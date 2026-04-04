@@ -68,10 +68,49 @@ def cmd_init(args: argparse.Namespace) -> None:
     )
 
 
+def _parse_version_tuple(version_str: str) -> tuple[int, ...]:
+    """Extract numeric parts from a version string, ignoring pre-release suffixes.
+
+    '0.6.0rc3' -> (0, 6, 0), '1.2.3' -> (1, 2, 3)
+    """
+    import re
+
+    parts = []
+    for segment in version_str.split("."):
+        m = re.match(r"(\d+)", segment)
+        if m:
+            parts.append(int(m.group(1)))
+    return tuple(parts)
+
+
+def _warn_version_mismatch(project_worca_dir: Path) -> None:
+    """Print a warning if the project's worca copy is older than the installed CLI."""
+    try:
+        from worca.cli.init import read_version
+
+        project_version = read_version(project_worca_dir)
+        if not project_version:
+            return  # can't read — skip silently
+        installed = worca.__version__
+        if project_version == installed:
+            return
+        proj_tuple = _parse_version_tuple(project_version)
+        inst_tuple = _parse_version_tuple(installed)
+        if proj_tuple < inst_tuple:
+            print(
+                f"warning: project worca ({project_version}) is older than "
+                f"installed ({installed}) — run 'worca init --upgrade'",
+                file=sys.stderr,
+            )
+    except Exception:
+        pass  # any error — never block
+
+
 def cmd_run(args: argparse.Namespace) -> None:
     """Thin launcher that delegates to the project copy's run_pipeline."""
     git_root = _find_git_root()
-    _require_project_worca(git_root)
+    project_worca_dir = _require_project_worca(git_root)
+    _warn_version_mismatch(project_worca_dir)
     _inject_project_path(git_root)
 
     # Build the command to run the project's run_pipeline.py

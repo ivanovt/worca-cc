@@ -1,7 +1,7 @@
 """Tests for worca version handling."""
 
 import worca
-from worca.cli.init import _read_version
+from worca.cli.init import read_version
 from pathlib import Path
 
 
@@ -15,7 +15,7 @@ def test_package_has_version():
 def test_version_matches_src():
     """Version in src/worca/__init__.py matches the importable version."""
     src_dir = Path(__file__).parent.parent / "src" / "worca"
-    file_version = _read_version(src_dir)
+    file_version = read_version(src_dir)
     assert file_version == worca.__version__
 
 

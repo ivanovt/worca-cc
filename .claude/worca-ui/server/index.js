@@ -31,6 +31,7 @@ function findProjectRoot(startDir) {
   return startDir; // fallback
 }
 
+import { checkWorcaVersion } from './version-check.js';
 import { createInbox } from './webhook-inbox.js';
 
 let projectRoot, worcaDir, settingsPath;
@@ -101,6 +102,18 @@ const { broadcast, scheduleRefresh, resolveRunProject } = attachWsServer(
 app.locals.broadcast = broadcast;
 app.locals.scheduleRefresh = scheduleRefresh;
 app.locals.resolveRunProject = resolveRunProject;
+
+// ─── worca-cc version check (non-blocking) ─────────────────────────────
+checkWorcaVersion().then((result) => {
+  app.locals.worcaVersion = result;
+  if (result.ok) {
+    console.log(`[version] ${result.message}`);
+  } else if (result.installed) {
+    console.warn(`[version] ${result.message}`);
+  } else {
+    console.log(`[version] ${result.message}`);
+  }
+});
 
 // ─── inotify budget check (Linux only) ─────────────────────────────────
 if (platform() === 'linux') {

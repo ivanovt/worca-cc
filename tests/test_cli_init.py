@@ -12,7 +12,7 @@ from worca.cli.init import (
     _get_worca_source,
     _migrate_settings_paths,
     _migrate_agent_overrides,
-    _read_version,
+    read_version,
     run_init,
 )
 
@@ -195,10 +195,10 @@ class TestReadVersion:
     def test_reads_version(self, tmp_path):
         init = tmp_path / "__init__.py"
         init.write_text('__version__ = "0.5.0"\n')
-        assert _read_version(tmp_path) == "0.5.0"
+        assert read_version(tmp_path) == "0.5.0"
 
     def test_returns_none_if_missing(self, tmp_path):
-        assert _read_version(tmp_path) is None
+        assert read_version(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------

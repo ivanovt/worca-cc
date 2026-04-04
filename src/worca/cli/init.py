@@ -224,8 +224,8 @@ def _show_check(source: Path, git_root: Path) -> None:
     settings_path = git_root / ".claude" / "settings.json"
 
     # Version comparison
-    source_version = _read_version(source)
-    project_version = _read_version(target) if target.exists() else None
+    source_version = read_version(source)
+    project_version = read_version(target) if target.exists() else None
 
     print(f"Source version:  {source_version or 'unknown'}")
     print(f"Project version: {project_version or 'not installed'}")
@@ -280,7 +280,7 @@ def _show_key_diff(current: dict, merged: dict, prefix: str = "") -> None:
             _show_key_diff(current[key], merged[key], prefix=f"{prefix}  {key}.")
 
 
-def _read_version(worca_dir: Path) -> str | None:
+def read_version(worca_dir: Path) -> str | None:
     """Read __version__ from a worca __init__.py."""
     init_file = worca_dir / "__init__.py"
     if not init_file.exists():
@@ -386,5 +386,5 @@ def run_init(
     if _init_beads(git_root):
         print("Initialized beads (.beads/)")
 
-    version = _read_version(target)
+    version = read_version(target)
     print(f"\nworca {version or 'unknown'} initialized successfully.")

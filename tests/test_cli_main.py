@@ -1,8 +1,9 @@
 """Tests for worca CLI entry point (src/worca/cli/main.py)."""
 
 import pytest
+from unittest.mock import patch
 
-from worca.cli.main import create_parser, main
+from worca.cli.main import create_parser, main, _parse_version_tuple, _warn_version_mismatch
 
 
 class TestCliParser:
@@ -74,3 +75,88 @@ class TestCliParser:
         parser = create_parser()
         args = parser.parse_args(["multi-status"])
         assert args.command == "multi-status"
+
+
+class TestParseVersionTuple:
+    def test_simple_version(self):
+        assert _parse_version_tuple("0.6.0") == (0, 6, 0)
+
+    def test_with_prerelease(self):
+        assert _parse_version_tuple("0.6.0rc3") == (0, 6, 0)
+
+    def test_two_part_version(self):
+        assert _parse_version_tuple("1.2") == (1, 2)
+
+    def test_with_dev_suffix(self):
+        assert _parse_version_tuple("1.0.0dev1") == (1, 0, 0)
+
+
+class TestWarnVersionMismatch:
+    def test_warns_when_project_older(self, tmp_path, capsys):
+        """Warning printed when project version < installed version."""
+        worca_dir = tmp_path / "worca"
+        worca_dir.mkdir()
+        (worca_dir / "__init__.py").write_text('__version__ = "0.5.0"\n')
+
+        with patch("worca.__version__", "0.6.0"):
+            _warn_version_mismatch(worca_dir)
+
+        captured = capsys.readouterr()
+        assert "warning:" in captured.err
+        assert "0.5.0" in captured.err
+        assert "0.6.0" in captured.err
+        assert "worca init --upgrade" in captured.err
+
+    def test_no_warning_when_versions_match(self, tmp_path, capsys):
+        """No warning when versions are equal."""
+        worca_dir = tmp_path / "worca"
+        worca_dir.mkdir()
+        (worca_dir / "__init__.py").write_text('__version__ = "0.6.0"\n')
+
+        with patch("worca.__version__", "0.6.0"):
+            _warn_version_mismatch(worca_dir)
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_no_warning_when_project_newer(self, tmp_path, capsys):
+        """No warning when project is newer than installed (edge case)."""
+        worca_dir = tmp_path / "worca"
+        worca_dir.mkdir()
+        (worca_dir / "__init__.py").write_text('__version__ = "0.7.0"\n')
+
+        with patch("worca.__version__", "0.6.0"):
+            _warn_version_mismatch(worca_dir)
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_silent_when_no_init_file(self, tmp_path, capsys):
+        """No crash or warning when __init__.py doesn't exist."""
+        worca_dir = tmp_path / "worca"
+        worca_dir.mkdir()
+
+        _warn_version_mismatch(worca_dir)
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_silent_when_dir_missing(self, tmp_path, capsys):
+        """No crash when the worca dir doesn't exist at all."""
+        _warn_version_mismatch(tmp_path / "nonexistent")
+
+        captured = capsys.readouterr()
+        assert captured.err == ""
+
+    def test_prerelease_ignored_in_comparison(self, tmp_path, capsys):
+        """Pre-release suffixes are stripped: 0.6.0rc3 satisfies >= 0.6.0."""
+        worca_dir = tmp_path / "worca"
+        worca_dir.mkdir()
+        (worca_dir / "__init__.py").write_text('__version__ = "0.6.0rc3"\n')
+
+        with patch("worca.__version__", "0.6.0"):
+            _warn_version_mismatch(worca_dir)
+
+        captured = capsys.readouterr()
+        # Same base version — no warning
+        assert "warning:" not in captured.err
