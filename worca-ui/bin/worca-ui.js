@@ -20,6 +20,11 @@ import {
   writeProject,
 } from '../server/project-registry.js';
 
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const pkg = JSON.parse(
+  readFileSync(join(__dirname, '..', 'package.json'), 'utf8'),
+);
+
 function findProjectRoot(startDir) {
   let dir = startDir;
   while (dir !== dirname(dir)) {
@@ -30,12 +35,7 @@ function findProjectRoot(startDir) {
 }
 
 const PREFS_DIR = join(homedir(), '.worca');
-const SERVER_SCRIPT = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'server',
-  'index.js',
-);
+const SERVER_SCRIPT = join(__dirname, '..', 'server', 'index.js');
 
 /** Exported for testing */
 export function parseArgs(argv) {
@@ -57,7 +57,11 @@ export function parseArgs(argv) {
   };
   for (let i = 2; i < argv.length; i++) {
     const arg = argv[i];
-    if (
+    if (arg === '--version' || arg === '-v') {
+      args.command = 'version';
+    } else if (arg === '--help' || arg === '-h') {
+      args.command = 'help';
+    } else if (
       ['start', 'stop', 'restart', 'status', 'projects', 'migrate'].includes(
         arg,
       )
@@ -493,6 +497,34 @@ function migrateStatus() {
   }
 }
 
+function printHelp() {
+  console.log(`worca-ui v${pkg.version} — Pipeline monitoring UI for worca-cc
+
+Usage: worca-ui <command> [options]
+
+Commands:
+  start                        Start the server (default)
+  stop                         Stop the running server
+  restart                      Restart the server
+  status                       Show server status
+  projects list                List registered projects
+  projects add <path> [--name] Register a project
+  projects remove <name>       Unregister a project
+  migrate --scan <dir>         Scan directory for projects to register
+  migrate --add <path>         Register a single project
+  migrate --status             Show registration health
+
+Options:
+  --port <N>         Server port (default: 3400, env: PORT)
+  --host <addr>      Bind address (default: 127.0.0.1, env: HOST)
+  --global           Multi-project mode (default)
+  --project [path]   Single-project mode, optionally scoped to path
+  --open             Open browser after start
+  --dry-run          Preview migrate --scan without registering
+  -v, --version      Show version
+  -h, --help         Show this help`);
+}
+
 const args = parseArgs(process.argv);
 switch (args.command) {
   case 'start':
@@ -538,8 +570,12 @@ switch (args.command) {
       );
     }
     break;
+  case 'version':
+    console.log(pkg.version);
+    break;
+  case 'help':
+    printHelp();
+    break;
   default:
-    console.log(
-      'Usage: worca-ui [start|stop|restart|status|projects|migrate] [--port N] [--host H] [--open] [--project [PATH]]',
-    );
+    printHelp();
 }
