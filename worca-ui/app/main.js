@@ -601,7 +601,7 @@ function fetchAllProjectRuns() {
         }
       }
     }
-    store.setState({ runs, archivedRuns });
+    store.setState({ runs, archivedRuns, runsLoaded: true });
     rerender();
   });
 }
@@ -1561,7 +1561,13 @@ function mainContentView() {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
     // switch), redirect to the section root instead of showing a stale view.
-    if (!run && currentProjectId && (state.projects || []).length > 1) {
+    // Skip redirect if runs haven't loaded yet (cold page load race condition).
+    if (
+      !run &&
+      state.runsLoaded &&
+      currentProjectId &&
+      (state.projects || []).length > 1
+    ) {
       navigate(route.section, null, route.projectId);
       return html``;
     }

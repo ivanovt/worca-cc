@@ -40,6 +40,7 @@ export function createStore(initial = {}) {
       events: [],
       controlAction: 'continue',
     },
+    runsLoaded: initial.runsLoaded ?? false,
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
   };
 
@@ -123,7 +124,7 @@ export function createStore(initial = {}) {
           runs[run.id] = run;
         }
       }
-      state = { ...state, runs, archivedRuns };
+      state = { ...state, runs, archivedRuns, runsLoaded: true };
       emit();
     },
 
