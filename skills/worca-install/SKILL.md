@@ -5,7 +5,7 @@ description: Install the worca autonomous pipeline into a project. Triggers on "
 
 # Install Worca into a New Project
 
-First-time installation of the worca pipeline into a target project. This copies all pipeline files, stores the source repo path for future `/worca-sync` updates, installs dependencies, and initializes beads.
+First-time installation of the worca pipeline into a target project. Delegates core setup (`.claude/worca/` copy, settings.json merge, `.gitignore`, beads init, `.worca/` dir) to `worca init`, then copies skills and registers the project.
 
 **Usage:** `/worca-install <target-project-path>` — the target path is **mandatory**.
 
@@ -34,62 +34,31 @@ DEST=<target-project-path>
 ```
 
 Validate:
-- `$WORCA_ROOT/.claude/worca/` exists (confirms it's actually worca-cc)
-- `$DEST` exists and is a git repository
+- `$WORCA_ROOT/src/worca/` exists (confirms it's actually worca-cc)
+- `$DEST` exists and is a git repository (including worktrees — use `git -C "$DEST" rev-parse --show-toplevel`, NOT `test -d "$DEST/.git"` which fails for worktrees that have a `.git` file instead of a directory)
 - `$DEST/.claude/worca/` does NOT exist (this is install, not sync — if it exists, suggest `/worca-sync` instead)
 
-### Step 2: Copy .claude/ directory
+### Step 2: Run worca init
+
+This single command handles: `.claude/worca/` copy, settings.json merge, `.gitignore` updates, beads init, and `.worca/` runtime directory.
 
 ```bash
-SRC="$WORCA_ROOT/.claude"
-
-# Create .claude if missing
-mkdir -p "$DEST/.claude"
-
-# Core worca directories
-rsync -av --exclude='node_modules' --exclude='__pycache__' "$SRC/worca/" "$DEST/.claude/worca/"
-rsync -av --exclude='node_modules' --exclude='__pycache__' --exclude='test-results/' "$WORCA_ROOT/worca-ui/" "$DEST/.claude/worca-ui/"
-rsync -av --exclude='overrides/' "$SRC/agents/" "$DEST/.claude/agents/"
-rsync -av --exclude='__pycache__' "$SRC/hooks/" "$DEST/.claude/hooks/"
-rsync -av --exclude='__pycache__' "$SRC/scripts/" "$DEST/.claude/scripts/"
-
-# Skills — exclude worca-install (only needed in the worca-cc source repo, not target projects)
-rsync -av --exclude='node_modules' --exclude='__pycache__' --exclude='worca-install/' "$SRC/skills/" "$DEST/.claude/skills/"
+cd "$DEST" && PYTHONPATH="$WORCA_ROOT/src" python3 -m worca.cli.main init --source "$WORCA_ROOT"
 ```
 
-### Step 3: Copy and patch settings.json
+If `worca init` fails, stop and report the error.
 
-Copy `settings.json` from source, then add the `worca.source_repo` key:
+### Step 3: Copy skills
+
+Copy only the skills that target projects need (skip `worca-install` and `worca-rc` which are source-repo-only):
 
 ```bash
-cp "$SRC/settings.json" "$DEST/.claude/settings.json"
+mkdir -p "$DEST/.claude/skills"
+rsync -av "$WORCA_ROOT/skills/worca-agent-override/" "$DEST/.claude/skills/worca-agent-override/"
+rsync -av "$WORCA_ROOT/skills/worca-sync/" "$DEST/.claude/skills/worca-sync/"
 ```
 
-Then use a JSON tool (python/jq) to set:
-
-```json
-{
-  "worca": {
-    "source_repo": "/absolute/path/to/worca-cc"
-  }
-}
-```
-
-This stores the source path so that `/worca-sync` can find it automatically in the future.
-
-**Do NOT copy** `settings.local.json` — it is machine-specific.
-
-### Step 4: Install dependencies and build worca-ui
-
-**MANDATORY — do NOT skip this step.** The UI will not work without it.
-
-```bash
-cd "$DEST/.claude/worca-ui" && npm install && npm run build
-```
-
-Verify the build succeeded by checking that `$DEST/.claude/worca-ui/app/main.bundle.js` exists.
-
-### Step 5: Install Python dev dependencies
+### Step 4: Install Python dev dependencies
 
 ```bash
 cd "$DEST" && pip install -e ".[dev]"
@@ -97,38 +66,7 @@ cd "$DEST" && pip install -e ".[dev]"
 
 If `pyproject.toml` does not exist in the target project root, skip this step.
 
-### Step 6: Initialize beads (if bd CLI is available)
-
-```bash
-cd "$DEST" && bd init
-```
-
-If `bd` is not installed, warn the user:
-```
-beads CLI not found. Install it with: npm install -g @beads/bd@0.49.0
-Then run: cd <target-project> && bd init
-```
-
-### Step 7: Create .worca runtime directory
-
-```bash
-mkdir -p "$DEST/.worca"
-```
-
-Check that `.worca` is in the target project's `.gitignore`. If not, add it:
-
-```bash
-echo ".worca/" >> "$DEST/.gitignore"
-```
-
-Also ensure these are gitignored:
-
-```
-.claude/worca-ui/node_modules/
-.claude/settings.local.json
-```
-
-### Step 7.5: Register project in worca-ui
+### Step 5: Register project in worca-ui
 
 Register the target project so it appears in the worca-ui multi-project selector.
 
@@ -153,7 +91,7 @@ fi
 
 If the project was registered, note it in the summary. If it already existed, note "already registered".
 
-### Step 8: Report results
+### Step 6: Report results
 
 Show a summary:
 
@@ -162,24 +100,14 @@ Worca installed successfully!
 
   Source:    /absolute/path/to/worca-cc
   Target:    /absolute/path/to/target-project
-  Stored:    worca.source_repo in .claude/settings.json
 
-  Copied:
-    .claude/worca/         done
-    .claude/worca-ui/      done  (npm install done)
-    .claude/agents/        done
-    .claude/hooks/         done
-    .claude/scripts/       done
-    .claude/skills/        done  (worca-install excluded)
-    .claude/settings.json  done  (source_repo saved)
-
-  Beads:     initialized / skipped (bd not found)
-  Gitignore: updated
-  Registered: ~/.worca/projects.d/<slug>.json (new / already existed)
+  worca init:        done (settings.json, .claude/worca/, .gitignore, beads, .worca/)
+  Skills:            done (worca-agent-override, worca-sync)
+  pip install:       done / skipped (no pyproject.toml)
+  Registered:        ~/.worca/projects.d/<slug>.json (new / already existed)
 
   Next steps:
     cd <target-project> && claude          # Interactive mode
-    python .claude/scripts/run_pipeline.py --prompt "..."  # Autonomous mode
+    worca run --prompt "..."               # Autonomous mode
     /worca-sync                            # Update worca files later
-    pnpm worca:ui                          # UI — project appears in selector
 ```

@@ -5,7 +5,7 @@ description: Create or update agent prompt overrides for worca pipeline agents. 
 
 # Agent Override Manager
 
-Create or update per-project agent prompt overlays in `.claude/agents/overrides/`. These overlay files customize the core agent prompts without modifying the originals.
+Create or update per-project agent prompt overlays in `.claude/agents/`. These overlay files customize the core agent prompts without modifying the originals.
 
 **Usage:** `/worca-agent-override [agent-name] [instruction]`
 
@@ -16,8 +16,8 @@ Examples:
 
 ## Background
 
-Core agent prompts live in `.claude/agents/core/<agent>.md` with `## Section` headings.
-Override files in `.claude/agents/overrides/<agent>.md` use `## Override: <Section>` headings.
+Core agent prompts live in `.claude/worca/agents/core/<agent>.md` with `## Section` headings.
+Override files in `.claude/agents/<agent>.md` use `## Override: <Section>` headings.
 
 Two modes per section:
 - **Append** (default): override body is added after the existing section content
@@ -29,7 +29,7 @@ Sections marked `<!-- governance -->` in core prompts **cannot be replaced** —
 
 ### Step 1: Determine the target agent
 
-Available agents (from `.claude/agents/core/`):
+Available agents (from `.claude/worca/agents/core/`):
 
 | Agent         | Role |
 |---------------|------|
@@ -44,9 +44,9 @@ If the user didn't specify an agent, ask which one. If the intent is clear from 
 
 ### Step 2: Show current sections
 
-Read the core agent prompt from `.claude/agents/core/<agent>.md` and list its `## Section` headings. Show them to the user so they know what can be targeted. Also note which sections have `<!-- governance -->` (these cannot be replaced, only appended to).
+Read the core agent prompt from `.claude/worca/agents/core/<agent>.md` and list its `## Section` headings. Show them to the user so they know what can be targeted. Also note which sections have `<!-- governance -->` (these cannot be replaced, only appended to).
 
-If an override file already exists at `.claude/agents/overrides/<agent>.md`, read it and show the existing overrides too.
+If an override file already exists at `.claude/agents/<agent>.md`, read it and show the existing overrides too.
 
 ### Step 3: Determine what the user wants
 
@@ -61,13 +61,7 @@ If the request targets a governance-protected section with replace, warn the use
 
 ### Step 4: Create or update the override file
 
-Ensure the overrides directory exists:
-
-```bash
-mkdir -p .claude/agents/overrides
-```
-
-The override file is `.claude/agents/overrides/<agent>.md`.
+The override file is `.claude/agents/<agent>.md`.
 
 **Format for each override block:**
 
@@ -106,7 +100,7 @@ After writing, show the user:
 ```
 Agent override saved!
 
-  File:    .claude/agents/overrides/<agent>.md
+  File:    .claude/agents/<agent>.md
   Agent:   <agent>
   Section: <section> (append|replace)
 
@@ -121,6 +115,6 @@ Agent override saved!
 ## Edge Cases
 
 - **User wants to remove an override**: Delete the `## Override: <Section>` block from the file. If no blocks remain, delete the file.
-- **User wants to see all overrides**: List all files in `.claude/agents/overrides/` and show their contents.
-- **User wants to reset an agent**: Delete `.claude/agents/overrides/<agent>.md`.
+- **User wants to see all overrides**: List all `.md` files in `.claude/agents/` and show their contents.
+- **User wants to reset an agent**: Delete `.claude/agents/<agent>.md`.
 - **Multiple sections in one request**: Create multiple `## Override:` blocks in the same file.
