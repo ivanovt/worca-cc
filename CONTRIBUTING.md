@@ -13,8 +13,9 @@ cd worca-cc
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install dev dependencies
+# Install dev dependencies (editable install)
 pip install -e ".[dev]"
+worca init .              # creates .claude/worca/ runtime copy
 
 # Build the UI
 cd worca-ui && npm install && npm run build && cd -
@@ -41,55 +42,66 @@ cd worca-ui && npx playwright test --workers=1
 
 ## Releasing
 
-Releases are automated via GitHub Actions. When a version tag is pushed, the workflow builds the archive, generates release notes, and publishes a GitHub Release.
+Two independent packages with independent version numbers and release cadences.
 
-### Steps to create a release
+### Python pipeline (`worca-cc` on PyPI)
 
-1. **Update the version** in `pyproject.toml`:
+| Item | Value |
+|---|---|
+| Version source | `pyproject.toml` + `src/worca/__init__.py` |
+| Tag format | `worca-cc-vX.Y.Z` |
+| CI workflow | `.github/workflows/release-pypi.yml` |
 
-   ```toml
-   version = "X.Y.Z"
-   ```
+Steps:
 
-2. **Commit the version bump**:
-
+1. Bump version in **both** `pyproject.toml` and `src/worca/__init__.py`
+2. Commit: `git commit -m "chore: bump worca-cc to X.Y.Z"`
+3. Tag and push:
    ```bash
-   git add pyproject.toml
-   git commit -m "Bump version to X.Y.Z"
+   git tag worca-cc-vX.Y.Z
+   git push origin main && git push origin worca-cc-vX.Y.Z
    ```
+4. CI validates tag matches pyproject.toml, builds wheel+sdist, publishes to PyPI (trusted publishing), creates GitHub Release with artifacts + checksums
 
-3. **Create and push the tag**:
+### Dashboard (`@worca/ui` on npm)
 
+| Item | Value |
+|---|---|
+| Version source | `worca-ui/package.json` |
+| Tag format | `worca-ui-vX.Y.Z` |
+| CI workflow | `.github/workflows/release-npm.yml` |
+
+Steps:
+
+1. Bump version in `worca-ui/package.json`
+2. Commit: `git commit -m "chore: bump @worca/ui to X.Y.Z"`
+3. Tag and push:
    ```bash
-   git tag vX.Y.Z
-   git push origin main
-   git push origin vX.Y.Z
+   git tag worca-ui-vX.Y.Z
+   git push origin main && git push origin worca-ui-vX.Y.Z
    ```
+4. CI validates tag matches package.json, builds, runs tests, publishes to npm
 
-4. **Verify** — go to [GitHub Actions](https://github.com/SinishaDjukic/worca-cc/actions) and confirm the release workflow completes successfully. The release will appear at [Releases](https://github.com/SinishaDjukic/worca-cc/releases).
+### Version table
 
-### What the workflow does
+| Package | Version source | Tag format |
+|---|---|---|
+| `worca-cc` | `pyproject.toml` + `src/worca/__init__.py` | `worca-cc-vX.Y.Z` |
+| `@worca/ui` | `worca-ui/package.json` | `worca-ui-vX.Y.Z` |
 
-1. Validates the tag version matches `pyproject.toml`
-2. Rebuilds the worca-ui bundle from source
-3. Creates zip and tar.gz archives via `git archive` (respecting `.gitattributes` export-ignore rules)
-4. Generates SHA-256 checksums
-5. Publishes a GitHub Release with auto-generated release notes
+Releases are independent — a UI fix doesn't require a Python release.
 
 ### Release artifacts
 
-Each release includes:
+**worca-cc:** wheel (.whl), sdist (.tar.gz), checksums-sha256.txt — published to PyPI, attached to GitHub Release
 
-| File | Description |
-|------|-------------|
-| `worca-cc-X.Y.Z.zip` | Release archive (zip) |
-| `worca-cc-X.Y.Z.tar.gz` | Release archive (tarball) |
-| `checksums-sha256.txt` | SHA-256 checksums for verification |
+**@worca/ui:** published to npm registry
 
-### Verifying a download
+### Verifying a PyPI download
 
 ```bash
-sha256sum -c checksums-sha256.txt
+pip download worca-cc --no-deps
+sha256sum worca_cc-*.whl
 ```
 
 ## License

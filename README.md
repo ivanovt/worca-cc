@@ -42,7 +42,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ### Customization
 
-- **Agent prompt overlays** — add `.claude/agents/overrides/<agent>.md` to customize agent instructions per-project without modifying core templates; overlay blocks can **append** to or **replace** (via `<!-- replace -->`) targeted sections; governance-protected sections cannot be replaced
+- **Agent prompt overlays** — add `.claude/agents/<agent>.md` to customize agent instructions per-project without modifying core templates; overlay blocks can **append** to or **replace** (via `<!-- replace -->`) targeted sections; governance-protected sections cannot be replaced
 - **Local settings** — `settings.local.json` deep-merges machine-specific overrides that aren't committed to git
 - **Loop controls** — configurable iteration limits for implement/test cycles, code review, and PR updates (per-loop-type limits + global multiplier)
 
@@ -76,63 +76,37 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ## Installation
 
-### Via the dashboard (recommended)
-
-Start the global dashboard and use the Add Project dialog to register and set up new projects:
+### Package install (recommended)
 
 ```bash
-cd worca-cc/worca-ui && node server/index.js --global
-# Open http://127.0.0.1:3400, click + next to the project picker
+pip install worca-cc              # Python pipeline + CLI
+npm install -g @worca/ui          # Dashboard (optional)
+npm install -g @beads/bd@0.49.0   # Issue tracking
 ```
 
-The dialog validates the project path, registers it, and offers to install worca automatically — copying pipeline files, installing dependencies, and building the UI. After registration, the project appears in the sidebar and is ready for pipeline runs.
-
-![Add project dialog](docs/screenshots/add-project-dialog.png)
-
-### Using the `/worca-install` skill
-
-Alternatively, install from the Claude Code CLI:
+### Initialize a project
 
 ```bash
-cd worca-cc && claude
-# Then type: /worca-install /path/to/your-project
+cd your-project
+worca init                        # scaffolds .claude/ with pipeline files
 ```
 
-This copies all pipeline files, installs dependencies, initializes beads, and stores the worca-cc source path in the target's `settings.json` for future `/worca-sync` updates.
-
-### Manual installation
+### Updating
 
 ```bash
-# Clone the repo
+pip install --upgrade worca-cc
+cd your-project && worca init --upgrade
+```
+
+### Developer install (from source)
+
+```bash
 git clone https://github.com/SinishaDjukic/worca-cc.git
-
-# Install beads CLI (uninstall any existing version first)
-npm uninstall -g @beads/bd
-npm install -g @beads/bd@0.49.0
-
-# Install in your project
-cp -R worca-cc/.claude/ your-project/.claude/
-
-# Initialize beads in your project (warnings about missing hooks or
-# outdated CLI are non-blocking — the pipeline works without fixing them)
-cd your-project && bd init
-
-# Install dashboard dependencies and build
-cd your-project/worca-ui && npm install && npm run build
+cd worca-cc
+pip install -e ".[dev]"
+worca init .
+cd worca-ui && npm install && npm run build
 ```
-
-### Updating an existing installation
-
-Use the `/worca-sync` skill to pull the latest pipeline files from worca-cc:
-
-```bash
-cd your-project && claude
-# Then type: /worca-sync
-```
-
-The source repo path is resolved automatically from `worca.source_repo` in your project's `settings.json` (set by `/worca-install`). You can also pass an explicit path: `/worca-sync /path/to/worca-cc`.
-
-Sync uses `rsync --delete` for core directories (worca, worca-ui, agents, hooks, scripts) to remove stale files, and additive sync for skills to preserve project-specific skills. Settings are merged — project-specific permissions, MCP config, and model preferences are never overwritten.
 
 ## Usage
 
@@ -143,13 +117,13 @@ Three modes of operation:
 cd your-project && claude
 
 # Autonomous — run full pipeline from prompt
-python .claude/scripts/run_pipeline.py --prompt "Add user authentication"
+worca run --prompt "Add user authentication"
 
 # From spec file or pre-made plan
-python .claude/scripts/run_pipeline.py --spec spec.md --plan plan.md
+worca run --spec spec.md --plan plan.md
 
 # From GitHub issue
-python .claude/scripts/run_pipeline.py --source gh:issue:42
+worca run --source gh:issue:42
 ```
 
 ### CLI flags
@@ -188,11 +162,11 @@ Projects are stored in `~/.worca/projects.d/` as individual JSON files. Each pro
 Run multiple work requests concurrently, each in an isolated git worktree:
 
 ```bash
-python .claude/scripts/run_multi.py \
+worca multi \
   --requests "Add auth" "Add search" "Add logging" \
   --max-parallel 3
 
-python .claude/scripts/run_multi.py \
+worca multi \
   --sources gh:issue:1 gh:issue:2 \
   --cleanup always
 ```
@@ -212,15 +186,14 @@ Results are saved to `.worca/multi/results-{timestamp}.json`.
 ## Dashboard (worca-ui)
 
 ```bash
-# From the project root (always global mode):
+# Via npm global install:
+worca-ui --global                         # Monitor all projects (port 3400)
+worca-ui --project /path                  # Monitor single project
+
+# Dev mode (from repo root):
 pnpm worca:ui                             # Build + start
 pnpm worca:ui:restart                     # Build + restart
 pnpm worca:ui:stop                        # Stop
-
-# Or directly (supports --global / per-project modes):
-cd worca-ui && npm start          # Start (per-project)
-cd worca-ui && npm run restart    # Stop + start
-cd worca-ui && npm run stop       # Stop
 ```
 
 A real-time web dashboard for monitoring and controlling the pipeline. All updates stream via WebSocket — no polling, no page refreshes.
@@ -285,11 +258,12 @@ Configure agent models and max turns, pipeline stages, governance rules, pricing
 
 ### Development
 
-After cloning, install the root dev dependencies to enable git hooks:
+After cloning, install dependencies and scaffold the runtime copy:
 
 ```bash
-npm install          # installs husky (pre-commit hooks)
-pip install -e ".[dev]"  # installs ruff, pytest, etc.
+pip install -e ".[dev]"  # editable install + ruff, pytest, etc.
+worca init .             # creates .claude/worca/ runtime copy
+npm install              # installs husky (pre-commit hooks)
 ```
 
 The pre-commit hook runs automatically on every `git commit` and checks:
@@ -325,7 +299,7 @@ Create `settings.local.json` next to `settings.json` for machine-specific overri
 
 ### Agent prompt overlays
 
-Add `.claude/agents/overrides/<agent>.md` files to customize agent prompts per-project. Use `## Override: <Section Name>` blocks to target specific sections. Add `<!-- replace -->` as the first line to replace instead of append. Governance-protected sections (marked `<!-- governance -->`) cannot be replaced.
+Add `.claude/agents/<agent>.md` files to customize agent prompts per-project. Use `## Override: <Section Name>` blocks to target specific sections. Add `<!-- replace -->` as the first line to replace instead of append. Governance-protected sections (marked `<!-- governance -->`) cannot be replaced.
 
 ## Architecture
 
@@ -350,39 +324,29 @@ Governance hooks run at every tool call — `pre_tool_use` enforces guards and p
 ## Project Structure
 
 ```
+src/worca/               # Python package (pip-installable)
+  orchestrator/          # Pipeline state machine, stages, prompt builder
+  claude_hooks/          # Claude Code hook scripts
+  scripts/               # Pipeline entry points (run_pipeline.py, run_multi.py)
+  agents/core/           # Agent .md templates
+  schemas/               # JSON schemas for structured agent output
+  state/                 # Status JSON read/write, iteration tracking
+  utils/                 # Claude CLI, beads, git, gh_issues helpers
+  cli/                   # CLI entry points (worca init, worca run, etc.)
+tests/                   # Python tests (pytest)
+worca-ui/                # Dashboard (@worca/ui npm package)
+  app/                   # Lit-HTML frontend
+  server/                # Express + WebSocket server
+docs/                    # Feature plans, screenshots
+```
+
+After `worca init`, your project gets:
+
+```
 .claude/
-├── agents/
-│   ├── core/           # Agent templates (planner, coordinator, implementer, tester, guardian, learner)
-│   ├── domain/         # Custom domain-specific agents
-│   └── overrides/      # Per-project prompt overlays (gitignored)
-├── hooks/              # Claude Code lifecycle hooks
-│   ├── pre_tool_use.py
-│   ├── post_tool_use.py
-│   └── ...
-├── scripts/
-│   ├── run_pipeline.py # CLI entry point
-│   ├── run_multi.py    # Multi-pipeline orchestrator (worktree-isolated)
-│   ├── run_learn.py    # LEARN stage runner
-│   ├── run_parallel.py # Parallel batch execution
-│   └── run_batch.py    # Batch runner
-├── skills/
-│   ├── worca-install/        # /worca-install skill
-│   ├── worca-sync/           # /worca-sync skill
-│   └── worca-agent-override/ # /worca-agent-override skill
-├── worca/
-│   ├── orchestrator/   # Pipeline runner, stages, resume, prompt builder, error classifier, overlays, events, control
-│   │   └── registry.py # Parallel pipeline registry (directory-based tracking)
-│   ├── events/         # Event emitter, webhook dispatch, event types
-│   ├── hooks/          # Guard, plan_check, test_gate, tracking, session
-│   ├── schemas/        # JSON schemas for agent outputs
-│   ├── state/          # Status persistence
-│   └── utils/          # Git, beads, Claude CLI, GitHub issues, token tracking, settings
-│       └── project_registry.py  # Auto-register projects in ~/.worca/projects.d/
-└── settings.json       # Configuration
-worca-ui/                 # Dashboard (top-level npm package)
-├── server/               # Express + WebSocket server (global mode, project routes, pipeline registry)
-├── app/                  # Lit-HTML frontend (multi-dashboard, add-project dialog)
-└── scripts/              # Build scripts
+  worca/                 # Runtime copy of pipeline (managed, overwritten on upgrade)
+  agents/                # Your agent prompt overrides (never touched by upgrade)
+  settings.json          # Pipeline configuration
 ```
 
 ## Linting
