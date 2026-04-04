@@ -138,6 +138,8 @@ pnpm worca:ui:restart                # Rebuild + restart in global mode
 PORT=3401 pnpm worca:ui              # Custom port via env var
 pnpm worca:ui -- --port 3401         # Custom port via flag
 pnpm worca:ui -- --project /path     # Single-project mode
+pnpm worca:ui -- --help              # Show all commands and options
+pnpm worca:ui -- --version           # Print version
 ```
 
 The `--port` flag takes precedence over the `PORT` env var. `HOST` / `--host` works the same way (default `127.0.0.1`).

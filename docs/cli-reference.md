@@ -73,7 +73,37 @@ Start the monitoring dashboard.
 ```bash
 worca-ui                         # monitor all projects (default, port 3400)
 worca-ui --project /path         # monitor single project
+worca-ui --version               # print version
+worca-ui --help                  # show all commands and options
 ```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `start` | Start the server (default) |
+| `stop` | Stop the running server |
+| `restart` | Restart the server |
+| `status` | Show server status |
+| `projects list` | List registered projects |
+| `projects add <path> [--name]` | Register a project |
+| `projects remove <name>` | Unregister a project |
+| `migrate --scan <dir>` | Scan directory for projects to register |
+| `migrate --add <path>` | Register a single project |
+| `migrate --status` | Show registration health |
+
+### Options
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--port <N>` | `3400` (env: `PORT`) | Server port |
+| `--host <addr>` | `127.0.0.1` (env: `HOST`) | Bind address |
+| `--global` | *(default)* | Multi-project mode |
+| `--project [path]` | | Single-project mode, optionally scoped to path |
+| `--open` | | Open browser after start |
+| `--dry-run` | | Preview `migrate --scan` without registering |
+| `-v`, `--version` | | Print version |
+| `-h`, `--help` | | Show help |
 
 ### Global dashboard commands
 

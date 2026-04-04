@@ -17,6 +17,8 @@ npm install -g @worca/ui
 ```bash
 worca-ui                         # monitor all projects (default, port 3400)
 worca-ui --project /path         # monitor single project
+worca-ui --help                  # show all commands and options
+worca-ui --version               # print version
 ```
 
 ## Features

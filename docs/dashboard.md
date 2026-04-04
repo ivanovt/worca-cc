@@ -5,6 +5,7 @@ A real-time web dashboard for monitoring and controlling the pipeline. All updat
 ```bash
 worca-ui                                  # Monitor all projects (default, port 3400)
 worca-ui --project /path                  # Monitor single project
+worca-ui --help                           # Show all commands and options
 ```
 
 ## Pipeline Detail

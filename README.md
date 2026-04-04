@@ -126,6 +126,7 @@ worca run --source gh:issue:42
 # From the dashboard — click "New Pipeline" in worca-ui
 worca-ui                         # monitor all projects (default)
 worca-ui --project /path         # monitor single project
+worca-ui --help                  # show all commands and options
 ```
 
 See [CLI Reference](docs/cli-reference.md) for all flags and commands.
