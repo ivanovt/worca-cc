@@ -70,6 +70,17 @@ Plan Review and Learn are disabled by default; enable via `worca.stages.plan_rev
 
 Governance hooks run at every tool call — `pre_tool_use` enforces guards and plan validation, `post_tool_use` enforces test gates and links beads tasks. The event system emits structured events at each stage transition, bead assignment, error, and governance violation.
 
+## Project Structure
+
+After `worca init`, your project gets:
+
+```
+.claude/
+  worca/                 # Runtime copy of pipeline (managed, overwritten on upgrade)
+  agents/                # Your agent prompt overrides (never touched by upgrade)
+  settings.json          # Pipeline configuration
+```
+
 ## Prerequisites
 
 - Python 3.8+
@@ -84,31 +95,20 @@ Governance hooks run at every tool call — `pre_tool_use` enforces guards and p
 
 ## Installation
 
-### Package install (recommended)
-
 ```bash
 pip install worca-cc              # Python pipeline + CLI
 npm install -g @worca/ui          # Dashboard
 npm install -g @beads/bd@0.49.0   # Issue tracking
 ```
 
-### Initialize a project
-
 ```bash
 cd your-project
 worca init                        # scaffolds .claude/ with pipeline files
 ```
 
-### Updating
+To update: `pip install --upgrade worca-cc && worca init --upgrade`
 
-```bash
-pip install --upgrade worca-cc
-cd your-project && worca init --upgrade
-```
-
-## Usage
-
-Four modes of operation:
+## Quick Start
 
 ```bash
 # Interactive — open Claude with pipeline hooks active
@@ -127,145 +127,19 @@ worca run --source gh:issue:42
 worca-ui --global
 ```
 
-### CLI flags
-
-| Flag | Description |
-|------|-------------|
-| `--prompt TEXT` | Text prompt describing the work (optional — title auto-generated from spec/plan if omitted) |
-| `--spec FILE` | Path to spec/requirements file |
-| `--source TEXT` | Source reference (`gh:issue:42`, `bd:bd-abc`, or issue URL) |
-| `--plan FILE` | Pre-made plan file (skips Plan stage) |
-| `--resume` | Resume a previous run from status.json |
-| `--branch NAME` | Use an existing branch instead of creating one |
-| `--model MODEL` | Override the default model for all agents |
-| `--msize [1-10]` | Task size multiplier — scales max_turns per stage |
-| `--mloops [1-10]` | Loop multiplier — scales max loop iterations |
-| `--settings FILE` | Path to settings.json (default: `.claude/settings.json`) |
-| `--status-dir DIR` | Directory for pipeline status files (default: `.worca`) |
-
-`--prompt`, `--spec`, and `--source` are mutually exclusive — provide one.
-
-### Global Dashboard
-
-Start a single worca-ui instance that monitors all registered projects:
-
-```bash
-worca-ui start --global          # single instance, port 3400
-worca-ui projects add /path      # register a project
-worca-ui projects list           # list registered projects
-worca-ui migrate --scan ~/dev    # batch-register all worca-enabled projects
-```
-
-Projects are stored in `~/.worca/projects.d/` as individual JSON files. Each project auto-registers when the pipeline runs.
-
-### Parallel Pipelines
-
-Run multiple work requests concurrently, each in an isolated git worktree:
-
-```bash
-worca multi \
-  --requests "Add auth" "Add search" "Add logging" \
-  --max-parallel 3
-
-worca multi \
-  --sources gh:issue:1 gh:issue:2 \
-  --cleanup always
-```
-
-| Flag | Description |
-|------|-------------|
-| `--requests TEXT [TEXT ...]` | Text prompts for each pipeline |
-| `--sources TEXT [TEXT ...]` | Source references (`gh:issue:N`, `bd:bd-abc`) |
-| `--max-parallel N` | Max concurrent pipelines (default: 3) |
-| `--base-branch REF` | Git ref each worktree branches from (default: `main`) |
-| `--cleanup POLICY` | Worktree cleanup: `on-success`, `always`, `never` |
-| `--msize [1-10]` | Task size multiplier for all pipelines |
-| `--mloops [1-10]` | Loop multiplier for all pipelines |
-
-Results are saved to `.worca/multi/results-{timestamp}.json`.
+See [CLI Reference](docs/cli-reference.md) for all flags and commands.
 
 ## Dashboard (worca-ui)
 
-```bash
-worca-ui --global                         # Monitor all projects (port 3400)
-worca-ui --project /path                  # Monitor single project
-```
-
 A real-time web dashboard for monitoring and controlling the pipeline. All updates stream via WebSocket — no polling, no page refreshes.
-
-### Pipeline Detail
-
-Stage pipeline with iteration counts, costs, duration, and a timing bar showing Thinking vs Tools breakdown. Expand any stage to drill into per-iteration metrics. Pause, resume, and stop controls in the header.
 
 ![Pipeline detail — stage pipeline with costs, turns, and timing bar](docs/screenshots/run-detail-stages.png)
 
-Expand a stage to see individual iterations — each shows agent, turns, cost, duration, and outcome. The log viewer streams real-time agent output with per-stage filtering.
-
-![Pipeline detail — IMPLEMENT expanded](docs/screenshots/pipeline-detail-implement.png)
-
-The header shows lifecycle controls — pause, resume, and stop buttons with real-time state transitions and a status badge.
-
-![Lifecycle controls — Failed status badge with Resume and Stop buttons](docs/screenshots/lifecycle-controls.png)
-
-### Learnings
-
-After a run completes, the LEARN stage produces ranked observations and actionable suggestions. Copy-to-clipboard buttons let you feed insights directly into future runs or agent prompts.
-
-![Learnings panel](docs/screenshots/learn-stage.png)
-
-### Global Dashboard
-
-In global mode (`--global`), the sidebar shows a project picker with all registered projects, live status indicators, and a "New Pipeline" button. Select a project to see its runs, beads, costs, and settings.
-
 ![Global dashboard — project-scoped history view with sidebar navigation](docs/screenshots/global-dashboard.png)
-
-The sidebar project picker shows all registered projects with live status dots (green = healthy, red = errors) and run count badges.
-
-![Sidebar project picker with status dots and 20 registered projects](docs/screenshots/sidebar-projects.png)
-
-### Add Project
-
-Click the **+** button next to the project picker to register a new project. The dialog validates the project path and auto-generates a slug for the project name.
-
-![Add project dialog](docs/screenshots/add-project-dialog.png)
-
-### Run History
-
-Browse completed and interrupted runs sorted newest-first. Each card shows the branch, timing, and stage completion badges.
-
-![Run History](docs/screenshots/history.png)
-
-### New Pipeline
-
-Start a run from a prompt, GitHub issue, or spec file. Advanced options for size/loop multipliers, branch selection, and pre-made plan files.
-
-![New Pipeline](docs/screenshots/new-pipeline.png)
-
-### Beads Task Board
-
-Kanban view of tasks created by the Coordinator, filtered by run. Shows priority badges, dependency chains, and status across Open/In Progress/Closed columns. Badge shows closed/total count (e.g., "3/5 beads").
 
 ![Beads Kanban](docs/screenshots/beads-kanban.png)
 
-### Token & Cost Dashboard
-
-Per-run cost breakdown with a stage-proportional bar chart. Detailed table showing cost, turns, duration, and API duration per iteration.
-
-![Cost Dashboard](docs/screenshots/costs.png)
-
-### Settings
-
-Configure agent models and max turns, pipeline stages, governance rules, pricing, webhooks, and preflight checks — all saved to `.claude/settings.json` and effective immediately without restarting.
-
-![Settings](docs/screenshots/settings.png)
-
-Preflight checks validate the environment before spending tokens — catching git state issues, missing dependencies, and configuration problems. Each check can be toggled independently.
-
-![Preflight settings](docs/screenshots/preflight-settings.png)
-
-The webhooks panel configures event subscriptions, budget limits, and HMAC-SHA256 signing for pipeline event delivery.
-
-![Webhooks settings — event system toggles, budget limits, and webhook configuration](docs/screenshots/webhooks-settings.png)
+See [Dashboard Guide](docs/dashboard.md) for the full screenshot walkthrough.
 
 ## Configuration
 
@@ -288,17 +162,6 @@ Create `settings.local.json` next to `settings.json` for machine-specific overri
 ### Agent prompt overlays
 
 Add `.claude/agents/<agent>.md` files to customize agent prompts per-project. Use `## Override: <Section Name>` blocks to target specific sections. Add `<!-- replace -->` as the first line to replace instead of append. Governance-protected sections (marked `<!-- governance -->`) cannot be replaced.
-
-## Project Structure
-
-After `worca init`, your project gets:
-
-```
-.claude/
-  worca/                 # Runtime copy of pipeline (managed, overwritten on upgrade)
-  agents/                # Your agent prompt overrides (never touched by upgrade)
-  settings.json          # Pipeline configuration
-```
 
 ## License
 
