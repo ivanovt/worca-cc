@@ -94,6 +94,21 @@ cd worca-ui && npx playwright test --workers=1
 - Line length: 100 characters
 - Target: Python 3.8+
 
+## Cutting Release Candidates
+
+Use the `/worca-rc` skill to bump RC versions for both packages, commit, tag, and push in one step:
+
+```
+/worca-rc
+```
+
+This will:
+1. Read current versions from `pyproject.toml`, `src/worca/__init__.py`, and `worca-ui/package.json`
+2. Increment the RC number (e.g. `0.6.0rc6` → `0.6.0rc7`, `0.1.0-rc.4` → `0.1.0-rc.5`)
+3. Update all version files, commit, create both tags, and push
+
+No arguments needed — versions are auto-detected. CI workflows handle publishing to PyPI and npm when the tags land.
+
 ## Releasing
 
 Two independent packages with independent version numbers and release cadences.
