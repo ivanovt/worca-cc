@@ -35,11 +35,7 @@ import {
 } from './settings-merge.js';
 import { validateSettingsPayload } from './settings-validator.js';
 import { discoverRuns } from './watcher.js';
-import {
-  checkWorcaInstalled,
-  getSourceRoot,
-  runWorcaSetup,
-} from './worca-setup.js';
+import { checkWorcaInstalled, runWorcaSetup } from './worca-setup.js';
 
 /** Validate a runId — must not contain path traversal characters */
 const RUN_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -868,7 +864,7 @@ export function createProjectScopedRoutes() {
 
     const child = spawn(
       'python3',
-      ['.claude/scripts/run_learn.py', '--run-id', runId],
+      ['.claude/worca/scripts/run_learn.py', '--run-id', runId],
       { detached: true, stdio: 'ignore', cwd, env },
     );
     child.unref();
@@ -970,7 +966,7 @@ export function createProjectScopedRoutes() {
       ? cleanupPolicy
       : 'on-success';
 
-    const args = ['.claude/scripts/run_multi.py'];
+    const args = ['.claude/worca/scripts/run_multi.py'];
     args.push('--max-parallel', String(maxP));
     args.push('--cleanup', cleanup);
     args.push('--msize', String(msizeVal));
@@ -1106,15 +1102,21 @@ export function createProjectScopedRoutes() {
 
   // POST /api/projects/:projectId/worca-setup — install or update worca
   router.post('/worca-setup', (req, res) => {
-    const sourceRoot = getSourceRoot();
-    if (!sourceRoot) {
-      return res.status(500).json({
-        ok: false,
-        error: 'Could not locate worca-cc source repository',
-      });
+    const { settingsPath, projectRoot } = req.project;
+    let source = req.body?.source;
+
+    // Fall back to worca.source_repo from merged settings
+    if (!source && settingsPath) {
+      try {
+        const settings = readMergedSettings(settingsPath);
+        source = settings?.worca?.source_repo;
+      } catch {
+        /* ignore — worca init will use its own resolution chain */
+      }
     }
+
     try {
-      const { pid } = runWorcaSetup(sourceRoot, req.project.projectRoot);
+      const { pid } = runWorcaSetup(projectRoot, { source });
       res.json({ ok: true, pid });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });

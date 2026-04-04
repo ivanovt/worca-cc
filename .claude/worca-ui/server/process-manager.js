@@ -150,14 +150,14 @@ export class ProcessManager {
    */
   async startPipeline(opts = {}) {
     const cwd = opts.projectRoot || this.projectRoot;
-    const scriptPath = join(cwd, '.claude/scripts/run_pipeline.py');
+    const scriptPath = join(cwd, '.claude/worca/scripts/run_pipeline.py');
     if (!existsSync(scriptPath)) {
       const err = new Error(`Pipeline script not found at ${scriptPath}`);
       err.code = 'script_not_found';
       throw err;
     }
 
-    const args = ['.claude/scripts/run_pipeline.py'];
+    const args = ['.claude/worca/scripts/run_pipeline.py'];
     let promptFilePath = null; // track for cleanup on spawn failure
 
     if (opts.resume) {
@@ -398,7 +398,7 @@ export class ProcessManager {
     }
 
     const cwd = opts.projectRoot || this.projectRoot;
-    const scriptPath = join(cwd, '.claude/scripts/run_pipeline.py');
+    const scriptPath = join(cwd, '.claude/worca/scripts/run_pipeline.py');
     if (!existsSync(scriptPath)) {
       const err = new Error(`Pipeline script not found at ${scriptPath}`);
       err.code = 'script_not_found';
@@ -457,7 +457,7 @@ export class ProcessManager {
     return new Promise((resolve, reject) => {
       const child = spawn(
         'python3',
-        ['.claude/scripts/run_pipeline.py', '--resume'],
+        ['.claude/worca/scripts/run_pipeline.py', '--resume'],
         {
           detached: true,
           stdio: 'ignore',

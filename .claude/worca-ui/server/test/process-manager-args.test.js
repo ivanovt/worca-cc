@@ -44,7 +44,7 @@ describe('startPipeline arg building', () => {
     mkdirSync(worcaDir, { recursive: true });
 
     // Create the script file so existsSync passes
-    const scriptDir = join(tmpDir, '.claude', 'scripts');
+    const scriptDir = join(tmpDir, '.claude', 'worca', 'scripts');
     mkdirSync(scriptDir, { recursive: true });
     writeFileSync(join(scriptDir, 'run_pipeline.py'), '# stub');
   });
@@ -304,7 +304,7 @@ describe('large prompt offloading', () => {
     worcaDir = join(tmpDir, '.worca');
     mkdirSync(worcaDir, { recursive: true });
 
-    const scriptDir = join(tmpDir, '.claude', 'scripts');
+    const scriptDir = join(tmpDir, '.claude', 'worca', 'scripts');
     mkdirSync(scriptDir, { recursive: true });
     writeFileSync(join(scriptDir, 'run_pipeline.py'), '# stub');
   });

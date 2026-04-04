@@ -155,13 +155,13 @@ export async function loadSettings(projectId) {
     if (!settingsData.worca.stages.preflight) {
       settingsData.worca.stages.preflight = {
         enabled: true,
-        script: '.claude/scripts/preflight_checks.py',
+        script: '.claude/worca/scripts/preflight_checks.py',
         require: [],
       };
     } else {
       const pf = settingsData.worca.stages.preflight;
       if (pf.enabled === undefined) pf.enabled = true;
-      if (!pf.script) pf.script = '.claude/scripts/preflight_checks.py';
+      if (!pf.script) pf.script = '.claude/worca/scripts/preflight_checks.py';
       if (!pf.require) pf.require = [];
     }
     if (!settingsData.worca.plan_path_template) {
@@ -330,7 +330,9 @@ function readPipelineFromDom() {
     msize: parseInt(msizeEl?.value, 10) || 1,
     mloops: parseInt(mloopsEl?.value, 10) || 1,
   };
-  return { loops, plan_path_template, defaults };
+  const sourceRepoEl = document.getElementById('worca-source-repo');
+  const source_repo = sourceRepoEl?.value?.trim() || '';
+  return { loops, plan_path_template, defaults, source_repo };
 }
 
 function readStagesFromDom() {
@@ -353,7 +355,8 @@ function readPreflightFromDom() {
   const requireVal = (requireEl?.value || '').trim();
   return {
     enabled: enabledEl?.checked ?? true,
-    script: scriptEl?.value?.trim() || '.claude/scripts/preflight_checks.py',
+    script:
+      scriptEl?.value?.trim() || '.claude/worca/scripts/preflight_checks.py',
     require: requireVal
       ? requireVal
           .split(',')
@@ -468,7 +471,7 @@ function pipelineTab(worca, rerender) {
 
   const preflight = stages.preflight || {
     enabled: true,
-    script: '.claude/scripts/preflight_checks.py',
+    script: '.claude/worca/scripts/preflight_checks.py',
     require: [],
   };
 
@@ -484,7 +487,7 @@ function pipelineTab(worca, rerender) {
         </div>
         <div class="settings-field">
           <label class="settings-label">Script Path</label>
-          <sl-input id="preflight-script" value="${preflight.script || '.claude/scripts/preflight_checks.py'}" size="small" placeholder=".claude/scripts/preflight_checks.py"></sl-input>
+          <sl-input id="preflight-script" value="${preflight.script || '.claude/worca/scripts/preflight_checks.py'}" size="small" placeholder=".claude/worca/scripts/preflight_checks.py"></sl-input>
         </div>
         <div class="settings-field">
           <label class="settings-label">Required Checks</label>
@@ -577,15 +580,26 @@ function pipelineTab(worca, rerender) {
         </div>
       </div>
 
+      <h3 class="settings-section-title">Development</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Source Repository Path</label>
+          <sl-input id="worca-source-repo" value="${worca.source_repo || ''}" size="small" placeholder="~/dev/worca-cc"></sl-input>
+          <span class="settings-field-hint">Local worca-cc repo path for development. Used by <code>worca init --upgrade</code> instead of the installed package.</span>
+        </div>
+      </div>
+
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
-          const { loops, plan_path_template, defaults } = readPipelineFromDom();
+          const { loops, plan_path_template, defaults, source_repo } =
+            readPipelineFromDom();
           const stages = readStagesFromDom();
           stages.preflight = readPreflightFromDom();
-          saveSettings(
-            { worca: { loops, stages, plan_path_template, defaults } },
-            rerender,
-          );
+          const payload = {
+            worca: { loops, stages, plan_path_template, defaults },
+          };
+          if (source_repo) payload.worca.source_repo = source_repo;
+          saveSettings(payload, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save
