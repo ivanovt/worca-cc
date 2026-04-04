@@ -18,6 +18,7 @@ node_modules/
 
 # Runtime copy created by `worca init .` — not tracked (source of truth is src/worca/)
 .claude/worca
+.claude/settings.json
 
 # Test artifacts
 test-results/

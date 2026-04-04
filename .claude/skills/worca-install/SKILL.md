@@ -54,8 +54,8 @@ Copy only the skills that target projects need (skip `worca-install` and `worca-
 
 ```bash
 mkdir -p "$DEST/.claude/skills"
-rsync -av "$WORCA_ROOT/skills/worca-agent-override/" "$DEST/.claude/skills/worca-agent-override/"
-rsync -av "$WORCA_ROOT/skills/worca-sync/" "$DEST/.claude/skills/worca-sync/"
+rsync -av "$WORCA_ROOT/.claude/skills/worca-agent-override/" "$DEST/.claude/skills/worca-agent-override/"
+rsync -av "$WORCA_ROOT/.claude/skills/worca-sync/" "$DEST/.claude/skills/worca-sync/"
 ```
 
 ### Step 4: Install Python dev dependencies

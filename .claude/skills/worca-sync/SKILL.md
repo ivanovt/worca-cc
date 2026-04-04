@@ -55,8 +55,8 @@ If a new source path was used, `init --upgrade` updates `worca.source_repo` in s
 Copy only the skills that target projects need (additive — preserves project-specific skills):
 
 ```bash
-rsync -av "$WORCA_ROOT/skills/worca-agent-override/" "$DEST/.claude/skills/worca-agent-override/"
-rsync -av "$WORCA_ROOT/skills/worca-sync/" "$DEST/.claude/skills/worca-sync/"
+rsync -av "$WORCA_ROOT/.claude/skills/worca-agent-override/" "$DEST/.claude/skills/worca-agent-override/"
+rsync -av "$WORCA_ROOT/.claude/skills/worca-sync/" "$DEST/.claude/skills/worca-sync/"
 ```
 
 ### Step 5: Ensure project is registered
