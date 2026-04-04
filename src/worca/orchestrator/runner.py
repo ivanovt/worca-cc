@@ -1974,23 +1974,6 @@ def run_pipeline(
             elif current_stage == Stage.IMPLEMENT:
                 iter_extras["outcome"] = "success"
                 complete_iteration(status, current_stage.value, **iter_extras)
-                update_stage(status, current_stage.value, **stage_extras)
-                save_status(status, actual_status_path)
-                if ctx:
-                    _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
-                        stage=current_stage.value, iteration=iter_num,
-                        duration_ms=iter_extras.get("duration_ms", 0),
-                        cost_usd=iter_extras.get("cost_usd", 0.0),
-                        turns=iter_extras.get("turns", 0),
-                        outcome=iter_extras["outcome"],
-                        token_usage=iter_extras.get("token_usage"),
-                    ))
-                    if _sc_event:
-                        _action = _check_control_response(ctx, _sc_event)
-                        if _action == "pause":
-                            _handle_pause(ctx, f"{current_stage.value} stage.completed")
-                        elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
 
                 # Thread implement outputs into PromptBuilder
                 new_files = result.get("files_changed", [])
@@ -2030,9 +2013,14 @@ def run_pipeline(
                     status["loop_counters"] = dict(loop_counters)
 
                     # Check for more beads (scoped to this run)
+                    # NOTE: Do NOT mark IMPLEMENT "completed" yet — if the pipeline
+                    # is stopped between bead iterations, resume must re-enter
+                    # IMPLEMENT to process remaining beads.
                     next_bead = _query_ready_bead(allowed_ids=run_bead_ids)
                     if next_bead and Stage.IMPLEMENT in stage_order:
                         if loop_counters["bead_iteration"] < max_beads:
+                            # Keep stage in_progress between beads so resume works
+                            save_status(status, actual_status_path)
                             _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters['bead_iteration']})", "ok")
                             _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
                             stage_idx = stage_order.index(Stage.IMPLEMENT)
@@ -2048,11 +2036,30 @@ def run_pipeline(
                                 _log(f"Bead limit reached ({max_beads}) but bd ready still has beads — possible stale beads from prior run", "warn")
                             _log(f"Bead iteration limit reached after {loop_counters['bead_iteration']} beads", "warn")
 
-                    # All beads done — set accumulated files for TEST/REVIEW
+                    # All beads done — NOW mark IMPLEMENT completed
                     prompt_builder.update_context("files_changed", list(set(all_files)))
                     prompt_builder.update_context("tests_added", list(set(all_tests)))
                     _log("All beads implemented — advancing to TEST", "ok")
                 # Phase 3 (fix mode): just fall through to TEST with current files
+
+                # Mark IMPLEMENT completed only when all beads are done (or fix mode)
+                update_stage(status, current_stage.value, **stage_extras)
+                save_status(status, actual_status_path)
+                if ctx:
+                    _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
+                        stage=current_stage.value, iteration=iter_num,
+                        duration_ms=iter_extras.get("duration_ms", 0),
+                        cost_usd=iter_extras.get("cost_usd", 0.0),
+                        turns=iter_extras.get("turns", 0),
+                        outcome=iter_extras["outcome"],
+                        token_usage=iter_extras.get("token_usage"),
+                    ))
+                    if _sc_event:
+                        _action = _check_control_response(ctx, _sc_event)
+                        if _action == "pause":
+                            _handle_pause(ctx, f"{current_stage.value} stage.completed")
+                        elif _action == "abort":
+                            raise PipelineInterrupted("Aborted via control webhook")
 
             # Handle test results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.TEST:
