@@ -415,6 +415,9 @@ function fetchAndUpdateRuns() {
 
 ws.on('run-started', () => {
   fetchAndUpdateRuns().catch(() => {});
+  // Retry after delay — the Python pipeline process needs time to write
+  // active_run and status.json before discoverRuns() can find the run.
+  setTimeout(() => fetchAndUpdateRuns().catch(() => {}), 2000);
 });
 
 ws.on('run-archived', (payload) => {
