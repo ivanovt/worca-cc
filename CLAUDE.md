@@ -144,6 +144,34 @@ The `--port` flag takes precedence over the `PORT` env var. `HOST` / `--host` wo
 
 Global mode (the default) starts the UI without a fixed project root, serving all projects registered in `~/.worca/projects.d/`. Use `--project` to scope to a single project.
 
+## Releasing
+
+Two independent packages — release by pushing tags. **Do not use twine or npm publish manually; CI handles publishing.**
+
+| Package | Version source | Tag format |
+|---|---|---|
+| `worca-cc` | `pyproject.toml` + `src/worca/__init__.py` (both must match) | `worca-cc-vX.Y.Z` |
+| `@worca/ui` | `worca-ui/package.json` | `worca-ui-vX.Y.Z` |
+
+Steps (same for both):
+
+1. Bump version in the version source file(s)
+2. Commit and push
+3. Tag and push tag:
+   ```bash
+   git tag worca-cc-v0.6.0rc6    # or worca-ui-v0.1.0-rc.4
+   git push origin <tag>
+   ```
+4. CI validates tag matches version, builds, tests, and publishes (PyPI via trusted publishing, npm via `NPM_TOKEN` secret)
+
+Releases are independent — a UI fix doesn't require a Python release.
+
+Update commands for users:
+```bash
+pip install --upgrade worca-cc==X.Y.Z
+npm install -g @worca/ui@X.Y.Z
+```
+
 ## Plans & Roadmap
 
 - Feature tracking lives in **GitHub Issues**: https://github.com/SinishaDjukic/worca-cc/issues
