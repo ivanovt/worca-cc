@@ -163,6 +163,14 @@ Create `settings.local.json` next to `settings.json` for machine-specific overri
 
 Add `.claude/agents/<agent>.md` files to customize agent prompts per-project. Use `## Override: <Section Name>` blocks to target specific sections. Add `<!-- replace -->` as the first line to replace instead of append. Governance-protected sections (marked `<!-- governance -->`) cannot be replaced.
 
+## Documentation
+
+- [CLI Reference](docs/cli-reference.md) — all flags and commands for `worca run`, `worca multi`, `worca init`, `worca-ui`
+- [Dashboard Guide](docs/dashboard.md) — full screenshot walkthrough of the monitoring UI
+- [Contributing](CONTRIBUTING.md) — development setup, project structure, linting, testing, and release process
+- [Changelog — worca-cc](src/worca/CHANGELOG.md)
+- [Changelog — @worca/ui](worca-ui/CHANGELOG.md)
+
 ## License
 
 [MIT](LICENSE)
