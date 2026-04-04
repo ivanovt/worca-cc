@@ -44,7 +44,7 @@ export function parseArgs(argv) {
     port: 3400,
     host: '127.0.0.1',
     open: false,
-    global: false,
+    global: true,
     // projects sub-command
     subAction: null, // 'list' | 'add' | 'remove'
     projectPath: null,
@@ -86,6 +86,11 @@ export function parseArgs(argv) {
       args.open = true;
     } else if (arg === '--global') {
       args.global = true;
+    } else if (arg === '--project') {
+      args.global = false;
+      if (argv[i + 1] && !argv[i + 1].startsWith('-')) {
+        args.projectPath = argv[++i];
+      }
     } else if (arg === '--scan' && argv[i + 1]) {
       args.scanDir = argv[++i];
     } else if (arg === '--dry-run') {
@@ -535,6 +540,6 @@ switch (args.command) {
     break;
   default:
     console.log(
-      'Usage: worca-ui [start|stop|restart|status|projects|migrate] [--port N] [--host H] [--open] [--global]',
+      'Usage: worca-ui [start|stop|restart|status|projects|migrate] [--port N] [--host H] [--open] [--project [PATH]]',
     );
 }

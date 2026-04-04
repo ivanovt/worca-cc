@@ -15,8 +15,8 @@ npm install -g @worca/ui
 ## Quick Start
 
 ```bash
-worca-ui --global            # monitor all projects on port 3400
-worca-ui --project /path     # monitor single project
+worca-ui                         # monitor all projects (default, port 3400)
+worca-ui --project /path         # monitor single project
 ```
 
 ## Features

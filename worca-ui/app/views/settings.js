@@ -330,9 +330,7 @@ function readPipelineFromDom() {
     msize: parseInt(msizeEl?.value, 10) || 1,
     mloops: parseInt(mloopsEl?.value, 10) || 1,
   };
-  const sourceRepoEl = document.getElementById('worca-source-repo');
-  const source_repo = sourceRepoEl?.value?.trim() || '';
-  return { loops, plan_path_template, defaults, source_repo };
+  return { loops, plan_path_template, defaults };
 }
 
 function readStagesFromDom() {
@@ -580,25 +578,14 @@ function pipelineTab(worca, rerender) {
         </div>
       </div>
 
-      <h3 class="settings-section-title">Development</h3>
-      <div class="settings-grid">
-        <div class="settings-field">
-          <label class="settings-label">Source Repository Path</label>
-          <sl-input id="worca-source-repo" value="${worca.source_repo || ''}" size="small" placeholder="~/dev/worca-cc"></sl-input>
-          <span class="settings-field-hint">Local worca-cc repo path for development. Used by <code>worca init --upgrade</code> instead of the installed package.</span>
-        </div>
-      </div>
-
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
-          const { loops, plan_path_template, defaults, source_repo } =
-            readPipelineFromDom();
+          const { loops, plan_path_template, defaults } = readPipelineFromDom();
           const stages = readStagesFromDom();
           stages.preflight = readPreflightFromDom();
           const payload = {
             worca: { loops, stages, plan_path_template, defaults },
           };
-          if (source_repo) payload.worca.source_repo = source_repo;
           saveSettings(payload, rerender);
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
@@ -701,8 +688,9 @@ function governanceTab(worca, permissions, rerender) {
   `;
 }
 
-function preferencesTab(preferences, { onThemeToggle }) {
+function preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo }) {
   const theme = preferences?.theme || 'light';
+  const sourceRepo = preferences?.source_repo || '';
 
   return html`
     <div class="settings-tab-content">
@@ -712,6 +700,25 @@ function preferencesTab(preferences, { onThemeToggle }) {
           <sl-switch ?checked=${theme === 'dark'} size="small" @sl-change=${onThemeToggle}>Dark Mode</sl-switch>
           <span class="settings-switch-desc">Toggle between light and dark theme</span>
         </div>
+      </div>
+
+      <h3 class="settings-section-title">Development</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Source Repository Path</label>
+          <sl-input id="pref-source-repo" value="${sourceRepo}" size="small" placeholder="~/dev/worca-cc"></sl-input>
+          <span class="settings-field-hint">Local worca-cc repo path for development. Used by <code>worca init --upgrade</code> instead of the installed package.</span>
+        </div>
+      </div>
+      <div class="settings-tab-actions">
+        <sl-button variant="primary" size="small" @click=${() => {
+          const el = document.getElementById('pref-source-repo');
+          const val = el?.value?.trim() || '';
+          onSaveSourceRepo(val);
+        }}>
+          ${unsafeHTML(iconSvg(Save, 14))}
+          Save
+        </sl-button>
       </div>
     </div>
   `;
@@ -1275,6 +1282,7 @@ export function settingsView(
   {
     rerender,
     onThemeToggle,
+    onSaveSourceRepo,
     onSaveNotifications,
     projects,
     onProjectAdd,
@@ -1306,7 +1314,7 @@ export function settingsView(
 
         <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications })}</sl-tab-panel>
-        <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle })}</sl-tab-panel>
+        <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo })}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;

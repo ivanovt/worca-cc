@@ -3,7 +3,7 @@
 A real-time web dashboard for monitoring and controlling the pipeline. All updates stream via WebSocket — no polling, no page refreshes.
 
 ```bash
-worca-ui --global                         # Monitor all projects (port 3400)
+worca-ui                                  # Monitor all projects (default, port 3400)
 worca-ui --project /path                  # Monitor single project
 ```
 
@@ -29,7 +29,7 @@ After a run completes, the LEARN stage produces ranked observations and actionab
 
 ## Global Dashboard
 
-In global mode (`--global`), the sidebar shows a project picker with all registered projects, live status indicators, and a "New Pipeline" button. Select a project to see its runs, beads, costs, and settings.
+In global mode (the default), the sidebar shows a project picker with all registered projects, live status indicators, and a "New Pipeline" button. Select a project to see its runs, beads, costs, and settings.
 
 ![Global dashboard — project-scoped history view with sidebar navigation](screenshots/global-dashboard.png)
 

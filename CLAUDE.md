@@ -132,16 +132,17 @@ This runs esbuild to produce `app/main.bundle.js`. Without rebuilding, changes w
 ### Running the UI
 
 ```bash
-pnpm worca:ui                        # Build + start in global mode (port 3400)
+pnpm worca:ui                        # Build + start in global mode (port 3400, default)
 pnpm worca:ui:stop                   # Stop the global server
 pnpm worca:ui:restart                # Rebuild + restart in global mode
 PORT=3401 pnpm worca:ui              # Custom port via env var
 pnpm worca:ui -- --port 3401         # Custom port via flag
+pnpm worca:ui -- --project /path     # Single-project mode
 ```
 
 The `--port` flag takes precedence over the `PORT` env var. `HOST` / `--host` works the same way (default `127.0.0.1`).
 
-Global mode (`--global`) starts the UI without a fixed project root, serving all projects registered in `~/.worca/projects.d/`. Use this when monitoring multiple projects from a single browser tab.
+Global mode (the default) starts the UI without a fixed project root, serving all projects registered in `~/.worca/projects.d/`. Use `--project` to scope to a single project.
 
 ## Plans & Roadmap
 

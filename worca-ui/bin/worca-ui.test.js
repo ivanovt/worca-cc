@@ -8,10 +8,28 @@ describe('parseArgs', () => {
     expect(result.global).toBe(true);
   });
 
-  it('defaults global to false', () => {
+  it('defaults global to true', () => {
     const result = parseArgs(['node', 'script', 'start']);
     expect(result.command).toBe('start');
+    expect(result.global).toBe(true);
+  });
+
+  it('sets global to false when --project is passed', () => {
+    const result = parseArgs(['node', 'script', 'start', '--project']);
+    expect(result.command).toBe('start');
     expect(result.global).toBe(false);
+  });
+
+  it('captures project path when --project has a path argument', () => {
+    const result = parseArgs([
+      'node',
+      'script',
+      'start',
+      '--project',
+      '/tmp/proj',
+    ]);
+    expect(result.global).toBe(false);
+    expect(result.projectPath).toBe('/tmp/proj');
   });
 
   it('parses projects list', () => {

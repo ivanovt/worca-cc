@@ -38,7 +38,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ### Multi-Project Dashboard
 
-- **Global mode** — a single `worca-ui --global` instance monitors all registered projects from one browser tab
+- **Global mode** — `worca-ui` monitors all registered projects from one browser tab (default)
 - **Sidebar project picker** — dropdown with live status dots (green = healthy, red = errors) and run count badges
 - **Add-project dialog** — register projects via the UI with path validation and duplicate detection
 - **Batch registration** — `worca-ui migrate --scan ~/dev` discovers and registers all worca-enabled projects in one command
@@ -124,7 +124,8 @@ worca run --spec spec.md --plan plan.md
 worca run --source gh:issue:42
 
 # From the dashboard — click "New Pipeline" in worca-ui
-worca-ui --global
+worca-ui                         # monitor all projects (default)
+worca-ui --project /path         # monitor single project
 ```
 
 See [CLI Reference](docs/cli-reference.md) for all flags and commands.

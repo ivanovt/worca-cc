@@ -71,14 +71,14 @@ worca init .            # developer mode (in the worca-cc repo itself)
 Start the monitoring dashboard.
 
 ```bash
-worca-ui --global            # monitor all projects on port 3400
-worca-ui --project /path     # monitor single project
+worca-ui                         # monitor all projects (default, port 3400)
+worca-ui --project /path         # monitor single project
 ```
 
 ### Global dashboard commands
 
 ```bash
-worca-ui start --global          # single instance, port 3400
+worca-ui start                   # single instance, port 3400 (default)
 worca-ui projects add /path      # register a project
 worca-ui projects list           # list registered projects
 worca-ui migrate --scan ~/dev    # batch-register all worca-enabled projects

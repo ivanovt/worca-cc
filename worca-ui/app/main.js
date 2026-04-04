@@ -860,6 +860,11 @@ function handleSaveNotifications(notifPrefs) {
   store.setState({ preferences: { notifications: notifPrefs } });
 }
 
+function handleSaveSourceRepo(sourceRepo) {
+  ws.send('set-preferences', { source_repo: sourceRepo }).catch(() => {});
+  store.setState({ preferences: { source_repo: sourceRepo } });
+}
+
 function handleStageFilter(stage) {
   logFilter = stage;
   // Auto-select last iteration when a stage is chosen
@@ -1652,6 +1657,7 @@ function mainContentView() {
     return settingsView(state.preferences, {
       rerender,
       onThemeToggle: handleThemeToggle,
+      onSaveSourceRepo: handleSaveSourceRepo,
       onSaveNotifications: handleSaveNotifications,
       projects: state.projects || [],
       onProjectAdd: (result) => {

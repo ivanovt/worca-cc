@@ -16,9 +16,11 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Router } from 'express';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
+import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import {
   readProjects,
@@ -1102,14 +1104,16 @@ export function createProjectScopedRoutes() {
 
   // POST /api/projects/:projectId/worca-setup — install or update worca
   router.post('/worca-setup', (req, res) => {
-    const { settingsPath, projectRoot } = req.project;
+    const { projectRoot } = req.project;
     let source = req.body?.source;
 
-    // Fall back to worca.source_repo from merged settings
-    if (!source && settingsPath) {
+    // Fall back to source_repo from global preferences
+    if (!source) {
       try {
-        const settings = readMergedSettings(settingsPath);
-        source = settings?.worca?.source_repo;
+        const prefs = readPreferences(
+          join(homedir(), '.worca', 'preferences.json'),
+        );
+        source = prefs.source_repo || undefined;
       } catch {
         /* ignore — worca init will use its own resolution chain */
       }
