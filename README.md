@@ -13,17 +13,9 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **9-stage pipeline** — Preflight → Plan → Plan Review → Coordinate → Implement → Test → Review → PR → Learn
 - **7 specialized agents** — Planner, Plan Reviewer, Coordinator, Guardian, Implementer, Tester, and Learner (model and max turns fully configurable per agent)
 - **Pause, stop & resume** — pause mid-stage with clean checkpointing, stop with SIGTERM, resume from where you left off; the UI has pause/resume/stop buttons with real-time state transitions
-
-![Lifecycle controls — Failed status badge with Resume and Stop buttons](docs/screenshots/lifecycle-controls.png)
-
 - **Circuit breakers** — error classification with halt thresholds; when a stage fails too many times, the circuit breaker trips and prevents runaway cost
 - **Preflight checks** — language-agnostic environment validation that always runs before spending tokens, catching git state issues, missing dependencies, and configuration problems
-
-![Preflight settings](docs/screenshots/preflight-settings.png)
-
 - **Post-run retrospective (LEARN stage)** — optional stage that analyzes what went well, what failed, and why; produces ranked observations with actionable suggestions and copy-to-clipboard prompts for improving future runs
-
-![Learnings panel — observations ranked by importance with evidence](docs/screenshots/learn-stage.png)
 
 ### Work Sources & Integration
 
@@ -31,8 +23,6 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **GitHub issue lifecycle** — start from issues with `--source gh:issue:N`, auto-post progress comments, link PRs, close issues on completion
 - **Smart title generation** — `--prompt` is optional; when omitted, the title is generated from the spec or plan file and sanitized for branch names
 - **Pipeline events & webhooks** — 52 structured event types emitted as a real-time JSONL stream; subscribe via configurable webhooks with HMAC-SHA256 signing, retry logic, and secret management; control webhooks can pause or abort the pipeline
-
-![Webhooks settings — event system toggles, budget limits, and webhook configuration](docs/screenshots/webhooks-settings.png)
 
 ### Governance & Safety
 
@@ -53,14 +43,32 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Add-project dialog** — register projects via the UI with path validation and duplicate detection
 - **Batch registration** — `worca-ui migrate --scan ~/dev` discovers and registers all worca-enabled projects in one command
 
-![Sidebar project picker with status dots and 20 registered projects](docs/screenshots/sidebar-projects.png)
-
 ### Parallel Pipelines
 
 - **`run_multi.py`** — run N pipelines concurrently, each isolated in its own git worktree with independent `.worca/` state, `.beads/` database, and git branch
 - **Three-level UI** — projects → pipelines → stages, with per-pipeline pause/stop/resume controls
 - **Configurable cleanup** — `on-success` (remove successful worktrees), `always`, or `never`
 - **Registry tracking** — all running pipelines are tracked in `.worca/multi/pipelines.d/` for monitoring and stale process recovery
+
+## Architecture
+
+```
+Preflight → Planner → Plan Reviewer → Coordinator → Implementer(s) → Tester → Guardian → Learner
+```
+
+Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
+
+| Agent | Role |
+|-------|------|
+| **Planner** | Reads work request, explores codebase, creates detailed implementation plan |
+| **Plan Reviewer** | Validates plan for completeness, feasibility, and architecture fit; loops back to Planner on critical issues |
+| **Coordinator** | Decomposes plan into beads tasks with dependencies and parallel groups |
+| **Implementer** | Claims task, implements with TDD, commits code, closes task |
+| **Tester** | Runs test suite, verifies coverage, collects proof artifacts |
+| **Guardian** | Verifies test proof, reviews code, creates PR, manages human gates |
+| **Learner** | Analyzes completed run, produces ranked observations and improvement suggestions |
+
+Governance hooks run at every tool call — `pre_tool_use` enforces guards and plan validation, `post_tool_use` enforces test gates and links beads tasks. The event system emits structured events at each stage transition, bead assignment, error, and governance violation.
 
 ## Prerequisites
 
@@ -195,6 +203,10 @@ Expand a stage to see individual iterations — each shows agent, turns, cost, d
 
 ![Pipeline detail — IMPLEMENT expanded](docs/screenshots/pipeline-detail-implement.png)
 
+The header shows lifecycle controls — pause, resume, and stop buttons with real-time state transitions and a status badge.
+
+![Lifecycle controls — Failed status badge with Resume and Stop buttons](docs/screenshots/lifecycle-controls.png)
+
 ### Learnings
 
 After a run completes, the LEARN stage produces ranked observations and actionable suggestions. Copy-to-clipboard buttons let you feed insights directly into future runs or agent prompts.
@@ -206,6 +218,10 @@ After a run completes, the LEARN stage produces ranked observations and actionab
 In global mode (`--global`), the sidebar shows a project picker with all registered projects, live status indicators, and a "New Pipeline" button. Select a project to see its runs, beads, costs, and settings.
 
 ![Global dashboard — project-scoped history view with sidebar navigation](docs/screenshots/global-dashboard.png)
+
+The sidebar project picker shows all registered projects with live status dots (green = healthy, red = errors) and run count badges.
+
+![Sidebar project picker with status dots and 20 registered projects](docs/screenshots/sidebar-projects.png)
 
 ### Add Project
 
@@ -243,6 +259,14 @@ Configure agent models and max turns, pipeline stages, governance rules, pricing
 
 ![Settings](docs/screenshots/settings.png)
 
+Preflight checks validate the environment before spending tokens — catching git state issues, missing dependencies, and configuration problems. Each check can be toggled independently.
+
+![Preflight settings](docs/screenshots/preflight-settings.png)
+
+The webhooks panel configures event subscriptions, budget limits, and HMAC-SHA256 signing for pipeline event delivery.
+
+![Webhooks settings — event system toggles, budget limits, and webhook configuration](docs/screenshots/webhooks-settings.png)
+
 ## Configuration
 
 All configuration lives in `.claude/settings.json` under the `worca` key:
@@ -264,26 +288,6 @@ Create `settings.local.json` next to `settings.json` for machine-specific overri
 ### Agent prompt overlays
 
 Add `.claude/agents/<agent>.md` files to customize agent prompts per-project. Use `## Override: <Section Name>` blocks to target specific sections. Add `<!-- replace -->` as the first line to replace instead of append. Governance-protected sections (marked `<!-- governance -->`) cannot be replaced.
-
-## Architecture
-
-```
-Preflight → Planner → Plan Reviewer → Coordinator → Implementer(s) → Tester → Guardian → Learner
-```
-
-Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
-
-| Agent | Role |
-|-------|------|
-| **Planner** | Reads work request, explores codebase, creates detailed implementation plan |
-| **Plan Reviewer** | Validates plan for completeness, feasibility, and architecture fit; loops back to Planner on critical issues |
-| **Coordinator** | Decomposes plan into beads tasks with dependencies and parallel groups |
-| **Implementer** | Claims task, implements with TDD, commits code, closes task |
-| **Tester** | Runs test suite, verifies coverage, collects proof artifacts |
-| **Guardian** | Verifies test proof, reviews code, creates PR, manages human gates |
-| **Learner** | Analyzes completed run, produces ranked observations and improvement suggestions |
-
-Governance hooks run at every tool call — `pre_tool_use` enforces guards and plan validation, `post_tool_use` enforces test gates and links beads tasks. The event system emits structured events at each stage transition, bead assignment, error, and governance violation.
 
 ## Project Structure
 
