@@ -16,7 +16,6 @@ sys.path, and delegates to the project copy's run_pipeline.main().
 """
 
 import argparse
-import subprocess
 import sys
 from pathlib import Path
 
@@ -106,53 +105,6 @@ def _warn_version_mismatch(project_worca_dir: Path) -> None:
         pass  # any error — never block
 
 
-def cmd_run(args: argparse.Namespace) -> None:
-    """Thin launcher that delegates to the project copy's run_pipeline."""
-    git_root = _find_git_root()
-    project_worca_dir = _require_project_worca(git_root)
-    _warn_version_mismatch(project_worca_dir)
-    _inject_project_path(git_root)
-
-    # Build the command to run the project's run_pipeline.py
-    script = str(git_root / ".claude" / "worca" / "scripts" / "run_pipeline.py")
-    cmd = [sys.executable, script]
-
-    if args.prompt:
-        cmd.extend(["--prompt", args.prompt])
-    if args.plan:
-        cmd.extend(["--plan", args.plan])
-    if args.spec:
-        cmd.extend(["--spec", args.spec])
-    if args.msize:
-        cmd.extend(["--msize", str(args.msize)])
-    if args.mloops:
-        cmd.extend(["--mloops", str(args.mloops)])
-    if args.resume:
-        cmd.append("--resume")
-    if args.source_arg:
-        cmd.extend(["--source", args.source_arg])
-
-    result = subprocess.run(cmd, cwd=str(git_root))
-    raise SystemExit(result.returncode)
-
-
-def cmd_lifecycle(args: argparse.Namespace) -> None:
-    """Delegate pause/stop/resume/status/multi-status to the project copy's worca_lifecycle."""
-    git_root = _find_git_root()
-    _require_project_worca(git_root)
-    _inject_project_path(git_root)
-
-    # Import from the project copy
-    from worca.scripts.worca_lifecycle import main as worca_main
-    # Re-invoke with the subcommand and its args
-    argv = [args.lifecycle_command]
-    if hasattr(args, "run_id") and args.run_id:
-        argv.append(args.run_id)
-    if hasattr(args, "base") and args.base:
-        argv.extend(["--base", args.base])
-    worca_main(argv)
-
-
 def create_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="worca",
@@ -208,11 +160,14 @@ def main(argv=None):
     if args.command == "init":
         cmd_init(args)
     elif args.command == "run":
+        from worca.cli.run_pipeline import cmd_run
         cmd_run(args)
     elif args.command in ("pause", "stop", "resume", "status"):
+        from worca.cli.control import cmd_lifecycle
         args.lifecycle_command = args.command
         cmd_lifecycle(args)
     elif args.command == "multi-status":
+        from worca.cli.control import cmd_lifecycle
         args.lifecycle_command = "multi-status"
         cmd_lifecycle(args)
     else:

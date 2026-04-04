@@ -7,11 +7,11 @@ Each request gets its own worktree and branch, running an independent
 pipeline instance. All pipelines execute concurrently.
 
 Usage:
-    python .claude/scripts/run_parallel.py \
+    python .claude/worca/scripts/run_parallel.py \
         --prompts "Add auth" "Add search" "Add dashboard" \
         --msize 2 --mloops 2
 
-    python .claude/scripts/run_parallel.py \
+    python .claude/worca/scripts/run_parallel.py \
         --sources gh:issue:1 gh:issue:2 gh:issue:3
 """
 import argparse
@@ -68,7 +68,7 @@ def _run_pipeline_in_worktree(
 ) -> dict:
     """Run a pipeline in a worktree subprocess. Returns result dict."""
     prompt_file = None
-    cmd = [sys.executable, ".claude/scripts/run_pipeline.py"]
+    cmd = [sys.executable, ".claude/worca/scripts/run_pipeline.py"]
 
     if len(prompt.encode("utf-8", errors="replace")) > _ARG_INLINE_LIMIT:
         fd, prompt_file = tempfile.mkstemp(prefix="worca_prompt_", suffix=".md")
