@@ -17,8 +17,62 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 worca init .              # creates .claude/worca/ runtime copy
 
-# Build the UI
+# Install git hooks and build the UI
+npm install               # installs husky (pre-commit hooks)
 cd worca-ui && npm install && npm run build && cd -
+```
+
+The pre-commit hook runs automatically on every `git commit` and checks:
+- **ruff** — Python linting
+- **biome** — JavaScript linting and formatting (worca-ui)
+- **esbuild** — UI bundle build
+
+After modifying any source files in `worca-ui/app/`, rebuild the bundle:
+
+```bash
+cd worca-ui && npm run build
+```
+
+This runs esbuild to produce `app/main.bundle.js`, which the server loads by default. Without rebuilding, changes to the source files won't take effect.
+
+### Running the dashboard (dev mode)
+
+```bash
+pnpm worca:ui                             # Build + start in global mode
+pnpm worca:ui:restart                     # Build + restart
+pnpm worca:ui:stop                        # Stop
+```
+
+## Project Structure
+
+```
+src/worca/               # Python package (pip-installable)
+  orchestrator/          # Pipeline state machine, stages, prompt builder
+  claude_hooks/          # Claude Code hook scripts
+  scripts/               # Pipeline entry points (run_pipeline.py, run_multi.py)
+  agents/core/           # Agent .md templates
+  schemas/               # JSON schemas for structured agent output
+  state/                 # Status JSON read/write, iteration tracking
+  utils/                 # Claude CLI, beads, git, gh_issues helpers
+  cli/                   # CLI entry points (worca init, worca run, etc.)
+tests/                   # Python tests (pytest)
+worca-ui/                # Dashboard (@worca/ui npm package)
+  app/                   # Lit-HTML frontend
+  server/                # Express + WebSocket server
+docs/                    # Feature plans, screenshots
+```
+
+## Linting
+
+```bash
+# Python lint
+ruff check .
+
+# UI lint (JavaScript)
+cd worca-ui && npm run lint
+
+# Auto-fix lint issues
+cd worca-ui && npm run lint:fix
 ```
 
 ## Running Tests

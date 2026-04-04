@@ -11,7 +11,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 ### Pipeline
 
 - **9-stage pipeline** — Preflight → Plan → Plan Review → Coordinate → Implement → Test → Review → PR → Learn
-- **7 specialized agents** — Planner, Plan Reviewer, Coordinator, and Guardian on Opus; Implementer, Tester, and Learner on Sonnet (model and max turns fully configurable per agent)
+- **7 specialized agents** — Planner, Plan Reviewer, Coordinator, Guardian, Implementer, Tester, and Learner (model and max turns fully configurable per agent)
 - **Pause, stop & resume** — pause mid-stage with clean checkpointing, stop with SIGTERM, resume from where you left off; the UI has pause/resume/stop buttons with real-time state transitions
 
 ![Lifecycle controls — Failed status badge with Resume and Stop buttons](docs/screenshots/lifecycle-controls.png)
@@ -80,7 +80,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ```bash
 pip install worca-cc              # Python pipeline + CLI
-npm install -g @worca/ui          # Dashboard (optional)
+npm install -g @worca/ui          # Dashboard
 npm install -g @beads/bd@0.49.0   # Issue tracking
 ```
 
@@ -98,19 +98,9 @@ pip install --upgrade worca-cc
 cd your-project && worca init --upgrade
 ```
 
-### Developer install (from source)
-
-```bash
-git clone https://github.com/SinishaDjukic/worca-cc.git
-cd worca-cc
-pip install -e ".[dev]"
-worca init .
-cd worca-ui && npm install && npm run build
-```
-
 ## Usage
 
-Three modes of operation:
+Four modes of operation:
 
 ```bash
 # Interactive — open Claude with pipeline hooks active
@@ -124,6 +114,9 @@ worca run --spec spec.md --plan plan.md
 
 # From GitHub issue
 worca run --source gh:issue:42
+
+# From the dashboard — click "New Pipeline" in worca-ui
+worca-ui --global
 ```
 
 ### CLI flags
@@ -186,14 +179,8 @@ Results are saved to `.worca/multi/results-{timestamp}.json`.
 ## Dashboard (worca-ui)
 
 ```bash
-# Via npm global install:
 worca-ui --global                         # Monitor all projects (port 3400)
 worca-ui --project /path                  # Monitor single project
-
-# Dev mode (from repo root):
-pnpm worca:ui                             # Build + start
-pnpm worca:ui:restart                     # Build + restart
-pnpm worca:ui:stop                        # Stop
 ```
 
 A real-time web dashboard for monitoring and controlling the pipeline. All updates stream via WebSocket — no polling, no page refreshes.
@@ -256,29 +243,6 @@ Configure agent models and max turns, pipeline stages, governance rules, pricing
 
 ![Settings](docs/screenshots/settings.png)
 
-### Development
-
-After cloning, install dependencies and scaffold the runtime copy:
-
-```bash
-pip install -e ".[dev]"  # editable install + ruff, pytest, etc.
-worca init .             # creates .claude/worca/ runtime copy
-npm install              # installs husky (pre-commit hooks)
-```
-
-The pre-commit hook runs automatically on every `git commit` and checks:
-- **ruff** — Python linting
-- **biome** — JavaScript linting and formatting (worca-ui)
-- **esbuild** — UI bundle build
-
-After modifying any source files in `worca-ui/app/`, rebuild the bundle:
-
-```bash
-cd worca-ui && npm run build
-```
-
-This runs esbuild to produce `app/main.bundle.js`, which the server loads by default. Without rebuilding, changes to the source files won't take effect.
-
 ## Configuration
 
 All configuration lives in `.claude/settings.json` under the `worca` key:
@@ -304,41 +268,24 @@ Add `.claude/agents/<agent>.md` files to customize agent prompts per-project. Us
 ## Architecture
 
 ```
-Preflight → Planner (Opus) → Plan Reviewer (Opus) → Coordinator (Opus) → Implementer(s) (Sonnet) → Tester (Sonnet) → Guardian (Opus) → Learner (Sonnet)
+Preflight → Planner → Plan Reviewer → Coordinator → Implementer(s) → Tester → Guardian → Learner
 ```
 
 Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
 
-| Agent | Model | Role |
-|-------|-------|------|
-| **Planner** | Opus | Reads work request, explores codebase, creates detailed implementation plan |
-| **Plan Reviewer** | Opus | Validates plan for completeness, feasibility, and architecture fit; loops back to Planner on critical issues |
-| **Coordinator** | Opus | Decomposes plan into beads tasks with dependencies and parallel groups |
-| **Implementer** | Sonnet | Claims task, implements with TDD, commits code, closes task |
-| **Tester** | Sonnet | Runs test suite, verifies coverage, collects proof artifacts |
-| **Guardian** | Opus | Verifies test proof, reviews code, creates PR, manages human gates |
-| **Learner** | Sonnet | Analyzes completed run, produces ranked observations and improvement suggestions |
+| Agent | Role |
+|-------|------|
+| **Planner** | Reads work request, explores codebase, creates detailed implementation plan |
+| **Plan Reviewer** | Validates plan for completeness, feasibility, and architecture fit; loops back to Planner on critical issues |
+| **Coordinator** | Decomposes plan into beads tasks with dependencies and parallel groups |
+| **Implementer** | Claims task, implements with TDD, commits code, closes task |
+| **Tester** | Runs test suite, verifies coverage, collects proof artifacts |
+| **Guardian** | Verifies test proof, reviews code, creates PR, manages human gates |
+| **Learner** | Analyzes completed run, produces ranked observations and improvement suggestions |
 
 Governance hooks run at every tool call — `pre_tool_use` enforces guards and plan validation, `post_tool_use` enforces test gates and links beads tasks. The event system emits structured events at each stage transition, bead assignment, error, and governance violation.
 
 ## Project Structure
-
-```
-src/worca/               # Python package (pip-installable)
-  orchestrator/          # Pipeline state machine, stages, prompt builder
-  claude_hooks/          # Claude Code hook scripts
-  scripts/               # Pipeline entry points (run_pipeline.py, run_multi.py)
-  agents/core/           # Agent .md templates
-  schemas/               # JSON schemas for structured agent output
-  state/                 # Status JSON read/write, iteration tracking
-  utils/                 # Claude CLI, beads, git, gh_issues helpers
-  cli/                   # CLI entry points (worca init, worca run, etc.)
-tests/                   # Python tests (pytest)
-worca-ui/                # Dashboard (@worca/ui npm package)
-  app/                   # Lit-HTML frontend
-  server/                # Express + WebSocket server
-docs/                    # Feature plans, screenshots
-```
 
 After `worca init`, your project gets:
 
@@ -347,32 +294,6 @@ After `worca init`, your project gets:
   worca/                 # Runtime copy of pipeline (managed, overwritten on upgrade)
   agents/                # Your agent prompt overrides (never touched by upgrade)
   settings.json          # Pipeline configuration
-```
-
-## Linting
-
-```bash
-# Python lint
-ruff check .
-
-# UI lint (JavaScript)
-cd worca-ui && npm run lint
-
-# Auto-fix lint issues
-cd worca-ui && npm run lint:fix
-```
-
-## Testing
-
-```bash
-# Python tests
-pytest tests/ -v
-
-# UI server tests
-npx vitest run worca-ui/server/
-
-# Browser e2e tests (must run serially)
-cd worca-ui && npx playwright test --workers=1
 ```
 
 ## License
