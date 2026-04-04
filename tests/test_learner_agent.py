@@ -3,9 +3,9 @@ import os
 
 import pytest
 
+import worca
 AGENT_PATH = os.path.join(
-    os.path.dirname(__file__), os.pardir,
-    ".claude", "agents", "core", "learner.md",
+    os.path.dirname(worca.__file__), "agents", "core", "learner.md",
 )
 
 

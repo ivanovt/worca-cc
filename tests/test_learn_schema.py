@@ -5,9 +5,9 @@ import os
 import jsonschema
 import pytest
 
+import worca
 SCHEMA_PATH = os.path.join(
-    os.path.dirname(__file__), os.pardir,
-    ".claude", "worca", "schemas", "learn.json",
+    os.path.dirname(worca.__file__), "schemas", "learn.json",
 )
 
 

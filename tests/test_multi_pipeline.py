@@ -1,15 +1,11 @@
-"""Tests for .claude/scripts/run_multi.py -- multi-pipeline orchestration."""
+"""Tests for worca.scripts.run_multi -- multi-pipeline orchestration."""
 import json
 import os
-import sys
 from unittest import mock
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts"))
-
-from run_multi import (
+from worca.scripts.run_multi import (
     _generate_run_id,
     _load_parallel_settings,
     _run_pipeline_in_worktree,
@@ -195,11 +191,11 @@ class TestCLIParsing:
 
 
 class TestReconcileStale:
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi.normalize", return_value=WorkRequest(
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi.normalize", return_value=WorkRequest(
         source_type="prompt", title="test"))
-    @mock.patch("run_multi.create_pipeline_worktree", return_value="")
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="")
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "on-success",
@@ -210,11 +206,11 @@ class TestReconcileStale:
         main(["--requests", "test"])
         mock_rec.assert_called_once()
 
-    @mock.patch("run_multi.reconcile_stale", return_value=["run-1", "run-2"])
-    @mock.patch("run_multi.normalize", return_value=WorkRequest(
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=["run-1", "run-2"])
+    @mock.patch("worca.scripts.run_multi.normalize", return_value=WorkRequest(
         source_type="prompt", title="test"))
-    @mock.patch("run_multi.create_pipeline_worktree", return_value="")
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="")
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "on-success",
@@ -232,22 +228,22 @@ class TestReconcileStale:
 
 
 class TestWorktreeCreation:
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     })
-    @mock.patch("run_multi.deregister_pipeline")
-    @mock.patch("run_multi.remove_pipeline_worktree")
-    @mock.patch("run_multi.update_pipeline")
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.create_pipeline_worktree")
-    @mock.patch("run_multi.normalize")
-    @mock.patch("run_multi._save_results", return_value=".worca/multi/results.json")
-    @mock.patch("run_multi._run_pipeline_in_worktree")
+    @mock.patch("worca.scripts.run_multi.deregister_pipeline")
+    @mock.patch("worca.scripts.run_multi.remove_pipeline_worktree")
+    @mock.patch("worca.scripts.run_multi.update_pipeline")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree")
+    @mock.patch("worca.scripts.run_multi.normalize")
+    @mock.patch("worca.scripts.run_multi._save_results", return_value=".worca/multi/results.json")
+    @mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree")
     def test_worktree_created_per_request(
         self, mock_run, mock_save, mock_norm, mock_create_wt,
         mock_init_beads, mock_register, mock_update,
@@ -267,17 +263,17 @@ class TestWorktreeCreation:
         for call in mock_create_wt.call_args_list:
             assert call.args[2] == "main"  # base_branch
 
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     })
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.create_pipeline_worktree")
-    @mock.patch("run_multi.normalize")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree")
+    @mock.patch("worca.scripts.run_multi.normalize")
     def test_beads_initialized_in_worktree(
         self, mock_norm, mock_create_wt, mock_init_beads,
         mock_register, mock_settings, mock_reconcile,
@@ -286,35 +282,35 @@ class TestWorktreeCreation:
         mock_create_wt.return_value = "/tmp/wt1"
 
         # Will fail at pipeline execution but beads init should happen
-        with mock.patch("run_multi._run_pipeline_in_worktree",
+        with mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree",
                         return_value={"returncode": 0, "stdout": "", "stderr": ""}):
-            with mock.patch("run_multi._save_results", return_value="x"):
-                with mock.patch("run_multi.update_pipeline"):
+            with mock.patch("worca.scripts.run_multi._save_results", return_value="x"):
+                with mock.patch("worca.scripts.run_multi.update_pipeline"):
                     main(["--requests", "test"])
 
         mock_init_beads.assert_called_once_with("/tmp/wt1")
 
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     })
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.create_pipeline_worktree", return_value="/tmp/wt1")
-    @mock.patch("run_multi.normalize")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="/tmp/wt1")
+    @mock.patch("worca.scripts.run_multi.normalize")
     def test_pipeline_registered(
         self, mock_norm, mock_create_wt, mock_init_beads,
         mock_register, mock_settings, mock_reconcile,
     ):
         mock_norm.return_value = WorkRequest(source_type="prompt", title="My task")
 
-        with mock.patch("run_multi._run_pipeline_in_worktree",
+        with mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree",
                         return_value={"returncode": 0, "stdout": "", "stderr": ""}):
-            with mock.patch("run_multi._save_results", return_value="x"):
-                with mock.patch("run_multi.update_pipeline"):
+            with mock.patch("worca.scripts.run_multi._save_results", return_value="x"):
+                with mock.patch("worca.scripts.run_multi.update_pipeline"):
                     main(["--requests", "My task"])
 
         mock_register.assert_called_once()
@@ -322,15 +318,15 @@ class TestWorktreeCreation:
         assert call_kwargs.kwargs["worktree_path"] == "/tmp/wt1"
         assert call_kwargs.kwargs["title"] == "My task"
 
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     })
-    @mock.patch("run_multi.normalize")
-    @mock.patch("run_multi.create_pipeline_worktree", return_value="")
+    @mock.patch("worca.scripts.run_multi.normalize")
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="")
     def test_skips_failed_worktree(self, mock_create_wt, mock_norm, mock_settings, mock_reconcile):
         mock_norm.return_value = WorkRequest(source_type="prompt", title="test")
         code = main(["--requests", "test"])
@@ -358,22 +354,22 @@ class TestCleanupPolicy:
             for rc in returncodes
         ]
 
-        with mock.patch("run_multi.reconcile_stale", return_value=[]), \
-             mock.patch("run_multi._load_parallel_settings", return_value={
+        with mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[]), \
+             mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
                  "max_concurrent_pipelines": 3,
                  "default_base_branch": "main",
                  "cleanup_policy": policy,
                  "worktree_base_dir": ".worktrees",
              }), \
-             mock.patch("run_multi.normalize", side_effect=mock_norms), \
-             mock.patch("run_multi.create_pipeline_worktree", side_effect=worktrees), \
-             mock.patch("run_multi.init_worktree_beads"), \
-             mock.patch("run_multi.register_pipeline"), \
-             mock.patch("run_multi.update_pipeline"), \
-             mock.patch("run_multi._run_pipeline_in_worktree", side_effect=results), \
-             mock.patch("run_multi._save_results", return_value="x"), \
-             mock.patch("run_multi.remove_pipeline_worktree", return_value=True) as mock_remove, \
-             mock.patch("run_multi.deregister_pipeline") as mock_dereg:
+             mock.patch("worca.scripts.run_multi.normalize", side_effect=mock_norms), \
+             mock.patch("worca.scripts.run_multi.create_pipeline_worktree", side_effect=worktrees), \
+             mock.patch("worca.scripts.run_multi.init_worktree_beads"), \
+             mock.patch("worca.scripts.run_multi.register_pipeline"), \
+             mock.patch("worca.scripts.run_multi.update_pipeline"), \
+             mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree", side_effect=results), \
+             mock.patch("worca.scripts.run_multi._save_results", return_value="x"), \
+             mock.patch("worca.scripts.run_multi.remove_pipeline_worktree", return_value=True) as mock_remove, \
+             mock.patch("worca.scripts.run_multi.deregister_pipeline") as mock_dereg:
 
             requests_args = ["--requests"] + titles
             main(requests_args)
@@ -436,22 +432,22 @@ class TestResultsSaving:
 
     def test_results_saved_during_main(self):
         """Verify main() calls _save_results."""
-        with mock.patch("run_multi.reconcile_stale", return_value=[]), \
-             mock.patch("run_multi._load_parallel_settings", return_value={
+        with mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[]), \
+             mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
                  "max_concurrent_pipelines": 3,
                  "default_base_branch": "main",
                  "cleanup_policy": "never",
                  "worktree_base_dir": ".worktrees",
              }), \
-             mock.patch("run_multi.normalize",
+             mock.patch("worca.scripts.run_multi.normalize",
                         return_value=WorkRequest(source_type="prompt", title="t")), \
-             mock.patch("run_multi.create_pipeline_worktree", return_value="/tmp/wt"), \
-             mock.patch("run_multi.init_worktree_beads"), \
-             mock.patch("run_multi.register_pipeline"), \
-             mock.patch("run_multi.update_pipeline"), \
-             mock.patch("run_multi._run_pipeline_in_worktree",
+             mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="/tmp/wt"), \
+             mock.patch("worca.scripts.run_multi.init_worktree_beads"), \
+             mock.patch("worca.scripts.run_multi.register_pipeline"), \
+             mock.patch("worca.scripts.run_multi.update_pipeline"), \
+             mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree",
                         return_value={"returncode": 0, "stdout": "", "stderr": ""}), \
-             mock.patch("run_multi._save_results", return_value="x") as mock_save:
+             mock.patch("worca.scripts.run_multi._save_results", return_value="x") as mock_save:
 
             main(["--requests", "t"])
 
@@ -467,21 +463,21 @@ class TestResultsSaving:
 
 
 class TestSourcesDispatch:
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     })
-    @mock.patch("run_multi.normalize")
-    @mock.patch("run_multi.create_pipeline_worktree", return_value="/tmp/wt1")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.update_pipeline")
-    @mock.patch("run_multi._run_pipeline_in_worktree",
+    @mock.patch("worca.scripts.run_multi.normalize")
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="/tmp/wt1")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.update_pipeline")
+    @mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree",
                 return_value={"returncode": 0, "stdout": "", "stderr": ""})
-    @mock.patch("run_multi._save_results", return_value="x")
+    @mock.patch("worca.scripts.run_multi._save_results", return_value="x")
     def test_sources_use_source_normalize(
         self, mock_save, mock_run, mock_update, mock_register,
         mock_init_beads, mock_create_wt, mock_norm,
@@ -511,20 +507,20 @@ class TestExitCode:
         norms = [WorkRequest(source_type="prompt", title=t) for t in titles]
         results = [{"returncode": rc, "stdout": "", "stderr": ""} for rc in returncodes]
 
-        with mock.patch("run_multi.reconcile_stale", return_value=[]), \
-             mock.patch("run_multi._load_parallel_settings", return_value={
+        with mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[]), \
+             mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
                  "max_concurrent_pipelines": 3,
                  "default_base_branch": "main",
                  "cleanup_policy": "never",
                  "worktree_base_dir": ".worktrees",
              }), \
-             mock.patch("run_multi.normalize", side_effect=norms), \
-             mock.patch("run_multi.create_pipeline_worktree", side_effect=worktrees), \
-             mock.patch("run_multi.init_worktree_beads"), \
-             mock.patch("run_multi.register_pipeline"), \
-             mock.patch("run_multi.update_pipeline"), \
-             mock.patch("run_multi._run_pipeline_in_worktree", side_effect=results), \
-             mock.patch("run_multi._save_results", return_value="x"):
+             mock.patch("worca.scripts.run_multi.normalize", side_effect=norms), \
+             mock.patch("worca.scripts.run_multi.create_pipeline_worktree", side_effect=worktrees), \
+             mock.patch("worca.scripts.run_multi.init_worktree_beads"), \
+             mock.patch("worca.scripts.run_multi.register_pipeline"), \
+             mock.patch("worca.scripts.run_multi.update_pipeline"), \
+             mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree", side_effect=results), \
+             mock.patch("worca.scripts.run_multi._save_results", return_value="x"):
             return main(["--requests"] + titles)
 
     def test_all_succeed_exit_0(self):
@@ -543,20 +539,20 @@ class TestExitCode:
 
 
 class TestRegistryUpdates:
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     })
-    @mock.patch("run_multi.normalize")
-    @mock.patch("run_multi.create_pipeline_worktree")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.update_pipeline")
-    @mock.patch("run_multi._run_pipeline_in_worktree")
-    @mock.patch("run_multi._save_results", return_value="x")
+    @mock.patch("worca.scripts.run_multi.normalize")
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.update_pipeline")
+    @mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree")
+    @mock.patch("worca.scripts.run_multi._save_results", return_value="x")
     def test_registry_updated_on_success(
         self, mock_save, mock_run, mock_update, mock_register,
         mock_init_beads, mock_create_wt, mock_norm,
@@ -571,20 +567,20 @@ class TestRegistryUpdates:
         mock_update.assert_called_once()
         assert mock_update.call_args.kwargs["status"] == "succeeded"
 
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi._load_parallel_settings", return_value={
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi._load_parallel_settings", return_value={
         "max_concurrent_pipelines": 3,
         "default_base_branch": "main",
         "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     })
-    @mock.patch("run_multi.normalize")
-    @mock.patch("run_multi.create_pipeline_worktree")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.update_pipeline")
-    @mock.patch("run_multi._run_pipeline_in_worktree")
-    @mock.patch("run_multi._save_results", return_value="x")
+    @mock.patch("worca.scripts.run_multi.normalize")
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.update_pipeline")
+    @mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree")
+    @mock.patch("worca.scripts.run_multi._save_results", return_value="x")
     def test_registry_updated_on_failure(
         self, mock_save, mock_run, mock_update, mock_register,
         mock_init_beads, mock_create_wt, mock_norm,
@@ -606,16 +602,16 @@ class TestRegistryUpdates:
 
 
 class TestSettingsDefaults:
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi.normalize",
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi.normalize",
                 return_value=WorkRequest(source_type="prompt", title="t"))
-    @mock.patch("run_multi.create_pipeline_worktree", return_value="/tmp/wt")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.update_pipeline")
-    @mock.patch("run_multi._run_pipeline_in_worktree",
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="/tmp/wt")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.update_pipeline")
+    @mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree",
                 return_value={"returncode": 0, "stdout": "", "stderr": ""})
-    @mock.patch("run_multi._save_results", return_value="x")
+    @mock.patch("worca.scripts.run_multi._save_results", return_value="x")
     def test_base_branch_from_settings(
         self, mock_save, mock_run, mock_update, mock_register,
         mock_init_beads, mock_create_wt, mock_norm, mock_reconcile,
@@ -637,16 +633,16 @@ class TestSettingsDefaults:
         # Verify create_pipeline_worktree was called with "develop"
         assert mock_create_wt.call_args.args[2] == "develop"
 
-    @mock.patch("run_multi.reconcile_stale", return_value=[])
-    @mock.patch("run_multi.normalize",
+    @mock.patch("worca.scripts.run_multi.reconcile_stale", return_value=[])
+    @mock.patch("worca.scripts.run_multi.normalize",
                 return_value=WorkRequest(source_type="prompt", title="t"))
-    @mock.patch("run_multi.create_pipeline_worktree", return_value="/tmp/wt")
-    @mock.patch("run_multi.init_worktree_beads")
-    @mock.patch("run_multi.register_pipeline")
-    @mock.patch("run_multi.update_pipeline")
-    @mock.patch("run_multi._run_pipeline_in_worktree",
+    @mock.patch("worca.scripts.run_multi.create_pipeline_worktree", return_value="/tmp/wt")
+    @mock.patch("worca.scripts.run_multi.init_worktree_beads")
+    @mock.patch("worca.scripts.run_multi.register_pipeline")
+    @mock.patch("worca.scripts.run_multi.update_pipeline")
+    @mock.patch("worca.scripts.run_multi._run_pipeline_in_worktree",
                 return_value={"returncode": 0, "stdout": "", "stderr": ""})
-    @mock.patch("run_multi._save_results", return_value="x")
+    @mock.patch("worca.scripts.run_multi._save_results", return_value="x")
     def test_cli_overrides_settings(
         self, mock_save, mock_run, mock_update, mock_register,
         mock_init_beads, mock_create_wt, mock_norm, mock_reconcile,
@@ -674,7 +670,7 @@ class TestSettingsDefaults:
 
 
 class TestWorktreeMode:
-    @mock.patch("run_multi.subprocess.run")
+    @mock.patch("worca.scripts.run_multi.subprocess.run")
     def test_worktree_flag_passed(self, mock_subprocess):
         mock_subprocess.return_value = mock.Mock(
             returncode=0, stdout="ok", stderr=""

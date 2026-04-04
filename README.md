@@ -81,7 +81,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 Start the global dashboard and use the Add Project dialog to register and set up new projects:
 
 ```bash
-cd worca-cc/.claude/worca-ui && node server/index.js --global
+cd worca-cc/worca-ui && node server/index.js --global
 # Open http://127.0.0.1:3400, click + next to the project picker
 ```
 
@@ -118,7 +118,7 @@ cp -R worca-cc/.claude/ your-project/.claude/
 cd your-project && bd init
 
 # Install dashboard dependencies and build
-cd your-project/.claude/worca-ui && npm install && npm run build
+cd your-project/worca-ui && npm install && npm run build
 ```
 
 ### Updating an existing installation
@@ -218,9 +218,9 @@ pnpm worca:ui:restart                     # Build + restart
 pnpm worca:ui:stop                        # Stop
 
 # Or directly (supports --global / per-project modes):
-cd .claude/worca-ui && npm start          # Start (per-project)
-cd .claude/worca-ui && npm run restart    # Stop + start
-cd .claude/worca-ui && npm run stop       # Stop
+cd worca-ui && npm start          # Start (per-project)
+cd worca-ui && npm run restart    # Stop + start
+cd worca-ui && npm run stop       # Stop
 ```
 
 A real-time web dashboard for monitoring and controlling the pipeline. All updates stream via WebSocket — no polling, no page refreshes.
@@ -300,7 +300,7 @@ The pre-commit hook runs automatically on every `git commit` and checks:
 After modifying any source files in `worca-ui/app/`, rebuild the bundle:
 
 ```bash
-cd .claude/worca-ui && npm run build
+cd worca-ui && npm run build
 ```
 
 This runs esbuild to produce `app/main.bundle.js`, which the server loads by default. Without rebuilding, changes to the source files won't take effect.
@@ -378,11 +378,11 @@ Governance hooks run at every tool call — `pre_tool_use` enforces guards and p
 │   ├── state/          # Status persistence
 │   └── utils/          # Git, beads, Claude CLI, GitHub issues, token tracking, settings
 │       └── project_registry.py  # Auto-register projects in ~/.worca/projects.d/
-├── worca-ui/
-│   ├── server/         # Express + WebSocket server (global mode, project routes, pipeline registry)
-│   ├── app/            # Lit-HTML frontend (multi-dashboard, add-project dialog)
-│   └── scripts/        # Build scripts
 └── settings.json       # Configuration
+worca-ui/                 # Dashboard (top-level npm package)
+├── server/               # Express + WebSocket server (global mode, project routes, pipeline registry)
+├── app/                  # Lit-HTML frontend (multi-dashboard, add-project dialog)
+└── scripts/              # Build scripts
 ```
 
 ## Linting
@@ -392,10 +392,10 @@ Governance hooks run at every tool call — `pre_tool_use` enforces guards and p
 ruff check .
 
 # UI lint (JavaScript)
-cd .claude/worca-ui && npm run lint
+cd worca-ui && npm run lint
 
 # Auto-fix lint issues
-cd .claude/worca-ui && npm run lint:fix
+cd worca-ui && npm run lint:fix
 ```
 
 ## Testing
@@ -405,10 +405,10 @@ cd .claude/worca-ui && npm run lint:fix
 pytest tests/ -v
 
 # UI server tests
-npx vitest run .claude/worca-ui/server/
+npx vitest run worca-ui/server/
 
 # Browser e2e tests (must run serially)
-cd .claude/worca-ui && npx playwright test --workers=1
+cd worca-ui && npx playwright test --workers=1
 ```
 
 ## License

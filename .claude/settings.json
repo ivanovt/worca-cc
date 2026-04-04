@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/pre_tool_use.py\""
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/pre_tool_use.py\""
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/post_tool_use.py\""
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/post_tool_use.py\""
           }
         ]
       }
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/.claude/hooks/user_prompt_submit.py\""
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/user_prompt_submit.py\""
           }
         ]
       }
@@ -126,7 +126,7 @@
       },
       "preflight": {
         "enabled": true,
-        "script": ".claude/scripts/preflight_checks.py",
+        "script": ".claude/worca/scripts/preflight_checks.py",
         "require": []
       },
       "plan_review": {
@@ -181,7 +181,7 @@
       "deploy_approval": true
     },
     "plan_path_template": "docs/plans/{timestamp}-{title_slug}.md",
-    "agent_overrides_dir": ".claude/agents/overrides",
+    "agent_overrides_dir": ".claude/agents",
     "pricing": {
       "models": {
         "opus": {

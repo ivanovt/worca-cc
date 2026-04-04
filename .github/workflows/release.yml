@@ -37,10 +37,10 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: .claude/worca-ui/package-lock.json
+          cache-dependency-path: worca-ui/package-lock.json
 
       - name: Build worca-ui bundle
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: |
           npm ci
           npm run build

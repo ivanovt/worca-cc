@@ -1,13 +1,9 @@
 """Tests for bd create run-label linking in post_tool_use hook."""
 import json
 import os
-import sys
 from unittest.mock import patch
 
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude"))
-
-from hooks.post_tool_use import _link_bd_create_to_run
+from worca.claude_hooks.post_tool_use import _link_bd_create_to_run
 
 
 class TestLinkBdCreateToRun:
@@ -20,7 +16,7 @@ class TestLinkBdCreateToRun:
         os.environ.pop("WORCA_RUN_ID", None)
 
     def test_no_action_when_no_run_id(self):
-        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run") as mock_run:
             _link_bd_create_to_run(
                 "Bash",
                 {"command": 'bd create --title="test"'},
@@ -30,7 +26,7 @@ class TestLinkBdCreateToRun:
 
     def test_no_action_for_non_bash_tool(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run") as mock_run:
             _link_bd_create_to_run(
                 "Write",
                 {"command": 'bd create --title="test"'},
@@ -40,7 +36,7 @@ class TestLinkBdCreateToRun:
 
     def test_no_action_when_no_bd_create(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run") as mock_run:
             _link_bd_create_to_run(
                 "Bash",
                 {"command": "bd list"},
@@ -50,7 +46,7 @@ class TestLinkBdCreateToRun:
 
     def test_no_action_on_failed_create(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run") as mock_run:
             _link_bd_create_to_run(
                 "Bash",
                 {"command": 'bd create --title="test"'},
@@ -60,7 +56,7 @@ class TestLinkBdCreateToRun:
 
     def test_adds_label_on_successful_create(self):
         os.environ["WORCA_RUN_ID"] = "20260310-211756"
-        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run") as mock_run:
             _link_bd_create_to_run(
                 "Bash",
                 {"command": 'bd create --title="test" --type=task'},
@@ -73,7 +69,7 @@ class TestLinkBdCreateToRun:
 
     def test_handles_multiple_creates_in_chain(self):
         os.environ["WORCA_RUN_ID"] = "run-123"
-        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run") as mock_run:
             _link_bd_create_to_run(
                 "Bash",
                 {"command": 'bd create --title="A" && bd create --title="B"'},
@@ -94,7 +90,7 @@ class TestLinkBdCreateToRun:
 
     def test_no_action_when_stdout_has_no_created_line(self):
         os.environ["WORCA_RUN_ID"] = "run-456"
-        with patch("hooks.post_tool_use.subprocess.run") as mock_run:
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run") as mock_run:
             _link_bd_create_to_run(
                 "Bash",
                 {"command": 'bd create --title="test"'},
@@ -119,7 +115,7 @@ class TestBeadCreatedEvent:
         events_file = str(tmp_path / "events.jsonl")
         os.environ["WORCA_RUN_ID"] = "20260320-120000"
         os.environ["WORCA_EVENTS_PATH"] = events_file
-        with patch("hooks.post_tool_use.subprocess.run"):
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run"):
             _link_bd_create_to_run(
                 "Bash",
                 {"command": 'bd create --title="Add auth"'},
@@ -150,7 +146,7 @@ class TestBeadCreatedEvent:
         events_file = str(tmp_path / "events.jsonl")
         os.environ["WORCA_RUN_ID"] = "run-multi"
         os.environ["WORCA_EVENTS_PATH"] = events_file
-        with patch("hooks.post_tool_use.subprocess.run"):
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run"):
             _link_bd_create_to_run(
                 "Bash",
                 {"command": 'bd create --title="A" && bd create --title="B"'},
@@ -166,7 +162,7 @@ class TestBeadCreatedEvent:
         """bead.created is silently skipped when WORCA_EVENTS_PATH is not set."""
         os.environ["WORCA_RUN_ID"] = "run-001"
         # WORCA_EVENTS_PATH not set
-        with patch("hooks.post_tool_use.subprocess.run"):
+        with patch("worca.claude_hooks.post_tool_use.subprocess.run"):
             # Should not raise
             _link_bd_create_to_run(
                 "Bash",

@@ -16,9 +16,12 @@ node_modules/
 .claude/settings.local.json
 .claude/agents/overrides/
 
+# Runtime copy created by `worca init .` — not tracked (source of truth is src/worca/)
+.claude/worca
+
 # Test artifacts
 test-results/
-.claude/worca-ui/test-results/
+worca-ui/test-results/
 .pytest_cache/
 
 # Pipeline runtime artifacts
@@ -29,9 +32,9 @@ MASTER_PLAN.md
 .playwright-mcp/
 
 # Debug scripts
-.claude/worca-ui/capture-console.mjs
-.claude/worca-ui/debug-capture.mjs
+worca-ui/capture-console.mjs
+worca-ui/debug-capture.mjs
 
 # Build artifacts
-.claude/worca-ui/app/main.bundle.js
-.claude/worca-ui/app/main.bundle.js.map
+worca-ui/app/main.bundle.js
+worca-ui/app/main.bundle.js.map

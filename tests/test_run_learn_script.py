@@ -1,31 +1,16 @@
-"""Tests for .claude/scripts/run_learn.py — standalone learn stage script."""
+"""Tests for worca.scripts.run_learn — standalone learn stage script."""
 
 import json
-import os
-import sys
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-# Ensure the scripts dir is importable
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude"))
+from worca.scripts import run_learn as _run_learn_module
 
-
-# ---------------------------------------------------------------------------
-# Import helpers — module lives at .claude/scripts/run_learn.py
-# ---------------------------------------------------------------------------
 
 def _import_run_learn():
-    """Import the run_learn module."""
-    import importlib
-    spec = importlib.util.spec_from_file_location(
-        "run_learn",
-        os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts", "run_learn.py"),
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    """Return the run_learn module."""
+    return _run_learn_module
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,6 @@ tests/              export-ignore
 # UI test files (colocated with source)
 *.test.js           export-ignore
 *.spec.js           export-ignore
-.claude/worca-ui/e2e/           export-ignore
-.claude/worca-ui/test/          export-ignore
-.claude/worca-ui/playwright.config.js  export-ignore
+worca-ui/e2e/           export-ignore
+worca-ui/test/          export-ignore
+worca-ui/playwright.config.js  export-ignore

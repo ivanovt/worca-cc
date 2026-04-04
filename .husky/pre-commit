@@ -33,8 +33,8 @@ echo "Running ruff..."
 ruff check "$ROOT" || exit 1
 
 echo "Running biome..."
-(cd "$ROOT/.claude/worca-ui" && npx biome check) || exit 1
+(cd "$ROOT/worca-ui" && npx biome check) || exit 1
 
 # --- UI build check ---
 echo "Building worca-ui..."
-(cd "$ROOT/.claude/worca-ui" && npm run build) || exit 1
+(cd "$ROOT/worca-ui" && npm run build) || exit 1

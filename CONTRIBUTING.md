@@ -17,7 +17,7 @@ source .venv/bin/activate
 pip install -e ".[dev]"
 
 # Build the UI
-cd .claude/worca-ui && npm install && npm run build && cd -
+cd worca-ui && npm install && npm run build && cd -
 ```
 
 ## Running Tests
@@ -27,10 +27,10 @@ cd .claude/worca-ui && npm install && npm run build && cd -
 pytest tests/
 
 # UI server tests
-npx vitest run .claude/worca-ui/server/
+npx vitest run worca-ui/server/
 
 # Browser e2e tests (must run serially)
-cd .claude/worca-ui && npx playwright test --workers=1
+cd worca-ui && npx playwright test --workers=1
 ```
 
 ## Code Style

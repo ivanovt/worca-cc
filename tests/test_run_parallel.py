@@ -1,27 +1,11 @@
-"""Tests for run_parallel.py helper functions."""
+"""Tests for worca.scripts.run_parallel helper functions."""
 
 import os
 import re
-import sys
 from unittest.mock import patch, MagicMock
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude"))
-
-# Import the helper functions directly from the script module
-import importlib.util
-spec = importlib.util.spec_from_file_location(
-    "run_parallel",
-    os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts", "run_parallel.py"),
-)
-run_parallel = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(run_parallel)
-
-_slugify = run_parallel._slugify
-_run_pipeline_in_worktree = run_parallel._run_pipeline_in_worktree
-
-# _ARG_INLINE_LIMIT is now imported from claude_cli by run_parallel
-from worca.utils.claude_cli import _ARG_INLINE_LIMIT  # noqa: E402
+from worca.scripts.run_parallel import _slugify, _run_pipeline_in_worktree
+from worca.utils.claude_cli import _ARG_INLINE_LIMIT
 
 
 # --- _slugify ---
@@ -56,7 +40,7 @@ def test_slugify_only_alphanumeric_and_dash():
 # --- _run_pipeline_in_worktree large prompt offloading ---
 
 class TestRunPipelineLargePrompt:
-    @patch("run_parallel.subprocess.run")
+    @patch("worca.scripts.run_parallel.subprocess.run")
     def test_small_prompt_uses_inline_arg(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         _run_pipeline_in_worktree("/tmp/wt", "small prompt", 1, 1, "settings.json")
@@ -66,7 +50,7 @@ class TestRunPipelineLargePrompt:
         idx = cmd.index("--prompt")
         assert cmd[idx + 1] == "small prompt"
 
-    @patch("run_parallel.subprocess.run")
+    @patch("worca.scripts.run_parallel.subprocess.run")
     def test_large_prompt_uses_prompt_file(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout="ok", stderr="")
         large_prompt = "x" * (_ARG_INLINE_LIMIT + 1)
@@ -79,7 +63,7 @@ class TestRunPipelineLargePrompt:
         prompt_file = cmd[idx + 1]
         assert not os.path.exists(prompt_file)
 
-    @patch("run_parallel.subprocess.run")
+    @patch("worca.scripts.run_parallel.subprocess.run")
     def test_large_prompt_file_contains_full_content(self, mock_run):
         """Verify the temp file contains the full prompt before subprocess runs."""
         large_prompt = "y" * (_ARG_INLINE_LIMIT + 100)

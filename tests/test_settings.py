@@ -3,11 +3,7 @@
 
 import json
 import os
-import sys
 
-
-# Add the .claude directory to sys.path so we can import worca modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '.claude'))
 from worca.utils.settings import deep_merge, load_settings
 
 

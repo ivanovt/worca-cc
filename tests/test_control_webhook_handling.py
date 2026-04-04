@@ -11,12 +11,9 @@ Covers:
 """
 
 import json
-import sys
 from unittest.mock import patch
 
 import pytest
-
-sys.path.insert(0, ".claude")
 
 from worca.events.emitter import EventContext, _check_control_response
 from worca.orchestrator.runner import PipelineInterrupted, _handle_pause

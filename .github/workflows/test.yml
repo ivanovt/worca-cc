@@ -55,16 +55,16 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: .claude/worca-ui/package-lock.json
+          cache-dependency-path: worca-ui/package-lock.json
 
       - name: Install dependencies
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npm ci
 
       - name: Lint with biome
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npx biome check
 
       - name: Run vitest
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npx vitest run

@@ -1,6 +1,5 @@
 """Tests for worca.orchestrator.runner — pipeline runner."""
 
-import importlib.util
 import json
 import os
 import re
@@ -34,13 +33,8 @@ def _mock_beads_init():
 
 
 def _import_run_pipeline():
-    """Import .claude/scripts/run_pipeline.py as a module."""
-    script_path = os.path.join(
-        os.path.dirname(__file__), "..", ".claude", "scripts", "run_pipeline.py",
-    )
-    spec = importlib.util.spec_from_file_location("run_pipeline_script", script_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    """Import worca.scripts.run_pipeline as a module."""
+    from worca.scripts import run_pipeline as mod
     return mod
 
 
