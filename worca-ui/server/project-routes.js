@@ -676,21 +676,17 @@ export function createProjectScopedRoutes() {
       res.json({ ok: true, stopped: true, runId, pid: result.pid });
     } catch (err) {
       if (err.code === 'not_running') {
-        const statusPath = join(
-          req.project.worcaDir,
-          'runs',
-          runId,
-          'status.json',
-        );
-        if (existsSync(statusPath)) {
+        const statusPath = findRunStatusPath(req.project.worcaDir, runId);
+        if (statusPath) {
           try {
             const st = JSON.parse(readFileSync(statusPath, 'utf8'));
             if (
               st.pipeline_status === 'paused' ||
               st.pipeline_status === 'running'
             ) {
-              st.pipeline_status = 'failed';
-              st.stop_reason = 'stopped';
+              st.pipeline_status = 'cancelled';
+              st.stop_reason = 'force_cancelled';
+              st.completed_at = new Date().toISOString();
               writeFileSync(
                 statusPath,
                 `${JSON.stringify(st, null, 2)}\n`,
@@ -706,6 +702,39 @@ export function createProjectScopedRoutes() {
         }
         return res.status(404).json({ ok: false, error: err.message });
       }
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/projects/:projectId/runs/:id/cancel — force-cancel a stale run
+  router.post('/runs/:id/cancel', requireWorcaDir, (req, res) => {
+    const runId = req.params.id;
+    if (!validateRunId(runId)) {
+      return res.status(400).json({ ok: false, error: 'Invalid runId' });
+    }
+    const { worcaDir } = req.project;
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      if (
+        st.pipeline_status === 'completed' ||
+        st.pipeline_status === 'cancelled'
+      ) {
+        return res.json({ ok: true, already: st.pipeline_status });
+      }
+      st.pipeline_status = 'cancelled';
+      st.stop_reason = 'force_cancelled';
+      st.completed_at = new Date().toISOString();
+      writeFileSync(statusPath, `${JSON.stringify(st, null, 2)}\n`, 'utf8');
+      const { broadcast } = req.app.locals;
+      if (broadcast) broadcast('run-stopped', { runId, pid: null });
+      res.json({ ok: true, cancelled: true, runId });
+    } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
   });

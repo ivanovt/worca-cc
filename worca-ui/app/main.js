@@ -970,6 +970,18 @@ async function handleConfirmStop() {
   }
 }
 
+async function handleCancelRun(runId) {
+  try {
+    const res = await fetch(projectUrl(`/runs/${runId}/cancel`), {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!data.ok) showActionError(data.error || 'Failed to cancel run');
+  } catch (err) {
+    showActionError(err?.message || 'Failed to cancel run');
+  }
+}
+
 function handleResumePipeline() {
   pipelineAction = 'resuming';
   actionError = null;
@@ -1438,6 +1450,19 @@ function contentHeaderView() {
   } else if (route.section === 'history') {
     title = 'History';
     showBack = true;
+    if (route.runId) {
+      const historyRun = Object.values(state.runs).find(
+        (r) => r.id === route.runId,
+      );
+      const hs = historyRun?.pipeline_status;
+      if (hs === 'running' || hs === 'paused') {
+        actionButton = html`
+          <button class="action-btn action-btn--danger" @click=${() => handleCancelRun(route.runId)}>
+            ${unsafeHTML(iconSvg(Square, 14))}
+            Cancel
+          </button>`;
+      }
+    }
   } else if (route.section === 'new-run') {
     title = 'New Pipeline';
     showBack = true;
