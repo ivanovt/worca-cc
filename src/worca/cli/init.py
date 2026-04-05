@@ -86,6 +86,24 @@ def _deep_merge_overwrite(base: dict, overlay: dict) -> dict:
     return result
 
 
+# Legacy files to remove during upgrade from pre-packaging installs
+_LEGACY_HOOK_FILES = [
+    "__init__.py", "post_tool_use.py", "pre_compact.py", "pre_tool_use.py",
+    "session_end.py", "session_start.py", "stop.py",
+    "subagent_start.py", "subagent_stop.py", "user_prompt_submit.py",
+]
+
+_LEGACY_SCRIPT_FILES = [
+    "__init__.py", "preflight_checks.py", "run_batch.py", "run_learn.py",
+    "run_multi.py", "run_parallel.py", "run_pipeline.py",
+    "worca.py",  # renamed to worca_lifecycle.py in new structure
+]
+
+_LEGACY_AGENT_FILES = [
+    "coordinator.md", "guardian.md", "implementer.md", "learner.md",
+    "plan_reviewer.md", "planner.md", "tester.md",
+]
+
 # Path migrations for --upgrade from pre-packaging installs
 _PATH_MIGRATIONS = [
     # (settings key path, old substring, new substring)
@@ -148,6 +166,76 @@ def _migrate_agent_overrides(git_root: Path) -> list[str]:
         changes.append("  Removed empty .claude/agents/overrides/")
     except OSError:
         pass  # Directory not empty, leave it
+
+    return changes
+
+
+def _remove_files_from_dir(directory: Path, filenames: list[str], changes: list[str]) -> None:
+    """Remove specific files from a directory, then clean up __pycache__/.DS_Store and empty dir."""
+    if not directory.is_dir():
+        return
+
+    for name in filenames:
+        f = directory / name
+        if f.exists():
+            f.unlink()
+            changes.append(f"  Removed {f.relative_to(directory.parent.parent)}")
+
+    # Remove __pycache__/ if present
+    pycache = directory / "__pycache__"
+    if pycache.is_dir():
+        shutil.rmtree(pycache)
+        changes.append(f"  Removed {pycache.relative_to(directory.parent.parent)}")
+
+    # Remove .DS_Store if present
+    ds_store = directory / ".DS_Store"
+    if ds_store.exists():
+        ds_store.unlink()
+
+    # Remove directory if now empty
+    try:
+        directory.rmdir()
+        changes.append(f"  Removed empty {directory.relative_to(directory.parent.parent)}/")
+    except OSError:
+        pass  # Directory not empty (user files remain)
+
+
+def _cleanup_legacy_files(git_root: Path) -> list[str]:
+    """Remove known worca-owned files from pre-packaging install locations.
+
+    Only runs if .claude/worca/ has no version (pre-packaging install).
+    Returns list of change descriptions.
+    """
+    changes: list[str] = []
+    claude_dir = git_root / ".claude"
+    worca_dir = claude_dir / "worca"
+
+    # If worca dir already has a version, this is a packaged install — skip cleanup
+    if read_version(worca_dir) is not None:
+        return changes
+
+    # Remove known files from .claude/hooks/
+    _remove_files_from_dir(claude_dir / "hooks", _LEGACY_HOOK_FILES, changes)
+
+    # Remove known files from .claude/scripts/
+    _remove_files_from_dir(claude_dir / "scripts", _LEGACY_SCRIPT_FILES, changes)
+
+    # Remove .claude/agents/core/ (agent templates)
+    _remove_files_from_dir(claude_dir / "agents" / "core", _LEGACY_AGENT_FILES, changes)
+
+    # Remove .claude/agents/domain/ if only contains .gitkeep and/or .DS_Store
+    domain_dir = claude_dir / "agents" / "domain"
+    if domain_dir.is_dir():
+        contents = set(f.name for f in domain_dir.iterdir())
+        if contents <= {".gitkeep", ".DS_Store"}:
+            shutil.rmtree(domain_dir)
+            changes.append("  Removed .claude/agents/domain/")
+
+    # Remove .claude/worca-ui/ (fully worca-owned embedded UI)
+    worca_ui_dir = claude_dir / "worca-ui"
+    if worca_ui_dir.is_dir():
+        shutil.rmtree(worca_ui_dir)
+        changes.append("  Removed .claude/worca-ui/")
 
     return changes
 
@@ -263,6 +351,36 @@ def _show_check(source: Path, git_root: Path) -> None:
             for change in migration_changes:
                 print(change)
 
+    # Legacy file cleanup check
+    claude_dir = git_root / ".claude"
+    worca_dir = claude_dir / "worca"
+    if read_version(worca_dir) is None:
+        legacy_files = []
+        for name in _LEGACY_HOOK_FILES:
+            f = claude_dir / "hooks" / name
+            if f.exists():
+                legacy_files.append(f"  .claude/hooks/{name}")
+        for name in _LEGACY_SCRIPT_FILES:
+            f = claude_dir / "scripts" / name
+            if f.exists():
+                legacy_files.append(f"  .claude/scripts/{name}")
+        for name in _LEGACY_AGENT_FILES:
+            f = claude_dir / "agents" / "core" / name
+            if f.exists():
+                legacy_files.append(f"  .claude/agents/core/{name}")
+        domain_dir = claude_dir / "agents" / "domain"
+        if domain_dir.is_dir():
+            contents = set(f.name for f in domain_dir.iterdir())
+            if contents <= {".gitkeep", ".DS_Store"}:
+                legacy_files.append("  .claude/agents/domain/")
+        worca_ui_dir = claude_dir / "worca-ui"
+        if worca_ui_dir.is_dir():
+            legacy_files.append("  .claude/worca-ui/")
+        if legacy_files:
+            print("\nLegacy files that would be removed:")
+            for lf in legacy_files:
+                print(lf)
+
     # Agent override migration
     old_overrides = git_root / ".claude" / "agents" / "overrides"
     if old_overrides.is_dir() and list(old_overrides.glob("*.md")):
@@ -337,6 +455,14 @@ def run_init(
                 f.write("\n")
             print("Path migrations applied:")
             for change in migration_changes:
+                print(change)
+
+    # --- Legacy file cleanup (only on --upgrade, before source copy) ---
+    if upgrade:
+        legacy_changes = _cleanup_legacy_files(git_root)
+        if legacy_changes:
+            print("Legacy file cleanup:")
+            for change in legacy_changes:
                 print(change)
 
     # --- Agent override migration (only on --upgrade) ---
