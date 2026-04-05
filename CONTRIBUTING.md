@@ -94,6 +94,47 @@ cd worca-ui && npx playwright test --workers=1
 - Line length: 100 characters
 - Target: Python 3.8+
 
+## Testing Changes in Projects
+
+When developing worca-cc, you'll want to test your local changes in real projects without publishing a release.
+
+### Setting the Worca Local Repo
+
+Open the worca-ui dashboard (`http://127.0.0.1:3400`), go to **Settings > Preferences**, and set **Worca Local Repo** to the path of your locally cloned `worca-cc` repository (e.g. `~/dev/worca-cc`). This tells `worca init --upgrade` to copy pipeline files from your local clone instead of the installed package.
+
+The Settings > Versions panel will also show the local repo path alongside installed/latest versions, so you can confirm it's configured.
+
+### Syncing changes to a test project
+
+After making changes in your local worca-cc repo, use the `/worca-sync` skill inside the target project to push your updates:
+
+```
+/worca-sync
+```
+
+This will:
+1. Resolve the source repo from the project's `settings.json` (set during `/worca-install` or via the UI preference)
+2. Run `worca init --upgrade` to sync `.claude/worca/`, merge settings, and update `.gitignore`
+3. Copy shared skills (`worca-sync`, `worca-agent-override`) to the project
+4. Register the project in worca-ui's multi-project selector if needed
+
+You can also pass an explicit path: `/worca-sync ~/dev/worca-cc`
+
+### Typical dev-test cycle
+
+```bash
+# 1. Make changes in worca-cc
+cd ~/dev/worca-cc
+# ... edit src/worca/, worca-ui/app/, etc.
+
+# 2. Sync to your test project
+cd ~/dev/my-test-project
+claude                    # then type: /worca-sync
+
+# 3. Run a pipeline to verify
+python .claude/scripts/run_pipeline.py --prompt "your test task"
+```
+
 ## Cutting Release Candidates
 
 Use the `/worca-rc` skill to bump RC versions for both packages, commit, tag, and push in one step:
