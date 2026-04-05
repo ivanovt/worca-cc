@@ -13,6 +13,7 @@ import {
   createProjectScopedRoutes,
   projectResolver,
 } from './project-routes.js';
+import { getVersionInfo } from './versions.js';
 import { createInbox } from './webhook-inbox.js';
 
 export function createApp(options = {}) {
@@ -400,6 +401,19 @@ export function createApp(options = {}) {
       }
     } catch {
       res.json({ ok: false });
+    }
+  });
+
+  // GET /api/versions — installed + registry version info
+  app.get('/api/versions', async (req, res) => {
+    const force = req.query.force === '1';
+    const prefsPath = prefsDir ? join(prefsDir, 'preferences.json') : null;
+    const worcaVersion = app.locals.worcaVersion || null;
+    try {
+      const data = await getVersionInfo({ prefsPath, worcaVersion, force });
+      res.json(data);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 

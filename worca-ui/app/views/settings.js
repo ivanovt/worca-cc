@@ -4,6 +4,7 @@ import { confirmDialogTemplate, showConfirm } from '../utils/confirm-dialog.js';
 import {
   Bell,
   ChevronRight,
+  ClipboardCopy,
   Coins,
   FolderOpen,
   GitBranch,
@@ -688,7 +689,147 @@ function governanceTab(worca, permissions, rerender) {
   `;
 }
 
-function preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo }) {
+// --- Versions state ---
+let versionsData = null;
+let versionsLoading = false;
+let versionsError = null;
+
+async function loadVersions(rerender, force = false) {
+  versionsLoading = true;
+  versionsError = null;
+  rerender();
+  try {
+    const url = force ? '/api/versions?force=1' : '/api/versions';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    versionsData = await res.json();
+  } catch (err) {
+    versionsError = err.message;
+  } finally {
+    versionsLoading = false;
+    rerender();
+  }
+}
+
+function relativeTime(isoStr) {
+  if (!isoStr) return '';
+  const diffMs = Date.now() - new Date(isoStr).getTime();
+  const secs = Math.floor(diffMs / 1000);
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  return `${hrs}h ago`;
+}
+
+function copyInstallCmd(cmd, btn) {
+  navigator.clipboard.writeText(cmd).then(() => {
+    const icon = btn.querySelector('.version-copy-icon');
+    if (icon) {
+      icon.textContent = '✓';
+      setTimeout(() => {
+        icon.textContent = '';
+      }, 1500);
+    }
+  });
+}
+
+function versionRow(label, value, installCmd) {
+  if (value === undefined) return nothing;
+  return html`
+    <div class="version-row">
+      <span class="version-row-label">${label}</span>
+      <span class="version-row-value">${
+        value && installCmd
+          ? html`
+        <sl-tooltip content="Copy: ${installCmd}">
+          <button class="version-copy-btn" @click=${(e) => copyInstallCmd(installCmd, e.currentTarget)}>
+            <span class="version-copy-icon">${unsafeHTML(iconSvg(ClipboardCopy, 12))}</span>
+          </button>
+        </sl-tooltip>
+      `
+          : nothing
+      }${value || '—'}</span>
+    </div>
+  `;
+}
+
+function versionsSection(rerender) {
+  // Auto-load on first render
+  if (!versionsData && !versionsLoading && !versionsError) {
+    loadVersions(rerender);
+  }
+
+  if (versionsLoading && !versionsData) {
+    return html`
+      <h3 class="settings-section-title">Worca Versions</h3>
+      <div class="settings-card">
+        <div class="settings-muted">Loading version info…</div>
+      </div>
+    `;
+  }
+
+  if (versionsError && !versionsData) {
+    return html`
+      <h3 class="settings-section-title">Worca Versions</h3>
+      <div class="settings-card">
+        <div class="settings-muted">Failed to load versions: ${versionsError}</div>
+        <div class="version-refresh">
+          <sl-button size="small" @click=${() => loadVersions(rerender, true)}>
+            ${unsafeHTML(iconSvg(RefreshCw, 14))}
+            Retry
+          </sl-button>
+        </div>
+      </div>
+    `;
+  }
+
+  if (!versionsData) return nothing;
+
+  const { worcaCc, worcaUi, devPath, cachedAt } = versionsData;
+
+  return html`
+    <h3 class="settings-section-title">Worca Versions</h3>
+    <div class="settings-grid">
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <span class="settings-card-title version-title-exact">worca-cc</span>
+          <sl-badge variant="neutral" pill>pypi</sl-badge>
+        </div>
+        <div class="settings-card-body">
+          ${versionRow('Installed', worcaCc?.installed)}
+          ${versionRow('Latest', worcaCc?.latest, worcaCc?.latest ? `pip install --upgrade worca-cc==${worcaCc.latest}` : null)}
+          ${versionRow('Latest RC', worcaCc?.latestRc, worcaCc?.latestRc ? `pip install --upgrade worca-cc==${worcaCc.latestRc}` : null)}
+          ${versionRow('Local repo', devPath?.worcaCc || null)}
+        </div>
+      </div>
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <span class="settings-card-title version-title-exact">@worca/ui</span>
+          <sl-badge variant="neutral" pill>npm</sl-badge>
+        </div>
+        <div class="settings-card-body">
+          ${versionRow('Installed', worcaUi?.installed)}
+          ${versionRow('Latest', worcaUi?.latest, worcaUi?.latest ? `npm install -g @worca/ui@${worcaUi.latest}` : null)}
+          ${versionRow('Latest RC', worcaUi?.latestRc, worcaUi?.latestRc ? `npm install -g @worca/ui@${worcaUi.latestRc}` : null)}
+          ${versionRow('Local repo', devPath?.worcaUi || null)}
+        </div>
+      </div>
+    </div>
+    <div class="version-refresh">
+      <sl-button size="small" @click=${() => loadVersions(rerender, true)} ?loading=${versionsLoading}>
+        ${unsafeHTML(iconSvg(RefreshCw, 14))}
+        Refresh
+      </sl-button>
+      <span class="version-refresh-hint">Updated ${relativeTime(cachedAt)}</span>
+    </div>
+  `;
+}
+
+function preferencesTab(
+  preferences,
+  { onThemeToggle, onSaveSourceRepo, rerender },
+) {
   const theme = preferences?.theme || 'light';
   const sourceRepo = preferences?.source_repo || '';
 
@@ -704,8 +845,8 @@ function preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo }) {
 
       <h3 class="settings-section-title">Development</h3>
       <div class="settings-grid">
-        <div class="settings-field">
-          <label class="settings-label">Source Repository Path</label>
+        <div class="settings-field" style="grid-column: span 2;">
+          <label class="settings-label">Worca Local Repo</label>
           <sl-input id="pref-source-repo" value="${sourceRepo}" size="small" placeholder="~/dev/worca-cc"></sl-input>
           <span class="settings-field-hint">Local worca-cc repo path for development. Used by <code>worca init --upgrade</code> instead of the installed package.</span>
         </div>
@@ -720,6 +861,8 @@ function preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo }) {
           Save
         </sl-button>
       </div>
+
+      ${rerender ? versionsSection(rerender) : nothing}
     </div>
   `;
 }
@@ -1181,11 +1324,44 @@ function feedbackAlert(rerender) {
 
 // --- Projects tab ---
 
+function parseVersion(v) {
+  // "0.6.0rc7" → { parts: [0, 6, 0], rc: 7 }
+  // "0.6.0"    → { parts: [0, 6, 0], rc: Infinity } (stable > any rc)
+  // "0.1.0-rc.5" → { parts: [0, 1, 0], rc: 5 }
+  const rcMatch = v.match(/^(.+?)[-.]?rc\.?(\d+)$/);
+  const base = rcMatch ? rcMatch[1] : v;
+  const rc = rcMatch ? parseInt(rcMatch[2], 10) : Infinity;
+  const parts = base.split('.').map((s) => parseInt(s, 10) || 0);
+  return { parts, rc };
+}
+
+function isVersionBehind(project, active) {
+  if (!project || !active) return false;
+  const p = parseVersion(project);
+  const a = parseVersion(active);
+  const len = Math.max(p.parts.length, a.parts.length);
+  for (let i = 0; i < len; i++) {
+    const pv = p.parts[i] || 0;
+    const av = a.parts[i] || 0;
+    if (pv < av) return true;
+    if (pv > av) return false;
+  }
+  // Same base version — compare RC numbers
+  if (p.rc < a.rc) return true;
+  return false;
+}
+
 function projectsTab(
   projects,
-  { onProjectAdd, onProjectRemove, rerender: _rerender },
+  { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender: _rerender },
 ) {
   const list = projects || [];
+
+  // Load version info for active version comparison
+  if (!versionsData && !versionsLoading && !versionsError) {
+    loadVersions(_rerender);
+  }
+  const activeWorcaCc = versionsData?.activeWorcaCc || null;
 
   function confirmRemove(projectName) {
     showConfirm(
@@ -1217,7 +1393,15 @@ function projectsTab(
         onConfirm: () => {
           fetch(`/api/projects/${projectName}/worca-setup`, {
             method: 'POST',
-          }).catch(() => {});
+          })
+            .then((r) => r.json())
+            .then((data) => {
+              if (data.ok) {
+                // Wait for the background process to finish, then refresh
+                setTimeout(() => onProjectsRefresh?.(), 3000);
+              }
+            })
+            .catch(() => {});
         },
       },
       _rerender,
@@ -1239,7 +1423,8 @@ function projectsTab(
               <div class="project-name">${p.name}</div>
               <div class="project-path">${p.path}</div>
             </div>
-            <div style="display:flex; gap:0.5rem;">
+            <div style="display:flex; align-items:center; gap:0.5rem;">
+              <sl-badge variant="${!p.worcaVersion || isVersionBehind(p.worcaVersion, activeWorcaCc) ? 'warning' : 'neutral'}" pill>worca-cc: ${p.worcaVersion || 'unknown'}</sl-badge>
               <sl-button
                 size="small"
                 variant="primary"
@@ -1292,6 +1477,7 @@ export function settingsView(
     projects,
     onProjectAdd,
     onProjectRemove,
+    onProjectsRefresh,
   } = {},
 ) {
   // Reload base settings when switching from project-scoped view
@@ -1317,9 +1503,9 @@ export function settingsView(
           Preferences
         </sl-tab>
 
-        <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, rerender })}</sl-tab-panel>
+        <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications, onRequestPermission })}</sl-tab-panel>
-        <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo })}</sl-tab-panel>
+        <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo, rerender })}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;

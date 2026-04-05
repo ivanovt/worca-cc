@@ -1699,6 +1699,15 @@ function mainContentView() {
           })
           .catch(() => {});
       },
+      onProjectsRefresh: () => {
+        fetch('/api/projects')
+          .then((r) => r.json())
+          .then((data) => {
+            store.setState({ projects: data.projects || [] });
+            rerender();
+          })
+          .catch(() => {});
+      },
     });
   }
 

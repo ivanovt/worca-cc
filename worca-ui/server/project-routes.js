@@ -37,7 +37,11 @@ import {
 } from './settings-merge.js';
 import { validateSettingsPayload } from './settings-validator.js';
 import { discoverRuns } from './watcher.js';
-import { checkWorcaInstalled, runWorcaSetup } from './worca-setup.js';
+import {
+  checkWorcaInstalled,
+  readProjectWorcaVersion,
+  runWorcaSetup,
+} from './worca-setup.js';
 
 /** Validate a runId — must not contain path traversal characters */
 const RUN_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -133,13 +137,16 @@ export function createProjectRoutes({ prefsDir, projectRoot }) {
 
   // GET /api/projects — list all projects (or synthesized default)
   router.get('/', (_req, res) => {
-    const projects = readProjects(prefsDir);
-    if (projects.length > 0) {
-      return res.json({ ok: true, projects });
+    let projects = readProjects(prefsDir);
+    if (projects.length === 0) {
+      projects = [synthesizeDefaultProject(projectRoot)];
     }
-    // No registered projects — synthesize from cwd
-    const synth = synthesizeDefaultProject(projectRoot);
-    res.json({ ok: true, projects: [synth] });
+    // Enrich each project with its worca-cc version
+    const enriched = projects.map((p) => ({
+      ...p,
+      worcaVersion: readProjectWorcaVersion(p.path),
+    }));
+    res.json({ ok: true, projects: enriched });
   });
 
   // POST /api/projects — create a new project

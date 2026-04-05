@@ -9,7 +9,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -17,6 +17,23 @@ import { join } from 'node:path';
  */
 export function checkWorcaInstalled(projectPath) {
   return existsSync(join(projectPath, '.claude', 'worca'));
+}
+
+/**
+ * Read the worca-cc version from a project's .claude/worca/__init__.py.
+ * Returns the version string or null if not found.
+ */
+export function readProjectWorcaVersion(projectPath) {
+  try {
+    const initPy = readFileSync(
+      join(projectPath, '.claude', 'worca', '__init__.py'),
+      'utf8',
+    );
+    const match = initPy.match(/^__version__\s*=\s*["']([^"']+)["']/m);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
