@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-const DEFAULTS = { theme: 'light', source_repo: '' };
+const DEFAULTS = { theme: 'light', source_repo: '', notifications: null };
 
 export function readPreferences(path) {
   try {

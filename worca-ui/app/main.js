@@ -579,19 +579,24 @@ function fetchAllProjectRuns() {
     projects.map((p) =>
       fetch(`/api/projects/${p.name}/runs`)
         .then((r) => r.json())
-        .then((data) =>
-          (data.runs || []).map((run) => ({
+        .then((data) => ({
+          runs: (data.runs || []).map((run) => ({
             ...run,
             project: run.project || p.name,
           })),
-        )
-        .catch(() => []),
+          settings: data.settings || null,
+          projectName: p.name,
+        }))
+        .catch(() => ({ runs: [], settings: null, projectName: p.name })),
     ),
   ).then((results) => {
     const runs = {};
     const archivedRuns = {};
     const now = Date.now();
-    for (const projectRuns of results) {
+    for (const { runs: projectRuns, settings: projSettings } of results) {
+      // Use settings from any project that provides them (last write wins;
+      // in practice loop limits are uniform across projects).
+      if (projSettings) settings = projSettings;
       for (const run of projectRuns) {
         if (run.archived) {
           if (isArchivedRunExpired(run, now)) continue;
@@ -1668,6 +1673,7 @@ function mainContentView() {
       onThemeToggle: handleThemeToggle,
       onSaveSourceRepo: handleSaveSourceRepo,
       onSaveNotifications: handleSaveNotifications,
+      onRequestPermission: () => notificationManager.requestPermission(),
       projects: state.projects || [],
       onProjectAdd: (result) => {
         if (result?.openDialog) {

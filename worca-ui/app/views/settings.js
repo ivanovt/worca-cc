@@ -810,16 +810,18 @@ const NOTIF_EVENT_LABELS = {
   },
 };
 
-function notificationsTab(preferences, { rerender, onSaveNotifications }) {
+function notificationsTab(
+  preferences,
+  { rerender, onSaveNotifications, onRequestPermission },
+) {
   const notifPrefs = preferences?.notifications || {};
-  const enabled = notifPrefs.enabled ?? true;
-  const sound = notifPrefs.sound ?? false;
-  const events = notifPrefs.events || {};
-
   const permission =
     typeof Notification !== 'undefined'
       ? Notification.permission
       : 'unsupported';
+  const enabled = permission === 'granted' && (notifPrefs.enabled ?? true);
+  const sound = notifPrefs.sound ?? false;
+  const events = notifPrefs.events || {};
   const permBadge =
     permission === 'granted'
       ? html`<sl-badge variant="success" pill>Granted</sl-badge>`
@@ -841,10 +843,12 @@ function notificationsTab(preferences, { rerender, onSaveNotifications }) {
           permission === 'default'
             ? html`
           <sl-button size="small" variant="primary" @click=${async () => {
-            if (typeof Notification !== 'undefined') {
+            if (onRequestPermission) {
+              await onRequestPermission();
+            } else if (typeof Notification !== 'undefined') {
               await Notification.requestPermission();
-              rerender();
             }
+            rerender();
           }}>Enable Notifications</sl-button>
         `
             : ''
@@ -1284,6 +1288,7 @@ export function settingsView(
     onThemeToggle,
     onSaveSourceRepo,
     onSaveNotifications,
+    onRequestPermission,
     projects,
     onProjectAdd,
     onProjectRemove,
@@ -1313,7 +1318,7 @@ export function settingsView(
         </sl-tab>
 
         <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, rerender })}</sl-tab-panel>
-        <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications })}</sl-tab-panel>
+        <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications, onRequestPermission })}</sl-tab-panel>
         <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo })}</sl-tab-panel>
       </sl-tab-group>
     </div>

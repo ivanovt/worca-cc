@@ -203,7 +203,17 @@ export function createProjectScopedRoutes() {
   router.get('/runs', requireWorcaDir, (req, res) => {
     try {
       const runs = discoverRuns(req.project.worcaDir);
-      res.json({ ok: true, runs });
+      const response = { ok: true, runs };
+      // Include settings so multi-project clients can use loop limits, etc.
+      const { settingsPath } = req.project;
+      if (settingsPath && existsSync(settingsPath)) {
+        try {
+          response.settings = readMergedSettings(settingsPath);
+        } catch {
+          /* non-fatal — runs still returned */
+        }
+      }
+      res.json(response);
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
