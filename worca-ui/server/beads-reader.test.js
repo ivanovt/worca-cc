@@ -1,259 +1,383 @@
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import Database from 'better-sqlite3';
-import { afterEach, describe, expect, it } from 'vitest';
-import {
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('node:child_process', () => ({
+  execFileSync: vi.fn(),
+}));
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, existsSync: vi.fn() };
+});
+
+const { execFileSync } = await import('node:child_process');
+const { existsSync } = await import('node:fs');
+const {
   dbExists,
   getIssue,
   listDistinctRunLabels,
   listIssues,
   listIssuesByLabel,
   listUnlinkedIssues,
-} from './beads-reader.js';
+  countIssuesByRunLabel,
+} = await import('./beads-reader.js');
 
-let tmpDir, dbPath;
+const DB = '/fake/beads.db';
 
-function setupDb(rows = [], deps = [], labels = []) {
-  tmpDir = mkdtempSync(join(tmpdir(), 'beads-test-'));
-  dbPath = join(tmpDir, 'beads.db');
-  const db = new Database(dbPath);
-  db.prepare(`CREATE TABLE issues (id TEXT PRIMARY KEY, title TEXT, description TEXT,
-      status TEXT, priority INTEGER, created_at TEXT, external_ref TEXT)`).run();
-  db.prepare(
-    `CREATE TABLE dependencies (issue_id TEXT, depends_on_id TEXT)`,
-  ).run();
-  db.prepare(
-    `CREATE TABLE labels (issue_id TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY (issue_id, label))`,
-  ).run();
-  const insertIssue = db.prepare(
-    'INSERT INTO issues (id, title, description, status, priority, created_at, external_ref) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  );
-  const insertDep = db.prepare('INSERT INTO dependencies VALUES (?, ?)');
-  const insertLabel = db.prepare('INSERT INTO labels VALUES (?, ?)');
-  for (const r of rows)
-    insertIssue.run(
-      r.id,
-      r.title,
-      r.body || '',
-      r.status,
-      r.priority,
-      r.created_at || '',
-      r.external_ref || null,
-    );
-  for (const d of deps) insertDep.run(d.issue_id, d.depends_on_id);
-  for (const l of labels) insertLabel.run(l.issue_id, l.label);
-  db.close();
-}
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 afterEach(() => {
-  if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
-  tmpDir = null;
+  vi.restoreAllMocks();
 });
 
 describe('dbExists', () => {
   it('returns false for non-existent path', () => {
-    expect(dbExists('/tmp/nonexistent-beads-db-12345/beads.db')).toBe(false);
+    existsSync.mockReturnValue(false);
+    expect(dbExists('/tmp/nonexistent/beads.db')).toBe(false);
   });
 
   it('returns true when the db file exists', () => {
-    setupDb();
-    expect(dbExists(dbPath)).toBe(true);
+    existsSync.mockReturnValue(true);
+    expect(dbExists(DB)).toBe(true);
   });
 });
 
 describe('listIssues', () => {
-  it('returns [] for non-existent path', () => {
-    expect(listIssues('/tmp/nonexistent-beads-db-12345/beads.db')).toEqual([]);
+  it('returns [] when bd fails', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('bd not found');
+    });
+    expect(listIssues(DB)).toEqual([]);
   });
 
-  it('excludes closed and tombstone issues', () => {
-    setupDb([
-      { id: '1', title: 'Open', body: '', status: 'open', priority: 2 },
-      { id: '2', title: 'Closed', body: '', status: 'closed', priority: 2 },
-      {
-        id: '3',
-        title: 'Tombstone',
-        body: '',
-        status: 'tombstone',
-        priority: 3,
-      },
-    ]);
-    const issues = listIssues(dbPath);
-    expect(issues.length).toBe(1);
-    expect(issues[0].title).toBe('Open');
-  });
-
-  it('returns correct depends_on array', () => {
-    setupDb(
-      [
-        { id: '1', title: 'A', body: '', status: 'open', priority: 2 },
-        { id: '2', title: 'B', body: '', status: 'open', priority: 2 },
-      ],
-      [{ issue_id: '2', depends_on_id: '1' }],
-    );
-    const issues = listIssues(dbPath);
-    const issueB = issues.find((i) => i.id === '2');
-    expect(issueB.depends_on).toEqual(['1']);
-  });
-
-  it('issue with closed dependency has blocked_by = []', () => {
-    setupDb(
-      [
+  it('returns transformed issues without deps', () => {
+    execFileSync.mockReturnValue(
+      JSON.stringify([
         {
           id: '1',
-          title: 'Closed dep',
-          body: '',
-          status: 'closed',
+          title: 'Open',
+          description: 'body text',
+          status: 'open',
           priority: 2,
+          created_at: '2026-01-01',
+          dependency_count: 0,
+          dependent_count: 0,
         },
-        { id: '2', title: 'B', body: '', status: 'open', priority: 2 },
-      ],
-      [{ issue_id: '2', depends_on_id: '1' }],
+      ]),
     );
-    const issues = listIssues(dbPath);
-    const issueB = issues.find((i) => i.id === '2');
-    expect(issueB.blocked_by).toEqual([]);
+    const issues = listIssues(DB);
+    expect(issues).toEqual([
+      {
+        id: '1',
+        title: 'Open',
+        body: 'body text',
+        status: 'open',
+        priority: 2,
+        created_at: '2026-01-01',
+        external_ref: null,
+        depends_on: [],
+        blocked_by: [],
+      },
+    ]);
   });
 
-  it('issue with open dependency has blocked_by = [depId]', () => {
-    setupDb(
-      [
-        { id: '1', title: 'Open dep', body: '', status: 'open', priority: 2 },
-        { id: '2', title: 'B', body: '', status: 'open', priority: 2 },
-      ],
-      [{ issue_id: '2', depends_on_id: '1' }],
+  it('returns correct depends_on and blocked_by from bd show', () => {
+    // First call: bd list
+    execFileSync.mockReturnValueOnce(
+      JSON.stringify([
+        {
+          id: '1',
+          title: 'Dep',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependency_count: 0,
+        },
+        {
+          id: '2',
+          title: 'B',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependency_count: 1,
+        },
+      ]),
     );
-    const issues = listIssues(dbPath);
+    // Second call: bd show for issues with deps
+    execFileSync.mockReturnValueOnce(
+      JSON.stringify([
+        {
+          id: '2',
+          title: 'B',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependencies: [
+            {
+              id: '1',
+              title: 'Dep',
+              status: 'open',
+              dependency_type: 'blocks',
+            },
+          ],
+        },
+      ]),
+    );
+    const issues = listIssues(DB);
     const issueB = issues.find((i) => i.id === '2');
+    expect(issueB.depends_on).toEqual(['1']);
     expect(issueB.blocked_by).toEqual(['1']);
   });
 
-  it('issue with no dependencies has depends_on = [] and blocked_by = []', () => {
-    setupDb([
-      { id: '1', title: 'Standalone', body: '', status: 'open', priority: 2 },
-    ]);
-    const issues = listIssues(dbPath);
-    expect(issues[0].depends_on).toEqual([]);
+  it('closed dependency yields empty blocked_by', () => {
+    execFileSync.mockReturnValueOnce(
+      JSON.stringify([
+        {
+          id: '2',
+          title: 'B',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependency_count: 1,
+        },
+      ]),
+    );
+    execFileSync.mockReturnValueOnce(
+      JSON.stringify([
+        {
+          id: '2',
+          title: 'B',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependencies: [
+            {
+              id: '1',
+              title: 'Closed dep',
+              status: 'closed',
+              dependency_type: 'blocks',
+            },
+          ],
+        },
+      ]),
+    );
+    const issues = listIssues(DB);
+    expect(issues[0].depends_on).toEqual(['1']);
     expect(issues[0].blocked_by).toEqual([]);
   });
 
-  it('returns [] on corrupt DB without throwing', () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'beads-test-'));
-    dbPath = join(tmpDir, 'beads.db');
-    const db = new Database(dbPath);
-    db.exec('CREATE TABLE wrong_table (x TEXT)');
-    db.close();
-    expect(listIssues(dbPath)).toEqual([]);
+  it('bd list returns empty array', () => {
+    execFileSync.mockReturnValue(JSON.stringify([]));
+    expect(listIssues(DB)).toEqual([]);
   });
 });
 
 describe('getIssue', () => {
-  it('returns null for non-existent ID', () => {
-    setupDb([{ id: '1', title: 'A', body: '', status: 'open', priority: 2 }]);
-    expect(getIssue(dbPath, '999')).toBeNull();
+  it('returns null when bd fails', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('not found');
+    });
+    expect(getIssue(DB, '999')).toBeNull();
+  });
+
+  it('returns null when bd returns empty array', () => {
+    execFileSync.mockReturnValue(JSON.stringify([]));
+    expect(getIssue(DB, '999')).toBeNull();
   });
 
   it('returns correct issue with depends_on and blocked_by', () => {
-    setupDb(
-      [
-        {
-          id: '1',
-          title: 'Dep',
-          body: 'dep body',
-          status: 'open',
-          priority: 2,
-        },
+    execFileSync.mockReturnValue(
+      JSON.stringify([
         {
           id: '2',
           title: 'Main',
-          body: 'main body',
+          description: 'main body',
           status: 'open',
           priority: 2,
+          created_at: '',
+          dependencies: [
+            {
+              id: '1',
+              title: 'Dep',
+              status: 'open',
+              dependency_type: 'blocks',
+            },
+          ],
         },
-      ],
-      [{ issue_id: '2', depends_on_id: '1' }],
+      ]),
     );
-    const issue = getIssue(dbPath, '2');
+    const issue = getIssue(DB, '2');
     expect(issue.title).toBe('Main');
+    expect(issue.body).toBe('main body');
     expect(issue.depends_on).toEqual(['1']);
     expect(issue.blocked_by).toEqual(['1']);
   });
 
-  it('with a closed dependency: blocked_by is empty', () => {
-    setupDb(
-      [
-        { id: '1', title: 'Closed', body: '', status: 'closed', priority: 2 },
-        { id: '2', title: 'Main', body: '', status: 'open', priority: 2 },
-      ],
-      [{ issue_id: '2', depends_on_id: '1' }],
+  it('closed dependency: blocked_by is empty', () => {
+    execFileSync.mockReturnValue(
+      JSON.stringify([
+        {
+          id: '2',
+          title: 'Main',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependencies: [
+            {
+              id: '1',
+              title: 'Closed',
+              status: 'closed',
+              dependency_type: 'blocks',
+            },
+          ],
+        },
+      ]),
     );
-    const issue = getIssue(dbPath, '2');
+    const issue = getIssue(DB, '2');
     expect(issue.depends_on).toEqual(['1']);
     expect(issue.blocked_by).toEqual([]);
   });
 
-  it('returns null on corrupt DB without throwing', () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'beads-test-'));
-    dbPath = join(tmpDir, 'beads.db');
-    const db = new Database(dbPath);
-    db.prepare('CREATE TABLE wrong_table (x TEXT)').run();
-    db.close();
-    expect(getIssue(dbPath, '1')).toBeNull();
+  it('tombstone dependency: blocked_by is empty', () => {
+    execFileSync.mockReturnValue(
+      JSON.stringify([
+        {
+          id: '2',
+          title: 'Main',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependencies: [
+            {
+              id: '1',
+              title: 'Gone',
+              status: 'tombstone',
+              dependency_type: 'blocks',
+            },
+          ],
+        },
+      ]),
+    );
+    const issue = getIssue(DB, '2');
+    expect(issue.blocked_by).toEqual([]);
   });
 });
 
 describe('listIssuesByLabel', () => {
   it('returns issues matching the given label', () => {
-    setupDb(
-      [
-        { id: '1', title: 'A', body: '', status: 'open', priority: 2 },
-        { id: '2', title: 'B', body: '', status: 'open', priority: 2 },
-        { id: '3', title: 'C', body: '', status: 'open', priority: 2 },
-      ],
-      [],
-      [
-        { issue_id: '1', label: 'run:run-1' },
-        { issue_id: '2', label: 'run:run-1' },
-        { issue_id: '3', label: 'run:run-2' },
-      ],
+    execFileSync.mockReturnValue(
+      JSON.stringify([
+        {
+          id: '1',
+          title: 'A',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependency_count: 0,
+        },
+        {
+          id: '2',
+          title: 'B',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependency_count: 0,
+        },
+      ]),
     );
-    const issues = listIssuesByLabel(dbPath, 'run:run-1');
+    const issues = listIssuesByLabel(DB, 'run:run-1');
     expect(issues.length).toBe(2);
     expect(issues.map((i) => i.title).sort()).toEqual(['A', 'B']);
+    // Verify --label-any and --all flags were passed
+    const args = execFileSync.mock.calls[0][1];
+    expect(args).toContain('--label-any');
+    expect(args).toContain('run:run-1');
+    expect(args).toContain('--all');
   });
 
-  it('returns [] when no issues match', () => {
-    setupDb(
-      [{ id: '1', title: 'A', body: '', status: 'open', priority: 2 }],
-      [],
-      [{ issue_id: '1', label: 'run:run-1' }],
-    );
-    expect(listIssuesByLabel(dbPath, 'run:run-999')).toEqual([]);
+  it('returns [] when bd returns empty', () => {
+    execFileSync.mockReturnValue(JSON.stringify([]));
+    expect(listIssuesByLabel(DB, 'run:run-999')).toEqual([]);
+  });
+
+  it('returns [] when bd fails', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('fail');
+    });
+    expect(listIssuesByLabel(DB, 'run:run-1')).toEqual([]);
   });
 });
 
 describe('listUnlinkedIssues', () => {
-  it('returns only issues without run label', () => {
-    setupDb(
-      [
-        { id: '1', title: 'Linked', body: '', status: 'open', priority: 2 },
-        { id: '2', title: 'Unlinked', body: '', status: 'open', priority: 2 },
+  it('returns only issues without run: labels', () => {
+    // First call: bd list
+    execFileSync.mockReturnValueOnce(
+      JSON.stringify([
+        {
+          id: '1',
+          title: 'Linked',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependency_count: 0,
+        },
+        {
+          id: '2',
+          title: 'Unlinked',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          dependency_count: 0,
+        },
         {
           id: '3',
           title: 'Other label',
-          body: '',
           status: 'open',
           priority: 2,
+          created_at: '',
+          dependency_count: 0,
         },
-      ],
-      [],
-      [
-        { issue_id: '1', label: 'run:run-1' },
-        { issue_id: '3', label: 'component:auth' },
-      ],
+      ]),
     );
-    const issues = listUnlinkedIssues(dbPath);
+    // Second call: bd show (to get labels)
+    execFileSync.mockReturnValueOnce(
+      JSON.stringify([
+        {
+          id: '1',
+          title: 'Linked',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          labels: ['run:run-1'],
+        },
+        {
+          id: '2',
+          title: 'Unlinked',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+        },
+        {
+          id: '3',
+          title: 'Other label',
+          description: '',
+          status: 'open',
+          priority: 2,
+          created_at: '',
+          labels: ['component:auth'],
+        },
+      ]),
+    );
+    const issues = listUnlinkedIssues(DB);
     expect(issues.length).toBe(2);
     expect(issues.map((i) => i.title).sort()).toEqual([
       'Other label',
@@ -261,59 +385,75 @@ describe('listUnlinkedIssues', () => {
     ]);
   });
 
-  it('excludes closed issues', () => {
-    setupDb([
-      {
-        id: '1',
-        title: 'Closed unlinked',
-        body: '',
-        status: 'closed',
-        priority: 2,
-      },
-      {
-        id: '2',
-        title: 'Open unlinked',
-        body: '',
-        status: 'open',
-        priority: 2,
-      },
-    ]);
-    const issues = listUnlinkedIssues(dbPath);
-    expect(issues.length).toBe(1);
-    expect(issues[0].title).toBe('Open unlinked');
+  it('returns [] when bd list returns empty', () => {
+    execFileSync.mockReturnValue(JSON.stringify([]));
+    expect(listUnlinkedIssues(DB)).toEqual([]);
+  });
+
+  it('returns [] when bd fails', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('fail');
+    });
+    expect(listUnlinkedIssues(DB)).toEqual([]);
+  });
+});
+
+describe('countIssuesByRunLabel', () => {
+  it('returns counts keyed by run ID (prefix stripped)', () => {
+    execFileSync.mockReturnValue(
+      JSON.stringify([
+        { label: 'run:run-1', count: 5 },
+        { label: 'run:run-2', count: 3 },
+        { label: 'component:auth', count: 2 },
+      ]),
+    );
+    expect(countIssuesByRunLabel(DB)).toEqual({
+      'run-1': 5,
+      'run-2': 3,
+    });
+  });
+
+  it('returns {} when bd fails', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('fail');
+    });
+    expect(countIssuesByRunLabel(DB)).toEqual({});
+  });
+
+  it('returns {} when no run labels exist', () => {
+    execFileSync.mockReturnValue(
+      JSON.stringify([{ label: 'component:auth', count: 2 }]),
+    );
+    expect(countIssuesByRunLabel(DB)).toEqual({});
   });
 });
 
 describe('listDistinctRunLabels', () => {
-  it('returns distinct run: labels', () => {
-    setupDb(
-      [
-        { id: '1', title: 'A', body: '', status: 'open', priority: 2 },
-        { id: '2', title: 'B', body: '', status: 'open', priority: 2 },
-        { id: '3', title: 'C', body: '', status: 'open', priority: 2 },
-      ],
-      [],
-      [
-        { issue_id: '1', label: 'run:run-1' },
-        { issue_id: '2', label: 'run:run-1' },
-        { issue_id: '3', label: 'run:run-2' },
-      ],
+  it('returns only run: labels', () => {
+    execFileSync.mockReturnValue(
+      JSON.stringify([
+        { label: 'run:run-1', count: 5 },
+        { label: 'run:run-2', count: 3 },
+        { label: 'component:auth', count: 2 },
+      ]),
     );
-    const refs = listDistinctRunLabels(dbPath);
-    expect(refs.sort()).toEqual(['run:run-1', 'run:run-2']);
+    expect(listDistinctRunLabels(DB).sort()).toEqual([
+      'run:run-1',
+      'run:run-2',
+    ]);
   });
 
   it('returns [] when no run labels exist', () => {
-    setupDb([{ id: '1', title: 'A', body: '', status: 'open', priority: 2 }]);
-    expect(listDistinctRunLabels(dbPath)).toEqual([]);
+    execFileSync.mockReturnValue(
+      JSON.stringify([{ label: 'component:auth', count: 2 }]),
+    );
+    expect(listDistinctRunLabels(DB)).toEqual([]);
   });
 
-  it('ignores non-run labels', () => {
-    setupDb(
-      [{ id: '1', title: 'A', body: '', status: 'open', priority: 2 }],
-      [],
-      [{ issue_id: '1', label: 'component:auth' }],
-    );
-    expect(listDistinctRunLabels(dbPath)).toEqual([]);
+  it('returns [] when bd fails', () => {
+    execFileSync.mockImplementation(() => {
+      throw new Error('fail');
+    });
+    expect(listDistinctRunLabels(DB)).toEqual([]);
   });
 });

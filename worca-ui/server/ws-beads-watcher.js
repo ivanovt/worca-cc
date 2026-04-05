@@ -8,7 +8,7 @@ import { existsSync, watch } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { listIssues } from './beads-reader.js';
 
-const BEADS_DEBOUNCE_MS = 200;
+const BEADS_DEBOUNCE_MS = 300;
 
 /**
  * @param {{ worcaDir: string, broadcaster: { broadcast: Function }, projectId?: string }} deps

@@ -1,199 +1,123 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import Database from 'better-sqlite3';
+
+function runBd(args, dbPath) {
+  const fullArgs = [...args, '--json', '--db', dbPath, '--readonly'];
+  const stdout = execFileSync('bd', fullArgs, {
+    encoding: 'utf8',
+    timeout: 10000,
+    maxBuffer: 10 * 1024 * 1024,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  return JSON.parse(stdout);
+}
+
+function transformIssue(issue, deps) {
+  const depends_on = (deps || []).map((d) => d.id);
+  const blocked_by = (deps || [])
+    .filter((d) => d.status !== 'closed' && d.status !== 'tombstone')
+    .map((d) => d.id);
+  return {
+    id: issue.id,
+    title: issue.title,
+    body: issue.description || '',
+    status: issue.status,
+    priority: issue.priority,
+    created_at: issue.created_at || '',
+    external_ref: issue.external_ref || null,
+    depends_on,
+    blocked_by,
+  };
+}
+
+function enrichWithDeps(issues, dbPath) {
+  const needDeps = issues.filter((i) => i.dependency_count > 0);
+  if (needDeps.length === 0) {
+    return issues.map((i) => transformIssue(i, []));
+  }
+  const detailed = runBd(['show', ...needDeps.map((i) => i.id)], dbPath);
+  const depMap = new Map(detailed.map((d) => [d.id, d.dependencies || []]));
+  return issues.map((i) => transformIssue(i, depMap.get(i.id) || []));
+}
 
 export function dbExists(beadsDb) {
   return existsSync(beadsDb);
 }
 
 export function listIssues(beadsDb) {
-  let db;
   try {
-    db = new Database(beadsDb, { readonly: true, fileMustExist: true });
-    const rows = db
-      .prepare(
-        `SELECT id, title, description AS body, status, priority, created_at, external_ref
-       FROM issues
-       WHERE status NOT IN ('closed','tombstone')
-       ORDER BY priority ASC, id ASC`,
-      )
-      .all();
-
-    const depStmt = db.prepare(
-      `SELECT depends_on_id FROM dependencies WHERE issue_id = ?`,
-    );
-    const statusMap = new Map(rows.map((r) => [r.id, r.status]));
-
-    return rows.map((row) => {
-      const depends_on = depStmt.all(row.id).map((d) => d.depends_on_id);
-      const blocked_by = depends_on.filter((depId) => statusMap.has(depId));
-      return { ...row, depends_on, blocked_by };
-    });
+    const issues = runBd(['list', '--limit', '0'], beadsDb);
+    return enrichWithDeps(issues, beadsDb);
   } catch {
     return [];
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      /* ignore */
-    }
   }
 }
 
 export function listIssuesByLabel(beadsDb, label) {
-  let db;
   try {
-    db = new Database(beadsDb, { readonly: true, fileMustExist: true });
-    const rows = db
-      .prepare(
-        `SELECT i.id, i.title, i.description AS body, i.status, i.priority, i.created_at
-       FROM issues i
-       JOIN labels l ON l.issue_id = i.id
-       WHERE l.label = ?
-       ORDER BY i.priority ASC, i.id ASC`,
-      )
-      .all(label);
-
-    const depStmt = db.prepare(
-      `SELECT depends_on_id FROM dependencies WHERE issue_id = ?`,
+    const issues = runBd(
+      ['list', '--label-any', label, '--all', '--limit', '0'],
+      beadsDb,
     );
-    const statusMap = new Map(rows.map((r) => [r.id, r.status]));
-
-    return rows.map((row) => {
-      const depends_on = depStmt.all(row.id).map((d) => d.depends_on_id);
-      const blocked_by = depends_on.filter((depId) => {
-        const s = statusMap.get(depId);
-        return s && s !== 'closed';
-      });
-      return { ...row, depends_on, blocked_by };
-    });
+    return enrichWithDeps(issues, beadsDb);
   } catch {
     return [];
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      /* ignore */
-    }
   }
 }
 
 export function listUnlinkedIssues(beadsDb) {
-  let db;
   try {
-    db = new Database(beadsDb, { readonly: true, fileMustExist: true });
-    const rows = db
-      .prepare(
-        `SELECT i.id, i.title, i.description AS body, i.status, i.priority, i.created_at
-       FROM issues i
-       WHERE NOT EXISTS (
-         SELECT 1 FROM labels l WHERE l.issue_id = i.id AND l.label LIKE 'run:%'
-       )
-       AND i.status NOT IN ('closed','tombstone')
-       ORDER BY i.priority ASC, i.id ASC`,
-      )
-      .all();
-
-    const depStmt = db.prepare(
-      `SELECT depends_on_id FROM dependencies WHERE issue_id = ?`,
-    );
-    const statusMap = new Map(rows.map((r) => [r.id, r.status]));
-
-    return rows.map((row) => {
-      const depends_on = depStmt.all(row.id).map((d) => d.depends_on_id);
-      const blocked_by = depends_on.filter((depId) => statusMap.has(depId));
-      return { ...row, depends_on, blocked_by };
+    const issues = runBd(['list', '--limit', '0'], beadsDb);
+    if (issues.length === 0) return [];
+    // bd list doesn't include labels — use bd show to get them
+    const detailed = runBd(['show', ...issues.map((i) => i.id)], beadsDb);
+    const detailMap = new Map(detailed.map((d) => [d.id, d]));
+    const unlinked = issues.filter((i) => {
+      const d = detailMap.get(i.id);
+      const labels = d?.labels || [];
+      return !labels.some((l) => l.startsWith('run:'));
+    });
+    // detailed already has dependencies, use them directly
+    return unlinked.map((i) => {
+      const d = detailMap.get(i.id);
+      return transformIssue(i, d?.dependencies || []);
     });
   } catch {
     return [];
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      /* ignore */
-    }
   }
 }
 
 export function countIssuesByRunLabel(beadsDb) {
-  let db;
   try {
-    db = new Database(beadsDb, { readonly: true, fileMustExist: true });
-    const rows = db
-      .prepare(
-        `SELECT l.label, COUNT(*) AS count FROM labels l
-       WHERE l.label LIKE 'run:%' GROUP BY l.label`,
-      )
-      .all();
+    const rows = runBd(['label', 'list-all'], beadsDb);
     const counts = {};
     for (const row of rows) {
-      const runId = row.label.replace('run:', '');
-      counts[runId] = row.count;
+      if (row.label.startsWith('run:')) {
+        counts[row.label.replace('run:', '')] = row.count;
+      }
     }
     return counts;
   } catch {
     return {};
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      /* ignore */
-    }
   }
 }
 
 export function listDistinctRunLabels(beadsDb) {
-  let db;
   try {
-    db = new Database(beadsDb, { readonly: true, fileMustExist: true });
-    const rows = db
-      .prepare(`SELECT DISTINCT label FROM labels WHERE label LIKE 'run:%'`)
-      .all();
-    return rows.map((r) => r.label);
+    const rows = runBd(['label', 'list-all'], beadsDb);
+    return rows.filter((r) => r.label.startsWith('run:')).map((r) => r.label);
   } catch {
     return [];
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      /* ignore */
-    }
   }
 }
 
 export function getIssue(beadsDb, id) {
-  let db;
   try {
-    db = new Database(beadsDb, { readonly: true, fileMustExist: true });
-    const row = db
-      .prepare(
-        `SELECT id, title, description AS body, status, priority, created_at, external_ref
-       FROM issues WHERE id = ?`,
-      )
-      .get(id);
-    if (!row) return null;
-
-    const depends_on = db
-      .prepare(`SELECT depends_on_id FROM dependencies WHERE issue_id = ?`)
-      .all(id)
-      .map((d) => d.depends_on_id);
-
-    const blocked_by = [];
-    for (const depId of depends_on) {
-      const dep = db
-        .prepare(`SELECT status FROM issues WHERE id = ?`)
-        .get(depId);
-      if (dep && dep.status !== 'closed' && dep.status !== 'tombstone') {
-        blocked_by.push(depId);
-      }
-    }
-    return { ...row, depends_on, blocked_by };
+    const results = runBd(['show', id], beadsDb);
+    if (!results || results.length === 0) return null;
+    const issue = results[0];
+    return transformIssue(issue, issue.dependencies || []);
   } catch {
     return null;
-  } finally {
-    try {
-      db?.close();
-    } catch {
-      /* ignore */
-    }
   }
 }
