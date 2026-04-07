@@ -552,7 +552,7 @@ export function createMessageRouter({
         ws.send(JSON.stringify(makeOk(req, { issues: [], dbExists: false })));
         return;
       }
-      const issues = listUnlinkedIssues(beadsDbPath);
+      const issues = await listUnlinkedIssues(beadsDbPath);
       ws.send(JSON.stringify(makeOk(req, { issues, dbExists: true })));
       return;
     }
@@ -569,7 +569,7 @@ export function createMessageRouter({
         ws.send(JSON.stringify(makeOk(req, { refs: [] })));
         return;
       }
-      const refs = listDistinctRunLabels(beadsDbPath);
+      const refs = await listDistinctRunLabels(beadsDbPath);
       ws.send(JSON.stringify(makeOk(req, { refs })));
       return;
     }
@@ -586,7 +586,7 @@ export function createMessageRouter({
         ws.send(JSON.stringify(makeOk(req, { counts: {} })));
         return;
       }
-      const counts = countIssuesByRunLabel(beadsDbPath);
+      const counts = await countIssuesByRunLabel(beadsDbPath);
       ws.send(JSON.stringify(makeOk(req, { counts })));
       return;
     }
@@ -612,7 +612,7 @@ export function createMessageRouter({
         ws.send(JSON.stringify(makeOk(req, { issues: [], runId })));
         return;
       }
-      const issues = listIssuesByLabel(beadsDbPath, `run:${runId}`);
+      const issues = await listIssuesByLabel(beadsDbPath, `run:${runId}`);
       ws.send(JSON.stringify(makeOk(req, { issues, runId })));
       return;
     }

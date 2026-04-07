@@ -21,10 +21,10 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
 
   function scheduleBeadsRefresh() {
     if (BEADS_REFRESH_TIMER) clearTimeout(BEADS_REFRESH_TIMER);
-    BEADS_REFRESH_TIMER = setTimeout(() => {
+    BEADS_REFRESH_TIMER = setTimeout(async () => {
       BEADS_REFRESH_TIMER = null;
       try {
-        const issues = listIssues(beadsDbPath);
+        const issues = await listIssues(beadsDbPath);
         broadcaster.broadcast(
           'beads-update',
           {

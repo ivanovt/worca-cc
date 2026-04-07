@@ -1251,7 +1251,7 @@ export function createProjectScopedRoutes() {
   });
 
   // ─── Beads (project-scoped) ─────────────────────────────────────────
-  router.get('/beads/issues', requireWorcaDir, (req, res) => {
+  router.get('/beads/issues', requireWorcaDir, async (req, res) => {
     const beadsDbPath = join(req.project.worcaDir, '..', '.beads', 'beads.db');
     if (!dbExists(beadsDbPath)) {
       return res.json({
@@ -1262,7 +1262,7 @@ export function createProjectScopedRoutes() {
       });
     }
     try {
-      const issues = listIssues(beadsDbPath);
+      const issues = await listIssues(beadsDbPath);
       res.json({ ok: true, issues, dbExists: true, dbPath: beadsDbPath });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
@@ -1277,7 +1277,7 @@ export function createProjectScopedRoutes() {
         .json({ ok: false, error: 'Issue ID must be a positive integer' });
     }
     const beadsDbPath = join(req.project.worcaDir, '..', '.beads', 'beads.db');
-    const issue = getIssue(beadsDbPath, issueId);
+    const issue = await getIssue(beadsDbPath, issueId);
     if (!issue) {
       return res
         .status(404)
