@@ -59,11 +59,11 @@ const DEFAULT_STAGES = {
 
 export const PRICING_MODELS = ['opus', 'sonnet', 'haiku'];
 export const PRICING_FIELDS = [
-  { key: 'input_per_mtok', label: 'Input/MTok' },
-  { key: 'output_per_mtok', label: 'Output/MTok' },
-  { key: 'cache_write_per_mtok', label: 'Cache Write 5m/MTok' },
-  { key: 'cache_write_1h_per_mtok', label: 'Cache Write 1h/MTok' },
-  { key: 'cache_read_per_mtok', label: 'Cache Read/MTok' },
+  { key: 'input_per_mtok', label: 'Input/MTok ($)' },
+  { key: 'output_per_mtok', label: 'Output/MTok ($)' },
+  { key: 'cache_write_per_mtok', label: 'Cache Write 5m/MTok ($)' },
+  { key: 'cache_write_1h_per_mtok', label: 'Cache Write 1h/MTok ($)' },
+  { key: 'cache_read_per_mtok', label: 'Cache Read/MTok ($)' },
 ];
 export const DEFAULT_PRICING = {
   models: {
@@ -928,6 +928,7 @@ function pricingTab(worca, rerender) {
                     (f) => html`
                     <td>
                       <sl-input
+                        class="pricing-input"
                         id="pricing-${model}-${f.key}"
                         type="number"
                         step="0.01"
@@ -945,30 +946,45 @@ function pricingTab(worca, rerender) {
         </table>
       </div>
 
-      <h3 class="settings-section-title">Server Tools</h3>
-      <div class="settings-grid">
-        <div class="settings-field">
-          <label class="settings-label">Web Search / request ($)</label>
-          <sl-input
-            id="pricing-server_tools-web_search_per_request"
-            type="number"
-            step="0.001"
-            min="0"
-            value="${serverTools.web_search_per_request ?? 0.01}"
-            size="small"
-          ></sl-input>
-        </div>
-        <div class="settings-field">
-          <label class="settings-label">Web Fetch / request ($)</label>
-          <sl-input
-            id="pricing-server_tools-web_fetch_per_request"
-            type="number"
-            step="0.001"
-            min="0"
-            value="${serverTools.web_fetch_per_request ?? 0.01}"
-            size="small"
-          ></sl-input>
-        </div>
+      <div class="pricing-table-wrap">
+        <table class="pricing-table pricing-table--auto">
+          <thead>
+            <tr>
+              <th>Server Tools</th>
+              <th>Request ($)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="pricing-model-name">Web Search</td>
+              <td>
+                <sl-input
+                  class="pricing-input"
+                  id="pricing-server_tools-web_search_per_request"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value="${serverTools.web_search_per_request ?? 0.01}"
+                  size="small"
+                ></sl-input>
+              </td>
+            </tr>
+            <tr>
+              <td class="pricing-model-name">Web Fetch</td>
+              <td>
+                <sl-input
+                  class="pricing-input"
+                  id="pricing-server_tools-web_fetch_per_request"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value="${serverTools.web_fetch_per_request ?? 0.01}"
+                  size="small"
+                ></sl-input>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </div>
 
       <div class="pricing-info">
