@@ -1,11 +1,22 @@
 # W-016: Pipeline Templates
 
+**Goal:** Eliminate repetitive pipeline reconfiguration by introducing named templates that capture complete pipeline profiles — stage configuration, agent tuning, loop limits, budget controls, and optional agent prompt overrides. Templates are selectable from both the CLI (`worca run --template`) and the UI ("New Run" dialog), and can be managed via `worca templates` subcommands or the Settings UI.
 
-**Goal:** Eliminate repetitive pipeline reconfiguration by introducing named templates that capture complete `worca` pipeline configurations. Users pick a template when starting a new run, can save their current settings as a custom template, and can manage their template library from the Settings UI.
+**Architecture:** Templates follow worca's three-tier resolution model:
 
-**Architecture:** Templates are stored as JSON files in `.claude/templates/`. Four built-in preset templates ship with worca. The Express server exposes a `GET/POST/DELETE /api/templates` REST API. The settings UI gains a "Templates" tab for management. The "New Run" dialog (added in W-009) gains a template picker that applies a template's settings to `settings.json` transiently before spawning the pipeline, without permanently overwriting user settings.
+| Tier | Location | Purpose | Tracked in git? |
+|------|----------|---------|-----------------|
+| **Package built-ins** | `src/worca/templates/{id}/` | Ship with `pip install worca-cc` | Yes (source repo) |
+| **Project templates** | `.claude/templates/{id}/` | Team-shared, project-specific | Yes |
+| **User templates** | `~/.worca/templates/{id}/` | Personal, cross-project | No |
 
-**Tech Stack:** Node.js `fs` for template file I/O, Express REST API, lit-html, Shoelace `sl-select` / `sl-dialog` / `sl-card` / `sl-badge` components, existing `GET/POST /api/settings` infrastructure.
+Resolution priority: user > project > built-in (most specific wins on ID collision).
+
+Each template is a directory containing a `template.json` config file and an optional `agents/` subdirectory with prompt overlay files. When a template is applied, the entire template directory is copied into the run's results folder (`.worca/runs/{run_id}/template/`) to provide a complete trace of the exact configuration used.
+
+Core template logic lives in Python (`src/worca/orchestrator/templates.py`), with the UI server's `template-manager.js` acting as a thin REST adapter.
+
+**Tech Stack:** Python `pathlib`/`shutil` for template resolution and file I/O, Express REST API for the UI layer, lit-html + Shoelace for UI components.
 
 **Depends on:** W-009 Pipeline Control Actions (the "New Run" dialog and `POST /api/runs` endpoint must already exist).
 
@@ -14,32 +25,141 @@
 ## 1. Scope and Boundaries
 
 ### In scope
-- Template JSON format and schema (stages, agents, loops, milestones)
-- Four built-in preset templates shipped as static files: `bugfix`, `feature`, `refactor`, `quick-fix`
-- `GET /api/templates` -- list all templates (built-in + user)
-- `GET /api/templates/:id` -- fetch a single template by ID
-- `POST /api/templates` -- save a new user template (or overwrite existing user template)
-- `DELETE /api/templates/:id` -- delete a user template (built-ins are read-only)
-- "Templates" tab in Settings UI for browsing, previewing, and deleting templates
+- Template directory format and schema (`template.json` + optional `agents/*.md` overlays)
+- Three-tier template resolution (package → project → user)
+- Four built-in preset templates shipped with the package: `bugfix`, `feature`, `refactor`, `quick-fix`
+- Python `TemplateResolver` class as the source of truth for template operations
+- CLI integration: `worca templates list|show|save|delete`, `worca run --template`
+- Template parameters (`params`) with defaults and enum constraints
+- Deep-merge config application (partial overrides, not wholesale replacement)
+- Full template snapshot in run results (`.worca/runs/{run_id}/template/`)
+- REST API: `GET/POST/DELETE /api/templates` (thin wrapper around Python resolver)
+- Settings UI "Templates" tab for browsing, previewing, and deleting templates
 - "Save as Template" action on the Settings > Pipeline tab
-- Template picker in the "New Run" dialog (optional, collapses if no templates exist)
-- Template application: write a merged settings payload to `settings.json` before pipeline start, then restore after pipeline completes
-- Template application approach: template values are merged into the existing `worca` config for the run, reverting automatically after the run ends
+- Template picker in the "New Run" dialog
 
 ### Out of scope
 - Template versioning or history
 - Template sharing / export to remote registries
-- Per-agent prompt customization in templates (future work)
-- Template inheritance or composition
+- Template inheritance or composition (each template is self-contained)
 - Authentication or access control (single-user local tool)
 
 ---
 
-## 2. Template JSON Format
+## 2. Template Directory Format
 
-Templates are stored as JSON files under `.claude/templates/`. Built-in presets live at `.claude/templates/builtin/`. User-created templates live at `.claude/templates/user/`.
+Each template is a directory (not a single file), enabling bundled agent prompt overrides alongside config.
 
-### Schema
+### Directory structure
+
+```
+templates/
+  {template-id}/
+    template.json          # Required: metadata + config overrides
+    agents/                # Optional: agent prompt overlays
+      guardian.md           #   merged via OverlayResolver at runtime
+      implementer.md        #   supports <!-- append --> and <!-- replace --> modes
+```
+
+### `template.json` schema
+
+```json
+{
+  "id": "security-audit",
+  "name": "Security Audit",
+  "description": "Full pipeline with hardened review and custom guardian checklist.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["security", "full-pipeline"],
+  "params": {
+    "severity_threshold": {
+      "description": "Minimum severity to flag in review",
+      "default": "medium",
+      "enum": ["low", "medium", "high", "critical"]
+    }
+  },
+  "config": {
+    "stages": {
+      "plan": { "enabled": false }
+    },
+    "agents": {
+      "guardian": { "model": "opus", "max_turns": 100 }
+    },
+    "loops": {
+      "implement_test": 10
+    },
+    "milestones": {
+      "plan_approval": false,
+      "pr_approval": true
+    },
+    "circuit_breaker": {
+      "max_consecutive_failures": 1
+    },
+    "budget": {
+      "max_cost_usd": 100
+    }
+  }
+}
+```
+
+### Field definitions
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | string | yes | URL-safe identifier, unique within its tier. Max 64 chars, `[a-z0-9\-]` only. |
+| `name` | string | yes | Human-readable display name. Max 80 chars. |
+| `description` | string | yes | One or two sentences explaining when to use this template. Max 500 chars. |
+| `builtin` | boolean | yes | `true` for shipped presets, `false` for user/project-created. |
+| `created_at` | ISO 8601 | yes | Creation timestamp. |
+| `tags` | string[] | no | Short labels shown as badges. Max 5 tags, 20 chars each. |
+| `params` | object | no | Template parameters. Keys are param names; values have `description` (string), `default` (any), and optional `enum` (array). |
+| `config` | object | yes | Partial subset of `worca.*` settings. Any key valid in the `worca` namespace of `settings.json` can appear here: `stages`, `agents`, `loops`, `milestones`, `circuit_breaker`, `budget`, `governance`, etc. |
+
+### Config merge rules (deep merge)
+
+When a template is applied, its `config` is **deep-merged** into the current `worca` settings:
+
+- Object keys are merged recursively: only specified keys are overridden, unspecified keys are preserved from the base settings.
+- Scalar values in the template replace the corresponding base value.
+- To wholesale-replace an object key (instead of merging), use the `"__replace__": true` sentinel:
+
+```json
+{
+  "config": {
+    "agents": {
+      "__replace__": true,
+      "implementer": { "model": "opus", "max_turns": 500 }
+    }
+  }
+}
+```
+
+This means a template only needs to specify the settings it wants to change. A bugfix template that only disables `plan` and `coordinate` stages doesn't need to repeat the entire `stages` object.
+
+### Agent prompt overlays
+
+Files in `{template-dir}/agents/{agent_name}.md` are processed by the existing `OverlayResolver`:
+
+- `<!-- append -->` mode: sections merge into the core agent prompt (can use `## Override: {section}` blocks)
+- `<!-- replace -->` mode (or no tag): replaces the core prompt entirely
+
+Template overlays are applied **after** any project-level overlays from `.claude/agents/`. The resolution chain is:
+
+1. Core agent prompt (`src/worca/agents/core/{agent}.md`)
+2. Project overlay (`.claude/agents/{agent}.md`)
+3. Template overlay (`{template-dir}/agents/{agent}.md`)
+
+Template `params` are rendered into overlay content as `{{param_name}}` placeholders before overlay resolution.
+
+---
+
+## 3. Preset Templates
+
+### 3.1 `bugfix` -- Bugfix
+
+**Directory:** `src/worca/templates/bugfix/`
+
+**Use when:** The bug is understood, reproduction is clear, and the fix is localized. No planning or task decomposition needed.
 
 ```json
 {
@@ -51,156 +171,347 @@ Templates are stored as JSON files under `.claude/templates/`. Built-in presets 
   "tags": ["fast", "no-plan"],
   "config": {
     "stages": {
-      "plan":       { "agent": "planner",     "enabled": false },
-      "coordinate": { "agent": "coordinator", "enabled": false },
-      "implement":  { "agent": "implementer", "enabled": true  },
-      "test":       { "agent": "tester",      "enabled": true  },
-      "review":     { "agent": "guardian",    "enabled": true  },
-      "pr":         { "agent": "guardian",    "enabled": true  }
-    },
-    "agents": {
-      "planner":     { "model": "opus",   "max_turns": 100 },
-      "coordinator": { "model": "opus",   "max_turns": 300 },
-      "implementer": { "model": "sonnet", "max_turns": 300 },
-      "tester":      { "model": "sonnet", "max_turns": 100 },
-      "guardian":    { "model": "opus",   "max_turns": 50  }
+      "plan":       { "enabled": false },
+      "coordinate": { "enabled": false }
     },
     "loops": {
-      "implement_test":    5,
-      "code_review":       3,
-      "pr_changes":        2,
-      "restart_planning":  1
+      "implement_test": 5,
+      "pr_changes": 2
     },
     "milestones": {
-      "plan_approval":   false,
-      "pr_approval":     true,
+      "plan_approval": false,
+      "pr_approval": true,
       "deploy_approval": false
     }
   }
 }
 ```
 
-### Field definitions
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `id` | string | yes | URL-safe identifier, unique within its scope (builtin or user). Max 64 chars, `[a-z0-9\-]` only. |
-| `name` | string | yes | Human-readable display name. Max 80 chars. |
-| `description` | string | yes | One or two sentences explaining when to use this template. Max 500 chars. |
-| `builtin` | boolean | yes | `true` for shipped presets, `false` for user-created. |
-| `created_at` | ISO 8601 | yes | Creation timestamp. |
-| `tags` | string[] | no | Short labels shown as badges. Max 5 tags, 20 chars each. |
-| `config` | object | yes | Subset of the `worca` namespace from `settings.json`. Only `stages`, `agents`, `loops`, and `milestones` are included. `governance`, `pricing`, `plan_path_template` are excluded. |
-
-### Config merging rules
-
-When a template is applied, its `config` is deep-merged into the current `worca` settings. Excluded fields (`governance`, `pricing`, `plan_path_template`) are left untouched. The merge is shallow per sub-key: `config.stages` replaces `worca.stages` wholesale; `config.agents` replaces `worca.agents` wholesale; etc.
-
-This means a template must specify all stages and agents it wants to control -- partial stage configs are not supported. The merger in `template-manager.js` applies the template's `config` as a complete replacement of those four sub-keys.
-
----
-
-## 3. Preset Templates
-
-### 3.1 `bugfix` -- Bugfix
-
-**File:** `.claude/templates/builtin/bugfix.json`
-
-**Use when:** The bug is understood, reproduction is clear, and the fix is localized. No planning or task decomposition needed.
-
-| Setting | Value |
-|---------|-------|
-| plan | disabled |
-| coordinate | disabled |
-| implement | enabled, sonnet, 300 turns |
-| test | enabled, sonnet, 100 turns |
-| review | enabled, opus, 50 turns |
-| pr | enabled, opus, 50 turns |
-| implement_test loops | 5 |
-| pr_changes loops | 2 |
-| plan_approval | false |
-| pr_approval | true |
-
-Tags: `fast`, `no-plan`
-
 ### 3.2 `feature` -- Feature Development
 
-**File:** `.claude/templates/builtin/feature.json`
+**Directory:** `src/worca/templates/feature/`
 
 **Use when:** Implementing a new user-facing feature that requires planning, task breakdown, and a full review cycle.
 
-| Setting | Value |
-|---------|-------|
-| plan | enabled, opus, 100 turns |
-| coordinate | enabled, opus, 300 turns |
-| implement | enabled, sonnet, 300 turns |
-| test | enabled, sonnet, 100 turns |
-| review | enabled, opus, 50 turns |
-| pr | enabled, opus, 50 turns |
-| implement_test loops | 10 |
-| code_review loops | 5 |
-| pr_changes loops | 3 |
-| restart_planning loops | 2 |
-| plan_approval | true |
-| pr_approval | true |
-| deploy_approval | true |
-
-Tags: `full-pipeline`, `requires-approval`
+```json
+{
+  "id": "feature",
+  "name": "Feature Development",
+  "description": "Full pipeline with planning, coordination, implementation, testing, review, and PR. Best for new features that require architectural decisions.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["full-pipeline", "requires-approval"],
+  "config": {
+    "loops": {
+      "implement_test": 10,
+      "pr_changes": 3,
+      "restart_planning": 2
+    },
+    "milestones": {
+      "plan_approval": true,
+      "pr_approval": true,
+      "deploy_approval": true
+    }
+  }
+}
+```
 
 ### 3.3 `refactor` -- Refactor
 
-**File:** `.claude/templates/builtin/refactor.json`
+**Directory:** `src/worca/templates/refactor/`
 
 **Use when:** Restructuring existing code without changing behavior. Plan is needed for coordination, but no PR is created -- the branch is ready for manual review.
 
-| Setting | Value |
-|---------|-------|
-| plan | enabled, opus, 100 turns |
-| coordinate | enabled, opus, 300 turns |
-| implement | enabled, sonnet, 300 turns |
-| test | enabled, sonnet, 100 turns |
-| review | enabled, opus, 50 turns |
-| pr | disabled |
-| implement_test loops | 10 |
-| code_review loops | 8 |
-| pr_changes loops | 0 |
-| restart_planning loops | 2 |
-| plan_approval | true |
-| pr_approval | false |
-| deploy_approval | false |
-
-Tags: `no-pr`, `extra-test`
+```json
+{
+  "id": "refactor",
+  "name": "Refactor",
+  "description": "Full pipeline without PR creation. Focuses on restructuring code with extra test iterations. Branch is left ready for manual review.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["no-pr", "extra-test"],
+  "config": {
+    "stages": {
+      "pr": { "enabled": false }
+    },
+    "loops": {
+      "implement_test": 10,
+      "pr_changes": 0,
+      "restart_planning": 2
+    },
+    "milestones": {
+      "plan_approval": true,
+      "pr_approval": false,
+      "deploy_approval": false
+    }
+  }
+}
+```
 
 ### 3.4 `quick-fix` -- Quick Fix
 
-**File:** `.claude/templates/builtin/quick-fix.json`
+**Directory:** `src/worca/templates/quick-fix/`
 
 **Use when:** A trivial one-liner fix, typo correction, or config tweak. Implementer only. No coordination, no review loop. High risk -- use only when the change is obviously safe.
 
-| Setting | Value |
-|---------|-------|
-| plan | disabled |
-| coordinate | disabled |
-| implement | enabled, sonnet, 100 turns |
-| test | disabled |
-| review | disabled |
-| pr | enabled, opus, 50 turns |
-| implement_test loops | 0 |
-| plan_approval | false |
-| pr_approval | false |
-| deploy_approval | false |
-
-Tags: `minimal`, `fast`, `no-review`
+```json
+{
+  "id": "quick-fix",
+  "name": "Quick Fix",
+  "description": "Minimal pipeline: implementer only, no planning, testing, or review. Use only for trivially safe changes like typos or config tweaks.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["minimal", "fast", "no-review"],
+  "config": {
+    "stages": {
+      "plan":       { "enabled": false },
+      "coordinate": { "enabled": false },
+      "test":       { "enabled": false },
+      "review":     { "enabled": false }
+    },
+    "agents": {
+      "implementer": { "max_turns": 100 }
+    },
+    "loops": {
+      "implement_test": 0
+    },
+    "milestones": {
+      "plan_approval": false,
+      "pr_approval": false,
+      "deploy_approval": false
+    }
+  }
+}
+```
 
 ---
 
-## 4. REST API Design
+## 4. Python Template Resolver
+
+### File: `src/worca/orchestrator/templates.py`
+
+The authoritative implementation for all template operations. The UI server delegates to this via subprocess or direct import.
+
+### Classes and functions
+
+```python
+@dataclass
+class TemplateSummary:
+    id: str
+    name: str
+    description: str
+    builtin: bool
+    tags: list[str]
+    created_at: str
+    tier: str  # "builtin" | "project" | "user"
+
+@dataclass
+class Template:
+    id: str
+    name: str
+    description: str
+    builtin: bool
+    created_at: str
+    tags: list[str]
+    params: dict          # param definitions
+    config: dict          # partial worca config
+    agents_dir: str | None  # path to agents/ subdirectory (if exists)
+    source_dir: str       # path to the template directory on disk
+    tier: str             # "builtin" | "project" | "user"
+
+class TemplateError(Exception):
+    def __init__(self, message, code, details=None):
+        # code: 'not_found' | 'builtin' | 'builtin_conflict' | 'validation_error' | 'parse_error'
+        ...
+
+class TemplateResolver:
+    def __init__(self, builtin_dir, project_dir, user_dir):
+        """
+        builtin_dir: src/worca/templates/ (from installed package)
+        project_dir: .claude/templates/ (project-local)
+        user_dir:    ~/.worca/templates/ (user-global)
+        """
+
+    def list(self) -> list[TemplateSummary]:
+        """Return all templates across all tiers.
+        Sorted: built-ins first (alpha by id), project (alpha), user (newest first).
+        If an id exists in multiple tiers, only the highest-priority one is returned.
+        """
+
+    def get(self, template_id: str) -> Template | None:
+        """Fetch a template by ID. Searches user > project > builtin."""
+
+    def apply(self, template_id: str, current_worca: dict, params: dict | None = None) -> dict:
+        """Deep-merge template config into current worca settings.
+        Resolves params, returns merged dict. Does not mutate inputs.
+        """
+
+    def snapshot_to_run(self, template_id: str, run_dir: str, params: dict | None = None):
+        """Copy entire template directory to {run_dir}/template/ for traceability.
+        Also writes a resolved-params.json with the param values used.
+        """
+
+    def save(self, template_data: dict, scope: str = "project") -> Template:
+        """Save a new template. scope is 'project' or 'user'.
+        Validates all fields. Raises TemplateError on failure.
+        Cannot use a built-in id.
+        Creates {scope_dir}/{id}/ directory and writes template.json.
+        """
+
+    def delete(self, template_id: str, scope: str = "project") -> bool:
+        """Delete a template directory. Cannot delete built-ins.
+        Raises TemplateError with appropriate code on failure.
+        """
+```
+
+### Deep-merge implementation
+
+```python
+def deep_merge_config(base: dict, overlay: dict) -> dict:
+    """Deep-merge overlay into base. Overlay values win for scalars.
+    Dicts are merged recursively unless overlay has '__replace__': True,
+    in which case the overlay replaces the base key wholesale.
+    """
+    result = base.copy()
+    for key, value in overlay.items():
+        if key == "__replace__":
+            continue
+        if isinstance(value, dict) and not value.get("__replace__"):
+            if key in result and isinstance(result[key], dict):
+                result[key] = deep_merge_config(result[key], value)
+            else:
+                clean = {k: v for k, v in value.items() if k != "__replace__"}
+                result[key] = clean
+        else:
+            if isinstance(value, dict):
+                result[key] = {k: v for k, v in value.items() if k != "__replace__"}
+            else:
+                result[key] = value
+    return result
+```
+
+### Param rendering
+
+```python
+def render_params(content: str, params: dict, param_defs: dict) -> str:
+    """Replace {{param_name}} placeholders in content with resolved values.
+    Uses param_defs for defaults; params dict overrides defaults.
+    Raises TemplateError if a required param without a default is missing.
+    """
+```
+
+### Agent overlay chain
+
+When a template with an `agents/` dir is active, the `OverlayResolver` chain becomes:
+
+1. Core prompt → `.claude/agents/{agent}.md` overlay → template `agents/{agent}.md` overlay
+
+The runner passes the template's `agents_dir` to `OverlayResolver` as a secondary overlay source.
+
+---
+
+## 5. CLI Integration
+
+### File: `src/worca/cli/templates.py` (new)
+
+New `worca templates` subcommand group, registered in `cli/main.py`.
+
+```bash
+# List all templates across all tiers
+worca templates list
+# Output:
+#   ID            NAME                 TIER      TAGS
+#   bugfix        Bugfix               builtin   fast, no-plan
+#   feature       Feature Development  builtin   full-pipeline, requires-approval
+#   refactor      Refactor             builtin   no-pr, extra-test
+#   quick-fix     Quick Fix            builtin   minimal, fast, no-review
+#   my-fast       My Fast Run          project   custom
+
+# Show template details
+worca templates show bugfix
+# Output: full template.json content, formatted
+
+# Save current settings as a project template
+worca templates save my-fast --description "Quick iterations, no review"
+
+# Save as a user-global template
+worca templates save my-fast --global --description "Quick iterations"
+
+# Delete a template
+worca templates delete my-fast
+worca templates delete my-fast --global
+```
+
+### Run with template
+
+Extend `run_pipeline.py` argument parser:
+
+```python
+parser.add_argument("--template", help="Template ID to apply before running")
+parser.add_argument("--param", action="append", metavar="KEY=VALUE",
+                    help="Template parameter override (repeatable)")
+```
+
+In `build_work_request()` / pipeline launch:
+
+1. If `--template` is provided, resolve the template via `TemplateResolver`
+2. Deep-merge template config into loaded settings
+3. Copy template directory to `{status_dir}/runs/{run_id}/template/`
+4. Write `resolved-params.json` alongside
+5. If template has `agents/` dir, configure overlay chain
+6. Pass merged settings to `run_pipeline()`
+
+---
+
+## 6. Run Traceability
+
+When a template is used for a run, the **entire template directory** is copied into the run results:
+
+```
+.worca/runs/{run_id}/
+  status.json
+  settings.json              # Full merged settings used for this run
+  template/                  # Complete template snapshot
+    template.json             # Template config as it was at run time
+    agents/                   # Agent overlays (if any)
+      guardian.md
+      implementer.md
+    resolved-params.json      # Actual param values used
+  logs/
+    ...
+```
+
+This provides:
+- **Full reproducibility:** the exact config that produced a given run is always available
+- **Auditability:** diff two runs' `template/` dirs to see what changed
+- **Debugging:** if a run fails, inspect the template snapshot alongside the logs
+
+The `snapshot_to_run()` method handles this copy. It also writes a `resolved-params.json`:
+
+```json
+{
+  "template_id": "security-audit",
+  "template_tier": "project",
+  "params": {
+    "severity_threshold": "critical"
+  },
+  "snapshot_at": "2026-04-07T10:30:00Z"
+}
+```
+
+When no template is used, the `template/` subdirectory is absent — the run's `settings.json` (which is always written) serves as the sole config record.
+
+---
+
+## 7. REST API Design
 
 All endpoints are prefixed `/api/`. Responses follow the existing convention `{ ok: true, ...data }` on success, `{ ok: false, error: string }` on failure.
 
+The JS server delegates to the Python `TemplateResolver` via a helper that instantiates it with the correct directory paths.
+
 ### `GET /api/templates`
 
-Return all available templates (built-in + user), sorted: built-ins first (by id), then user templates (by `created_at` descending).
+Return all available templates across all tiers, deduplicated by ID (highest-priority tier wins).
 
 **Response:**
 ```json
@@ -213,6 +524,7 @@ Return all available templates (built-in + user), sorted: built-ins first (by id
       "description": "...",
       "builtin": true,
       "tags": ["fast", "no-plan"],
+      "tier": "builtin",
       "created_at": "2026-03-10T00:00:00Z"
     }
   ]
@@ -223,7 +535,7 @@ Note: The `config` field is omitted from the list response for brevity. Use `GET
 
 ### `GET /api/templates/:id`
 
-Fetch a single template by ID. Searches builtin first, then user.
+Fetch a single template by ID.
 
 **Response on success:**
 ```json
@@ -237,7 +549,7 @@ HTTP 404: { "ok": false, "error": "Template 'xyz' not found" }
 
 ### `POST /api/templates`
 
-Create or replace a user template. Built-in templates cannot be overwritten via this endpoint (reject if `id` matches a built-in).
+Create or replace a project-scope template. Built-in templates cannot be overwritten.
 
 **Request body:**
 ```json
@@ -246,7 +558,7 @@ Create or replace a user template. Built-in templates cannot be overwritten via 
   "name": "My Fast Run",
   "description": "Custom template for quick iterations.",
   "tags": ["custom"],
-  "config": { ...stages, agents, loops, milestones... }
+  "config": { ... }
 }
 ```
 
@@ -255,8 +567,8 @@ Create or replace a user template. Built-in templates cannot be overwritten via 
 - `name` must be non-empty string, max 80 chars
 - `description` must be non-empty string, max 500 chars
 - `tags` optional, max 5 entries, each max 20 chars, each matching `[a-z0-9\-]`
-- `config` must be an object; sub-keys `stages`, `agents`, `loops`, `milestones` validated individually (same rules as the existing `POST /api/settings` validator)
-- Cannot use a `builtin` id (`bugfix`, `feature`, `refactor`, `quick-fix`)
+- `config` must be an object; validated as a partial `worca` config
+- Cannot use a built-in id
 
 **Response on success:**
 ```json
@@ -275,7 +587,7 @@ HTTP 409: { "ok": false, "error": "Cannot overwrite built-in template 'bugfix'" 
 
 ### `DELETE /api/templates/:id`
 
-Delete a user template. Built-in templates cannot be deleted.
+Delete a project-scope template. Built-in templates cannot be deleted.
 
 **Response on success:**
 ```json
@@ -292,827 +604,386 @@ HTTP 403: { "ok": false, "error": "Cannot delete built-in template" }
 HTTP 404: { "ok": false, "error": "Template 'xyz' not found" }
 ```
 
----
+### Extension to `POST /api/runs`
 
-## 5. Template Application Logic
+The `POST /api/runs` endpoint accepts optional `templateId` and `params` fields:
 
-When a user picks a template in the "New Run" dialog and submits the form, the frontend sends both the template ID and the standard run parameters to `POST /api/runs`. The server-side template application works as follows:
-
-### Run-scoped config override (server-side)
-
-The `POST /api/runs` endpoint is extended to accept an optional `templateId` field. When present:
-
-1. Load the template via `templateManager.getTemplate(templateId)`
-2. Read current `settings.json`
-3. Merge `template.config` into the `worca` section using `applyTemplateConfig(currentWorca, templateConfig)`, producing a merged `worca` object
-4. Write a temporary settings file to `{worcaDir}/runs/{runId}/settings-override.json` containing the full settings JSON with the merged worca section
-5. Spawn `run_pipeline.py` with `--settings {runId}/settings-override.json` instead of the default `.claude/settings.json`
-6. The override file lives only in the run's directory and is naturally cleaned up when the run is archived
-
-This approach keeps the user's persistent `settings.json` untouched. The pipeline's `runner.py` already accepts `settings_path` as a parameter and passes it through to all sub-calls (`get_stage_config`, `get_enabled_stages`, `check_loop_limit`), so no changes to runner logic are needed.
-
-### `applyTemplateConfig(currentWorca, templateConfig)` merge function
-
-```javascript
-function applyTemplateConfig(currentWorca, templateConfig) {
-  return {
-    ...currentWorca,
-    ...(templateConfig.stages    && { stages:     templateConfig.stages }),
-    ...(templateConfig.agents    && { agents:     templateConfig.agents }),
-    ...(templateConfig.loops     && { loops:      templateConfig.loops }),
-    ...(templateConfig.milestones && { milestones: templateConfig.milestones }),
-  };
+```json
+{
+  "inputType": "prompt",
+  "inputValue": "Fix login crash",
+  "templateId": "bugfix",
+  "params": {}
 }
 ```
 
-Fields not present in the template config (`governance`, `pricing`, `plan_path_template`) are inherited from the user's current settings.
+When `templateId` is present, the server:
+1. Resolves the template
+2. Deep-merges config into current settings
+3. Writes merged settings to the run directory
+4. Copies the template directory to the run directory
+5. Passes the merged settings path to `run_pipeline.py`
 
 ---
 
-## 6. Implementation Tasks
+## 8. Implementation Tasks
 
-### Task 1: Create Preset Template JSON Files
+### Task 1: Create Python TemplateResolver
 
 **Files to create:**
-- `.claude/templates/builtin/bugfix.json`
-- `.claude/templates/builtin/feature.json`
-- `.claude/templates/builtin/refactor.json`
-- `.claude/templates/builtin/quick-fix.json`
+- `src/worca/orchestrator/templates.py`
 
-Write each preset as a complete JSON object following the schema in Section 2 and the per-template specs in Section 3.
+Implement the `TemplateResolver` class, `TemplateSummary` and `Template` dataclasses, `TemplateError` exception, `deep_merge_config()`, and `render_params()` functions as specified in Section 4.
 
-All four files have `"builtin": true`. The `created_at` field should be set to `2026-03-10T00:00:00Z` for all built-ins (stable, deterministic).
-
-The `id` field in `quick-fix.json` is `"quick-fix"` (hyphen, matching the filename).
-
-No code changes required for this task. The files are consumed by the template manager in Task 2.
+**Key implementation details:**
+- `list()`: scan all three tier directories for subdirectories containing `template.json`, parse each, deduplicate by ID (user > project > builtin)
+- `get()`: search tiers in priority order, return first match
+- `apply()`: load template, render params into agent overlays, deep-merge config into current settings
+- `snapshot_to_run()`: `shutil.copytree()` the template directory into `{run_dir}/template/`, write `resolved-params.json`
+- `save()`: validate fields, create `{scope_dir}/{id}/template.json`, set `builtin: false` and `created_at` to now
+- `delete()`: check not built-in, `shutil.rmtree()` the template directory
+- Tier directory resolution: use `importlib.resources` or `Path(__file__).parent.parent / "templates"` for built-in dir
 
 ---
 
-### Task 2: Create `server/template-manager.js`
+### Task 2: Create Preset Template Directories
 
-**File to create:** `.claude/worca-ui/server/template-manager.js`
+**Directories to create:**
+- `src/worca/templates/bugfix/template.json`
+- `src/worca/templates/feature/template.json`
+- `src/worca/templates/refactor/template.json`
+- `src/worca/templates/quick-fix/template.json`
 
-A stateless module that handles all template file I/O. Consumers call it with explicit directory paths (testable without mocking `process.cwd()`).
+Write each `template.json` as specified in Section 3. No `agents/` subdirectories for the built-in presets (they use default agent prompts).
+
+---
+
+### Task 3: Create Python Tests for TemplateResolver
+
+**File to create:** `tests/test_templates.py`
+
+Test cases using pytest with `tmp_path` fixture:
+
+**`list()`:**
+- Returns built-in templates sorted alphabetically
+- Returns project templates after built-ins
+- Returns user templates, deduplicates by ID (user wins over project, project wins over builtin)
+- Gracefully handles missing tier directories
+- Skips unparseable `template.json` files
+
+**`get()`:**
+- Returns template from highest-priority tier
+- Returns `None` for unknown ID
+- Populates `agents_dir` when `agents/` subdirectory exists
+- Populates `source_dir` with the template directory path
+
+**`apply()`:**
+- Deep-merges template stages into current settings (partial override)
+- Preserves unspecified keys (e.g., `governance` not in template → unchanged)
+- Handles `__replace__` sentinel for wholesale replacement
+- Renders params into config values
+- Returns new dict (does not mutate inputs)
+
+**`snapshot_to_run()`:**
+- Copies entire template directory to `{run_dir}/template/`
+- Writes `resolved-params.json` with param values and metadata
+- Copies `agents/` subdirectory when present
+
+**`save()`:**
+- Creates template directory with `template.json`
+- Sets `builtin: false` and `created_at`
+- Creates tier directory if it doesn't exist
+- Raises `TemplateError(code='builtin_conflict')` for built-in IDs
+- Raises `TemplateError(code='validation_error')` for invalid fields
+- Collects multiple validation errors into `details`
+
+**`delete()`:**
+- Removes template directory
+- Raises `TemplateError(code='not_found')` for missing templates
+- Raises `TemplateError(code='builtin')` for built-in templates
+
+**`deep_merge_config()`:**
+- Merges nested dicts recursively
+- Overlay scalars replace base scalars
+- `__replace__: true` triggers wholesale replacement
+- Returns new dict (no mutation)
+
+---
+
+### Task 4: Add CLI `worca templates` Subcommands
+
+**Files to create:**
+- `src/worca/cli/templates.py`
+
+**File to modify:**
+- `src/worca/cli/main.py` — register the `templates` subcommand group
+
+Subcommands:
+- `worca templates list` — tabular output of all templates
+- `worca templates show <id>` — pretty-printed template.json
+- `worca templates save <id> --description "..." [--global]` — save current settings as template
+- `worca templates delete <id> [--global]` — delete a project or user template
+
+---
+
+### Task 5: Extend `run_pipeline.py` for `--template`
+
+**File to modify:** `src/worca/scripts/run_pipeline.py`
+
+Add `--template` and `--param KEY=VALUE` arguments to `create_parser()`.
+
+In the main execution flow, after loading settings and before calling `run_pipeline()`:
+
+1. If `--template` is provided, instantiate `TemplateResolver` with appropriate dirs
+2. Call `resolver.apply(template_id, worca_settings, params)`
+3. Call `resolver.snapshot_to_run(template_id, run_dir, params)`
+4. If template has `agents_dir`, pass it to `OverlayResolver` as a secondary source
+5. Write merged settings to `{run_dir}/settings.json`
+
+---
+
+### Task 6: Extend OverlayResolver for Template Overlays
+
+**File to modify:** `src/worca/orchestrator/overlay.py`
+
+Add support for a secondary overlay source (template agents dir). The `resolve()` method gains an optional `template_agents_dir` parameter:
+
+```python
+def resolve(self, agent_name: str, rendered_core: str, template_agents_dir: str | None = None) -> str:
+```
+
+Resolution chain:
+1. Apply project overlay (`.claude/agents/{agent}.md`) → intermediate result
+2. Apply template overlay (`{template_agents_dir}/{agent}.md`) → final result
+
+---
+
+### Task 7: Create `server/template-manager.js`
+
+**File to create:** `worca-ui/server/template-manager.js`
+
+A thin adapter that delegates to the Python `TemplateResolver`. Alternatively, a pure JS reimplementation for the subset of operations needed by the REST API (list, get, save, delete, apply).
 
 **Exports:**
 
 ```javascript
-export function listTemplates(builtinDir, userDir)
-// Returns array of template summary objects (id, name, description, builtin, tags, created_at)
-// Sorted: built-ins first (alphabetical by id), then user templates (newest first by created_at)
-// Gracefully handles missing userDir (returns only built-ins)
-
-export function getTemplate(id, builtinDir, userDir)
-// Returns full template object (including config) or null if not found
-// Searches builtinDir first, then userDir
-// Parses and returns parsed JSON; throws TemplateError on malformed JSON
-
-export function saveTemplate(template, userDir)
-// Validates template object; throws TemplateError with details array on validation failure
-// Throws TemplateError with code 'builtin_conflict' if id matches a built-in id
-// Writes to {userDir}/{template.id}.json
-// Returns the saved template object with builtin: false and created_at set to now
-
-export function deleteTemplate(id, builtinDir, userDir)
-// Throws TemplateError with code 'builtin' if id is a built-in
-// Throws TemplateError with code 'not_found' if file does not exist in userDir
-// Deletes {userDir}/{id}.json, returns { deleted: true }
-
+export function listTemplates(builtinDir, projectDir, userDir)
+export function getTemplate(id, builtinDir, projectDir, userDir)
+export function saveTemplate(template, projectDir)
+export function deleteTemplate(id, builtinDir, projectDir)
 export function applyTemplateConfig(currentWorca, templateConfig)
-// Returns merged worca object; see Section 5 for merge logic
-
-export class TemplateError extends Error {
-  constructor(message, code, details = [])
-  // code: 'not_found' | 'builtin' | 'builtin_conflict' | 'validation_error' | 'parse_error'
-}
+export function snapshotTemplate(templateDir, runDir, params)
+export class TemplateError extends Error { constructor(message, code, details) }
 ```
 
-**Implementation notes:**
-
-- `listTemplates` reads all `.json` files from `builtinDir` and `userDir` using `fs.readdirSync`. Skip files that fail to parse (log a warning but don't throw).
-- `getTemplate` reads a single file by constructing `{builtinDir}/{id}.json` and `{userDir}/{id}.json`. Check builtin first.
-- `saveTemplate` validation:
-  - `id`: required, `[a-z0-9\-]{1,64}`
-  - `name`: required, string, 1-80 chars
-  - `description`: required, string, 1-500 chars
-  - `tags`: optional, array, max 5 elements, each `[a-z0-9\-]{1,20}`
-  - `config`: required object; each present sub-key (`stages`, `agents`, `loops`, `milestones`) must match structure expected by `settings-validator.js` (reuse the existing validation helpers)
-  - Collect all violations into `details` array before throwing
-- `saveTemplate` creates `userDir` with `fs.mkdirSync(..., { recursive: true })` if it does not exist.
-- Built-in IDs are loaded lazily by reading `builtinDir` at call time, not hardcoded. This means a new built-in added to `builtinDir` is automatically protected.
+The `snapshotTemplate()` function copies the template directory to `{runDir}/template/` and writes `resolved-params.json`. Called by the `POST /api/runs` handler when `templateId` is present.
 
 ---
 
-### Task 3: Add Template REST Endpoints to `server/app.js`
+### Task 8: Add Template REST Endpoints to `server/app.js`
 
-**File to modify:** `.claude/worca-ui/server/app.js`
+**File to modify:** `worca-ui/server/app.js`
 
-Add import at the top:
-```javascript
-import { listTemplates, getTemplate, saveTemplate, deleteTemplate, TemplateError } from './template-manager.js';
-```
+Add `GET /api/templates`, `GET /api/templates/:id`, `POST /api/templates`, `DELETE /api/templates/:id` routes as specified in Section 7.
 
-Update `createApp(options)` to accept `{ settingsPath, worcaDir, templatesDir }`. The `templatesDir` defaults to `join(dirname(settingsPath), '../templates')` if not provided.
+Update `createApp(options)` to accept `templatesProjectDir` and `templatesUserDir`. The built-in dir is resolved from the worca package location.
 
-Add these route handlers after the existing `/api/settings` routes and before the static file middleware:
+**File to modify:** `worca-ui/server/index.js`
 
-**`GET /api/templates`:**
-```javascript
-app.get('/api/templates', (_req, res) => {
-  try {
-    const templates = listTemplates(
-      join(options.templatesDir, 'builtin'),
-      join(options.templatesDir, 'user')
-    );
-    res.json({ ok: true, templates });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-```
-
-**`GET /api/templates/:id`:**
-```javascript
-app.get('/api/templates/:id', (req, res) => {
-  try {
-    const template = getTemplate(
-      req.params.id,
-      join(options.templatesDir, 'builtin'),
-      join(options.templatesDir, 'user')
-    );
-    if (!template) return res.status(404).json({ ok: false, error: `Template '${req.params.id}' not found` });
-    res.json({ ok: true, template });
-  } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-```
-
-**`POST /api/templates`:**
-```javascript
-app.post('/api/templates', (req, res) => {
-  try {
-    const saved = saveTemplate(req.body, join(options.templatesDir, 'user'));
-    res.json({ ok: true, template: saved });
-  } catch (err) {
-    if (err instanceof TemplateError) {
-      if (err.code === 'builtin_conflict') return res.status(409).json({ ok: false, error: err.message });
-      if (err.code === 'validation_error') return res.status(400).json({ ok: false, error: err.message, details: err.details });
-    }
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-```
-
-**`DELETE /api/templates/:id`:**
-```javascript
-app.delete('/api/templates/:id', (req, res) => {
-  try {
-    const result = deleteTemplate(
-      req.params.id,
-      join(options.templatesDir, 'builtin'),
-      join(options.templatesDir, 'user')
-    );
-    res.json({ ok: true, ...result });
-  } catch (err) {
-    if (err instanceof TemplateError) {
-      if (err.code === 'not_found') return res.status(404).json({ ok: false, error: err.message });
-      if (err.code === 'builtin') return res.status(403).json({ ok: false, error: err.message });
-    }
-    res.status(500).json({ ok: false, error: err.message });
-  }
-});
-```
-
-**Changes to `server/index.js`:**
-
-Pass `templatesDir` to `createApp`:
-```javascript
-const templatesDir = join(cwd, '.claude', 'templates');
-const app = createApp({ settingsPath, worcaDir, templatesDir });
-```
+Pass template directories to `createApp`.
 
 ---
 
-### Task 4: Extend `POST /api/runs` to Accept `templateId`
+### Task 9: Extend `POST /api/runs` to Accept `templateId`
 
-**File to modify:** `.claude/worca-ui/server/app.js` (or `process-manager.js` if that's where `POST /api/runs` lives after W-009)
+**File to modify:** `worca-ui/server/app.js` (or `process-manager.js`)
 
-Extend the `POST /api/runs` handler to accept an optional `templateId` field in the request body.
+When `templateId` is present in the request body:
 
-**Changes to the handler:**
+1. Load the template via `getTemplate()`
+2. Read current settings
+3. Deep-merge template config into worca section
+4. Write merged settings to `{worcaDir}/runs/{runId}/settings.json`
+5. Copy template directory to `{worcaDir}/runs/{runId}/template/`
+6. Spawn `run_pipeline.py` with `--settings` pointing to the run-scoped settings file
 
-After validating `inputType`, `inputValue`, `msize`, `mloops` (existing validation), add:
+**File to modify:** `worca-ui/server/process-manager.js`
 
-```javascript
-const { templateId } = req.body;
-let overrideSettingsPath = null;
-
-if (templateId) {
-  // Load template
-  const template = getTemplate(templateId, builtinDir, userDir);
-  if (!template) {
-    return res.status(400).json({ ok: false, error: `Template '${templateId}' not found` });
-  }
-
-  // Read current settings
-  const rawSettings = JSON.parse(readFileSync(options.settingsPath, 'utf8'));
-
-  // Merge template config into worca section
-  rawSettings.worca = applyTemplateConfig(rawSettings.worca || {}, template.config);
-
-  // Write override file into a temp location
-  const overrideDir = join(options.worcaDir, 'template-overrides');
-  mkdirSync(overrideDir, { recursive: true });
-  const overrideFile = join(overrideDir, `${Date.now()}-${templateId}.json`);
-  writeFileSync(overrideFile, JSON.stringify(rawSettings, null, 2));
-  overrideSettingsPath = overrideFile;
-}
-
-// Pass overrideSettingsPath to startPipeline
-const result = await startPipeline(options.worcaDir, {
-  inputType, inputValue, msize, mloops,
-  settingsPath: overrideSettingsPath || options.settingsPath,
-});
-```
-
-**Changes to `process-manager.js` `startPipeline()`:**
-
-Add optional `settingsPath` parameter. When provided and different from the default, append `--settings {settingsPath}` to the spawn args:
-
-```javascript
-if (opts.settingsPath && opts.settingsPath !== defaultSettingsPath) {
-  args.push('--settings', opts.settingsPath);
-}
-```
-
-**Changes to `run_pipeline.py`:**
-
-The script already accepts `--settings` (or needs it added). Check if it exists; if not, add a `--settings` CLI argument that overrides the default `.claude/settings.json` path and passes it through to `run_pipeline()` as the `settings_path` parameter. `runner.py`'s `run_pipeline()` already takes `settings_path` as a keyword argument, so this is a one-line addition to the CLI arg parser.
-
-The override file in `worcaDir/template-overrides/` is cleaned up the next time `POST /api/runs` is called (scan and delete files older than 24 hours on each `POST /api/runs` call). This prevents accumulation without requiring a separate cleanup job.
+Accept `settingsPath` in `startPipeline()` options and pass as `--settings` arg when provided.
 
 ---
 
-### Task 5: Create `app/views/templates.js`
+### Task 10: Create `app/views/templates.js`
 
-**File to create:** `.claude/worca-ui/app/views/templates.js`
+**File to create:** `worca-ui/app/views/templates.js`
 
-A lit-html view module for the Settings > Templates tab.
+Settings > Templates tab view. Shows template cards in a grid with name, tier badge, tags, description, and delete button (disabled for built-ins).
 
-**Exported function:** `templatesTab(templates, { onDelete, onSaveAsTemplate })`
-
-Where `templates` is the array from `GET /api/templates` (summary objects, no config).
-
-**Template structure:**
-
-```javascript
-export function templatesTab(templates, { onDelete, onSaveAsTemplate }) {
-  return html`
-    <div class="settings-tab-content">
-      <div class="templates-header">
-        <h3 class="settings-section-title">Pipeline Templates</h3>
-        <sl-button size="small" variant="primary" @click=${onSaveAsTemplate}>
-          ${unsafeHTML(iconSvg(Save, 14))}
-          Save Current as Template
-        </sl-button>
-      </div>
-
-      ${templates.length === 0
-        ? html`<div class="empty-state">No templates found.</div>`
-        : html`
-          <div class="templates-grid">
-            ${templates.map(t => templateCard(t, { onDelete }))}
-          </div>
-        `
-      }
-    </div>
-  `;
-}
-```
-
-**`templateCard(template, { onDelete })`:**
-
-Renders an `sl-card` per template. Each card shows:
-- Template name (bold) + `sl-badge variant="neutral" pill` for `builtin` or `sl-badge variant="success" pill` for user-created
-- Tags rendered as small `sl-badge` elements in a row
-- Description text (truncated to 2 lines with CSS)
-- Delete button (`variant="danger"`, `size="small"`) -- disabled and greyed out for built-ins, with a tooltip: "Built-in templates cannot be deleted"
-- On delete click: call `onDelete(template.id)`
-
-```html
-<sl-card class="template-card">
-  <div class="template-card-header" slot="header">
-    <span class="template-name">${template.name}</span>
-    ${template.builtin
-      ? html`<sl-badge variant="neutral" pill>built-in</sl-badge>`
-      : html`<sl-badge variant="success" pill>custom</sl-badge>`}
-  </div>
-  <div class="template-tags">
-    ${(template.tags || []).map(tag => html`<sl-badge variant="primary" pill size="small">${tag}</sl-badge>`)}
-  </div>
-  <p class="template-description">${template.description}</p>
-  <div slot="footer" class="template-card-actions">
-    <sl-button
-      variant="danger" size="small"
-      ?disabled=${template.builtin}
-      title=${template.builtin ? 'Built-in templates cannot be deleted' : ''}
-      @click=${() => !template.builtin && onDelete(template.id)}
-    >
-      Delete
-    </sl-button>
-  </div>
-</sl-card>
-```
+Exported function: `templatesTab(templates, { onDelete, onSaveAsTemplate })`
 
 ---
 
-### Task 6: Create `app/views/save-template-dialog.js`
+### Task 11: Create `app/views/save-template-dialog.js`
 
-**File to create:** `.claude/worca-ui/app/views/save-template-dialog.js`
+**File to create:** `worca-ui/app/views/save-template-dialog.js`
 
-A Shoelace dialog that lets users save the current pipeline settings as a named template.
+Shoelace dialog for saving current pipeline settings as a template. Fields: name, description, tags (comma-separated). ID auto-derived from name.
 
-**Exported function:** `saveTemplateDialogView(isOpen, { onSubmit, onClose })`
-
-**Dialog fields:**
-- Template name: `<sl-input id="tmpl-name" label="Template Name" placeholder="My Fast Run" maxlength="80">`
-- Template description: `<sl-textarea id="tmpl-desc" label="Description" placeholder="When to use this template..." rows="2" maxlength="500">`
-- Tags (optional): `<sl-input id="tmpl-tags" label="Tags (comma-separated)" placeholder="fast, no-plan" maxlength="120">`
-- ID (auto-derived from name, shown as read-only hint): `Saved as: my-fast-run`
-- Footer: Cancel + "Save Template" primary button
-
-**ID derivation:** `name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 64)`
-
-**Behavior:**
-- On submit: read fields from DOM, call `onSubmit({ id, name, description, tags })`
-- The caller (`main.js`) handles the actual `POST /api/templates` call
-- On cancel: call `onClose`
-- Disable "Save Template" button while `isSubmitting` is true
+Exported function: `saveTemplateDialogView(isOpen, { onSubmit, onClose, isSubmitting, error })`
 
 ---
 
-### Task 7: Add Template Picker to "New Run" Dialog
+### Task 12: Add Template Picker to "New Run" Dialog
 
-**File to modify:** `.claude/worca-ui/app/views/new-run-dialog.js`
+**File to modify:** `worca-ui/app/views/new-run-dialog.js`
 
-Add a template picker section at the top of the dialog, above the input type selector. The section is collapsible via an `sl-details` element with summary "Pipeline Template (optional)".
+Add a collapsible `sl-details` section with an `sl-select` template picker at the top of the dialog. When a template is selected, show its description and tags as a preview.
 
-**Module-level state to add:**
-```javascript
-let selectedTemplateId = null;
-let availableTemplates = [];
-```
-
-**New function:** `loadTemplatesForPicker()` -- calls `GET /api/templates`, populates `availableTemplates`, rerenders. Called once when the dialog opens.
-
-**Template picker section:**
-```html
-<sl-details summary="Pipeline Template (optional)" class="new-run-template-picker">
-  ${availableTemplates.length === 0
-    ? html`<span class="settings-muted">No templates available.</span>`
-    : html`
-      <sl-select
-        id="new-run-template"
-        placeholder="None (use current settings)"
-        clearable
-        @sl-change=${(e) => { selectedTemplateId = e.target.value || null; rerender(); }}
-      >
-        ${availableTemplates.map(t => html`
-          <sl-option value="${t.id}">
-            ${t.name}
-            ${t.builtin ? html`<sl-badge slot="suffix" variant="neutral" pill size="small">built-in</sl-badge>` : ''}
-          </sl-option>
-        `)}
-      </sl-select>
-      ${selectedTemplateId ? templatePreviewBadges(availableTemplates.find(t => t.id === selectedTemplateId)) : ''}
-    `
-  }
-</sl-details>
-```
-
-**`templatePreviewBadges(template)`:** Renders the selected template's tags and a one-line description summary below the selector.
-
-**Include `templateId` in form submission:**
-The `onSubmit` callback in `new-run-dialog.js` is updated to include `selectedTemplateId`:
-```javascript
-onSubmit({ inputType, inputValue, msize, mloops, templateId: selectedTemplateId });
-```
-
-**Reset on close:** Set `selectedTemplateId = null` when the dialog closes.
+Include `templateId` in the form submission payload.
 
 ---
 
-### Task 8: Add "Templates" Tab and "Save as Template" to Settings
+### Task 13: Wire Templates into Settings View and `main.js`
 
-**File to modify:** `.claude/worca-ui/app/views/settings.js`
+**File to modify:** `worca-ui/app/views/settings.js`
 
-**Module-level state to add:**
-```javascript
-let templatesData = null;        // array from GET /api/templates
-let templatesLoadError = null;
-```
+Add "Templates" tab to the settings `sl-tab-group`. Add `loadTemplates()` function, `handleDeleteTemplate`, and "Save as Template" button on the Pipeline tab.
 
-**New functions:**
+**File to modify:** `worca-ui/app/main.js`
 
-```javascript
-export async function loadTemplates() {
-  try {
-    const res = await fetch('/api/templates');
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    templatesData = data.templates || [];
-    templatesLoadError = null;
-  } catch (err) {
-    templatesData = [];
-    templatesLoadError = 'Failed to load templates: ' + err.message;
-  }
-}
-```
-
-**Add "Templates" tab to `settingsView()`:**
-
-Add a new tab nav entry and tab panel in the `sl-tab-group`:
-
-```html
-<sl-tab slot="nav" panel="templates">
-  ${unsafeHTML(iconSvg(LayoutTemplate, 14))}
-  Templates
-</sl-tab>
-...
-<sl-tab-panel name="templates">
-  ${templatesTab(templatesData || [], {
-    onDelete: handleDeleteTemplate,
-    onSaveAsTemplate: handleOpenSaveAsTemplate,
-  })}
-</sl-tab-panel>
-```
-
-**`handleDeleteTemplate(id)`:**
-- Call `fetch('/api/templates/' + id, { method: 'DELETE' })`
-- On success: reload `templatesData` via `loadTemplates()`, rerender
-- On error: show `saveMessage` error toast
-
-**"Save as Template" on the Pipeline tab:**
-
-Add a secondary button next to "Save Pipeline" on the pipeline tab footer:
-```html
-<sl-button variant="default" size="small" @click=${onOpenSaveAsTemplate}>
-  ${unsafeHTML(iconSvg(LayoutTemplate, 14))}
-  Save as Template
-</sl-button>
-```
-
-Update `pipelineTab(worca, rerender, { onOpenSaveAsTemplate })` signature to accept this callback.
-
-**`handleOpenSaveAsTemplate()`:** Sets `saveTemplateDialogOpen = true`, rerenders. The dialog reads current pipeline settings from DOM (same way "Save Pipeline" does) and submits them bundled with the template metadata.
-
-**`handleSaveAsTemplate({ id, name, description, tags })`:**
-1. Read current pipeline config from DOM (call `readStagesFromDom()`, `readPipelineFromDom()`, `readAgentsFromDom()`)
-2. Read milestones from settings (currently not editable in UI -- read from `settingsData.worca.milestones`)
-3. Build `config = { stages, agents, loops, milestones }`
-4. `POST /api/templates` with `{ id, name, description, tags, config }`
-5. On success: reload templates, close dialog, show success toast
-6. On error: show error in dialog
-
-**New icon import:** Add `LayoutTemplate` to the icon imports (use an existing layout icon or add a simple SVG path). If `LayoutTemplate` is not in the current `icons.js`, add a minimal inline SVG for it.
+Add save-template dialog state and handlers. Pass `templateId` through `handleSubmitNewRun`. Trigger template loading at appropriate points.
 
 ---
 
-### Task 9: Wire Everything Together in `main.js`
+### Task 14: Add CSS for Templates
 
-**File to modify:** `.claude/worca-ui/app/main.js`
+**File to modify:** `worca-ui/app/styles.css`
 
-**New module-level state:**
-```javascript
-let saveTemplateDialogOpen = false;
-let saveTemplateSubmitting = false;
-let saveTemplateError = null;
-```
-
-**New handler functions:**
-
-```javascript
-function handleOpenSaveAsTemplate() {
-  saveTemplateDialogOpen = true;
-  saveTemplateError = null;
-  rerender();
-}
-
-function handleCloseSaveAsTemplate() {
-  saveTemplateDialogOpen = false;
-  saveTemplateError = null;
-  saveTemplateSubmitting = false;
-  rerender();
-}
-
-async function handleSaveAsTemplate(templateData) {
-  saveTemplateSubmitting = true;
-  saveTemplateError = null;
-  rerender();
-  try {
-    const res = await fetch('/api/templates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(templateData),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      saveTemplateError = data.error || 'Failed to save template';
-      return;
-    }
-    // Reload templates in settings view
-    await loadTemplates();
-    handleCloseSaveAsTemplate();
-  } catch (err) {
-    saveTemplateError = err.message;
-  } finally {
-    saveTemplateSubmitting = false;
-    rerender();
-  }
-}
-```
-
-**Updates to `handleSubmitNewRun()`:**
-
-Pass `templateId` through to `POST /api/runs`:
-```javascript
-async function handleSubmitNewRun({ inputType, inputValue, msize, mloops, templateId }) {
-  // ...existing code...
-  body: JSON.stringify({ inputType, inputValue, msize, mloops, ...(templateId && { templateId }) })
-  // ...
-}
-```
-
-**Render `saveTemplateDialogView` and import `loadTemplates`:**
-
-Add to the `rerender()` function body (alongside existing dialogs):
-```javascript
-render(saveTemplateDialogView(saveTemplateDialogOpen, {
-  isSubmitting: saveTemplateSubmitting,
-  error: saveTemplateError,
-  onSubmit: handleSaveAsTemplate,
-  onClose: handleCloseSaveAsTemplate,
-}), document.getElementById('save-template-dialog-mount'));
-```
-
-Add a `<div id="save-template-dialog-mount"></div>` to `index.html` (alongside the existing dialog mounts).
-
-**Call `loadTemplates()` on settings tab open:** If templates haven't been loaded yet when the settings view is first shown, trigger `loadTemplates()` and rerender.
-
-**Call `loadTemplatesForPicker()` when the "New Run" dialog opens** (in `handleOpenNewRunDialog()`).
+Add styles for template card grid, template picker in New Run dialog, and save-as-template dialog.
 
 ---
 
-### Task 10: Add CSS for Templates
+### Task 15: Create Server-Side Template Tests
 
-**File to modify:** `.claude/worca-ui/app/styles.css`
+**File to create:** `worca-ui/server/template-manager.test.js`
 
-Add the following styles:
-
-```css
-/* Templates tab */
-.templates-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 16px;
-}
-
-.templates-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 12px;
-}
-
-.template-card {
-  --padding: 12px;
-}
-
-.template-card-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.template-name {
-  font-weight: 600;
-  font-size: 14px;
-  flex: 1;
-}
-
-.template-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin: 6px 0;
-}
-
-.template-description {
-  font-size: 12px;
-  color: var(--muted);
-  margin: 0;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.template-card-actions {
-  display: flex;
-  justify-content: flex-end;
-}
-
-/* New Run dialog: template picker */
-.new-run-template-picker {
-  margin-bottom: 12px;
-}
-
-.template-preview-desc {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
-.template-preview-tags {
-  display: flex;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-/* Save as Template dialog */
-.save-template-field {
-  margin-bottom: 12px;
-}
-
-.save-template-id-hint {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 2px;
-}
-```
+Unit tests for the JS template manager module, covering list, get, save, delete, apply, and snapshotTemplate operations.
 
 ---
 
-### Task 11: Create `server/template-manager.test.js`
+### Task 16: Rebuild Frontend Bundle
 
-**File to create:** `.claude/worca-ui/server/template-manager.test.js`
-
-Unit tests for the template manager module using Node's built-in `node:test` runner (consistent with existing test files in the project).
-
-**Test cases:**
-
-`listTemplates`:
-- Returns built-in templates from the builtin dir, sorted alphabetically
-- Returns user templates after built-ins, sorted newest-first
-- Gracefully handles missing user dir (returns only built-ins)
-- Skips unparseable JSON files without throwing
-
-`getTemplate`:
-- Returns full template object for a known built-in id
-- Returns full template object for a user template id
-- Returns null for unknown id
-- Searches builtin before user (builtin wins on id collision)
-
-`saveTemplate`:
-- Saves valid template object to user dir with `builtin: false`
-- Injects `created_at` timestamp on save
-- Creates user dir if it does not exist
-- Throws `TemplateError` with code `builtin_conflict` when id matches a built-in
-- Throws `TemplateError` with code `validation_error` for invalid `id` (spaces, uppercase, too long)
-- Throws `TemplateError` with code `validation_error` for missing `name`
-- Throws `TemplateError` with code `validation_error` for too many tags
-- Collects multiple violations into `details` array before throwing
-
-`deleteTemplate`:
-- Deletes user template file from disk
-- Throws `TemplateError` code `not_found` for unknown user template
-- Throws `TemplateError` code `builtin` for built-in template id
-
-`applyTemplateConfig`:
-- Merges template stages, agents, loops, milestones into currentWorca
-- Preserves `governance`, `pricing`, `plan_path_template` from currentWorca
-- Handles partial template config (e.g. only `stages` present -- other keys unchanged)
-- Returns new object (does not mutate either input)
-
-Use `os.tmpdir()` / `fs.mkdtempSync` for temp directories in all file-system tests.
-
----
-
-### Task 12: Rebuild Frontend Bundle
-
-**Command:**
 ```bash
-cd .claude/worca-ui && npm run build
+cd worca-ui && npm run build
 ```
 
-(Or the equivalent `npx esbuild` command from `package.json`.) This regenerates `app/main.bundle.js` from all the modified and new source files.
-
-Run after all Tasks 1-11 are complete and verified.
+Run after all UI tasks are complete.
 
 ---
 
-## 7. Testing Strategy
+## 9. `worca init` Integration
+
+**File to modify:** `src/worca/cli/init.py`
+
+During `worca init`:
+- Copy `src/worca/templates/` to `.claude/worca/templates/` (alongside other source files)
+- On `--upgrade`: refresh built-in templates from package source
+- Create `.claude/templates/` directory if it doesn't exist (project templates go here)
+
+The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the runtime copy), not directly to `src/worca/templates/`. This is consistent with how all other worca source files are resolved at runtime.
+
+---
+
+## 10. Testing Strategy
 
 ### Unit Tests
 
-Covered by Task 11 (`template-manager.test.js`). Run via:
-```bash
-cd .claude/worca-ui && node --test server/template-manager.test.js
-```
+- **Python:** `tests/test_templates.py` (Task 3) — covers `TemplateResolver`, merge logic, params, snapshot
+- **JS:** `worca-ui/server/template-manager.test.js` (Task 15) — covers REST adapter layer
 
 ### Manual Integration Checklist
 
+**CLI:**
+- `worca templates list` shows four built-ins
+- `worca templates show bugfix` prints full config
+- `worca templates save my-custom --description "test"` creates `.claude/templates/my-custom/template.json`
+- `worca templates delete my-custom` removes the directory
+- `worca run --template bugfix --prompt "Fix login"` applies template config and creates `template/` snapshot in run dir
+- `worca run --template bugfix --param key=value` renders params
+
 **Template API:**
-- `GET /api/templates` returns four built-ins and any user templates
-- `GET /api/templates/bugfix` returns full config including all six stages
-- `POST /api/templates` with valid body creates file in `.claude/templates/user/`
-- `POST /api/templates` with `id: "bugfix"` returns HTTP 409
-- `POST /api/templates` with `id: "INVALID ID"` returns HTTP 400 with details
-- `DELETE /api/templates/{user-id}` removes file and returns `{ ok: true, deleted: true }`
-- `DELETE /api/templates/bugfix` returns HTTP 403
+- `GET /api/templates` returns all templates with tier badges
+- `GET /api/templates/bugfix` returns full config
+- `POST /api/templates` creates project template directory
+- `POST /api/templates` with built-in ID returns 409
+- `DELETE /api/templates/{user-id}` removes template directory
+- `DELETE /api/templates/bugfix` returns 403
 
-**Settings UI -- Templates tab:**
-- All four built-ins appear as cards with `built-in` badge
-- Built-in delete buttons are disabled and show tooltip
-- "Save Current as Template" button opens the dialog
-- Filling in name auto-derives the ID
-- Saving creates a new card in the Templates tab
-- Deleting a custom template removes its card
+**Run traceability:**
+- After a templated run, `.worca/runs/{run_id}/template/` contains the full template directory
+- `resolved-params.json` records the params used
+- `settings.json` in the run dir reflects the merged config
+- Non-templated runs have no `template/` subdirectory
 
-**Settings UI -- Pipeline tab:**
-- "Save as Template" secondary button appears next to "Save Pipeline"
-- Clicking it opens the save-as-template dialog
-- Submitting creates the template from the current DOM state (not from saved settings)
-
-**New Run dialog -- template picker:**
-- `sl-details` is collapsed by default
-- Expanding it shows all templates in the `sl-select`
-- Selecting "Bugfix" shows the description and tags below the selector
-- Clearing the selection (clearable) removes the preview
-- Starting a run with a template selected: the spawned pipeline uses the template's stage config (verify by checking the override settings file written to `worcaDir/template-overrides/`)
-- Starting a run without a template: no override file is written, pipeline uses `settings.json` directly
-
-**Run isolation:**
-- After a templated run completes, `settings.json` is unchanged
-- Starting a second run without a template still uses the original `settings.json`
-
-### Edge Cases to Verify
-
-- Template ID with 64 chars (boundary valid)
-- Template ID with 65 chars (boundary invalid, rejected with 400)
-- Template `config` with only `stages` specified (other config keys inherited from current settings)
-- User dir does not exist yet (created automatically on first save)
-- Builtin dir is empty or missing (list returns empty array, no crash)
-- Two browser tabs open: delete a template in one tab, refresh templates in the other tab
+**UI:**
+- Templates tab shows card grid with tier badges
+- Built-in delete buttons disabled
+- "Save as Template" opens dialog, saves correctly
+- New Run dialog template picker works, includes templateId in submission
 
 ---
 
-## 8. File Summary
+## 11. File Summary
 
 ### New files
 
 | File | Purpose |
 |------|---------|
-| `.claude/templates/builtin/bugfix.json` | Bugfix preset template |
-| `.claude/templates/builtin/feature.json` | Feature development preset template |
-| `.claude/templates/builtin/refactor.json` | Refactor preset template |
-| `.claude/templates/builtin/quick-fix.json` | Quick fix preset template |
-| `.claude/worca-ui/server/template-manager.js` | Template file I/O, validation, merge logic |
-| `.claude/worca-ui/server/template-manager.test.js` | Unit tests for template manager |
-| `.claude/worca-ui/app/views/templates.js` | Settings > Templates tab view |
-| `.claude/worca-ui/app/views/save-template-dialog.js` | "Save as Template" dialog component |
+| `src/worca/orchestrator/templates.py` | Python TemplateResolver — source of truth |
+| `src/worca/cli/templates.py` | `worca templates` CLI subcommands |
+| `src/worca/templates/bugfix/template.json` | Bugfix preset |
+| `src/worca/templates/feature/template.json` | Feature development preset |
+| `src/worca/templates/refactor/template.json` | Refactor preset |
+| `src/worca/templates/quick-fix/template.json` | Quick fix preset |
+| `tests/test_templates.py` | Python tests for TemplateResolver |
+| `worca-ui/server/template-manager.js` | JS adapter for template operations |
+| `worca-ui/server/template-manager.test.js` | JS template manager tests |
+| `worca-ui/app/views/templates.js` | Settings > Templates tab view |
+| `worca-ui/app/views/save-template-dialog.js` | Save-as-template dialog |
 
 ### Modified files
 
 | File | Changes |
 |------|---------|
-| `.claude/worca-ui/server/app.js` | Add `GET/POST/DELETE /api/templates` endpoints; extend `POST /api/runs` to accept `templateId` |
-| `.claude/worca-ui/server/index.js` | Pass `templatesDir` to `createApp` |
-| `.claude/worca-ui/server/process-manager.js` | Accept `settingsPath` override in `startPipeline()` |
-| `.claude/worca-ui/app/views/settings.js` | Add "Templates" tab, `loadTemplates()`, "Save as Template" button on Pipeline tab, `handleDeleteTemplate`, `handleSaveAsTemplate` |
-| `.claude/worca-ui/app/views/new-run-dialog.js` | Add template picker section, `selectedTemplateId` state, `loadTemplatesForPicker()`, include `templateId` in submit payload |
-| `.claude/worca-ui/app/main.js` | Add `saveTemplateDialog` state and handlers; pass `templateId` through `handleSubmitNewRun`; trigger `loadTemplates` and `loadTemplatesForPicker` at appropriate points; render `saveTemplateDialogView` |
-| `.claude/worca-ui/app/styles.css` | Add template card grid, template picker, save-as-template dialog styles |
-| `.claude/worca-ui/app/main.bundle.js` | Rebuilt from source after all changes |
-| `.claude/scripts/run_pipeline.py` | Add `--settings` CLI argument if not already present |
+| `src/worca/cli/main.py` | Register `templates` subcommand group |
+| `src/worca/cli/init.py` | Copy built-in templates during init, create `.claude/templates/` |
+| `src/worca/scripts/run_pipeline.py` | Add `--template` and `--param` arguments, template application logic |
+| `src/worca/orchestrator/overlay.py` | Add `template_agents_dir` parameter to `resolve()` |
+| `worca-ui/server/app.js` | Add template REST endpoints, extend `POST /api/runs` |
+| `worca-ui/server/index.js` | Pass template directories to `createApp` |
+| `worca-ui/server/process-manager.js` | Accept `settingsPath` override in `startPipeline()` |
+| `worca-ui/app/views/settings.js` | Add Templates tab, loadTemplates, Save as Template button |
+| `worca-ui/app/views/new-run-dialog.js` | Add template picker, include templateId in submit |
+| `worca-ui/app/main.js` | Wire save-template dialog, pass templateId through |
+| `worca-ui/app/styles.css` | Template card grid, picker, dialog styles |
 
 ---
 
-## 9. Rollout Order
+## 12. Rollout Order
 
 Tasks should be implemented in this order due to dependencies:
 
-1. **Task 1** (preset JSON files) -- no code dependencies; can be written first and verified by inspection
-2. **Task 2** (template-manager.js) -- depends on Task 1 to test against real built-in files
-3. **Task 11** (template-manager.test.js) -- depends on Task 2; run tests immediately after
-4. **Task 3** (REST endpoints in app.js + index.js) -- depends on Task 2
-5. **Task 4** (extend POST /api/runs + process-manager.js + run_pipeline.py) -- depends on Task 2; can run in parallel with Task 3 after Task 2 is done
-6. **Task 5** (templates.js view) -- frontend work, depends only on the API contract from Task 3
-7. **Task 6** (save-template-dialog.js) -- independent frontend component; can run in parallel with Task 5
-8. **Task 7** (template picker in new-run-dialog.js) -- depends on Task 4 (API contract) and Task 5 (preview logic pattern)
-9. **Task 8** (settings.js changes) -- depends on Tasks 5, 6, 7
-10. **Task 9** (main.js wiring) -- depends on Tasks 5, 6, 7, 8
-11. **Task 10** (CSS) -- after all view components are settled
-12. **Task 12** (rebuild bundle) -- final step
+1. **Task 2** (preset template directories) — no code dependencies
+2. **Task 1** (Python TemplateResolver) — depends on Task 2 for test fixtures
+3. **Task 3** (Python tests) — depends on Tasks 1-2
+4. **Task 4** (CLI subcommands) — depends on Task 1
+5. **Task 5** (run_pipeline.py --template) — depends on Task 1
+6. **Task 6** (OverlayResolver extension) — depends on Task 5
+7. **Task 7** (JS template-manager.js) — depends on Task 1 (mirrors its API)
+8. **Task 8** (REST endpoints) — depends on Task 7
+9. **Task 9** (POST /api/runs extension) — depends on Tasks 7-8
+10. **Task 15** (JS tests) — depends on Task 7
+11. **Tasks 10-12** (UI views) — depend on REST API contract from Task 8; can be parallelized
+12. **Task 13** (main.js wiring) — depends on Tasks 10-12
+13. **Task 14** (CSS) — after all views are settled
+14. **Task 16** (rebuild bundle) — final step
