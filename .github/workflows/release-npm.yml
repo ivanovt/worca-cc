@@ -1,0 +1,52 @@
+name: Release to npm
+
+on:
+  push:
+    tags:
+      - "worca-ui-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: worca-ui/package-lock.json
+
+      - name: Validate tag matches package.json version
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          TAG_VERSION="${TAG_NAME#worca-ui-v}"
+          PKG_VERSION=$(node -p "require('./worca-ui/package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        working-directory: worca-ui
+        run: npm ci
+
+      - name: Build frontend bundle
+        working-directory: worca-ui
+        run: npm run build
+
+      - name: Run tests
+        working-directory: worca-ui
+        run: npx vitest run
+
+      - name: Publish to npm
+        working-directory: worca-ui
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

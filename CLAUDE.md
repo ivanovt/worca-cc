@@ -11,7 +11,7 @@ cd worca-cc && claude
 
 # Or manually copy .claude/ folder
 cp -R .claude/ my-project/.claude/
-cd my-project/.claude/worca-ui && npm install && npm run build && cd -
+cd my-project/worca-ui && npm install && npm run build && cd -
 
 # Interactive mode
 cd my-project && claude
@@ -26,41 +26,41 @@ python .claude/scripts/run_pipeline.py --prompt "Add user auth"
 
 Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
 
-All governance enforced via Python hooks in `.claude/hooks/`.
+All governance enforced via Python hooks in `src/worca/claude_hooks/`.
 
 ## Project Structure
 
 ```
+src/worca/               # Python package (pip-installable)
+  orchestrator/          # Pipeline state machine, stages, prompt builder
+  claude_hooks/          # Claude Code hook scripts (pre/post tool use, etc.)
+  scripts/               # Pipeline entry points (run_pipeline.py, run_multi.py)
+  agents/core/           # Agent .md templates (planner, coordinator, etc.)
+  schemas/               # JSON schemas for structured agent output
+  state/                 # Status JSON read/write, iteration tracking
+  utils/                 # Claude CLI, beads, git, gh_issues helpers
+  cli/                   # CLI entry points (worca init, worca run, etc.)
 .claude/
-  agents/core/           # Agent .md templates (planner, plan_reviewer, coordinator, implementer, tester, guardian, learner)
-  hooks/                 # Python hook scripts (pre_tool_use, post_tool_use, etc.)
-  scripts/               # Pipeline entry points (run_pipeline.py, run_multi.py, preflight_checks.py)
-  settings.json          # All pipeline config under the "worca" key
-  worca/
-    orchestrator/
-      runner.py          # Main pipeline state machine and stage loop
-      stages.py          # Stage enum, STAGE_ORDER, transitions, config readers
-      prompt_builder.py  # Per-stage prompt construction
-      error_classifier.py # LLM error classification + circuit breaker
-      resume.py          # Resume point detection
-      work_request.py    # Input normalization (gh issues, beads, prompts)
-      registry.py        # Parallel pipeline registry (directory-based tracking)
-    state/
-      status.py          # Status JSON read/write, iteration tracking
-    utils/
-      claude_cli.py      # Claude subprocess management
-      beads.py           # Beads CLI wrapper
-      gh_issues.py       # GitHub issue lifecycle
-      git.py             # Git operations
-      env.py             # PATH enrichment
-      project_registry.py # Auto-register projects in ~/.worca/projects.d/
-    schemas/             # JSON schemas for structured agent output
-  worca-ui/              # Web UI (lit-html + Shoelace + esbuild)
-    app/                 # Source files (views/, utils/, styles.css, main.js)
-    server/              # Express API server
+  worca/                 # Runtime copy (created by `worca init .`, gitignored)
+  agents/                # User-specific agent overrides
+  settings.json          # Pipeline config under the "worca" key
 tests/                   # Python tests (pytest)
 docs/plans/              # Feature plans (W-NNN-slug.md)
+worca-ui/                # Web UI (lit-html + Shoelace + esbuild, top-level npm package)
+  app/                   # Source files (views/, utils/, styles.css, main.js)
+  server/                # Express API server
 ```
+
+## Developer Setup (dogfooding)
+
+```bash
+pip install -e ".[dev]"   # Editable install — import worca points to src/worca/
+worca init .              # Creates .claude/worca/ runtime copy (gitignored)
+cd worca-ui && npm install && npm run build && cd -
+```
+
+After editing `src/worca/`, run `worca init --upgrade` to refresh `.claude/worca/`.
+Tests import from the package directly (`from worca.xxx import yyy`), so they use live source via the editable install.
 
 ## Configuration
 
@@ -95,8 +95,8 @@ Implementer agents read this section to determine the testing methodology.
 
 ```bash
 ruff check .                                              # Python lint
-cd .claude/worca-ui && npm run lint                       # UI lint (biome)
-cd .claude/worca-ui && npm run lint:fix                   # Auto-fix UI lint issues
+cd worca-ui && npm run lint                       # UI lint (biome)
+cd worca-ui && npm run lint:fix                   # Auto-fix UI lint issues
 ```
 
 ## Testing
@@ -104,8 +104,8 @@ cd .claude/worca-ui && npm run lint:fix                   # Auto-fix UI lint iss
 ```bash
 pytest tests/                              # All Python tests
 pytest tests/test_<module>.py              # Single module
-npx vitest run .claude/worca-ui/server/    # UI server tests
-cd .claude/worca-ui && npx playwright test --workers=1  # Browser e2e tests (must run serially)
+npx vitest run worca-ui/server/    # UI server tests
+cd worca-ui && npx playwright test --workers=1  # Browser e2e tests (must run serially)
 ```
 
 Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing failures in unrelated tests should be ignored — only verify tests relevant to your changes.
@@ -121,10 +121,10 @@ Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing 
 
 ## worca-ui Development
 
-After modifying any source files in `.claude/worca-ui/app/`, rebuild the bundle:
+After modifying any source files in `worca-ui/app/`, rebuild the bundle:
 
 ```bash
-cd .claude/worca-ui && npm run build
+cd worca-ui && npm run build
 ```
 
 This runs esbuild to produce `app/main.bundle.js`. Without rebuilding, changes won't take effect.
@@ -132,16 +132,47 @@ This runs esbuild to produce `app/main.bundle.js`. Without rebuilding, changes w
 ### Running the UI
 
 ```bash
-pnpm worca:ui                        # Build + start in global mode (port 3400)
+pnpm worca:ui                        # Build + start in global mode (port 3400, default)
 pnpm worca:ui:stop                   # Stop the global server
 pnpm worca:ui:restart                # Rebuild + restart in global mode
 PORT=3401 pnpm worca:ui              # Custom port via env var
 pnpm worca:ui -- --port 3401         # Custom port via flag
+pnpm worca:ui -- --project /path     # Single-project mode
+pnpm worca:ui -- --help              # Show all commands and options
+pnpm worca:ui -- --version           # Print version
 ```
 
 The `--port` flag takes precedence over the `PORT` env var. `HOST` / `--host` works the same way (default `127.0.0.1`).
 
-Global mode (`--global`) starts the UI without a fixed project root, serving all projects registered in `~/.worca/projects.d/`. Use this when monitoring multiple projects from a single browser tab.
+Global mode (the default) starts the UI without a fixed project root, serving all projects registered in `~/.worca/projects.d/`. Use `--project` to scope to a single project.
+
+## Releasing
+
+Two independent packages — release by pushing tags. **Do not use twine or npm publish manually; CI handles publishing.**
+
+| Package | Version source | Tag format |
+|---|---|---|
+| `worca-cc` | `pyproject.toml` + `src/worca/__init__.py` (both must match) | `worca-cc-vX.Y.Z` |
+| `@worca/ui` | `worca-ui/package.json` | `worca-ui-vX.Y.Z` |
+
+Steps (same for both):
+
+1. Bump version in the version source file(s)
+2. Commit and push
+3. Tag and push tag:
+   ```bash
+   git tag worca-cc-v0.6.0rc6    # or worca-ui-v0.1.0-rc.4
+   git push origin <tag>
+   ```
+4. CI validates tag matches version, builds, tests, and publishes (PyPI via trusted publishing, npm via `NPM_TOKEN` secret)
+
+Releases are independent — a UI fix doesn't require a Python release.
+
+Update commands for users:
+```bash
+pip install --upgrade worca-cc==X.Y.Z
+npm install -g @worca/ui@X.Y.Z
+```
 
 ## Plans & Roadmap
 

@@ -3,11 +3,7 @@
 
 import json
 import os
-import sys
 
-
-# Add the .claude directory to sys.path so we can import worca modules
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '.claude'))
 from worca.utils.settings import deep_merge, load_settings
 
 
@@ -361,13 +357,13 @@ class TestParallelSettings:
         assert result["worca"]["events"]["enabled"] is True
 
     def test_real_settings_has_parallel_section(self):
-        """The actual .claude/settings.json contains the parallel section."""
+        """The src/worca/settings.json contains the parallel section."""
         settings_path = os.path.join(
-            os.path.dirname(__file__), '..', '.claude', 'settings.json'
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
         )
         result = load_settings(settings_path)
         assert "parallel" in result.get("worca", {}), \
-            "worca.parallel section missing from .claude/settings.json"
+            "worca.parallel section missing from src/worca/settings.json"
         p = result["worca"]["parallel"]
         assert p["max_concurrent_pipelines"] == 3
         assert p["default_base_branch"] == "main"

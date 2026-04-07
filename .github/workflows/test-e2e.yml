@@ -4,11 +4,11 @@ on:
   push:
     branches: [master]
     paths:
-      - '.claude/worca-ui/**'
+      - 'worca-ui/**'
   pull_request:
     branches: [master]
     paths:
-      - '.claude/worca-ui/**'
+      - 'worca-ui/**'
 
 jobs:
   ui-e2e-tests:
@@ -21,14 +21,14 @@ jobs:
         with:
           node-version: 22
           cache: 'npm'
-          cache-dependency-path: .claude/worca-ui/package-lock.json
+          cache-dependency-path: worca-ui/package-lock.json
 
       - name: Install dependencies
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npm ci
 
       - name: Build frontend bundle
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npm run build
 
       - name: Cache Playwright browsers
@@ -36,18 +36,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('.claude/worca-ui/package-lock.json') }}
+          key: playwright-${{ runner.os }}-${{ hashFiles('worca-ui/package-lock.json') }}
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npx playwright install --with-deps chromium
 
       - name: Install Playwright system deps
         if: steps.playwright-cache.outputs.cache-hit == 'true'
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npx playwright install-deps chromium
 
       - name: Run Playwright tests
-        working-directory: .claude/worca-ui
+        working-directory: worca-ui
         run: npx playwright test --workers=1

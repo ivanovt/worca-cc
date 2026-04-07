@@ -9,12 +9,9 @@ import importlib
 import io
 import json
 import os
-import sys
 from unittest.mock import patch
 
 import pytest
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude"))
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +31,7 @@ class TestPreToolUseBlockedEvent:
             os.environ.pop(k, None)
 
     def _call_main(self, stdin_data):
-        import hooks.pre_tool_use as m
+        import worca.claude_hooks.pre_tool_use as m
         importlib.reload(m)
         with patch("sys.stdin", io.StringIO(stdin_data)):
             with pytest.raises(SystemExit) as exc:
@@ -136,7 +133,7 @@ class TestPostToolUseTestGateEvent:
         test_gate._state["strikes"] = 0
 
     def _call_main(self, stdin_data):
-        import hooks.post_tool_use as m
+        import worca.claude_hooks.post_tool_use as m
         importlib.reload(m)
         with patch("sys.stdin", io.StringIO(stdin_data)):
             with pytest.raises(SystemExit) as exc:
@@ -273,7 +270,7 @@ class TestSubagentStartDispatchBlockedEvent:
     def _call_main(self, stdin_data, agent=None):
         if agent is not None:
             os.environ["WORCA_AGENT"] = agent
-        import hooks.subagent_start as m
+        import worca.claude_hooks.subagent_start as m
         importlib.reload(m)
         with patch("sys.stdin", io.StringIO(stdin_data)):
             with pytest.raises(SystemExit) as exc:

@@ -1,13 +1,9 @@
-"""Tests for .claude/scripts/run_pipeline.py arg parsing and prompt merging."""
-import sys
+"""Tests for worca.scripts.run_pipeline arg parsing and prompt merging."""
 import os
 import pytest
 from unittest.mock import patch
 
-# Add scripts dir so we can import run_pipeline
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".claude", "scripts"))
-
-from run_pipeline import create_parser, build_work_request
+from worca.scripts.run_pipeline import create_parser, build_work_request
 
 
 class TestCreateParser:
@@ -88,7 +84,7 @@ class TestBuildWorkRequest:
         with pytest.raises(SystemExit):
             build_work_request(args)
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_prompt_only_backwards_compat(self, mock_normalize):
         from worca.orchestrator.work_request import WorkRequest
         mock_normalize.return_value = WorkRequest(
@@ -100,7 +96,7 @@ class TestBuildWorkRequest:
         mock_normalize.assert_called_once_with("prompt", "Add auth")
         assert wr.title == "Add auth"
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_source_dispatches_normalize(self, mock_normalize):
         from worca.orchestrator.work_request import WorkRequest
         mock_normalize.return_value = WorkRequest(
@@ -112,7 +108,7 @@ class TestBuildWorkRequest:
         mock_normalize.assert_called_once_with("source", "gh:issue:42")
         assert wr.title == "Fix bug"
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_spec_dispatches_normalize(self, mock_normalize):
         from worca.orchestrator.work_request import WorkRequest
         mock_normalize.return_value = WorkRequest(
@@ -123,7 +119,7 @@ class TestBuildWorkRequest:
         _wr = build_work_request(args)
         mock_normalize.assert_called_once_with("spec", "spec.md")
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_plan_only_dispatches_normalize(self, mock_normalize):
         from worca.orchestrator.work_request import WorkRequest
         mock_normalize.return_value = WorkRequest(
@@ -135,7 +131,7 @@ class TestBuildWorkRequest:
         _wr = build_work_request(args)
         mock_normalize.assert_called_once_with("plan", "plan.md")
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_prompt_merging_with_source(self, mock_normalize):
         """When --prompt accompanies --source, append as Additional Instructions."""
         from worca.orchestrator.work_request import WorkRequest
@@ -150,7 +146,7 @@ class TestBuildWorkRequest:
         assert "## Additional Instructions" in wr.description
         assert "focus on auth" in wr.description
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_prompt_merging_with_spec(self, mock_normalize):
         """When --prompt accompanies --spec, append as Additional Instructions."""
         from worca.orchestrator.work_request import WorkRequest
@@ -165,7 +161,7 @@ class TestBuildWorkRequest:
         assert "## Additional Instructions" in wr.description
         assert "extra context" in wr.description
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_prompt_merging_with_plan(self, mock_normalize):
         """When --prompt accompanies --plan, append as Additional Instructions."""
         from worca.orchestrator.work_request import WorkRequest
@@ -180,7 +176,7 @@ class TestBuildWorkRequest:
         assert "## Additional Instructions" in wr.description
         assert "additional notes" in wr.description
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_prompt_only_no_merging(self, mock_normalize):
         """When only --prompt is given, no merging — just normal prompt flow."""
         from worca.orchestrator.work_request import WorkRequest
@@ -192,7 +188,7 @@ class TestBuildWorkRequest:
         wr = build_work_request(args)
         assert "Additional Instructions" not in wr.description
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_source_priority_over_plan(self, mock_normalize):
         """When both --source and --plan given, source is primary, plan is plan_file."""
         from worca.orchestrator.work_request import WorkRequest
@@ -230,7 +226,7 @@ class TestPromptFile:
         os.unlink(args.prompt_file)
         assert not pf.exists()
 
-    @patch("run_pipeline.normalize")
+    @patch("worca.scripts.run_pipeline.normalize")
     def test_prompt_file_used_as_prompt_in_build(self, mock_normalize, tmp_path):
         """--prompt-file content should be used as if --prompt was passed."""
         from worca.orchestrator.work_request import WorkRequest

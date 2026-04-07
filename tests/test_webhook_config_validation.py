@@ -15,10 +15,6 @@ Covers:
 """
 
 import json
-import sys
-
-
-sys.path.insert(0, ".claude")
 
 from worca.events.emitter import EventContext
 
