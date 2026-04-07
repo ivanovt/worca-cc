@@ -1174,77 +1174,36 @@ export function createProjectScopedRoutes() {
   });
 
   // GET /api/projects/:projectId/costs — token & cost data
+  // Reads per-iteration token_usage from each run's status.json.
   router.get('/costs', requireWorcaDir, (req, res) => {
     const { worcaDir } = req.project;
-    const resultsDir = join(worcaDir, 'results');
-    if (!existsSync(resultsDir)) return res.json({ ok: true, tokenData: {} });
-
+    const runs = discoverRuns(worcaDir);
     const tokenData = {};
 
-    for (const entry of readdirSync(resultsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const runDir = join(resultsDir, entry.name);
-      const stageNames = [];
-      try {
-        for (const sub of readdirSync(runDir, { withFileTypes: true })) {
-          if (sub.isDirectory()) stageNames.push(sub.name);
-        }
-      } catch {
-        continue;
-      }
+    for (const run of runs) {
+      const stages = run.stages || {};
+      const runEntry = {};
 
-      if (stageNames.length === 0) continue;
-      tokenData[entry.name] = {};
-
-      for (const stage of stageNames) {
-        const stageDir = join(runDir, stage);
+      for (const [stageName, stage] of Object.entries(stages)) {
+        const iterations = stage.iterations || [];
         const iters = [];
-        try {
-          const files = readdirSync(stageDir)
-            .filter((f) => f.startsWith('iter-') && f.endsWith('.json'))
-            .sort();
-          for (const file of files) {
-            try {
-              const data = JSON.parse(
-                readFileSync(join(stageDir, file), 'utf8'),
-              );
-              const mu = data.modelUsage || {};
-              let inputTokens = 0,
-                outputTokens = 0,
-                cacheReadInputTokens = 0,
-                cacheCreationInputTokens = 0,
-                webSearchRequests = 0;
-              const models = [];
-              for (const [model, usage] of Object.entries(mu)) {
-                inputTokens += usage.inputTokens || 0;
-                outputTokens += usage.outputTokens || 0;
-                cacheReadInputTokens += usage.cacheReadInputTokens || 0;
-                cacheCreationInputTokens += usage.cacheCreationInputTokens || 0;
-                webSearchRequests += usage.webSearchRequests || 0;
-                models.push(model);
-              }
-              const cacheCreation = data.usage?.cache_creation || {};
-              iters.push({
-                inputTokens,
-                outputTokens,
-                cacheReadInputTokens,
-                cacheCreationInputTokens,
-                webSearchRequests,
-                cacheEphemeral1hTokens:
-                  cacheCreation.ephemeral_1h_input_tokens || 0,
-                cacheEphemeral5mTokens:
-                  cacheCreation.ephemeral_5m_input_tokens || 0,
-                models,
-              });
-            } catch {
-              /* skip bad files */
-            }
-          }
-        } catch {
-          /* skip */
+        for (const iter of iterations) {
+          const tu = iter.token_usage || {};
+          iters.push({
+            inputTokens: tu.input_tokens || 0,
+            outputTokens: tu.output_tokens || 0,
+            cacheReadInputTokens: tu.cache_read_input_tokens || 0,
+            cacheCreationInputTokens: tu.cache_creation_input_tokens || 0,
+            webSearchRequests: tu.web_search_requests || 0,
+            cacheEphemeral1hTokens: tu.cache_ephemeral_1h_tokens || 0,
+            cacheEphemeral5mTokens: tu.cache_ephemeral_5m_tokens || 0,
+            models: tu.model ? [tu.model] : [],
+          });
         }
-        if (iters.length > 0) tokenData[entry.name][stage] = iters;
+        if (iters.length > 0) runEntry[stageName] = iters;
       }
+
+      if (Object.keys(runEntry).length > 0) tokenData[run.id] = runEntry;
     }
 
     res.json({ ok: true, tokenData });
