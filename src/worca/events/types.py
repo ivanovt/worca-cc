@@ -593,8 +593,12 @@ def cost_stage_total_payload(
     input_tokens: int,
     output_tokens: int,
     model: str,
+    web_search_requests: int = 0,
+    web_fetch_requests: int = 0,
+    cache_creation_input_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
 ) -> dict:
-    return {
+    p: dict = {
         "stage": stage,
         "iteration": iteration,
         "cost_usd": cost_usd,
@@ -602,6 +606,15 @@ def cost_stage_total_payload(
         "output_tokens": output_tokens,
         "model": model,
     }
+    if web_search_requests:
+        p["web_search_requests"] = web_search_requests
+    if web_fetch_requests:
+        p["web_fetch_requests"] = web_fetch_requests
+    if cache_creation_input_tokens:
+        p["cache_creation_input_tokens"] = cache_creation_input_tokens
+    if cache_read_input_tokens:
+        p["cache_read_input_tokens"] = cache_read_input_tokens
+    return p
 
 
 def cost_running_total_payload(

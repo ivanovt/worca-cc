@@ -1,7 +1,15 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
-import { Clock, Coins, Cpu, iconSvg, Timer, Zap } from '../utils/icons.js';
+import {
+  Clock,
+  Coins,
+  Cpu,
+  iconSvg,
+  Search,
+  Timer,
+  Zap,
+} from '../utils/icons.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
 
 let _prevRuns = null;
@@ -39,7 +47,8 @@ function _sumTokens(tokenData) {
   let input = 0,
     output = 0,
     cacheRead = 0,
-    cacheWrite = 0;
+    cacheWrite = 0,
+    webSearches = 0;
   for (const run of Object.values(tokenData)) {
     for (const stage of Object.values(run)) {
       for (const iter of stage) {
@@ -47,10 +56,11 @@ function _sumTokens(tokenData) {
         output += iter.outputTokens || 0;
         cacheRead += iter.cacheReadInputTokens || 0;
         cacheWrite += iter.cacheCreationInputTokens || 0;
+        webSearches += iter.webSearchRequests || 0;
       }
     }
   }
-  return { input, output, cacheRead, cacheWrite };
+  return { input, output, cacheRead, cacheWrite, webSearches };
 }
 
 function _runCost(run) {
@@ -151,6 +161,19 @@ function summaryCards(runs, tokenData) {
           <span class="stat-label">Runs</span>
         </div>
       </div>
+      ${
+        tokens.webSearches > 0
+          ? html`
+      <div class="stat-card stat-web-search">
+        <div class="stat-icon-ring">${unsafeHTML(iconSvg(Search, 20))}</div>
+        <div class="stat-body">
+          <span class="stat-number">${tokens.webSearches}</span>
+          <span class="stat-label">Web Searches</span>
+        </div>
+      </div>
+      `
+          : nothing
+      }
     </div>
   `;
 }
@@ -257,14 +280,17 @@ function runRow(run, tokenData, expandedRun, { onToggleRun }) {
                     <tr class="${idx === 0 ? 'cost-table-stage' : 'cost-table-iter'}">
                       ${idx === 0 ? html`<td rowspan="${iters.length}">${name}</td>` : nothing}
                       <td>#${iter.number || idx + 1}</td>
-                      <td>${_formatCost(iter.cost_usd)}</td>
+                      <td>
+                        ${_formatCost(iter.cost_usd)}
+                        ${tokens.webSearchRequests ? html`<span class="cost-badge" title="Includes ${tokens.webSearchRequests} web search(es)">${unsafeHTML(iconSvg(Search, 10))} ${tokens.webSearchRequests}</span>` : nothing}
+                      </td>
                       <td>${iter.turns || '-'}</td>
                       <td>${iter.duration_ms ? formatDuration(iter.duration_ms) : '-'}</td>
                       <td>${iter.duration_api_ms ? formatDuration(iter.duration_api_ms) : '-'}</td>
                       <td>${tokens.inputTokens ? _formatTokens(tokens.inputTokens) : '-'}</td>
                       <td>${tokens.outputTokens ? _formatTokens(tokens.outputTokens) : '-'}</td>
                       <td>${tokens.cacheReadInputTokens ? _formatTokens(tokens.cacheReadInputTokens) : '-'}</td>
-                      <td>${tokens.cacheCreationInputTokens ? _formatTokens(tokens.cacheCreationInputTokens) : '-'}</td>
+                      <td title="${tokens.cacheEphemeral1hTokens ? `1h: ${_formatTokens(tokens.cacheEphemeral1hTokens)}, 5m: ${_formatTokens(tokens.cacheEphemeral5mTokens)}` : ''}">${tokens.cacheCreationInputTokens ? _formatTokens(tokens.cacheCreationInputTokens) : '-'}</td>
                     </tr>
                   `;
                 });

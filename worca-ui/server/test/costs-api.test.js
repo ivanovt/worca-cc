@@ -167,4 +167,120 @@ describe('GET /api/costs', () => {
     // Bad file is skipped, so plan stage has no valid iters — run entry exists but is empty
     expect(res.body.tokenData[runId]).toEqual({});
   });
+
+  it('includes webSearchRequests aggregated from modelUsage', async () => {
+    const runId = 'web-search-run';
+    const stageDir = join(dir, 'worca', 'results', runId, 'plan');
+    mkdirSync(stageDir, { recursive: true });
+
+    writeFileSync(
+      join(stageDir, 'iter-1.json'),
+      JSON.stringify({
+        modelUsage: {
+          'claude-opus-4-6': {
+            inputTokens: 100,
+            outputTokens: 200,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 3,
+          },
+          'claude-sonnet-4-6': {
+            inputTokens: 50,
+            outputTokens: 80,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+            webSearchRequests: 2,
+          },
+        },
+      }),
+    );
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/costs`);
+    expect(res.status).toBe(200);
+    const iter = res.body.tokenData[runId].plan[0];
+    expect(iter.webSearchRequests).toBe(5);
+  });
+
+  it('defaults webSearchRequests to 0 when field is absent', async () => {
+    const runId = 'no-search-run';
+    const stageDir = join(dir, 'worca', 'results', runId, 'implement');
+    mkdirSync(stageDir, { recursive: true });
+
+    writeFileSync(
+      join(stageDir, 'iter-1.json'),
+      JSON.stringify({
+        modelUsage: {
+          'claude-sonnet-4-6': {
+            inputTokens: 300,
+            outputTokens: 400,
+            cacheReadInputTokens: 10,
+            cacheCreationInputTokens: 20,
+          },
+        },
+      }),
+    );
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/costs`);
+    expect(res.status).toBe(200);
+    const iter = res.body.tokenData[runId].implement[0];
+    expect(iter.webSearchRequests).toBe(0);
+  });
+
+  it('includes cacheEphemeral1hTokens and cacheEphemeral5mTokens from usage.cache_creation', async () => {
+    const runId = 'cache-tier-run';
+    const stageDir = join(dir, 'worca', 'results', runId, 'plan');
+    mkdirSync(stageDir, { recursive: true });
+
+    writeFileSync(
+      join(stageDir, 'iter-1.json'),
+      JSON.stringify({
+        modelUsage: {
+          'claude-opus-4-6': {
+            inputTokens: 14,
+            outputTokens: 9229,
+            cacheReadInputTokens: 489722,
+            cacheCreationInputTokens: 56131,
+          },
+        },
+        usage: {
+          cache_creation: {
+            ephemeral_1h_input_tokens: 50000,
+            ephemeral_5m_input_tokens: 6131,
+          },
+        },
+      }),
+    );
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/costs`);
+    expect(res.status).toBe(200);
+    const iter = res.body.tokenData[runId].plan[0];
+    expect(iter.cacheEphemeral1hTokens).toBe(50000);
+    expect(iter.cacheEphemeral5mTokens).toBe(6131);
+  });
+
+  it('defaults cache ephemeral tokens to 0 when usage.cache_creation is absent', async () => {
+    const runId = 'no-cache-tier-run';
+    const stageDir = join(dir, 'worca', 'results', runId, 'plan');
+    mkdirSync(stageDir, { recursive: true });
+
+    writeFileSync(
+      join(stageDir, 'iter-1.json'),
+      JSON.stringify({
+        modelUsage: {
+          'claude-sonnet-4-6': {
+            inputTokens: 100,
+            outputTokens: 200,
+            cacheReadInputTokens: 0,
+            cacheCreationInputTokens: 0,
+          },
+        },
+      }),
+    );
+
+    const res = await fetch(`http://127.0.0.1:${port}/api/costs`);
+    expect(res.status).toBe(200);
+    const iter = res.body.tokenData[runId].plan[0];
+    expect(iter.cacheEphemeral1hTokens).toBe(0);
+    expect(iter.cacheEphemeral5mTokens).toBe(0);
+  });
 });

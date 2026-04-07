@@ -1655,6 +1655,10 @@ def run_pipeline(
                         input_tokens=_stage_input,
                         output_tokens=_stage_output,
                         model=stage_config.get("model", ""),
+                        cache_creation_input_tokens=usage.get("cache_creation_input_tokens", 0),
+                        cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
+                        web_search_requests=usage.get("web_search_requests", 0),
+                        web_fetch_requests=usage.get("web_fetch_requests", 0),
                     ))
                 # Running total: sum of all previously-completed stages + current
                 _prev_costs = sum(

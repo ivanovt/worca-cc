@@ -1212,20 +1212,28 @@ export function createProjectScopedRoutes() {
               let inputTokens = 0,
                 outputTokens = 0,
                 cacheReadInputTokens = 0,
-                cacheCreationInputTokens = 0;
+                cacheCreationInputTokens = 0,
+                webSearchRequests = 0;
               const models = [];
               for (const [model, usage] of Object.entries(mu)) {
                 inputTokens += usage.inputTokens || 0;
                 outputTokens += usage.outputTokens || 0;
                 cacheReadInputTokens += usage.cacheReadInputTokens || 0;
                 cacheCreationInputTokens += usage.cacheCreationInputTokens || 0;
+                webSearchRequests += usage.webSearchRequests || 0;
                 models.push(model);
               }
+              const cacheCreation = data.usage?.cache_creation || {};
               iters.push({
                 inputTokens,
                 outputTokens,
                 cacheReadInputTokens,
                 cacheCreationInputTokens,
+                webSearchRequests,
+                cacheEphemeral1hTokens:
+                  cacheCreation.ephemeral_1h_input_tokens || 0,
+                cacheEphemeral5mTokens:
+                  cacheCreation.ephemeral_5m_input_tokens || 0,
                 models,
               });
             } catch {
