@@ -1,10 +1,8 @@
 // server/versions.js — version fetching + caching for worca-cc and @worca/ui
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { readPreferences } from './preferences.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Cache: { data, timestamp } */
 let _cache = null;
@@ -173,15 +171,19 @@ export function getDevPathVersions(sourceRepo) {
 }
 
 /**
- * Get installed @worca/ui version from own package.json.
+ * Get globally installed @worca/ui version via npm.
+ * Falls back to own package.json if npm query fails.
  * @returns {string|null}
  */
 function getInstalledUiVersion() {
   try {
-    const pkg = JSON.parse(
-      readFileSync(join(__dirname, '..', 'package.json'), 'utf8'),
-    );
-    return pkg.version || null;
+    const output = execFileSync('npm', ['list', '-g', '@worca/ui', '--json'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const data = JSON.parse(output);
+    return data.dependencies?.['@worca/ui']?.version || null;
   } catch {
     return null;
   }
