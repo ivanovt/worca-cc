@@ -484,17 +484,17 @@ def run_init(
             shutil.copy2(str(source_settings), str(settings_path))
             print("Settings: replaced with template (--force)")
     elif settings_path.exists():
-        # Deep-merge: add missing keys only
+        # Deep-merge: template values overwrite base, user customizations live in .local.json
         with open(settings_path) as f:
             current = json.load(f)
         if source_settings.exists():
             with open(source_settings) as f:
                 template = json.load(f)
-            merged = _deep_merge(current, template)
+            merged = _deep_merge_overwrite(current, template)
             with open(settings_path, "w") as f:
                 json.dump(merged, f, indent=2)
                 f.write("\n")
-            print("Settings: merged (existing keys preserved)")
+            print("Settings: updated to latest defaults")
     else:
         # Create from template
         if source_settings.exists():

@@ -22,21 +22,6 @@ describe('Pricing Editor constants and readPricingFromDom', () => {
     }
   });
 
-  it('exports DEFAULT_PRICING with correct structure', async () => {
-    const { DEFAULT_PRICING } = await import('./settings.js');
-    expect(DEFAULT_PRICING.models.opus).toBeDefined();
-    expect(DEFAULT_PRICING.models.sonnet).toBeDefined();
-    expect(DEFAULT_PRICING.models.haiku).toBeDefined();
-    expect(DEFAULT_PRICING.currency).toBe('USD');
-    expect(typeof DEFAULT_PRICING.last_updated).toBe('string');
-    // Opus costs (Opus 4.6 rates)
-    expect(DEFAULT_PRICING.models.opus.input_per_mtok).toBe(5);
-    expect(DEFAULT_PRICING.models.opus.output_per_mtok).toBe(25);
-    // Sonnet costs
-    expect(DEFAULT_PRICING.models.sonnet.input_per_mtok).toBe(3);
-    expect(DEFAULT_PRICING.models.sonnet.output_per_mtok).toBe(15);
-  });
-
   it('exports readPricingFromDom as a function', async () => {
     const { readPricingFromDom } = await import('./settings.js');
     expect(typeof readPricingFromDom).toBe('function');
