@@ -25,6 +25,8 @@ def extract_token_usage(raw_envelope: dict) -> dict:
         return _empty_token_usage()
 
     usage = raw_envelope.get("usage") or {}
+    server_tool_use = usage.get("server_tool_use") or {}
+    cache_creation = usage.get("cache_creation") or {}
 
     return {
         "input_tokens": usage.get("input_tokens", 0) or 0,
@@ -36,6 +38,11 @@ def extract_token_usage(raw_envelope: dict) -> dict:
         "duration_api_ms": raw_envelope.get("duration_api_ms", 0) or 0,
         "num_turns": raw_envelope.get("num_turns", 0) or 0,
         "model": raw_envelope.get("_resolved_model") or raw_envelope.get("model", ""),
+        "web_search_requests": server_tool_use.get("web_search_requests", 0) or 0,
+        "web_fetch_requests": server_tool_use.get("web_fetch_requests", 0) or 0,
+        "cache_ephemeral_1h_tokens": cache_creation.get("ephemeral_1h_input_tokens", 0) or 0,
+        "cache_ephemeral_5m_tokens": cache_creation.get("ephemeral_5m_input_tokens", 0) or 0,
+        "speed": usage.get("speed", "") or "",
     }
 
 
@@ -51,6 +58,11 @@ def _empty_token_usage() -> dict:
         "duration_api_ms": 0,
         "num_turns": 0,
         "model": "",
+        "web_search_requests": 0,
+        "web_fetch_requests": 0,
+        "cache_ephemeral_1h_tokens": 0,
+        "cache_ephemeral_5m_tokens": 0,
+        "speed": "",
     }
 
 
@@ -63,6 +75,10 @@ _SUMMABLE_FIELDS = [
     "duration_ms",
     "duration_api_ms",
     "num_turns",
+    "web_search_requests",
+    "web_fetch_requests",
+    "cache_ephemeral_1h_tokens",
+    "cache_ephemeral_5m_tokens",
 ]
 
 
@@ -112,6 +128,8 @@ def aggregate_by_model(usages: list[dict]) -> dict:
                 "cost_usd": 0,
                 "num_turns": 0,
                 "invocations": 0,
+                "web_search_requests": 0,
+                "web_fetch_requests": 0,
             }
         entry = by_model[model]
         entry["input_tokens"] += usage.get("input_tokens", 0) or 0
@@ -121,11 +139,17 @@ def aggregate_by_model(usages: list[dict]) -> dict:
         entry["cost_usd"] += usage.get("total_cost_usd", 0) or 0
         entry["num_turns"] += usage.get("num_turns", 0) or 0
         entry["invocations"] += 1
+        entry["web_search_requests"] += usage.get("web_search_requests", 0) or 0
+        entry["web_fetch_requests"] += usage.get("web_fetch_requests", 0) or 0
 
     return by_model
 
 
-def estimate_cost(token_usage: dict, pricing: dict) -> float:
+def estimate_cost(
+    token_usage: dict,
+    pricing: dict,
+    server_tools_pricing: Optional[dict] = None,
+) -> float:
     """Estimate cost from token counts using a pricing table.
 
     Used as fallback when total_cost_usd is missing (e.g., interrupted runs).
@@ -133,21 +157,40 @@ def estimate_cost(token_usage: dict, pricing: dict) -> float:
     Args:
         token_usage: Dict with input_tokens, output_tokens, etc.
         pricing: Dict with input_per_mtok, output_per_mtok, etc.
+        server_tools_pricing: Optional dict with web_search_per_request, etc.
 
     Returns:
         Estimated cost in USD.
     """
     input_tokens = token_usage.get("input_tokens", 0) or 0
     output_tokens = token_usage.get("output_tokens", 0) or 0
-    cache_creation = token_usage.get("cache_creation_input_tokens", 0) or 0
     cache_read = token_usage.get("cache_read_input_tokens", 0) or 0
+
+    cache_1h = token_usage.get("cache_ephemeral_1h_tokens", 0) or 0
+    cache_5m = token_usage.get("cache_ephemeral_5m_tokens", 0) or 0
+    cache_creation_total = token_usage.get("cache_creation_input_tokens", 0) or 0
+
+    if cache_1h or cache_5m:
+        cache_write_cost = (
+            cache_5m * pricing.get("cache_write_per_mtok", 0) / 1_000_000
+            + cache_1h * pricing.get("cache_write_1h_per_mtok", pricing.get("cache_write_per_mtok", 0)) / 1_000_000
+        )
+    else:
+        cache_write_cost = cache_creation_total * pricing.get("cache_write_per_mtok", 0) / 1_000_000
 
     cost = (
         input_tokens * pricing.get("input_per_mtok", 0) / 1_000_000
         + output_tokens * pricing.get("output_per_mtok", 0) / 1_000_000
-        + cache_creation * pricing.get("cache_write_per_mtok", 0) / 1_000_000
+        + cache_write_cost
         + cache_read * pricing.get("cache_read_per_mtok", 0) / 1_000_000
     )
+
+    if server_tools_pricing:
+        web_search = token_usage.get("web_search_requests", 0) or 0
+        web_fetch = token_usage.get("web_fetch_requests", 0) or 0
+        cost += web_search * server_tools_pricing.get("web_search_per_request", 0)
+        cost += web_fetch * server_tools_pricing.get("web_fetch_per_request", 0)
+
     return cost
 
 

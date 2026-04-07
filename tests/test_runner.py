@@ -2299,7 +2299,10 @@ def test_cb_reset_event_emitted_after_success(tmp_path):
 
 
 def _run_pipeline_with_cost(tmp_path, cost_usd=1.5, input_tokens=1000,
-                             output_tokens=500, budget=None):
+                             output_tokens=500, budget=None,
+                             web_search_requests=0, web_fetch_requests=0,
+                             cache_creation_input_tokens=0,
+                             cache_read_input_tokens=0):
     """Run minimal pipeline with a stage that returns cost data.
 
     Uses PLAN stage (no plan_file) so run_stage is actually invoked.
@@ -2325,13 +2328,21 @@ def _run_pipeline_with_cost(tmp_path, cost_usd=1.5, input_tokens=1000,
     status_path = str(worca_dir / "status.json")
     wr = WorkRequest(source_type="prompt", title="Cost test")
 
+    usage_dict = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cache_creation_input_tokens": cache_creation_input_tokens,
+        "cache_read_input_tokens": cache_read_input_tokens,
+    }
+    if web_search_requests or web_fetch_requests:
+        usage_dict["server_tool_use"] = {
+            "web_search_requests": web_search_requests,
+            "web_fetch_requests": web_fetch_requests,
+        }
     raw_envelope = {
         "type": "result",
         "total_cost_usd": cost_usd,
-        "usage": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-        },
+        "usage": usage_dict,
     }
 
     def mock_run_stage(stage, context, sp, msize=1, iteration=1,
@@ -2429,6 +2440,49 @@ def test_cost_budget_warning_payload_fields(tmp_path):
     assert "pct_used" in p
     assert p["budget_usd"] == 1.0
     assert p["pct_used"] > 80.0
+
+
+def test_cost_stage_total_web_search_requests_in_payload(tmp_path):
+    """pipeline.cost.stage_total payload includes web_search_requests when non-zero."""
+    events = _run_pipeline_with_cost(tmp_path, cost_usd=1.0, web_search_requests=3)
+    evt = next(e for e in events if e["event_type"] == "pipeline.cost.stage_total")
+    assert evt["payload"].get("web_search_requests") == 3
+
+
+def test_cost_stage_total_web_fetch_requests_in_payload(tmp_path):
+    """pipeline.cost.stage_total payload includes web_fetch_requests when non-zero."""
+    events = _run_pipeline_with_cost(tmp_path, cost_usd=1.0, web_fetch_requests=2)
+    evt = next(e for e in events if e["event_type"] == "pipeline.cost.stage_total")
+    assert evt["payload"].get("web_fetch_requests") == 2
+
+
+def test_cost_stage_total_cache_creation_tokens_in_payload(tmp_path):
+    """pipeline.cost.stage_total payload includes cache_creation_input_tokens when non-zero."""
+    events = _run_pipeline_with_cost(
+        tmp_path, cost_usd=1.0, cache_creation_input_tokens=5000
+    )
+    evt = next(e for e in events if e["event_type"] == "pipeline.cost.stage_total")
+    assert evt["payload"].get("cache_creation_input_tokens") == 5000
+
+
+def test_cost_stage_total_cache_read_tokens_in_payload(tmp_path):
+    """pipeline.cost.stage_total payload includes cache_read_input_tokens when non-zero."""
+    events = _run_pipeline_with_cost(
+        tmp_path, cost_usd=1.0, cache_read_input_tokens=8000
+    )
+    evt = next(e for e in events if e["event_type"] == "pipeline.cost.stage_total")
+    assert evt["payload"].get("cache_read_input_tokens") == 8000
+
+
+def test_cost_stage_total_new_fields_absent_when_zero(tmp_path):
+    """pipeline.cost.stage_total payload omits new fields when they are zero."""
+    events = _run_pipeline_with_cost(tmp_path, cost_usd=1.0)
+    evt = next(e for e in events if e["event_type"] == "pipeline.cost.stage_total")
+    p = evt["payload"]
+    assert "web_search_requests" not in p
+    assert "web_fetch_requests" not in p
+    assert "cache_creation_input_tokens" not in p
+    assert "cache_read_input_tokens" not in p
 
 
 # ---------------------------------------------------------------------------

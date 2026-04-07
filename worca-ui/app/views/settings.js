@@ -57,31 +57,17 @@ const DEFAULT_STAGES = {
   learn: { agent: 'learner', enabled: false },
 };
 
-export const PRICING_MODELS = ['opus', 'sonnet'];
+export const PRICING_MODELS = ['opus', 'sonnet', 'haiku'];
 export const PRICING_FIELDS = [
-  { key: 'input_per_mtok', label: 'Input/MTok' },
-  { key: 'output_per_mtok', label: 'Output/MTok' },
-  { key: 'cache_write_per_mtok', label: 'Cache Write/MTok' },
-  { key: 'cache_read_per_mtok', label: 'Cache Read/MTok' },
+  { key: 'input_per_mtok', label: 'Input/MTok ($)' },
+  { key: 'output_per_mtok', label: 'Output/MTok ($)' },
+  { key: 'cache_write_per_mtok', label: 'Cache Write 5m/MTok ($)' },
+  { key: 'cache_write_1h_per_mtok', label: 'Cache Write 1h/MTok ($)' },
+  { key: 'cache_read_per_mtok', label: 'Cache Read/MTok ($)' },
 ];
-export const DEFAULT_PRICING = {
-  models: {
-    opus: {
-      input_per_mtok: 15,
-      output_per_mtok: 75,
-      cache_write_per_mtok: 18.75,
-      cache_read_per_mtok: 1.5,
-    },
-    sonnet: {
-      input_per_mtok: 3,
-      output_per_mtok: 15,
-      cache_write_per_mtok: 3.75,
-      cache_read_per_mtok: 0.3,
-    },
-  },
-  currency: 'USD',
-  last_updated: '2025-05-01',
-};
+// Zero-value fallback used only when server hasn't loaded yet.
+// Real defaults live in src/worca/settings.json (single source of truth).
+const EMPTY_MODEL = Object.fromEntries(PRICING_FIELDS.map((f) => [f.key, 0]));
 
 const GUARD_RULES = [
   {
@@ -174,19 +160,21 @@ export async function loadSettings(projectId) {
     }
     if (!settingsData.worca.pricing) {
       settingsData.worca.pricing = {
-        ...DEFAULT_PRICING,
-        models: { ...DEFAULT_PRICING.models },
+        models: {},
+        server_tools: {},
+        currency: 'USD',
       };
-    } else {
-      if (!settingsData.worca.pricing.models)
-        settingsData.worca.pricing.models = {};
-      for (const model of PRICING_MODELS) {
-        settingsData.worca.pricing.models[model] = {
-          ...DEFAULT_PRICING.models[model],
-          ...(settingsData.worca.pricing.models[model] || {}),
-        };
-      }
     }
+    if (!settingsData.worca.pricing.models)
+      settingsData.worca.pricing.models = {};
+    for (const model of PRICING_MODELS) {
+      settingsData.worca.pricing.models[model] = {
+        ...EMPTY_MODEL,
+        ...(settingsData.worca.pricing.models[model] || {}),
+      };
+    }
+    if (!settingsData.worca.pricing.server_tools)
+      settingsData.worca.pricing.server_tools = {};
     if (!settingsData.worca.governance) {
       settingsData.worca.governance = { ...DEFAULT_GOVERNANCE };
     } else {
@@ -405,9 +393,19 @@ export function readPricingFromDom() {
       models[model][field.key] = parseFloat(el?.value) || 0;
     }
   }
+  const searchEl = document.getElementById(
+    'pricing-server_tools-web_search_per_request',
+  );
+  const fetchEl = document.getElementById(
+    'pricing-server_tools-web_fetch_per_request',
+  );
   return {
     models,
-    currency: DEFAULT_PRICING.currency,
+    server_tools: {
+      web_search_per_request: parseFloat(searchEl?.value) || 0,
+      web_fetch_per_request: parseFloat(fetchEl?.value) || 0,
+    },
+    currency: settingsData?.worca?.pricing?.currency || 'USD',
     last_updated: new Date().toISOString().slice(0, 10),
   };
 }
@@ -868,8 +866,9 @@ function preferencesTab(
 }
 
 function pricingTab(worca, rerender) {
-  const pricing = worca.pricing || DEFAULT_PRICING;
-  const models = pricing.models || DEFAULT_PRICING.models;
+  const pricing = worca.pricing || {};
+  const models = pricing.models || {};
+  const serverTools = pricing.server_tools || {};
 
   return html`
     <div class="settings-tab-content">
@@ -884,7 +883,7 @@ function pricingTab(worca, rerender) {
           </thead>
           <tbody>
             ${PRICING_MODELS.map((model) => {
-              const costs = models[model] || DEFAULT_PRICING.models[model];
+              const costs = models[model] || EMPTY_MODEL;
               return html`
                 <tr>
                   <td class="pricing-model-name">${model}</td>
@@ -892,6 +891,7 @@ function pricingTab(worca, rerender) {
                     (f) => html`
                     <td>
                       <sl-input
+                        class="pricing-input"
                         id="pricing-${model}-${f.key}"
                         type="number"
                         step="0.01"
@@ -908,6 +908,48 @@ function pricingTab(worca, rerender) {
           </tbody>
         </table>
       </div>
+
+      <div class="pricing-table-wrap">
+        <table class="pricing-table pricing-table--auto">
+          <thead>
+            <tr>
+              <th>Server Tools</th>
+              <th>Request ($)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="pricing-model-name">Web Search</td>
+              <td>
+                <sl-input
+                  class="pricing-input"
+                  id="pricing-server_tools-web_search_per_request"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value="${serverTools.web_search_per_request ?? 0.01}"
+                  size="small"
+                ></sl-input>
+              </td>
+            </tr>
+            <tr>
+              <td class="pricing-model-name">Web Fetch</td>
+              <td>
+                <sl-input
+                  class="pricing-input"
+                  id="pricing-server_tools-web_fetch_per_request"
+                  type="number"
+                  step="0.001"
+                  min="0"
+                  value="${serverTools.web_fetch_per_request ?? 0.01}"
+                  size="small"
+                ></sl-input>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       <div class="pricing-info">
         <span class="settings-muted">Currency: ${pricing.currency || 'USD'}</span>
         <span class="settings-muted">Last updated: ${pricing.last_updated || 'N/A'}</span>

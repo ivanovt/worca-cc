@@ -1735,9 +1735,19 @@ sl-details.log-history-panel::part(content) {
 }
 
 .pricing-table sl-input {
-  min-width: 90px;
-  max-width: 130px;
+  min-width: 72px;
+  max-width: 104px;
+  display: inline-block;
 }
+
+sl-input.pricing-input::part(input) {
+  text-align: right;
+}
+
+.pricing-table--auto {
+  width: auto;
+}
+
 
 .pricing-info {
   display: flex;
@@ -3158,6 +3168,19 @@ sl-details.learnings-panel::part(content) {
 
 .cost-muted {
   color: var(--muted);
+}
+
+.cost-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.7rem;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  color: var(--muted);
+  margin-left: 4px;
+  vertical-align: middle;
 }
 
 /* Preflight checks view */

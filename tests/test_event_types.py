@@ -588,6 +588,64 @@ def test_cost_stage_total_payload_required_fields():
     assert p["model"] == "claude-sonnet-4-6"
 
 
+def test_cost_stage_total_payload_optional_fields_excluded_when_zero():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="IMPLEMENT", iteration=1, cost_usd=0.10,
+        input_tokens=500, output_tokens=200, model="claude-sonnet-4-6",
+    )
+    assert "web_search_requests" not in p
+    assert "web_fetch_requests" not in p
+    assert "cache_creation_input_tokens" not in p
+    assert "cache_read_input_tokens" not in p
+
+
+def test_cost_stage_total_payload_optional_fields_included_when_nonzero():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="IMPLEMENT", iteration=2, cost_usd=0.20,
+        input_tokens=800, output_tokens=300, model="claude-opus-4-6",
+        web_search_requests=5,
+        web_fetch_requests=2,
+        cache_creation_input_tokens=1000,
+        cache_read_input_tokens=500,
+    )
+    assert p["web_search_requests"] == 5
+    assert p["web_fetch_requests"] == 2
+    assert p["cache_creation_input_tokens"] == 1000
+    assert p["cache_read_input_tokens"] == 500
+
+
+def test_cost_stage_total_payload_partial_optional_fields():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="TEST", iteration=1, cost_usd=0.05,
+        input_tokens=100, output_tokens=50, model="claude-haiku-4-5",
+        web_search_requests=3,
+        cache_read_input_tokens=200,
+    )
+    assert p["web_search_requests"] == 3
+    assert p["cache_read_input_tokens"] == 200
+    assert "web_fetch_requests" not in p
+    assert "cache_creation_input_tokens" not in p
+
+
+def test_cost_stage_total_payload_zero_optional_fields_excluded():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="PLAN", iteration=1, cost_usd=0.01,
+        input_tokens=50, output_tokens=25, model="claude-sonnet-4-6",
+        web_search_requests=0,
+        web_fetch_requests=0,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=0,
+    )
+    assert "web_search_requests" not in p
+    assert "web_fetch_requests" not in p
+    assert "cache_creation_input_tokens" not in p
+    assert "cache_read_input_tokens" not in p
+
+
 def test_cost_running_total_payload_required_fields():
     from worca.events.types import cost_running_total_payload
     p = cost_running_total_payload(
