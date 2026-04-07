@@ -8,7 +8,7 @@
 |------|----------|---------|-----------------|
 | **Package built-ins** | `src/worca/templates/{id}/` | Ship with `pip install worca-cc` | Yes (source repo) |
 | **Project templates** | `.claude/templates/{id}/` | Team-shared, project-specific | Yes |
-| **User templates** | `~/.worca/templates/{id}/` | Personal, cross-project | No |
+| **User templates** | `~/.worca/templates/{id}/` | Cross-project, per-user | No |
 
 Resolution priority: user > project > built-in (most specific wins on ID collision).
 
@@ -626,7 +626,129 @@ When `templateId` is present, the server:
 
 ---
 
-## 8. Implementation Tasks
+## 8. UI Design
+
+### Terminology and visual language
+
+Three source tiers, each with a consistent `sl-badge` variant used everywhere:
+
+| Tier | Badge label | Badge variant | Meaning |
+|------|-------------|---------------|---------|
+| Package | `worca` | `neutral` (grey) | Shipped with `pip install worca-cc` |
+| Project | `project` | `primary` (blue) | Team-shared, version-controlled |
+| User | `user` | `success` (green) | Cross-project, per-user |
+
+The `sourceBadge(tier)` helper renders the badge. Used in template cards, run detail headers, run list items, and the template picker.
+
+### 8.1 Templates tab (Settings > Templates)
+
+A single grid with a filter bar — not separate tabs per tier:
+
+```
+[All ▾] [worca] [project] [user]         [Save Current as Template]
+┌─────────────┐ ┌─────────────┐ ┌─────────────┐
+│ Bugfix       │ │ Feature Dev  │ │ Refactor     │
+│ ●worca       │ │ ●worca       │ │ ●worca       │
+│ fast no-plan │ │ full-pipeline│ │ no-pr extra  │
+│ Skip planner │ │ Full pipeline│ │ Full pipeline│
+│              │ │              │ │              │
+│    [Clone]   │ │    [Clone]   │ │    [Clone]   │
+└─────────────┘ └─────────────┘ └─────────────┘
+┌─────────────┐
+│ My Fast Run  │
+│ ●project     │
+│ custom       │
+│ Quick itera… │
+│ [Edit] [Del] │
+└─────────────┘
+```
+
+- `worca` templates are read-only: Clone button only
+- `project` and `user` templates show Edit and Delete buttons
+- Each card shows: name, source badge, tags as small badges, description (2-line clamp)
+
+### 8.2 Clone / Edit / Save-as-template (unified editor dialog)
+
+A single `templateEditorDialog` component serves three entry points:
+
+| Entry point | Pre-populated from | Save target |
+|-------------|-------------------|-------------|
+| **Clone** (any card) | Source template's config | User picks: `project` or `user` |
+| **Edit** (project/user card) | The template being edited | Same scope (overwrites in place) |
+| **Save Current as Template** (Pipeline tab button) | Current pipeline settings from DOM | User picks: `project` or `user` |
+
+```
+┌─ Template Editor ────────────────────────────┐
+│                                               │
+│  Name:  [My Security Audit            ]      │
+│  ID:    my-security-audit (auto-derived)      │
+│  Desc:  [Hardened review with custom...  ]   │
+│  Tags:  [security, full-pipeline         ]   │
+│                                               │
+│  ┌─ Config ─────────────────────────────────┐ │
+│  │ Stages    Agents    Loops    Advanced    │ │
+│  │ ┌──────────────────────────────────────┐ │ │
+│  │ │ ☑ Plan        ☐ Coordinate          │ │ │
+│  │ │ ☑ Implement   ☑ Test                │ │ │
+│  │ │ ☑ Review      ☑ PR                  │ │ │
+│  │ └──────────────────────────────────────┘ │ │
+│  └──────────────────────────────────────────┘ │
+│                                               │
+│  Save to: (●) Project  ( ) User              │
+│                                               │
+│              [Cancel]  [Save Template]         │
+└───────────────────────────────────────────────┘
+```
+
+ID auto-derivation: `name.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 64)`
+
+### 8.3 Template picker (New Run dialog)
+
+Collapsible `sl-details` section at the top of the "New Run" dialog:
+
+```
+▶ Pipeline Template (optional)
+  ┌─────────────────────────────────────────┐
+  │ None (use current settings)           ▾ │
+  │  Bugfix                       ●worca    │
+  │  Feature Development          ●worca    │
+  │  Refactor                     ●worca    │
+  │  Quick Fix                    ●worca    │
+  │  My Fast Run                  ●project  │
+  └─────────────────────────────────────────┘
+  fast · no-plan
+  Skip planner and coordinator. Focuses on...
+```
+
+When a template is selected, its tags and description appear below the selector as a preview. Clearing the selection reverts to "use current settings."
+
+### 8.4 Run detail template indicator
+
+When a run used a template, the run detail view shows it:
+
+- **Run header badge:** `Template: bugfix (worca)` — small inline badge using `templateSummaryBadge(templateInfo)`
+- **Template details panel** (expandable or as a tab):
+  - Template name, source tier badge, description
+  - Config diff: what the template changed vs. base settings
+  - Agent overlays: list of bundled `.md` files, clickable to view content
+  - Params used (from `resolved-params.json`)
+
+This data comes from the `template/` snapshot in the run directory — always available even if the original template has been modified or deleted since.
+
+### 8.5 Reusable components
+
+| Component | Used in |
+|-----------|---------|
+| `sourceBadge(tier)` | Template cards, run detail, template picker, run list |
+| `templateCard(template, actions)` | Templates tab grid, template picker preview |
+| `templateEditorDialog(data, mode, options)` | Save-as-template, Clone, Edit |
+| `templateSummaryBadge(info)` | Run cards, run detail header, run list |
+| `templateConfigPreview(config)` | Template editor, run detail template panel |
+| `tagBadges(tags)` | Template cards, template picker, run detail |
+
+---
+
+## 9. Implementation Tasks
 
 ### Task 1: Create Python TemplateResolver
 
@@ -813,57 +935,83 @@ Accept `settingsPath` in `startPipeline()` options and pass as `--settings` arg 
 
 ---
 
-### Task 10: Create `app/views/templates.js`
+### Task 10: Create Reusable UI Components
+
+**File to create:** `worca-ui/app/views/template-components.js`
+
+Implement the shared components from Section 8.5:
+
+- `sourceBadge(tier)` — renders `sl-badge` with consistent variant mapping (`worca`→neutral, `project`→primary, `user`→success)
+- `templateCard(template, actions)` — card with name, source badge, tags, description, and action buttons (Clone for all; Edit/Delete for project/user only)
+- `templateSummaryBadge(info)` — inline badge for run headers showing `Template: {name} ({tier})`
+- `templateConfigPreview(config)` — summarizes stage enable/disable, agent models, loop limits
+- `tagBadges(tags)` — renders tag array as small `sl-badge` elements
+
+---
+
+### Task 11: Create `app/views/templates.js`
 
 **File to create:** `worca-ui/app/views/templates.js`
 
-Settings > Templates tab view. Shows template cards in a grid with name, tier badge, tags, description, and delete button (disabled for built-ins).
+Settings > Templates tab view as specified in Section 8.1. Uses `templateCard` from Task 10. Includes tier filter bar (`[All] [worca] [project] [user]`) and "Save Current as Template" button.
 
-Exported function: `templatesTab(templates, { onDelete, onSaveAsTemplate })`
-
----
-
-### Task 11: Create `app/views/save-template-dialog.js`
-
-**File to create:** `worca-ui/app/views/save-template-dialog.js`
-
-Shoelace dialog for saving current pipeline settings as a template. Fields: name, description, tags (comma-separated). ID auto-derived from name.
-
-Exported function: `saveTemplateDialogView(isOpen, { onSubmit, onClose, isSubmitting, error })`
+Exported function: `templatesTab(templates, { onDelete, onClone, onEdit, onSaveAsTemplate, tierFilter })`
 
 ---
 
-### Task 12: Add Template Picker to "New Run" Dialog
+### Task 12: Create `app/views/template-editor-dialog.js`
+
+**File to create:** `worca-ui/app/views/template-editor-dialog.js`
+
+Unified editor dialog as specified in Section 8.2. Handles three modes: Clone, Edit, Save-as-template.
+
+Fields: name, auto-derived ID, description, tags, config sub-tabs (Stages, Agents, Loops, Advanced), save-target radio (Project/User).
+
+Exported function: `templateEditorDialogView(isOpen, { mode, data, onSubmit, onClose, isSubmitting, error })`
+
+---
+
+### Task 13: Add Template Picker to "New Run" Dialog
 
 **File to modify:** `worca-ui/app/views/new-run-dialog.js`
 
-Add a collapsible `sl-details` section with an `sl-select` template picker at the top of the dialog. When a template is selected, show its description and tags as a preview.
+Add template picker as specified in Section 8.3. Collapsible `sl-details` with `sl-select`. Uses `sourceBadge` and `tagBadges` from Task 10.
 
 Include `templateId` in the form submission payload.
 
 ---
 
-### Task 13: Wire Templates into Settings View and `main.js`
+### Task 14: Add Template Indicator to Run Detail View
+
+**File to modify:** `worca-ui/app/views/run-detail.js`
+
+Add template indicator as specified in Section 8.4. Uses `templateSummaryBadge` in the header and an expandable panel for template details (config diff, agent overlays, params).
+
+Data sourced from the `template/` snapshot in the run's results directory via a new `GET /api/runs/:id/template` endpoint.
+
+---
+
+### Task 15: Wire Templates into Settings View and `main.js`
 
 **File to modify:** `worca-ui/app/views/settings.js`
 
-Add "Templates" tab to the settings `sl-tab-group`. Add `loadTemplates()` function, `handleDeleteTemplate`, and "Save as Template" button on the Pipeline tab.
+Add "Templates" tab to the settings `sl-tab-group`. Add `loadTemplates()` function, `handleDeleteTemplate`, `handleCloneTemplate`, `handleEditTemplate`, and "Save as Template" button on the Pipeline tab.
 
 **File to modify:** `worca-ui/app/main.js`
 
-Add save-template dialog state and handlers. Pass `templateId` through `handleSubmitNewRun`. Trigger template loading at appropriate points.
+Add template editor dialog state and handlers. Pass `templateId` through `handleSubmitNewRun`. Trigger template loading at appropriate points.
 
 ---
 
-### Task 14: Add CSS for Templates
+### Task 16: Add CSS for Templates
 
 **File to modify:** `worca-ui/app/styles.css`
 
-Add styles for template card grid, template picker in New Run dialog, and save-as-template dialog.
+Add styles for template card grid, tier filter bar, template picker in New Run dialog, template editor dialog, and run detail template indicator.
 
 ---
 
-### Task 15: Create Server-Side Template Tests
+### Task 17: Create Server-Side Template Tests
 
 **File to create:** `worca-ui/server/template-manager.test.js`
 
@@ -871,7 +1019,7 @@ Unit tests for the JS template manager module, covering list, get, save, delete,
 
 ---
 
-### Task 16: Rebuild Frontend Bundle
+### Task 18: Rebuild Frontend Bundle
 
 ```bash
 cd worca-ui && npm run build
@@ -881,7 +1029,7 @@ Run after all UI tasks are complete.
 
 ---
 
-## 9. `worca init` Integration
+## 10. `worca init` Integration
 
 **File to modify:** `src/worca/cli/init.py`
 
@@ -894,12 +1042,12 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 
 ---
 
-## 10. Testing Strategy
+## 11. Testing Strategy
 
 ### Unit Tests
 
 - **Python:** `tests/test_templates.py` (Task 3) — covers `TemplateResolver`, merge logic, params, snapshot
-- **JS:** `worca-ui/server/template-manager.test.js` (Task 15) — covers REST adapter layer
+- **JS:** `worca-ui/server/template-manager.test.js` (Task 17) — covers REST adapter layer
 
 ### Manual Integration Checklist
 
@@ -933,7 +1081,7 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 
 ---
 
-## 11. File Summary
+## 12. File Summary
 
 ### New files
 
@@ -948,8 +1096,9 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 | `tests/test_templates.py` | Python tests for TemplateResolver |
 | `worca-ui/server/template-manager.js` | JS adapter for template operations |
 | `worca-ui/server/template-manager.test.js` | JS template manager tests |
+| `worca-ui/app/views/template-components.js` | Reusable components: sourceBadge, templateCard, tagBadges, etc. |
 | `worca-ui/app/views/templates.js` | Settings > Templates tab view |
-| `worca-ui/app/views/save-template-dialog.js` | Save-as-template dialog |
+| `worca-ui/app/views/template-editor-dialog.js` | Unified Clone/Edit/Save-as-template dialog |
 
 ### Modified files
 
@@ -964,12 +1113,13 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 | `worca-ui/server/process-manager.js` | Accept `settingsPath` override in `startPipeline()` |
 | `worca-ui/app/views/settings.js` | Add Templates tab, loadTemplates, Save as Template button |
 | `worca-ui/app/views/new-run-dialog.js` | Add template picker, include templateId in submit |
-| `worca-ui/app/main.js` | Wire save-template dialog, pass templateId through |
-| `worca-ui/app/styles.css` | Template card grid, picker, dialog styles |
+| `worca-ui/app/views/run-detail.js` | Add template indicator badge and expandable template details panel |
+| `worca-ui/app/main.js` | Wire template editor dialog, pass templateId through |
+| `worca-ui/app/styles.css` | Template card grid, tier filter, picker, editor dialog, run detail indicator styles |
 
 ---
 
-## 12. Rollout Order
+## 13. Rollout Order
 
 Tasks should be implemented in this order due to dependencies:
 
@@ -982,8 +1132,9 @@ Tasks should be implemented in this order due to dependencies:
 7. **Task 7** (JS template-manager.js) — depends on Task 1 (mirrors its API)
 8. **Task 8** (REST endpoints) — depends on Task 7
 9. **Task 9** (POST /api/runs extension) — depends on Tasks 7-8
-10. **Task 15** (JS tests) — depends on Task 7
-11. **Tasks 10-12** (UI views) — depend on REST API contract from Task 8; can be parallelized
-12. **Task 13** (main.js wiring) — depends on Tasks 10-12
-13. **Task 14** (CSS) — after all views are settled
-14. **Task 16** (rebuild bundle) — final step
+10. **Task 17** (JS tests) — depends on Task 7
+11. **Task 10** (reusable UI components) — depends on REST API contract from Task 8
+12. **Tasks 11-14** (UI views: templates tab, editor dialog, picker, run detail) — depend on Task 10; can be parallelized
+13. **Task 15** (main.js wiring) — depends on Tasks 11-14
+14. **Task 16** (CSS) — after all views are settled
+15. **Task 18** (rebuild bundle) — final step
