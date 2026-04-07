@@ -531,7 +531,7 @@ export function createMessageRouter({
         );
         return;
       }
-      const issues = listIssues(beadsDbPath);
+      const issues = await listIssues(beadsDbPath);
       ws.send(
         JSON.stringify(
           makeOk(req, { issues, dbExists: true, dbPath: beadsDbPath }),

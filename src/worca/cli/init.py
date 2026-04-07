@@ -306,6 +306,23 @@ def _init_beads(git_root: Path) -> bool:
         return False
 
 
+def _upgrade_beads(git_root: Path) -> bool:
+    """Update beads repo fingerprint if .beads/ exists. Idempotent."""
+    if not (git_root / ".beads").is_dir():
+        return False
+    try:
+        subprocess.run(
+            ["bd", "migrate", "--update-repo-id"],
+            cwd=str(git_root),
+            input=b"y\n",
+            capture_output=True,
+            timeout=30,
+        )
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
 def _show_check(source: Path, git_root: Path) -> None:
     """Show what would change without making changes."""
     target = git_root / ".claude" / "worca"
@@ -508,9 +525,11 @@ def run_init(
         for change in gitignore_changes:
             print(change)
 
-    # --- Beads init ---
+    # --- Beads init / upgrade ---
     if _init_beads(git_root):
         print("Initialized beads (.beads/)")
+    elif upgrade and _upgrade_beads(git_root):
+        print("Beads: updated repo fingerprint")
 
     version = read_version(target)
     print(f"\nworca {version or 'unknown'} initialized successfully.")
