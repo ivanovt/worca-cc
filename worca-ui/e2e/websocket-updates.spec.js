@@ -206,7 +206,7 @@ test.describe('WebSocket live updates — stage timeline', () => {
 // ─── Dashboard live status updates ───────────────────────────────────────────
 
 test.describe('WebSocket live updates — dashboard status changes', () => {
-  test('run card status updates from running to paused on dashboard', async ({ page }) => {
+  test('run card moves to paused section when paused on dashboard', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-ws-dash-run-to-pause';
@@ -224,13 +224,15 @@ test.describe('WebSocket live updates — dashboard status changes', () => {
         work_request: { title: 'Status change: running to paused' },
       });
 
-      await expect(page.locator('.run-card.status-paused')).toBeVisible();
+      // Run moves from active group to paused section
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
+      await expect(page.locator('.active-group:not(.active-group-paused) .run-card')).not.toBeAttached();
     } finally {
       await ctx.close();
     }
   });
 
-  test('run card status updates from paused to running on dashboard', async ({ page }) => {
+  test('resumed run moves from paused section to active group on dashboard', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-ws-dash-pause-to-run';
@@ -241,14 +243,16 @@ test.describe('WebSocket live updates — dashboard status changes', () => {
       });
 
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group .run-card.status-paused')).toBeVisible();
+      // Paused run is in paused section, not active group
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
 
       triggerStatusUpdate(ctx.worcaDir, runId, {
         pipeline_status: 'running',
         work_request: { title: 'Status change: paused to running' },
       });
 
-      await expect(page.locator('.run-card.status-running')).toBeVisible();
+      // After resume, run moves to active group
+      await expect(page.locator('.active-group .run-card.status-running')).toBeVisible();
     } finally {
       await ctx.close();
     }

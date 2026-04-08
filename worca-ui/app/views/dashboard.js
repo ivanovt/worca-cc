@@ -90,6 +90,7 @@ export function dashboardView(
   const totalCost = _computeTotalCost(runs);
 
   const activeGroup = sortByStartDesc(active);
+  const allPaused = sortByStartDesc(_activeGroup(runs, ['paused']));
 
   const MAX_RECENT = 3;
   const allFailed = sortByStartDesc(_activeGroup(runs, ['failed']));
@@ -153,6 +154,22 @@ export function dashboardView(
         </div>
       `
           : html`<div class="empty-state">No active pipelines</div>`
+      }
+
+      ${
+        allPaused.length > 0
+          ? html`
+        <h3 class="dashboard-section-title">
+          Paused
+          <span class="dashboard-section-count">${allPaused.length}</span>
+        </h3>
+        <div class="active-group active-group-paused">
+          <div class="run-list">
+            ${allPaused.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
+          </div>
+        </div>
+      `
+          : nothing
       }
 
       ${

@@ -34,7 +34,7 @@ const _running2 = {
 const paused1 = {
   id: 'p1',
   pipeline_status: 'paused',
-  active: true,
+  active: false,
   started_at: '2026-01-01T00:00:00Z',
 };
 const failed1 = {
@@ -54,19 +54,21 @@ describe('dashboardView - active runs', () => {
     expect(output).toContain('run-card');
   });
 
-  it('shows active paused run in Active Runs section', () => {
+  it('shows paused run in Paused section, not Active Runs', () => {
     const state = { runs: { p1: paused1 } };
     const output = renderToString(dashboardView(state));
-    expect(output).toContain('Active Runs');
-    expect(output).toContain('run-card');
+    expect(output).toContain('Paused');
+    expect(output).toContain('active-group-paused');
+    expect(output).toContain('No active pipelines');
   });
 
-  it('shows all active runs regardless of status', () => {
+  it('running in Active, paused in Paused section', () => {
     const state = { runs: { r1: running1, p1: paused1 } };
     const output = renderToString(dashboardView(state));
-    // Both are active:true, so both appear under Active Runs
+    // Running in active group, paused in paused section — 2 run-cards total
     const count = (output.match(/run-card /g) || []).length;
     expect(count).toBe(2);
+    expect(output).toContain('active-group-paused');
   });
 
   it('shows resuming run in Active Runs section', () => {
@@ -146,23 +148,24 @@ describe('dashboardView - sort order within groups', () => {
     );
   });
 
-  it('renders newer paused run before older paused run', () => {
+  it('renders newer paused run before older paused run in Paused section', () => {
     const older = {
       id: 'pA',
       pipeline_status: 'paused',
-      active: true,
+      active: false,
       started_at: '2026-01-01T00:00:00Z',
       work_request: { title: 'Older Paused' },
     };
     const newer = {
       id: 'pB',
       pipeline_status: 'paused',
-      active: true,
+      active: false,
       started_at: '2026-03-01T00:00:00Z',
       work_request: { title: 'Newer Paused' },
     };
     const state = { runs: { pA: older, pB: newer } };
     const output = renderToString(dashboardView(state));
+    expect(output).toContain('active-group-paused');
     expect(output.indexOf('Newer Paused')).toBeLessThan(
       output.indexOf('Older Paused'),
     );
@@ -200,9 +203,10 @@ describe('dashboardView - quick-action buttons', () => {
     expect(output).toContain('btn-quick-pause');
   });
 
-  it('shows resume button on paused run cards when onResume provided', () => {
+  it('shows resume button on paused run cards in Paused section when onResume provided', () => {
     const state = { runs: { p1: paused1 } };
     const output = renderToString(dashboardView(state, { onResume: () => {} }));
+    expect(output).toContain('active-group-paused');
     expect(output).toContain('btn-quick-resume');
   });
 
@@ -253,16 +257,16 @@ describe('dashboardView - inactive failed/paused runs', () => {
     expect(output).toContain('btn-quick-resume');
   });
 
-  it('does not show inactive paused run in active paused group', () => {
-    const inactivePaused = {
+  it('shows paused run in Paused section', () => {
+    const pausedRun = {
       id: 'ip1',
       pipeline_status: 'paused',
       active: false,
       started_at: '2026-01-01T00:00:00Z',
     };
-    const state = { runs: { ip1: inactivePaused } };
+    const state = { runs: { ip1: pausedRun } };
     const output = renderToString(dashboardView(state));
-    expect(output).not.toContain('active-group-paused');
+    expect(output).toContain('active-group-paused');
   });
 
   it('shows inactive completed run in Recent Completed section', () => {

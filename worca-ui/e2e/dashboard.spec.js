@@ -4,10 +4,10 @@ import { startServer, seedRun, writePipelinePid } from './fixtures.js';
 const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 
 // ─── Dashboard active runs ──────────────────────────────────────────────────
-// The dashboard renders a single .active-group for all active runs (running,
-// paused, resuming). Failed and completed runs appear in separate sections
-// (.active-group-failed, .active-group-completed). There is no per-status
-// sub-grouping within the active section.
+// The dashboard renders a single .active-group for running runs only.
+// Paused runs are NOT active — they appear in history.
+// Failed and completed runs appear in separate sections
+// (.active-group-failed, .active-group-completed).
 
 test.describe('dashboard — active run groups', () => {
   test('shows empty state when no running/paused/failed runs', async ({ page }) => {
@@ -42,7 +42,7 @@ test.describe('dashboard — active run groups', () => {
     }
   });
 
-  test('shows active group for pipeline_status=paused', async ({ page }) => {
+  test('shows paused section for pipeline_status=paused', async ({ page }) => {
     const ctx = await startServer();
     try {
       writePipelinePid(ctx.worcaDir, '20260101-dash-paused');
@@ -51,8 +51,9 @@ test.describe('dashboard — active run groups', () => {
         work_request: { title: 'Paused test' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group .run-card.status-paused')).toBeVisible();
-      await expect(page.locator('.empty-state')).not.toBeAttached();
+      // Paused runs appear in their own section, not the active group
+      await expect(page.locator('.active-group:not(.active-group-paused) .run-card.status-paused')).not.toBeAttached();
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -72,7 +73,7 @@ test.describe('dashboard — active run groups', () => {
     }
   });
 
-  test('running and paused runs coexist in active group', async ({ page }) => {
+  test('running and paused runs appear in separate sections', async ({ page }) => {
     const ctx = await startServer();
     try {
       writePipelinePid(ctx.worcaDir, '20260101-dash-multi-run');
@@ -87,7 +88,7 @@ test.describe('dashboard — active run groups', () => {
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
       await expect(page.locator('.active-group .run-card.status-running')).toBeVisible();
-      await expect(page.locator('.active-group .run-card.status-paused')).toBeVisible();
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
       await expect(page.locator('.empty-state')).not.toBeAttached();
     } finally {
       await ctx.close();
@@ -114,7 +115,7 @@ test.describe('dashboard — quick-action buttons', () => {
     }
   });
 
-  test('paused card shows quick-resume button', async ({ page }) => {
+  test('paused card shows quick-resume button in paused section', async ({ page }) => {
     const ctx = await startServer();
     try {
       writePipelinePid(ctx.worcaDir, '20260101-dash-qresume-paused');
@@ -123,8 +124,8 @@ test.describe('dashboard — quick-action buttons', () => {
         work_request: { title: 'Quick resume paused' },
       });
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group .run-card')).toBeVisible();
-      await expect(page.locator('.active-group .btn-quick-resume')).toBeVisible();
+      await expect(page.locator('.active-group-paused .run-card')).toBeVisible();
+      await expect(page.locator('.active-group-paused .btn-quick-resume')).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -192,13 +193,12 @@ test.describe('dashboard — quick-action buttons', () => {
     }
   });
 
-  test('quick-resume click sends POST /api/runs/:id/resume', async ({ page }) => {
+  test('quick-resume click on failed run sends POST /api/runs/:id/resume', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-dash-qresume-req';
-      writePipelinePid(ctx.worcaDir, runId);
       seedRun(ctx.worcaDir, runId, {
-        pipeline_status: 'paused',
+        pipeline_status: 'failed',
         work_request: { title: 'Quick resume API' },
       });
 
@@ -213,8 +213,8 @@ test.describe('dashboard — quick-action buttons', () => {
       });
 
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-      await expect(page.locator('.active-group .btn-quick-resume')).toBeVisible();
-      await page.locator('.active-group .btn-quick-resume').click();
+      await expect(page.locator('.active-group-failed .btn-quick-resume')).toBeVisible();
+      await page.locator('.active-group-failed .btn-quick-resume').click();
 
       await expect.poll(() => resumeRequests.length, {}).toBeGreaterThan(0);
       expect(resumeRequests[0]).toBe('POST');

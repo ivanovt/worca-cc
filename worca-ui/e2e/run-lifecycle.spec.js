@@ -204,9 +204,9 @@ test.describe('run lifecycle — multiple runs on dashboard', () => {
 
       await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
 
-      // Active group has both running and paused cards
+      // Running card in active group, paused card in paused section
       await expect(page.locator('.active-group .run-card.status-running')).toBeVisible();
-      await expect(page.locator('.active-group .run-card.status-paused')).toBeVisible();
+      await expect(page.locator('.active-group-paused .run-card.status-paused')).toBeVisible();
 
       // Completed runs should not appear in the active group (exclude the completed section which also has .active-group)
       await expect(page.locator('.active-group:not(.active-group-completed) .run-card.status-completed')).not.toBeAttached();
