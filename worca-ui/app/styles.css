@@ -3937,3 +3937,82 @@ sl-details.learnings-panel::part(content) {
 .project-worca-version { font-size: 11px; color: var(--muted); font-family: var(--sl-font-mono); margin-top: 2px; }
 .project-worca-version--behind { color: var(--status-failed, #dc2626); }
 
+/* ─── Bead tooltip content ──────────────────────────────────────────── */
+.bead-tooltip-content {
+  max-width: 320px;
+  padding: 4px 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bead-tooltip-title {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bead-tooltip-meta {
+  font-size: 11px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bead-tooltip-excerpt {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.bead-tooltip-date {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.bead-tooltip-deps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.bead-tooltip-dep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-family: var(--sl-font-mono);
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.bead-chip-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-width: 240px;
+  padding: 2px 0;
+}
+
+.bead-chip-tooltip-id {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.bead-chip-tooltip-title {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+

@@ -137,7 +137,20 @@ export function beadsDependencyGraph(issues) {
     const sc = beadsStatusClass(issue);
     const title = issue.title || '';
     const label = title.length > 18 ? `${title.slice(0, 18)}...` : title;
+    const excerpt = issue.body ? issue.body.slice(0, 100) : '';
+    const depsLine =
+      issue.depends_on && issue.depends_on.length > 0
+        ? `Depends on: ${issue.depends_on.join(', ')}`
+        : '';
+    const tooltipParts = [
+      title,
+      `Status: ${issue.status} | Priority: P${issue.priority}`,
+      excerpt,
+      depsLine,
+    ].filter(Boolean);
+    const svgTitle = `<title>${escapeXml(tooltipParts.join('\n'))}</title>`;
     nodes += `<g class="beads-graph-node beads-graph-node--${sc}" transform="translate(${pos.x},${pos.y})">
+      ${svgTitle}
       <rect width="${NODE_W}" height="${NODE_H}" rx="6"/>
       <text x="8" y="14" class="beads-graph-node-id">#${issue.id}</text>
       <text x="8" y="28">${escapeXml(label)}</text>
@@ -207,7 +220,7 @@ export function beadChipTooltip(depId, issuesById) {
   `;
 }
 
-function _beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
+export function beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
   const isClosed = issue.status === 'closed';
   const isBlocked = issue.blocked_by && issue.blocked_by.length > 0;
   const canStart = issue.status === 'open' && !isBlocked && starting === null;
@@ -235,10 +248,13 @@ function _beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
                   ? 'beads-dep-chip--blocking'
                   : 'beads-dep-chip--satisfied';
               return html`
-                <span class="beads-dep-chip ${chipClass}">
-                  ${unsafeHTML(beadDepStatusIcon(depId, issuesById || new Map()))}
-                  #${depId}
-                </span>
+                <sl-tooltip>
+                  <div slot="content">${beadChipTooltip(depId, issuesById || new Map())}</div>
+                  <span class="beads-dep-chip ${chipClass}">
+                    ${unsafeHTML(beadDepStatusIcon(depId, issuesById || new Map()))}
+                    #${depId}
+                  </span>
+                </sl-tooltip>
               `;
             })}
           </div>
@@ -331,29 +347,32 @@ function beadsKanbanView(
           ${col.items.map((issue) => {
             const isBlocked = issue.blocked_by && issue.blocked_by.length > 0;
             return html`
-              <div class="beads-kanban-card ${isBlocked ? 'beads-kanban-card--blocked' : ''}">
-                <div class="beads-kanban-card-header">
-                  <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-                  <span class="beads-kanban-card-id">#${issue.id}</span>
-                </div>
-                <div class="beads-kanban-card-title">${issue.title}</div>
-                ${
-                  isBlocked
-                    ? html`
-                  <div class="beads-kanban-card-deps">
-                    ${issue.blocked_by.map(
-                      (depId) => html`
-                      <span class="beads-dep-chip beads-dep-chip--blocking">
-                        ${unsafeHTML(beadDepStatusIcon(depId, issuesById))}
-                        #${depId}
-                      </span>
-                    `,
-                    )}
+              <sl-tooltip class="bead-tooltip" hoist>
+                <div slot="content">${beadTooltipContent(issue, issuesById)}</div>
+                <div class="beads-kanban-card ${isBlocked ? 'beads-kanban-card--blocked' : ''}">
+                  <div class="beads-kanban-card-header">
+                    <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+                    <span class="beads-kanban-card-id">#${issue.id}</span>
                   </div>
-                `
-                    : ''
-                }
-              </div>
+                  <div class="beads-kanban-card-title">${issue.title}</div>
+                  ${
+                    isBlocked
+                      ? html`
+                    <div class="beads-kanban-card-deps">
+                      ${issue.blocked_by.map(
+                        (depId) => html`
+                        <span class="beads-dep-chip beads-dep-chip--blocking">
+                          ${unsafeHTML(beadDepStatusIcon(depId, issuesById))}
+                          #${depId}
+                        </span>
+                      `,
+                      )}
+                    </div>
+                  `
+                      : ''
+                  }
+                </div>
+              </sl-tooltip>
             `;
           })}
         </div>

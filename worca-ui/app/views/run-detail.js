@@ -22,6 +22,7 @@ import {
 } from '../utils/status-badge.js';
 import {
   beadsDependencyGraph,
+  beadTooltipContent,
   priorityVariant,
   statusVariant,
 } from './beads-panel.js';
@@ -459,6 +460,7 @@ export function runBeadsSectionView(beads) {
       </div>
     `;
   }
+  const issuesById = new Map(beads.map((i) => [i.id, i]));
   return html`
     <div class="run-beads-section">
       <sl-details class="run-beads-panel" @sl-after-show=${scrollOnExpand}>
@@ -470,12 +472,15 @@ export function runBeadsSectionView(beads) {
         <div class="run-beads-list">
           ${beads.map(
             (issue) => html`
-            <div class="run-bead-row">
-              <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
-              <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-              <span class="run-bead-id">#${issue.id}</span>
-              <span class="run-bead-title">${issue.title}</span>
-            </div>
+            <sl-tooltip hoist>
+              <div slot="content">${beadTooltipContent(issue, issuesById)}</div>
+              <div class="run-bead-row">
+                <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
+                <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+                <span class="run-bead-id">#${issue.id}</span>
+                <span class="run-bead-title">${issue.title}</span>
+              </div>
+            </sl-tooltip>
           `,
           )}
         </div>
