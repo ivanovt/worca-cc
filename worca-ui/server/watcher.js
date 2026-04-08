@@ -26,22 +26,9 @@ function isTerminal(status) {
   );
 }
 
-function isPipelineRunning(worcaDir) {
-  const pidPath = join(worcaDir, 'pipeline.pid');
-  if (!existsSync(pidPath)) return false;
-  try {
-    const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
-    process.kill(pid, 0); // signal 0 = check if alive
-    return true;
-  } catch {
-    return false; // stale PID or unreadable
-  }
-}
-
 export function discoverRuns(worcaDir) {
   const runs = [];
   const seenIds = new Set();
-  const pipelineRunning = isPipelineRunning(worcaDir);
 
   // 1. Check active_run pointer for the current run
   const activeRunPath = join(worcaDir, 'active_run');
@@ -51,7 +38,7 @@ export function discoverRuns(worcaDir) {
       const candidate = join(worcaDir, 'runs', activeId, 'status.json');
       if (existsSync(candidate)) {
         const status = JSON.parse(readFileSync(candidate, 'utf8'));
-        const active = !isTerminal(status) && pipelineRunning;
+        const active = !isTerminal(status) && status.pipeline_status === 'running';
         const id = createRunId(status);
         runs.push({ id, active, ...status });
         seenIds.add(id);
@@ -88,7 +75,7 @@ export function discoverRuns(worcaDir) {
       const status = JSON.parse(readFileSync(statusPath, 'utf8'));
       const id = createRunId(status);
       if (!seenIds.has(id)) {
-        const active = !isTerminal(status) && pipelineRunning;
+        const active = !isTerminal(status) && status.pipeline_status === 'running';
         runs.push({ id, active, ...status });
         seenIds.add(id);
       }
@@ -142,7 +129,6 @@ export function discoverRuns(worcaDir) {
 export async function discoverRunsAsync(worcaDir) {
   const runs = [];
   const seenIds = new Set();
-  const pipelineRunning = isPipelineRunning(worcaDir); // cheap check (one stat + one kill)
 
   // 1. Active run
   const activeRunPath = join(worcaDir, 'active_run');
@@ -150,7 +136,7 @@ export async function discoverRunsAsync(worcaDir) {
     const activeId = (await readFile(activeRunPath, 'utf8')).trim();
     const candidate = join(worcaDir, 'runs', activeId, 'status.json');
     const status = JSON.parse(await readFile(candidate, 'utf8'));
-    const active = !isTerminal(status) && pipelineRunning;
+    const active = !isTerminal(status) && status.pipeline_status === 'running';
     const id = createRunId(status);
     runs.push({ id, active, ...status });
     seenIds.add(id);
@@ -191,7 +177,7 @@ export async function discoverRunsAsync(worcaDir) {
     );
     const id = createRunId(status);
     if (!seenIds.has(id)) {
-      const active = !isTerminal(status) && pipelineRunning;
+      const active = !isTerminal(status) && status.pipeline_status === 'running';
       runs.push({ id, active, ...status });
       seenIds.add(id);
     }

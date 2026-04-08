@@ -113,13 +113,12 @@ export function writeControlFile(worcaDir, runId, action) {
 }
 
 /**
- * Write pipeline.pid + active_run so that discoverRuns() sets `active: true`
- * for the specified run. Uses the current test process PID (which is alive).
+ * Write pipeline.pid + active_run for a run.
+ * - pipeline.pid is used by process-manager for stop/pause signals
+ * - active_run sets the discovery-priority pointer in discoverRuns()
  *
- * discoverRuns() only marks a run as active when:
- *  1. It's found via the `active_run` pointer (not the directory scan), AND
- *  2. pipeline.pid contains a live PID, AND
- *  3. The run is not terminal (no completed_at, stages not all done)
+ * Note: active status is determined by `pipeline_status` in each run's
+ * status.json (set by seedRun), not by PID liveness.
  *
  * @param {string} worcaDir
  * @param {string} [activeRunId] - run ID to write to active_run

@@ -66,12 +66,11 @@ describe('WebSocket integration', () => {
     const status = {
       started_at: '2026-03-08T10:00:00Z',
       stage: 'implement',
+      pipeline_status: 'running',
       work_request: { title: 'test run' },
       stages: { plan: { status: 'completed' }, implement: { status: 'in_progress' } }
     };
     writeFileSync(join(dir, 'worca', 'status.json'), JSON.stringify(status));
-    // discoverRuns checks pipeline.pid to determine active status
-    writeFileSync(join(dir, 'worca', 'pipeline.pid'), String(process.pid));
 
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     await waitForOpen(ws);
@@ -188,6 +187,7 @@ describe('WebSocket integration', () => {
       started_at: '2026-03-09T12:00:00Z',
       run_id: runId,
       stage: 'implement',
+      pipeline_status: 'running',
       work_request: { title: 'Test feature', description: 'Implement the test feature' },
       stages: {
         plan: { status: 'completed', agent: 'planner' },
@@ -197,8 +197,6 @@ describe('WebSocket integration', () => {
     writeFileSync(join(dir, 'worca', 'runs', runId, 'agents', 'implementer.md'),
       '# Implementer Agent\n\nYou are the Implementer.');
     writeFileSync(join(dir, 'worca', 'active_run'), runId);
-    // discoverRuns checks pipeline.pid to determine active status for active_run entries
-    writeFileSync(join(dir, 'worca', 'pipeline.pid'), String(process.pid));
 
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     await waitForOpen(ws);
