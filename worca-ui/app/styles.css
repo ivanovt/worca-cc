@@ -3939,59 +3939,87 @@ sl-details.learnings-panel::part(content) {
 
 /* ─── Bead tooltip content ──────────────────────────────────────────── */
 .bead-tooltip-content {
-  max-width: 320px;
+  max-width: 540px;
   padding: 4px 2px;
   display: flex;
   flex-direction: column;
+  gap: 2px;
+}
+
+.bead-tooltip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+sl-tooltip.bead-tooltip::part(body) {
+  pointer-events: auto;
+}
+
+.bead-tooltip-badges {
+  display: flex;
+  align-items: center;
   gap: 4px;
+}
+
+.bead-tooltip-id {
+  font-family: var(--sl-font-mono);
+  font-size: 11px;
+  opacity: 0.7;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.bead-tooltip-separator {
+  border: none;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  margin: 4px 0;
+}
+
+.bead-tooltip-label {
+  font-size: 11px;
+  opacity: 0.7;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .bead-tooltip-title {
   font-weight: 600;
   font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.bead-tooltip-meta {
-  font-size: 11px;
-  color: var(--muted);
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  margin-bottom: 4px;
 }
 
 .bead-tooltip-excerpt {
   font-size: 12px;
-  color: var(--muted);
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
+  white-space: pre-wrap;
+  margin-bottom: 2px;
 }
 
-.bead-tooltip-date {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.bead-tooltip-deps {
+.bead-tooltip-footer {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  justify-content: flex-end;
+  margin-top: 6px;
 }
 
-.bead-tooltip-dep-chip {
+.bead-tooltip-copy {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 4px;
+  padding: 3px 8px;
   font-size: 11px;
-  font-family: var(--sl-font-mono);
-  background: var(--bg-secondary);
-  border-radius: 3px;
-  padding: 1px 5px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.bead-tooltip-copy:hover {
+  background: rgba(255, 255, 255, 0.25);
 }
 
 .bead-chip-tooltip {
