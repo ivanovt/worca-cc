@@ -38,7 +38,8 @@ export function discoverRuns(worcaDir) {
       const candidate = join(worcaDir, 'runs', activeId, 'status.json');
       if (existsSync(candidate)) {
         const status = JSON.parse(readFileSync(candidate, 'utf8'));
-        const active = !isTerminal(status) && status.pipeline_status === 'running';
+        const active =
+          !isTerminal(status) && status.pipeline_status === 'running';
         const id = createRunId(status);
         runs.push({ id, active, ...status });
         seenIds.add(id);
@@ -75,7 +76,8 @@ export function discoverRuns(worcaDir) {
       const status = JSON.parse(readFileSync(statusPath, 'utf8'));
       const id = createRunId(status);
       if (!seenIds.has(id)) {
-        const active = !isTerminal(status) && status.pipeline_status === 'running';
+        const active =
+          !isTerminal(status) && status.pipeline_status === 'running';
         runs.push({ id, active, ...status });
         seenIds.add(id);
       }
@@ -177,7 +179,8 @@ export async function discoverRunsAsync(worcaDir) {
     );
     const id = createRunId(status);
     if (!seenIds.has(id)) {
-      const active = !isTerminal(status) && status.pipeline_status === 'running';
+      const active =
+        !isTerminal(status) && status.pipeline_status === 'running';
       runs.push({ id, active, ...status });
       seenIds.add(id);
     }

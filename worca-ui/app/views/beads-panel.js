@@ -166,6 +166,47 @@ function escapeXml(str) {
     .replace(/"/g, '&quot;');
 }
 
+export function beadTooltipContent(issue, issuesById) {
+  const excerpt = issue.body ? issue.body.slice(0, 100) : '';
+  const createdDate = issue.created_at ? issue.created_at.slice(0, 10) : '';
+  return html`
+    <div class="bead-tooltip-content">
+      <div class="bead-tooltip-title">${issue.title}</div>
+      ${excerpt ? html`<div class="bead-tooltip-excerpt">${excerpt}</div>` : ''}
+      <div class="bead-tooltip-meta">
+        <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+        <sl-badge variant="${statusVariant(issue.status)}">${issue.status}</sl-badge>
+        ${createdDate ? html`<span class="bead-tooltip-date">${createdDate}</span>` : ''}
+      </div>
+      ${
+        issue.depends_on && issue.depends_on.length > 0
+          ? html`<div class="bead-tooltip-deps">
+              ${issue.depends_on.map((depId) => {
+                const dep = issuesById ? issuesById.get(depId) : null;
+                return html`<span class="bead-tooltip-dep-chip">#${depId}${dep ? html` <sl-badge variant="${statusVariant(dep.status)}">${dep.status}</sl-badge>` : ''}</span>`;
+              })}
+            </div>`
+          : ''
+      }
+    </div>
+  `;
+}
+
+export function beadChipTooltip(depId, issuesById) {
+  const dep = issuesById ? issuesById.get(depId) : null;
+  return html`
+    <div class="bead-chip-tooltip">
+      <span class="bead-chip-tooltip-id">#${depId}</span>
+      ${
+        dep
+          ? html`<span class="bead-chip-tooltip-title">${dep.title}</span>
+        <sl-badge variant="${statusVariant(dep.status)}">${dep.status}</sl-badge>`
+          : ''
+      }
+    </div>
+  `;
+}
+
 function _beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
   const isClosed = issue.status === 'closed';
   const isBlocked = issue.blocked_by && issue.blocked_by.length > 0;

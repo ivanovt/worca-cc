@@ -1,0 +1,23 @@
+{
+  "id": "refactor",
+  "name": "Refactor",
+  "description": "Full pipeline without PR. Planner analyzes structure, guardian reviews for behavioral preservation. Branch left for manual review.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["no-pr", "extra-test"],
+  "config": {
+    "stages": {
+      "pr": { "enabled": false }
+    },
+    "loops": {
+      "implement_test": 10,
+      "restart_planning": 2
+    },
+    "milestones": {
+      "plan_approval": true,
+      "pr_approval": false,
+      "deploy_approval": false
+    },
+    "budget": { "max_cost_usd": 50 }
+  }
+}

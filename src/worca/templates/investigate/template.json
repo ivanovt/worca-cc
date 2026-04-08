@@ -1,0 +1,26 @@
+{
+  "id": "investigate",
+  "name": "Investigation",
+  "description": "Analysis only. Opus planner explores codebase and produces a detailed report. No code changes, no PR. Output is a reusable MASTER_PLAN.md.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["analysis", "no-code", "plan-only"],
+  "config": {
+    "stages": {
+      "coordinate": { "enabled": false },
+      "implement":  { "enabled": false },
+      "test":       { "enabled": false },
+      "review":     { "enabled": false },
+      "pr":         { "enabled": false }
+    },
+    "agents": {
+      "planner": { "model": "opus", "max_turns": 200 }
+    },
+    "milestones": {
+      "plan_approval": false,
+      "pr_approval": false,
+      "deploy_approval": false
+    },
+    "budget": { "max_cost_usd": 20 }
+  }
+}

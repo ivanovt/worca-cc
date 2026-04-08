@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { beadsPanelView, beadsRunListView } from './beads-panel.js';
+import {
+  beadChipTooltip,
+  beadsPanelView,
+  beadsRunListView,
+  beadTooltipContent,
+} from './beads-panel.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -247,5 +252,125 @@ describe('beadsPanelView - run/branch metadata strip', () => {
     );
     expect(output).toContain('Run ');
     expect(output).toContain('20260322-161722');
+  });
+});
+
+describe('beadTooltipContent', () => {
+  const issue = {
+    id: 'worca-cc-abc1',
+    title: 'My Full Issue Title',
+    body: 'This is the body text that is longer than 100 characters. It should be truncated at 100 characters by the excerpt logic.',
+    status: 'in_progress',
+    priority: 2,
+    depends_on: ['worca-cc-dep1', 'worca-cc-dep2'],
+    created_at: '2026-04-01T10:00:00Z',
+  };
+
+  const dep1 = {
+    id: 'worca-cc-dep1',
+    title: 'Dep One Title',
+    status: 'closed',
+    depends_on: [],
+  };
+  const dep2 = {
+    id: 'worca-cc-dep2',
+    title: 'Dep Two Title',
+    status: 'open',
+    depends_on: [],
+  };
+  const issuesById = new Map([
+    ['worca-cc-dep1', dep1],
+    ['worca-cc-dep2', dep2],
+  ]);
+
+  it('includes the full title', () => {
+    const out = renderToString(beadTooltipContent(issue, issuesById));
+    expect(out).toContain('My Full Issue Title');
+  });
+
+  it('includes a body excerpt (first 100 chars)', () => {
+    const out = renderToString(beadTooltipContent(issue, issuesById));
+    const excerpt = issue.body.slice(0, 100);
+    expect(out).toContain(excerpt);
+  });
+
+  it('does not include more than 100 chars of body', () => {
+    const out = renderToString(beadTooltipContent(issue, issuesById));
+    expect(out).not.toContain(issue.body.slice(101));
+  });
+
+  it('includes status badge with correct variant', () => {
+    const out = renderToString(beadTooltipContent(issue, issuesById));
+    expect(out).toContain('in_progress');
+    expect(out).toContain('warning'); // statusVariant('in_progress') = 'warning'
+  });
+
+  it('includes priority badge', () => {
+    const out = renderToString(beadTooltipContent(issue, issuesById));
+    expect(out).toContain('P2');
+  });
+
+  it('includes dependency IDs', () => {
+    const out = renderToString(beadTooltipContent(issue, issuesById));
+    expect(out).toContain('worca-cc-dep1');
+    expect(out).toContain('worca-cc-dep2');
+  });
+
+  it('includes created date', () => {
+    const out = renderToString(beadTooltipContent(issue, issuesById));
+    expect(out).toContain('2026-04-01');
+  });
+
+  it('handles missing body gracefully', () => {
+    const noBody = { ...issue, body: '' };
+    const out = renderToString(beadTooltipContent(noBody, issuesById));
+    expect(out).toContain('My Full Issue Title');
+  });
+
+  it('handles no dependencies gracefully', () => {
+    const noDeps = { ...issue, depends_on: [] };
+    const out = renderToString(beadTooltipContent(noDeps, issuesById));
+    expect(out).toContain('My Full Issue Title');
+  });
+
+  it('works with empty issuesById map', () => {
+    const out = renderToString(beadTooltipContent(issue, new Map()));
+    expect(out).toContain('My Full Issue Title');
+    expect(out).toContain('worca-cc-dep1');
+  });
+});
+
+describe('beadChipTooltip', () => {
+  const dep = {
+    id: 'worca-cc-dep1',
+    title: 'Dep One Title',
+    status: 'closed',
+    depends_on: [],
+  };
+  const issuesById = new Map([['worca-cc-dep1', dep]]);
+
+  it('includes the dep title', () => {
+    const out = renderToString(beadChipTooltip('worca-cc-dep1', issuesById));
+    expect(out).toContain('Dep One Title');
+  });
+
+  it('includes the dep status', () => {
+    const out = renderToString(beadChipTooltip('worca-cc-dep1', issuesById));
+    expect(out).toContain('closed');
+  });
+
+  it('includes status badge variant for closed', () => {
+    const out = renderToString(beadChipTooltip('worca-cc-dep1', issuesById));
+    expect(out).toContain('neutral'); // statusVariant('closed') = 'neutral'
+  });
+
+  it('handles unknown dep id gracefully', () => {
+    const out = renderToString(beadChipTooltip('worca-cc-unknown', issuesById));
+    expect(out).toContain('worca-cc-unknown');
+  });
+
+  it('includes the dep id', () => {
+    const out = renderToString(beadChipTooltip('worca-cc-dep1', issuesById));
+    expect(out).toContain('worca-cc-dep1');
   });
 });
