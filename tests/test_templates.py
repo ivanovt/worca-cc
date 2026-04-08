@@ -10,6 +10,8 @@ from worca.orchestrator.templates import (
     TemplateSummary,
     TemplateError,
     TemplateResolver,
+    deep_merge_config,
+    render_params,
 )
 
 
@@ -492,3 +494,128 @@ class TestTemplateResolverDelete:
         with pytest.raises(TemplateError) as exc_info:
             resolver.delete("bugfix", scope="project")
         assert exc_info.value.code == "builtin"
+
+
+# ---------------------------------------------------------------------------
+# deep_merge_config()
+# ---------------------------------------------------------------------------
+
+
+class TestDeepMergeConfig:
+    def test_merges_nested_dicts_recursively(self):
+        base = {"a": {"x": 1, "y": 2}, "b": 3}
+        overlay = {"a": {"y": 99, "z": 4}}
+        result = deep_merge_config(base, overlay)
+        assert result == {"a": {"x": 1, "y": 99, "z": 4}, "b": 3}
+
+    def test_overlay_scalars_replace_base(self):
+        base = {"key": "original", "other": 10}
+        overlay = {"key": "overridden"}
+        result = deep_merge_config(base, overlay)
+        assert result["key"] == "overridden"
+        assert result["other"] == 10
+
+    def test_replace_sentinel_triggers_wholesale_replacement(self):
+        base = {"stages": {"plan": {"enabled": True}, "test": {"enabled": True}}}
+        overlay = {"stages": {"__replace__": True, "test": {"enabled": False}}}
+        result = deep_merge_config(base, overlay)
+        assert result["stages"] == {"test": {"enabled": False}}
+        assert "plan" not in result["stages"]
+
+    def test_returns_new_dict_no_mutation(self):
+        base = {"a": {"x": 1}}
+        overlay = {"a": {"x": 2}}
+        base_copy = {"a": {"x": 1}}
+        result = deep_merge_config(base, overlay)
+        assert result is not base
+        assert base == base_copy
+
+
+# ---------------------------------------------------------------------------
+# render_params()
+# ---------------------------------------------------------------------------
+
+
+class TestRenderParams:
+    def test_replaces_placeholders_with_provided_params(self):
+        content = "Model is {{model}} with {{turns}} turns."
+        result = render_params(content, {"model": "haiku", "turns": "50"}, {})
+        assert result == "Model is haiku with 50 turns."
+
+    def test_falls_back_to_defaults_from_param_defs(self):
+        content = "Use {{model}} for planning."
+        result = render_params(content, {}, {"model": {"default": "opus"}})
+        assert result == "Use opus for planning."
+
+    def test_raises_template_error_for_required_param_missing_value_and_default(self):
+        content = "Run with {{budget}} limit."
+        with pytest.raises(TemplateError) as exc_info:
+            render_params(content, {}, {"budget": {}})
+        assert exc_info.value.code == "validation_error"
+        assert exc_info.value.details["param"] == "budget"
+
+
+# ---------------------------------------------------------------------------
+# TemplateResolver.apply() — config & params
+# ---------------------------------------------------------------------------
+
+
+class TestTemplateResolverApplyConfig:
+    def _make_resolver(self, tmp_path, config: dict, params_def: dict | None = None):
+        builtin_dir = tmp_path / "builtin"
+        data = _minimal("tmpl")
+        data["config"] = config
+        if params_def is not None:
+            data["params"] = params_def
+        _write_template(builtin_dir / "tmpl", data)
+        return TemplateResolver(builtin_dir, None, None)
+
+    def test_deep_merges_template_stages_into_current_settings(self, tmp_path):
+        resolver = self._make_resolver(
+            tmp_path,
+            config={"stages": {"test": {"enabled": False}}},
+        )
+        current = {"stages": {"plan": {"enabled": True}, "test": {"enabled": True}}}
+        result = resolver.apply("tmpl", current)
+        assert result["stages"]["plan"]["enabled"] is True
+        assert result["stages"]["test"]["enabled"] is False
+
+    def test_preserves_unspecified_keys(self, tmp_path):
+        resolver = self._make_resolver(
+            tmp_path,
+            config={"stages": {"test": {"enabled": False}}},
+        )
+        current = {"governance": {"hooks_enabled": True}, "stages": {"test": {"enabled": True}}}
+        result = resolver.apply("tmpl", current)
+        assert result["governance"]["hooks_enabled"] is True
+
+    def test_handles_replace_sentinel(self, tmp_path):
+        resolver = self._make_resolver(
+            tmp_path,
+            config={"stages": {"__replace__": True, "test": {"enabled": False}}},
+        )
+        current = {"stages": {"plan": {"enabled": True}, "test": {"enabled": True}}}
+        result = resolver.apply("tmpl", current)
+        assert result["stages"] == {"test": {"enabled": False}}
+        assert "plan" not in result["stages"]
+
+    def test_renders_params_into_config_values(self, tmp_path):
+        resolver = self._make_resolver(
+            tmp_path,
+            config={"agents": {"planner": {"model": "{{model}}"}}},
+            params_def={"model": {"default": "opus"}},
+        )
+        current = {}
+        result = resolver.apply("tmpl", current, params={"model": "haiku"})
+        assert result["agents"]["planner"]["model"] == "haiku"
+
+    def test_returns_new_dict_does_not_mutate_inputs(self, tmp_path):
+        resolver = self._make_resolver(
+            tmp_path,
+            config={"stages": {"test": {"enabled": False}}},
+        )
+        current = {"stages": {"test": {"enabled": True}}}
+        current_copy = {"stages": {"test": {"enabled": True}}}
+        result = resolver.apply("tmpl", current)
+        assert result is not current
+        assert current == current_copy
