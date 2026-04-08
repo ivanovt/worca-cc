@@ -13,6 +13,8 @@ let planDropdownOpen = false;
 let selectedPlan = '';
 let branches = null; // null = not fetched, [] = fetched but empty
 let selectedBranch = ''; // empty = new branch
+let templates = null; // null = not fetched
+let selectedTemplate = 'default'; // 'default' = built-in worca pipeline
 
 /**
  * Reset module state for testing or re-initialization.
@@ -24,6 +26,7 @@ export function resetNewRunState(overrides = {}) {
   selectedPlan = overrides.selectedPlan ?? '';
   planFilter = overrides.selectedPlan ?? '';
   selectedBranch = '';
+  selectedTemplate = overrides.selectedTemplate ?? 'default';
 }
 
 function sourceLabel(type) {
@@ -88,6 +91,33 @@ function groupedPlanFiles(files) {
   return groups;
 }
 
+function fetchTemplates(projectId) {
+  if (templates !== null && _lastProjectId === projectId)
+    return Promise.resolve(templates);
+  const url = projectId
+    ? `/api/projects/${projectId}/templates`
+    : '/api/templates';
+  return fetch(url)
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.ok) templates = data.templates;
+      return templates || [];
+    })
+    .catch(() => {
+      templates = [];
+      return [];
+    });
+}
+
+function templatesByTier() {
+  const result = { worca: [], project: [], user: [] };
+  for (const t of templates || []) {
+    const tier = t.tier;
+    if (result[tier]) result[tier].push(t);
+  }
+  return result;
+}
+
 export function getNewRunSubmitState() {
   return { submitStatus, isSubmitting: submitStatus === 'submitting' };
 }
@@ -144,6 +174,8 @@ export async function submitNewRun({
     if (hasPrompt) body.prompt = promptValue;
     if (hasPlan) body.planFile = selectedPlan;
     if (selectedBranch) body.branch = selectedBranch;
+    if (selectedTemplate && selectedTemplate !== 'default')
+      body.template = selectedTemplate;
 
     const url = projectId ? `/api/projects/${projectId}/runs` : '/api/runs';
     const res = await fetch(url, {
@@ -183,9 +215,24 @@ export function newRunView(_state, { rerender }) {
     rerender();
   }
 
+  // Reset caches when project changes (before fetchBranches updates _lastProjectId)
+  if (_lastProjectId !== projectId) {
+    templates = null;
+  }
+
   // Fetch branches once (null = not yet fetched, or project changed)
   if (branches === null || _lastProjectId !== projectId) {
     fetchBranches(projectId).then(() => rerender());
+  }
+
+  // Fetch templates once
+  if (templates === null) {
+    fetchTemplates(projectId).then(() => rerender());
+  }
+
+  function handleTemplateChange(e) {
+    selectedTemplate = e.target.value;
+    rerender();
   }
 
   function handleBranchChange(e) {
@@ -306,7 +353,51 @@ export function newRunView(_state, { rerender }) {
           </div>
         </div>
 
-        <!-- Section 2: Prompt -->
+        <!-- Section 2: Pipeline -->
+        ${(() => {
+          const tiers = templatesByTier();
+          return html`
+          <div class="new-run-section">
+            <h3 class="new-run-section-title">Pipeline</h3>
+            <div class="settings-field">
+              <label class="settings-label">Pipeline Template</label>
+              <sl-select value=${selectedTemplate} @sl-change=${handleTemplateChange}>
+                <sl-option value="default">Default (worca built-in)</sl-option>
+                ${
+                  tiers.worca.length > 0
+                    ? html`
+                  <sl-option-group label="WORCA">
+                    ${tiers.worca.map((t) => html`<sl-option value=${t.id}>${t.name}</sl-option>`)}
+                  </sl-option-group>
+                `
+                    : nothing
+                }
+                ${
+                  tiers.project.length > 0
+                    ? html`
+                  <sl-option-group label="PROJECT">
+                    ${tiers.project.map((t) => html`<sl-option value=${t.id}>${t.name}</sl-option>`)}
+                  </sl-option-group>
+                `
+                    : nothing
+                }
+                ${
+                  tiers.user.length > 0
+                    ? html`
+                  <sl-option-group label="USER">
+                    ${tiers.user.map((t) => html`<sl-option value=${t.id}>${t.name}</sl-option>`)}
+                  </sl-option-group>
+                `
+                    : nothing
+                }
+              </sl-select>
+              <span class="settings-field-hint">Customize stages and agent behavior. Groups: worca (built-in), project, user.</span>
+            </div>
+          </div>
+        `;
+        })()}
+
+        <!-- Section 3: Prompt -->
         <div class="new-run-section">
           <h3 class="new-run-section-title">Prompt</h3>
           <div class="settings-field">

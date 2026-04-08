@@ -528,6 +528,13 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 13px;
 }
 
+.run-template {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
 .pipeline-cost-strip {
   display: flex;
   flex-wrap: wrap;
@@ -1245,6 +1252,15 @@ sl-details.log-history-panel::part(content) {
   font-size: 12px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.run-card-template {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 26px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .run-card-stages {
@@ -2247,6 +2263,10 @@ sl-details.live-output-panel::part(content) {
   font-size: 13px;
   color: var(--status-error);
   font-weight: 500;
+}
+
+.new-run-section sl-select {
+  width: 100%;
 }
 
 /* Plan file autocomplete */

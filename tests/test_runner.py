@@ -3228,3 +3228,83 @@ def test_run_pipeline_reads_agent_overrides_dir_from_settings(tmp_path, monkeypa
     assert any(c == custom_overrides for c in captured_calls), (
         f"Expected agent_overrides_dir={custom_overrides!r} to be passed; got calls: {captured_calls}"
     )
+
+
+# --- pipeline_template threading ---
+
+def _make_template_test_settings(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }))
+    return settings
+
+
+def test_run_pipeline_stores_pipeline_template_in_status(tmp_path, monkeypatch):
+    """pipeline_template passed to run_pipeline() appears in status.json."""
+    from worca.orchestrator.work_request import WorkRequest
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _make_template_test_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        result = run_pipeline(
+            WorkRequest(source_type="prompt", title="Test template"),
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+            pipeline_template="worca:bugfix",
+        )
+
+    assert result["pipeline_template"] == "worca:bugfix"
+
+
+def test_run_pipeline_pipeline_template_none_by_default(tmp_path, monkeypatch):
+    """pipeline_template defaults to None when not provided."""
+    from worca.orchestrator.work_request import WorkRequest
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _make_template_test_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        result = run_pipeline(
+            WorkRequest(source_type="prompt", title="Test no template"),
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+        )
+
+    assert result["pipeline_template"] is None

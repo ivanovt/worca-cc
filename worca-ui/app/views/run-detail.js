@@ -34,6 +34,18 @@ function _sortedEntries(stages) {
 }
 
 /**
+ * Format a pipeline_template value for display.
+ * Maps "builtin:xxx" to "worca:xxx" for legacy compatibility.
+ * Returns null for empty/null/undefined input.
+ */
+export function formatPipelineTemplate(value) {
+  if (!value) return null;
+  if (value.startsWith('builtin:'))
+    return `worca:${value.slice('builtin:'.length)}`;
+  return value;
+}
+
+/**
  * Render a stacked horizontal timing bar at the pipeline level.
  * Segments: Thinking (Agent) | Tools (Agent) | Rest of Pipeline
  * 100% = pipeline wall time (started_at → last stage end).
@@ -519,6 +531,7 @@ export function runDetailView(run, settings = {}, options = {}) {
   }
 
   const branch = run.branch || run.work_request?.branch || '';
+  const pipelineTemplate = formatPipelineTemplate(run.pipeline_template);
   const pr = run.pr_url || null;
   const endTime =
     run.completed_at ||
@@ -546,6 +559,16 @@ export function runDetailView(run, settings = {}, options = {}) {
             <span class="meta-label">Branch:</span>
             <span class="meta-value">${branch}</span>
             ${pr ? html`<a class="run-pr-link" href="${pr}" target="_blank">View PR</a>` : nothing}
+          </div>
+        `
+            : nothing
+        }
+        ${
+          pipelineTemplate
+            ? html`
+          <div class="run-template">
+            <span class="meta-label">Pipeline Template:</span>
+            <span class="meta-value">${pipelineTemplate}</span>
           </div>
         `
             : nothing

@@ -214,7 +214,7 @@ def resolve_status(status: str) -> str:
     return _LEGACY_STATUS_MAP.get(status, status)
 
 
-def init_status(work_request: dict, branch: str, git_head: str = None) -> dict:
+def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_template: str = None) -> dict:
     """Create a fresh status dict with all stages set to 'pending'.
 
     Populates work_request and branch per the design doc schema.
@@ -229,6 +229,7 @@ def init_status(work_request: dict, branch: str, git_head: str = None) -> dict:
         "branch": branch,
         "worktree": None,
         "plan_file": None,
+        "pipeline_template": pipeline_template,
         "git_head": git_head,
         "loop_counters": {},
         "started_at": datetime.now(timezone.utc).isoformat(),

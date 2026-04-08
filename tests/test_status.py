@@ -339,6 +339,25 @@ def test_init_status_accepts_git_head():
     assert result["git_head"] == "abc1234"
 
 
+def test_init_status_pipeline_template_defaults_to_none():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert "pipeline_template" in result
+    assert result["pipeline_template"] is None
+
+
+def test_init_status_accepts_pipeline_template():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task", pipeline_template="worca:bugfix")
+    assert result["pipeline_template"] == "worca:bugfix"
+
+
+def test_init_status_pipeline_template_project_tier():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task", pipeline_template="project:my-template")
+    assert result["pipeline_template"] == "project:my-template"
+
+
 # --- resolve_status ---
 
 def test_resolve_status_maps_in_progress_to_running():

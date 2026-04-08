@@ -1008,6 +1008,7 @@ def run_pipeline(
     skip_preflight: bool = False,
     on_git_divergence=None,
     worktree: bool = False,
+    pipeline_template: Optional[str] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -1126,7 +1127,7 @@ def run_pipeline(
             "source_ref": work_request.source_ref,
             "priority": work_request.priority,
         }
-        status = init_status(wr_dict, branch_name, git_head=get_current_git_head())
+        status = init_status(wr_dict, branch_name, git_head=get_current_git_head(), pipeline_template=pipeline_template)
 
         if worktree:
             status["worktree"] = True

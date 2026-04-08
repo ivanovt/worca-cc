@@ -210,6 +210,9 @@ export class ProcessManager {
     if (opts.branch) {
       args.push('--branch', opts.branch);
     }
+    if (opts.template) {
+      args.push('--template', opts.template);
+    }
 
     const env = { ...process.env };
     delete env.CLAUDECODE;

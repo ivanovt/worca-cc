@@ -204,6 +204,7 @@ def main():
     _merged_settings = None
     _temp_settings_path = None
     _resolver = None
+    _pipeline_template = None
 
     if _template_id:
         import tempfile
@@ -230,6 +231,11 @@ def main():
         _tmpl = _resolver.get(_template_id)
         if _tmpl and _tmpl.agents_dir:
             _merged_worca["_template_agents_dir"] = _tmpl.agents_dir
+
+        # Format pipeline_template as "tier:id" for storage in status.json
+        if _tmpl:
+            _tier_display = "worca" if _tmpl.tier == "builtin" else _tmpl.tier
+            _pipeline_template = f"{_tier_display}:{_template_id}"
 
         _merged_settings = {**_current_settings, "worca": _merged_worca}
         _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
@@ -259,6 +265,7 @@ def main():
             branch=args.branch,
             skip_preflight=args.skip_preflight,
             worktree=args.worktree,
+            pipeline_template=_pipeline_template,
         )
 
         # Snapshot template to run dir and write merged settings for traceability

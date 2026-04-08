@@ -348,6 +348,157 @@ describe('project-routes', () => {
     });
   });
 
+  describe('GET /api/projects/:id/templates', () => {
+    it('returns empty list when no template dirs exist', async () => {
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/templates`,
+      );
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(Array.isArray(body.templates)).toBe(true);
+    });
+
+    it('returns worca-tier templates from .claude/worca/templates/', async () => {
+      const tmplDir = join(
+        projectRoot,
+        '.claude',
+        'worca',
+        'templates',
+        'mytemplate',
+      );
+      mkdirSync(tmplDir, { recursive: true });
+      writeFileSync(
+        join(tmplDir, 'template.json'),
+        JSON.stringify({
+          id: 'mytemplate',
+          name: 'My Template',
+          description: 'A test template',
+        }),
+      );
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/templates`,
+      );
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      const t = body.templates.find((t) => t.id === 'mytemplate');
+      expect(t).toBeDefined();
+      expect(t.name).toBe('My Template');
+      expect(t.description).toBe('A test template');
+      expect(t.tier).toBe('worca');
+    });
+
+    it('returns project-tier templates from .claude/templates/', async () => {
+      const tmplDir = join(projectRoot, '.claude', 'templates', 'proj-tpl');
+      mkdirSync(tmplDir, { recursive: true });
+      writeFileSync(
+        join(tmplDir, 'template.json'),
+        JSON.stringify({
+          id: 'proj-tpl',
+          name: 'Project Template',
+          description: 'Project-level',
+        }),
+      );
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/templates`,
+      );
+      expect(status).toBe(200);
+      const t = body.templates.find((t) => t.id === 'proj-tpl');
+      expect(t).toBeDefined();
+      expect(t.tier).toBe('project');
+    });
+
+    it('skips subdirs without template.json', async () => {
+      const noJsonDir = join(
+        projectRoot,
+        '.claude',
+        'worca',
+        'templates',
+        'no-manifest',
+      );
+      mkdirSync(noJsonDir, { recursive: true });
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/templates`,
+      );
+      expect(status).toBe(200);
+      const t = body.templates.find((t) => t.id === 'no-manifest');
+      expect(t).toBeUndefined();
+    });
+
+    it('returns templates from multiple tiers together', async () => {
+      mkdirSync(join(projectRoot, '.claude', 'worca', 'templates', 'w-tpl'), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(
+          projectRoot,
+          '.claude',
+          'worca',
+          'templates',
+          'w-tpl',
+          'template.json',
+        ),
+        JSON.stringify({ id: 'w-tpl', name: 'Worca Tpl', description: '' }),
+      );
+      mkdirSync(join(projectRoot, '.claude', 'templates', 'p-tpl'), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(projectRoot, '.claude', 'templates', 'p-tpl', 'template.json'),
+        JSON.stringify({ id: 'p-tpl', name: 'Project Tpl', description: '' }),
+      );
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/templates`,
+      );
+      expect(status).toBe(200);
+      expect(body.templates.some((t) => t.tier === 'worca')).toBe(true);
+      expect(body.templates.some((t) => t.tier === 'project')).toBe(true);
+    });
+
+    it('returns 404 for unknown project', async () => {
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { status } = await request(
+        app,
+        'GET',
+        '/api/projects/nonexistent/templates',
+      );
+      expect(status).toBe(404);
+    });
+  });
+
   describe('backwards compatibility', () => {
     it('old /api/runs route still works', async () => {
       const app = await createTestApp(prefsDir, projectRoot);

@@ -129,6 +129,14 @@ cd worca-ui && npm run build
 
 This runs esbuild to produce `app/main.bundle.js`. Without rebuilding, changes won't take effect.
 
+**Before committing any worca-ui changes**, always run the unit tests locally to catch failures before they reach CI:
+
+```bash
+cd worca-ui && npx vitest run
+```
+
+Run from inside `worca-ui/` so the vitest config's exclude patterns apply correctly. Do not commit if tests fail — fix them first.
+
 ### Running the UI
 
 ```bash
