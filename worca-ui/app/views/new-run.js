@@ -362,31 +362,52 @@ export function newRunView(_state, { rerender }) {
             <div class="settings-field">
               <label class="settings-label">Pipeline Template</label>
               <sl-select value=${selectedTemplate} @sl-change=${handleTemplateChange}>
-                <sl-option value="default">Default (worca built-in)</sl-option>
+                <sl-option value="default">Project Default (settings.json)</sl-option>
                 ${
                   tiers.worca.length > 0
                     ? html`
-                  <sl-option-group label="WORCA">
-                    ${tiers.worca.map((t) => html`<sl-option value=${t.id}>${t.name}</sl-option>`)}
-                  </sl-option-group>
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">WORCA</small>
+                  ${tiers.worca.map(
+                    (
+                      t,
+                    ) => html`<sl-option class="template-grouped" value=${t.id}>
+                    ${t.name}
+                    ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
+                  </sl-option>`,
+                  )}
                 `
                     : nothing
                 }
                 ${
                   tiers.project.length > 0
                     ? html`
-                  <sl-option-group label="PROJECT">
-                    ${tiers.project.map((t) => html`<sl-option value=${t.id}>${t.name}</sl-option>`)}
-                  </sl-option-group>
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">PROJECT</small>
+                  ${tiers.project.map(
+                    (
+                      t,
+                    ) => html`<sl-option class="template-grouped" value=${t.id}>
+                    ${t.name}
+                    ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
+                  </sl-option>`,
+                  )}
                 `
                     : nothing
                 }
                 ${
                   tiers.user.length > 0
                     ? html`
-                  <sl-option-group label="USER">
-                    ${tiers.user.map((t) => html`<sl-option value=${t.id}>${t.name}</sl-option>`)}
-                  </sl-option-group>
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">USER</small>
+                  ${tiers.user.map(
+                    (
+                      t,
+                    ) => html`<sl-option class="template-grouped" value=${t.id}>
+                    ${t.name}
+                    ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
+                  </sl-option>`,
+                  )}
                 `
                     : nothing
                 }
