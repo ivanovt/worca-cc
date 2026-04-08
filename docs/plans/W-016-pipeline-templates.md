@@ -1138,3 +1138,87 @@ Tasks should be implemented in this order due to dependencies:
 13. **Task 15** (main.js wiring) — depends on Tasks 11-14
 14. **Task 16** (CSS) — after all views are settled
 15. **Task 18** (rebuild bundle) — final step
+
+---
+
+## Appendix A: Stage Coupling Analysis
+
+This appendix documents how tightly the orchestrator is coupled to its current stage definitions. Templates (W-016) work within these constraints — they configure the existing stages but do not redefine them. A future effort (see note at end) could make stages themselves configurable.
+
+### Hard-coupled areas (require source edits to change)
+
+| Area | File | What's locked |
+|------|------|---------------|
+| **Stage enum** | `orchestrator/stages.py:7-17` | `Stage(Enum)` with 9 fixed values |
+| **Transitions** | `orchestrator/stages.py:20-29` | `TRANSITIONS` dict — fixed state machine graph |
+| **Runner logic** | `orchestrator/runner.py:1741-2330` | ~800 lines of `if current_stage == Stage.X` chains with per-stage output parsing, loopback triggers, and context management |
+| **Prompt builder** | `orchestrator/prompt_builder.py:124-542` | Hardcoded `_build_{stage}()` methods dispatched via `getattr(self, f"_build_{stage}")` |
+| **Schema map** | `orchestrator/stages.py:43-53` | `STAGE_SCHEMA_MAP` — fixed stage→schema filename mapping |
+
+### Soft-coupled areas (configurable within bounds)
+
+| Area | File | What's flexible |
+|------|------|----------------|
+| **Agent assignment** | `stages.py:31-41` + settings.json | `stages.{name}.agent` overrides `STAGE_AGENT_MAP` default |
+| **Enable/disable** | settings.json | `stages.{name}.enabled: false` skips a stage |
+| **Loop limits** | settings.json | `loops.implement_test`, `loops.pr_changes`, etc. |
+| **Model/turns** | settings.json | `agents.{name}.model` and `agents.{name}.max_turns` |
+| **Status tracking** | `state/status.py` | Generic — accepts any stage name string, no validation against enum |
+| **Hooks** | `claude_hooks/*.py` | Check `WORCA_AGENT` role, not stage name |
+| **Events** | `events/types.py` | Generic stage events (`STAGE_STARTED`, `STAGE_COMPLETED`) plus stage-specific ones (`TEST_SUITE_FAILED`, `REVIEW_VERDICT`) hardcoded in runner |
+
+### Hardcoded transition paths
+
+```
+PREFLIGHT → PLAN
+PLAN → PLAN_REVIEW | COORDINATE
+PLAN_REVIEW → COORDINATE | PLAN (revision)
+COORDINATE → IMPLEMENT
+IMPLEMENT → TEST
+TEST → REVIEW | IMPLEMENT (test failure loopback)
+REVIEW → PR | IMPLEMENT (changes requested) | PLAN (restart planning)
+PR → (end)
+```
+
+Loopbacks are controlled by trigger strings (`"test_failure"`, `"review_changes"`, `"next_bead"`) set in the runner's per-stage if/elif blocks and consumed by the IMPLEMENT stage handler to choose between initial/next-bead/fix modes.
+
+### Per-stage special-case logic in runner.py
+
+- **PREFLIGHT:** Runs via script (`run_preflight()`), not agent. Skippable via `--skip-preflight`.
+- **PLAN:** Parses `plan.json` schema output, sets `plan_approved` milestone, handles plan revision mode via `plan_revision_mode` context key.
+- **PLAN_REVIEW:** Parses `outcome` field ("approve"/"revise"), filters by severity (critical/major), loops back to PLAN on revision.
+- **COORDINATE:** Parses bead task list from `coordinate.json`, populates dependency graph.
+- **IMPLEMENT:** Three trigger paths — `initial` (assign bead), `next_bead` (next task), `test_failure`/`review_changes` (fix mode). Tracks `bead_prompt_iteration` for retry prompts.
+- **TEST:** Parses test results, severity-gates loopback (only failures trigger `TEST→IMPLEMENT`), tracks `implement_test` loop counter.
+- **REVIEW:** Parses `outcome` field, three loopback paths (`→IMPLEMENT`, `→PLAN`, `→PR`), filters issues by severity for fix mode, tracks `pr_changes` loop counter.
+- **PR:** Emits `GIT_PR_CREATED` event. Terminal stage.
+- **LEARN:** Post-completion only, conditional on termination type. Not in main stage loop.
+
+### What templates CAN control (W-016 scope)
+
+- Which stages are enabled/disabled
+- Which agent handles each stage (and its model/turns)
+- Loop iteration limits
+- Milestones (approval gates)
+- Budget and circuit breaker thresholds
+- Agent prompt overlays (via template `agents/` directory)
+
+### What templates CANNOT control
+
+- Adding new stages
+- Changing transition graph (which stages connect to which)
+- Changing loopback conditions (what triggers a retry)
+- Changing stage order
+- Custom output schema parsing logic
+
+### Future: data-driven stage machine
+
+Making stages fully configurable would require:
+
+1. Moving `TRANSITIONS`, `STAGE_ORDER`, `STAGE_AGENT_MAP`, `STAGE_SCHEMA_MAP` into settings.json
+2. Replacing the ~800 lines of if/elif with a generic dispatch table and pluggable stage handlers
+3. Defining loopback conditions as data (e.g., `"on_failure": "implement"` in transition config)
+4. Making prompt builders loadable from template files rather than hardcoded methods
+5. Making output parsing generic (check schema-defined outcome fields)
+
+This is a separate feature from W-016 and would be a significant architectural refactor.
