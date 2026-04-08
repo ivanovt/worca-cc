@@ -45,6 +45,8 @@ worca = [
     "agents/core/*.md",
     "schemas/*.json",
     "settings.json",
+    "templates/*/template.json",
+    "templates/*/agents/*.md",
 ]
 
 [tool.pytest.ini_options]
