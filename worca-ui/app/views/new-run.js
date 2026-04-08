@@ -122,12 +122,7 @@ export function getNewRunSubmitState() {
   return { submitStatus, isSubmitting: submitStatus === 'submitting' };
 }
 
-export async function submitNewRun({
-  rerender,
-  onStarted,
-  projectId,
-  refreshRuns,
-}) {
+export async function submitNewRun({ rerender, onStarted, projectId }) {
   const sourceValueEl = document.getElementById('new-run-source-value');
   const promptEl = document.getElementById('new-run-prompt');
   const msizeEl = document.getElementById('new-run-msize');
@@ -187,13 +182,9 @@ export async function submitNewRun({
     const data = await res.json();
     if (data.ok) {
       submitStatus = null;
-      if (refreshRuns) {
-        try {
-          await refreshRuns();
-        } catch (_) {
-          /* best-effort */
-        }
-      }
+      // Don't call refreshRuns() here — the Python process hasn't written
+      // status files yet, so discoverRuns() returns stale data that wipes
+      // state.runs. The 'run-started' WS event + its 2s retry handles it.
       onStarted();
     } else {
       submitStatus = 'error';

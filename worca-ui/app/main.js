@@ -1461,7 +1461,7 @@ function contentHeaderView() {
     const nrs = getNewRunSubmitState();
     actionButton = html`
       <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting}
-        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId, refreshRuns: fetchAndUpdateRuns })}>
+        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId })}>
 
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
