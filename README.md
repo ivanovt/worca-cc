@@ -12,7 +12,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 - **9-stage pipeline** — Preflight → Plan → Plan Review → Coordinate → Implement → Test → Review → PR → Learn
 - **7 specialized agents** — Planner, Plan Reviewer, Coordinator, Guardian, Implementer, Tester, and Learner (model and max turns fully configurable per agent)
-- **Pause, stop & resume** — pause mid-stage with clean checkpointing, stop with SIGTERM, resume from where you left off; the UI has pause/resume/stop buttons with real-time state transitions
+- **Pause, stop & resume** — pause mid-stage with clean checkpointing, stop with SIGTERM, resume from where you left off; the UI has pause/resume/stop buttons with real-time state transitions and force-cancel for stale runs
 - **Circuit breakers** — error classification with halt thresholds; when a stage fails too many times, the circuit breaker trips and prevents runaway cost
 - **Preflight checks** — language-agnostic environment validation that always runs before spending tokens, catching git state issues, missing dependencies, and configuration problems
 - **Post-run retrospective (LEARN stage)** — optional stage that analyzes what went well, what failed, and why; produces ranked observations with actionable suggestions and copy-to-clipboard prompts for improving future runs
@@ -28,7 +28,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 - **Governance hooks** — block dangerous operations (rm -rf, force push, env writes), enforce test gates, validate plans (each guard can be toggled independently)
 - **Human approval gates** — optional checkpoints after planning, before merge, and before deploy (configurable per gate)
-- **Token and cost tracking** — per-agent usage with model-specific pricing, budget warnings at configurable thresholds
+- **Token and cost tracking** — per-agent usage with model-specific pricing, web search/fetch cost tracking, cache tier breakdown, budget warnings at configurable thresholds
 
 ### Customization
 
@@ -107,6 +107,8 @@ worca init                        # scaffolds .claude/ with pipeline files
 ```
 
 To update: `pip install --upgrade worca-cc && worca init --upgrade`
+
+Use `worca init --check` for a dry-run that shows what would change without modifying anything.
 
 ## Quick Start
 

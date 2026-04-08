@@ -22,6 +22,8 @@ npm install               # installs husky (pre-commit hooks)
 cd worca-ui && npm install && npm run build && cd -
 ```
 
+**Note:** `worca init --upgrade` overwrites `.claude/settings.json` with the latest package defaults. Put any machine-specific overrides in `settings.local.json` (which is gitignored and deep-merges on top). Use `worca init --check` for a dry-run that shows what would change without modifying anything.
+
 The pre-commit hook runs automatically on every `git commit` and checks:
 - **ruff** — Python linting
 - **biome** — JavaScript linting and formatting (worca-ui)
@@ -150,9 +152,24 @@ This will:
 
 No arguments needed — versions are auto-detected. CI workflows handle publishing to PyPI and npm when the tags land.
 
-## Releasing
+## Creating Stable Releases
 
-Two independent packages with independent version numbers and release cadences.
+Use the `/worca-release` skill to bump to a stable version, commit, tag, and push:
+
+```
+/worca-release --version:micro              # bump patch for all packages
+/worca-release --version:minor              # bump minor for all packages
+/worca-release --version:micro --package:worca-cc   # Python only
+/worca-release --version:minor --package:worca-ui   # npm only
+```
+
+This strips any RC suffix, applies the bump, updates all version files, commits, tags, and pushes. CI handles publishing to PyPI and npm.
+
+Run `/worca-release` with no arguments to see current versions and recent tags.
+
+## Releasing (Manual)
+
+Two independent packages with independent version numbers and release cadences. Prefer using `/worca-release` above — these manual steps are for reference.
 
 ### Python pipeline (`worca-cc` on PyPI)
 
