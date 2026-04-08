@@ -17,7 +17,6 @@ vi.mock('./process-manager.js', async (importOriginal) => {
   return {
     ...actual,
     ProcessManager: class MockProcessManager {
-      constructor() {}
       getRunningPid() {
         return null;
       }
