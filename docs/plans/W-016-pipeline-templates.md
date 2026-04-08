@@ -163,34 +163,59 @@ Template `params` are rendered into overlay content as `{{param_name}}` placehol
 
 ## 3. Preset Templates
 
+### Design constraint: stage dependency chain
+
+The orchestrator has a hard dependency chain: **PLAN → COORDINATE → IMPLEMENT**. The coordinator creates beads (tasks) from the plan, and the implementer consumes those beads. Skipping links in this chain causes the implementer to fish for unscoped beads from prior runs.
+
+**Templates must not skip stages in the middle of the chain.** Instead, they reshape stages via:
+- **Agent prompt overlays** — different instructions for the same stage (e.g., a bugfix planner investigates root cause instead of designing architecture)
+- **Model overrides** — cheaper/faster models for lightweight stages (haiku for trivial planning)
+- **Turn limits** — fewer turns for stages that should be quick
+- **Tail trimming** — disabling stages from the end (no PR, no review) is safe because no downstream stage depends on them
+
+### Overview
+
+| Preset | Chain | Tail trimmed | Model overrides | Agent overlays |
+|---|---|---|---|---|
+| `bugfix` | full | none | sonnet for plan+coord | planner, coordinator |
+| `feature` | full + plan_review + learn | none | none (defaults) | none |
+| `refactor` | full | PR | none | planner, guardian |
+| `quick-fix` | full | test, review | haiku for plan+coord | planner, coordinator |
+| `investigate` | plan only | coord thru PR | opus planner, 200 turns | planner |
+| `test-only` | full | none | sonnet for plan+coord | planner, coordinator, implementer |
+
 ### 3.1 `bugfix` -- Bugfix
 
 **Directory:** `src/worca/templates/bugfix/`
 
-**Use when:** The bug is understood, reproduction is clear, and the fix is localized. No planning or task decomposition needed.
+**Use when:** A bug needs fixing. The planner investigates root cause and scopes the fix, the coordinator creates 1-3 focused tasks, and the implementer fixes them. Faster and cheaper than the default pipeline.
+
+**Agent overlays:**
+- `agents/planner.md` — "Investigate this bug, identify root cause, scope the minimal fix"
+- `agents/coordinator.md` — "Create 1-3 focused fix tasks, no broad decomposition"
 
 ```json
 {
   "id": "bugfix",
   "name": "Bugfix",
-  "description": "Skip planner and coordinator. Focuses on direct implementation and testing. Best for well-understood bugs with a clear fix.",
+  "description": "Fast bug fix pipeline. Planner investigates root cause, coordinator creates focused tasks, implementer fixes. Sonnet for planning, budget-capped.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
-  "tags": ["fast", "no-plan"],
+  "tags": ["fast", "focused"],
   "config": {
-    "stages": {
-      "plan":       { "enabled": false },
-      "coordinate": { "enabled": false }
+    "agents": {
+      "planner":     { "model": "sonnet", "max_turns": 30 },
+      "coordinator": { "model": "sonnet", "max_turns": 50 }
     },
     "loops": {
-      "implement_test": 5,
-      "pr_changes": 2
+      "implement_test": 8,
+      "pr_changes": 3
     },
     "milestones": {
       "plan_approval": false,
-      "pr_approval": true,
       "deploy_approval": false
-    }
+    },
+    "budget": { "max_cost_usd": 30 }
   }
 }
 ```
@@ -199,26 +224,26 @@ Template `params` are rendered into overlay content as `{{param_name}}` placehol
 
 **Directory:** `src/worca/templates/feature/`
 
-**Use when:** Implementing a new user-facing feature that requires planning, task breakdown, and a full review cycle.
+**Use when:** Implementing a new user-facing feature that requires full planning, task breakdown, and review. Enables the opt-in plan_review and learn stages that defaults leave off, with higher retry limits.
 
 ```json
 {
   "id": "feature",
   "name": "Feature Development",
-  "description": "Full pipeline with planning, coordination, implementation, testing, review, and PR. Best for new features that require architectural decisions.",
+  "description": "Full pipeline with plan review and learn stages enabled. Higher retry limits for complex features. All approval gates active.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
-  "tags": ["full-pipeline", "requires-approval"],
+  "tags": ["full-pipeline", "plan-review", "learn"],
   "config": {
+    "stages": {
+      "plan_review": { "enabled": true },
+      "learn": { "enabled": true }
+    },
     "loops": {
       "implement_test": 10,
-      "pr_changes": 3,
-      "restart_planning": 2
-    },
-    "milestones": {
-      "plan_approval": true,
-      "pr_approval": true,
-      "deploy_approval": true
+      "pr_changes": 5,
+      "restart_planning": 3,
+      "plan_review": 3
     }
   }
 }
@@ -228,13 +253,17 @@ Template `params` are rendered into overlay content as `{{param_name}}` placehol
 
 **Directory:** `src/worca/templates/refactor/`
 
-**Use when:** Restructuring existing code without changing behavior. Plan is needed for coordination, but no PR is created -- the branch is ready for manual review.
+**Use when:** Restructuring existing code without changing behavior. Full pipeline minus PR — the branch is left ready for manual review. Guardian focuses on behavioral preservation.
+
+**Agent overlays:**
+- `agents/planner.md` — "Analyze current structure, design target architecture, identify safe refactoring steps"
+- `agents/guardian.md` — "Focus on behavioral preservation, no new features, verify test equivalence"
 
 ```json
 {
   "id": "refactor",
   "name": "Refactor",
-  "description": "Full pipeline without PR creation. Focuses on restructuring code with extra test iterations. Branch is left ready for manual review.",
+  "description": "Full pipeline without PR. Planner analyzes structure, guardian reviews for behavioral preservation. Branch left for manual review.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": ["no-pr", "extra-test"],
@@ -244,14 +273,14 @@ Template `params` are rendered into overlay content as `{{param_name}}` placehol
     },
     "loops": {
       "implement_test": 10,
-      "pr_changes": 0,
       "restart_planning": 2
     },
     "milestones": {
       "plan_approval": true,
       "pr_approval": false,
       "deploy_approval": false
-    }
+    },
+    "budget": { "max_cost_usd": 50 }
   }
 }
 ```
@@ -260,25 +289,29 @@ Template `params` are rendered into overlay content as `{{param_name}}` placehol
 
 **Directory:** `src/worca/templates/quick-fix/`
 
-**Use when:** A trivial one-liner fix, typo correction, or config tweak. Implementer only. No coordination, no review loop. High risk -- use only when the change is obviously safe.
+**Use when:** A trivial one-liner fix, typo correction, or config tweak. Full dependency chain (plan → coordinate → implement) runs with haiku for pennies-cost planning. Test and review trimmed from the tail. Tight budget and circuit breaker.
+
+**Agent overlays:**
+- `agents/planner.md` — "Identify the single change needed. One file, one fix."
+- `agents/coordinator.md` — "Create exactly one task for this fix."
 
 ```json
 {
   "id": "quick-fix",
   "name": "Quick Fix",
-  "description": "Minimal pipeline: implementer only, no planning, testing, or review. Use only for trivially safe changes like typos or config tweaks.",
+  "description": "Minimal pipeline for trivial changes. Haiku plans and coordinates in seconds, sonnet implements, no test or review. Budget-capped at $5.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": ["minimal", "fast", "no-review"],
   "config": {
     "stages": {
-      "plan":       { "enabled": false },
-      "coordinate": { "enabled": false },
-      "test":       { "enabled": false },
-      "review":     { "enabled": false }
+      "test":   { "enabled": false },
+      "review": { "enabled": false }
     },
     "agents": {
-      "implementer": { "max_turns": 100 }
+      "planner":     { "model": "haiku", "max_turns": 15 },
+      "coordinator": { "model": "haiku", "max_turns": 15 },
+      "implementer": { "model": "sonnet", "max_turns": 100 }
     },
     "loops": {
       "implement_test": 0
@@ -287,7 +320,84 @@ Template `params` are rendered into overlay content as `{{param_name}}` placehol
       "plan_approval": false,
       "pr_approval": false,
       "deploy_approval": false
-    }
+    },
+    "budget": { "max_cost_usd": 5 },
+    "circuit_breaker": { "max_consecutive_failures": 1 }
+  }
+}
+```
+
+### 3.5 `investigate` -- Investigation
+
+**Directory:** `src/worca/templates/investigate/`
+
+**Use when:** Root cause analysis, architecture review, or codebase exploration. Produces a plan/report (`MASTER_PLAN.md`) without implementing anything. Output can feed into a subsequent `feature` or `bugfix` run.
+
+**Agent overlay:**
+- `agents/planner.md` — "Deep analysis mode: explore codebase, document findings, produce actionable report. Do NOT propose implementation."
+
+```json
+{
+  "id": "investigate",
+  "name": "Investigation",
+  "description": "Analysis only. Opus planner explores codebase and produces a detailed report. No code changes, no PR. Output is a reusable MASTER_PLAN.md.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["analysis", "no-code", "plan-only"],
+  "config": {
+    "stages": {
+      "coordinate": { "enabled": false },
+      "implement":  { "enabled": false },
+      "test":       { "enabled": false },
+      "review":     { "enabled": false },
+      "pr":         { "enabled": false }
+    },
+    "agents": {
+      "planner": { "model": "opus", "max_turns": 200 }
+    },
+    "milestones": {
+      "plan_approval": false,
+      "pr_approval": false,
+      "deploy_approval": false
+    },
+    "budget": { "max_cost_usd": 20 }
+  }
+}
+```
+
+### 3.6 `test-only` -- Test Coverage
+
+**Directory:** `src/worca/templates/test-only/`
+
+**Use when:** Adding test coverage, fixing flaky tests, or verifying existing behavior. Full chain runs but all agents are instructed to only touch test files.
+
+**Agent overlays:**
+- `agents/planner.md` — "Analyze test coverage gaps. Identify which modules need tests. Do NOT plan production code changes."
+- `agents/coordinator.md` — "Create tasks for test files only. Each task targets one module's test coverage."
+- `agents/implementer.md` — "Write test files ONLY. Do NOT modify production source files."
+
+```json
+{
+  "id": "test-only",
+  "name": "Test Coverage",
+  "description": "Add test coverage without changing production code. Planner analyzes gaps, coordinator creates per-module test tasks, implementer writes tests only.",
+  "builtin": true,
+  "created_at": "2026-03-10T00:00:00Z",
+  "tags": ["tests", "no-prod-changes"],
+  "config": {
+    "agents": {
+      "planner":     { "model": "sonnet", "max_turns": 30 },
+      "coordinator": { "model": "sonnet", "max_turns": 50 }
+    },
+    "loops": {
+      "implement_test": 8,
+      "pr_changes": 2
+    },
+    "milestones": {
+      "plan_approval": false,
+      "deploy_approval": false
+    },
+    "budget": { "max_cost_usd": 25 }
   }
 }
 ```
@@ -778,13 +888,16 @@ Implement the `TemplateResolver` class, `TemplateSummary` and `Template` datacla
 
 ### Task 2: Create Preset Template Directories
 
-**Directories to create:**
-- `src/worca/templates/bugfix/template.json`
-- `src/worca/templates/feature/template.json`
-- `src/worca/templates/refactor/template.json`
-- `src/worca/templates/quick-fix/template.json`
+**Directories to create (6 presets, each with `template.json` + optional `agents/` overlays):**
 
-Write each `template.json` as specified in Section 3. No `agents/` subdirectories for the built-in presets (they use default agent prompts).
+- `src/worca/templates/bugfix/template.json` + `agents/planner.md`, `agents/coordinator.md`
+- `src/worca/templates/feature/template.json` (no overlays — uses default prompts)
+- `src/worca/templates/refactor/template.json` + `agents/planner.md`, `agents/guardian.md`
+- `src/worca/templates/quick-fix/template.json` + `agents/planner.md`, `agents/coordinator.md`
+- `src/worca/templates/investigate/template.json` + `agents/planner.md`
+- `src/worca/templates/test-only/template.json` + `agents/planner.md`, `agents/coordinator.md`, `agents/implementer.md`
+
+Write each `template.json` as specified in Section 3. Agent overlay files use `<!-- append -->` mode with `## Override:` blocks to modify specific sections of core agent prompts while preserving governance rules.
 
 ---
 
@@ -1170,10 +1283,22 @@ Extend existing overlay tests to cover the template agents chain:
 |------|---------|
 | `src/worca/orchestrator/templates.py` | Python TemplateResolver — source of truth |
 | `src/worca/cli/templates.py` | `worca templates` CLI subcommands |
-| `src/worca/templates/bugfix/template.json` | Bugfix preset |
-| `src/worca/templates/feature/template.json` | Feature development preset |
-| `src/worca/templates/refactor/template.json` | Refactor preset |
-| `src/worca/templates/quick-fix/template.json` | Quick fix preset |
+| `src/worca/templates/bugfix/template.json` | Bugfix preset config |
+| `src/worca/templates/bugfix/agents/planner.md` | Bugfix planner overlay (root cause focus) |
+| `src/worca/templates/bugfix/agents/coordinator.md` | Bugfix coordinator overlay (1-3 focused tasks) |
+| `src/worca/templates/feature/template.json` | Feature development preset config |
+| `src/worca/templates/refactor/template.json` | Refactor preset config |
+| `src/worca/templates/refactor/agents/planner.md` | Refactor planner overlay (structural analysis) |
+| `src/worca/templates/refactor/agents/guardian.md` | Refactor guardian overlay (behavioral preservation) |
+| `src/worca/templates/quick-fix/template.json` | Quick fix preset config |
+| `src/worca/templates/quick-fix/agents/planner.md` | Quick fix planner overlay (single change) |
+| `src/worca/templates/quick-fix/agents/coordinator.md` | Quick fix coordinator overlay (one task) |
+| `src/worca/templates/investigate/template.json` | Investigation preset config |
+| `src/worca/templates/investigate/agents/planner.md` | Investigation planner overlay (analysis mode) |
+| `src/worca/templates/test-only/template.json` | Test coverage preset config |
+| `src/worca/templates/test-only/agents/planner.md` | Test planner overlay (coverage gaps) |
+| `src/worca/templates/test-only/agents/coordinator.md` | Test coordinator overlay (per-module tasks) |
+| `src/worca/templates/test-only/agents/implementer.md` | Test implementer overlay (test files only) |
 | `tests/test_templates.py` | Python tests for TemplateResolver |
 
 ### Modified files
