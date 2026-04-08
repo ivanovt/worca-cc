@@ -259,84 +259,65 @@ describe('beadTooltipContent', () => {
   const issue = {
     id: 'worca-cc-abc1',
     title: 'My Full Issue Title',
-    body: 'This is the body text that is longer than 100 characters. It should be truncated at 100 characters by the excerpt logic.',
+    body: 'This is the body text that describes what needs to be done.',
     status: 'in_progress',
     priority: 2,
     depends_on: ['worca-cc-dep1', 'worca-cc-dep2'],
-    created_at: '2026-04-01T10:00:00Z',
   };
-
-  const dep1 = {
-    id: 'worca-cc-dep1',
-    title: 'Dep One Title',
-    status: 'closed',
-    depends_on: [],
-  };
-  const dep2 = {
-    id: 'worca-cc-dep2',
-    title: 'Dep Two Title',
-    status: 'open',
-    depends_on: [],
-  };
-  const issuesById = new Map([
-    ['worca-cc-dep1', dep1],
-    ['worca-cc-dep2', dep2],
-  ]);
 
   it('includes the full title', () => {
-    const out = renderToString(beadTooltipContent(issue, issuesById));
+    const out = renderToString(beadTooltipContent(issue));
     expect(out).toContain('My Full Issue Title');
   });
 
-  it('includes a body excerpt (first 100 chars)', () => {
-    const out = renderToString(beadTooltipContent(issue, issuesById));
-    const excerpt = issue.body.slice(0, 100);
-    expect(out).toContain(excerpt);
+  it('includes the full body text', () => {
+    const out = renderToString(beadTooltipContent(issue));
+    expect(out).toContain(
+      'This is the body text that describes what needs to be done.',
+    );
   });
 
-  it('does not include more than 100 chars of body', () => {
-    const out = renderToString(beadTooltipContent(issue, issuesById));
-    expect(out).not.toContain(issue.body.slice(101));
+  it('includes bead ID in header', () => {
+    const out = renderToString(beadTooltipContent(issue));
+    expect(out).toContain('Bead ID:');
+    expect(out).toContain('worca-cc-abc1');
   });
 
   it('includes status badge with correct variant', () => {
-    const out = renderToString(beadTooltipContent(issue, issuesById));
+    const out = renderToString(beadTooltipContent(issue));
     expect(out).toContain('in_progress');
     expect(out).toContain('warning'); // statusVariant('in_progress') = 'warning'
   });
 
   it('includes priority badge', () => {
-    const out = renderToString(beadTooltipContent(issue, issuesById));
+    const out = renderToString(beadTooltipContent(issue));
     expect(out).toContain('P2');
   });
 
-  it('includes dependency IDs', () => {
-    const out = renderToString(beadTooltipContent(issue, issuesById));
-    expect(out).toContain('worca-cc-dep1');
-    expect(out).toContain('worca-cc-dep2');
+  it('has tooltip header with badges', () => {
+    const out = renderToString(beadTooltipContent(issue));
+    expect(out).toContain('bead-tooltip-header');
+    expect(out).toContain('bead-tooltip-badges');
   });
 
-  it('includes created date', () => {
-    const out = renderToString(beadTooltipContent(issue, issuesById));
-    expect(out).toContain('2026-04-01');
+  it('has labeled title and description sections', () => {
+    const out = renderToString(beadTooltipContent(issue));
+    expect(out).toContain('bead-tooltip-label');
+    expect(out).toContain('Title:');
+    expect(out).toContain('Description:');
   });
 
   it('handles missing body gracefully', () => {
     const noBody = { ...issue, body: '' };
-    const out = renderToString(beadTooltipContent(noBody, issuesById));
+    const out = renderToString(beadTooltipContent(noBody));
     expect(out).toContain('My Full Issue Title');
+    expect(out).not.toContain('Description:');
   });
 
-  it('handles no dependencies gracefully', () => {
-    const noDeps = { ...issue, depends_on: [] };
-    const out = renderToString(beadTooltipContent(noDeps, issuesById));
-    expect(out).toContain('My Full Issue Title');
-  });
-
-  it('works with empty issuesById map', () => {
-    const out = renderToString(beadTooltipContent(issue, new Map()));
-    expect(out).toContain('My Full Issue Title');
-    expect(out).toContain('worca-cc-dep1');
+  it('includes copy button', () => {
+    const out = renderToString(beadTooltipContent(issue));
+    expect(out).toContain('bead-tooltip-copy');
+    expect(out).toContain('Copy');
   });
 });
 

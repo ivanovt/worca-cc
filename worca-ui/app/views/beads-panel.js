@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Circle,
   CircleCheck,
+  ClipboardCopy,
   GitBranch,
   Hash,
   iconSvg,
@@ -69,7 +70,7 @@ function computeLayers(issues) {
 }
 
 export function beadsDependencyGraph(issues) {
-  if (!issues || issues.length === 0) return '';
+  if (!issues || issues.length === 0) return { svg: '', nodes: [] };
 
   const NODE_W = 140,
     NODE_H = 40,
@@ -131,6 +132,7 @@ export function beadsDependencyGraph(issues) {
 
   // Node border color matches bead status
   let nodes = '';
+  const nodeList = [];
   for (const issue of issues) {
     const pos = positions.get(issue.id);
     if (!pos) continue;
@@ -142,9 +144,10 @@ export function beadsDependencyGraph(issues) {
       <text x="8" y="14" class="beads-graph-node-id">#${issue.id}</text>
       <text x="8" y="28">${escapeXml(label)}</text>
     </g>`;
+    nodeList.push({ issue, x: pos.x, y: pos.y, w: NODE_W, h: NODE_H });
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
     <defs>
       <marker id="beads-arrow-satisfied" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border)"/>
@@ -156,6 +159,7 @@ export function beadsDependencyGraph(issues) {
     ${edges}
     ${nodes}
   </svg>`;
+  return { svg, nodes: nodeList };
 }
 
 function escapeXml(str) {
@@ -166,28 +170,40 @@ function escapeXml(str) {
     .replace(/"/g, '&quot;');
 }
 
-export function beadTooltipContent(issue, issuesById) {
-  const excerpt = issue.body ? issue.body.slice(0, 100) : '';
-  const createdDate = issue.created_at ? issue.created_at.slice(0, 10) : '';
+function beadToMarkdown(issue) {
+  let md = `**Bead ID:** ${issue.id} | **Priority:** P${issue.priority} | **Status:** ${issue.status}`;
+  md += `\n\n**Title:** ${issue.title}`;
+  if (issue.body) md += `\n\n**Description:**\n${issue.body}`;
+  return md;
+}
+
+export function beadTooltipContent(issue) {
+  const copyBead = (e) => {
+    e.stopPropagation();
+    const btn = e.currentTarget;
+    navigator.clipboard.writeText(beadToMarkdown(issue)).then(() => {
+      btn.textContent = 'Copied!';
+      setTimeout(() => {
+        btn.textContent = 'Copy';
+      }, 1500);
+    });
+  };
   return html`
     <div class="bead-tooltip-content">
-      <div class="bead-tooltip-title">${issue.title}</div>
-      ${excerpt ? html`<div class="bead-tooltip-excerpt">${excerpt}</div>` : ''}
-      <div class="bead-tooltip-meta">
-        <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-        <sl-badge variant="${statusVariant(issue.status)}">${issue.status}</sl-badge>
-        ${createdDate ? html`<span class="bead-tooltip-date">${createdDate}</span>` : ''}
+      <div class="bead-tooltip-header">
+        <span class="bead-tooltip-id">Bead ID: ${issue.id}</span>
+        <span class="bead-tooltip-badges">
+          <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+          <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
+        </span>
       </div>
-      ${
-        issue.depends_on && issue.depends_on.length > 0
-          ? html`<div class="bead-tooltip-deps">
-              ${issue.depends_on.map((depId) => {
-                const dep = issuesById ? issuesById.get(depId) : null;
-                return html`<span class="bead-tooltip-dep-chip">#${depId}${dep ? html` <sl-badge variant="${statusVariant(dep.status)}">${dep.status}</sl-badge>` : ''}</span>`;
-              })}
-            </div>`
-          : ''
-      }
+      <hr class="bead-tooltip-separator">
+      <div class="bead-tooltip-label">Title:</div>
+      <div class="bead-tooltip-title">${issue.title}</div>
+      ${issue.body ? html`<div class="bead-tooltip-label">Description:</div><div class="bead-tooltip-excerpt">${issue.body}</div>` : ''}
+      <div class="bead-tooltip-footer">
+        <button class="bead-tooltip-copy" @click=${copyBead}>${unsafeHTML(iconSvg(ClipboardCopy, 12))} Copy</button>
+      </div>
     </div>
   `;
 }
@@ -207,7 +223,7 @@ export function beadChipTooltip(depId, issuesById) {
   `;
 }
 
-function _beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
+export function beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
   const isClosed = issue.status === 'closed';
   const isBlocked = issue.blocked_by && issue.blocked_by.length > 0;
   const canStart = issue.status === 'open' && !isBlocked && starting === null;
@@ -235,10 +251,13 @@ function _beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
                   ? 'beads-dep-chip--blocking'
                   : 'beads-dep-chip--satisfied';
               return html`
-                <span class="beads-dep-chip ${chipClass}">
-                  ${unsafeHTML(beadDepStatusIcon(depId, issuesById || new Map()))}
-                  #${depId}
-                </span>
+                <sl-tooltip>
+                  <div slot="content">${beadChipTooltip(depId, issuesById || new Map())}</div>
+                  <span class="beads-dep-chip ${chipClass}">
+                    ${unsafeHTML(beadDepStatusIcon(depId, issuesById || new Map()))}
+                    #${depId}
+                  </span>
+                </sl-tooltip>
               `;
             })}
           </div>
@@ -331,29 +350,32 @@ function beadsKanbanView(
           ${col.items.map((issue) => {
             const isBlocked = issue.blocked_by && issue.blocked_by.length > 0;
             return html`
-              <div class="beads-kanban-card ${isBlocked ? 'beads-kanban-card--blocked' : ''}">
-                <div class="beads-kanban-card-header">
-                  <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-                  <span class="beads-kanban-card-id">#${issue.id}</span>
-                </div>
-                <div class="beads-kanban-card-title">${issue.title}</div>
-                ${
-                  isBlocked
-                    ? html`
-                  <div class="beads-kanban-card-deps">
-                    ${issue.blocked_by.map(
-                      (depId) => html`
-                      <span class="beads-dep-chip beads-dep-chip--blocking">
-                        ${unsafeHTML(beadDepStatusIcon(depId, issuesById))}
-                        #${depId}
-                      </span>
-                    `,
-                    )}
+              <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
+                <div slot="content">${beadTooltipContent(issue)}</div>
+                <div class="beads-kanban-card ${isBlocked ? 'beads-kanban-card--blocked' : ''}">
+                  <div class="beads-kanban-card-header">
+                    <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+                    <span class="beads-kanban-card-id">#${issue.id}</span>
                   </div>
-                `
-                    : ''
-                }
-              </div>
+                  <div class="beads-kanban-card-title">${issue.title}</div>
+                  ${
+                    isBlocked
+                      ? html`
+                    <div class="beads-kanban-card-deps">
+                      ${issue.blocked_by.map(
+                        (depId) => html`
+                        <span class="beads-dep-chip beads-dep-chip--blocking">
+                          ${unsafeHTML(beadDepStatusIcon(depId, issuesById))}
+                          #${depId}
+                        </span>
+                      `,
+                      )}
+                    </div>
+                  `
+                      : ''
+                  }
+                </div>
+              </sl-tooltip>
             `;
           })}
         </div>
