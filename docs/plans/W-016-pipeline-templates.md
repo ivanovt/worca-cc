@@ -1,6 +1,8 @@
 # W-016: Pipeline Templates
 
-**Goal:** Eliminate repetitive pipeline reconfiguration by introducing named templates that capture complete pipeline profiles — stage configuration, agent tuning, loop limits, budget controls, and optional agent prompt overrides. Templates are selectable from both the CLI (`worca run --template`) and the UI ("New Run" dialog), and can be managed via `worca templates` subcommands or the Settings UI.
+**Goal:** Eliminate repetitive pipeline reconfiguration by introducing named templates that capture complete pipeline profiles — stage configuration, agent tuning, loop limits, budget controls, and optional agent prompt overrides. Templates are selectable from the CLI (`worca run --template`) and manageable via `worca templates` subcommands.
+
+**Scope:** This plan covers the Python core and CLI integration only (Tasks 1-6). The UI integration (REST API, template picker, settings tab, editor dialog) is documented in Sections 7-8 as a design reference for a follow-up effort.
 
 **Architecture:** Templates follow worca's three-tier resolution model:
 
@@ -14,17 +16,17 @@ Resolution priority: user > project > built-in (most specific wins on ID collisi
 
 Each template is a directory containing a `template.json` config file and an optional `agents/` subdirectory with prompt overlay files. When a template is applied, the entire template directory is copied into the run's results folder (`.worca/runs/{run_id}/template/`) to provide a complete trace of the exact configuration used.
 
-Core template logic lives in Python (`src/worca/orchestrator/templates.py`), with the UI server's `template-manager.js` acting as a thin REST adapter.
+Core template logic lives in Python (`src/worca/orchestrator/templates.py`).
 
-**Tech Stack:** Python `pathlib`/`shutil` for template resolution and file I/O, Express REST API for the UI layer, lit-html + Shoelace for UI components.
+**Tech Stack:** Python `pathlib`/`shutil` for template resolution and file I/O.
 
-**Depends on:** W-009 Pipeline Control Actions (the "New Run" dialog and `POST /api/runs` endpoint must already exist).
+**Depends on:** Nothing (CLI-only scope). UI integration (follow-up) depends on W-009.
 
 ---
 
 ## 1. Scope and Boundaries
 
-### In scope
+### In scope (this plan)
 - Template directory format and schema (`template.json` + optional `agents/*.md` overlays)
 - Three-tier template resolution (package → project → user)
 - Four built-in preset templates shipped with the package: `bugfix`, `feature`, `refactor`, `quick-fix`
@@ -33,10 +35,16 @@ Core template logic lives in Python (`src/worca/orchestrator/templates.py`), wit
 - Template parameters (`params`) with defaults and enum constraints
 - Deep-merge config application (partial overrides, not wholesale replacement)
 - Full template snapshot in run results (`.worca/runs/{run_id}/template/`)
+- OverlayResolver extension for template agent prompt overlays
+- `worca init` integration (copy built-in templates to runtime)
+
+### Follow-up (design reference in Sections 7-8, not implemented in this plan)
 - REST API: `GET/POST/DELETE /api/templates` (thin wrapper around Python resolver)
 - Settings UI "Templates" tab for browsing, previewing, and deleting templates
 - "Save as Template" action on the Settings > Pipeline tab
 - Template picker in the "New Run" dialog
+- Template editor dialog (Clone/Edit/Save-as-template)
+- Run detail template indicator
 
 ### Out of scope
 - Template versioning or history
@@ -748,7 +756,7 @@ This data comes from the `template/` snapshot in the run directory — always av
 
 ---
 
-## 9. Implementation Tasks
+## 9. Implementation Tasks (W-016 scope)
 
 ### Task 1: Create Python TemplateResolver
 
@@ -879,6 +887,10 @@ Resolution chain:
 2. Apply template overlay (`{template_agents_dir}/{agent}.md`) → final result
 
 ---
+
+## 9b. Follow-up Tasks (UI integration — not in W-016 scope)
+
+The tasks below are documented as a design reference for a follow-up effort. They depend on the Python core (Tasks 1-6) being complete and on W-009 (Pipeline Control Actions).
 
 ### Task 7: Create `server/template-manager.js`
 
@@ -1044,28 +1056,98 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 
 ## 11. Testing Strategy
 
-### Unit Tests
+Testing is a first-class deliverable for W-016. Every task must have corresponding test coverage before it is considered complete. The project follows TDD — write failing tests first, then implement.
 
-- **Python:** `tests/test_templates.py` (Task 3) — covers `TemplateResolver`, merge logic, params, snapshot
-- **JS:** `worca-ui/server/template-manager.test.js` (Task 17) — covers REST adapter layer
+### Unit Tests (Task 3 — `tests/test_templates.py`)
+
+This is the largest test file in the plan. It covers the entire `TemplateResolver` surface:
+
+**`TemplateResolver.list()`** — 5 tests:
+- Returns built-in templates sorted alphabetically
+- Returns project templates after built-ins
+- Returns user templates; deduplicates by ID (user > project > builtin)
+- Gracefully handles missing tier directories
+- Skips unparseable `template.json` files without crashing
+
+**`TemplateResolver.get()`** — 4 tests:
+- Returns template from highest-priority tier on ID collision
+- Returns `None` for unknown ID
+- Populates `agents_dir` when `agents/` subdirectory exists
+- Populates `source_dir` with the template directory path
+
+**`TemplateResolver.apply()`** — 5 tests:
+- Deep-merges template stages into current settings (partial override)
+- Preserves unspecified keys (`governance` not in template → unchanged)
+- Handles `__replace__` sentinel for wholesale replacement
+- Renders params into config values
+- Returns new dict (does not mutate either input)
+
+**`TemplateResolver.snapshot_to_run()`** — 3 tests:
+- Copies entire template directory to `{run_dir}/template/`
+- Writes `resolved-params.json` with param values and metadata
+- Copies `agents/` subdirectory when present
+
+**`TemplateResolver.save()`** — 6 tests:
+- Creates template directory with `template.json`
+- Sets `builtin: false` and `created_at`
+- Creates tier directory if it doesn't exist
+- Raises `TemplateError(code='builtin_conflict')` for built-in IDs
+- Raises `TemplateError(code='validation_error')` for invalid fields (bad id, missing name, too many tags)
+- Collects multiple validation errors into `details` array
+
+**`TemplateResolver.delete()`** — 3 tests:
+- Removes template directory from disk
+- Raises `TemplateError(code='not_found')` for missing templates
+- Raises `TemplateError(code='builtin')` for built-in templates
+
+**`deep_merge_config()`** — 4 tests:
+- Merges nested dicts recursively
+- Overlay scalars replace base scalars
+- `__replace__: true` triggers wholesale replacement
+- Returns new dict (no mutation of inputs)
+
+**`render_params()`** — 3 tests:
+- Replaces `{{param_name}}` placeholders with values
+- Falls back to defaults from param definitions
+- Raises `TemplateError` for required params missing both value and default
+
+**Total: ~33 test cases minimum.**
+
+### CLI Tests (Task 4)
+
+Test the CLI subcommands via subprocess or by calling the handler functions directly:
+- `worca templates list` — output format, all tiers shown
+- `worca templates show <id>` — full JSON output, 404 for unknown
+- `worca templates save` — creates directory, validates fields
+- `worca templates delete` — removes directory, rejects built-ins
+
+### Integration Tests (Task 5)
+
+Test `--template` flag in `run_pipeline.py`:
+- Template config is merged into settings before pipeline launch
+- Template snapshot is written to run directory
+- `--param KEY=VALUE` overrides template defaults
+- Unknown template ID fails with clear error
+- Running without `--template` works unchanged (no regression)
+
+### OverlayResolver Tests (Task 6)
+
+Extend existing overlay tests to cover the template agents chain:
+- Core → project overlay → template overlay (three-layer merge)
+- Template overlay applies when `template_agents_dir` is provided
+- No template overlay when `template_agents_dir` is `None` (backwards compatible)
+- Append and replace modes both work in template overlays
 
 ### Manual Integration Checklist
 
 **CLI:**
-- `worca templates list` shows four built-ins
+- `worca templates list` shows four built-ins with tier/tags columns
 - `worca templates show bugfix` prints full config
 - `worca templates save my-custom --description "test"` creates `.claude/templates/my-custom/template.json`
+- `worca templates save my-custom --global --description "test"` creates `~/.worca/templates/my-custom/template.json`
 - `worca templates delete my-custom` removes the directory
 - `worca run --template bugfix --prompt "Fix login"` applies template config and creates `template/` snapshot in run dir
 - `worca run --template bugfix --param key=value` renders params
-
-**Template API:**
-- `GET /api/templates` returns all templates with tier badges
-- `GET /api/templates/bugfix` returns full config
-- `POST /api/templates` creates project template directory
-- `POST /api/templates` with built-in ID returns 409
-- `DELETE /api/templates/{user-id}` removes template directory
-- `DELETE /api/templates/bugfix` returns 403
 
 **Run traceability:**
 - After a templated run, `.worca/runs/{run_id}/template/` contains the full template directory
@@ -1073,15 +1155,14 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 - `settings.json` in the run dir reflects the merged config
 - Non-templated runs have no `template/` subdirectory
 
-**UI:**
-- Templates tab shows card grid with tier badges
-- Built-in delete buttons disabled
-- "Save as Template" opens dialog, saves correctly
-- New Run dialog template picker works, includes templateId in submission
+### Follow-up test coverage (UI integration)
+
+- **JS:** `worca-ui/server/template-manager.test.js` (Task 17) — covers REST adapter layer
+- **UI:** Templates tab, editor dialog, picker, run detail indicator
 
 ---
 
-## 12. File Summary
+## 12. File Summary (W-016 scope)
 
 ### New files
 
@@ -1094,11 +1175,6 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 | `src/worca/templates/refactor/template.json` | Refactor preset |
 | `src/worca/templates/quick-fix/template.json` | Quick fix preset |
 | `tests/test_templates.py` | Python tests for TemplateResolver |
-| `worca-ui/server/template-manager.js` | JS adapter for template operations |
-| `worca-ui/server/template-manager.test.js` | JS template manager tests |
-| `worca-ui/app/views/template-components.js` | Reusable components: sourceBadge, templateCard, tagBadges, etc. |
-| `worca-ui/app/views/templates.js` | Settings > Templates tab view |
-| `worca-ui/app/views/template-editor-dialog.js` | Unified Clone/Edit/Save-as-template dialog |
 
 ### Modified files
 
@@ -1108,6 +1184,16 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 | `src/worca/cli/init.py` | Copy built-in templates during init, create `.claude/templates/` |
 | `src/worca/scripts/run_pipeline.py` | Add `--template` and `--param` arguments, template application logic |
 | `src/worca/orchestrator/overlay.py` | Add `template_agents_dir` parameter to `resolve()` |
+
+### Follow-up files (UI integration, not in W-016 scope)
+
+| File | Purpose |
+|------|---------|
+| `worca-ui/server/template-manager.js` | JS adapter for template operations |
+| `worca-ui/server/template-manager.test.js` | JS template manager tests |
+| `worca-ui/app/views/template-components.js` | Reusable components: sourceBadge, templateCard, tagBadges, etc. |
+| `worca-ui/app/views/templates.js` | Settings > Templates tab view |
+| `worca-ui/app/views/template-editor-dialog.js` | Unified Clone/Edit/Save-as-template dialog |
 | `worca-ui/server/app.js` | Add template REST endpoints, extend `POST /api/runs` |
 | `worca-ui/server/index.js` | Pass template directories to `createApp` |
 | `worca-ui/server/process-manager.js` | Accept `settingsPath` override in `startPipeline()` |
@@ -1119,22 +1205,27 @@ The `TemplateResolver`'s `builtin_dir` points to `.claude/worca/templates/` (the
 
 ---
 
-## 13. Rollout Order
+## 13. Rollout Order (W-016 scope)
 
-Tasks should be implemented in this order due to dependencies:
+All six tasks are Python-only and should be implemented in this order:
 
-1. **Task 2** (preset template directories) — no code dependencies
+1. **Task 2** (preset template directories) — no code dependencies, pure data
 2. **Task 1** (Python TemplateResolver) — depends on Task 2 for test fixtures
-3. **Task 3** (Python tests) — depends on Tasks 1-2
-4. **Task 4** (CLI subcommands) — depends on Task 1
-5. **Task 5** (run_pipeline.py --template) — depends on Task 1
-6. **Task 6** (OverlayResolver extension) — depends on Task 5
-7. **Task 7** (JS template-manager.js) — depends on Task 1 (mirrors its API)
+3. **Task 3** (Python tests) — depends on Tasks 1-2; validates core logic
+4. **Task 4** (CLI subcommands) — depends on Task 1; thin wrappers
+5. **Task 5** (run_pipeline.py --template) — depends on Task 1; integrates with pipeline launch
+6. **Task 6** (OverlayResolver extension) — depends on Task 5; enables template agent overlays
+
+Tasks 4-6 are independent of each other and can be parallelized after Task 3 passes.
+
+### Follow-up rollout (UI integration)
+
+7. **Task 7** (JS template-manager.js) — mirrors Python TemplateResolver API
 8. **Task 8** (REST endpoints) — depends on Task 7
 9. **Task 9** (POST /api/runs extension) — depends on Tasks 7-8
 10. **Task 17** (JS tests) — depends on Task 7
 11. **Task 10** (reusable UI components) — depends on REST API contract from Task 8
-12. **Tasks 11-14** (UI views: templates tab, editor dialog, picker, run detail) — depend on Task 10; can be parallelized
+12. **Tasks 11-14** (UI views) — depend on Task 10; can be parallelized
 13. **Task 15** (main.js wiring) — depends on Tasks 11-14
 14. **Task 16** (CSS) — after all views are settled
 15. **Task 18** (rebuild bundle) — final step
