@@ -21,49 +21,52 @@ const issue2 = {
   blocked_by: [],
 };
 
-describe('beadsDependencyGraph - SVG title tooltips', () => {
-  it('each graph node has a <title> child element', () => {
-    const svg = beadsDependencyGraph([issue1, issue2]);
-    // Both nodes should have a <title> element inside their <g> node group
-    const titleMatches = svg.match(/<title>/g);
-    expect(titleMatches).not.toBeNull();
-    expect(titleMatches.length).toBeGreaterThanOrEqual(2);
+describe('beadsDependencyGraph - returns svg and node positions', () => {
+  it('returns an object with svg string and nodes array', () => {
+    const result = beadsDependencyGraph([issue1, issue2]);
+    expect(result).toHaveProperty('svg');
+    expect(result).toHaveProperty('nodes');
+    expect(typeof result.svg).toBe('string');
+    expect(Array.isArray(result.nodes)).toBe(true);
   });
 
-  it('node title contains the full issue title', () => {
-    const svg = beadsDependencyGraph([issue1]);
-    expect(svg).toContain('Full Title Of Issue One');
+  it('returns one node entry per issue', () => {
+    const { nodes } = beadsDependencyGraph([issue1, issue2]);
+    expect(nodes).toHaveLength(2);
   });
 
-  it('node title contains status and priority', () => {
-    const svg = beadsDependencyGraph([issue1]);
-    // Should contain "open" (status) and "P2" (priority)
-    const titleBlock = svg.match(/<title>([\s\S]*?)<\/title>/)?.[1] ?? '';
-    expect(titleBlock).toContain('open');
-    expect(titleBlock).toContain('P2');
+  it('each node has issue, x, y, w, h properties', () => {
+    const { nodes } = beadsDependencyGraph([issue1]);
+    const node = nodes[0];
+    expect(node).toHaveProperty('issue');
+    expect(node).toHaveProperty('x');
+    expect(node).toHaveProperty('y');
+    expect(node).toHaveProperty('w');
+    expect(node).toHaveProperty('h');
+    expect(node.issue.id).toBe('worca-cc-aaa1');
   });
 
-  it('node title contains body excerpt (first ~100 chars)', () => {
-    const svg = beadsDependencyGraph([issue1]);
-    const excerpt = issue1.body.slice(0, 100);
-    expect(svg).toContain(excerpt);
+  it('svg contains node labels (truncated titles)', () => {
+    const { svg } = beadsDependencyGraph([issue1]);
+    // Title "Full Title Of Issue One" is > 18 chars, so truncated
+    expect(svg).toContain('Full Title Of Issu...');
   });
 
-  it('node title lists dependency IDs when present', () => {
-    const svg = beadsDependencyGraph([issue1, issue2]);
-    // issue2 depends on issue1 — its <title> should mention worca-cc-aaa1
-    const titleBlocks = [...svg.matchAll(/<title>([\s\S]*?)<\/title>/g)].map(
-      (m) => m[1],
-    );
-    const depTitleBlock = titleBlocks.find((t) =>
-      t.includes('Second Issue Depends On First'),
-    );
-    expect(depTitleBlock).toBeDefined();
-    expect(depTitleBlock).toContain('worca-cc-aaa1');
+  it('svg contains issue IDs', () => {
+    const { svg } = beadsDependencyGraph([issue1, issue2]);
+    expect(svg).toContain('#worca-cc-aaa1');
+    expect(svg).toContain('#worca-cc-bbb2');
   });
 
-  it('returns empty string when issues array is empty', () => {
-    expect(beadsDependencyGraph([])).toBe('');
-    expect(beadsDependencyGraph(null)).toBe('');
+  it('svg contains edge paths for dependencies', () => {
+    const { svg } = beadsDependencyGraph([issue1, issue2]);
+    // issue2 depends on issue1, so there should be a path
+    expect(svg).toContain('<path');
+    expect(svg).toContain('beads-graph-edge');
+  });
+
+  it('returns empty svg and nodes for empty input', () => {
+    expect(beadsDependencyGraph([])).toEqual({ svg: '', nodes: [] });
+    expect(beadsDependencyGraph(null)).toEqual({ svg: '', nodes: [] });
   });
 });

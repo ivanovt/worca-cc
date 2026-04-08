@@ -14,9 +14,9 @@ describe('bead tooltip CSS styles', () => {
       expect(block).toContain('padding:');
     });
 
-    it('has max-width of 320px', () => {
+    it('has max-width of 540px', () => {
       const match = css.match(/\.bead-tooltip-content\s*\{([^}]+)\}/);
-      expect(match[1]).toContain('320px');
+      expect(match[1]).toContain('540px');
     });
   });
 
@@ -26,60 +26,59 @@ describe('bead tooltip CSS styles', () => {
       expect(match).not.toBeNull();
       expect(match[1]).toContain('font-weight:');
     });
+  });
 
-    it('truncates overflow text', () => {
-      const match = css.match(/\.bead-tooltip-title\s*\{([^}]+)\}/);
+  describe('.bead-tooltip-header', () => {
+    it('exists with flex layout', () => {
+      const match = css.match(/\.bead-tooltip-header\s*\{([^}]+)\}/);
       expect(match).not.toBeNull();
-      const block = match[1];
-      expect(block).toContain('overflow: hidden');
-      expect(block).toContain('text-overflow: ellipsis');
-      expect(block).toContain('white-space: nowrap');
+      expect(match[1]).toContain('display: flex');
     });
   });
 
-  describe('.bead-tooltip-meta', () => {
-    it('exists with font-size styling', () => {
-      const match = css.match(/\.bead-tooltip-meta\s*\{([^}]+)\}/);
+  describe('.bead-tooltip-label', () => {
+    it('exists with uppercase styling', () => {
+      const match = css.match(/\.bead-tooltip-label\s*\{([^}]+)\}/);
       expect(match).not.toBeNull();
-      expect(match[1]).toContain('font-size:');
-    });
-
-    it('uses muted color', () => {
-      const match = css.match(/\.bead-tooltip-meta\s*\{([^}]+)\}/);
-      expect(match).not.toBeNull();
-      expect(match[1]).toContain('color:');
+      expect(match[1]).toContain('text-transform: uppercase');
     });
   });
 
   describe('.bead-tooltip-excerpt', () => {
-    it('exists with font-size and muted color', () => {
+    it('exists with font-size', () => {
       const match = css.match(/\.bead-tooltip-excerpt\s*\{([^}]+)\}/);
       expect(match).not.toBeNull();
-      const block = match[1];
-      expect(block).toContain('font-size:');
-      expect(block).toContain('color:');
+      expect(match[1]).toContain('font-size:');
     });
 
-    it('handles overflow', () => {
+    it('uses pre-wrap whitespace', () => {
       const match = css.match(/\.bead-tooltip-excerpt\s*\{([^}]+)\}/);
       expect(match).not.toBeNull();
-      expect(match[1]).toContain('overflow: hidden');
+      expect(match[1]).toContain('white-space: pre-wrap');
     });
   });
 
-  describe('.bead-tooltip-deps', () => {
-    it('exists with flex layout', () => {
-      const match = css.match(/\.bead-tooltip-deps\s*\{([^}]+)\}/);
+  describe('.bead-tooltip-separator', () => {
+    it('exists with border-top', () => {
+      const match = css.match(/\.bead-tooltip-separator\s*\{([^}]+)\}/);
       expect(match).not.toBeNull();
-      const block = match[1];
-      expect(block).toContain('display: flex');
-      expect(block).toContain('gap:');
+      expect(match[1]).toContain('border-top:');
     });
+  });
 
-    it('allows wrapping', () => {
-      const match = css.match(/\.bead-tooltip-deps\s*\{([^}]+)\}/);
+  describe('.bead-tooltip-copy', () => {
+    it('exists with cursor pointer', () => {
+      const match = css.match(/\.bead-tooltip-copy\s*\{([^}]+)\}/);
       expect(match).not.toBeNull();
-      expect(match[1]).toContain('flex-wrap: wrap');
+      expect(match[1]).toContain('cursor: pointer');
+    });
+  });
+
+  describe('.graph-tooltip-trigger', () => {
+    it('exists with absolute positioning', () => {
+      const match = css.match(/\.graph-tooltip-trigger\s*\{([^}]+)\}/);
+      expect(match).not.toBeNull();
+      expect(match[1]).toContain('position: absolute');
     });
   });
 });

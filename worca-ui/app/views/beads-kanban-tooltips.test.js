@@ -58,10 +58,10 @@ describe('beadsKanbanView - sl-tooltip wrapping', () => {
     expect(out).toContain('This is the body text for the issue');
   });
 
-  it('tooltip content slot shows status and priority meta', () => {
+  it('tooltip content slot shows status and priority badges', () => {
     const out = renderToString(beadsPanelView([issue], baseOptions));
-    // bead-tooltip-meta section rendered inside tooltip
-    expect(out).toContain('bead-tooltip-meta');
+    // bead-tooltip-header with badges rendered inside tooltip
+    expect(out).toContain('bead-tooltip-header');
     expect(out).toContain('P2');
     expect(out).toContain('open');
   });
