@@ -445,6 +445,23 @@ function _agentPromptSection(_stageKey, promptData) {
   `;
 }
 
+function _graphWithTooltips(beads) {
+  const { svg, nodes } = beadsDependencyGraph(beads);
+  return html`
+    <div class="run-beads-graph">
+      ${unsafeHTML(svg)}
+      ${nodes.map(
+        ({ issue, x, y, w, h }) => html`
+        <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
+          <div slot="content">${beadTooltipContent(issue)}</div>
+          <div class="graph-tooltip-trigger" style="left:${x}px;top:${y}px;width:${w}px;height:${h}px"></div>
+        </sl-tooltip>
+      `,
+      )}
+    </div>
+  `;
+}
+
 export function runBeadsSectionView(beads) {
   if (!beads) return nothing;
   if (beads.length === 0) {
@@ -486,9 +503,7 @@ export function runBeadsSectionView(beads) {
         ${
           beads.length > 1
             ? html`
-          <div class="run-beads-graph">
-            ${unsafeHTML(beadsDependencyGraph(beads))}
-          </div>
+          ${_graphWithTooltips(beads)}
         `
             : ''
         }

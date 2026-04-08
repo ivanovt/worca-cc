@@ -4022,6 +4022,16 @@ sl-tooltip.bead-tooltip::part(body) {
   background: rgba(255, 255, 255, 0.25);
 }
 
+/* ─── Graph node tooltip overlays ─────────────────────────────────── */
+.run-beads-graph {
+  position: relative;
+}
+
+.graph-tooltip-trigger {
+  position: absolute;
+  cursor: pointer;
+}
+
 .bead-chip-tooltip {
   display: flex;
   flex-direction: column;

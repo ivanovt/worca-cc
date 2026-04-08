@@ -70,7 +70,7 @@ function computeLayers(issues) {
 }
 
 export function beadsDependencyGraph(issues) {
-  if (!issues || issues.length === 0) return '';
+  if (!issues || issues.length === 0) return { svg: '', nodes: [] };
 
   const NODE_W = 140,
     NODE_H = 40,
@@ -132,24 +132,22 @@ export function beadsDependencyGraph(issues) {
 
   // Node border color matches bead status
   let nodes = '';
+  const nodeList = [];
   for (const issue of issues) {
     const pos = positions.get(issue.id);
     if (!pos) continue;
     const sc = beadsStatusClass(issue);
     const title = issue.title || '';
     const label = title.length > 18 ? `${title.slice(0, 18)}...` : title;
-    const tooltipParts = [`Bead ID: ${issue.id}`, `Title: ${title}`];
-    if (issue.body) tooltipParts.push(`\nDescription:\n${issue.body}`);
-    const svgTitle = `<title>${escapeXml(tooltipParts.join('\n'))}</title>`;
     nodes += `<g class="beads-graph-node beads-graph-node--${sc}" transform="translate(${pos.x},${pos.y})">
-      ${svgTitle}
       <rect width="${NODE_W}" height="${NODE_H}" rx="6"/>
       <text x="8" y="14" class="beads-graph-node-id">#${issue.id}</text>
       <text x="8" y="28">${escapeXml(label)}</text>
     </g>`;
+    nodeList.push({ issue, x: pos.x, y: pos.y, w: NODE_W, h: NODE_H });
   }
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
     <defs>
       <marker id="beads-arrow-satisfied" viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--border)"/>
@@ -161,6 +159,7 @@ export function beadsDependencyGraph(issues) {
     ${edges}
     ${nodes}
   </svg>`;
+  return { svg, nodes: nodeList };
 }
 
 function escapeXml(str) {
