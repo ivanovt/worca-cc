@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   beadChipTooltip,
+  beadsDependencyGraph,
   beadsPanelView,
   beadsRunListView,
   beadTooltipContent,
+  statusVariant,
 } from './beads-panel.js';
 
 function renderToString(template) {
@@ -35,6 +37,34 @@ const baseOptions = {
   onStartIssue: () => {},
   onDismissError: () => {},
 };
+
+describe('statusVariant', () => {
+  it('returns primary for in_progress', () => {
+    expect(statusVariant('in_progress')).toBe('primary');
+  });
+
+  it('returns success for open', () => {
+    expect(statusVariant('open')).toBe('success');
+  });
+
+  it('returns neutral for closed', () => {
+    expect(statusVariant('closed')).toBe('neutral');
+  });
+
+  it('returns warning when issue has blocked_by entries, overriding status', () => {
+    expect(statusVariant('in_progress', { blocked_by: ['dep1'] })).toBe('warning');
+    expect(statusVariant('open', { blocked_by: ['dep1'] })).toBe('warning');
+  });
+
+  it('returns primary for in_progress when blocked_by is empty', () => {
+    expect(statusVariant('in_progress', { blocked_by: [] })).toBe('primary');
+  });
+
+  it('returns primary for in_progress when issue has no blocked_by field', () => {
+    expect(statusVariant('in_progress', {})).toBe('primary');
+    expect(statusVariant('in_progress', null)).toBe('primary');
+  });
+});
 
 describe('beadsRunListView - active-first + newest-first ordering', () => {
   const options = { onSelectRun: () => {}, beadsCounts: {} };
@@ -286,7 +316,7 @@ describe('beadTooltipContent', () => {
   it('includes status badge with correct variant', () => {
     const out = renderToString(beadTooltipContent(issue));
     expect(out).toContain('in_progress');
-    expect(out).toContain('warning'); // statusVariant('in_progress') = 'warning'
+    expect(out).toContain('primary'); // statusVariant('in_progress') = 'primary'
   });
 
   it('includes priority badge', () => {
@@ -353,5 +383,99 @@ describe('beadChipTooltip', () => {
   it('includes the dep id', () => {
     const out = renderToString(beadChipTooltip('worca-cc-dep1', issuesById));
     expect(out).toContain('worca-cc-dep1');
+  });
+
+  it('shows warning variant for a blocked dep', () => {
+    const blockedDep = {
+      id: 'worca-cc-dep2',
+      title: 'Dep Two Title',
+      status: 'open',
+      depends_on: ['worca-cc-dep3'],
+      blocked_by: ['worca-cc-dep3'],
+    };
+    const blockedMap = new Map([['worca-cc-dep2', blockedDep]]);
+    const out = renderToString(beadChipTooltip('worca-cc-dep2', blockedMap));
+    expect(out).toContain('warning');
+  });
+});
+
+describe('beadsKanbanView - card in_progress modifier class', () => {
+  it('applies beads-kanban-card--in_progress to in_progress issues', () => {
+    const issues = [{
+      id: 'worca-cc-ip1',
+      title: 'In Progress Issue',
+      status: 'in_progress',
+      priority: 2,
+      depends_on: [],
+      blocked_by: [],
+    }];
+    const out = renderToString(beadsPanelView(issues, baseOptions));
+    expect(out).toContain('beads-kanban-card--in_progress');
+  });
+
+  it('does not apply beads-kanban-card--in_progress to open issues', () => {
+    const issues = [{
+      id: 'worca-cc-op1',
+      title: 'Open Issue',
+      status: 'open',
+      priority: 2,
+      depends_on: [],
+      blocked_by: [],
+    }];
+    const out = renderToString(beadsPanelView(issues, baseOptions));
+    expect(out).not.toContain('beads-kanban-card--in_progress');
+  });
+});
+
+describe('beadTooltipContent - blocked state', () => {
+  const blockedIssue = {
+    id: 'worca-cc-abc2',
+    title: 'Blocked Issue Title',
+    status: 'open',
+    priority: 2,
+    depends_on: ['worca-cc-dep1'],
+    blocked_by: ['worca-cc-dep1'],
+  };
+
+  it('shows warning variant for status badge when issue is blocked', () => {
+    const out = renderToString(beadTooltipContent(blockedIssue));
+    expect(out).toContain('warning');
+  });
+
+  it('shows a blocked badge when issue has blocked_by entries', () => {
+    const out = renderToString(beadTooltipContent(blockedIssue));
+    // There should be a badge with text 'blocked'
+    const badgeIndex = out.indexOf('>blocked<');
+    expect(badgeIndex).toBeGreaterThan(-1);
+  });
+
+  it('does not show blocked badge when blocked_by is empty', () => {
+    const unblockedIssue = { ...blockedIssue, blocked_by: [] };
+    const out = renderToString(beadTooltipContent(unblockedIssue));
+    // 'blocked' text should not appear as badge content
+    expect(out).not.toContain('>blocked<');
+  });
+});
+
+describe('beadsDependencyGraph - edge CSS classes', () => {
+  const dep = { id: 'dep1', title: 'Dep', status: 'open', depends_on: [], blocked_by: [] };
+  const task = { id: 'task1', title: 'Task', status: 'open', depends_on: ['dep1'], blocked_by: ['dep1'] };
+
+  it('assigns beads-graph-edge--blocking class for unsatisfied (non-closed) dependencies', () => {
+    const { svg } = beadsDependencyGraph([dep, task]);
+    expect(svg).toContain('beads-graph-edge--blocking');
+    expect(svg).not.toContain('beads-graph-edge--satisfied');
+  });
+
+  it('assigns beads-graph-edge--satisfied class when dependency is closed', () => {
+    const closedDep = { ...dep, status: 'closed' };
+    const { svg } = beadsDependencyGraph([closedDep, task]);
+    expect(svg).toContain('beads-graph-edge--satisfied');
+    expect(svg).not.toContain('beads-graph-edge--blocking');
+  });
+
+  it('blocking arrow marker uses var(--status-blocked) for amber color', () => {
+    const { svg } = beadsDependencyGraph([dep, task]);
+    expect(svg).toContain('fill="var(--status-blocked)"');
   });
 });

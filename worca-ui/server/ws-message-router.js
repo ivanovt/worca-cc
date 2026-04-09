@@ -613,6 +613,12 @@ export function createMessageRouter({
         return;
       }
       const issues = await listIssuesByLabel(beadsDbPath, `run:${runId}`);
+      console.log(
+        '[list-beads-by-run] runId=%s count=%d statuses=%o',
+        runId,
+        issues.length,
+        issues.map((i) => i.status),
+      );
       ws.send(JSON.stringify(makeOk(req, { issues, runId })));
       return;
     }

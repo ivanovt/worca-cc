@@ -25,9 +25,9 @@
   --status-resuming: #3b82f6;
   --status-skipped: #94a3b8;
   /* legacy */
-  --status-in-progress: #f59e0b;
+  --status-in-progress: #3b82f6;
   --status-error: #ef4444;
-  --status-blocked: #3b82f6;
+  --status-blocked: #f59e0b;
 
   /* Log viewer */
   --log-bg: #0f172a;
@@ -47,7 +47,7 @@
   /* Shoelace token mapping */
   --sl-color-primary-600: var(--accent);
   --sl-color-success-600: var(--status-completed);
-  --sl-color-warning-600: var(--status-in-progress);
+  --sl-color-warning-600: var(--status-blocked);
   --sl-color-danger-600: var(--status-error);
   --sl-color-neutral-600: var(--status-pending);
   --sl-border-radius-medium: var(--radius);
@@ -570,11 +570,11 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .timing-bar-thinking {
-  background: var(--status-blocked, #3b82f6);
+  background: var(--status-blocked, #f59e0b);
 }
 
 .timing-bar-tools {
-  background: var(--status-in-progress, #f59e0b);
+  background: var(--status-in-progress, #3b82f6);
 }
 
 .timing-bar-rest {
@@ -2522,6 +2522,10 @@ sl-details.live-output-panel::part(content) {
 .beads-kanban-card--blocked {
   border-color: var(--status-blocked);
   border-style: dashed;
+}
+
+.beads-kanban-card--in_progress {
+  border-color: var(--status-in-progress);
 }
 
 .beads-kanban-card-header {
