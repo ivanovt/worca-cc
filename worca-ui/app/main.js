@@ -1676,7 +1676,7 @@ function mainContentView() {
   }
 
   if (route.section === 'new-run') {
-    return newRunView(state, { rerender });
+    return newRunView(viewState, { rerender });
   }
 
   if (route.section === 'project-settings') {
