@@ -30,6 +30,12 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Human approval gates** — optional checkpoints after planning, before merge, and before deploy (configurable per gate)
 - **Token and cost tracking** — per-agent usage with model-specific pricing, web search/fetch cost tracking, cache tier breakdown, budget warnings at configurable thresholds
 
+### Pipeline Templates
+
+- **Built-in templates** — `feature`, `bugfix`, `quick-fix`, `incident-analysis`, `refactor` — each with tailored stage flows, agent selection, and governance rules for different work types
+- **Template selection UI** — styled dropdown on the new-run page with group headers, descriptions, and indentation; also selectable via CLI
+- **Agent prompt overrides** — templates wire their own agent prompt overrides through the overlay resolver, so each work type gets purpose-built instructions
+
 ### Customization
 
 - **Agent prompt overlays** — add `.claude/agents/<agent>.md` to customize agent instructions per-project without modifying core templates; overlay blocks can **append** to or **replace** (via `<!-- replace -->`) targeted sections; governance-protected sections cannot be replaced
@@ -42,6 +48,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Sidebar project picker** — dropdown with live status dots (green = healthy, red = errors) and run count badges
 - **Add-project dialog** — register projects via the UI with path validation and duplicate detection
 - **Batch registration** — `worca-ui migrate --scan ~/dev` discovers and registers all worca-enabled projects in one command
+- **Rich bead tooltips** — hover over any bead in Kanban, dependency graph, or list views for structured details with copy button and interactive content
 
 ### Parallel Pipelines
 

@@ -31,22 +31,10 @@ worca-cc is now installable via `pip install worca-cc` and the dashboard via `np
 
 Per-agent token and cost tracking with model-specific pricing (updated for Opus 4.6, Sonnet 4.6, Haiku 4.5), web search/fetch usage tracking, and cache tier breakdown (read/create/uncached). The dashboard displays cost badges per stage, a web searches summary card, and cache breakdown tooltips. Pricing is centralized in `settings.json` as the single source of truth. ([#70](https://github.com/SinishaDjukic/worca-cc/issues/70))
 
----
+### Pipeline Templates (W-016)
 
-## Planned
+Predefined pipeline templates that configure stage flow, agent selection, and governance rules for different work types. Templates are selected at run time via the dashboard's new-run page (styled dropdown with group headers, descriptions, and indentation) or CLI. Built-in templates include `feature`, `bugfix`, `quick-fix`, `incident-analysis`, and `refactor` — each with tailored stage flows to eliminate unnecessary stages, reducing both token cost and end-to-end run time. Template agent prompt overrides are wired through to the overlay resolver. ([#23](https://github.com/SinishaDjukic/worca-cc/issues/23))
 
-### Pipeline Templates
+### Rich Bead Tooltips (#74)
 
-Support predefined pipeline templates that configure stage flow, agent selection, and governance rules for different work types. ([#23](https://github.com/SinishaDjukic/worca-cc/issues/23))
-
-**Problem.** The current pipeline uses a single fixed stage flow (Preflight → Plan → Coordinate → Implement → Test → Review → PR → Learn) regardless of the work type. A bugfix doesn't need the same planning depth as a new feature. An incident analysis doesn't need an Implementer. Users must manually toggle stages in settings for each run.
-
-**Approach.** Introduce pipeline templates — named configurations that define which stages run, in what order, with which agents and settings. Templates are selected at run time, and the existing stage flow becomes the `default` template.
-
-**Benefit.** Eliminates unnecessary stages per work type, reducing both token cost and end-to-end run time.
-
-**Example templates:**
-- **feature** — Full pipeline: Plan → Coordinate → Implement → Test → Review → PR → Learn
-- **bugfix** — Abbreviated flow: skip deep planning, focus on reproducing the bug, fixing, and testing
-- **incident-analysis** — Read-only investigation: Plan → Coordinate (analysis tasks) → Review → Learn, no code changes
-- **refactor** — Emphasize Review and Test stages with stricter governance thresholds
+Hover tooltips on all bead views (Kanban, dependency graph, list) showing structured bead details with copy button and interactive content. Dependency graph nodes use `sl-tooltip` overlays.
