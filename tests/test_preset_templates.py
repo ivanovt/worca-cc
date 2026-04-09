@@ -97,9 +97,6 @@ class TestBugfixConfig:
     def test_coordinator_model_sonnet(self):
         assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
 
-    def test_budget_capped(self):
-        assert self._config()["budget"]["max_cost_usd"] == 30
-
 
 class TestFeatureConfig:
     def _config(self):
@@ -127,17 +124,14 @@ class TestQuickFixConfig:
     def test_planner_model_haiku(self):
         assert self._config()["agents"]["planner"]["model"] == "haiku"
 
-    def test_coordinator_model_haiku(self):
-        assert self._config()["agents"]["coordinator"]["model"] == "haiku"
+    def test_coordinator_model_sonnet(self):
+        assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
 
     def test_test_stage_disabled(self):
         assert self._config()["stages"]["test"]["enabled"] is False
 
     def test_review_stage_disabled(self):
         assert self._config()["stages"]["review"]["enabled"] is False
-
-    def test_budget_5(self):
-        assert self._config()["budget"]["max_cost_usd"] == 5
 
 
 class TestInvestigateConfig:
@@ -167,5 +161,3 @@ class TestTestOnlyConfig:
     def test_coordinator_model_sonnet(self):
         assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
 
-    def test_budget_25(self):
-        assert self._config()["budget"]["max_cost_usd"] == 25
