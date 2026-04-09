@@ -161,7 +161,7 @@ test.describe('control buttons — interactions', () => {
     }
   });
 
-  test('stop confirm sends DELETE /api/runs/:id', async ({ page }) => {
+  test('stop confirm sends POST /api/runs/:id/stop', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-ctrl-stop-confirm';
@@ -169,9 +169,9 @@ test.describe('control buttons — interactions', () => {
       seedRun(ctx.worcaDir, runId, { pipeline_status: 'running' });
 
       const stopRequests = [];
-      await page.route(`**/api/runs/${runId}`, (route) => {
-        if (route.request().method() === 'DELETE') {
-          stopRequests.push('DELETE');
+      await page.route(`**/api/runs/${runId}/stop`, (route) => {
+        if (route.request().method() === 'POST') {
+          stopRequests.push('POST');
           route.fulfill({
             status: 200,
             contentType: 'application/json',
@@ -190,13 +190,13 @@ test.describe('control buttons — interactions', () => {
       await page.locator('#global-confirm-dialog sl-button[variant="danger"]').click();
 
       await expect.poll(() => stopRequests.length, {}).toBeGreaterThan(0);
-      expect(stopRequests[0]).toBe('DELETE');
+      expect(stopRequests[0]).toBe('POST');
     } finally {
       await ctx.close();
     }
   });
 
-  test('stop cancel does not send DELETE /api/runs/:id', async ({ page }) => {
+  test('stop cancel does not send POST /api/runs/:id/stop', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-ctrl-stop-cancel';
@@ -204,9 +204,9 @@ test.describe('control buttons — interactions', () => {
       seedRun(ctx.worcaDir, runId, { pipeline_status: 'running' });
 
       const stopRequests = [];
-      await page.route(`**/api/runs/${runId}`, (route) => {
-        if (route.request().method() === 'DELETE') {
-          stopRequests.push('DELETE');
+      await page.route(`**/api/runs/${runId}/stop`, (route) => {
+        if (route.request().method() === 'POST') {
+          stopRequests.push('POST');
           route.fulfill({
             status: 200,
             contentType: 'application/json',
