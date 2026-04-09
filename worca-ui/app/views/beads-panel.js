@@ -19,9 +19,10 @@ export function priorityVariant(priority) {
   return 'neutral';
 }
 
-export function statusVariant(status) {
+export function statusVariant(status, issue = null) {
+  if (issue?.blocked_by && issue.blocked_by.length > 0) return 'warning';
   if (status === 'open') return 'success';
-  if (status === 'in_progress') return 'warning';
+  if (status === 'in_progress') return 'primary';
   if (status === 'closed') return 'neutral';
   return 'neutral';
 }
@@ -105,7 +106,7 @@ export function beadsDependencyGraph(issues) {
     }
   }
 
-  // Edge color based on dependency (source) status: closed = satisfied (gray), else blocking (red)
+  // Edge color based on dependency (source) status: closed = satisfied (gray), else blocking (amber)
   let edges = '';
   for (const issue of issues) {
     const to = positions.get(issue.id);
@@ -194,7 +195,8 @@ export function beadTooltipContent(issue) {
         <span class="bead-tooltip-id">Bead ID: ${issue.id}</span>
         <span class="bead-tooltip-badges">
           <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-          <sl-badge variant="${statusVariant(issue.status)}" pill>${issue.status}</sl-badge>
+          <sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>
+          ${issue.blocked_by && issue.blocked_by.length > 0 ? html`<sl-badge variant="warning" pill>blocked</sl-badge>` : ''}
         </span>
       </div>
       <hr class="bead-tooltip-separator">
@@ -216,7 +218,7 @@ export function beadChipTooltip(depId, issuesById) {
       ${
         dep
           ? html`<span class="bead-chip-tooltip-title">${dep.title}</span>
-        <sl-badge variant="${statusVariant(dep.status)}">${dep.status}</sl-badge>`
+        <sl-badge variant="${statusVariant(dep.status, dep)}">${dep.status}</sl-badge>`
           : ''
       }
     </div>
@@ -352,7 +354,7 @@ function beadsKanbanView(
             return html`
               <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
                 <div slot="content">${beadTooltipContent(issue)}</div>
-                <div class="beads-kanban-card ${isBlocked ? 'beads-kanban-card--blocked' : ''}">
+                <div class="beads-kanban-card ${isBlocked ? 'beads-kanban-card--blocked' : issue.status === 'in_progress' ? 'beads-kanban-card--in_progress' : ''}">
                   <div class="beads-kanban-card-header">
                     <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
                     <span class="beads-kanban-card-id">#${issue.id}</span>
