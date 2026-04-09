@@ -13,6 +13,8 @@ let planDropdownOpen = false;
 let selectedPlan = '';
 let branches = null; // null = not fetched, [] = fetched but empty
 let selectedBranch = ''; // empty = new branch
+let templates = null; // null = not fetched
+let selectedTemplate = 'default'; // 'default' = built-in worca pipeline
 
 /**
  * Reset module state for testing or re-initialization.
@@ -24,6 +26,7 @@ export function resetNewRunState(overrides = {}) {
   selectedPlan = overrides.selectedPlan ?? '';
   planFilter = overrides.selectedPlan ?? '';
   selectedBranch = '';
+  selectedTemplate = overrides.selectedTemplate ?? 'default';
 }
 
 function sourceLabel(type) {
@@ -88,16 +91,38 @@ function groupedPlanFiles(files) {
   return groups;
 }
 
+function fetchTemplates(projectId) {
+  if (templates !== null && _lastProjectId === projectId)
+    return Promise.resolve(templates);
+  const url = projectId
+    ? `/api/projects/${projectId}/templates`
+    : '/api/templates';
+  return fetch(url)
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.ok) templates = data.templates;
+      return templates || [];
+    })
+    .catch(() => {
+      templates = [];
+      return [];
+    });
+}
+
+function templatesByTier() {
+  const result = { worca: [], project: [], user: [] };
+  for (const t of templates || []) {
+    const tier = t.tier;
+    if (result[tier]) result[tier].push(t);
+  }
+  return result;
+}
+
 export function getNewRunSubmitState() {
   return { submitStatus, isSubmitting: submitStatus === 'submitting' };
 }
 
-export async function submitNewRun({
-  rerender,
-  onStarted,
-  projectId,
-  refreshRuns,
-}) {
+export async function submitNewRun({ rerender, onStarted, projectId }) {
   const sourceValueEl = document.getElementById('new-run-source-value');
   const promptEl = document.getElementById('new-run-prompt');
   const msizeEl = document.getElementById('new-run-msize');
@@ -144,6 +169,8 @@ export async function submitNewRun({
     if (hasPrompt) body.prompt = promptValue;
     if (hasPlan) body.planFile = selectedPlan;
     if (selectedBranch) body.branch = selectedBranch;
+    if (selectedTemplate && selectedTemplate !== 'default')
+      body.template = selectedTemplate;
 
     const url = projectId ? `/api/projects/${projectId}/runs` : '/api/runs';
     const res = await fetch(url, {
@@ -155,13 +182,9 @@ export async function submitNewRun({
     const data = await res.json();
     if (data.ok) {
       submitStatus = null;
-      if (refreshRuns) {
-        try {
-          await refreshRuns();
-        } catch (_) {
-          /* best-effort */
-        }
-      }
+      // Don't call refreshRuns() here — the Python process hasn't written
+      // status files yet, so discoverRuns() returns stale data that wipes
+      // state.runs. The 'run-started' WS event + its 2s retry handles it.
       onStarted();
     } else {
       submitStatus = 'error';
@@ -175,17 +198,42 @@ export async function submitNewRun({
   }
 }
 
+/**
+ * Check if any pipeline is currently active (running/resuming).
+ */
+export function hasActivePipeline(state) {
+  const runs = state?.runs;
+  if (!runs) return false;
+  return Object.values(runs).some((r) => r.active === true);
+}
+
 export function newRunView(_state, { rerender }) {
   const projectId = _state.currentProjectId || null;
+  const pipelineRunning = hasActivePipeline(_state);
 
   function handleSourceTypeChange(e) {
     sourceType = e.target.value;
     rerender();
   }
 
+  // Reset caches when project changes (before fetchBranches updates _lastProjectId)
+  if (_lastProjectId !== projectId) {
+    templates = null;
+  }
+
   // Fetch branches once (null = not yet fetched, or project changed)
   if (branches === null || _lastProjectId !== projectId) {
     fetchBranches(projectId).then(() => rerender());
+  }
+
+  // Fetch templates once
+  if (templates === null) {
+    fetchTemplates(projectId).then(() => rerender());
+  }
+
+  function handleTemplateChange(e) {
+    selectedTemplate = e.target.value;
+    rerender();
   }
 
   function handleBranchChange(e) {
@@ -240,9 +288,20 @@ export function newRunView(_state, { rerender }) {
 
   return html`
     <div class="new-run-page">
+      ${
+        pipelineRunning
+          ? html`
+        <div class="new-run-info">
+          <strong>Pipeline already running</strong>
+          <p>Parallel pipelines on the same project are not fully supported yet.
+          Please wait for the current pipeline to finish, or stop it before starting a new one.</p>
+        </div>
+      `
+          : nothing
+      }
       ${submitStatus === 'error' ? html`<div class="new-run-error">${submitError}</div>` : nothing}
 
-      <div class="new-run-form">
+      <div class="new-run-form ${pipelineRunning ? 'new-run-form-disabled' : ''}"
         <!-- Section 1: Work Source -->
         <div class="new-run-section">
           <h3 class="new-run-section-title">Work Source</h3>
@@ -306,7 +365,80 @@ export function newRunView(_state, { rerender }) {
           </div>
         </div>
 
-        <!-- Section 2: Prompt -->
+        <!-- Section 2: Pipeline -->
+        ${(() => {
+          const tiers = templatesByTier();
+          return html`
+          <div class="new-run-section">
+            <h3 class="new-run-section-title">Pipeline</h3>
+            <div class="settings-field">
+              <label class="settings-label">Pipeline Template</label>
+              <sl-select value=${selectedTemplate} @sl-change=${handleTemplateChange}>
+                <sl-option value="default">Project Default (settings.json)</sl-option>
+                ${
+                  tiers.worca.length > 0
+                    ? html`
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">WORCA</small>
+                  ${tiers.worca.map(
+                    (
+                      t,
+                    ) => html`<sl-option class="template-grouped" value=${t.id}>
+                    ${t.name}
+                    ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
+                  </sl-option>`,
+                  )}
+                `
+                    : nothing
+                }
+                ${
+                  tiers.project.length > 0
+                    ? html`
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">PROJECT</small>
+                  ${tiers.project.map(
+                    (
+                      t,
+                    ) => html`<sl-option class="template-grouped" value=${t.id}>
+                    ${t.name}
+                    ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
+                  </sl-option>`,
+                  )}
+                `
+                    : nothing
+                }
+                ${
+                  tiers.user.length > 0
+                    ? html`
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">USER</small>
+                  ${tiers.user.map(
+                    (
+                      t,
+                    ) => html`<sl-option class="template-grouped" value=${t.id}>
+                    ${t.name}
+                    ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
+                  </sl-option>`,
+                  )}
+                `
+                    : nothing
+                }
+              </sl-select>
+              <span class="settings-field-hint">Customize stages and agent behavior. Groups: worca (built-in), project, user.</span>
+              ${(() => {
+                const sel = (templates || []).find(
+                  (t) => t.id === selectedTemplate,
+                );
+                return sel?.description
+                  ? html`<div class="template-description"><strong>Selected template:</strong><br>${sel.description}</div>`
+                  : nothing;
+              })()}
+            </div>
+          </div>
+        `;
+        })()}
+
+        <!-- Section 3: Prompt -->
         <div class="new-run-section">
           <h3 class="new-run-section-title">Prompt</h3>
           <div class="settings-field">

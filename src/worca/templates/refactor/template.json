@@ -17,7 +17,6 @@
       "plan_approval": true,
       "pr_approval": false,
       "deploy_approval": false
-    },
-    "budget": { "max_cost_usd": 50 }
+    }
   }
 }

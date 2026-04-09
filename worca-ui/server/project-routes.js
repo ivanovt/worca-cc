@@ -73,6 +73,9 @@ export function findRunStatusPath(worcaDir, runId) {
 
 /** Validate a branch name — alphanumeric, dots, hyphens, underscores, slashes */
 const BRANCH_RE = /^[\w.\-/]+$/;
+
+/** Validate a template identifier — lowercase alphanumeric and hyphens, 1-64 chars */
+const TEMPLATE_RE = /^[a-z0-9-]{1,64}$/;
 function validateBranch(branch) {
   return (
     typeof branch === 'string' && branch.length <= 200 && BRANCH_RE.test(branch)
@@ -470,10 +473,29 @@ export function createProjectScopedRoutes() {
 
   // POST /api/projects/:projectId/runs — start a new pipeline
   router.post('/runs', requireWorcaDir, async (req, res) => {
+    // Block parallel pipelines on the same project (GH #82)
+    const running = req.project.pm.getRunningPid();
+    if (running) {
+      return res.status(409).json({
+        ok: false,
+        error:
+          'A pipeline is already running on this project. Parallel pipelines on the same project are not yet supported.',
+        code: 'already_running',
+      });
+    }
+
     const body = req.body || {};
 
-    let { sourceType, sourceValue, prompt, planFile, msize, mloops, branch } =
-      body;
+    let {
+      sourceType,
+      sourceValue,
+      prompt,
+      planFile,
+      msize,
+      mloops,
+      branch,
+      template,
+    } = body;
     if (body.inputType && sourceType === undefined) {
       if (body.inputType === 'prompt') {
         sourceType = 'none';
@@ -534,6 +556,15 @@ export function createProjectScopedRoutes() {
       }
     }
 
+    if (template !== undefined && template !== null) {
+      if (typeof template !== 'string' || !TEMPLATE_RE.test(template)) {
+        return res.status(400).json({
+          ok: false,
+          error: 'template must match ^[a-z0-9-]{1,64}$',
+        });
+      }
+    }
+
     const hasSource = sourceType !== 'none' && sourceValue;
     const hasPlan = typeof planFile === 'string' && planFile.trim().length > 0;
     const hasPrompt = typeof prompt === 'string' && prompt.length > 0;
@@ -561,6 +592,7 @@ export function createProjectScopedRoutes() {
         mloops: mloopsVal,
         planFile: hasPlan ? planFile.trim() : undefined,
         branch: branch || undefined,
+        template: template || undefined,
       });
       const { broadcast } = req.app.locals;
       if (broadcast) broadcast('run-started', { pid: result.pid });
@@ -576,7 +608,7 @@ export function createProjectScopedRoutes() {
   // DELETE /api/projects/:projectId/runs/:id — stop a running pipeline
   router.delete('/runs/:id', requireWorcaDir, (req, res) => {
     try {
-      const result = req.project.pm.stopPipeline();
+      const result = req.project.pm.stopPipeline(req.params.id);
       const { broadcast } = req.app.locals;
       if (broadcast) broadcast('run-stopped', { pid: result.pid });
       res.json({ ok: true, stopped: true, pid: result.pid });
@@ -670,7 +702,7 @@ export function createProjectScopedRoutes() {
       /* non-fatal — SIGTERM follows */
     }
     try {
-      const result = req.project.pm.stopPipeline();
+      const result = req.project.pm.stopPipeline(runId);
       const { broadcast } = req.app.locals;
       if (broadcast) broadcast('run-stopped', { runId, pid: result.pid });
       res.json({ ok: true, stopped: true, runId, pid: result.pid });
@@ -1086,7 +1118,7 @@ export function createProjectScopedRoutes() {
       worcaDir: join(pipeline.worktree_path, '.worca'),
     });
     try {
-      const result = worktreePm.stopPipeline();
+      const result = worktreePm.stopPipeline(runId);
       res.json({ ok: true, stopped: true, runId, pid: result.pid });
     } catch (err) {
       if (err.code === 'not_running') {
@@ -1140,6 +1172,45 @@ export function createProjectScopedRoutes() {
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
+  });
+
+  // GET /api/projects/:projectId/templates — list available pipeline templates
+  router.get('/templates', (req, res) => {
+    const root = req.project.projectRoot;
+    const tiers = [
+      { tier: 'worca', dir: join(root, '.claude', 'worca', 'templates') },
+      { tier: 'project', dir: join(root, '.claude', 'templates') },
+      { tier: 'user', dir: join(homedir(), '.worca', 'templates') },
+    ];
+
+    const templates = [];
+    for (const { tier, dir } of tiers) {
+      if (!existsSync(dir)) continue;
+      let entries;
+      try {
+        entries = readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const manifestPath = join(dir, entry.name, 'template.json');
+        if (!existsSync(manifestPath)) continue;
+        try {
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+          templates.push({
+            id: manifest.id || entry.name,
+            name: manifest.name || entry.name,
+            description: manifest.description || '',
+            tier,
+          });
+        } catch {
+          /* skip malformed manifests */
+        }
+      }
+    }
+
+    res.json({ ok: true, templates });
   });
 
   // GET /api/projects/:projectId/worca-status — check worca installation state

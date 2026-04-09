@@ -10,6 +10,7 @@
 
 const LOG_CAP = 5000;
 export const MAX_ARCHIVED_AGE_MS = 90 * 24 * 60 * 60 * 1000;
+const RUN_GRACE_MS = 5000;
 
 /** Returns true if an archived run's archived_at is older than MAX_ARCHIVED_AGE_MS. */
 export function isArchivedRunExpired(run, now) {
@@ -100,7 +101,11 @@ export function createStore(initial = {}) {
           state = { ...state, archivedRuns };
         }
       } else {
-        const runs = { ...state.runs, [runId]: data };
+        // Stamp _addedAt on first appearance so setRunsBulk can protect
+        // recently-added runs from stale bulk overwrites.
+        const isNew = !(runId in state.runs) && !(runId in state.archivedRuns);
+        const entry = isNew ? { ...data, _addedAt: Date.now() } : data;
+        const runs = { ...state.runs, [runId]: entry };
         if (runId in state.archivedRuns) {
           const archivedRuns = { ...state.archivedRuns };
           delete archivedRuns[runId];
@@ -122,6 +127,17 @@ export function createStore(initial = {}) {
           archivedRuns[run.id] = run;
         } else {
           runs[run.id] = run;
+        }
+      }
+      // Preserve active runs added within the grace period that the
+      // server hasn't discovered yet (status files not written yet).
+      for (const [id, run] of Object.entries(state.runs)) {
+        if (
+          run._addedAt &&
+          now - run._addedAt < RUN_GRACE_MS &&
+          !(id in runs)
+        ) {
+          runs[id] = run;
         }
       }
       state = { ...state, runs, archivedRuns, runsLoaded: true };

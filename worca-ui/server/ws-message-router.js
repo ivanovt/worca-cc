@@ -452,7 +452,8 @@ export function createMessageRouter({
         return;
       }
       try {
-        const result = pmStopPipeline(proj.worcaDir);
+        const { runId } = req.payload || {};
+        const result = pmStopPipeline(proj.worcaDir, runId);
         ws.send(JSON.stringify(makeOk(req, result)));
         let checks = 0;
         const maxChecks = 20;

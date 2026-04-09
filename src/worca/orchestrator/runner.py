@@ -99,6 +99,7 @@ _shutdown_requested = False
 # Signal/atexit status refs for crash safety (Layers 1 & 4)
 _signal_status = None
 _signal_status_path = None
+_signal_project_status_path = None  # project-level status.json for PID cleanup
 
 
 def _check_control_file(
@@ -248,9 +249,11 @@ def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
 
 
 def _render_agent_templates(run_dir: str, template_vars: dict,
-                            overrides_dir: str = ".claude/agents") -> None:
+                            overrides_dir: str = ".claude/agents",
+                            template_agents_dir: str | None = None) -> None:
     """Read agent .md templates from .claude/worca/agents/core/, replace placeholders,
-    apply project overlays from overrides_dir, write results to {run_dir}/agents/."""
+    apply project overlays from overrides_dir and template overlays from
+    template_agents_dir, write results to {run_dir}/agents/."""
     src_dir = ".claude/worca/agents/core"
     dst_dir = os.path.join(run_dir, "agents")
     os.makedirs(dst_dir, exist_ok=True)
@@ -267,7 +270,8 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
         for key, value in template_vars.items():
             content = content.replace(f"{{{key}}}", str(value))
         agent_name = filename[:-3]  # strip .md
-        content = resolver.resolve(agent_name, content)
+        content = resolver.resolve(agent_name, content,
+                                   template_agents_dir=template_agents_dir)
         with open(os.path.join(dst_dir, filename), "w") as f:
             f.write(content)
 
@@ -296,58 +300,6 @@ def _is_same_work_request(existing_wr: dict, new_wr: WorkRequest) -> bool:
     if existing_wr.get("source_ref") and new_wr.source_ref:
         return existing_wr["source_ref"] == new_wr.source_ref
     return existing_wr.get("title", "") == new_wr.title
-
-
-def _archive_run(status: dict, status_path: str) -> None:
-    """Move a completed/abandoned run to the results directory.
-
-    If status has a run_id (new format), moves the entire run dir.
-    Otherwise (legacy), archives as hash-based .json + logs dir.
-    Always cleans up the active_run pointer.
-    """
-    import hashlib
-    import shutil
-    worca_dir = os.path.dirname(status_path)
-    # For per-run dirs, worca_dir is .worca/runs/{id} — go up two levels
-    if "/runs/" in status_path:
-        worca_dir = os.path.dirname(os.path.dirname(os.path.dirname(status_path)))
-    results_dir = os.path.join(worca_dir, "results")
-    os.makedirs(results_dir, exist_ok=True)
-
-    run_id = status.get("run_id")
-    if run_id:
-        # New format: move entire run dir to results/
-        run_dir = os.path.join(worca_dir, "runs", run_id)
-        dest = os.path.join(results_dir, run_id)
-        if os.path.isdir(run_dir):
-            # events.jsonl is co-located in run_dir; it is archived automatically.
-            # Graceful skip: if events.jsonl is absent (events disabled), no action needed.
-            shutil.move(run_dir, dest)
-        elif os.path.exists(status_path):
-            # Run dir missing but status exists — save status to results
-            os.makedirs(dest, exist_ok=True)
-            shutil.move(status_path, os.path.join(dest, "status.json"))
-    else:
-        # Legacy format: hash-based .json file + logs dir
-        key = f"{status.get('started_at', '')}:{status.get('work_request', {}).get('title', '')}"
-        legacy_id = hashlib.sha256(key.encode()).hexdigest()[:12]
-        result_path = os.path.join(results_dir, f"{legacy_id}.json")
-        with open(result_path, "w") as f:
-            json.dump(status, f, indent=2)
-        try:
-            os.remove(status_path)
-        except FileNotFoundError:
-            pass
-        logs_dir = os.path.join(worca_dir, "logs")
-        if os.path.isdir(logs_dir):
-            shutil.move(logs_dir, os.path.join(results_dir, legacy_id))
-
-    # Clean up active_run pointer
-    active_run_path = os.path.join(worca_dir, "active_run")
-    try:
-        os.remove(active_run_path)
-    except FileNotFoundError:
-        pass
 
 
 def _pid_path(status_path: str) -> str:
@@ -389,6 +341,10 @@ def _install_signal_handlers():
                 save_status(_signal_status, _signal_status_path)
             except Exception:
                 pass
+            # Clean up PID files (per-run + project-level)
+            _remove_pid(_signal_status_path)
+            if _signal_project_status_path:
+                _remove_pid(_signal_project_status_path)
 
     signal.signal(signal.SIGTERM, _handler)
     signal.signal(signal.SIGINT, _handler)
@@ -415,6 +371,10 @@ def _atexit_cleanup():
                 save_status(_signal_status, _signal_status_path)
         except Exception:
             pass
+        # Clean up PID files (per-run + project-level)
+        _remove_pid(_signal_status_path)
+        if _signal_project_status_path:
+            _remove_pid(_signal_project_status_path)
 
 
 _orchestrator_log = None
@@ -1008,6 +968,7 @@ def run_pipeline(
     skip_preflight: bool = False,
     on_git_divergence=None,
     worktree: bool = False,
+    pipeline_template: Optional[str] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -1031,7 +992,7 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested, _signal_status, _signal_status_path
+    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path
     _shutdown_requested = False
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
@@ -1046,8 +1007,7 @@ def run_pipeline(
     except Exception:
         pass
 
-    # PID file and signal handlers
-    _write_pid(status_path)
+    # Signal handlers (PID file written after run_id is known)
     _install_signal_handlers()
 
     # Check for resume via active_run pointer first, then flat status.json
@@ -1093,6 +1053,10 @@ def run_pipeline(
                 run_dir = os.path.join(worca_dir, "runs", status["run_id"])
                 actual_status_path = os.path.join(run_dir, "status.json")
 
+            # Write PID to per-run directory (+ project-level for backward compat)
+            _write_pid(actual_status_path)
+            _write_pid(status_path)
+
             # Clear stale control.json left over from a previous stop/pause that
             # killed the process before it could consume the file.  Without this,
             # the first iteration of the resumed pipeline would read the old
@@ -1103,12 +1067,7 @@ def run_pipeline(
             _log("Pipeline already completed", "ok")
             return existing  # all done
     else:
-        # Fresh start — archive any existing run
-        if existing:
-            old_title = existing.get("work_request", {}).get("title", "unknown")
-            _log(f"Archiving previous run: {old_title}")
-            _archive_run(existing, actual_status_path)
-
+        # Fresh start — previous runs stay in runs/ (no archival)
         if branch:
             branch_name = branch
         elif worktree:
@@ -1126,7 +1085,7 @@ def run_pipeline(
             "source_ref": work_request.source_ref,
             "priority": work_request.priority,
         }
-        status = init_status(wr_dict, branch_name, git_head=get_current_git_head())
+        status = init_status(wr_dict, branch_name, git_head=get_current_git_head(), pipeline_template=pipeline_template)
 
         if worktree:
             status["worktree"] = True
@@ -1143,6 +1102,10 @@ def run_pipeline(
         os.makedirs(worca_dir, exist_ok=True)
         with open(active_run_path, "w") as f:
             f.write(run_id)
+
+        # Write PID to per-run directory (+ project-level for backward compat)
+        _write_pid(actual_status_path)
+        _write_pid(status_path)
 
         save_status(status, actual_status_path)
 
@@ -1161,6 +1124,7 @@ def run_pipeline(
     # Wire up signal/atexit status refs for crash safety (Layers 1 & 4)
     _signal_status = status
     _signal_status_path = actual_status_path
+    _signal_project_status_path = status_path  # project-level for PID cleanup
     atexit.register(_atexit_cleanup)
 
     ctx = None
@@ -1277,15 +1241,18 @@ def run_pipeline(
             # Render agent templates with plan_file and other vars
             if run_dir:
                 _render_settings = load_settings(settings_path)
-                overrides_dir = _render_settings.get("worca", {}).get(
+                _render_worca = _render_settings.get("worca", {})
+                overrides_dir = _render_worca.get(
                     "agent_overrides_dir", ".claude/agents"
                 )
+                template_agents_dir = _render_worca.get("_template_agents_dir")
                 _render_agent_templates(run_dir, {
                     "plan_file": status["plan_file"],
                     "run_id": status.get("run_id", ""),
                     "branch": branch_name,
                     "title": work_request.title,
-                }, overrides_dir=overrides_dir)
+                }, overrides_dir=overrides_dir,
+                   template_agents_dir=template_agents_dir)
 
             save_status(status, actual_status_path)
 
@@ -1779,7 +1746,12 @@ def run_pipeline(
 
             # Milestone gate after PLAN
             elif current_stage == Stage.PLAN:
-                approved = result.get("approved", True)
+                _ms_cfg = load_settings(settings_path).get("worca", {}).get("milestones", {})
+                if _ms_cfg.get("plan_approval") is False:
+                    # Template disables plan approval gate — auto-approve
+                    approved = True
+                else:
+                    approved = result.get("approved", True)
                 iter_extras["outcome"] = "success" if approved else "rejected"
                 complete_iteration(status, current_stage.value, **iter_extras)
                 update_stage(status, current_stage.value, **stage_extras)
@@ -2498,10 +2470,13 @@ def run_pipeline(
         # Clear signal/atexit refs — finally block already handled cleanup
         _signal_status = None
         _signal_status_path = None
+        _signal_project_status_path = None
         try:
             atexit.unregister(_atexit_cleanup)
         except Exception:
             pass
+        # Remove PID files (per-run + project-level)
+        _remove_pid(actual_status_path)
         _remove_pid(status_path)
         _close_orchestrator_log()
         os.environ.pop("WORCA_PLAN_FILE", None)

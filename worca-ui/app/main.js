@@ -957,7 +957,9 @@ async function handleConfirmStop() {
       (r) => r.active,
     );
     const runId = activeRun?.id || 'current';
-    const res = await fetch(projectUrl(`/runs/${runId}`), { method: 'DELETE' });
+    const res = await fetch(projectUrl(`/runs/${runId}/stop`), {
+      method: 'POST',
+    });
     const data = await res.json();
     if (!data.ok) {
       pipelineAction = null;
@@ -1461,7 +1463,7 @@ function contentHeaderView() {
     const nrs = getNewRunSubmitState();
     actionButton = html`
       <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting}
-        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId, refreshRuns: fetchAndUpdateRuns })}>
+        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId })}>
 
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
@@ -1674,7 +1676,7 @@ function mainContentView() {
   }
 
   if (route.section === 'new-run') {
-    return newRunView(state, { rerender });
+    return newRunView(viewState, { rerender });
   }
 
   if (route.section === 'project-settings') {

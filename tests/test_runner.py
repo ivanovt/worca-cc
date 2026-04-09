@@ -18,7 +18,6 @@ from worca.orchestrator.runner import (
     _resolve_plan_path,
     _render_agent_templates,
     _agent_path,
-    _archive_run,
     LoopExhaustedError,
     PipelineError,
 )
@@ -459,103 +458,6 @@ def test_plan_file_stores_path_in_status(tmp_path, monkeypatch):
     active_run = worca_dir / "active_run"
     assert active_run.exists()
     assert active_run.read_text() == result["run_id"]
-
-
-def test_archive_moves_run_dir(tmp_path):
-    """_archive_run moves per-run dir to results/ when run_id is present."""
-    worca_dir = tmp_path / ".worca"
-    run_id = "20260309-171545"
-    run_dir = worca_dir / "runs" / run_id
-    run_dir.mkdir(parents=True)
-    (run_dir / "logs").mkdir()
-    (run_dir / "agents").mkdir()
-
-    status = {"run_id": run_id, "started_at": "2026-03-09T17:15:45+00:00"}
-    status_path = str(run_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    # Write active_run pointer
-    with open(str(worca_dir / "active_run"), "w") as f:
-        f.write(run_id)
-
-    _archive_run(status, status_path)
-
-    # Run dir should be moved to results/
-    assert not run_dir.exists()
-    assert (worca_dir / "results" / run_id / "status.json").exists()
-
-    # Active run pointer cleaned up
-    assert not (worca_dir / "active_run").exists()
-
-
-def test_archive_includes_events_jsonl(tmp_path):
-    """_archive_run moves events.jsonl alongside other run files."""
-    worca_dir = tmp_path / ".worca"
-    run_id = "20260320-120000"
-    run_dir = worca_dir / "runs" / run_id
-    run_dir.mkdir(parents=True)
-
-    status = {"run_id": run_id, "started_at": "2026-03-20T12:00:00+00:00"}
-    status_path = str(run_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    # Write events.jsonl co-located with status.json
-    events_path = run_dir / "events.jsonl"
-    events_path.write_text('{"type":"pipeline.run.started"}\n')
-
-    _archive_run(status, status_path)
-
-    # events.jsonl should be in the archived location
-    assert (worca_dir / "results" / run_id / "events.jsonl").exists()
-    assert not events_path.exists()
-
-
-def test_archive_without_events_jsonl_graceful(tmp_path):
-    """_archive_run succeeds gracefully when events.jsonl does not exist."""
-    worca_dir = tmp_path / ".worca"
-    run_id = "20260320-130000"
-    run_dir = worca_dir / "runs" / run_id
-    run_dir.mkdir(parents=True)
-
-    status = {"run_id": run_id, "started_at": "2026-03-20T13:00:00+00:00"}
-    status_path = str(run_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    # No events.jsonl in run_dir (events were disabled)
-    assert not (run_dir / "events.jsonl").exists()
-
-    _archive_run(status, status_path)
-
-    # Archive should succeed without errors
-    assert not run_dir.exists()
-    assert (worca_dir / "results" / run_id / "status.json").exists()
-    # No events.jsonl in results (was never created)
-    assert not (worca_dir / "results" / run_id / "events.jsonl").exists()
-
-
-def test_archive_legacy_format(tmp_path):
-    """_archive_run uses hash-based format when no run_id."""
-    worca_dir = tmp_path / ".worca"
-    worca_dir.mkdir()
-
-    status = {"started_at": "2026-01-01T00:00:00+00:00", "work_request": {"title": "Legacy"}}
-    status_path = str(worca_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    _archive_run(status, status_path)
-
-    # Status file should be removed
-    assert not os.path.exists(status_path)
-
-    # Result should exist as a hash-based .json file
-    results_dir = worca_dir / "results"
-    assert results_dir.exists()
-    json_files = list(results_dir.glob("*.json"))
-    assert len(json_files) == 1
 
 
 def test_run_pipeline_no_plan_resolves_from_template(tmp_path, monkeypatch):
@@ -2028,6 +1930,88 @@ def test_milestone_set_event_emitted_on_plan_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# T11b: plan_approval milestone gate
+# ---------------------------------------------------------------------------
+
+
+def test_plan_approval_false_auto_approves(tmp_path):
+    """When milestones.plan_approval is false, approved=false from planner is overridden."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    settings_path = _make_minimal_settings(tmp_path, extra={
+        "milestones": {"plan_approval": False},
+    })
+
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+
+    wr = WorkRequest(source_type="prompt", title="Auto-approve test")
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
+        from worca.orchestrator.stages import Stage
+        if stage == Stage.PLAN:
+            return {
+                "approved": False,  # planner says not approved
+                "approach": "test approach",
+                "tasks_outline": [],
+                "branch_name": "test-branch",
+            }, {"type": "result"}
+        return {}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner.create_branch"):
+            with patch("worca.orchestrator.runner._write_pid"):
+                with patch("worca.orchestrator.runner._remove_pid"):
+                    result = run_pipeline(
+                        wr,
+                        settings_path=settings_path,
+                        status_path=status_path,
+                    )
+
+    # Pipeline should complete (not fail on plan rejection)
+    assert result["pipeline_status"] == "completed"
+    assert result["milestones"]["plan_approved"] is True
+
+
+def test_plan_approval_true_rejects_unapproved(tmp_path):
+    """When milestones.plan_approval is true (default), approved=false stops pipeline."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    settings_path = _make_minimal_settings(tmp_path, extra={
+        "milestones": {"plan_approval": True},
+    })
+
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+
+    wr = WorkRequest(source_type="prompt", title="Reject test")
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
+        from worca.orchestrator.stages import Stage
+        if stage == Stage.PLAN:
+            return {
+                "approved": False,
+                "approach": "test approach",
+                "tasks_outline": [],
+                "branch_name": "test-branch",
+            }, {"type": "result"}
+        return {}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner.create_branch"):
+            with patch("worca.orchestrator.runner._write_pid"):
+                with patch("worca.orchestrator.runner._remove_pid"):
+                    with pytest.raises(PipelineError, match="Plan not approved"):
+                        run_pipeline(
+                            wr,
+                            settings_path=settings_path,
+                            status_path=status_path,
+                        )
+
+
+# ---------------------------------------------------------------------------
 # T12: Circuit breaker events
 # ---------------------------------------------------------------------------
 
@@ -3209,7 +3193,8 @@ def test_run_pipeline_reads_agent_overrides_dir_from_settings(tmp_path, monkeypa
 
     captured_calls = []
 
-    def fake_render(run_dir, template_vars, overrides_dir=".claude/agents"):
+    def fake_render(run_dir, template_vars, overrides_dir=".claude/agents",
+                    template_agents_dir=None):
         captured_calls.append(overrides_dir)
 
     def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
@@ -3228,3 +3213,83 @@ def test_run_pipeline_reads_agent_overrides_dir_from_settings(tmp_path, monkeypa
     assert any(c == custom_overrides for c in captured_calls), (
         f"Expected agent_overrides_dir={custom_overrides!r} to be passed; got calls: {captured_calls}"
     )
+
+
+# --- pipeline_template threading ---
+
+def _make_template_test_settings(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }))
+    return settings
+
+
+def test_run_pipeline_stores_pipeline_template_in_status(tmp_path, monkeypatch):
+    """pipeline_template passed to run_pipeline() appears in status.json."""
+    from worca.orchestrator.work_request import WorkRequest
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _make_template_test_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        result = run_pipeline(
+            WorkRequest(source_type="prompt", title="Test template"),
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+            pipeline_template="worca:bugfix",
+        )
+
+    assert result["pipeline_template"] == "worca:bugfix"
+
+
+def test_run_pipeline_pipeline_template_none_by_default(tmp_path, monkeypatch):
+    """pipeline_template defaults to None when not provided."""
+    from worca.orchestrator.work_request import WorkRequest
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _make_template_test_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        result = run_pipeline(
+            WorkRequest(source_type="prompt", title="Test no template"),
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+        )
+
+    assert result["pipeline_template"] is None

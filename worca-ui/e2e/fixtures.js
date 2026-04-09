@@ -114,8 +114,7 @@ export function writeControlFile(worcaDir, runId, action) {
 
 /**
  * Write pipeline.pid + active_run for a run.
- * - pipeline.pid is used by process-manager for stop/pause signals
- * - active_run sets the discovery-priority pointer in discoverRuns()
+ * Writes PID to both per-run directory and project-level (backward compat).
  *
  * Note: active status is determined by `pipeline_status` in each run's
  * status.json (set by seedRun), not by PID liveness.
@@ -124,8 +123,13 @@ export function writeControlFile(worcaDir, runId, action) {
  * @param {string} [activeRunId] - run ID to write to active_run
  */
 export function writePipelinePid(worcaDir, activeRunId) {
+  // Project-level PID (backward compat)
   writeFileSync(join(worcaDir, 'pipeline.pid'), String(process.pid), 'utf8');
   if (activeRunId) {
+    // Per-run PID (primary)
+    const runDir = join(worcaDir, 'runs', activeRunId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(join(runDir, 'pipeline.pid'), String(process.pid), 'utf8');
     writeFileSync(join(worcaDir, 'active_run'), activeRunId, 'utf8');
   }
 }

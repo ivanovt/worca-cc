@@ -1,7 +1,7 @@
 {
   "id": "quick-fix",
   "name": "Quick Fix",
-  "description": "Minimal pipeline for trivial changes. Haiku plans and coordinates in seconds, sonnet implements, no test or review. Budget-capped at $5.",
+  "description": "Minimal pipeline for trivial changes. Haiku plans, sonnet coordinates and implements, no test or review. Budget-capped at $5.",
   "builtin": true,
   "created_at": "2026-03-10T00:00:00Z",
   "tags": ["minimal", "fast", "no-review"],
@@ -12,7 +12,7 @@
     },
     "agents": {
       "planner":     { "model": "haiku", "max_turns": 15 },
-      "coordinator": { "model": "haiku", "max_turns": 15 },
+      "coordinator": { "model": "sonnet", "max_turns": 15 },
       "implementer": { "model": "sonnet", "max_turns": 100 }
     },
     "loops": {
@@ -23,7 +23,6 @@
       "pr_approval": false,
       "deploy_approval": false
     },
-    "budget": { "max_cost_usd": 5 },
     "circuit_breaker": { "max_consecutive_failures": 1 }
   }
 }

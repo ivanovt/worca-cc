@@ -560,3 +560,125 @@ class TestTemplateMain:
 
         assert "data" in captured_settings, "Temp settings file was not readable during run_pipeline call"
         assert captured_settings["data"]["worca"].get("_template_agents_dir") == "/some/template/agents"
+
+
+class TestPipelineTemplateFormatting:
+    """Test that pipeline_template is formatted as tier:id and passed to run_pipeline()."""
+
+    def _make_settings(self, tmp_path, worca_config=None):
+        data = {"worca": worca_config or {}}
+        p = tmp_path / ".claude" / "settings.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data))
+        return str(p)
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_builtin_template_formatted_as_worca_colon_id(self, mock_run_pipeline, tmp_path):
+        """Builtin tier template is formatted as 'worca:{id}'."""
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path)
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_tmpl = MagicMock()
+        mock_tmpl.agents_dir = None
+        mock_tmpl.tier = "builtin"
+        mock_resolver.get.return_value = mock_tmpl
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--template", "bugfix",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                    from worca.orchestrator.work_request import WorkRequest
+                    mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                    main()
+
+        call_kwargs = mock_run_pipeline.call_args[1]
+        assert call_kwargs["pipeline_template"] == "worca:bugfix"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_project_template_formatted_as_project_colon_id(self, mock_run_pipeline, tmp_path):
+        """Project tier template is formatted as 'project:{id}'."""
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path)
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_tmpl = MagicMock()
+        mock_tmpl.agents_dir = None
+        mock_tmpl.tier = "project"
+        mock_resolver.get.return_value = mock_tmpl
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Refactor code",
+            "--template", "my-template",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                    from worca.orchestrator.work_request import WorkRequest
+                    mock_norm.return_value = WorkRequest(source_type="prompt", title="Refactor code")
+                    main()
+
+        call_kwargs = mock_run_pipeline.call_args[1]
+        assert call_kwargs["pipeline_template"] == "project:my-template"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_user_template_formatted_as_user_colon_id(self, mock_run_pipeline, tmp_path):
+        """User tier template is formatted as 'user:{id}'."""
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path)
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_tmpl = MagicMock()
+        mock_tmpl.agents_dir = None
+        mock_tmpl.tier = "user"
+        mock_resolver.get.return_value = mock_tmpl
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Add feature",
+            "--template", "my-custom",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                    from worca.orchestrator.work_request import WorkRequest
+                    mock_norm.return_value = WorkRequest(source_type="prompt", title="Add feature")
+                    main()
+
+        call_kwargs = mock_run_pipeline.call_args[1]
+        assert call_kwargs["pipeline_template"] == "user:my-custom"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_no_template_passes_none_pipeline_template(self, mock_run_pipeline, tmp_path):
+        """When no --template flag, pipeline_template is None."""
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path)
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                from worca.orchestrator.work_request import WorkRequest
+                mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                main()
+
+        call_kwargs = mock_run_pipeline.call_args[1]
+        assert call_kwargs.get("pipeline_template") is None

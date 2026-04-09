@@ -528,6 +528,13 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 13px;
 }
 
+.run-template {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
 .pipeline-cost-strip {
   display: flex;
   flex-wrap: wrap;
@@ -1245,6 +1252,15 @@ sl-details.log-history-panel::part(content) {
   font-size: 12px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+
+.run-card-template {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 26px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .run-card-stages {
@@ -2247,6 +2263,79 @@ sl-details.live-output-panel::part(content) {
   font-size: 13px;
   color: var(--status-error);
   font-weight: 500;
+}
+
+.new-run-info {
+  background: var(--surface-raised, #1e293b);
+  border: 1px solid var(--border, #334155);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: var(--muted, #94a3b8);
+}
+.new-run-info strong {
+  color: var(--text, #e2e8f0);
+  display: block;
+  margin-bottom: 6px;
+}
+.new-run-info p { margin: 0; line-height: 1.5; }
+
+.new-run-form-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.new-run-section sl-select {
+  width: 100%;
+}
+
+/* Template group labels */
+.template-group-label {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 6px 12px 2px;
+}
+
+/* Indent grouped template options and bold the name */
+sl-option.template-grouped::part(base) {
+  padding-left: 24px;
+  flex-wrap: wrap;
+}
+
+sl-option.template-grouped::part(label) {
+  font-weight: 500;
+}
+
+/* Description wraps below name, aligned with label */
+sl-option.template-grouped::part(suffix) {
+  flex-basis: 100%;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 0 0 4px;
+}
+
+/* Fix contrast on selected/current option description */
+sl-option.template-grouped[aria-selected="true"]::part(suffix),
+sl-option.template-grouped:focus::part(suffix) {
+  color: inherit;
+  opacity: 0.85;
+}
+
+/* Selected template description below dropdown */
+.template-description {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.5;
 }
 
 /* Plan file autocomplete */

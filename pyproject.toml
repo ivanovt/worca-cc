@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "worca-cc"
-version = "0.8.0"
+version = "0.8.1rc5"
 description = "Autonomous software development pipeline combining orchestration with governance enforcement"
 readme = "src/worca/README.md"
 license = "MIT"
@@ -45,6 +45,8 @@ worca = [
     "agents/core/*.md",
     "schemas/*.json",
     "settings.json",
+    "templates/*/template.json",
+    "templates/*/agents/*.md",
 ]
 
 [tool.pytest.ini_options]

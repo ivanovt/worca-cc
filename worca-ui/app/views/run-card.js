@@ -149,6 +149,12 @@ export function runCardView(
       `
       : nothing;
 
+  const pipelineTemplate = run.pipeline_template
+    ? run.pipeline_template.startsWith('builtin:')
+      ? `worca:${run.pipeline_template.slice('builtin:'.length)}`
+      : run.pipeline_template
+    : null;
+
   return html`
     <div class="run-card ${statusClass(overallStatus)}" @click=${onClick ? () => onClick(run.id) : null}>
       <div class="run-card-top">
@@ -160,6 +166,7 @@ export function runCardView(
         <span class="run-card-title">${title}</span>
       </div>
       ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> <span class="meta-value">${branch}</span></span></div>` : nothing}
+      ${pipelineTemplate ? html`<div class="run-card-template"><span class="meta-label">Pipeline:</span> <span class="meta-value">${pipelineTemplate}</span></div>` : nothing}
       <div class="run-card-meta">
         <span class="run-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(run.started_at)}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Finished:</span> <span class="meta-value">${formatTimestamp(endTime)}</span></span>

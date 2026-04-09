@@ -31,8 +31,8 @@ vi.mock('../process-manager.js', () => {
     startPipeline(opts) {
       return mockStartPipeline(this.worcaDir, opts);
     }
-    stopPipeline() {
-      return mockStopPipeline(this.worcaDir);
+    stopPipeline(runId) {
+      return mockStopPipeline(this.worcaDir, runId);
     }
     getRunningPid() {
       return mockGetRunningPid(this.worcaDir);
@@ -248,9 +248,9 @@ describe('POST /api/runs/:id/stop', () => {
     expect(data.pid).toBe(42000);
   });
 
-  it('calls stopPipeline with worcaDir', async () => {
+  it('calls stopPipeline with worcaDir and runId', async () => {
     await fetch(`${base}/api/runs/run-abc/stop`, { method: 'POST' });
-    expect(mockStopPipeline).toHaveBeenCalledWith(tmpDir);
+    expect(mockStopPipeline).toHaveBeenCalledWith(tmpDir, 'run-abc');
   });
 
   it('writes control.json with action=stop for the specific run', async () => {

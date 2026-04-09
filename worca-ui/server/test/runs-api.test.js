@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockStartPipeline = vi.fn().mockResolvedValue({ pid: 12345 });
+let mockRunningPid = null;
 
 vi.mock('../process-manager.js', () => {
   class ProcessManager {
@@ -15,14 +16,14 @@ vi.mock('../process-manager.js', () => {
     startPipeline(opts) {
       return mockStartPipeline(this.worcaDir, opts);
     }
-    stopPipeline() {
-      return vi.fn()();
+    stopPipeline(runId) {
+      return vi.fn()(runId);
     }
     pausePipeline(runId) {
       return vi.fn()(runId);
     }
     getRunningPid() {
-      return null;
+      return mockRunningPid;
     }
     reconcileStatus() {
       return false;
@@ -72,6 +73,7 @@ describe('POST /api/runs - new format', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'runs-api-test-'));
     mockStartPipeline.mockClear();
     mockStartPipeline.mockResolvedValue({ pid: 12345 });
+    mockRunningPid = null;
     ({ server, base } = await startServer(tmpDir));
   });
 
@@ -258,6 +260,7 @@ describe('POST /api/runs - backwards compatibility', () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'runs-api-test-'));
     mockStartPipeline.mockClear();
     mockStartPipeline.mockResolvedValue({ pid: 12345 });
+    mockRunningPid = null;
     ({ server, base } = await startServer(tmpDir));
   });
 
@@ -335,5 +338,41 @@ describe('POST /api/runs - backwards compatibility', () => {
       tmpDir,
       expect.objectContaining({ msize: 3, mloops: 2 }),
     );
+  });
+});
+
+describe('POST /api/runs - parallel pipeline block', () => {
+  let tmpDir, server, base;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'runs-api-test-'));
+    mockStartPipeline.mockClear();
+    mockStartPipeline.mockResolvedValue({ pid: 12345 });
+    mockRunningPid = null;
+    ({ server, base } = await startServer(tmpDir));
+  });
+
+  afterEach(async () => {
+    if (server) await stopServer(server);
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it('returns 409 when a pipeline is already running', async () => {
+    mockRunningPid = 99999;
+    const res = await postRun(base, { prompt: 'Add feature X' });
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.code).toBe('already_running');
+    expect(data.error).toMatch(/already running/i);
+    expect(mockStartPipeline).not.toHaveBeenCalled();
+  });
+
+  it('allows start when no pipeline is running', async () => {
+    mockRunningPid = null;
+    const res = await postRun(base, { prompt: 'Add feature X' });
+    expect(res.status).toBe(200);
+    expect((await res.json()).ok).toBe(true);
+    expect(mockStartPipeline).toHaveBeenCalled();
   });
 });
