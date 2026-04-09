@@ -95,7 +95,7 @@ test.describe('WebSocket live updates — control button transitions', () => {
     }
   });
 
-  test('pipeline-failed: pause disappears, resume and stop appear', async ({ page }) => {
+  test('pipeline-failed: pause and stop disappear, resume appears', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-ws-running-to-failed';
@@ -109,7 +109,7 @@ test.describe('WebSocket live updates — control button transitions', () => {
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'failed' });
 
       await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
+      await expect(page.locator('.action-btn--danger')).not.toBeAttached();
       await expect(page.locator('.action-btn--amber')).not.toBeAttached();
     } finally {
       await ctx.close();

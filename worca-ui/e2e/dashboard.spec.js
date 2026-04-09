@@ -193,7 +193,7 @@ test.describe('dashboard — quick-action buttons', () => {
     }
   });
 
-  test('quick-resume click on failed run sends POST /api/runs/:id/resume', async ({ page }) => {
+  test('quick-resume click on failed run sends WS resume-run message', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-dash-qresume-req';
@@ -202,13 +202,13 @@ test.describe('dashboard — quick-action buttons', () => {
         work_request: { title: 'Quick resume API' },
       });
 
-      const resumeRequests = [];
-      await page.route(`**/api/runs/${runId}/resume`, (route) => {
-        resumeRequests.push(route.request().method());
-        route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({ ok: true, pid: 99, runId }),
+      const sentFrames = [];
+      page.on('websocket', (ws) => {
+        ws.on('framesent', ({ payload }) => {
+          try {
+            const msg = JSON.parse(payload);
+            if (msg.type === 'resume-run') sentFrames.push(msg);
+          } catch { /* ignore non-JSON */ }
         });
       });
 
@@ -216,8 +216,9 @@ test.describe('dashboard — quick-action buttons', () => {
       await expect(page.locator('.active-group-failed .btn-quick-resume')).toBeVisible();
       await page.locator('.active-group-failed .btn-quick-resume').click();
 
-      await expect.poll(() => resumeRequests.length, {}).toBeGreaterThan(0);
-      expect(resumeRequests[0]).toBe('POST');
+      await expect.poll(() => sentFrames.length, {}).toBeGreaterThan(0);
+      expect(sentFrames[0].type).toBe('resume-run');
+      expect(sentFrames[0].payload).toHaveProperty('runId');
     } finally {
       await ctx.close();
     }

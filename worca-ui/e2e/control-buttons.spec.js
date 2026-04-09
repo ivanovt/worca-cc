@@ -52,7 +52,7 @@ test.describe('control buttons — visibility by pipeline status', () => {
     }
   });
 
-  test('failed: resume and stop visible, pause absent', async ({ page }) => {
+  test('failed: resume visible, stop and pause absent', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-ctrl-failed';
@@ -61,7 +61,7 @@ test.describe('control buttons — visibility by pipeline status', () => {
       await openRunDetail(page, ctx.url, runId, 'failed');
 
       await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
+      await expect(page.locator('.action-btn--danger')).not.toBeAttached();
       await expect(page.locator('.action-btn--amber')).not.toBeAttached();
     } finally {
       await ctx.close();

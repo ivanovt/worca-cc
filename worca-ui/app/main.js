@@ -972,18 +972,6 @@ async function handleConfirmStop() {
   }
 }
 
-async function handleCancelRun(runId) {
-  try {
-    const res = await fetch(projectUrl(`/runs/${runId}/cancel`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) showActionError(data.error || 'Failed to cancel run');
-  } catch (err) {
-    showActionError(err?.message || 'Failed to cancel run');
-  }
-}
-
 function handleResumePipeline() {
   pipelineAction = 'resuming';
   actionError = null;
@@ -1042,17 +1030,42 @@ async function handleResumeRun(runId) {
   _controlPending = { action: 'resume', runId };
   rerender();
   try {
-    const res = await fetch(projectUrl(`/runs/${runId}/resume`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) showActionError(data.error || 'Failed to resume run');
+    await ws.send('resume-run', { runId });
   } catch (err) {
     showActionError(err?.message || 'Failed to resume run');
   } finally {
     _controlPending = null;
     rerender();
   }
+}
+
+function handleStopRun(runId) {
+  showConfirm(
+    {
+      label: 'Stop Pipeline?',
+      message:
+        'Are you sure? The current stage will be interrupted and marked as error.',
+      confirmLabel: 'Stop',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        _controlPending = { action: 'stop', runId };
+        rerender();
+        try {
+          const res = await fetch(projectUrl(`/runs/${runId}/stop`), {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) showActionError(data.error || 'Failed to stop run');
+        } catch (err) {
+          showActionError(err?.message || 'Failed to stop run');
+        } finally {
+          _controlPending = null;
+          rerender();
+        }
+      },
+    },
+    rerender,
+  );
 }
 
 // --- Archive/Unarchive ---
@@ -1426,7 +1439,7 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Square, 14))}
             Stop
           </button>`;
-      } else if (ps === 'paused' || ps === 'failed') {
+      } else if (ps === 'paused') {
         actionButton = html`
           <button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
             ${unsafeHTML(iconSvg(Play, 14))}
@@ -1435,6 +1448,12 @@ function contentHeaderView() {
           <button class="action-btn action-btn--danger" @click=${handleStopPipeline}>
             ${unsafeHTML(iconSvg(Square, 14))}
             Stop
+          </button>`;
+      } else if (ps === 'failed') {
+        actionButton = html`
+          <button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
+            ${unsafeHTML(iconSvg(Play, 14))}
+            Resume
           </button>`;
       }
     }
@@ -1449,11 +1468,51 @@ function contentHeaderView() {
         (r) => r.id === route.runId,
       );
       const hs = historyRun?.pipeline_status;
-      if (hs === 'running' || hs === 'paused') {
+      const pending =
+        _controlPending?.runId === route.runId ? _controlPending.action : null;
+      if (pending === 'stop') {
         actionButton = html`
-          <button class="action-btn action-btn--danger" @click=${() => handleCancelRun(route.runId)}>
+          <button class="action-btn action-btn--danger" disabled>
+            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+            Stopping\u2026
+          </button>`;
+      } else if (pending === 'pause') {
+        actionButton = html`
+          <button class="action-btn action-btn--amber" disabled>
+            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+            Pausing\u2026
+          </button>`;
+      } else if (pending === 'resume') {
+        actionButton = html`
+          <button class="action-btn action-btn--primary" disabled>
+            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+            Resuming\u2026
+          </button>`;
+      } else if (hs === 'running') {
+        actionButton = html`
+          <button class="action-btn action-btn--amber" @click=${() => handlePauseRun(route.runId)}>
+            ${unsafeHTML(iconSvg(Pause, 14))}
+            Pause
+          </button>
+          <button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
             ${unsafeHTML(iconSvg(Square, 14))}
-            Cancel
+            Stop
+          </button>`;
+      } else if (hs === 'paused') {
+        actionButton = html`
+          <button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
+            ${unsafeHTML(iconSvg(Play, 14))}
+            Resume
+          </button>
+          <button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
+            ${unsafeHTML(iconSvg(Square, 14))}
+            Stop
+          </button>`;
+      } else if (hs === 'failed') {
+        actionButton = html`
+          <button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
+            ${unsafeHTML(iconSvg(Play, 14))}
+            Resume
           </button>`;
       }
     }
