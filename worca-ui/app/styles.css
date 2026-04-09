@@ -2265,6 +2265,27 @@ sl-details.live-output-panel::part(content) {
   font-weight: 500;
 }
 
+.new-run-info {
+  background: var(--surface-raised, #1e293b);
+  border: 1px solid var(--border, #334155);
+  border-radius: 8px;
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  color: var(--muted, #94a3b8);
+}
+.new-run-info strong {
+  color: var(--text, #e2e8f0);
+  display: block;
+  margin-bottom: 6px;
+}
+.new-run-info p { margin: 0; line-height: 1.5; }
+
+.new-run-form-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .new-run-section sl-select {
   width: 100%;
 }

@@ -198,8 +198,18 @@ export async function submitNewRun({ rerender, onStarted, projectId }) {
   }
 }
 
+/**
+ * Check if any pipeline is currently active (running/resuming).
+ */
+export function hasActivePipeline(state) {
+  const runs = state?.runs;
+  if (!runs) return false;
+  return Object.values(runs).some((r) => r.active === true);
+}
+
 export function newRunView(_state, { rerender }) {
   const projectId = _state.currentProjectId || null;
+  const pipelineRunning = hasActivePipeline(_state);
 
   function handleSourceTypeChange(e) {
     sourceType = e.target.value;
@@ -278,9 +288,20 @@ export function newRunView(_state, { rerender }) {
 
   return html`
     <div class="new-run-page">
+      ${
+        pipelineRunning
+          ? html`
+        <div class="new-run-info">
+          <strong>Pipeline already running</strong>
+          <p>Parallel pipelines on the same project are not fully supported yet.
+          Please wait for the current pipeline to finish, or stop it before starting a new one.</p>
+        </div>
+      `
+          : nothing
+      }
       ${submitStatus === 'error' ? html`<div class="new-run-error">${submitError}</div>` : nothing}
 
-      <div class="new-run-form">
+      <div class="new-run-form ${pipelineRunning ? 'new-run-form-disabled' : ''}"
         <!-- Section 1: Work Source -->
         <div class="new-run-section">
           <h3 class="new-run-section-title">Work Source</h3>

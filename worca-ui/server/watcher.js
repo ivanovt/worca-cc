@@ -100,7 +100,9 @@ export function discoverRuns(worcaDir) {
             const id = createRunId(data);
             if (!seenIds.has(id)) {
               seenIds.add(id);
-              runs.push({ id, active: false, ...data });
+              const active =
+                !isTerminal(data) && data.pipeline_status === 'running';
+              runs.push({ id, active, ...data });
             }
           }
         } else if (entry.isDirectory()) {
@@ -111,7 +113,9 @@ export function discoverRuns(worcaDir) {
             const id = createRunId(data);
             if (!seenIds.has(id)) {
               seenIds.add(id);
-              runs.push({ id, active: false, ...data });
+              const active =
+                !isTerminal(data) && data.pipeline_status === 'running';
+              runs.push({ id, active, ...data });
             }
           }
         }
@@ -213,7 +217,8 @@ export async function discoverRunsAsync(worcaDir) {
       const id = createRunId(data);
       if (!seenIds.has(id)) {
         seenIds.add(id);
-        runs.push({ id, active: false, ...data });
+        const active = !isTerminal(data) && data.pipeline_status === 'running';
+        runs.push({ id, active, ...data });
       }
     }
   } catch {

@@ -18,7 +18,6 @@ from worca.orchestrator.runner import (
     _resolve_plan_path,
     _render_agent_templates,
     _agent_path,
-    _archive_run,
     LoopExhaustedError,
     PipelineError,
 )
@@ -459,103 +458,6 @@ def test_plan_file_stores_path_in_status(tmp_path, monkeypatch):
     active_run = worca_dir / "active_run"
     assert active_run.exists()
     assert active_run.read_text() == result["run_id"]
-
-
-def test_archive_moves_run_dir(tmp_path):
-    """_archive_run moves per-run dir to results/ when run_id is present."""
-    worca_dir = tmp_path / ".worca"
-    run_id = "20260309-171545"
-    run_dir = worca_dir / "runs" / run_id
-    run_dir.mkdir(parents=True)
-    (run_dir / "logs").mkdir()
-    (run_dir / "agents").mkdir()
-
-    status = {"run_id": run_id, "started_at": "2026-03-09T17:15:45+00:00"}
-    status_path = str(run_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    # Write active_run pointer
-    with open(str(worca_dir / "active_run"), "w") as f:
-        f.write(run_id)
-
-    _archive_run(status, status_path)
-
-    # Run dir should be moved to results/
-    assert not run_dir.exists()
-    assert (worca_dir / "results" / run_id / "status.json").exists()
-
-    # Active run pointer cleaned up
-    assert not (worca_dir / "active_run").exists()
-
-
-def test_archive_includes_events_jsonl(tmp_path):
-    """_archive_run moves events.jsonl alongside other run files."""
-    worca_dir = tmp_path / ".worca"
-    run_id = "20260320-120000"
-    run_dir = worca_dir / "runs" / run_id
-    run_dir.mkdir(parents=True)
-
-    status = {"run_id": run_id, "started_at": "2026-03-20T12:00:00+00:00"}
-    status_path = str(run_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    # Write events.jsonl co-located with status.json
-    events_path = run_dir / "events.jsonl"
-    events_path.write_text('{"type":"pipeline.run.started"}\n')
-
-    _archive_run(status, status_path)
-
-    # events.jsonl should be in the archived location
-    assert (worca_dir / "results" / run_id / "events.jsonl").exists()
-    assert not events_path.exists()
-
-
-def test_archive_without_events_jsonl_graceful(tmp_path):
-    """_archive_run succeeds gracefully when events.jsonl does not exist."""
-    worca_dir = tmp_path / ".worca"
-    run_id = "20260320-130000"
-    run_dir = worca_dir / "runs" / run_id
-    run_dir.mkdir(parents=True)
-
-    status = {"run_id": run_id, "started_at": "2026-03-20T13:00:00+00:00"}
-    status_path = str(run_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    # No events.jsonl in run_dir (events were disabled)
-    assert not (run_dir / "events.jsonl").exists()
-
-    _archive_run(status, status_path)
-
-    # Archive should succeed without errors
-    assert not run_dir.exists()
-    assert (worca_dir / "results" / run_id / "status.json").exists()
-    # No events.jsonl in results (was never created)
-    assert not (worca_dir / "results" / run_id / "events.jsonl").exists()
-
-
-def test_archive_legacy_format(tmp_path):
-    """_archive_run uses hash-based format when no run_id."""
-    worca_dir = tmp_path / ".worca"
-    worca_dir.mkdir()
-
-    status = {"started_at": "2026-01-01T00:00:00+00:00", "work_request": {"title": "Legacy"}}
-    status_path = str(worca_dir / "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f)
-
-    _archive_run(status, status_path)
-
-    # Status file should be removed
-    assert not os.path.exists(status_path)
-
-    # Result should exist as a hash-based .json file
-    results_dir = worca_dir / "results"
-    assert results_dir.exists()
-    json_files = list(results_dir.glob("*.json"))
-    assert len(json_files) == 1
 
 
 def test_run_pipeline_no_plan_resolves_from_template(tmp_path, monkeypatch):

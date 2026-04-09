@@ -473,6 +473,17 @@ export function createProjectScopedRoutes() {
 
   // POST /api/projects/:projectId/runs — start a new pipeline
   router.post('/runs', requireWorcaDir, async (req, res) => {
+    // Block parallel pipelines on the same project (GH #82)
+    const running = req.project.pm.getRunningPid();
+    if (running) {
+      return res.status(409).json({
+        ok: false,
+        error:
+          'A pipeline is already running on this project. Parallel pipelines on the same project are not yet supported.',
+        code: 'already_running',
+      });
+    }
+
     const body = req.body || {};
 
     let {

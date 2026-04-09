@@ -302,58 +302,6 @@ def _is_same_work_request(existing_wr: dict, new_wr: WorkRequest) -> bool:
     return existing_wr.get("title", "") == new_wr.title
 
 
-def _archive_run(status: dict, status_path: str) -> None:
-    """Move a completed/abandoned run to the results directory.
-
-    If status has a run_id (new format), moves the entire run dir.
-    Otherwise (legacy), archives as hash-based .json + logs dir.
-    Always cleans up the active_run pointer.
-    """
-    import hashlib
-    import shutil
-    worca_dir = os.path.dirname(status_path)
-    # For per-run dirs, worca_dir is .worca/runs/{id} — go up two levels
-    if "/runs/" in status_path:
-        worca_dir = os.path.dirname(os.path.dirname(os.path.dirname(status_path)))
-    results_dir = os.path.join(worca_dir, "results")
-    os.makedirs(results_dir, exist_ok=True)
-
-    run_id = status.get("run_id")
-    if run_id:
-        # New format: move entire run dir to results/
-        run_dir = os.path.join(worca_dir, "runs", run_id)
-        dest = os.path.join(results_dir, run_id)
-        if os.path.isdir(run_dir):
-            # events.jsonl is co-located in run_dir; it is archived automatically.
-            # Graceful skip: if events.jsonl is absent (events disabled), no action needed.
-            shutil.move(run_dir, dest)
-        elif os.path.exists(status_path):
-            # Run dir missing but status exists — save status to results
-            os.makedirs(dest, exist_ok=True)
-            shutil.move(status_path, os.path.join(dest, "status.json"))
-    else:
-        # Legacy format: hash-based .json file + logs dir
-        key = f"{status.get('started_at', '')}:{status.get('work_request', {}).get('title', '')}"
-        legacy_id = hashlib.sha256(key.encode()).hexdigest()[:12]
-        result_path = os.path.join(results_dir, f"{legacy_id}.json")
-        with open(result_path, "w") as f:
-            json.dump(status, f, indent=2)
-        try:
-            os.remove(status_path)
-        except FileNotFoundError:
-            pass
-        logs_dir = os.path.join(worca_dir, "logs")
-        if os.path.isdir(logs_dir):
-            shutil.move(logs_dir, os.path.join(results_dir, legacy_id))
-
-    # Clean up active_run pointer
-    active_run_path = os.path.join(worca_dir, "active_run")
-    try:
-        os.remove(active_run_path)
-    except FileNotFoundError:
-        pass
-
-
 def _pid_path(status_path: str) -> str:
     """Return the path to the PID file for this pipeline."""
     return os.path.join(os.path.dirname(status_path), "pipeline.pid")
@@ -1119,12 +1067,7 @@ def run_pipeline(
             _log("Pipeline already completed", "ok")
             return existing  # all done
     else:
-        # Fresh start — archive any existing run
-        if existing:
-            old_title = existing.get("work_request", {}).get("title", "unknown")
-            _log(f"Archiving previous run: {old_title}")
-            _archive_run(existing, actual_status_path)
-
+        # Fresh start — previous runs stay in runs/ (no archival)
         if branch:
             branch_name = branch
         elif worktree:
