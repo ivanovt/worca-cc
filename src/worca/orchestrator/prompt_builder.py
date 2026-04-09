@@ -55,7 +55,7 @@ class PromptBuilder:
         back to the ``plan_file_path`` context key (set when a pre-made plan is
         provided via CLI and MASTER_PLAN.md is not created).
         Returns empty string if neither is found."""
-        for path in (self._master_plan_path, self._context.get("plan_file_path")):
+        for path in (self._master_plan_path, self._context.get("plan_file"), self._context.get("plan_file_path")):
             if not path:
                 continue
             try:
@@ -159,6 +159,8 @@ class PromptBuilder:
 
     def _build_plan_revision(self) -> str:
         """Build prompt for plan revision mode (triggered by PLAN_REVIEW revise outcome)."""
+        plan_file = self._context.get("plan_file") or "MASTER_PLAN.md"
+        plan_file_name = os.path.basename(plan_file)
         parts = [
             "The plan reviewer has identified issues that must be addressed. "
             "Revise the existing plan -- do NOT start from scratch.",
@@ -168,7 +170,7 @@ class PromptBuilder:
 
         plan_content = self._read_master_plan()
         if plan_content:
-            parts.append(f"## Current Plan (MASTER_PLAN.md)\n\n{plan_content}")
+            parts.append(f"## Current Plan ({plan_file_name})\n\n{plan_content}")
 
         issues = self._context.get("plan_review_issues") or []
         if issues:
@@ -202,7 +204,7 @@ class PromptBuilder:
 
         parts.append(
             "Address each issue above. Preserve all parts of the plan that were not flagged. "
-            "Write the updated plan to MASTER_PLAN.md. "
+            f"Write the updated plan to {plan_file_name}. "
             "In your JSON output, set `approved: true` to signal that the revised plan is ready for review."
         )
         return "\n\n".join(parts)
@@ -216,12 +218,13 @@ class PromptBuilder:
 
         parts.append(self._work_request_section())
 
+        plan_file_name = os.path.basename(self._context.get("plan_file") or "MASTER_PLAN.md")
         plan_content = self._read_master_plan()
         if plan_content:
-            parts.append(f"## Implementation Plan (MASTER_PLAN.md)\n\n{plan_content}")
+            parts.append(f"## Implementation Plan ({plan_file_name})\n\n{plan_content}")
         else:
             parts.append(
-                "## Implementation Plan (MASTER_PLAN.md)\n\n"
+                f"## Implementation Plan ({plan_file_name})\n\n"
                 "*Plan file not found or empty -- this is itself a critical issue to report.*"
             )
 

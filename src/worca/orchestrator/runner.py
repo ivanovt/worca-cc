@@ -1872,6 +1872,23 @@ def run_pipeline(
                         if prompt_context_path:
                             prompt_builder.save_context(prompt_context_path)
                         save_status(status, actual_status_path)
+                        # 2a. Re-render agent templates so planner.md stays consistent
+                        # with the current plan_file path (defensive: prevents stale
+                        # template instructions if plan_file ever changes mid-revision).
+                        if run_dir:
+                            _lb_settings = load_settings(settings_path)
+                            _lb_worca = _lb_settings.get("worca", {})
+                            _lb_overrides_dir = _lb_worca.get(
+                                "agent_overrides_dir", ".claude/agents"
+                            )
+                            _lb_template_agents_dir = _lb_worca.get("_template_agents_dir")
+                            _render_agent_templates(run_dir, {
+                                "plan_file": status["plan_file"],
+                                "run_id": status.get("run_id", ""),
+                                "branch": branch_name,
+                                "title": work_request.title,
+                            }, overrides_dir=_lb_overrides_dir,
+                               template_agents_dir=_lb_template_agents_dir)
                         # 3. In-memory transitions (context keys drive behavior on crash/resume)
                         _next_trigger[Stage.PLAN.value] = "plan_review_revise"
                         stage_idx = stage_order.index(Stage.PLAN)

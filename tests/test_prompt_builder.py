@@ -439,3 +439,50 @@ def test_build_plan_revision_mode_instructs_approved_true(tmp_path):
     prompt = pb.build("plan")
     assert "approved" in prompt.lower()
     assert "true" in prompt.lower()
+
+
+# --- plan-file context fixes (TDD red phase) ---
+
+def test_build_plan_revision_uses_plan_file_context(tmp_path):
+    """_build_plan_revision() should reference plan_file context name, not MASTER_PLAN.md."""
+    plan_file = tmp_path / "plan-001.md"
+    plan_file.write_text("# Current Plan\n\nDo this and that")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(tmp_path / "MASTER_PLAN.md"))
+    pb.update_context("plan_file", str(plan_file))
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_issues", [
+        {"category": "completeness", "severity": "critical", "description": "Missing edge cases"},
+    ])
+    prompt = pb.build("plan")
+    assert "plan-001.md" in prompt
+    assert "MASTER_PLAN.md" not in prompt
+
+
+def test_read_master_plan_uses_plan_file_context(tmp_path):
+    """_read_master_plan() should find content via plan_file context key when MASTER_PLAN.md absent."""
+    plan_file = tmp_path / "plan-001.md"
+    plan_file.write_text("# Plan from plan_file context")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(tmp_path / "MASTER_PLAN.md"))
+    pb.update_context("plan_file", str(plan_file))
+    content = pb._read_master_plan()
+    assert "Plan from plan_file context" in content
+
+
+def test_build_plan_review_uses_plan_file_context(tmp_path):
+    """_build_plan_review() section header should use plan_file name, not MASTER_PLAN.md."""
+    plan_file = tmp_path / "plan-001.md"
+    plan_file.write_text("# Implementation Plan\n\nPhase 1: Setup")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(tmp_path / "MASTER_PLAN.md"))
+    pb.update_context("plan_file", str(plan_file))
+    prompt = pb.build("plan_review")
+    assert "Implementation Plan (plan-001.md)" in prompt
+    assert "Implementation Plan (MASTER_PLAN.md)" not in prompt
+
+
+def test_build_plan_review_missing_plan_uses_plan_file_name(tmp_path):
+    """Fallback message when plan is missing should reference plan_file name, not MASTER_PLAN.md."""
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(tmp_path / "MASTER_PLAN.md"))
+    pb.update_context("plan_file", str(tmp_path / "plan-001.md"))  # file does not exist
+    prompt = pb.build("plan_review")
+    assert "plan-001.md" in prompt
+    assert "MASTER_PLAN.md" not in prompt

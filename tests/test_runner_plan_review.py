@@ -1016,3 +1016,106 @@ class TestPlanReviewMalformedOutput:
         # Unrecognized outcome → not "revise" → approve path → PLAN runs once
         assert stages_run.count("plan") == 1
         assert "coordinate" in stages_run
+
+
+# ---------------------------------------------------------------------------
+# Revision loop-back re-renders agent templates (Fix 5: defensive)
+# ---------------------------------------------------------------------------
+
+class TestReviseLoopbackRendersAgentTemplates:
+
+    def test_render_agent_templates_called_on_loopback(self, tmp_path):
+        """_render_agent_templates is called during the revision loop-back."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=2)
+        critical_issue = {"category": "risk", "severity": "critical",
+                          "description": "Missing rollback"}
+        call_count = {"plan_review": 0}
+        render_calls = []
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                call_count["plan_review"] += 1
+                if call_count["plan_review"] == 1:
+                    return _mock_stage(stage, {
+                        "outcome": "revise",
+                        "issues": [critical_issue],
+                        "summary": "Issues found",
+                    })
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        def mock_render(run_dir, template_vars, overrides_dir=".claude/agents",
+                        template_agents_dir=None):
+            render_calls.append({
+                "run_dir": run_dir,
+                "template_vars": dict(template_vars),
+                "overrides_dir": overrides_dir,
+                "template_agents_dir": template_agents_dir,
+            })
+
+        with patch("worca.orchestrator.runner._render_agent_templates", side_effect=mock_render):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        # Should have been called at least twice: once at init, once on loop-back
+        assert len(render_calls) >= 2, (
+            f"Expected _render_agent_templates called >= 2 times, got {len(render_calls)}"
+        )
+        # The loop-back call must include plan_file in template_vars
+        loopback_calls = render_calls[1:]  # Skip the initial render call
+        assert len(loopback_calls) >= 1
+        for call in loopback_calls:
+            assert "plan_file" in call["template_vars"], (
+                f"Loop-back render call missing plan_file: {call}"
+            )
+
+    def test_render_agent_templates_loopback_passes_correct_vars(self, tmp_path):
+        """Loop-back _render_agent_templates call includes plan_file, run_id, branch, title."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=2)
+        critical_issue = {"category": "feasibility", "severity": "critical",
+                          "description": "Too complex"}
+        call_count = {"plan_review": 0}
+        render_calls = []
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                call_count["plan_review"] += 1
+                if call_count["plan_review"] == 1:
+                    return _mock_stage(stage, {
+                        "outcome": "revise",
+                        "issues": [critical_issue],
+                        "summary": "Issues",
+                    })
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        def mock_render(run_dir, template_vars, overrides_dir=".claude/agents",
+                        template_agents_dir=None):
+            render_calls.append(dict(template_vars))
+
+        with patch("worca.orchestrator.runner._render_agent_templates", side_effect=mock_render):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert len(render_calls) >= 2
+        loopback_vars = render_calls[1]
+        assert "plan_file" in loopback_vars
+        assert "run_id" in loopback_vars
+        assert "branch" in loopback_vars
+        assert "title" in loopback_vars
