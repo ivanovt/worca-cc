@@ -219,7 +219,7 @@ describe('detectTestFailures with projectName', () => {
 });
 
 describe('detectLoopLimitWarning', () => {
-  it('detects loop limit warning at limit-1', () => {
+  it('detects loop limit warning at limit-1 loop-backs', () => {
     const warnedLoops = new Set();
     const settings = { worca: { loops: { implement_test: 3 } } };
     const prev = makeRun();
@@ -227,7 +227,11 @@ describe('detectLoopLimitWarning', () => {
       stages: {
         implement: {
           status: 'in_progress',
-          iterations: [{ result: 'done' }, { result: 'done' }],
+          iterations: [
+            { trigger: 'initial', result: 'done' },
+            { trigger: 'test_failure', result: 'done' },
+            { trigger: 'test_failure', result: 'done' },
+          ],
         },
       },
     });
@@ -243,13 +247,36 @@ describe('detectLoopLimitWarning', () => {
     expect(result.body).toContain('2/3');
   });
 
-  it('does not warn below limit-1', () => {
+  it('does not warn when only initial iteration exists', () => {
+    const warnedLoops = new Set();
+    const settings = { worca: { loops: { restart_planning: 2 } } };
+    const prev = makeRun();
+    const next = makeRun({
+      stages: {
+        plan: {
+          status: 'completed',
+          iterations: [{ trigger: 'initial', result: 'done' }],
+        },
+      },
+    });
+    expect(
+      detectLoopLimitWarning('run-1', next, prev, settings, warnedLoops),
+    ).toBeNull();
+  });
+
+  it('does not warn below limit-1 loop-backs', () => {
     const warnedLoops = new Set();
     const settings = { worca: { loops: { implement_test: 3 } } };
     const prev = makeRun();
     const next = makeRun({
       stages: {
-        implement: { status: 'in_progress', iterations: [{ result: 'done' }] },
+        implement: {
+          status: 'in_progress',
+          iterations: [
+            { trigger: 'initial', result: 'done' },
+            { trigger: 'test_failure', result: 'done' },
+          ],
+        },
       },
     });
     expect(
@@ -265,7 +292,11 @@ describe('detectLoopLimitWarning', () => {
       stages: {
         implement: {
           status: 'in_progress',
-          iterations: [{ result: 'done' }, { result: 'done' }],
+          iterations: [
+            { trigger: 'initial', result: 'done' },
+            { trigger: 'test_failure', result: 'done' },
+            { trigger: 'test_failure', result: 'done' },
+          ],
         },
       },
     });

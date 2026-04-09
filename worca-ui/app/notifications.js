@@ -182,8 +182,12 @@ export function detectLoopLimitWarning(
     for (const stageName of stageNames) {
       const stage = stages[stageName];
       if (!stage) continue;
-      const iterCount = (stage.iterations || []).length;
-      if (iterCount === limit - 1) {
+      // Only count loop-back iterations (trigger !== 'initial') to avoid
+      // false positives when a stage runs its normal first pass.
+      const loopBacks = (stage.iterations || []).filter(
+        (it) => it.trigger !== 'initial',
+      ).length;
+      if (loopBacks > 0 && loopBacks === limit - 1) {
         const warnKey = `${runId}-${stageName}`;
         if (warnedLoops.has(warnKey)) continue;
         warnedLoops.add(warnKey);
@@ -191,7 +195,7 @@ export function detectLoopLimitWarning(
         return {
           event: 'loop_limit_warning',
           title: EVENT_CONFIG.loop_limit_warning.title,
-          body: `"${runTitle}" ${stageName} stage approaching loop limit (${iterCount}/${limit})`,
+          body: `"${runTitle}" ${stageName} stage approaching loop limit (${loopBacks}/${limit})`,
           tag: `worca-loop-${runId}-${stageName}`,
           requireInteraction: false,
           runId,
