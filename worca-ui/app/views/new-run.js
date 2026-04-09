@@ -425,6 +425,14 @@ export function newRunView(_state, { rerender }) {
                 }
               </sl-select>
               <span class="settings-field-hint">Customize stages and agent behavior. Groups: worca (built-in), project, user.</span>
+              ${(() => {
+                const sel = (templates || []).find(
+                  (t) => t.id === selectedTemplate,
+                );
+                return sel?.description
+                  ? html`<div class="template-description"><strong>Selected template:</strong><br>${sel.description}</div>`
+                  : nothing;
+              })()}
             </div>
           </div>
         `;

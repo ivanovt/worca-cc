@@ -2323,6 +2323,21 @@ sl-option.template-grouped::part(suffix) {
   padding: 0 0 4px;
 }
 
+/* Fix contrast on selected/current option description */
+sl-option.template-grouped[aria-selected="true"]::part(suffix),
+sl-option.template-grouped:focus::part(suffix) {
+  color: inherit;
+  opacity: 0.85;
+}
+
+/* Selected template description below dropdown */
+.template-description {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
 /* Plan file autocomplete */
 .plan-autocomplete {
   position: relative;
