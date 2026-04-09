@@ -112,15 +112,19 @@ describe('stopPipeline writes control.json', () => {
     children.length = 0;
   });
 
-  it('writes control.json with action=stop when active_run exists', async () => {
+  it('writes control.json with action=stop when runId provided', async () => {
     const runId = 'stop-run-001';
     mkdirSync(join(worcaDir, 'runs', runId), { recursive: true });
-    writeFileSync(join(worcaDir, 'active_run'), runId, 'utf8');
 
     const child = await spawnLongProcess();
-    writeFileSync(join(worcaDir, 'pipeline.pid'), String(child.pid), 'utf8');
+    // Write PID to per-run directory (new behavior)
+    writeFileSync(
+      join(worcaDir, 'runs', runId, 'pipeline.pid'),
+      String(child.pid),
+      'utf8',
+    );
 
-    stopPipeline(worcaDir);
+    stopPipeline(worcaDir, runId);
 
     const controlPath = join(worcaDir, 'runs', runId, 'control.json');
     expect(existsSync(controlPath)).toBe(true);
@@ -131,11 +135,45 @@ describe('stopPipeline writes control.json', () => {
     expect(new Date(data.requested_at).getTime()).not.toBeNaN();
   });
 
-  it('does not throw and skips control.json when active_run is missing', async () => {
+  it('falls back to project-level PID when per-run PID missing', async () => {
+    const runId = 'stop-run-002';
+    mkdirSync(join(worcaDir, 'runs', runId), { recursive: true });
+
+    const child = await spawnLongProcess();
+    // Write PID to project-level only (backward compat)
+    writeFileSync(join(worcaDir, 'pipeline.pid'), String(child.pid), 'utf8');
+
+    stopPipeline(worcaDir, runId);
+
+    const controlPath = join(worcaDir, 'runs', runId, 'control.json');
+    expect(existsSync(controlPath)).toBe(true);
+  });
+
+  it('does not throw and skips control.json when no runId and no active_run', async () => {
     const child = await spawnLongProcess();
     writeFileSync(join(worcaDir, 'pipeline.pid'), String(child.pid), 'utf8');
 
     expect(() => stopPipeline(worcaDir)).not.toThrow();
     expect(existsSync(join(worcaDir, 'runs'))).toBe(false);
+  });
+
+  it('cleans up both per-run and project-level PID files', async () => {
+    const runId = 'stop-run-003';
+    mkdirSync(join(worcaDir, 'runs', runId), { recursive: true });
+
+    const child = await spawnLongProcess();
+    writeFileSync(
+      join(worcaDir, 'runs', runId, 'pipeline.pid'),
+      String(child.pid),
+      'utf8',
+    );
+    writeFileSync(join(worcaDir, 'pipeline.pid'), String(child.pid), 'utf8');
+
+    stopPipeline(worcaDir, runId);
+
+    expect(existsSync(join(worcaDir, 'runs', runId, 'pipeline.pid'))).toBe(
+      false,
+    );
+    expect(existsSync(join(worcaDir, 'pipeline.pid'))).toBe(false);
   });
 });

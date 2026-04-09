@@ -54,18 +54,37 @@ describe('reconcileStatus', () => {
     expect(status.stop_reason).toBe('stale');
   });
 
-  it('does not change status when process is alive', () => {
+  it('does not change status when process is alive (per-run PID)', () => {
     writeStatus(worcaDir, 'run-002', {
       pipeline_status: 'running',
       stage: 'test',
     });
-    // Write a PID file pointing to our own PID (which is alive)
-    writeFileSync(join(worcaDir, 'pipeline.pid'), String(process.pid), 'utf8');
+    // Write a per-run PID file pointing to our own PID (which is alive)
+    writeFileSync(
+      join(worcaDir, 'runs', 'run-002', 'pipeline.pid'),
+      String(process.pid),
+      'utf8',
+    );
 
     const fixed = reconcileStatus(worcaDir);
 
     expect(fixed).toBe(false);
     const status = readStatus(worcaDir, 'run-002');
+    expect(status.pipeline_status).toBe('running');
+  });
+
+  it('does not change status when process is alive (project-level PID)', () => {
+    writeStatus(worcaDir, 'run-002b', {
+      pipeline_status: 'running',
+      stage: 'test',
+    });
+    // Write a project-level PID file (backward compat)
+    writeFileSync(join(worcaDir, 'pipeline.pid'), String(process.pid), 'utf8');
+
+    const fixed = reconcileStatus(worcaDir);
+
+    expect(fixed).toBe(false);
+    const status = readStatus(worcaDir, 'run-002b');
     expect(status.pipeline_status).toBe('running');
   });
 
@@ -99,9 +118,43 @@ describe('reconcileStatus', () => {
     expect(status.stop_reason).toBe('signal'); // preserved, not overwritten to "stale"
   });
 
-  it('returns false when no active_run file exists', () => {
-    // worcaDir exists but no active_run file
+  it('returns false when no active_run file exists and no per-run PIDs', () => {
+    // worcaDir exists but no active_run file and no per-run PIDs
     const fixed = reconcileStatus(worcaDir);
     expect(fixed).toBe(false);
+  });
+
+  it('fixes multiple stale runs with per-run PID files', () => {
+    // Two runs both with stale PID files (non-existent PIDs)
+    writeStatus(worcaDir, 'run-multi-1', {
+      pipeline_status: 'running',
+      stage: 'plan',
+    });
+    writeFileSync(
+      join(worcaDir, 'runs', 'run-multi-1', 'pipeline.pid'),
+      '999999999',
+      'utf8',
+    );
+
+    writeStatus(worcaDir, 'run-multi-2', {
+      pipeline_status: 'running',
+      stage: 'implement',
+    });
+    writeFileSync(
+      join(worcaDir, 'runs', 'run-multi-2', 'pipeline.pid'),
+      '999999998',
+      'utf8',
+    );
+
+    // active_run points to run-multi-2 only (but both should be reconciled)
+    writeFileSync(join(worcaDir, 'active_run'), 'run-multi-2', 'utf8');
+
+    const fixed = reconcileStatus(worcaDir);
+
+    expect(fixed).toBe(true);
+    expect(readStatus(worcaDir, 'run-multi-1').pipeline_status).toBe('failed');
+    expect(readStatus(worcaDir, 'run-multi-1').stop_reason).toBe('stale');
+    expect(readStatus(worcaDir, 'run-multi-2').pipeline_status).toBe('failed');
+    expect(readStatus(worcaDir, 'run-multi-2').stop_reason).toBe('stale');
   });
 });

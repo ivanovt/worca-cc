@@ -99,6 +99,7 @@ _shutdown_requested = False
 # Signal/atexit status refs for crash safety (Layers 1 & 4)
 _signal_status = None
 _signal_status_path = None
+_signal_project_status_path = None  # project-level status.json for PID cleanup
 
 
 def _check_control_file(
@@ -392,6 +393,10 @@ def _install_signal_handlers():
                 save_status(_signal_status, _signal_status_path)
             except Exception:
                 pass
+            # Clean up PID files (per-run + project-level)
+            _remove_pid(_signal_status_path)
+            if _signal_project_status_path:
+                _remove_pid(_signal_project_status_path)
 
     signal.signal(signal.SIGTERM, _handler)
     signal.signal(signal.SIGINT, _handler)
@@ -418,6 +423,10 @@ def _atexit_cleanup():
                 save_status(_signal_status, _signal_status_path)
         except Exception:
             pass
+        # Clean up PID files (per-run + project-level)
+        _remove_pid(_signal_status_path)
+        if _signal_project_status_path:
+            _remove_pid(_signal_project_status_path)
 
 
 _orchestrator_log = None
@@ -1035,7 +1044,7 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested, _signal_status, _signal_status_path
+    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path
     _shutdown_requested = False
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
@@ -1050,8 +1059,7 @@ def run_pipeline(
     except Exception:
         pass
 
-    # PID file and signal handlers
-    _write_pid(status_path)
+    # Signal handlers (PID file written after run_id is known)
     _install_signal_handlers()
 
     # Check for resume via active_run pointer first, then flat status.json
@@ -1096,6 +1104,10 @@ def run_pipeline(
             if not run_dir and status.get("run_id"):
                 run_dir = os.path.join(worca_dir, "runs", status["run_id"])
                 actual_status_path = os.path.join(run_dir, "status.json")
+
+            # Write PID to per-run directory (+ project-level for backward compat)
+            _write_pid(actual_status_path)
+            _write_pid(status_path)
 
             # Clear stale control.json left over from a previous stop/pause that
             # killed the process before it could consume the file.  Without this,
@@ -1148,6 +1160,10 @@ def run_pipeline(
         with open(active_run_path, "w") as f:
             f.write(run_id)
 
+        # Write PID to per-run directory (+ project-level for backward compat)
+        _write_pid(actual_status_path)
+        _write_pid(status_path)
+
         save_status(status, actual_status_path)
 
         # Update multi-pipeline registry with the subprocess PID when in worktree mode.
@@ -1165,6 +1181,7 @@ def run_pipeline(
     # Wire up signal/atexit status refs for crash safety (Layers 1 & 4)
     _signal_status = status
     _signal_status_path = actual_status_path
+    _signal_project_status_path = status_path  # project-level for PID cleanup
     atexit.register(_atexit_cleanup)
 
     ctx = None
@@ -2505,10 +2522,13 @@ def run_pipeline(
         # Clear signal/atexit refs — finally block already handled cleanup
         _signal_status = None
         _signal_status_path = None
+        _signal_project_status_path = None
         try:
             atexit.unregister(_atexit_cleanup)
         except Exception:
             pass
+        # Remove PID files (per-run + project-level)
+        _remove_pid(actual_status_path)
         _remove_pid(status_path)
         _close_orchestrator_log()
         os.environ.pop("WORCA_PLAN_FILE", None)

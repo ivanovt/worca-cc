@@ -16,10 +16,15 @@ function waitForOpen(ws) {
 function sendAndReceive(ws, msg) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('timeout')), 5000);
-    ws.once('message', (data) => {
-      clearTimeout(timer);
-      resolve(JSON.parse(data.toString()));
-    });
+    function onMessage(data) {
+      const parsed = JSON.parse(data.toString());
+      if (parsed.id === msg.id) {
+        clearTimeout(timer);
+        ws.removeListener('message', onMessage);
+        resolve(parsed);
+      }
+    }
+    ws.on('message', onMessage);
     ws.send(JSON.stringify(msg));
   });
 }

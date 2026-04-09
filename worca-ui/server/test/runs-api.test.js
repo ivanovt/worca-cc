@@ -15,8 +15,8 @@ vi.mock('../process-manager.js', () => {
     startPipeline(opts) {
       return mockStartPipeline(this.worcaDir, opts);
     }
-    stopPipeline() {
-      return vi.fn()();
+    stopPipeline(runId) {
+      return vi.fn()(runId);
     }
     pausePipeline(runId) {
       return vi.fn()(runId);

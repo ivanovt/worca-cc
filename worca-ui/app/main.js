@@ -957,7 +957,9 @@ async function handleConfirmStop() {
       (r) => r.active,
     );
     const runId = activeRun?.id || 'current';
-    const res = await fetch(projectUrl(`/runs/${runId}`), { method: 'DELETE' });
+    const res = await fetch(projectUrl(`/runs/${runId}/stop`), {
+      method: 'POST',
+    });
     const data = await res.json();
     if (!data.ok) {
       pipelineAction = null;

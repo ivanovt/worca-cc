@@ -597,7 +597,7 @@ export function createProjectScopedRoutes() {
   // DELETE /api/projects/:projectId/runs/:id — stop a running pipeline
   router.delete('/runs/:id', requireWorcaDir, (req, res) => {
     try {
-      const result = req.project.pm.stopPipeline();
+      const result = req.project.pm.stopPipeline(req.params.id);
       const { broadcast } = req.app.locals;
       if (broadcast) broadcast('run-stopped', { pid: result.pid });
       res.json({ ok: true, stopped: true, pid: result.pid });
@@ -691,7 +691,7 @@ export function createProjectScopedRoutes() {
       /* non-fatal — SIGTERM follows */
     }
     try {
-      const result = req.project.pm.stopPipeline();
+      const result = req.project.pm.stopPipeline(runId);
       const { broadcast } = req.app.locals;
       if (broadcast) broadcast('run-stopped', { runId, pid: result.pid });
       res.json({ ok: true, stopped: true, runId, pid: result.pid });
@@ -1107,7 +1107,7 @@ export function createProjectScopedRoutes() {
       worcaDir: join(pipeline.worktree_path, '.worca'),
     });
     try {
-      const result = worktreePm.stopPipeline();
+      const result = worktreePm.stopPipeline(runId);
       res.json({ ok: true, stopped: true, runId, pid: result.pid });
     } catch (err) {
       if (err.code === 'not_running') {

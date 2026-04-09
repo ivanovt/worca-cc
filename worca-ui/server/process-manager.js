@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
@@ -67,80 +68,118 @@ export class ProcessManager {
 
   /**
    * Check if a pipeline is currently running.
+   * @param {string} [runId] - If provided, check per-run PID first
    * @returns {{ pid: number } | null}
    */
-  getRunningPid() {
-    const pidPath = join(this.worcaDir, 'pipeline.pid');
-    if (!existsSync(pidPath)) return null;
-    try {
-      const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
-      if (Number.isNaN(pid) || pid <= 0) {
+  getRunningPid(runId) {
+    // Build candidate PID paths: per-run first, then project-level fallback
+    const candidates = [];
+    if (runId) {
+      candidates.push(join(this.worcaDir, 'runs', runId, 'pipeline.pid'));
+    }
+    candidates.push(join(this.worcaDir, 'pipeline.pid'));
+
+    for (const pidPath of candidates) {
+      if (!existsSync(pidPath)) continue;
+      try {
+        const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+        if (Number.isNaN(pid) || pid <= 0) {
+          try {
+            unlinkSync(pidPath);
+          } catch {
+            /* ignore */
+          }
+          continue;
+        }
+        process.kill(pid, 0); // throws if dead
+        return { pid };
+      } catch {
+        // Stale PID file — clean up
         try {
           unlinkSync(pidPath);
         } catch {
           /* ignore */
         }
-        return null;
       }
-      process.kill(pid, 0); // throws if dead
-      return { pid };
-    } catch {
-      // Stale PID file — clean up
-      try {
-        unlinkSync(pidPath);
-      } catch {
-        /* ignore */
-      }
-      return null;
     }
+    return null;
   }
 
   /**
    * Reconcile stale "running" status when the pipeline process is dead.
-   * Checks the active run's status.json — if pipeline_status is "running"
-   * but no process is alive, transitions to "failed" with stop_reason="stale".
+   * Scans all runs with per-run PID files + the active_run pointer.
+   * If pipeline_status is "running" but no process is alive, transitions
+   * to "failed" with stop_reason="stale".
    * Preserves any existing stop_reason (e.g. "signal" set by Layer 1).
    *
-   * @returns {boolean} true if status was fixed
+   * @returns {boolean} true if any status was fixed
    */
   reconcileStatus() {
-    const running = this.getRunningPid();
-    if (running) return false; // process is alive, nothing to fix
+    let fixed = false;
 
+    // Collect run IDs to check: scan runs/*/pipeline.pid + active_run fallback
+    const runIds = new Set();
+    const runsDir = join(this.worcaDir, 'runs');
+    if (existsSync(runsDir)) {
+      try {
+        for (const entry of readdirSync(runsDir, { withFileTypes: true })) {
+          if (
+            entry.isDirectory() &&
+            existsSync(join(runsDir, entry.name, 'pipeline.pid'))
+          ) {
+            runIds.add(entry.name);
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
+    // Backward compat: also check active_run pointer
     const activeRunPath = join(this.worcaDir, 'active_run');
-    if (!existsSync(activeRunPath)) return false;
-
-    let runId;
-    try {
-      runId = readFileSync(activeRunPath, 'utf8').trim();
-    } catch {
-      return false;
-    }
-    if (!runId) return false;
-
-    const statusPath = join(this.worcaDir, 'runs', runId, 'status.json');
-    if (!existsSync(statusPath)) return false;
-
-    let status;
-    try {
-      status = JSON.parse(readFileSync(statusPath, 'utf8'));
-    } catch {
-      return false;
+    if (existsSync(activeRunPath)) {
+      try {
+        const activeId = readFileSync(activeRunPath, 'utf8').trim();
+        if (activeId) runIds.add(activeId);
+      } catch {
+        /* ignore */
+      }
     }
 
-    if (status.pipeline_status !== 'running') return false;
+    for (const runId of runIds) {
+      // Check if this run's process is alive
+      const alive = this.getRunningPid(runId);
+      if (alive) continue;
 
-    status.pipeline_status = 'failed';
-    if (!status.stop_reason) {
-      status.stop_reason = 'stale';
-    }
-    try {
-      writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8');
-    } catch {
-      return false;
+      const statusPath = join(this.worcaDir, 'runs', runId, 'status.json');
+      if (!existsSync(statusPath)) continue;
+
+      let status;
+      try {
+        status = JSON.parse(readFileSync(statusPath, 'utf8'));
+      } catch {
+        continue;
+      }
+
+      if (status.pipeline_status !== 'running') continue;
+
+      status.pipeline_status = 'failed';
+      if (!status.stop_reason) {
+        status.stop_reason = 'stale';
+      }
+      try {
+        writeFileSync(
+          statusPath,
+          `${JSON.stringify(status, null, 2)}\n`,
+          'utf8',
+        );
+        fixed = true;
+      } catch {
+        /* ignore */
+      }
     }
 
-    return true;
+    return fixed;
   }
 
   /**
@@ -271,16 +310,27 @@ export class ProcessManager {
   /**
    * Stop a running pipeline.
    * PID file is the sole source of truth — no pgrep fallback.
+   * @param {string} [runId] - If provided, look up PID from per-run directory first
    * @returns {{ pid: number, stopped: boolean }}
    */
-  stopPipeline() {
+  stopPipeline(runId) {
     let pid = null;
-    const pidPath = join(this.worcaDir, 'pipeline.pid');
+    let foundPidPath = null;
 
-    if (existsSync(pidPath)) {
+    // Check per-run PID file first, then project-level fallback
+    const candidates = [];
+    if (runId) {
+      candidates.push(join(this.worcaDir, 'runs', runId, 'pipeline.pid'));
+    }
+    candidates.push(join(this.worcaDir, 'pipeline.pid'));
+
+    for (const pidPath of candidates) {
+      if (!existsSync(pidPath)) continue;
       try {
         pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
         process.kill(pid, 0); // verify alive
+        foundPidPath = pidPath;
+        break;
       } catch {
         try {
           unlinkSync(pidPath);
@@ -298,27 +348,24 @@ export class ProcessManager {
     }
 
     // Belt-and-suspenders: write control.json so the orchestrator gets a clean signal
-    const activeRunPath = join(this.worcaDir, 'active_run');
-    if (existsSync(activeRunPath)) {
+    const effectiveRunId = runId || this._readActiveRunId();
+    if (effectiveRunId) {
       try {
-        const runId = readFileSync(activeRunPath, 'utf8').trim();
-        if (runId) {
-          const controlDir = join(this.worcaDir, 'runs', runId);
-          mkdirSync(controlDir, { recursive: true });
-          writeFileSync(
-            join(controlDir, 'control.json'),
-            `${JSON.stringify(
-              {
-                action: 'stop',
-                requested_at: new Date().toISOString(),
-                source: 'ui',
-              },
-              null,
-              2,
-            )}\n`,
-            'utf8',
-          );
-        }
+        const controlDir = join(this.worcaDir, 'runs', effectiveRunId);
+        mkdirSync(controlDir, { recursive: true });
+        writeFileSync(
+          join(controlDir, 'control.json'),
+          `${JSON.stringify(
+            {
+              action: 'stop',
+              requested_at: new Date().toISOString(),
+              source: 'ui',
+            },
+            null,
+            2,
+          )}\n`,
+          'utf8',
+        );
       } catch {
         /* non-fatal */
       }
@@ -328,7 +375,7 @@ export class ProcessManager {
       process.kill(pid, 'SIGTERM');
     } catch (e) {
       try {
-        unlinkSync(pidPath);
+        if (foundPidPath) unlinkSync(foundPidPath);
       } catch {
         /* ignore */
       }
@@ -352,14 +399,31 @@ export class ProcessManager {
     }, 10000);
     watchdog.unref();
 
-    // Clean up PID file
-    try {
-      unlinkSync(pidPath);
-    } catch {
-      /* ignore */
+    // Clean up PID files (per-run + project-level)
+    for (const pidPath of candidates) {
+      try {
+        unlinkSync(pidPath);
+      } catch {
+        /* ignore */
+      }
     }
 
     return { pid, stopped: true };
+  }
+
+  /**
+   * Read the active_run file to get the current run ID.
+   * @returns {string|null}
+   */
+  _readActiveRunId() {
+    const activeRunPath = join(this.worcaDir, 'active_run');
+    if (!existsSync(activeRunPath)) return null;
+    try {
+      const id = readFileSync(activeRunPath, 'utf8').trim();
+      return id || null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -512,9 +576,9 @@ export class ProcessManager {
 // These delegate to a one-off ProcessManager instance so existing callers
 // (app.js, ws.js, tests) continue to work without changes during Phase 0.
 
-/** @param {string} worcaDir */
-export function getRunningPid(worcaDir) {
-  return new ProcessManager({ worcaDir }).getRunningPid();
+/** @param {string} worcaDir @param {string} [runId] */
+export function getRunningPid(worcaDir, runId) {
+  return new ProcessManager({ worcaDir }).getRunningPid(runId);
 }
 
 /** @param {string} worcaDir */
@@ -530,9 +594,9 @@ export async function startPipeline(worcaDir, opts = {}) {
   }).startPipeline(opts);
 }
 
-/** @param {string} worcaDir */
-export function stopPipeline(worcaDir) {
-  return new ProcessManager({ worcaDir }).stopPipeline();
+/** @param {string} worcaDir @param {string} [runId] */
+export function stopPipeline(worcaDir, runId) {
+  return new ProcessManager({ worcaDir }).stopPipeline(runId);
 }
 
 /** @param {string} worcaDir @param {string} runId */
