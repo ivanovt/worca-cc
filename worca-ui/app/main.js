@@ -972,18 +972,6 @@ async function handleConfirmStop() {
   }
 }
 
-async function handleCancelRun(runId) {
-  try {
-    const res = await fetch(projectUrl(`/runs/${runId}/cancel`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) showActionError(data.error || 'Failed to cancel run');
-  } catch (err) {
-    showActionError(err?.message || 'Failed to cancel run');
-  }
-}
-
 function handleResumePipeline() {
   pipelineAction = 'resuming';
   actionError = null;
@@ -1480,7 +1468,8 @@ function contentHeaderView() {
         (r) => r.id === route.runId,
       );
       const hs = historyRun?.pipeline_status;
-      const pending = _controlPending?.runId === route.runId ? _controlPending.action : null;
+      const pending =
+        _controlPending?.runId === route.runId ? _controlPending.action : null;
       if (pending === 'stop') {
         actionButton = html`
           <button class="action-btn action-btn--danger" disabled>
