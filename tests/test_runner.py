@@ -1930,6 +1930,88 @@ def test_milestone_set_event_emitted_on_plan_file(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# T11b: plan_approval milestone gate
+# ---------------------------------------------------------------------------
+
+
+def test_plan_approval_false_auto_approves(tmp_path):
+    """When milestones.plan_approval is false, approved=false from planner is overridden."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    settings_path = _make_minimal_settings(tmp_path, extra={
+        "milestones": {"plan_approval": False},
+    })
+
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+
+    wr = WorkRequest(source_type="prompt", title="Auto-approve test")
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
+        from worca.orchestrator.stages import Stage
+        if stage == Stage.PLAN:
+            return {
+                "approved": False,  # planner says not approved
+                "approach": "test approach",
+                "tasks_outline": [],
+                "branch_name": "test-branch",
+            }, {"type": "result"}
+        return {}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner.create_branch"):
+            with patch("worca.orchestrator.runner._write_pid"):
+                with patch("worca.orchestrator.runner._remove_pid"):
+                    result = run_pipeline(
+                        wr,
+                        settings_path=settings_path,
+                        status_path=status_path,
+                    )
+
+    # Pipeline should complete (not fail on plan rejection)
+    assert result["pipeline_status"] == "completed"
+    assert result["milestones"]["plan_approved"] is True
+
+
+def test_plan_approval_true_rejects_unapproved(tmp_path):
+    """When milestones.plan_approval is true (default), approved=false stops pipeline."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    settings_path = _make_minimal_settings(tmp_path, extra={
+        "milestones": {"plan_approval": True},
+    })
+
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+
+    wr = WorkRequest(source_type="prompt", title="Reject test")
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
+        from worca.orchestrator.stages import Stage
+        if stage == Stage.PLAN:
+            return {
+                "approved": False,
+                "approach": "test approach",
+                "tasks_outline": [],
+                "branch_name": "test-branch",
+            }, {"type": "result"}
+        return {}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner.create_branch"):
+            with patch("worca.orchestrator.runner._write_pid"):
+                with patch("worca.orchestrator.runner._remove_pid"):
+                    with pytest.raises(PipelineError, match="Plan not approved"):
+                        run_pipeline(
+                            wr,
+                            settings_path=settings_path,
+                            status_path=status_path,
+                        )
+
+
+# ---------------------------------------------------------------------------
 # T12: Circuit breaker events
 # ---------------------------------------------------------------------------
 
