@@ -52,7 +52,9 @@ describe('statusVariant', () => {
   });
 
   it('returns warning when issue has blocked_by entries, overriding status', () => {
-    expect(statusVariant('in_progress', { blocked_by: ['dep1'] })).toBe('warning');
+    expect(statusVariant('in_progress', { blocked_by: ['dep1'] })).toBe(
+      'warning',
+    );
     expect(statusVariant('open', { blocked_by: ['dep1'] })).toBe('warning');
   });
 
@@ -401,27 +403,31 @@ describe('beadChipTooltip', () => {
 
 describe('beadsKanbanView - card in_progress modifier class', () => {
   it('applies beads-kanban-card--in_progress to in_progress issues', () => {
-    const issues = [{
-      id: 'worca-cc-ip1',
-      title: 'In Progress Issue',
-      status: 'in_progress',
-      priority: 2,
-      depends_on: [],
-      blocked_by: [],
-    }];
+    const issues = [
+      {
+        id: 'worca-cc-ip1',
+        title: 'In Progress Issue',
+        status: 'in_progress',
+        priority: 2,
+        depends_on: [],
+        blocked_by: [],
+      },
+    ];
     const out = renderToString(beadsPanelView(issues, baseOptions));
     expect(out).toContain('beads-kanban-card--in_progress');
   });
 
   it('does not apply beads-kanban-card--in_progress to open issues', () => {
-    const issues = [{
-      id: 'worca-cc-op1',
-      title: 'Open Issue',
-      status: 'open',
-      priority: 2,
-      depends_on: [],
-      blocked_by: [],
-    }];
+    const issues = [
+      {
+        id: 'worca-cc-op1',
+        title: 'Open Issue',
+        status: 'open',
+        priority: 2,
+        depends_on: [],
+        blocked_by: [],
+      },
+    ];
     const out = renderToString(beadsPanelView(issues, baseOptions));
     expect(out).not.toContain('beads-kanban-card--in_progress');
   });
@@ -458,8 +464,20 @@ describe('beadTooltipContent - blocked state', () => {
 });
 
 describe('beadsDependencyGraph - edge CSS classes', () => {
-  const dep = { id: 'dep1', title: 'Dep', status: 'open', depends_on: [], blocked_by: [] };
-  const task = { id: 'task1', title: 'Task', status: 'open', depends_on: ['dep1'], blocked_by: ['dep1'] };
+  const dep = {
+    id: 'dep1',
+    title: 'Dep',
+    status: 'open',
+    depends_on: [],
+    blocked_by: [],
+  };
+  const task = {
+    id: 'task1',
+    title: 'Task',
+    status: 'open',
+    depends_on: ['dep1'],
+    blocked_by: ['dep1'],
+  };
 
   it('assigns beads-graph-edge--blocking class for unsatisfied (non-closed) dependencies', () => {
     const { svg } = beadsDependencyGraph([dep, task]);

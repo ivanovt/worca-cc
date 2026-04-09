@@ -20,7 +20,7 @@ export function priorityVariant(priority) {
 }
 
 export function statusVariant(status, issue = null) {
-  if (issue && issue.blocked_by && issue.blocked_by.length > 0) return 'warning';
+  if (issue?.blocked_by && issue.blocked_by.length > 0) return 'warning';
   if (status === 'open') return 'success';
   if (status === 'in_progress') return 'primary';
   if (status === 'closed') return 'neutral';
