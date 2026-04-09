@@ -200,13 +200,56 @@ class TestNormalizePrompt:
         assert wr.title == "Add auth"
         assert wr.source_ref is None
 
-    def test_prompt_has_no_description(self):
+    def test_prompt_description_matches_text(self):
         wr = normalize_prompt("Refactor logging")
-        assert wr.description == ""
+        assert wr.description == "Refactor logging"
 
     def test_prompt_default_priority(self):
         wr = normalize_prompt("task")
         assert wr.priority == 2
+
+    def test_short_prompt_passthrough(self):
+        """Short prompt (<=60 chars) is used as-is for title and description."""
+        short = "Fix the login bug"
+        wr = normalize_prompt(short)
+        assert wr.title == short
+        assert wr.description == short
+
+    def test_threshold_boundary(self):
+        """Exactly 60-char prompt passes through unchanged — no LLM call."""
+        boundary = "x" * 60
+        wr = normalize_prompt(boundary)
+        assert wr.title == boundary
+        assert wr.description == boundary
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_long_prompt_llm_success(self, mock_smart_title):
+        """Prompt >60 chars calls generate_smart_title; title=result, description=full text."""
+        long_prompt = "Implement a comprehensive user authentication system with OAuth"
+        assert len(long_prompt) > 60
+        mock_smart_title.return_value = "Implement user authentication system"
+        wr = normalize_prompt(long_prompt)
+        assert wr.title == "Implement user authentication system"
+        assert wr.description == long_prompt
+        mock_smart_title.assert_called_once()
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_long_prompt_llm_failure(self, mock_smart_title):
+        """Prompt >60 chars with LLM failure falls back to first 60 chars + ellipsis."""
+        long_prompt = "Implement a comprehensive user authentication system with OAuth and SSO support"
+        assert len(long_prompt) > 60
+        mock_smart_title.return_value = ""
+        wr = normalize_prompt(long_prompt)
+        assert wr.title == long_prompt[:60] + "…"
+        assert wr.description == long_prompt
+
+    @patch("worca.orchestrator.work_request.generate_smart_title")
+    def test_description_preservation(self, mock_smart_title):
+        """Description always equals the full original prompt text regardless of length."""
+        long_prompt = "A" * 120
+        mock_smart_title.return_value = "Some short title"
+        wr = normalize_prompt(long_prompt)
+        assert wr.description == long_prompt
 
 
 # --- normalize_spec_file ---

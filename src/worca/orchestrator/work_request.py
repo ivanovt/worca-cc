@@ -15,6 +15,8 @@ _PLAN_LINK_RE = re.compile(r"\[.*?\]\([^)]*?(docs/plans/[^\)]+\.md)\)")
 _GH_ISSUE_URL_RE = re.compile(r"https?://github\.com/[^/]+/[^/]+/issues/(\d+)$")
 
 
+_PROMPT_TITLE_THRESHOLD = 60
+
 _SMART_TITLE_PROMPT = (
     "Extract a concise 5-8 word title summarizing this content. "
     "Return ONLY the title, no quotes, no punctuation at the end, no explanation."
@@ -102,8 +104,16 @@ def normalize_plan_file(path: str, content: str = None) -> WorkRequest:
 
 
 def normalize_prompt(text: str) -> WorkRequest:
-    """Create a WorkRequest from a plain text prompt."""
-    return WorkRequest(source_type="prompt", title=text)
+    """Create a WorkRequest from a plain text prompt.
+
+    Short prompts (<=60 chars) are used as-is. Long prompts call
+    generate_smart_title(); falls back to first 60 chars + ellipsis.
+    """
+    if len(text) <= _PROMPT_TITLE_THRESHOLD:
+        title = text
+    else:
+        title = generate_smart_title(text, source_hint="prompt") or text[:_PROMPT_TITLE_THRESHOLD] + "…"
+    return WorkRequest(source_type="prompt", title=title, description=text)
 
 
 def normalize_spec_file(path: str) -> WorkRequest:
