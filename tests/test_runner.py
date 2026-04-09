@@ -3209,7 +3209,8 @@ def test_run_pipeline_reads_agent_overrides_dir_from_settings(tmp_path, monkeypa
 
     captured_calls = []
 
-    def fake_render(run_dir, template_vars, overrides_dir=".claude/agents"):
+    def fake_render(run_dir, template_vars, overrides_dir=".claude/agents",
+                    template_agents_dir=None):
         captured_calls.append(overrides_dir)
 
     def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,

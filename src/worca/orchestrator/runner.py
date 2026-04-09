@@ -248,9 +248,11 @@ def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
 
 
 def _render_agent_templates(run_dir: str, template_vars: dict,
-                            overrides_dir: str = ".claude/agents") -> None:
+                            overrides_dir: str = ".claude/agents",
+                            template_agents_dir: str | None = None) -> None:
     """Read agent .md templates from .claude/worca/agents/core/, replace placeholders,
-    apply project overlays from overrides_dir, write results to {run_dir}/agents/."""
+    apply project overlays from overrides_dir and template overlays from
+    template_agents_dir, write results to {run_dir}/agents/."""
     src_dir = ".claude/worca/agents/core"
     dst_dir = os.path.join(run_dir, "agents")
     os.makedirs(dst_dir, exist_ok=True)
@@ -267,7 +269,8 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
         for key, value in template_vars.items():
             content = content.replace(f"{{{key}}}", str(value))
         agent_name = filename[:-3]  # strip .md
-        content = resolver.resolve(agent_name, content)
+        content = resolver.resolve(agent_name, content,
+                                   template_agents_dir=template_agents_dir)
         with open(os.path.join(dst_dir, filename), "w") as f:
             f.write(content)
 
@@ -1278,15 +1281,18 @@ def run_pipeline(
             # Render agent templates with plan_file and other vars
             if run_dir:
                 _render_settings = load_settings(settings_path)
-                overrides_dir = _render_settings.get("worca", {}).get(
+                _render_worca = _render_settings.get("worca", {})
+                overrides_dir = _render_worca.get(
                     "agent_overrides_dir", ".claude/agents"
                 )
+                template_agents_dir = _render_worca.get("_template_agents_dir")
                 _render_agent_templates(run_dir, {
                     "plan_file": status["plan_file"],
                     "run_id": status.get("run_id", ""),
                     "branch": branch_name,
                     "title": work_request.title,
-                }, overrides_dir=overrides_dir)
+                }, overrides_dir=overrides_dir,
+                   template_agents_dir=template_agents_dir)
 
             save_status(status, actual_status_path)
 
