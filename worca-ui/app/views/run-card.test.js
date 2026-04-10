@@ -327,3 +327,89 @@ describe('runCardView - archive/unarchive buttons', () => {
     expect(output).not.toContain('Unarchive');
   });
 });
+
+describe('runCardView - duration for active run with completed stages', () => {
+  it('shows a duration greater than the last stage end when active run has been running longer', () => {
+    const startedAt = '2026-04-10T10:00:00Z';
+    const stageEnd = '2026-04-10T10:05:43Z'; // 5m 43s into run
+    // Run is active and started 35 minutes ago (stage only completed 5m in)
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: startedAt,
+      stages: {
+        coordinate: { status: 'completed', completed_at: stageEnd },
+      },
+    };
+    const output = renderToString(runCardView(run));
+    // Duration should NOT be "5m 43s" (the last stage end) but rather actual elapsed time
+    expect(output).not.toContain('5m 43s');
+  });
+
+  it('uses elapsed-to-now for duration when run is active regardless of stage completion', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(), // 10 minutes ago
+      stages: {
+        coordinate: {
+          status: 'completed',
+          completed_at: new Date(Date.now() - 8 * 60 * 1000).toISOString(), // completed 8 min ago
+        },
+      },
+    };
+    const output = renderToString(runCardView(run));
+    // Should contain "10m" not "2m" (duration from start to now, not from start to stage-end)
+    expect(output).toContain('10m');
+  });
+});
+
+describe('runCardView - Finished timestamp visibility', () => {
+  it('shows elapsed time from started_at to now for active run without completed_at', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 minutes ago
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('5m');
+  });
+
+  it('does not show a Finished timestamp for active runs', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: new Date(Date.now() - 3 * 60 * 1000).toISOString(),
+    };
+    const output = renderToString(runCardView(run));
+    // endTime is null for active runs — formatTimestamp(null) returns 'N/A', not a real date
+    const finishedMatch = output.match(
+      /Finished:<\/span>\s*<span[^>]*>([^<]+)<\/span>/,
+    );
+    expect(finishedMatch).not.toBeNull();
+    expect(finishedMatch[1].trim()).toBe('N/A');
+  });
+
+  it('shows Finished timestamp for completed runs', () => {
+    const completedAt = '2026-04-10T12:30:00Z';
+    const run = {
+      id: '1',
+      pipeline_status: 'completed',
+      active: false,
+      started_at: '2026-04-10T12:00:00Z',
+      completed_at: completedAt,
+    };
+    const output = renderToString(runCardView(run));
+    // formatTimestamp returns a formatted date string (not 'N/A') for a real completed_at
+    const finishedMatch = output.match(
+      /Finished:<\/span>\s*<span[^>]*>([^<]+)<\/span>/,
+    );
+    expect(finishedMatch).not.toBeNull();
+    expect(finishedMatch[1].trim()).not.toBe('N/A');
+    expect(finishedMatch[1].trim()).toContain('2026');
+  });
+});

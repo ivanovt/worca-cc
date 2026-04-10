@@ -80,12 +80,13 @@ export function runCardView(
     run.pipeline_status ||
     (isActive ? 'running' : run.stage === 'error' ? 'failed' : 'completed');
   const tooltip = _statusTooltip(run, overallStatus);
-  const endTime = run.completed_at || _lastStageEnd(run.stages);
+  const endTime =
+    run.completed_at || (isActive ? null : _lastStageEnd(run.stages));
   const duration =
-    run.started_at && endTime
-      ? formatDuration(elapsed(run.started_at, endTime))
-      : run.started_at && isActive
-        ? formatDuration(elapsed(run.started_at, null))
+    run.started_at && isActive
+      ? formatDuration(elapsed(run.started_at, null))
+      : run.started_at && endTime
+        ? formatDuration(elapsed(run.started_at, endTime))
         : 'N/A';
   const branch = run.branch || run.work_request?.branch || '';
   const stages = run.stages ? _sortedEntries(run.stages) : [];

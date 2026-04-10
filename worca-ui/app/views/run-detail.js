@@ -358,10 +358,7 @@ function _stageWallMs(stage) {
 }
 
 function timingStripView(startedAt, completedAt, extra = nothing) {
-  const dur =
-    startedAt && completedAt
-      ? formatDuration(elapsed(startedAt, completedAt))
-      : '';
+  const dur = startedAt ? formatDuration(elapsed(startedAt, completedAt)) : '';
   return html`
     <div class="timing-strip">
       ${startedAt ? html`<span class="timing-strip-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(startedAt)}</span></span>` : nothing}
@@ -535,9 +532,7 @@ export function runDetailView(run, settings = {}, options = {}) {
   const pipelineTemplate = formatPipelineTemplate(run.pipeline_template);
   const pr = run.pr_url || null;
   const endTime =
-    run.completed_at ||
-    _lastStageEnd(run.stages) ||
-    (run.active ? new Date().toISOString() : null);
+    run.completed_at || (run.active ? null : _lastStageEnd(run.stages));
   const rawStages = run.stages || {};
   // Ensure preflight and learn exist (may be absent in old runs)
   let stages = rawStages;
@@ -587,8 +582,9 @@ export function runDetailView(run, settings = {}, options = {}) {
             (sum, it) => sum + (it.turns || 0),
             0,
           );
-          const pipelineWallMs =
-            run.started_at && endTime ? elapsed(run.started_at, endTime) : 0;
+          const pipelineWallMs = run.started_at
+            ? elapsed(run.started_at, endTime || null)
+            : 0;
           return html`
             ${
               pipelineCost > 0 || pipelineTurns > 0
