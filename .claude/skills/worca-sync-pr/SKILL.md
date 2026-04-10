@@ -1,6 +1,6 @@
 ---
 name: worca-sync-pr
-description: Sync a GitHub PR into a target worca-cc repo clone, rebuild worca-ui, upgrade the runtime, and start a project-scoped UI. Use when the user says "sync pr", "pull pr", "worca-sync-pr", or wants to apply a pipeline-created PR to a local worca-cc clone for review.
+description: Sync a GitHub PR into a target worca-cc repo clone, rebuild worca-ui, upgrade the runtime, and start a project-scoped UI.
 ---
 
 # Sync PR to Target Repo
