@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runBeadsSectionView } from './run-detail.js';
+import { runBeadsSectionView, runDetailView } from './run-detail.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -80,5 +80,55 @@ describe('runBeadsSectionView - blocked state', () => {
     // Only "open" badge text, no "blocked" badge text
     const blockedCount = (out.match(/\bblocked\b/g) || []).length;
     expect(blockedCount).toBe(0);
+  });
+});
+
+describe('runDetailView - endTime for active runs', () => {
+  const startedAt = '2026-04-10T10:00:00Z';
+  const stageEnd = '2026-04-10T10:05:43Z';
+
+  function render(template) {
+    return renderToString(template?.overview ?? template);
+  }
+
+  it('does not show Finished label for an active run even if a stage has completed', () => {
+    const run = {
+      id: 'r1',
+      active: true,
+      started_at: startedAt,
+      stages: {
+        coordinate: { status: 'completed', completed_at: stageEnd },
+      },
+    };
+    const out = render(runDetailView(run));
+    expect(out).not.toContain('Finished:');
+  });
+
+  it('shows Finished label for a completed run', () => {
+    const run = {
+      id: 'r2',
+      active: false,
+      started_at: startedAt,
+      completed_at: '2026-04-10T11:00:00Z',
+      stages: {
+        coordinate: { status: 'completed', completed_at: stageEnd },
+      },
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Finished:');
+  });
+
+  it('does not show Finished for an inactive run with no completed_at but a finished stage', () => {
+    // Inactive run with no completed_at should still show stage-based end time
+    const run = {
+      id: 'r3',
+      active: false,
+      started_at: startedAt,
+      stages: {
+        coordinate: { status: 'completed', completed_at: stageEnd },
+      },
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Finished:');
   });
 });
