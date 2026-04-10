@@ -90,6 +90,50 @@ npx vitest run worca-ui/server/
 cd worca-ui && npx playwright test --workers=1
 ```
 
+## Claude Code Skills
+
+worca-cc ships with slash-command skills that automate common contributor workflows. Run these inside a Claude Code session (`claude` in your terminal).
+
+### Development & Testing
+
+| Skill | What it does |
+|---|---|
+| `/worca-install <path>` | First-time install of the pipeline into a target project. Copies runtime files, merges settings, installs skills, and registers the project in worca-ui. |
+| `/worca-sync [path]` | Update an existing project with the latest pipeline files from your local worca-cc clone. Re-runs `worca init --upgrade`, syncs skills, and ensures project registration. Path is optional if `worca.source_repo` is already set. |
+| `/worca-sync-commit <target> <ref>` | Check out a specific commit or branch in a target worca-cc clone, rebuild worca-ui, upgrade the Python runtime, and start a project-scoped UI. Useful for reviewing pipeline output at a particular point in history. Add `--clean` to discard uncommitted changes first. |
+| `/worca-sync-pr <target> <pr>` | Same as above but checks out a GitHub PR by number or URL. Great for reviewing pipeline-generated PRs in an isolated clone. |
+| `/worca-agent-override [agent] [instruction]` | Create or update per-project agent prompt overrides without modifying core templates. Supports append and replace modes with governance protection. |
+
+**Typical dev-test cycle with skills:**
+
+```bash
+# 1. Make changes in worca-cc
+cd ~/dev/worca-cc
+# ... edit src/worca/, worca-ui/app/, etc.
+
+# 2. Sync to your test project (inside a claude session)
+cd ~/dev/my-test-project && claude
+/worca-sync
+
+# 3. Or review a PR's pipeline output in a separate clone
+cd ~/dev/worca-cc && claude
+/worca-sync-pr ~/dev/worca-cc-review 43
+
+# 4. Or jump to a specific commit to compare behavior
+/worca-sync-commit ~/dev/worca-cc-review abc1234
+```
+
+### Releasing
+
+| Skill | What it does |
+|---|---|
+| `/worca-rc` | Bump RC versions for both packages, commit, tag, and push. Versions are auto-detected — no arguments needed. CI handles publishing. |
+| `/worca-release --version:micro` | Create a stable release (patch bump) for all packages. Strips any RC suffix, bumps, commits, tags, and pushes. |
+| `/worca-release --version:minor` | Same but with a minor version bump. |
+| `/worca-release --version:micro --package:worca-cc` | Release only the Python package. Use `--package:worca-ui` for npm only. |
+
+Run `/worca-release` with no arguments to see current versions and recent tags.
+
 ## Code Style
 
 - Python: enforced by [Ruff](https://docs.astral.sh/ruff/) (`ruff check .`)
