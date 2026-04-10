@@ -1,9 +1,11 @@
 # W-005: Agent Memory & Context Sharing
 
 
-**Goal:** Give every pipeline stage a durable, human-readable view of accumulated decisions, rationale, failures, and artifacts from all prior stages. Each agent reads a shared context file at startup and appends its own summary on completion. Loop-backs (test failure → implement retry, review changes → implement retry) automatically inject the failure context so the retrying agent understands exactly what went wrong and why.
+**Goal:** Give every pipeline stage a durable, human-readable view of accumulated decisions, rationale, failures, and artifacts from all prior stages. Loop-backs (test failure → implement retry, review changes → implement retry) automatically inject the failure context so the retrying agent understands exactly what went wrong and why. Crucially, the context survives pause/resume — a resumed pipeline picks up the full history without loss.
 
-**Architecture:** A new `ContextManager` class owns one Markdown file per run at `.worca/runs/{run_id}/context.md`. The `runner.py` creates the file at run start, passes a `ContextManager` instance through the pipeline loop, calls `append_stage_entry()` after each stage completes, and injects `build_prompt_section()` into every `PromptBuilder` stage method. The context file is plain Markdown so humans can read it in any editor and agents can read it as part of their tool calls. `runner.py` also adds the context file path into the template variables rendered into agent `.md` files, so agent system prompts can reference it directly.
+**Architecture:** A new `ContextManager` class owns one Markdown file per run at `.worca/runs/{run_id}/context.md`. This file is the **primary and sole vehicle** for accumulated cross-stage context. The `runner.py` creates the file at run start, passes a `ContextManager` instance through the pipeline loop, and calls `append_stage_entry()` after each stage completes. `PromptBuilder` reads the file via `ContextManager.build_prompt_section()` and injects a `## Shared Run Context` section into every agent prompt. On resume, `PromptBuilder` starts with an empty `_context` dict, but the context file on disk preserves the full run history — this is the key advantage over in-memory accumulation.
+
+**Design decision — file as primary context source:** The existing `prompt_builder._context` dict accumulates stage results in memory, but this state is lost on pause/resume (a fresh `PromptBuilder` is created). Rather than serializing the dict to disk (reinventing the file with worse readability) or reconstructing from `status.json` (which lacks rationale, decisions, and failure details), the context file serves as both the persistence layer and the richer accumulator. Agents receive context exclusively via `PromptBuilder`'s prompt injection — they do not read the file directly via tool calls. The `{context_file}` template variable in agent `.md` files is removed; agents rely on the `## Shared Run Context` section that `PromptBuilder` injects into their prompts.
 
 **Tech Stack:** Python stdlib only (no new dependencies). Markdown for the context file format. Touches `runner.py`, `prompt_builder.py`, and all five agent `.md` files.
 
@@ -15,16 +17,14 @@
 
 ### In scope
 
-- `ContextManager` class in `.claude/worca/orchestrator/context_manager.py`
+- `ContextManager` class in `src/worca/orchestrator/context_manager.py`
 - Context file format: `.worca/runs/{run_id}/context.md` (one file per run)
-- Runner creates the file on fresh start, rehydrates it on resume
+- Runner creates the file on fresh start; on resume, `ContextManager` opens the existing file and `PromptBuilder` reads accumulated history from it — this is the primary mechanism for restoring cross-stage context after pause/resume
 - Each pipeline stage appends a structured entry on completion
 - Loop-back stages (implement retry on test failure, implement retry on review changes) inject the failure/feedback entry into the prompt
-- `PromptBuilder` gains a `set_context_file()` method and injects a `## Shared Context` section into every stage prompt
-- All five agent `.md` templates gain a `{context_file}` placeholder and a read instruction
+- `PromptBuilder` gains a `set_context_manager()` method and injects a `## Shared Run Context` section into every stage prompt by reading the file via `ContextManager.build_prompt_section()`
 - Size limit: context file capped at 16,000 characters; older entries are summarized and compacted when the cap is reached
-- `_render_agent_templates` passes `context_file` as a template variable alongside the existing `plan_file`, `run_id`, `branch`, `title`
-- Unit tests for `ContextManager`: create, append, inject, compact
+- Unit tests for `ContextManager`: create, append, inject, compact, resume
 
 ### Out of scope
 
@@ -246,21 +246,7 @@ else:
     ctx.create(...)
 ```
 
-### 4.2 Template variable injection
-
-Pass `context_file` (the relative path as seen from the project root) to `_render_agent_templates`:
-
-```python
-_render_agent_templates(run_dir, {
-    "plan_file": status["plan_file"],
-    "run_id": status.get("run_id", ""),
-    "branch": branch_name,
-    "title": work_request.title,
-    "context_file": os.path.relpath(context_file),   # new
-})
-```
-
-### 4.3 PromptBuilder wiring
+### 4.2 PromptBuilder wiring
 
 After creating `prompt_builder`, call:
 
@@ -388,11 +374,9 @@ ctx.append_stage_entry(
 
 ### 4.5 Loop-back context (the critical path)
 
-The existing `runner.py` already calls `prompt_builder.update_context("test_failures", ...)` before looping back to IMPLEMENT. With W-005, the `test` section has already been appended to `context.md` by the time the implement retry runs. The `PromptBuilder._build_implement()` will inject the full `## Shared Context` section (which includes the test failure section verbatim) in addition to the existing failure list it already formats from `_context["test_failures"]`.
+The existing `runner.py` already calls `prompt_builder.update_context("test_failures", ...)` before looping back to IMPLEMENT. With W-005, the `test` section has already been appended to `context.md` by the time the implement retry runs. `PromptBuilder._build_implement()` injects the `## Shared Run Context` section (which includes the test failure section verbatim) — the context file is the **primary source** for this information.
 
-This means the retrying implementer receives:
-1. The structured failure list (from `PromptBuilder`'s existing iteration logic) — fast to scan.
-2. The full context file section for the failed test stage — includes proof artifact paths and the full error message as the tester recorded it.
+The existing `_context["test_failures"]` formatting in `PromptBuilder` continues to work as before for backward compatibility, but the richer context file entry (which includes proof artifact paths, coverage data, and the full error messages as the tester recorded them) provides the complete picture. On resume after a pause, the `_context` dict is empty but the context file preserves the full failure history — this is where the file-based approach pays off.
 
 No changes to the loop-back trigger logic in `runner.py` are required beyond adding the `ctx.append_stage_entry()` calls.
 
@@ -453,23 +437,18 @@ For `_build_plan` specifically, the context file will be empty on the first run 
 
 ## 6. Agent Prompt Template Changes
 
-All five agent `.md` files in `.claude/agents/core/` receive two additions:
+Agents receive context exclusively through `PromptBuilder`'s `## Shared Run Context` prompt injection — they do **not** read the context file directly via tool calls. This avoids the dual-channel problem (stale file reads vs. fresh prompt content) and keeps agent templates simple.
 
-1. A `{context_file}` placeholder reference so the rendered template path is accurate.
-2. A read instruction in the Process section.
+No `{context_file}` template variable is added. No changes to `_render_agent_templates` are needed.
+
+The five agent `.md` files in `src/worca/agents/core/` receive a single addition each: a note in their **Context** section explaining that shared run context is injected into their prompt automatically.
 
 ### 6.1 planner.md
 
 Add to the **Context** section:
 
 ```markdown
-The shared run context file is at `{context_file}`. Read it before starting — it contains prior stage decisions and rationale if this is a restart.
-```
-
-Add as step 2a in **Process** (after "Read and understand the work request"):
-
-```
-2a. Read `{context_file}` if it exists — check for prior planning attempts or guardian feedback.
+If this is a restart (e.g., after a guardian rejection), your prompt includes a `## Shared Run Context` section with prior stage decisions, rationale, and feedback. Use it to understand what was tried before and why it was rejected.
 ```
 
 ### 6.2 coordinator.md
@@ -477,13 +456,7 @@ Add as step 2a in **Process** (after "Read and understand the work request"):
 Add to the **Context** section:
 
 ```markdown
-The shared run context file is at `{context_file}`. It contains the planner's approach and key decisions. Read it before decomposing.
-```
-
-Add as step 1a in **Process** (after "Read `{plan_file}`"):
-
-```
-1a. Read `{context_file}` — confirms the approach and any architectural constraints the planner recorded.
+Your prompt includes a `## Shared Run Context` section with the planner's approach and key decisions. Use it to inform your task decomposition.
 ```
 
 ### 6.3 implementer.md
@@ -491,13 +464,7 @@ Add as step 1a in **Process** (after "Read `{plan_file}`"):
 Add to the **Context** section:
 
 ```markdown
-The shared run context file is at `{context_file}`. On retry iterations, it contains test failure details and review feedback from prior stages.
-```
-
-Add as step 3a in **Process** (after "Read the task description"):
-
-```
-3a. Read `{context_file}` — if this is a retry, failures and review issues are recorded there. Use them to guide your fix.
+Your prompt includes a `## Shared Run Context` section. On retry iterations, this contains test failure details and review feedback from prior stages — use them to guide your fix.
 ```
 
 ### 6.4 tester.md
@@ -505,13 +472,7 @@ Add as step 3a in **Process** (after "Read the task description"):
 Add to the **Context** section:
 
 ```markdown
-The shared run context file is at `{context_file}`. It records what the implementer changed. Read it to understand which files and tests to focus on.
-```
-
-Add as step 1a in **Process** (after discovering the test command):
-
-```
-1a. Read `{context_file}` — note the files changed by the implementer and any prior test failure patterns.
+Your prompt includes a `## Shared Run Context` section recording what the implementer changed. Use it to understand which files and tests to focus on.
 ```
 
 ### 6.5 guardian.md
@@ -519,13 +480,7 @@ Add as step 1a in **Process** (after discovering the test command):
 Add to the **Context** section:
 
 ```markdown
-The shared run context file is at `{context_file}`. It contains the full pipeline history: plan decisions, implementation details, and test results.
-```
-
-Add as step 1a in **Process** (before verifying proof status):
-
-```
-1a. Read `{context_file}` — review the full pipeline history before forming a judgment.
+Your prompt includes a `## Shared Run Context` section with the full pipeline history: plan decisions, implementation details, and test results. Review it before forming a judgment.
 ```
 
 ---
@@ -539,7 +494,7 @@ Tasks are ordered so that each step is independently testable and no task depend
 ### Task 1: Create `context_manager.py`
 
 **File:**
-- Create: `.claude/worca/orchestrator/context_manager.py`
+- Create: `src/worca/orchestrator/context_manager.py`
 
 Implement the `ContextManager` class with the full public API described in Section 3.
 
@@ -676,10 +631,6 @@ if not resume_stage:
 # else: resume — context.md already exists, ContextManager will append
 ```
 
-**Changes — template variables:**
-
-Add `"context_file": os.path.relpath(context_file)` to the `_render_agent_templates` call dict.
-
 **Changes — PromptBuilder wiring:**
 
 After constructing `prompt_builder`, add:
@@ -714,27 +665,15 @@ continue
 ### Task 6: Update agent `.md` templates
 
 **Files:**
-- Modify: `.claude/agents/core/planner.md`
-- Modify: `.claude/agents/core/coordinator.md`
-- Modify: `.claude/agents/core/implementer.md`
-- Modify: `.claude/agents/core/tester.md`
-- Modify: `.claude/agents/core/guardian.md`
+- Modify: `src/worca/agents/core/planner.md`
+- Modify: `src/worca/agents/core/coordinator.md`
+- Modify: `src/worca/agents/core/implementer.md`
+- Modify: `src/worca/agents/core/tester.md`
+- Modify: `src/worca/agents/core/guardian.md`
 
-Apply the additions described in Section 6 to each file. The placeholder `{context_file}` will be replaced at runtime by `_render_agent_templates()` before the agent is invoked.
+Apply the additions described in Section 6 to each file. Agents receive context exclusively through `PromptBuilder`'s `## Shared Run Context` prompt injection — no `{context_file}` template variable, no tool-call-based reading. Each agent's **Context** section gets a note explaining what the injected context contains and when it is present.
 
-**Exact addition to each file's Context section** (adapt wording per agent as shown in Section 6):
-
-```markdown
-The shared run context file is at `{context_file}`. [Agent-specific description of what it contains and when to read it.]
-```
-
-**Exact addition to each file's Process section** (insert at the appropriate step):
-
-```
-{N}. Read `{context_file}` — [agent-specific guidance on what to look for].
-```
-
-Keep the process step ordering logical. For the planner, reading context comes before exploring the codebase. For the implementer, it comes after claiming the bead but before writing code. For the tester and guardian, it is the first step.
+No changes to agent **Process** sections are needed — agents do not need to perform any action to receive the context (it is injected into their prompt automatically).
 
 ---
 
@@ -767,7 +706,7 @@ This test runs a trimmed mock pipeline through `run_pipeline()` with all agents 
 
 | File | Purpose |
 |------|---------|
-| `.claude/worca/orchestrator/context_manager.py` | `ContextManager` class: create, append, compact, inject |
+| `src/worca/orchestrator/context_manager.py` | `ContextManager` class: create, append, compact, read |
 | `tests/test_context_manager.py` | Unit tests for `ContextManager` |
 | `tests/test_runner_context.py` | Integration test: full pipeline with context file verification |
 
@@ -775,13 +714,13 @@ This test runs a trimmed mock pipeline through `run_pipeline()` with all agents 
 
 | File | Changes |
 |------|---------|
-| `.claude/worca/orchestrator/prompt_builder.py` | Add `set_context_manager()`, `_context_section()`, inject context in all 6 `_build_*` methods |
-| `.claude/worca/orchestrator/runner.py` | Import `ContextManager`, create/resume context file, pass to `PromptBuilder`, append entries after each stage, add `context_file` to template vars |
-| `.claude/agents/core/planner.md` | Add `{context_file}` reference and read instruction |
-| `.claude/agents/core/coordinator.md` | Add `{context_file}` reference and read instruction |
-| `.claude/agents/core/implementer.md` | Add `{context_file}` reference and read instruction |
-| `.claude/agents/core/tester.md` | Add `{context_file}` reference and read instruction |
-| `.claude/agents/core/guardian.md` | Add `{context_file}` reference and read instruction |
+| `src/worca/orchestrator/prompt_builder.py` | Add `set_context_manager()`, `_context_section()`, inject context in all 6 `_build_*` methods |
+| `src/worca/orchestrator/runner.py` | Import `ContextManager`, create/resume context file, pass to `PromptBuilder`, append entries after each stage |
+| `src/worca/agents/core/planner.md` | Add note about injected `## Shared Run Context` section |
+| `src/worca/agents/core/coordinator.md` | Add note about injected `## Shared Run Context` section |
+| `src/worca/agents/core/implementer.md` | Add note about injected `## Shared Run Context` section |
+| `src/worca/agents/core/tester.md` | Add note about injected `## Shared Run Context` section |
+| `src/worca/agents/core/guardian.md` | Add note about injected `## Shared Run Context` section |
 | `tests/test_prompt_builder.py` | Add context injection tests |
 
 ---
@@ -806,13 +745,13 @@ Tasks should be implemented in this order. Each task is independently testable b
 - [ ] The context file contains one `## Stage: {name}` section per completed stage, in chronological order.
 - [ ] The implement retry prompt (iteration > 0, trigger `test_failure`) contains a `## Shared Run Context` section that includes the failed test section from the previous test stage.
 - [ ] The implement retry prompt (iteration > 0, trigger `review_changes`) contains a `## Shared Run Context` section that includes the review issues recorded by the guardian.
-- [ ] On pipeline resume, the context file is not overwritten; new entries are appended.
+- [ ] On pipeline resume, the context file is not overwritten; new entries are appended. `PromptBuilder` reads the file on resume and injects the full accumulated history into the next agent's prompt — no context is lost across pause/resume.
 - [ ] When the context file exceeds 16,000 characters, it is automatically compacted: the last two sections remain verbatim and earlier sections appear in the `## Compacted History` summary block.
 - [ ] `build_prompt_section(max_chars=4_000)` never returns more than 4,000 characters.
-- [ ] All five agent `.md` templates reference `{context_file}` and include a read instruction in their Process section.
-- [ ] The rendered agent templates in `.worca/runs/{run_id}/agents/` contain the actual file path (no unresolved `{context_file}` placeholder).
+- [ ] All five agent `.md` templates document the `## Shared Run Context` prompt injection in their Context section.
+- [ ] Agents do **not** read the context file directly — context is delivered exclusively via `PromptBuilder` prompt injection. No `{context_file}` template variable exists.
 - [ ] All unit tests in `tests/test_context_manager.py` pass (`pytest tests/test_context_manager.py -v`).
 - [ ] All new tests in `tests/test_prompt_builder.py` pass without breaking existing tests.
-- [ ] The integration test in `tests/test_runner_context.py` passes end-to-end including the loop-back scenario.
+- [ ] The integration test in `tests/test_runner_context.py` passes end-to-end including the loop-back and resume scenarios.
 - [ ] No new Python package dependencies are introduced.
 - [ ] The existing `tests/` suite continues to pass with no regressions (`pytest tests/ -v`).
