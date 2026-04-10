@@ -430,7 +430,9 @@ export function createApp(options = {}) {
   // ─── Dynamic favicon ──────────────────────────────────────────────────
   // Serve mode-specific favicon before express.static so it takes precedence.
   app.get('/favicon.svg', (_req, res) => {
-    const faviconFile = projectRoot ? 'favicon-project.svg' : 'favicon-global.svg';
+    const faviconFile = projectRoot
+      ? 'favicon-project.svg'
+      : 'favicon-global.svg';
     res.setHeader('Content-Type', 'image/svg+xml');
     res.sendFile(faviconFile, { root: appDir });
   });
