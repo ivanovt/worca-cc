@@ -99,6 +99,8 @@ cd worca-ui && npm run lint                       # UI lint (biome)
 cd worca-ui && npm run lint:fix                   # Auto-fix UI lint issues
 ```
 
+**CI enforces biome formatting strictly.** Always run `cd worca-ui && npm run lint` before committing any worca-ui changes (JS, server, app). Use `npm run lint:fix` to auto-fix formatting issues. Common biome rules: long ternaries must be split across lines, trailing commas required.
+
 ## Testing
 
 ```bash
@@ -129,13 +131,13 @@ cd worca-ui && npm run build
 
 This runs esbuild to produce `app/main.bundle.js`. Without rebuilding, changes won't take effect.
 
-**Before committing any worca-ui changes**, always run the unit tests locally to catch failures before they reach CI:
+**Before committing any worca-ui changes**, always run lint and tests locally to catch failures before they reach CI:
 
 ```bash
-cd worca-ui && npx vitest run
+cd worca-ui && npm run lint:fix && npx vitest run
 ```
 
-Run from inside `worca-ui/` so the vitest config's exclude patterns apply correctly. Do not commit if tests fail — fix them first.
+Run both checks from inside `worca-ui/` so config paths resolve correctly. Do not commit if either fails — fix them first.
 
 ### Running the UI
 
