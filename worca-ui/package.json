@@ -26,6 +26,7 @@
     "server/*.js",
     "!server/*.test.js",
     "!server/test/",
+    "app/favicon-*.svg",
     "app/index.html",
     "app/main.bundle.js",
     "app/main.bundle.js.map",
