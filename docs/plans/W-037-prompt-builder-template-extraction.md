@@ -651,12 +651,12 @@ _render_agent_templates() — called once per run at startup (SIMPLIFIED):
 
 ```
 run_stage() is called:
-  1. PromptBuilder.build(stage, iteration)
+  1. PromptBuilder.build_context(stage, iteration)
      - Selects which context values to populate (mode routing)
      - Pre-formats complex data (test failures → markdown)
-     - Builds the context dict
-  2. Read the rendered agent .md from {run_dir}/agents/{agent}.md
-     (this has {single-brace} vars + overlay already applied, but NOT blocks/placeholders)
+     - Returns the context dict
+  2. Read the agent .md template from {run_dir}/agents/{agent}.md
+     (overlay already applied, but contains unresolved {{block:name}} and {{placeholder}} tokens)
   3. resolve_agent(agent_content, context, resolver, core_dir, template_agents_dir)
      → produces the fully resolved agent document
   4. Write resolved content to a temp file
@@ -886,11 +886,27 @@ Extract list-formatting logic into helpers:
 
 **Files:** Modify `src/worca/orchestrator/prompt_builder.py`
 
-Replace all `_build_*` methods with:
+Add:
 - `build_context(stage, iteration) -> dict` — assembles context for block/placeholder resolution
 - `_apply_stage_context(stage, iteration, ctx)` — stage-specific context routing
 
-Remove `build(stage, iteration) -> str`.
+**Keep `build()` as a backward-compatible shim** during transition:
+
+```python
+def build(self, stage: str, iteration: int = 0) -> str:
+    """DEPRECATED — backward-compatible wrapper.
+
+    Calls build_context() + resolve_agent() to produce the same output
+    that old callers expect. Remove once all call sites migrate to
+    build_context().
+    """
+    ctx = self.build_context(stage, iteration)
+    agent_content = self._load_agent_template(stage)
+    return resolve_agent(agent_content, ctx, self._resolver,
+                         self._core_dir, self._template_agents_dir)
+```
+
+This ensures the running pipeline (which uses the old `prompt_builder.build()` call in runner.py) continues to work even if Task 10 is not yet applied. The shim is removed as part of Task 10 when `run_stage()` is updated to call `build_context()` directly.
 
 ### Task 10: Integrate per-stage resolution in runner.py
 
@@ -905,14 +921,23 @@ Change `run_stage()`:
 
 ### Task 11: Update tests
 
-**Files:**
-- Unit tests for `resolve_placeholders()` — substitution, defaults, conditionals, missing keys, cleanup
-- Unit tests for `resolve_blocks()` — block insertion, missing blocks, recursive blocks, cycle detection
-- Unit tests for `resolve_block()` — three-tier resolution, overlay modes, empty override
-- Rewrite 76+ existing PromptBuilder tests — assert on context dict contents rather than prompt strings
-- Integration test: verify full `resolve_agent()` output matches expected structure per stage
-- Verify builtin templates resolve correctly with sample context
-- Test new reviewer agent: verify STAGE_AGENT_MAP change, guard.py read-only enforcement
+See Section 15 (Testing Strategy) for full details. Summary:
+
+**Unit tests (new):**
+- `resolve_placeholders()` — substitution, defaults, conditionals, missing keys, cleanup
+- `resolve_blocks()` — block insertion, missing blocks, recursive blocks, cycle detection
+- `resolve_block()` — three-tier resolution, overlay modes, empty override
+- Pre-formatting helpers — structured data → Markdown string assertions
+- `build_context()` — context dict contents per stage/iteration
+- Reviewer agent — STAGE_AGENT_MAP change, guard.py read-only enforcement
+
+**Unit tests (rewrite):**
+- 76+ existing PromptBuilder tests → assert on context dict contents instead of prompt strings
+
+**Integration tests:**
+- Parameterized golden-fragment tests per stage — verify resolved agent document contains expected content
+- Builtin template resolution — verify append-mode templates resolve correctly with sample context
+- Cross-project installation test — install into `/Volumes/Apps/dev/ccexperiments/test-multi-01/`, verify files land correctly and resolve_agent produces valid output against installed templates
 
 ### Task 12: Copy block files and reviewer agent during `worca init`
 
@@ -973,7 +998,200 @@ For each stage, verify the fully resolved agent document (after block insertion 
 
 ---
 
-## 14. Acceptance Criteria
+## 15. Testing Strategy
+
+### Runtime isolation
+
+The pipeline implementing this change runs from an **installed copy** of worca (`.claude/worca/` in the target project). The source files being modified (`src/worca/`, `src/worca/agents/core/`) are separate from the running pipeline's runtime. There is no bootstrapping problem:
+
+```
+Pipeline runtime:     .claude/worca/  (in target project)  ← OLD installed code, untouched
+Source being modified: src/worca/     (in worca-cc repo)   ← NEW code being written
+Unit tests (pytest):  imports from editable install        ← tests NEW code in subprocess
+```
+
+The tester agent's own prompt is built by the old `.claude/worca/` code. `pytest` runs in a subprocess and imports the modified `src/worca/` via editable install. Completely separate.
+
+### Test layers
+
+#### Layer 1: Unit tests (deterministic, no LLM)
+
+**Template engine (`tests/test_overlay_placeholders.py`):**
+
+| Test | What it verifies |
+|---|---|
+| `test_simple_placeholder` | `{{name}}` → value from context |
+| `test_placeholder_missing_key` | `{{name}}` → empty string when key absent |
+| `test_placeholder_default` | `{{name\|fallback}}` → fallback when key absent |
+| `test_placeholder_default_key_present` | `{{name\|fallback}}` → value when key present |
+| `test_conditional_truthy` | `{{#if x}}body{{/if}}` → body when x truthy |
+| `test_conditional_falsy` | `{{#if x}}body{{/if}}` → empty when x falsy |
+| `test_conditional_else_truthy` | `{{#if x}}a{{else}}b{{/if}}` → a |
+| `test_conditional_else_falsy` | `{{#if x}}a{{else}}b{{/if}}` → b |
+| `test_nested_conditionals` | `{{#if a}}...{{#if b}}...{{/if}}...{{/if}}` |
+| `test_blank_line_cleanup` | 3+ blank lines → 2 after empty conditional removal |
+| `test_block_insertion` | `{{block:name}}` ��� loads and inserts block content |
+| `test_block_missing` | `{{block:name}}` → empty when block file absent |
+| `test_block_recursive` | Block A contains `{{block:B}}`, B resolves |
+| `test_block_cycle_detection` | Block A → B → A → stops |
+
+**Block resolution (`tests/test_overlay_blocks.py`):**
+
+| Test | What it verifies |
+|---|---|
+| `test_resolve_block_core_only` | Loads from core_dir when no overlays exist |
+| `test_resolve_block_project_replaces` | Project override replaces core block |
+| `test_resolve_block_project_appends` | Project `<!-- append -->` appends to core block |
+| `test_resolve_block_template_replaces` | Template override replaces after project |
+| `test_resolve_block_all_tiers` | Core → project append → template replace chain |
+| `test_resolve_block_missing_all_tiers` | Returns None when no tier provides block |
+| `test_resolve_block_empty_override` | Empty project file → empty string (block removed) |
+| `test_resolve_block_introduced_by_project` | No core, project provides → returns content |
+| `test_resolve_block_introduced_by_template` | No core/project, template provides → returns content |
+
+**Pre-formatting helpers (`tests/test_prompt_builder.py` — rewritten):**
+
+| Test | What it verifies |
+|---|---|
+| `test_format_test_failures` | List of failure dicts → numbered Markdown |
+| `test_format_review_issues` | List of issue dicts → severity/file/line Markdown |
+| `test_format_*_empty` | Empty list → empty string |
+| `test_format_*_missing_fields` | Dicts with missing keys → graceful defaults |
+
+**Context assembly (`tests/test_prompt_builder.py` — rewritten):**
+
+76+ existing tests rewritten to assert on `build_context()` output dict rather than prompt strings:
+
+| Test pattern | What it verifies |
+|---|---|
+| `test_build_context_plan_initial` | Returns `work_request`, `claude_md`, no `plan_revision_mode` |
+| `test_build_context_plan_revision` | Returns `plan_revision_mode=True`, `plan_content`, `plan_review_issues_formatted` |
+| `test_build_context_implement_initial` | Returns `assigned_task`, `work_request`, no `is_retry` |
+| `test_build_context_implement_retry` | Returns `is_retry=True`, `issue_type`, `test_failures_formatted` |
+| `test_build_context_*` | One per stage × mode combination |
+
+**Reviewer agent (`tests/test_reviewer_agent.py`):**
+
+| Test | What it verifies |
+|---|---|
+| `test_stage_agent_map_review` | `STAGE_AGENT_MAP[Stage.REVIEW] == "reviewer"` |
+| `test_reviewer_md_exists` | `src/worca/agents/core/reviewer.md` exists |
+| `test_guard_reviewer_read_only` | guard.py blocks writes for reviewer agent |
+
+#### Layer 2: Integration tests (deterministic, no LLM)
+
+**Golden-fragment tests (`tests/test_resolve_agent_integration.py`):**
+
+Parameterized tests that verify the full `resolve_agent()` pipeline produces output containing expected content fragments:
+
+```python
+@pytest.mark.parametrize("stage,agent,context,expected_fragments", [
+    ("plan", "planner", {
+        "plan_file": "MASTER_PLAN.md",
+        "work_request": "Add user authentication",
+        "claude_md": "# My Project\nUses FastAPI...",
+    }, [
+        "Add user authentication",      # work request present
+        "# My Project",                  # claude_md present
+        "plan.json schema",              # output format from agent .md
+        "Do NOT write implementation",   # governance from agent .md
+        "MASTER_PLAN.md",               # plan_file placeholder resolved
+    ]),
+    ("implement", "implementer", {
+        "is_retry": True,
+        "issue_type": "Test Failures",
+        "attempt_count": "2",
+        "test_failures_formatted": "1. **test_auth** ...",
+        "work_request": "Add auth",
+    }, [
+        "PRIORITY: Fix Test Failures",   # retry header
+        "attempt 2",                     # attempt count
+        "1. **test_auth**",              # failures list
+        "Do NOT re-implement",           # retry rules from agent .md
+        "TDD",                           # process from agent .md
+    ]),
+    # ... one entry per stage × mode combination
+])
+def test_resolved_agent_contains_fragments(stage, agent, context, expected_fragments, tmp_path):
+    # Set up core dir with agent .md and block files
+    # Run resolve_agent()
+    # Assert all fragments present in output
+```
+
+**Builtin template tests (`tests/test_builtin_templates.py`):**
+
+For each of the 6 builtin templates, verify that append-mode overrides produce valid resolved output:
+
+```python
+@pytest.mark.parametrize("template_id", ["bugfix", "refactor", "quick-fix", "investigate", "test-only", "feature"])
+def test_template_resolves_with_blocks(template_id, tmp_path):
+    # Load template's agents/ dir
+    # Apply overlay chain: core → template
+    # Resolve with sample context
+    # Assert block content appears (not just raw {{block:name}} tokens)
+    # Assert governance sections preserved
+```
+
+**Cross-project installation test (`tests/test_worca_init_blocks.py`):**
+
+Verifies that `worca init --upgrade` correctly installs block files into a target project:
+
+```python
+TEST_PROJECT = "/Volumes/Apps/dev/ccexperiments/test-multi-01"
+
+@pytest.mark.skipif(not os.path.isdir(TEST_PROJECT), reason="test-multi-01 not available")
+def test_worca_init_installs_blocks():
+    """Install worca into test-multi-01 and verify block files land correctly."""
+    # 1. Run: pip install -e /Volumes/Apps/dev/ccexperiments/worca-cc
+    # 2. Run: cd test-multi-01 && worca init --upgrade
+    # 3. Assert .claude/worca/agents/core/*.block.md files exist
+    # 4. Assert .claude/worca/agents/core/reviewer.md exists
+    # 5. Assert agent .md files contain {{block:name}} (not old {single-brace})
+    # 6. Load a sample context, run resolve_agent() against installed files
+    # 7. Assert resolved output contains expected content (no unresolved {{...}} tokens)
+```
+
+This test is skipped in CI (test-multi-01 is a local development repo). It runs when the tester executes `pytest tests/` in the worca-cc repo on a machine where test-multi-01 exists.
+
+#### Layer 3: Backward-compatible shim verification
+
+The `build()` shim (Task 9) ensures the old API still works during transition:
+
+```python
+def test_build_shim_produces_equivalent_output():
+    """Verify build() shim produces same output as build_context() + resolve_agent()."""
+    pb = PromptBuilder(...)
+    pb.update_context("work_request", "Add auth")
+    # ... set up context
+
+    # Old path (via shim)
+    shim_output = pb.build("plan", 0)
+
+    # New path (explicit)
+    ctx = pb.build_context("plan", 0)
+    agent_content = load_agent_template("planner")
+    direct_output = resolve_agent(agent_content, ctx, ...)
+
+    assert shim_output == direct_output
+```
+
+### What is NOT tested by the pipeline
+
+The pipeline cannot test whether agents **behave correctly** with the new prompt structure (one document vs two). This requires running actual pipeline stages with real LLM calls, which is outside the tester's scope.
+
+**Post-merge manual validation:** After the PR is created, run a smoke pipeline on test-multi-01:
+
+```bash
+cd /Volumes/Apps/dev/ccexperiments/test-multi-01
+worca init --upgrade
+worca run --prompt "Add a hello world function" --template quick-fix
+```
+
+Verify the pipeline completes successfully — planner produces a plan, coordinator creates tasks, implementer writes code, tester runs tests. This confirms the new prompt system produces working agent behavior end-to-end.
+
+---
+
+## 16. Acceptance Criteria
 
 - [ ] Dedicated `reviewer.md` agent created; `STAGE_AGENT_MAP` updated for REVIEW stage
 - [ ] 8 `.block.md` files created (plan, plan-review, coordinate, implement, test, review, pr, learn)
@@ -995,3 +1213,7 @@ For each stage, verify the fully resolved agent document (after block insertion 
 - [ ] All existing tests pass (rewritten as needed)
 - [ ] `worca init --upgrade` copies `.block.md` files and `reviewer.md`
 - [ ] Fully resolved agent document contains equivalent content to old `--agent` + `-p` combination
+- [ ] `build()` shim produces identical output to `build_context()` + `resolve_agent()` path
+- [ ] Golden-fragment tests pass for all stage × mode combinations
+- [ ] Cross-project installation test passes against `test-multi-01`
+- [ ] Post-merge smoke pipeline completes successfully on `test-multi-01` (manual)
