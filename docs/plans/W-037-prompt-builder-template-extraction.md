@@ -11,6 +11,7 @@
 - A **block** (`.block.md`) is a reusable, overlayable unit of dynamic content with `{{placeholder}}` tokens
 - A **prompt** is the final assembled agent `.md` with all `{{block:name}}` references resolved and placeholders substituted — this goes to `--agent`
 - The `-p` flag becomes minimal (just the work request), or can be eliminated entirely
+- All placeholder substitution uses **double-brace** `{{name}}` syntax — the legacy single-brace `{name}` substitution in `_render_agent_templates()` is removed
 
 **Depends on:** W-008 (OverlayResolver, already implemented).
 
@@ -29,9 +30,9 @@ The agent `.md` defines persona, process, rules. The PromptBuilder output define
 ### New architecture
 
 ```
-agent .md file                        ← contains {{block:name}} insertion points
+agent .md file                        ← contains {{block:name}} insertion points + {{placeholder}} tokens
       ↓
-  resolve blocks (load .block.md, overlay, placeholder substitution)
+  resolve blocks (load .block.md, overlay chain, placeholder substitution)
       ↓
 fully resolved agent document  ──→ --agent flag
                                       ↕ Claude sees both
@@ -39,6 +40,17 @@ work request (minimal)         ──→ -p flag
 ```
 
 The agent sees **one coherent document** via `--agent`. Static instructions (role, process, rules) and dynamic context (work request, test failures, plan content) are interleaved at specific, controllable positions. The `-p` prompt is reduced to just the raw work request title + description.
+
+### One agent per stage
+
+Each pipeline stage maps to exactly one agent. This is critical for the block-in-agent architecture: the agent `.md` is resolved once per stage invocation with stage-specific context. A single agent serving multiple stages would require per-stage conditional gating on every block, defeating the purpose.
+
+Currently, the **guardian** agent serves both REVIEW and PR stages. This plan introduces a dedicated **reviewer** agent for the REVIEW stage, separating concerns:
+
+| Stage | Agent (before) | Agent (after) |
+|---|---|---|
+| REVIEW | guardian | **reviewer** (new) |
+| PR | guardian | guardian (unchanged) |
 
 ---
 
@@ -82,17 +94,24 @@ If no tier provides a block file, `{{block:name}}` resolves to an empty string. 
 ```
 src/worca/agents/core/
   planner.md                    ← agent definition, contains {{block:plan}}
-  plan.block.md                 ← block: plan stage context
-  plan-revision.block.md        ← block: plan revision mode context
+  plan.block.md                 ← block: plan stage context (includes revision mode via conditional)
+  plan_reviewer.md
   plan-review.block.md          ← block: plan review stage context
+  coordinator.md
   coordinate.block.md
-  implement.block.md
-  implement-retry.block.md      ← block: implement retry mode context
+  implementer.md
+  implement.block.md            ← block: implement stage context (includes retry mode via conditional)
+  tester.md
   test.block.md
+  reviewer.md                   ← NEW agent for REVIEW stage
   review.block.md
+  guardian.md
   pr.block.md
+  learner.md
   learn.block.md
 ```
+
+8 block files total (down from 10 — plan-revision and implement-retry merged into their parent blocks via `{{#if}}` conditionals).
 
 Block names are decoupled from agent names. An agent `.md` can reference any number of blocks, and the same block can be referenced by multiple agents.
 
@@ -100,9 +119,13 @@ Block names are decoupled from agent names. An agent `.md` can reference any num
 
 ## 3. Placeholder Syntax
 
-### Types
+### Unified double-brace syntax
 
-All use double-brace `{{...}}` syntax, distinct from the existing single-brace `{name}` used by `_render_agent_templates()`.
+All placeholder substitution — in agent `.md` files, block files, and project/template overrides — uses double-brace `{{...}}` syntax. The legacy single-brace `{name}` substitution in `_render_agent_templates()` is **removed**. This eliminates the confusing situation where agent `.md` uses `{plan_file}` but blocks use `{{plan_file}}` for the same variable.
+
+Migration: existing `{plan_file}`, `{run_id}`, `{branch}`, `{title}` in agent `.md` files become `{{plan_file}}`, `{{run_id}}`, `{{branch}}`, `{{title}}`.
+
+### Types
 
 | Syntax | Purpose | Resolution |
 |---|---|---|
@@ -131,29 +154,18 @@ No loop constructs in the template engine — Python handles list formatting.
 
 ## 4. Agent `.md` File Changes
 
-### Current `planner.md` (abbreviated)
+### Single-brace to double-brace migration
 
-```markdown
-# Planner Agent
+All existing `{name}` references in agent `.md` files become `{{name}}`:
 
-## Role
-You are the Planner. You create plan files...
+| Before | After |
+|---|---|
+| `` `{plan_file}` `` | `` `{{plan_file}}` `` |
+| `run:{run_id}` | `run:{{run_id}}` |
+| `{branch}` | `{{branch}}` |
+| `{title}` | `{{title}}` |
 
-## Context
-You receive a work request...
-
-## Process
-1. Read and understand the work request
-2. Read CLAUDE.md for project context
-...
-
-## Output
-Produce a structured plan following the `plan.json` schema.
-
-## Rules
-<!-- governance -->
-- Do NOT write implementation code...
-```
+The `_render_agent_templates()` function's `str.replace(f"{{{key}}}", ...)` loop is removed. All substitution happens in `resolve_agent()`.
 
 ### New `planner.md` with block insertion
 
@@ -162,14 +174,14 @@ Produce a structured plan following the `plan.json` schema.
 
 ## Role
 You are the Planner. You create plan files that define the architecture,
-approach, and scope for a work request. The plan file path is `{plan_file}`.
+approach, and scope for a work request. The plan file path is `{{plan_file}}`.
 
 ## Process
 1. Read and understand the work request
 2. Read CLAUDE.md for project context
 3. Explore the codebase to understand existing architecture
 4. Identify affected components and potential risks
-5. Create `{plan_file}` with: problem statement, approach, task breakdown, test strategy, branch naming
+5. Create `{{plan_file}}` with: problem statement, approach, task breakdown, test strategy, branch naming
 6. Set `approved: true` in your output
 
 {{block:plan}}
@@ -185,7 +197,53 @@ Produce a structured plan following the `plan.json` schema.
 
 The `{{block:plan}}` reference is positioned between Process and Output — the agent sees the work request and dynamic context right after understanding what to do, before the output format and governance rules.
 
-### New `implementer.md` with conditional block insertion
+### New `reviewer.md` (new agent for REVIEW stage)
+
+The REVIEW stage currently maps to the **guardian** agent, which also serves the PR stage. This creates a conflict: one agent `.md` cannot contain stage-specific blocks for two different stages without per-stage conditional gating on every block.
+
+**Solution:** Introduce a dedicated `reviewer.md` agent for the REVIEW stage. The guardian retains the PR stage only.
+
+```markdown
+# Reviewer Agent
+
+## Role
+You are the Reviewer. You review code changes for correctness, style, and
+adherence to the plan. You do NOT modify code — you report issues for the
+implementer to fix.
+
+## Process
+1. Read the work request and plan to understand intent
+2. Review all changed files against the plan
+3. Check for correctness, style, security, and adherence to conventions
+4. Report issues with file, line, severity, and description
+5. If no issues found, approve the changes
+
+{{block:review}}
+
+## Implementer Capabilities
+
+The implementer agent can edit files and run tests but CANNOT make git commits
+(commits are handled by the guardian stage). Do NOT flag uncommitted files as issues
+requiring changes — focus only on code correctness, style, and adherence to the plan.
+
+## Output
+Produce a structured result following the `review.json` schema.
+
+## Rules
+<!-- governance -->
+- Do NOT modify source code — only review and report
+- Do NOT run tests — the tester stage handles that
+- Do NOT invoke skills (superpowers, executing-plans, etc.)
+```
+
+**`STAGE_AGENT_MAP` change:**
+
+```python
+Stage.REVIEW: "reviewer",   # was "guardian"
+Stage.PR: "guardian",        # unchanged
+```
+
+### New `implementer.md` with block insertion
 
 ```markdown
 # Implementer Agent
@@ -210,8 +268,6 @@ When your prompt says "Fix All Issues" or "Fix Test Failures" or "Fix Review Iss
 4. Run only the tests related to the files you changed
 5. Do NOT use `bd ready` or `bd close`
 
-{{block:implement-retry}}
-
 ## Retry Rules
 - After making each fix, read back the changed lines to confirm the fix is correct
 - Do NOT re-implement the plan from scratch
@@ -226,47 +282,31 @@ Produce a structured result following the `implement.json` schema.
 ...
 ```
 
-Both `{{block:implement}}` and `{{block:implement-retry}}` are in the same file. At runtime:
-- For initial implementation: `implement.block.md` resolves to the task assignment + work request; `implement-retry.block.md` doesn't exist or resolves to empty
-- For retry: `implement.block.md` may resolve to empty or a reference section; `implement-retry.block.md` resolves to the priority header + failure lists
-
-PromptBuilder controls which blocks have content by setting context values that blocks reference via `{{#if}}`.
+The `{{block:implement}}` block uses an internal `{{#if}}` conditional to switch between initial implementation context and retry context (see Section 5).
 
 ### All agent `.md` changes summary
 
-| Agent file | Block references to add | New static content to add |
-|---|---|---|
-| `planner.md` | `{{block:plan}}` between Process and Output | None (already complete) |
-| `plan_reviewer.md` | `{{block:plan-review}}` between Process and Output | None |
-| `coordinator.md` | `{{block:coordinate}}` between Process and Output | None |
-| `implementer.md` | `{{block:implement}}` + `{{block:implement-retry}}` | `## Retry Rules` section (from `_build_implement_retry` lines 389-393, 323-324) |
-| `tester.md` | `{{block:test}}` between Process and Output | None |
-| `guardian.md` | `{{block:pr}}` between Process and Output | None |
-| `learner.md` | `{{block:learn}}` between Process and Output | 6-category analysis instructions (from `_build_learn` lines 519-543) |
-
-A new `reviewer.md` is NOT needed — the review stage already uses `tester.md` agent or a configured agent. The implementer-capabilities disclaimer currently in `_build_review` (lines 453-458) moves into `review.block.md` since it's contextual to what the reviewer needs to know about the current run.
+| Agent file | Status | Block references | New static content |
+|---|---|---|---|
+| `planner.md` | Modify | `{{block:plan}}` between Process and Output | Migrate `{single-brace}` → `{{double-brace}}` |
+| `plan_reviewer.md` | Modify | `{{block:plan-review}}` between Process and Output | None |
+| `coordinator.md` | Modify | `{{block:coordinate}}` between Process and Output | Migrate `{run_id}` → `{{run_id}}` |
+| `implementer.md` | Modify | `{{block:implement}}` between Process and Fix Mode | `## Retry Rules` section (from `_build_implement_retry`) |
+| `tester.md` | Modify | `{{block:test}}` between Process and Output | None |
+| `reviewer.md` | **New** | `{{block:review}}` between Process and Output | Full agent definition including implementer-capabilities disclaimer |
+| `guardian.md` | Modify | `{{block:pr}}` between Process and Output | None (no longer serves REVIEW) |
+| `learner.md` | Modify | `{{block:learn}}` between Process and Output | 6-category analysis instructions (from `_build_learn` lines 519-543) |
 
 ---
 
 ## 5. Block File Contents
 
-### `plan.block.md`
+### `plan.block.md` (plan + plan-revision in one block)
+
+A single block handles both initial planning and revision mode via `{{#if plan_revision_mode}}`:
 
 ```markdown
-## Work Request
-
-{{work_request}}
-
-{{#if claude_md}}
-## Project Context (from CLAUDE.md)
-
-{{claude_md}}
-{{/if}}
-```
-
-### `plan-revision.block.md`
-
-```markdown
+{{#if plan_revision_mode}}
 ## Revision Required
 
 The plan reviewer has identified issues that must be addressed.
@@ -297,7 +337,20 @@ Revise the existing plan — do NOT start from scratch.
 Address each issue above. Preserve all parts of the plan that were not flagged.
 Write the updated plan. In your JSON output, set `approved: true` to signal
 that the revised plan is ready for review.
+{{else}}
+## Work Request
+
+{{work_request}}
+
+{{#if claude_md}}
+## Project Context (from CLAUDE.md)
+
+{{claude_md}}
+{{/if}}
+{{/if}}
 ```
+
+The planner agent `.md` has a single `{{block:plan}}` reference. PromptBuilder sets `plan_revision_mode` in the context dict to control which branch renders.
 
 ### `plan-review.block.md`
 
@@ -340,23 +393,12 @@ in the revised plan above.
 {{/if}}
 ```
 
-### `implement.block.md`
+### `implement.block.md` (initial + retry in one block)
+
+A single block handles both initial implementation and retry mode via `{{#if is_retry}}`:
 
 ```markdown
-{{#if assigned_task}}
-## Assigned Task
-
-{{assigned_task}}
-{{/if}}
-
-## Work Request
-
-{{work_request}}
-```
-
-### `implement-retry.block.md`
-
-```markdown
+{{#if is_retry}}
 ## PRIORITY: Fix {{issue_type}} (attempt {{attempt_count}})
 
 {{#if test_failures_formatted}}
@@ -386,7 +428,20 @@ in the revised plan above.
 
 {{/if}}
 {{work_request}}
+{{else}}
+{{#if assigned_task}}
+## Assigned Task
+
+{{assigned_task}}
+{{/if}}
+
+## Work Request
+
+{{work_request}}
+{{/if}}
 ```
+
+The implementer agent `.md` has a single `{{block:implement}}` reference. PromptBuilder sets `is_retry` in the context dict to control which branch renders.
 
 ### `test.block.md`
 
@@ -420,13 +475,9 @@ in the revised plan above.
 
 {{files_changed_formatted}}
 {{/if}}
-
-## Implementer Capabilities
-
-The implementer agent can edit files and run tests but CANNOT make git commits
-(commits are handled by the guardian stage). Do NOT flag uncommitted files as issues
-requiring changes — focus only on code correctness, style, and adherence to the plan.
 ```
+
+Note: the implementer-capabilities disclaimer moves to `reviewer.md` as static content (Section 4), not in the block.
 
 ### `pr.block.md`
 
@@ -557,7 +608,7 @@ def resolve_block(self, block_name: str, core_dir: str,
 
 ### Full resolution pipeline
 
-Called by `_render_agent_templates()` after existing `{single-brace}` substitution and overlay merge:
+Called by `_render_agent_templates()` **replacing** the old `{single-brace}` substitution loop:
 
 ```python
 def resolve_agent(content: str, context: dict, resolver: OverlayResolver,
@@ -566,12 +617,14 @@ def resolve_agent(content: str, context: dict, resolver: OverlayResolver,
     # 1. Resolve {{block:name}} references
     result = resolve_blocks(content, context, resolver, core_dir, template_agents_dir)
     # 2. Resolve {{#if}}...{{/if}} conditionals
-    # 3. Resolve {{name}} placeholders
+    # 3. Resolve {{name}} and {{name|default}} placeholders
     result = resolve_placeholders(result, context)
     # 4. Collapse excessive blank lines
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result
 ```
+
+This replaces the old `for key, value in template_vars.items(): content.replace(f"{{{key}}}", str(value))` loop entirely. One syntax, one resolution pass.
 
 ---
 
@@ -580,24 +633,19 @@ def resolve_agent(content: str, context: dict, resolver: OverlayResolver,
 ### Updated rendering pipeline
 
 ```
-_render_agent_templates() — called once per run at startup:
+_render_agent_templates() — called once per run at startup (SIMPLIFIED):
 
   For each agent .md in .claude/worca/agents/core/:
     1. Read core .md
-    2. {single-brace} substitution ({plan_file}, {run_id}, {branch}, {title})
-    3. Overlay merge (project → template) via OverlayResolver.resolve()
-    4. Write to {run_dir}/agents/{agent}.md
-          ↑ THIS IS THE EXISTING FLOW — unchanged
+    2. Overlay merge (project → template) via OverlayResolver.resolve()
+    3. Write to {run_dir}/agents/{agent}.md
+          ↑ This is the TEMPLATE — contains unresolved {{block:name}} and {{placeholder}} tokens
 
-  NEW — after step 4, for each rendered agent .md:
-    5. resolve_agent(content, context, resolver, core_dir, template_agents_dir)
-       - Resolves {{block:name}} → loads block, applies overlay chain, inserts
-       - Resolves {{#if}}...{{/if}} conditionals
-       - Resolves {{name}} placeholders
-    6. Write final result to {run_dir}/agents/{agent}.md (overwrites step 4)
+  (Step 2 from the old flow — {single-brace} substitution — is REMOVED.
+   All substitution now happens in resolve_agent() at stage invocation time.)
 ```
 
-**Important:** Step 5 cannot happen at startup because context values (test failures, review issues, plan content) don't exist yet. The full resolution must happen **per stage invocation**, not once at startup.
+**Important:** Block and placeholder resolution cannot happen at startup because context values (test failures, review issues, plan content) don't exist yet. The full resolution happens **per stage invocation** in `run_stage()`.
 
 ### Per-stage resolution flow
 
@@ -652,78 +700,54 @@ The `_build_*` methods are replaced by `_apply_stage_context()` which populates 
 
 ## 8. Builtin Pipeline Templates Update
 
-Six builtin templates ship with worca. Their agent overrides currently contain only prose instructions. After this change, templates that customize agent behavior should also control which blocks appear and what they contain.
+Six builtin templates ship with worca. Their agent overrides currently use replace mode (the OverlayResolver default). After this change, replace-mode overrides **must include `{{block:name}}` references** or the agent loses all dynamic context.
 
-### Templates that need block overrides
+**Recommendation:** Migrate all builtin templates to `<!-- append -->` mode. This preserves the core file (including its `{{block:name}}` references) and only adds/modifies specific sections. Append mode is less fragile — if core adds a new block reference, append-mode templates automatically inherit it.
 
-| Template | Current overrides | Block changes needed |
+### Migration plan per template
+
+| Template | Current overrides | Migration |
 |---|---|---|
-| `bugfix` | `planner.md`, `coordinator.md` | Add `{{block:plan}}` to planner override if not inherited from core. No block overrides needed — the prose changes are in the agent `.md`. |
-| `refactor` | `planner.md`, `guardian.md` | Same — prose is in agent `.md` overrides, blocks pass through from core. |
-| `quick-fix` | `planner.md`, `coordinator.md` | Same. |
-| `investigate` | `planner.md` | May want to override `plan.block.md` to suppress work request formatting since this is analysis-only. |
-| `test-only` | `planner.md`, `coordinator.md`, `implementer.md` | `implementer.md` override should include `{{block:implement}}` reference since it replaces the core implementer. |
-| `feature` | None | No changes — uses core defaults. |
+| `feature` | None | No changes — uses core defaults |
+| `bugfix` | `planner.md`, `coordinator.md` | Switch both to `<!-- append -->` with section-level replace |
+| `refactor` | `planner.md`, `guardian.md` | Switch both to `<!-- append -->`. `guardian.md` no longer handles REVIEW, so override scope is narrower |
+| `quick-fix` | `planner.md`, `coordinator.md` | Switch both to `<!-- append -->` |
+| `investigate` | `planner.md` | Switch to `<!-- append -->`. Optionally add `plan.block.md` override to customize work request presentation |
+| `test-only` | `planner.md`, `coordinator.md`, `implementer.md` | Switch all to `<!-- append -->` |
 
-### Key migration rule for template agent overrides
+### Example: `bugfix/agents/planner.md` (before → after)
 
-Existing template agent overrides use **replace mode** (OverlayResolver default). When a template provides `agents/implementer.md`, it completely replaces the core `implementer.md`. After this change, that replacement file **must include `{{block:name}}` references** or the agent loses all dynamic context.
-
-This is the critical migration step: every template agent `.md` override that uses replace mode must be updated to include the appropriate `{{block:name}}` references from the new core `.md` files.
-
-**For templates using `<!-- append -->` mode:** No change needed — the core file's `{{block:name}}` references are preserved, and appended content gets added after.
-
-### Updated template files
-
-**`bugfix/agents/planner.md`** — currently replaces core planner. Must add `{{block:plan}}`:
-
+**Before (replace mode):**
 ```markdown
 # Planner Agent — Bugfix Mode
-
-## Role
-You are the Planner in bugfix mode...
-
-## Process
-1. Reproduce the bug...
-2. Identify root cause...
-...
-
-{{block:plan}}
-
-## Output
-Produce a structured plan following the `plan.json` schema.
-
-## Rules
-<!-- governance -->
-...
+...full agent file...
 ```
 
-Same pattern for all other template agent overrides that use replace mode.
-
-### Alternative: switch templates to `<!-- append -->` mode
-
-Instead of duplicating the full agent `.md` structure in each template override, templates could switch to append mode. This preserves the core file (including its `{{block:name}}` references) and only adds/modifies specific sections:
-
+**After (append mode with section replace):**
 ```markdown
 <!-- append -->
+## Override: Role
+<!-- replace -->
+
+You are the Planner in bugfix mode. You investigate bugs and identify root causes.
+Stay tightly focused on the reported problem — avoid new features or broad refactors.
+
 ## Override: Process
 <!-- replace -->
 
-1. Reproduce the bug...
-2. Identify root cause (not just symptoms)...
+1. Reproduce the bug from the description
+2. Identify root cause (not just symptoms)
+3. Determine the minimal fix
+4. Create a focused plan describing exactly what to change and where
 ```
 
-This is less fragile — if core adds a new `{{block:name}}` reference, append-mode templates automatically pick it up. Replace-mode templates would miss it.
-
-**Recommendation:** Migrate existing builtin templates to `<!-- append -->` mode where possible. Only use replace mode when the template fundamentally changes the agent's structure.
+The core `planner.md` is preserved — including `{{block:plan}}`, `{{plan_file}}` references, Output section, and governance Rules. The template only overrides Role and Process.
 
 ---
 
 ## 9. Audit: What to Move vs Keep
 
-### Fully unconditional — duplicated in agent `.md`
-
-These lines in `prompt_builder.py` repeat what the agent `.md` already says. **Remove** from Python — the agent `.md` already covers them.
+### Remove from Python — duplicated in agent `.md`
 
 | Method | Lines | Duplicated instruction |
 |---|---|---|
@@ -740,19 +764,27 @@ These lines in `prompt_builder.py` repeat what the agent `.md` already says. **R
 
 | Source | Instruction | Target |
 |---|---|---|
+| `_build_review:453-458` | Implementer capabilities disclaimer | `reviewer.md` (new agent) — static content |
 | `_build_implement_retry:389-393` | "Read back changed lines to confirm fix" | `implementer.md` `## Retry Rules` |
 | `_build_implement_retry:323-324` | "Do NOT re-implement from scratch" | `implementer.md` `## Retry Rules` |
 | `_build_learn:519-543` | 6-category analysis instructions | `learner.md` (new section) |
 
 ### Move to blocks (dynamic context)
 
-All data injections become `{{placeholder}}` tokens in `.block.md` files. See Section 5 for full block contents.
+All data injections become `{{placeholder}}` tokens in `.block.md` files. See Section 5.
 
-### Stays in Python
+### Stays in Python (by design)
 
-- Pre-formatting helpers (`_format_test_failures`, etc.)
-- Context assembly (`build_context`)
-- Mode routing (which context keys to populate per stage/iteration)
+| What | Where | Why |
+|---|---|---|
+| Pre-formatting helpers (`_format_test_failures`, etc.) | `prompt_builder.py` ~60 lines | No loop constructs in template engine — Python formats lists into Markdown |
+| Context formatters (`_work_request_section`, `_assigned_task_section`) | `prompt_builder.py` ~20 lines | Assemble structured context values from raw data |
+| Mode routing (`_apply_stage_context`) | `prompt_builder.py` ~30 lines | Selects which context keys to populate per stage/iteration |
+| Error classification prompt | `error_classifier.py:108-119` | Self-contained LLM call, fully dynamic, not a stage prompt |
+| Smart title prompt | `work_request.py:20-23` | Two-line utility prompt, not worth a template file |
+| CLI prompt offloading bridge | `claude_cli.py:76-79` | Infrastructure code for ARG_MAX handling |
+| Hook governance messages (15 total) | `hooks/guard.py`, `plan_check.py`, `prompt.py`, `test_gate.py`, `tracking.py` | Tightly coupled to enforcement logic, short, agent-facing error strings |
+| Preflight diagnostic messages (~14) | `scripts/preflight_checks.py` | Status messages, not instructions |
 
 ---
 
@@ -795,41 +827,52 @@ Add `resolve_block(block_name, core_dir, template_agents_dir)`:
 ### Task 3: Create block files
 
 **Files:** Create in `src/worca/agents/core/`:
-- `plan.block.md`, `plan-revision.block.md`, `plan-review.block.md`
+- `plan.block.md` (includes plan-revision via `{{#if plan_revision_mode}}`)
+- `plan-review.block.md`
 - `coordinate.block.md`
-- `implement.block.md`, `implement-retry.block.md`
+- `implement.block.md` (includes retry via `{{#if is_retry}}`)
 - `test.block.md`, `review.block.md`, `pr.block.md`, `learn.block.md`
 
-Content as specified in Section 5.
+8 block files total. Content as specified in Section 5.
 
-### Task 4: Add `{{block:name}}` references to agent `.md` files
+### Task 4: Create `reviewer.md` agent and update `STAGE_AGENT_MAP`
 
-**Files:** Modify `src/worca/agents/core/`:
-- `planner.md` — add `{{block:plan}}`
+**Files:**
+- Create `src/worca/agents/core/reviewer.md` — full agent definition (see Section 4)
+- Modify `src/worca/orchestrator/stages.py` — change `Stage.REVIEW: "guardian"` to `Stage.REVIEW: "reviewer"`
+- Modify `src/worca/hooks/guard.py` — add `"reviewer"` to the read-only agent list (same restrictions as current guardian-in-review-mode)
+
+### Task 5: Add `{{block:name}}` references to agent `.md` files + migrate to `{{double-brace}}`
+
+**Files:** Modify all files in `src/worca/agents/core/`:
+- `planner.md` — add `{{block:plan}}`; migrate `{plan_file}` → `{{plan_file}}`
 - `plan_reviewer.md` — add `{{block:plan-review}}`
-- `coordinator.md` — add `{{block:coordinate}}`
-- `implementer.md` — add `{{block:implement}}` + `{{block:implement-retry}}` + `## Retry Rules`
+- `coordinator.md` — add `{{block:coordinate}}`; migrate `{plan_file}`, `{run_id}` → `{{plan_file}}`, `{{run_id}}`
+- `implementer.md` — add `{{block:implement}}` + `## Retry Rules`
 - `tester.md` — add `{{block:test}}`
-- `guardian.md` — add `{{block:pr}}`
+- `guardian.md` — add `{{block:pr}}`; remove REVIEW-related content
 - `learner.md` — add `{{block:learn}}` + 6-category analysis section
 
-### Task 5: Update builtin pipeline templates
+### Task 6: Remove `{single-brace}` substitution from `_render_agent_templates()`
 
-**Files:** Modify `src/worca/templates/`:
-- `bugfix/agents/planner.md` — add `{{block:plan}}`
-- `bugfix/agents/coordinator.md` — add `{{block:coordinate}}`
-- `refactor/agents/planner.md` — add `{{block:plan}}`
-- `refactor/agents/guardian.md` — add `{{block:pr}}`
-- `quick-fix/agents/planner.md` — add `{{block:plan}}`
-- `quick-fix/agents/coordinator.md` — add `{{block:coordinate}}`
-- `investigate/agents/planner.md` — add `{{block:plan}}`
-- `test-only/agents/planner.md` — add `{{block:plan}}`
-- `test-only/agents/coordinator.md` — add `{{block:coordinate}}`
-- `test-only/agents/implementer.md` — add `{{block:implement}}`
+**Files:** Modify `src/worca/orchestrator/runner.py`
 
-Evaluate switching each to `<!-- append -->` mode where the override only modifies specific sections, to avoid having to maintain `{{block:name}}` references in template overrides. Use replace mode only when the template fundamentally changes the agent structure.
+Remove the `for key, value in template_vars.items(): content.replace(...)` loop from `_render_agent_templates()`. The function now only does: read core → overlay merge → write to `{run_dir}/agents/`. All placeholder substitution is deferred to `resolve_agent()` at stage invocation time.
 
-### Task 6: Add pre-formatting helpers to PromptBuilder
+Also delete `_STAGE_PROMPT_PREFIX` dict and `_build_stage_prompt()` function.
+
+### Task 7: Migrate builtin pipeline templates to `<!-- append -->` mode
+
+**Files:** Modify all files in `src/worca/templates/`:
+- `bugfix/agents/planner.md`, `bugfix/agents/coordinator.md`
+- `refactor/agents/planner.md`, `refactor/agents/guardian.md`
+- `quick-fix/agents/planner.md`, `quick-fix/agents/coordinator.md`
+- `investigate/agents/planner.md`
+- `test-only/agents/planner.md`, `test-only/agents/coordinator.md`, `test-only/agents/implementer.md`
+
+Switch each from replace mode to `<!-- append -->` with `## Override: <Section>` blocks. This preserves core `{{block:name}}` references and governance rules.
+
+### Task 8: Add pre-formatting helpers to PromptBuilder
 
 **Files:** Modify `src/worca/orchestrator/prompt_builder.py`
 
@@ -839,70 +882,71 @@ Extract list-formatting logic into helpers:
 - `_format_plan_review_issues`, `_format_plan_review_history`
 - `_format_implementation_summary`, `_format_test_results`
 
-### Task 7: Refactor PromptBuilder to context assembler
+### Task 9: Refactor PromptBuilder to context assembler
 
 **Files:** Modify `src/worca/orchestrator/prompt_builder.py`
 
 Replace all `_build_*` methods with:
 - `build_context(stage, iteration) -> dict` — assembles context for block/placeholder resolution
-- `_apply_stage_context(stage, iteration, ctx)` — stage-specific context routing (mode selection, key population)
+- `_apply_stage_context(stage, iteration, ctx)` — stage-specific context routing
 
-Remove `build(stage, iteration) -> str` — the string assembly now happens in `resolve_agent()`.
+Remove `build(stage, iteration) -> str`.
 
-### Task 8: Integrate per-stage resolution in runner.py
+### Task 10: Integrate per-stage resolution in runner.py
 
 **Files:** Modify `src/worca/orchestrator/runner.py`
 
 Change `run_stage()`:
 - Call `prompt_builder.build_context(stage, iteration)` instead of `prompt_builder.build()`
-- Read rendered agent `.md` from `{run_dir}/agents/`
+- Read agent `.md` template from `{run_dir}/agents/` (contains unresolved `{{block:name}}` and `{{placeholder}}` tokens)
 - Call `resolve_agent(content, context, ...)` to produce fully resolved agent document
 - Write to temp file, pass as `--agent`
 - Pass minimal work request as `-p`
 
-Delete `_STAGE_PROMPT_PREFIX` and `_build_stage_prompt()`.
-
-### Task 9: Update tests
+### Task 11: Update tests
 
 **Files:**
 - Unit tests for `resolve_placeholders()` — substitution, defaults, conditionals, missing keys, cleanup
 - Unit tests for `resolve_blocks()` — block insertion, missing blocks, recursive blocks, cycle detection
 - Unit tests for `resolve_block()` — three-tier resolution, overlay modes, empty override
 - Rewrite 76+ existing PromptBuilder tests — assert on context dict contents rather than prompt strings
-- Integration test: verify full resolve_agent() output matches expected structure per stage
+- Integration test: verify full `resolve_agent()` output matches expected structure per stage
 - Verify builtin templates resolve correctly with sample context
+- Test new reviewer agent: verify STAGE_AGENT_MAP change, guard.py read-only enforcement
 
-### Task 10: Copy block files during `worca init`
+### Task 12: Copy block files and reviewer agent during `worca init`
 
 **Files:** Modify `src/worca/cli/init.py` (or equivalent)
 
-Ensure `worca init` and `worca init --upgrade` copy `.block.md` files alongside agent `.md` files to `.claude/worca/agents/core/`.
+Ensure `worca init` and `worca init --upgrade` copy `.block.md` files and `reviewer.md` alongside other agent `.md` files to `.claude/worca/agents/core/`.
 
 ---
 
 ## 12. Rollout Order
 
 ```
-Task 1  (template engine)
-  ↓
-Task 2  (resolve_block on OverlayResolver)
+Task 1  (template engine)           Task 4  (reviewer agent + STAGE_AGENT_MAP)
+  ↓                                    ↓
+Task 2  (resolve_block)
   ↓
 Task 3  (create block files)
   ↓
-Task 4  (add {{block:name}} to agent .md)     Task 5  (update builtin templates)
-  ↓                                               ↓
-Task 6  (pre-formatting helpers)
+Task 5  ({{block:name}} + double-brace in agent .md)
   ↓
-Task 7  (refactor PromptBuilder)
+Task 6  (remove {single-brace} from runner.py)     Task 7  (migrate builtin templates)
+  ↓                                                    ↓
+Task 8  (pre-formatting helpers)
   ↓
-Task 8  (integrate in runner.py)
+Task 9  (refactor PromptBuilder)
   ↓
-Task 9  (tests)
+Task 10 (integrate in runner.py)
   ↓
-Task 10 (worca init copy)
+Task 11 (tests)
+  ↓
+Task 12 (worca init copy)
 ```
 
-Tasks 4 and 5 can run in parallel. Task 7 depends on Task 6.
+Tasks 1 and 4 can run in parallel (no dependency). Tasks 6 and 7 can run in parallel. Task 9 depends on Task 8.
 
 ---
 
@@ -910,16 +954,18 @@ Tasks 4 and 5 can run in parallel. Task 7 depends on Task 6.
 
 ### Backward compatibility
 
-- Existing project agent overrides (`.claude/agents/*.md`) continue to work — they override the agent `.md` which now contains `{{block:name}}` references that get resolved after overlay
-- If a project override uses replace mode and does NOT include `{{block:name}}` references, the agent loses dynamic context — this is intentional (the project is taking full control)
-- The `{single-brace}` substitution in `_render_agent_templates()` runs before `{{double-brace}}` resolution — no conflict
-- `worca init --upgrade` delivers both new agent `.md` files (with `{{block:name}}` references) and `.block.md` files together — no partial state
+- Existing project agent overrides (`.claude/agents/*.md`) using **append mode** continue to work — the core file's `{{block:name}}` references are preserved, appended content is added after
+- Project overrides using **replace mode** that do NOT include `{{block:name}}` references will result in the agent losing dynamic context — this is intentional (the project is taking full control of the agent)
+- `worca init --upgrade` delivers new agent `.md` files (with `{{block:name}}` and `{{double-brace}}`), `.block.md` files, and `reviewer.md` together — no partial state
+- The `{single-brace}` → `{{double-brace}}` migration is transparent to users — the syntax only appears in agent/block template files, not in user-facing config
 
 ### Breaking changes
 
-- **Pipeline template agent overrides using replace mode** must add `{{block:name}}` references. All 6 builtin templates are updated in Task 5. Third-party templates need migration guidance.
-- **PromptBuilder API changes** — `build()` is replaced by `build_context()`. Any code calling `prompt_builder.build(stage, iteration)` must be updated.
+- **`STAGE_AGENT_MAP`:** REVIEW stage now maps to `reviewer` instead of `guardian`. Projects that override the review agent in `settings.json` via `worca.stages.review.agent` are unaffected (settings override takes precedence). Projects relying on the default guardian-as-reviewer behavior will see different agent behavior.
+- **Pipeline template agent overrides using replace mode** must add `{{block:name}}` references or switch to append mode. All 6 builtin templates are migrated in Task 7. Third-party templates using replace mode will lose dynamic context until updated.
+- **PromptBuilder API:** `build()` is replaced by `build_context()`. Any code calling `prompt_builder.build(stage, iteration)` must be updated (runner.py, run_learn.py).
 - **76+ tests** need rewriting to assert on context dicts instead of prompt strings.
+- **`{single-brace}` syntax removed:** Any project override or pipeline template agent `.md` that uses `{plan_file}`, `{run_id}`, `{branch}`, or `{title}` must update to `{{double-brace}}` syntax.
 
 ### Verification
 
@@ -929,19 +975,23 @@ For each stage, verify the fully resolved agent document (after block insertion 
 
 ## 14. Acceptance Criteria
 
+- [ ] Dedicated `reviewer.md` agent created; `STAGE_AGENT_MAP` updated for REVIEW stage
+- [ ] 8 `.block.md` files created (plan, plan-review, coordinate, implement, test, review, pr, learn)
+- [ ] All agent `.md` files migrated from `{single-brace}` to `{{double-brace}}` syntax
 - [ ] Agent `.md` files contain `{{block:name}}` references at appropriate positions
-- [ ] 10 `.block.md` files created with dynamic content extracted from `_build_*` methods
 - [ ] `resolve_placeholders()` handles `{{name}}`, `{{name|default}}`, `{{#if}}...{{/if}}`, `{{#if}}...{{else}}...{{/if}}`
 - [ ] `resolve_blocks()` handles `{{block:name}}` insertion, missing blocks (empty), recursive blocks, cycle detection
 - [ ] `resolve_block()` returns `None` for missing blocks (no error)
 - [ ] Three-tier overlay chain works for `.block.md` files (core → project → template)
 - [ ] Pipeline templates can override blocks, introduce new blocks, or remove blocks via empty overrides
-- [ ] All 6 builtin pipeline templates updated with `{{block:name}}` references (or switched to append mode)
-- [ ] PromptBuilder refactored to context assembler — no prompt string assembly
-- [ ] `-p` reduced to minimal work request
+- [ ] All 6 builtin pipeline templates migrated to `<!-- append -->` mode
+- [ ] `{single-brace}` substitution loop removed from `_render_agent_templates()`
 - [ ] `_STAGE_PROMPT_PREFIX` and `_build_stage_prompt()` deleted
+- [ ] PromptBuilder refactored to context assembler — `build_context()` replaces `build()`
+- [ ] `-p` reduced to minimal work request
 - [ ] Learner analysis instructions moved to `learner.md`
 - [ ] Implementer retry rules moved to `implementer.md`
+- [ ] Implementer capabilities disclaimer in `reviewer.md` (static content)
 - [ ] All existing tests pass (rewritten as needed)
-- [ ] `worca init --upgrade` copies `.block.md` files
+- [ ] `worca init --upgrade` copies `.block.md` files and `reviewer.md`
 - [ ] Fully resolved agent document contains equivalent content to old `--agent` + `-p` combination
