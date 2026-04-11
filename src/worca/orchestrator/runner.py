@@ -539,7 +539,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
             )
             _learn_resolved_dir = os.path.join(run_dir, "agents", "resolved")
             os.makedirs(_learn_resolved_dir, exist_ok=True)
-            _learn_resolved_path = os.path.join(_learn_resolved_dir, f"{_learn_agent_name}-iter-1.md")
+            _learn_resolved_path = os.path.join(_learn_resolved_dir, f"learn-{_learn_agent_name}-iter-1.md")
             with open(_learn_resolved_path, "w") as _f:
                 _f.write(_learn_resolved)
             _learn_agent_override = _learn_resolved_path
@@ -1433,7 +1433,7 @@ def run_pipeline(
                     _resolved_dir = os.path.join(run_dir, "agents", "resolved")
                     os.makedirs(_resolved_dir, exist_ok=True)
                     _resolved_path = os.path.join(
-                        _resolved_dir, f"{_stage_agent_name}-iter-{iter_num}.md"
+                        _resolved_dir, f"{current_stage.value}-{_stage_agent_name}-iter-{iter_num}.md"
                     )
                     with open(_resolved_path, "w") as _f:
                         _f.write(_resolved)
@@ -1822,6 +1822,14 @@ def run_pipeline(
                 # Thread plan outputs into PromptBuilder for downstream stages
                 prompt_builder.update_context("plan_approach", result.get("approach", ""))
                 prompt_builder.update_context("plan_tasks_outline", result.get("tasks_outline", []))
+                # Read plan file content now so plan_review has it immediately
+                # (avoids race where plan_review starts before the file is flushed)
+                _plan_path = status.get("plan_file")
+                if _plan_path and os.path.exists(_plan_path):
+                    with open(_plan_path) as _pf:
+                        _plan_text = _pf.read().strip()
+                    if _plan_text:
+                        prompt_builder.update_context("plan_file_content", _plan_text)
 
             # Handle plan review results
             elif current_stage == Stage.PLAN_REVIEW:

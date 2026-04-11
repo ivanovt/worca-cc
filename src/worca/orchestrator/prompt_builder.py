@@ -177,7 +177,9 @@ class PromptBuilder:
                 )
 
         elif stage == "plan_review":
-            ctx["plan_content"] = self._read_master_plan()
+            # Prefer plan content already in context (set by runner after PLAN stage)
+            # to avoid race condition where the file isn't flushed yet
+            ctx["plan_content"] = ctx.get("plan_file_content") or self._read_master_plan()
             if iteration > 0:
                 ctx["plan_review_history_formatted"] = self._format_plan_review_history(
                     ctx.get("plan_review_history") or []

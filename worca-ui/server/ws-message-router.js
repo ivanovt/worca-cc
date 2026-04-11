@@ -182,9 +182,28 @@ export function createMessageRouter({
       const resolvedIterationPrompts = [];
 
       // Collect per-iteration resolved files
+      // Filename format: {stage}-{agent}-iter-{N}.md (W-037+)
+      // Fallback: {agent}-iter-{N}.md (early W-037 runs)
       for (const iter of iterations) {
         const iterNum = iter.number ?? 0;
         const resolvedCandidates = [
+          join(
+            proj.worcaDir,
+            'runs',
+            effectiveRunId,
+            'agents',
+            'resolved',
+            `${stage}-${agentName}-iter-${iterNum}.md`,
+          ),
+          join(
+            proj.worcaDir,
+            'results',
+            effectiveRunId,
+            'agents',
+            'resolved',
+            `${stage}-${agentName}-iter-${iterNum}.md`,
+          ),
+          // Fallback for early W-037 runs without stage prefix
           join(
             proj.worcaDir,
             'runs',
