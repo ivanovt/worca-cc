@@ -16,6 +16,8 @@ You run after all Implementer tasks are complete. You verify that the full syste
 4. Collect proof artifacts (test output, coverage reports)
 5. Set proof status: verified or failed
 
+{{block:test}}
+
 ## Output
 
 Produce a structured result following the `test_result.json` schema.

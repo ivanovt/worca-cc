@@ -107,16 +107,17 @@ class TestGuardPlannerPlanFiles:
 # --- PromptBuilder uses plan_file from context ---
 
 class TestPromptBuilderPlanFile:
-    def test_plan_prompt_uses_context_plan_file(self):
+    def test_plan_context_uses_plan_file_from_context(self):
+        """build_context('plan') passes plan_file through to the context dict."""
         from worca.orchestrator.prompt_builder import PromptBuilder
         pb = PromptBuilder("Test title", "Test desc", claude_md_path="/nonexistent")
         pb.update_context("plan_file", "/run/plan-001.md")
-        prompt = pb.build("plan")
-        assert "/run/plan-001.md" in prompt
-        assert "MASTER_PLAN.md" not in prompt
+        ctx = pb.build_context("plan")
+        assert ctx.get("plan_file") == "/run/plan-001.md"
 
-    def test_plan_prompt_falls_back_to_master_plan(self):
+    def test_plan_context_has_work_request(self):
+        """build_context('plan') includes work_request key."""
         from worca.orchestrator.prompt_builder import PromptBuilder
         pb = PromptBuilder("Test title", "Test desc", claude_md_path="/nonexistent")
-        prompt = pb.build("plan")
-        assert "MASTER_PLAN.md" in prompt
+        ctx = pb.build_context("plan")
+        assert "Test title" in ctx.get("work_request", "")

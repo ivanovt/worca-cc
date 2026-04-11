@@ -255,8 +255,8 @@ def test_save_context_no_truncation_when_under_100kb(tmp_path):
     assert "assigned_bead_id" in data
 
 
-def test_load_context_after_resume_affects_prompt(tmp_path):
-    """After loading context, prompt_builder uses recovered values in prompts."""
+def test_load_context_after_resume_affects_context(tmp_path):
+    """After loading context, build_context() uses recovered values."""
     ctx_path = str(tmp_path / "prompt_context.json")
     with open(ctx_path, "w") as f:
         json.dump({
@@ -269,6 +269,6 @@ def test_load_context_after_resume_affects_prompt(tmp_path):
     pb = PromptBuilder("title", "desc")
     pb.load_context(ctx_path)
 
-    prompt = pb.build("implement")
-    assert "bd-resumed" in prompt
-    assert "Resumed Task" in prompt
+    ctx = pb.build_context("implement")
+    assert "bd-resumed" in ctx.get("assigned_task", "")
+    assert "Resumed Task" in ctx.get("assigned_task", "")

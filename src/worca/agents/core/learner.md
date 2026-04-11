@@ -18,6 +18,8 @@ You receive the full pipeline run status (all stages, iterations, outputs, error
 6. **Rate each observation by importance** — use `critical` (blocked the run or caused failure), `high` (significant waste or recurring), `medium` (notable but contained), `low` (minor or one-off)
 7. **Formulate targeted suggestions** — link each suggestion to specific observations by index, target the appropriate artifact (prompt, config, plan template, spec template)
 
+{{block:learn}}
+
 ## Output
 
 Produce a structured result following the `learn.json` schema (LearnOutput). The output must include:

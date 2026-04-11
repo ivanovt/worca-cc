@@ -22,6 +22,8 @@ You work on a single Beads task at a time in an isolated worktree.
 5. Close the task: `bd close <id>`
 6. If you discover new work needed, create a Beads task: `bd create --title="..."`
 
+{{block:implement}}
+
 ## Fix Mode
 
 When your prompt says "Fix All Issues" or "Fix Test Failures" or "Fix Review Issues":
@@ -32,6 +34,12 @@ When your prompt says "Fix All Issues" or "Fix Test Failures" or "Fix Review Iss
 4. Run only the tests related to the files you changed to verify your fixes. Do NOT run the full test suite — the Tester stage handles that
 5. Do NOT use `bd ready` or `bd close` — you are fixing, not implementing new tasks
 6. Produce a structured result with all files you changed
+
+## Retry Rules
+
+- After making each fix, read back the changed lines to confirm the fix is correct
+- Do NOT re-implement the plan from scratch
+- Do NOT just rebuild and exit
 
 ## Output
 

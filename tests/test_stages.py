@@ -162,8 +162,8 @@ class TestStageAgentMap:
     def test_test_maps_to_tester(self):
         assert STAGE_AGENT_MAP[Stage.TEST] == "tester"
 
-    def test_review_maps_to_guardian(self):
-        assert STAGE_AGENT_MAP[Stage.REVIEW] == "guardian"
+    def test_review_maps_to_reviewer(self):
+        assert STAGE_AGENT_MAP[Stage.REVIEW] == "reviewer"
 
     def test_pr_maps_to_guardian(self):
         assert STAGE_AGENT_MAP[Stage.PR] == "guardian"
@@ -254,7 +254,7 @@ class TestGetStageConfig:
         empty_file = tmp_path / "empty.json"
         empty_file.write_text("{}")
         config = get_stage_config(Stage.REVIEW, settings_path=str(empty_file))
-        assert config["agent"] == "guardian"
+        assert config["agent"] == "reviewer"
         assert config["model"] == "claude-sonnet-4-6"
         assert config["max_turns"] == 30
 
