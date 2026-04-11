@@ -302,8 +302,12 @@ class PromptBuilder:
             return ""
 
     def _work_request_section(self) -> str:
-        """Common work request section included in all prompts."""
-        return f"## Work Request\n\n**{self._title}**\n\n{self._description}"
+        """Common work request content for {{work_request}} placeholder.
+
+        Returns title + description only — no heading. Block files provide
+        the ## Work Request heading so template authors control structure.
+        """
+        return f"**{self._title}**\n\n{self._description}"
 
     # -- Pre-formatting helpers ------------------------------------------------
 

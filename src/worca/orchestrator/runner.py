@@ -1247,9 +1247,12 @@ def run_pipeline(
         # Ensure hook env vars are set for both new and resumed runs
         os.environ["WORCA_PLAN_FILE"] = status.get("plan_file") or ""
 
-        # Thread plan_file into PromptBuilder so _build_plan can reference it
+        # Thread template variables into PromptBuilder for {{placeholder}} resolution
         if status.get("plan_file"):
             prompt_builder.update_context("plan_file", status["plan_file"])
+        prompt_builder.update_context("run_id", status.get("run_id", ""))
+        prompt_builder.update_context("branch", branch_name)
+        prompt_builder.update_context("title", work_request.title)
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
 
