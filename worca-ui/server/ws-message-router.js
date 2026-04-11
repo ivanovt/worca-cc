@@ -35,24 +35,6 @@ import {
 import { readSettings } from './settings-reader.js';
 import { discoverRuns } from './watcher.js';
 
-// Legacy fallback prefixes — only used when status.json lacks a stored prompt
-const STAGE_PROMPT_PREFIX = {
-  plan: 'Create a detailed implementation plan for the following work request. Write the plan to the designated plan file.\n\nWork request: ',
-  coordinate:
-    'Decompose the following work request into Beads tasks with dependencies. Do NOT implement anything — only create tasks using `bd create`.\n\nWork request: ',
-  implement:
-    'Implement the code changes described in the work request. Follow the plan and complete the tasks assigned to you.\n\nWork request: ',
-  test: 'Review and test the implementation for the following work request. Run tests and report results. Do NOT modify code.\n\nWork request: ',
-  review:
-    'Review the code changes for the following work request. Check for correctness, style, and adherence to the plan. Do NOT modify code.\n\nWork request: ',
-  pr: 'Create a pull request for the following work request. Summarize the changes and ensure the commit history is clean.\n\nWork request: ',
-};
-
-function _buildStagePrompt(stage, rawPrompt) {
-  const prefix = STAGE_PROMPT_PREFIX[stage];
-  return prefix ? prefix + rawPrompt : rawPrompt;
-}
-
 /**
  * @param {{
  *   watcherSets: Map<string, import('./watcher-set.js').WatcherSet>,
@@ -174,6 +156,7 @@ export function createMessageRouter({
         return;
       }
       const agentName = run.stages?.[stage]?.agent || stage;
+      const effectiveRunId = run.run_id || runId;
 
       const iterations = run.stages?.[stage]?.iterations || [];
       const iterationPrompts = iterations.map((iter, idx) => {
@@ -181,62 +164,97 @@ export function createMessageRouter({
         return { iteration: iter.number ?? idx, prompt };
       });
 
-      const storedPrompt = run.stages?.[stage]?.prompt;
-      let fallbackPrompt;
-      let promptSource;
-      if (storedPrompt) {
-        fallbackPrompt = storedPrompt;
-        promptSource = 'actual';
-      } else {
-        const rawPrompt =
-          run.work_request?.description || run.work_request?.title || '';
-        fallbackPrompt = _buildStagePrompt(stage, rawPrompt);
-        promptSource = 'reconstructed';
-      }
-
+      // User message (-p) — stored in status.json
+      const userPrompt = run.stages?.[stage]?.prompt || null;
       const hasIterationPrompts = iterationPrompts.some(
         (ip) => ip.prompt != null,
       );
-      if (!hasIterationPrompts) {
+      if (!hasIterationPrompts && userPrompt) {
         for (const ip of iterationPrompts) {
-          ip.prompt = fallbackPrompt;
+          ip.prompt = userPrompt;
         }
       }
 
-      let agentInstructions = null;
-      const candidates = [
-        join(
-          proj.worcaDir,
-          'runs',
-          run.run_id || runId,
-          'agents',
-          `${agentName}.md`,
-        ),
-        join(
-          proj.worcaDir,
-          'results',
-          run.run_id || runId,
-          'agents',
-          `${agentName}.md`,
-        ),
-      ];
-      for (const p of candidates) {
-        if (existsSync(p)) {
-          try {
-            agentInstructions = readFileSync(p, 'utf8');
-          } catch {
-            /* ignore */
+      // Resolved agent prompt — the full document the agent actually received.
+      // Prefer per-iteration resolved files (W-037+), fall back to the
+      // unresolved agent template for pre-W-037 runs.
+      let resolvedPrompt = null;
+      const resolvedIterationPrompts = [];
+
+      // Collect per-iteration resolved files
+      for (const iter of iterations) {
+        const iterNum = iter.number ?? 0;
+        const resolvedCandidates = [
+          join(
+            proj.worcaDir,
+            'runs',
+            effectiveRunId,
+            'agents',
+            'resolved',
+            `${agentName}-iter-${iterNum}.md`,
+          ),
+          join(
+            proj.worcaDir,
+            'results',
+            effectiveRunId,
+            'agents',
+            'resolved',
+            `${agentName}-iter-${iterNum}.md`,
+          ),
+        ];
+        let content = null;
+        for (const p of resolvedCandidates) {
+          if (existsSync(p)) {
+            try {
+              content = readFileSync(p, 'utf8');
+            } catch {
+              /* ignore */
+            }
+            break;
           }
-          break;
+        }
+        resolvedIterationPrompts.push({ iteration: iterNum, prompt: content });
+        if (!resolvedPrompt && content) resolvedPrompt = content;
+      }
+
+      // Fall back to unresolved agent template (pre-W-037 runs)
+      if (!resolvedPrompt) {
+        const templateCandidates = [
+          join(
+            proj.worcaDir,
+            'runs',
+            effectiveRunId,
+            'agents',
+            `${agentName}.md`,
+          ),
+          join(
+            proj.worcaDir,
+            'results',
+            effectiveRunId,
+            'agents',
+            `${agentName}.md`,
+          ),
+        ];
+        for (const p of templateCandidates) {
+          if (existsSync(p)) {
+            try {
+              resolvedPrompt = readFileSync(p, 'utf8');
+            } catch {
+              /* ignore */
+            }
+            break;
+          }
         }
       }
+
       ws.send(
         JSON.stringify(
           makeOk(req, {
-            agentInstructions,
-            userPrompt: fallbackPrompt,
+            agentInstructions: resolvedPrompt,
+            userPrompt,
             iterationPrompts,
-            promptSource,
+            resolvedIterationPrompts,
+            promptSource: userPrompt ? 'actual' : 'none',
             agent: agentName,
           }),
         ),

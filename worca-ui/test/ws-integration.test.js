@@ -217,8 +217,10 @@ describe('WebSocket integration', () => {
     });
     expect(reply.ok).toBe(true);
     expect(reply.payload.agent).toBe('implementer');
-    expect(reply.payload.userPrompt).toContain('Implement the test feature');
-    expect(reply.payload.promptSource).toBe('reconstructed');
+    // No stored prompt in status.json → userPrompt is null
+    expect(reply.payload.userPrompt).toBeNull();
+    expect(reply.payload.promptSource).toBe('none');
+    // Falls back to unresolved agent template (pre-W-037 compat)
     expect(reply.payload.agentInstructions).toContain('Implementer Agent');
     ws.close();
   });

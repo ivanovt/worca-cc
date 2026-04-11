@@ -421,31 +421,31 @@ function _agentPromptSection(_stageKey, promptData) {
         Agent Instructions
       </div>
       ${
-        userPrompt
-          ? html`
-        <div class="agent-prompt-block">
-          <div class="agent-prompt-label-row">
-            <span class="agent-prompt-label">User Prompt (-p)</span>
-            <button class="copy-btn" @click=${(e) => _copyToClipboard(userPrompt, e.currentTarget)}>
-              ${unsafeHTML(iconSvg(ClipboardCopy, 11))} Copy
-            </button>
-          </div>
-          <pre class="agent-prompt-content">${userPrompt}</pre>
-        </div>
-      `
-          : nothing
-      }
-      ${
         agentInstructions
           ? html`
         <div class="agent-prompt-block">
           <div class="agent-prompt-label-row">
-            <span class="agent-prompt-label">System Prompt (agent .md)</span>
+            <span class="agent-prompt-label">Agent Prompt (resolved)</span>
             <button class="copy-btn" @click=${(e) => _copyToClipboard(agentInstructions, e.currentTarget)}>
               ${unsafeHTML(iconSvg(ClipboardCopy, 11))} Copy
             </button>
           </div>
           <pre class="agent-prompt-content">${agentInstructions}</pre>
+        </div>
+      `
+          : nothing
+      }
+      ${
+        userPrompt
+          ? html`
+        <div class="agent-prompt-block">
+          <div class="agent-prompt-label-row">
+            <span class="agent-prompt-label">User Message (-p)</span>
+            <button class="copy-btn" @click=${(e) => _copyToClipboard(userPrompt, e.currentTarget)}>
+              ${unsafeHTML(iconSvg(ClipboardCopy, 11))} Copy
+            </button>
+          </div>
+          <pre class="agent-prompt-content">${userPrompt}</pre>
         </div>
       `
           : nothing
