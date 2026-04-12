@@ -400,8 +400,8 @@ In `run-detail.js`, add a `_dispatchEventsView(iter)` function (similar pattern 
 | File | Change |
 |------|--------|
 | `worca-ui/app/views/settings.js` | Rename `dispatch` → `subagent_dispatch` in DEFAULT_GOVERNANCE, load logic, DOM reads, render. Add legacy fallback with warning banner. Add denylist notice. Replace comma-separated inputs with tag input + suggestions popup (see 3.3.1). |
+| `worca-ui/app/views/dispatch-tag-state.js` | **New** — extracted pure state functions for tag input logic (see 5.1). |
 | `worca-ui/server/settings-validator.js` | Accept both `dispatch` and `subagent_dispatch`. Change value validation from VALID_AGENTS check to any-string check. |
-| `worca-ui/server/test/settings-api.test.js` | Update test payloads from `dispatch` to `subagent_dispatch`. Add tests for legacy key acceptance and migration-on-save. |
 | `worca-ui/app/views/run-detail.js` | Add `_dispatchEventsView()` for dispatch event strips in iteration detail. |
 | `src/worca/claude_hooks/subagent_start.py` | Emit `dispatch_allowed` event on successful dispatch. |
 | `src/worca/events/types.py` | Add `HOOK_DISPATCH_ALLOWED` event type and payload builder. |
@@ -414,28 +414,72 @@ In `run-detail.js`, add a `_dispatchEventsView(iter)` function (similar pattern 
 
 | File | Change |
 |------|--------|
-| `src/worca/hooks/tracking.py` | Rename constant, add denylist, add config loading, update `check_dispatch` |
+| `src/worca/hooks/tracking.py` | Rename constant, add denylist, add config loading with `_settings_override` param, `_reset_dispatch_cache()`, update `check_dispatch` |
 | `src/worca/settings.json` | Remove `governance.dispatch`, add `governance.subagent_dispatch` |
 | `src/worca/agents/core/plan_reviewer.md` | Update dispatch rule in governance section |
 | `src/worca/cli/init.py` | Add `governance.dispatch` → `governance.subagent_dispatch` migration |
 | `src/worca/claude_hooks/subagent_start.py` | Emit `dispatch_allowed` event on success |
 | `src/worca/events/types.py` | Add `HOOK_DISPATCH_ALLOWED` event type and payload |
-| `tests/test_tracking.py` | Update existing tests, add config/denylist/fallback tests |
+| `tests/test_tracking.py` | Update existing tests, add config/denylist/fallback/cache tests |
+| `tests/test_init_migration.py` | **New** — settings migration tests for `governance.dispatch` → `governance.subagent_dispatch` |
 
 ### UI (@worca/ui)
 
 | File | Change |
 |------|--------|
 | `worca-ui/app/views/settings.js` | Rename dispatch key, add legacy fallback + warning, denylist notice, tag input with suggestions |
+| `worca-ui/app/views/dispatch-tag-state.js` | **New** — extracted pure state functions: `addTag`, `removeTag`, `filterSuggestions`, `isCustomized` |
 | `worca-ui/server/settings-validator.js` | Accept both keys, change value validation to any-string |
+| `worca-ui/app/views/run-detail.js` | Add `_dispatchEventsView()` for dispatch event strips in iteration detail |
 | `worca-ui/server/test/settings-api.test.js` | Update dispatch test payloads, add legacy/migration tests |
-| `worca-ui/app/views/run-detail.js` | Add dispatch event visualization in iteration detail |
+| `worca-ui/app/views/dispatch-tag-state.test.js` | **New** — unit tests for tag state logic |
+| `worca-ui/app/views/run-detail-dispatch.test.js` | **New** — render tests for dispatch event strips |
+| `worca-ui/e2e/settings-dispatch.spec.js` | **New** — Playwright e2e tests for tag input interaction, legacy migration, save round-trip |
 
 ---
 
 ## 5. Test Plan
 
-### Python — existing tests to update
+### 5.1 Testability design
+
+**Python — settings injection for `_load_subagent_dispatch`:**
+
+`check_dispatch` will call `_load_subagent_dispatch()` which reads `settings.json` from disk. To keep tests fast and deterministic without `tmp_path` fixtures, add an internal `_settings_override` parameter:
+
+```python
+_cached_rules: dict | None = None
+
+def _load_subagent_dispatch(settings_override: dict | None = None) -> dict:
+    global _cached_rules
+    if _cached_rules is not None and settings_override is None:
+        return _cached_rules
+    # ... rest of loading logic, using settings_override or reading from disk
+```
+
+Tests call `_load_subagent_dispatch(settings_override={...})` directly. The cache must be resettable between tests:
+
+```python
+def _reset_dispatch_cache():
+    global _cached_rules
+    _cached_rules = None
+```
+
+Use a pytest `autouse` fixture in `test_tracking.py` that calls `_reset_dispatch_cache()` after each test to ensure isolation.
+
+**UI — extract tag input state logic:**
+
+Separate the tag input state management from DOM rendering into pure testable functions (either in `settings.js` or a new `dispatch-tag-state.js`):
+
+```javascript
+export function addTag(current, newTag, denylist) { ... }
+export function removeTag(current, tag) { ... }
+export function filterSuggestions(input, knownTypes, current, denylist) { ... }
+export function isCustomized(current, defaults) { ... }
+```
+
+These are unit-tested with vitest (fast, no DOM). The DOM rendering and interaction are tested via Playwright e2e.
+
+### 5.2 Python — existing tests to update
 
 | Test | Current | New |
 |------|---------|-----|
@@ -443,43 +487,149 @@ In `run-detail.js`, add a `_dispatchEventsView(iter)` function (similar pattern 
 | `test_plan_reviewer_dispatch_rules_is_empty_set` | asserts empty | asserts `{"explore"}` |
 | `test_blocks_plan_reviewer_dispatching_anything` | asserts block | asserts allow (explore) |
 
-### Python — new tests
+### 5.3 Python — new tests in `tests/test_tracking.py`
 
 | Test | Validates |
 |------|-----------|
 | `test_reviewer_dispatching_explore` | W-037 gap: `reviewer` can dispatch `explore` |
+| `test_learner_in_default_dispatch` | `learner` present in `DEFAULT_SUBAGENT_DISPATCH` with empty set |
 | `test_denylist_blocks_general_purpose` | `general-purpose` blocked even with no parent agent rule |
-| `test_denylist_blocks_general_purpose_even_if_configured` | User config with `general-purpose` is stripped |
-| `test_config_replaces_defaults_per_agent` | User config `implementer: ["explore", "foo"]` overrides default |
+| `test_denylist_blocks_general_purpose_even_if_configured` | User config with `general-purpose` is stripped, warning emitted to stderr |
+| `test_config_replaces_defaults_per_agent` | User config `implementer: ["explore", "foo"]` overrides default — `foo` allowed, other defaults unchanged |
 | `test_config_fallback_for_missing_agent` | Unconfigured agents get `DEFAULT_SUBAGENT_DISPATCH` values |
-| `test_config_empty_list_removes_all` | User config `planner: []` removes explore access |
-| `test_default_constant_matches_settings_json` | `DEFAULT_SUBAGENT_DISPATCH` keys/values match `settings.json` defaults |
-| `test_settings_migration_renames_dispatch_key` | `worca init --upgrade` renames `governance.dispatch` → `governance.subagent_dispatch` |
+| `test_config_empty_list_removes_all` | User config `planner: []` removes explore access for planner |
+| `test_default_constant_matches_settings_json` | `DEFAULT_SUBAGENT_DISPATCH` keys/values match `src/worca/settings.json` defaults |
+| `test_cache_reset_between_config_changes` | After `_reset_dispatch_cache()`, new settings are loaded |
 
-### UI — existing tests to update
+### 5.4 Python — new `tests/test_init_migration.py`
 
-| Test file | Change |
-|-----------|--------|
-| `settings-api.test.js` | Update all `dispatch` payloads to `subagent_dispatch` |
-| `settings-api.test.js` "rejects dispatch arrays containing unknown agent names" | Remove or change — values are now open-ended strings, not VALID_AGENTS |
-
-### UI — new tests
+No `test_init.py` exists today. Create `tests/test_init_migration.py` focused on settings migration logic:
 
 | Test | Validates |
 |------|-----------|
-| `settings-api: accepts subagent_dispatch with arbitrary subagent types` | `["explore", "feature-dev:code-reviewer"]` accepted |
-| `settings-api: accepts legacy dispatch key` | Old key still passes validation |
-| `settings-api: migrates dispatch to subagent_dispatch on save` | Save with old key writes new key |
-| `run-detail: renders dispatch allowed events` | Green badge appears for allowed dispatch |
-| `run-detail: renders dispatch blocked events` | Red badge with reason for blocked dispatch |
-| `run-detail: no dispatch strip when no events` | Clean rendering when iteration has no dispatch events |
-| `settings: tag input adds known type from suggestions` | Clicking a suggestion adds a tag chip |
-| `settings: tag input adds custom freeform type` | Typing unknown string + Enter adds a custom tag |
-| `settings: tag input prevents denied types` | `general-purpose` shown greyed out, cannot be added |
-| `settings: tag input removes tag on X click` | Clicking remove on chip deletes the entry |
-| `settings: reset to default restores default tags` | Reset button restores `DEFAULT_SUBAGENT_DISPATCH` values |
-| `settings: legacy key shows migration warning` | Banner shown when `governance.dispatch` detected |
-| `settings: save with legacy key writes subagent_dispatch` | Saving migrates to new key |
+| `test_migrate_dispatch_to_subagent_dispatch` | `governance.dispatch` key renamed to `governance.subagent_dispatch` |
+| `test_migrate_dispatch_replaces_wrong_values` | Old values (pipeline agent names) replaced with new defaults (subagent types) |
+| `test_migrate_preserves_other_governance_keys` | `guards`, `test_gate_strikes` untouched during migration |
+| `test_migrate_no_op_when_subagent_dispatch_exists` | Already-migrated settings not modified |
+| `test_migrate_no_op_when_no_dispatch_key` | Settings without any dispatch key pass through unchanged |
+
+Uses `tmp_path` fixture to create a temporary `settings.json`, calls `_migrate_settings_paths()` directly, asserts on the returned dict.
+
+### 5.5 UI — server API tests (vitest)
+
+Existing tests in `worca-ui/server/test/settings-api.test.js` to update:
+
+| Test | Change |
+|------|--------|
+| `SAMPLE_SETTINGS` fixture | Change `dispatch` → `subagent_dispatch` with correct values |
+| "rejects dispatch arrays containing unknown agent names" | Remove — values are now open-ended strings, not `VALID_AGENTS` |
+
+New tests:
+
+| Test | Validates |
+|------|-----------|
+| `accepts subagent_dispatch with arbitrary subagent types` | `["explore", "feature-dev:code-reviewer"]` accepted |
+| `accepts legacy dispatch key` | Old `governance.dispatch` key passes validation |
+| `prefers subagent_dispatch when both keys present` | `subagent_dispatch` wins over `dispatch` |
+| `rejects non-array values in subagent_dispatch` | `{ planner: "explore" }` (string, not array) rejected |
+| `rejects non-string array elements` | `{ planner: [123] }` rejected |
+
+### 5.6 UI — view render tests (vitest)
+
+New file: `worca-ui/app/views/run-detail-dispatch.test.js`
+
+Follows the existing `renderToString` pattern from `run-detail-circuit-breaker.test.js`:
+
+| Test | Validates |
+|------|-----------|
+| `renders dispatch allowed events as green badge` | `_dispatchEventsView` with allowed event produces green badge HTML |
+| `renders dispatch blocked events as red badge` | Blocked event produces red badge with reason text |
+| `renders multiple dispatch events for same iteration` | Two events → two badges |
+| `renders nothing when no dispatch events` | No dispatch data → `nothing` (no empty-state noise) |
+
+New file: `worca-ui/app/views/dispatch-tag-state.test.js` (or inline in `settings.test.js`)
+
+Tests the extracted pure state functions:
+
+| Test | Validates |
+|------|-----------|
+| `addTag adds a new type to the list` | `addTag(["explore"], "foo", denylist)` → `["explore", "foo"]` |
+| `addTag rejects duplicate` | `addTag(["explore"], "explore", denylist)` → `["explore"]` (unchanged) |
+| `addTag rejects denied type` | `addTag([], "general-purpose", denylist)` → `[]` + returns rejection reason |
+| `removeTag removes existing type` | `removeTag(["explore", "foo"], "foo")` → `["explore"]` |
+| `filterSuggestions excludes already-added types` | Types in `current` not shown in suggestions |
+| `filterSuggestions filters by input prefix` | Input `"feat"` → only `feature-dev:*` types shown |
+| `filterSuggestions marks denied types` | `general-purpose` in results has `denied: true` flag |
+| `isCustomized returns false when matching defaults` | `["explore"]` for planner matches default → not customized |
+| `isCustomized returns true when different from defaults` | `["explore", "foo"]` for planner → customized |
+
+### 5.7 UI — Playwright e2e tests
+
+New file: `worca-ui/e2e/settings-dispatch.spec.js`
+
+Uses the existing `startServer()` fixture from `e2e/fixtures.js`. Writes a `settings.json` to the temp project dir before navigating.
+
+**Test: renders tag input with current dispatch values**
+1. Write `settings.json` with `subagent_dispatch: { planner: ["explore"], implementer: ["explore", "feature-dev:code-reviewer"] }`
+2. Navigate to settings page → Governance tab
+3. Assert `planner` row has 1 tag chip ("explore")
+4. Assert `implementer` row has 2 tag chips ("explore", "feature-dev:code-reviewer")
+
+**Test: add a known subagent type via suggestions**
+1. Start with default settings
+2. Click into the `tester` tag input → type "exp"
+3. Assert suggestions popup appears with "explore" highlighted
+4. Click "explore" suggestion
+5. Assert "explore" tag chip added to `tester` row
+
+**Test: add a custom freeform subagent type**
+1. Click into the `implementer` tag input → type "my-custom-agent"
+2. Press Enter
+3. Assert "my-custom-agent" tag chip added
+
+**Test: remove a tag chip**
+1. Start with `planner: ["explore"]`
+2. Click the × on the "explore" chip
+3. Assert chip removed, input is now empty
+
+**Test: denied type shown greyed out in suggestions**
+1. Click into any agent input → type "general"
+2. Assert suggestions popup shows "general-purpose" with `denied` styling (greyed, struck-through)
+3. Click it → assert it is NOT added as a tag
+
+**Test: reset to default**
+1. Start with `implementer: ["explore", "custom-thing"]` (customized)
+2. Assert "reset to default" button visible for implementer row
+3. Click reset button
+4. Assert implementer row now shows only default tags (["explore"])
+
+**Test: legacy key shows warning banner and migrates on save**
+1. Write `settings.json` with old `governance.dispatch` key (no `subagent_dispatch`)
+2. Navigate to settings → Governance tab
+3. Assert migration warning banner visible ("Run `worca init --upgrade` to migrate")
+4. Assert dispatch values still rendered from the legacy key
+5. Click Save
+6. Read `settings.json` from temp dir → assert `subagent_dispatch` key present, `dispatch` key absent
+
+**Test: save round-trip preserves all dispatch values**
+1. Start with default settings
+2. Add "feature-dev:code-reviewer" to `implementer`
+3. Click Save
+4. Reload page
+5. Assert `implementer` row still shows both "explore" and "feature-dev:code-reviewer"
+
+### 5.8 Test execution summary
+
+| Layer | Tool | Command | Files | Speed |
+|-------|------|---------|-------|-------|
+| Python dispatch logic | pytest | `pytest tests/test_tracking.py` | `tests/test_tracking.py` | Fast (<1s) |
+| Python migration | pytest | `pytest tests/test_init_migration.py` | `tests/test_init_migration.py` (new) | Fast (<1s) |
+| UI server API | vitest | `cd worca-ui && npx vitest run server/test/settings-api.test.js` | `server/test/settings-api.test.js` | Fast (<2s) |
+| UI tag state logic | vitest | `cd worca-ui && npx vitest run app/views/dispatch-tag-state.test.js` | `app/views/dispatch-tag-state.test.js` (new) | Fast (<1s) |
+| UI dispatch strips | vitest | `cd worca-ui && npx vitest run app/views/run-detail-dispatch.test.js` | `app/views/run-detail-dispatch.test.js` (new) | Fast (<1s) |
+| UI e2e interaction | Playwright | `cd worca-ui && npx playwright test e2e/settings-dispatch.spec.js --workers=1` | `e2e/settings-dispatch.spec.js` (new) | Slow (~15s) |
+
+All tests run in CI. Playwright tests must use `--workers=1` (serial) per CLAUDE.md.
 
 ---
 
