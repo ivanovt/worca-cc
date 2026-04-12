@@ -136,6 +136,16 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
         changes.append("  agent_overrides_dir: .claude/agents/overrides -> .claude/agents")
         migrated["worca"] = worca_cfg
 
+    # Migrate review stage agent: guardian -> reviewer (W-037)
+    stages_cfg = worca_cfg.get("stages", {})
+    review_cfg = stages_cfg.get("review", {})
+    if review_cfg.get("agent") == "guardian":
+        review_cfg["agent"] = "reviewer"
+        stages_cfg["review"] = review_cfg
+        worca_cfg["stages"] = stages_cfg
+        migrated["worca"] = worca_cfg
+        changes.append("  stages.review.agent: guardian -> reviewer")
+
     return migrated, changes
 
 

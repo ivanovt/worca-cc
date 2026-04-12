@@ -4,218 +4,12 @@
 from worca.orchestrator.prompt_builder import PromptBuilder
 
 
-def test_build_unknown_stage_returns_work_request():
-    pb = PromptBuilder("Add auth", "Implement user authentication")
-    prompt = pb.build("unknown_stage")
-    assert "Add auth" in prompt
-    assert "Implement user authentication" in prompt
+# --- T10: build() shim removal ---
 
-
-def test_build_plan_includes_work_request():
-    pb = PromptBuilder("Add auth", "Implement user authentication")
-    prompt = pb.build("plan")
-    assert "Add auth" in prompt
-    assert "Implement user authentication" in prompt
-
-
-def test_build_plan_includes_claude_md_instruction():
-    pb = PromptBuilder("Add auth", "Implement user authentication")
-    prompt = pb.build("plan")
-    assert "CLAUDE.md" in prompt
-    assert "MASTER_PLAN.md" in prompt
-
-
-def test_build_plan_includes_claude_md_content(tmp_path):
-    claude_md = tmp_path / "CLAUDE.md"
-    claude_md.write_text("# My Project\n\nUses Python + pytest")
-    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(claude_md))
-    prompt = pb.build("plan")
-    assert "My Project" in prompt
-    assert "Uses Python + pytest" in prompt
-    assert "Project Context" in prompt
-
-
-def test_build_plan_no_claude_md(tmp_path):
-    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(tmp_path / "nonexistent.md"))
-    prompt = pb.build("plan")
-    assert "Project Context" not in prompt
-    assert "Add auth" in prompt
-
-
-def test_build_coordinate_includes_work_request():
-    pb = PromptBuilder("Add auth", "Implement user authentication")
-    prompt = pb.build("coordinate")
-    assert "Add auth" in prompt
-    assert "bd create" in prompt
-    assert "Do NOT implement" in prompt
-
-
-def test_build_coordinate_includes_plan_context():
+def test_build_method_removed():
+    """build() shim has been removed from PromptBuilder after T10 refactor."""
     pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("plan_approach", "Use JWT tokens with refresh flow")
-    pb.update_context("plan_tasks_outline", [
-        {"title": "Create auth middleware", "description": "JWT validation middleware"},
-        {"title": "Add login endpoint", "description": "POST /api/login"},
-    ])
-    prompt = pb.build("coordinate")
-    assert "Approved Plan" in prompt
-    assert "JWT tokens" in prompt
-    assert "Create auth middleware" in prompt
-    assert "Add login endpoint" in prompt
-
-
-def test_build_coordinate_without_plan_context():
-    pb = PromptBuilder("Add auth", "Desc")
-    prompt = pb.build("coordinate")
-    assert "Approved Plan" not in prompt
-
-
-def test_build_implement_with_assigned_bead():
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("assigned_bead_id", "bd-abc123")
-    pb.update_context("assigned_bead_title", "Create auth middleware")
-    pb.update_context("assigned_bead_description", "JWT validation middleware")
-    prompt = pb.build("implement")
-    assert "bd-abc123" in prompt
-    assert "Create auth middleware" in prompt
-    assert "JWT validation middleware" in prompt
-    assert "bd ready" not in prompt
-
-
-def test_build_implement_without_assigned_bead():
-    pb = PromptBuilder("Add auth", "Desc")
-    prompt = pb.build("implement")
-    assert "bd ready" in prompt
-
-
-def test_build_implement_with_test_failures():
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("assigned_bead_id", "bd-abc123")
-    pb.update_context("test_failures", [
-        {"test_name": "test_login_valid", "error": "AssertionError: 401 != 200"},
-        {"test_name": "test_token_refresh", "error": "KeyError: 'refresh_token'"},
-    ])
-    prompt = pb.build("implement", iteration=1)
-    assert "PRIORITY: Fix Test Failures" in prompt
-    assert "Failures to Fix" in prompt
-    assert "test_login_valid" in prompt
-    assert "401 != 200" in prompt
-    assert "test_token_refresh" in prompt
-    assert "Reference: Task & Plan (already implemented)" in prompt
-
-
-def test_build_implement_with_review_issues():
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("assigned_bead_id", "bd-abc123")
-    pb.update_context("review_issues", [
-        {"file": "auth.py", "line": 42, "severity": "critical", "description": "SQL injection"},
-    ])
-    prompt = pb.build("implement", iteration=2)
-    assert "PRIORITY: Fix Review Issues" in prompt
-    assert "Issues to Fix" in prompt
-    assert "auth.py:42" in prompt
-    assert "SQL injection" in prompt
-    assert "[critical]" in prompt
-    assert "Reference: Task & Plan (already implemented)" in prompt
-
-
-def test_build_implement_no_loop_context_at_iteration_0():
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("test_failures", [{"test_name": "t", "error": "e"}])
-    prompt = pb.build("implement", iteration=0)
-    assert "PRIORITY" not in prompt
-
-
-def test_build_implement_cleared_context_not_shown():
-    """When test_failures is set to None (cleared), it should not appear."""
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("assigned_bead_id", "bd-abc123")
-    pb.update_context("test_failures", None)
-    pb.update_context("review_issues", [
-        {"file": "x.py", "line": 1, "severity": "minor", "description": "style"},
-    ])
-    prompt = pb.build("implement", iteration=1)
-    assert "Fix Test Failures" not in prompt
-    assert "Fix Review Issues" in prompt
-
-
-def test_build_implement_retry_shows_history():
-    """Review history from multiple attempts is shown in retry prompt."""
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("assigned_bead_id", "bd-abc123")
-    pb.update_context("review_history", [
-        {"attempt": 1, "issues": [{"file": "a.py", "line": 10, "severity": "major", "description": "bug1"}]},
-        {"attempt": 2, "issues": [{"file": "a.py", "line": 10, "severity": "major", "description": "bug1 still"}]},
-    ])
-    pb.update_context("review_issues", [
-        {"file": "a.py", "line": 10, "severity": "major", "description": "bug1 still"},
-    ])
-    prompt = pb.build("implement", iteration=2)
-    assert "Previous Attempts (all failed to resolve)" in prompt
-    assert "Attempt 1" in prompt
-    assert "PRIORITY: Fix Review Issues (attempt 2)" in prompt
-
-
-def test_build_implement_retry_verification_instruction():
-    """Retry prompt includes verification instruction."""
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("review_issues", [
-        {"file": "a.py", "line": 1, "severity": "critical", "description": "x"},
-    ])
-    prompt = pb.build("implement", iteration=1)
-    assert "read back the changed lines" in prompt
-
-
-def test_build_test_includes_implementation_summary():
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("files_changed", ["auth.py", "middleware.py"])
-    pb.update_context("tests_added", ["test_auth.py"])
-    prompt = pb.build("test")
-    assert "Implementation Summary" in prompt
-    assert "auth.py" in prompt
-    assert "middleware.py" in prompt
-    assert "test_auth.py" in prompt
-
-
-def test_build_test_without_implementation_summary():
-    pb = PromptBuilder("Add auth", "Desc")
-    prompt = pb.build("test")
-    assert "Implementation Summary" not in prompt
-    assert "Do NOT modify source code" in prompt
-
-
-def test_build_review_includes_test_results():
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("test_passed", True)
-    pb.update_context("test_coverage", 87.5)
-    pb.update_context("proof_artifacts", [".worca/test-output.txt"])
-    pb.update_context("files_changed", ["auth.py"])
-    prompt = pb.build("review")
-    assert "PASSED" in prompt
-    assert "87.5%" in prompt
-    assert "test-output.txt" in prompt
-    assert "Files Changed" in prompt
-    assert "auth.py" in prompt
-
-
-def test_build_review_without_test_results():
-    pb = PromptBuilder("Add auth", "Desc")
-    prompt = pb.build("review")
-    assert "Test Results" not in prompt
-
-
-def test_build_pr_includes_approach():
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("plan_approach", "JWT with refresh tokens")
-    prompt = pb.build("pr")
-    assert "JWT with refresh tokens" in prompt
-    assert "pull request" in prompt.lower()
-
-
-def test_build_pr_without_approach():
-    pb = PromptBuilder("Add auth", "Desc")
-    prompt = pb.build("pr")
-    assert "Approach" not in prompt
+    assert not hasattr(pb, "build"), "build() shim should be removed from PromptBuilder"
 
 
 def test_update_and_get_context():
@@ -225,69 +19,6 @@ def test_update_and_get_context():
     assert pb.get_context("missing") is None
     assert pb.get_context("missing", "default") == "default"
 
-
-def test_description_defaults_to_title():
-    pb = PromptBuilder("Add auth")
-    prompt = pb.build("plan")
-    # Description should fall back to title
-    assert "Add auth" in prompt
-
-
-# --- Fix 1: per-bead prompt iteration counter ---
-
-def test_implement_iteration_0_produces_initial_prompt():
-    """build("implement", 0) should produce the initial prompt."""
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("assigned_bead_id", "bd-abc")
-    pb.update_context("assigned_bead_title", "Task 1")
-    prompt = pb.build("implement", iteration=0)
-    assert prompt.startswith("Implement the code")
-    assert "PRIORITY" not in prompt
-
-
-def test_implement_iteration_1_with_review_issues_produces_retry():
-    """build("implement", 1) with review_issues should produce a retry prompt."""
-    pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("review_issues", [
-        {"file": "x.py", "line": 1, "severity": "major", "description": "bug"},
-    ])
-    prompt = pb.build("implement", iteration=1)
-    assert prompt.startswith("## PRIORITY")
-
-
-def test_implement_iteration_0_after_context_clear_produces_initial():
-    """After clearing feedback context, build("implement", 0) should produce
-    the initial prompt again — not a broken retry prompt."""
-    pb = PromptBuilder("Add auth", "Desc")
-    # Simulate a retry cycle
-    pb.update_context("review_issues", [
-        {"file": "x.py", "line": 1, "severity": "major", "description": "bug"},
-    ])
-    prompt_retry = pb.build("implement", iteration=1)
-    assert "PRIORITY" in prompt_retry
-
-    # Simulate next_bead transition: clear feedback, reset iteration
-    pb.update_context("review_issues", None)
-    pb.update_context("review_history", None)
-    pb.update_context("test_failures", None)
-    pb.update_context("test_failure_history", None)
-    prompt_fresh = pb.build("implement", iteration=0)
-    assert prompt_fresh.startswith("Implement the code")
-    assert "PRIORITY" not in prompt_fresh
-    assert "Verification" not in prompt_fresh.split("\n")[0]
-
-
-# --- Fix 2: reviewer knows implementer capabilities ---
-
-def test_review_prompt_contains_implementer_capabilities():
-    """Review prompt should tell the reviewer that the implementer cannot commit."""
-    pb = PromptBuilder("Add auth", "Desc")
-    prompt = pb.build("review")
-    assert "CANNOT make git commits" in prompt
-    assert "Do NOT flag uncommitted files" in prompt
-
-
-# --- pop_context ---
 
 def test_pop_context_removes_key_and_returns_value():
     pb = PromptBuilder("title", "desc")
@@ -311,153 +42,6 @@ def test_pop_context_does_not_persist_key():
 
 # --- _build_plan_review ---
 
-def test_build_plan_review_includes_work_request(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Implementation Plan\n\nPhase 1: Setup")
-    pb = PromptBuilder("Add auth", "Implement user authentication", master_plan_path=str(plan_file))
-    prompt = pb.build("plan_review")
-    assert "Add auth" in prompt
-    assert "Implement user authentication" in prompt
-
-
-def test_build_plan_review_reads_plan_from_disk(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Implementation Plan\n\nPhase 1: Setup\nPhase 2: Implement JWT")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    prompt = pb.build("plan_review")
-    assert "Phase 1: Setup" in prompt
-    assert "Phase 2: Implement JWT" in prompt
-
-
-def test_build_plan_review_includes_mcp_instructions(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Plan")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    prompt = pb.build("plan_review")
-    assert "context7" in prompt.lower()
-    assert "WebSearch" in prompt or "websearch" in prompt.lower()
-    assert "WebFetch" in prompt or "webfetch" in prompt.lower()
-
-
-def test_build_plan_review_no_history_on_first_iteration(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Plan")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    pb.update_context("plan_review_history", [
-        {"attempt": 1, "issues": [{"category": "risk", "severity": "major", "description": "secret"}]}
-    ])
-    prompt = pb.build("plan_review", iteration=0)
-    assert "secret" not in prompt
-    assert "Previous Review" not in prompt
-
-
-def test_build_plan_review_includes_history_on_subsequent_iteration(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Plan")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    pb.update_context("plan_review_history", [
-        {"attempt": 1, "issues": [{"category": "completeness", "severity": "major", "description": "Missing auth edge cases"}]}
-    ])
-    prompt = pb.build("plan_review", iteration=1)
-    assert "Missing auth edge cases" in prompt
-    assert "Previous Review" in prompt
-
-
-def test_build_plan_review_handles_missing_master_plan():
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path="/nonexistent/MASTER_PLAN.md")
-    prompt = pb.build("plan_review")
-    assert "Add auth" in prompt
-    assert "not found" in prompt.lower() or "empty" in prompt.lower() or "critical" in prompt.lower()
-
-
-# --- _build_plan revision mode ---
-
-def test_build_plan_revision_mode_uses_revision_header(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Current Plan\n\nDo this and that")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    pb.update_context("plan_revision_mode", True)
-    pb.update_context("plan_review_issues", [
-        {"category": "completeness", "severity": "critical", "description": "Missing edge cases"},
-    ])
-    prompt = pb.build("plan")
-    assert "revise" in prompt.lower() or "revision" in prompt.lower()
-    assert "Create a detailed implementation plan" not in prompt
-
-
-def test_build_plan_revision_mode_includes_issues(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Current Plan")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    pb.update_context("plan_revision_mode", True)
-    pb.update_context("plan_review_issues", [
-        {"category": "feasibility", "severity": "major", "description": "Unrealistic timeline"},
-        {"category": "completeness", "severity": "critical", "description": "Missing error handling"},
-    ])
-    prompt = pb.build("plan")
-    assert "Unrealistic timeline" in prompt
-    assert "Missing error handling" in prompt
-
-
-def test_build_plan_revision_mode_includes_history(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Current Plan")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    pb.update_context("plan_revision_mode", True)
-    pb.update_context("plan_review_issues", [])
-    pb.update_context("plan_review_history", [
-        {"attempt": 1, "issues": [{"category": "risk", "severity": "major", "description": "No rollback"}]}
-    ])
-    prompt = pb.build("plan")
-    assert "No rollback" in prompt
-
-
-def test_build_plan_revision_mode_reads_current_plan(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Existing Plan Content\n\nDo step A, then B")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    pb.update_context("plan_revision_mode", True)
-    pb.update_context("plan_review_issues", [])
-    prompt = pb.build("plan")
-    assert "Existing Plan Content" in prompt
-    assert "Do step A, then B" in prompt
-
-
-def test_build_plan_no_revision_mode_unchanged():
-    pb = PromptBuilder("Add auth", "Implement user authentication")
-    prompt = pb.build("plan")
-    assert "Create a detailed implementation plan" in prompt
-    assert "MASTER_PLAN.md" in prompt
-
-
-def test_build_plan_revision_mode_instructs_approved_true(tmp_path):
-    plan_file = tmp_path / "MASTER_PLAN.md"
-    plan_file.write_text("# Current Plan")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
-    pb.update_context("plan_revision_mode", True)
-    pb.update_context("plan_review_issues", [])
-    prompt = pb.build("plan")
-    assert "approved" in prompt.lower()
-    assert "true" in prompt.lower()
-
-
-# --- plan-file context fixes (TDD red phase) ---
-
-def test_build_plan_revision_uses_plan_file_context(tmp_path):
-    """_build_plan_revision() should reference plan_file context name, not MASTER_PLAN.md."""
-    plan_file = tmp_path / "plan-001.md"
-    plan_file.write_text("# Current Plan\n\nDo this and that")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(tmp_path / "MASTER_PLAN.md"))
-    pb.update_context("plan_file", str(plan_file))
-    pb.update_context("plan_revision_mode", True)
-    pb.update_context("plan_review_issues", [
-        {"category": "completeness", "severity": "critical", "description": "Missing edge cases"},
-    ])
-    prompt = pb.build("plan")
-    assert "plan-001.md" in prompt
-    assert "MASTER_PLAN.md" not in prompt
-
-
 def test_read_master_plan_uses_plan_file_context(tmp_path):
     """_read_master_plan() should find content via plan_file context key when MASTER_PLAN.md absent."""
     plan_file = tmp_path / "plan-001.md"
@@ -468,21 +52,506 @@ def test_read_master_plan_uses_plan_file_context(tmp_path):
     assert "Plan from plan_file context" in content
 
 
-def test_build_plan_review_uses_plan_file_context(tmp_path):
-    """_build_plan_review() section header should use plan_file name, not MASTER_PLAN.md."""
-    plan_file = tmp_path / "plan-001.md"
+def test_format_test_failures_returns_numbered_markdown():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_test_failures([
+        {"test_name": "test_login_valid", "error": "AssertionError: 401 != 200"},
+        {"test_name": "test_token_refresh", "error": "KeyError: 'refresh_token'"},
+    ])
+    assert "1. **test_login_valid**" in result
+    assert "AssertionError: 401 != 200" in result
+    assert "2. **test_token_refresh**" in result
+    assert "KeyError: 'refresh_token'" in result
+
+
+def test_format_test_failures_empty_list_returns_empty_string():
+    pb = PromptBuilder("T", "D")
+    assert pb._format_test_failures([]) == ""
+
+
+def test_format_test_failures_missing_fields_uses_defaults():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_test_failures([{}])
+    assert "1. **unknown**" in result
+    assert "no details" in result
+
+
+def test_format_review_issues_returns_severity_file_line_markdown():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_review_issues([
+        {"file": "auth.py", "line": 42, "severity": "critical", "description": "SQL injection"},
+        {"file": "middleware.py", "line": 15, "severity": "major", "description": "Missing validation"},
+    ])
+    assert "1. [critical] `auth.py:42`" in result
+    assert "SQL injection" in result
+    assert "2. [major] `middleware.py:15`" in result
+    assert "Missing validation" in result
+
+
+def test_format_review_issues_empty_list_returns_empty_string():
+    pb = PromptBuilder("T", "D")
+    assert pb._format_review_issues([]) == ""
+
+
+def test_format_review_issues_missing_fields_uses_defaults():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_review_issues([{}])
+    assert "[?] `?:?`" in result
+
+
+def test_format_review_history_returns_attempt_bullets():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_review_history([
+        {"attempt": 1, "issues": [{"file": "a.py", "line": 10, "severity": "major"}]},
+        {"attempt": 2, "issues": [{"file": "b.py", "line": 5, "severity": "critical"}]},
+    ])
+    assert "- Attempt 1:" in result
+    assert "[major] a.py:10" in result
+    assert "- Attempt 2:" in result
+    assert "[critical] b.py:5" in result
+
+
+def test_format_review_history_empty_list_returns_empty_string():
+    pb = PromptBuilder("T", "D")
+    assert pb._format_review_history([]) == ""
+
+
+def test_format_review_history_missing_fields_uses_defaults():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_review_history([{"attempt": 1, "issues": [{}]}])
+    assert "- Attempt 1:" in result
+    assert "[?] ?:?" in result
+
+
+def test_format_test_failure_history_returns_attempt_bullets():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_test_failure_history([
+        {"attempt": 1, "failures": [{"test_name": "test_a"}, {"test_name": "test_b"}]},
+        {"attempt": 2, "failures": [{"test_name": "test_c"}]},
+    ])
+    assert "- Attempt 1: test_a; test_b" in result
+    assert "- Attempt 2: test_c" in result
+
+
+def test_format_test_failure_history_empty_list_returns_empty_string():
+    pb = PromptBuilder("T", "D")
+    assert pb._format_test_failure_history([]) == ""
+
+
+def test_format_test_failure_history_missing_fields_uses_defaults():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_test_failure_history([{"attempt": "?", "failures": [{}]}])
+    assert "- Attempt ?: unknown" in result
+
+
+def test_format_plan_review_issues_returns_numbered_markdown():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_plan_review_issues([
+        {
+            "category": "feasibility",
+            "severity": "major",
+            "description": "Unrealistic timeline",
+            "suggestion": "Add buffer",
+            "evidence": "Similar project took 4 weeks",
+        },
+        {
+            "category": "completeness",
+            "severity": "critical",
+            "description": "Missing error handling",
+        },
+    ])
+    assert "1. [major] (feasibility) Unrealistic timeline" in result
+    assert "Suggestion: Add buffer" in result
+    assert "Evidence: Similar project took 4 weeks" in result
+    assert "2. [critical] (completeness) Missing error handling" in result
+
+
+def test_format_plan_review_issues_omits_missing_suggestion_evidence():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_plan_review_issues([
+        {"category": "risk", "severity": "minor", "description": "Low risk"},
+    ])
+    assert "Suggestion" not in result
+    assert "Evidence" not in result
+
+
+def test_format_plan_review_issues_empty_list_returns_empty_string():
+    pb = PromptBuilder("T", "D")
+    assert pb._format_plan_review_issues([]) == ""
+
+
+def test_format_plan_review_issues_missing_fields_uses_defaults():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_plan_review_issues([{}])
+    assert "1. [?] (?) " in result
+
+
+def test_format_plan_review_history_returns_attempt_bullets():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_plan_review_history([
+        {"attempt": 1, "issues": [{"severity": "major", "category": "risk", "description": "No rollback"}]},
+        {"attempt": 2, "issues": [{"severity": "critical", "category": "completeness", "description": "Missing tests"}]},
+    ])
+    assert "- Attempt 1: [major] risk: No rollback" in result
+    assert "- Attempt 2: [critical] completeness: Missing tests" in result
+
+
+def test_format_plan_review_history_empty_list_returns_empty_string():
+    pb = PromptBuilder("T", "D")
+    assert pb._format_plan_review_history([]) == ""
+
+
+def test_format_plan_review_history_missing_fields_uses_defaults():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_plan_review_history([{"attempt": 1, "issues": [{}]}])
+    assert "- Attempt 1: [?] ?: " in result
+
+
+def test_format_implementation_summary_returns_files_and_tests():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_implementation_summary(
+        files_changed=["auth.py", "middleware.py"],
+        tests_added=["test_auth.py"],
+    )
+    assert "**Files changed:**" in result
+    assert "- auth.py" in result
+    assert "- middleware.py" in result
+    assert "**Tests added:**" in result
+    assert "- test_auth.py" in result
+
+
+def test_format_implementation_summary_files_only():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_implementation_summary(
+        files_changed=["main.py"],
+        tests_added=[],
+    )
+    assert "**Files changed:**" in result
+    assert "**Tests added:**" not in result
+
+
+def test_format_implementation_summary_empty_returns_empty_string():
+    pb = PromptBuilder("T", "D")
+    assert pb._format_implementation_summary([], []) == ""
+
+
+def test_format_test_results_passed_with_coverage():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_test_results(
+        test_passed=True,
+        coverage=87.5,
+        proof_artifacts=[".worca/test-output.txt"],
+    )
+    assert "**Status:** PASSED" in result
+    assert "**Coverage:** 87.5%" in result
+    assert "**Proof artifacts:**" in result
+    assert "- .worca/test-output.txt" in result
+
+
+def test_format_test_results_failed_no_coverage():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_test_results(test_passed=False, coverage=None, proof_artifacts=[])
+    assert "**Status:** FAILED" in result
+    assert "Coverage" not in result
+    assert "Proof artifacts" not in result
+
+
+def test_format_test_results_no_artifacts():
+    pb = PromptBuilder("T", "D")
+    result = pb._format_test_results(test_passed=True, coverage=None, proof_artifacts=None)
+    assert "**Status:** PASSED" in result
+    assert "Proof artifacts" not in result
+
+
+# --- build_context() ---
+
+def test_build_context_returns_dict():
+    pb = PromptBuilder("Add auth", "Implement authentication")
+    ctx = pb.build_context("plan")
+    assert isinstance(ctx, dict)
+
+
+def test_build_context_plan_contains_work_request():
+    pb = PromptBuilder("Add auth", "Implement authentication")
+    ctx = pb.build_context("plan")
+    assert "work_request" in ctx
+    assert "Add auth" in ctx["work_request"]
+    assert "Implement authentication" in ctx["work_request"]
+
+
+def test_build_context_plan_contains_claude_md(tmp_path):
+    claude_md = tmp_path / "CLAUDE.md"
+    claude_md.write_text("# My Project\n\nUses Python + pytest")
+    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(claude_md))
+    ctx = pb.build_context("plan")
+    assert ctx.get("claude_md") == "# My Project\n\nUses Python + pytest"
+
+
+def test_build_context_plan_no_claude_md(tmp_path):
+    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(tmp_path / "nonexistent.md"))
+    ctx = pb.build_context("plan")
+    assert ctx.get("claude_md") == ""
+
+
+def test_build_context_plan_revision_mode_sets_plan_content(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
+    plan_file.write_text("# Plan Content")
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    pb.update_context("plan_revision_mode", True)
+    ctx = pb.build_context("plan")
+    assert "Plan Content" in ctx.get("plan_content", "")
+
+
+def test_build_context_plan_revision_mode_formats_issues():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_issues", [
+        {"category": "completeness", "severity": "critical", "description": "Missing edge cases"},
+    ])
+    ctx = pb.build_context("plan")
+    assert "Missing edge cases" in ctx.get("plan_review_issues_formatted", "")
+
+
+def test_build_context_plan_revision_mode_formats_history():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_review_history", [
+        {"attempt": 1, "issues": [{"severity": "major", "category": "risk", "description": "No rollback"}]},
+    ])
+    ctx = pb.build_context("plan")
+    assert "No rollback" in ctx.get("plan_review_history_formatted", "")
+
+
+def test_build_context_plan_review_sets_plan_content(tmp_path):
+    plan_file = tmp_path / "MASTER_PLAN.md"
     plan_file.write_text("# Implementation Plan\n\nPhase 1: Setup")
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(tmp_path / "MASTER_PLAN.md"))
-    pb.update_context("plan_file", str(plan_file))
-    prompt = pb.build("plan_review")
-    assert "Implementation Plan (plan-001.md)" in prompt
-    assert "Implementation Plan (MASTER_PLAN.md)" not in prompt
+    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(plan_file))
+    ctx = pb.build_context("plan_review")
+    assert "Phase 1: Setup" in ctx.get("plan_content", "")
 
 
-def test_build_plan_review_missing_plan_uses_plan_file_name(tmp_path):
-    """Fallback message when plan is missing should reference plan_file name, not MASTER_PLAN.md."""
-    pb = PromptBuilder("Add auth", "Desc", master_plan_path=str(tmp_path / "MASTER_PLAN.md"))
-    pb.update_context("plan_file", str(tmp_path / "plan-001.md"))  # file does not exist
-    prompt = pb.build("plan_review")
-    assert "plan-001.md" in prompt
-    assert "MASTER_PLAN.md" not in prompt
+def test_build_context_plan_review_history_empty_on_iteration_0():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_review_history", [
+        {"attempt": 1, "issues": [{"category": "risk", "severity": "major", "description": "No rollback"}]}
+    ])
+    ctx = pb.build_context("plan_review", iteration=0)
+    assert not ctx.get("plan_review_history_formatted")
+
+
+def test_build_context_plan_review_history_set_on_iteration_1():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_review_history", [
+        {"attempt": 1, "issues": [{"category": "risk", "severity": "major", "description": "No rollback"}]}
+    ])
+    ctx = pb.build_context("plan_review", iteration=1)
+    assert "No rollback" in ctx.get("plan_review_history_formatted", "")
+
+
+def test_build_context_coordinate_plan_summary_from_approach_and_outline():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_approach", "Use JWT tokens")
+    pb.update_context("plan_tasks_outline", [
+        {"title": "Create middleware", "description": "JWT validation"},
+    ])
+    ctx = pb.build_context("coordinate")
+    assert "Use JWT tokens" in ctx.get("plan_summary", "")
+    assert "Create middleware" in ctx.get("plan_summary", "")
+
+
+def test_build_context_coordinate_no_plan_summary_without_approach():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("coordinate")
+    assert not ctx.get("plan_summary")
+
+
+def test_build_context_implement_initial_is_retry_false():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("implement", iteration=0)
+    assert ctx.get("is_retry") is False
+
+
+def test_build_context_implement_retry_is_retry_true():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("test_failures", [{"test_name": "test_a", "error": "fail"}])
+    ctx = pb.build_context("implement", iteration=1)
+    assert ctx.get("is_retry") is True
+
+
+def test_build_context_implement_retry_issue_type_test_failures():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("test_failures", [{"test_name": "test_a", "error": "fail"}])
+    ctx = pb.build_context("implement", iteration=1)
+    assert ctx.get("issue_type") == "Test Failures"
+
+
+def test_build_context_implement_retry_issue_type_review_issues():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("review_issues", [
+        {"file": "a.py", "line": 1, "severity": "major", "description": "bug"},
+    ])
+    ctx = pb.build_context("implement", iteration=1)
+    assert ctx.get("issue_type") == "Review Issues"
+
+
+def test_build_context_implement_retry_formats_test_failures():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("test_failures", [
+        {"test_name": "test_login", "error": "AssertionError: 401 != 200"},
+    ])
+    ctx = pb.build_context("implement", iteration=1)
+    assert "test_login" in ctx.get("test_failures_formatted", "")
+    assert "401 != 200" in ctx.get("test_failures_formatted", "")
+
+
+def test_build_context_implement_retry_formats_review_issues():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("review_issues", [
+        {"file": "auth.py", "line": 42, "severity": "critical", "description": "SQL injection"},
+    ])
+    ctx = pb.build_context("implement", iteration=1)
+    assert "auth.py" in ctx.get("review_issues_formatted", "")
+    assert "SQL injection" in ctx.get("review_issues_formatted", "")
+
+
+def test_build_context_implement_retry_previous_attempts_from_review_history():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("review_history", [
+        {"attempt": 1, "issues": [{"file": "a.py", "line": 10, "severity": "major", "description": "bug1"}]},
+        {"attempt": 2, "issues": [{"file": "a.py", "line": 10, "severity": "major", "description": "bug2"}]},
+    ])
+    pb.update_context("review_issues", [
+        {"file": "a.py", "line": 10, "severity": "major", "description": "bug2"},
+    ])
+    ctx = pb.build_context("implement", iteration=2)
+    assert "Attempt 1" in ctx.get("previous_attempts", "")
+
+
+def test_build_context_implement_assigned_task_body_with_bead():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("assigned_bead_id", "bd-abc123")
+    pb.update_context("assigned_bead_title", "Create auth middleware")
+    ctx = pb.build_context("implement", iteration=0)
+    assert "bd-abc123" in ctx.get("assigned_task", "")
+    assert "Create auth middleware" in ctx.get("assigned_task", "")
+
+
+def test_build_context_implement_no_assigned_task_when_no_bead():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("implement")
+    assert not ctx.get("assigned_task")
+
+
+def test_build_context_test_formats_implementation_summary():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("files_changed", ["auth.py", "middleware.py"])
+    pb.update_context("tests_added", ["test_auth.py"])
+    ctx = pb.build_context("test")
+    assert "auth.py" in ctx.get("implementation_summary", "")
+    assert "test_auth.py" in ctx.get("implementation_summary", "")
+
+
+def test_build_context_test_no_implementation_summary_when_empty():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("test")
+    assert not ctx.get("implementation_summary")
+
+
+def test_build_context_review_formats_test_results():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("test_passed", True)
+    pb.update_context("test_coverage", 87.5)
+    pb.update_context("proof_artifacts", [".worca/test-output.txt"])
+    ctx = pb.build_context("review")
+    assert "PASSED" in ctx.get("test_results", "")
+    assert "87.5%" in ctx.get("test_results", "")
+
+
+def test_build_context_review_no_test_results_when_not_set():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("review")
+    assert not ctx.get("test_results")
+
+
+def test_build_context_review_formats_files_changed():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("files_changed", ["auth.py", "middleware.py"])
+    ctx = pb.build_context("review")
+    assert "auth.py" in ctx.get("files_changed_formatted", "")
+    assert "middleware.py" in ctx.get("files_changed_formatted", "")
+
+
+def test_build_context_pr_includes_plan_approach():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_approach", "JWT with refresh tokens")
+    ctx = pb.build_context("pr")
+    assert ctx.get("plan_approach") == "JWT with refresh tokens"
+
+
+def test_build_context_learn_termination_type_default():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("learn")
+    assert ctx.get("termination_type") == "unknown"
+
+
+def test_build_context_learn_termination_type_from_context():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("termination_type", "success")
+    ctx = pb.build_context("learn")
+    assert ctx.get("termination_type") == "success"
+
+
+def test_build_context_learn_contains_run_data():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("full_status", {"run_id": "run-abc123"})
+    ctx = pb.build_context("learn")
+    assert "run-abc123" in ctx.get("run_data", "")
+
+
+def test_build_context_learn_contains_run_id():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("full_status", {"run_id": "run-xyz"})
+    ctx = pb.build_context("learn")
+    assert ctx.get("run_id") == "run-xyz"
+
+
+def test_build_context_learn_plan_content_from_plan_file_content():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_file_content", "# My Plan")
+    ctx = pb.build_context("learn")
+    assert ctx.get("plan_content") == "# My Plan"
+
+
+# --- _load_agent_template ---
+
+def test_load_agent_template_returns_empty_when_run_dir_none():
+    pb = PromptBuilder("Add auth", "Desc")
+    result = pb._load_agent_template("plan")
+    assert result == ""
+
+
+def test_load_agent_template_reads_from_run_dir(tmp_path):
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    planner_md = agents_dir / "planner.md"
+    planner_md.write_text("# Planner Agent\n\n{{block:plan}}")
+    pb = PromptBuilder("Add auth", "Desc", run_dir=str(tmp_path))
+    result = pb._load_agent_template("plan")
+    assert "# Planner Agent" in result
+    assert "{{block:plan}}" in result
+
+
+def test_load_agent_template_returns_empty_for_unknown_stage(tmp_path):
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    pb = PromptBuilder("Add auth", "Desc", run_dir=str(tmp_path))
+    result = pb._load_agent_template("unknown_stage")
+    assert result == ""
+
+
+def test_load_agent_template_returns_empty_when_file_missing(tmp_path):
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    pb = PromptBuilder("Add auth", "Desc", run_dir=str(tmp_path))
+    result = pb._load_agent_template("plan")  # planner.md doesn't exist
+    assert result == ""

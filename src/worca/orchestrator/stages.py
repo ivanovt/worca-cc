@@ -35,7 +35,7 @@ STAGE_AGENT_MAP = {
     Stage.COORDINATE: "coordinator",
     Stage.IMPLEMENT: "implementer",
     Stage.TEST: "tester",
-    Stage.REVIEW: "guardian",
+    Stage.REVIEW: "reviewer",
     Stage.PR: "guardian",
     Stage.LEARN: "learner",
 }

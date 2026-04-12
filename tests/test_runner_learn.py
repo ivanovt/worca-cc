@@ -7,7 +7,6 @@ import pytest
 
 from worca.orchestrator.runner import (
     _run_learn_stage,
-    _STAGE_PROMPT_PREFIX,
     PipelineError,
     PipelineInterrupted,
 )
@@ -19,17 +18,6 @@ def _mock_beads_init():
     """Prevent run_pipeline from invoking the real bd binary in tests."""
     with patch("worca.orchestrator.runner._ensure_beads_initialized"):
         yield
-
-
-# ---------------------------------------------------------------------------
-# _STAGE_PROMPT_PREFIX includes LEARN
-# ---------------------------------------------------------------------------
-
-def test_stage_prompt_prefix_includes_learn():
-    """Stage.LEARN should have an entry in _STAGE_PROMPT_PREFIX."""
-    assert Stage.LEARN in _STAGE_PROMPT_PREFIX
-    template = _STAGE_PROMPT_PREFIX[Stage.LEARN]
-    assert "{prompt}" in template
 
 
 # ---------------------------------------------------------------------------
@@ -265,14 +253,15 @@ def test_run_learn_stage_records_error_in_status(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_run_learn_stage_calls_run_stage_with_learn(tmp_path):
-    """run_stage should be called with Stage.LEARN and the rendered prompt."""
+    """run_stage should be called with Stage.LEARN using build_context()."""
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"worca": {"stages": {"learn": {"enabled": True}}}}))
     run_dir = tmp_path / "run"
     run_dir.mkdir()
 
     pb = MagicMock()
-    pb.build.return_value = "learn prompt content"
+    pb.build_context.return_value = {"work_request": "## Work Request\n\nTest task"}
+    pb._resolver = None  # disable per-stage resolution (no template file)
     status = {"stages": {}, "plan_file": None}
 
     with patch("worca.orchestrator.runner.run_stage", return_value=({}, {})) as mock_run:
@@ -295,10 +284,11 @@ def test_run_learn_stage_calls_run_stage_with_learn(tmp_path):
     args, kwargs = mock_run.call_args
     assert args[0] == Stage.LEARN
     assert kwargs.get("msize") == 2
-    assert kwargs.get("prompt_override") == "learn prompt content"
+    # Minimal work request passed as prompt_override
+    assert kwargs.get("prompt_override") is not None
 
-    # prompt_builder.build should have been called with "learn", 0
-    pb.build.assert_called_once_with("learn", 0)
+    # prompt_builder.build_context should have been called with "learn", 0
+    pb.build_context.assert_called_once_with("learn", 0)
 
 
 # ---------------------------------------------------------------------------

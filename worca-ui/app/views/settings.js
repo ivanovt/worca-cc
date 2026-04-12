@@ -27,7 +27,7 @@ export const STAGE_AGENT_MAP = {
   coordinate: 'coordinator',
   implement: 'implementer',
   test: 'tester',
-  review: 'guardian',
+  review: 'reviewer',
   pr: 'guardian',
   learn: 'learner',
 };
@@ -40,6 +40,7 @@ export const AGENT_NAMES = [
   'coordinator',
   'implementer',
   'tester',
+  'reviewer',
   'guardian',
   'learner',
 ];
@@ -51,7 +52,7 @@ const DEFAULT_STAGES = {
   coordinate: { agent: 'coordinator', enabled: true },
   implement: { agent: 'implementer', enabled: true },
   test: { agent: 'tester', enabled: true },
-  review: { agent: 'guardian', enabled: true },
+  review: { agent: 'reviewer', enabled: true },
   pr: { agent: 'guardian', enabled: true },
   learn: { agent: 'learner', enabled: false },
 };

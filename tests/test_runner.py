@@ -3147,6 +3147,65 @@ def test_render_agent_templates_no_overlay_unchanged(tmp_path, monkeypatch):
     assert rendered == "## Rules\n\n- Core rule.\n"
 
 
+def test_render_agent_templates_excludes_block_md(tmp_path, monkeypatch):
+    """_render_agent_templates must NOT copy .block.md files to the run dir."""
+    monkeypatch.chdir(tmp_path)
+
+    core_dir = tmp_path / ".claude" / "worca" / "agents" / "core"
+    core_dir.mkdir(parents=True)
+    (core_dir / "implementer.md").write_text("## Rules\n\n- Core rule.\n")
+    (core_dir / "implement.block.md").write_text("## Block content\n")
+
+    run_dir = tmp_path / "run"
+    _render_agent_templates(
+        str(run_dir),
+        {"plan_file": "p.md", "run_id": "r1", "branch": "b", "title": "T"},
+        overrides_dir=str(tmp_path / "overrides"),
+    )
+
+    assert (run_dir / "agents" / "implementer.md").exists()
+    assert not (run_dir / "agents" / "implement.block.md").exists()
+
+
+def test_render_agent_templates_no_single_brace_substitution(tmp_path, monkeypatch):
+    """_render_agent_templates must NOT perform {single-brace} placeholder substitution."""
+    monkeypatch.chdir(tmp_path)
+
+    core_dir = tmp_path / ".claude" / "worca" / "agents" / "core"
+    core_dir.mkdir(parents=True)
+    (core_dir / "planner.md").write_text("# Planner\n\nRun: {run_id}\nTitle: {title}\n")
+
+    run_dir = tmp_path / "run"
+    _render_agent_templates(
+        str(run_dir),
+        {"run_id": "20260411", "title": "My Task"},
+        overrides_dir=str(tmp_path / "overrides"),
+    )
+
+    rendered = (run_dir / "agents" / "planner.md").read_text()
+    # Single-brace placeholders must remain unexpanded
+    assert "{run_id}" in rendered
+    assert "{title}" in rendered
+    assert "20260411" not in rendered
+    assert "My Task" not in rendered
+
+
+def test_stage_prompt_prefix_removed():
+    """_STAGE_PROMPT_PREFIX must no longer exist in runner.py."""
+    import worca.orchestrator.runner as runner_mod
+    assert not hasattr(runner_mod, "_STAGE_PROMPT_PREFIX"), (
+        "_STAGE_PROMPT_PREFIX should have been deleted"
+    )
+
+
+def test_build_stage_prompt_removed():
+    """_build_stage_prompt must no longer exist in runner.py."""
+    import worca.orchestrator.runner as runner_mod
+    assert not hasattr(runner_mod, "_build_stage_prompt"), (
+        "_build_stage_prompt should have been deleted"
+    )
+
+
 def test_settings_json_has_agent_overrides_dir():
     """settings.json worca namespace must declare agent_overrides_dir adjacent to plan_path_template."""
     import pathlib
@@ -3293,3 +3352,32 @@ def test_run_pipeline_pipeline_template_none_by_default(tmp_path, monkeypatch):
         )
 
     assert result["pipeline_template"] is None
+
+
+# --- T10: agent_override in run_stage ---
+
+def test_run_stage_uses_agent_override():
+    """run_stage passes agent_override path to run_agent when provided."""
+    mock_config = {"agent": "planner", "model": None, "max_turns": 40, "schema": "plan.json"}
+    with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
+        with patch("worca.orchestrator.runner.run_agent", return_value={}) as mock_run:
+            run_stage(Stage.PLAN, {"prompt": "x"}, agent_override="/tmp/custom-agent.md")
+    assert mock_run.call_args.kwargs.get("agent") == "/tmp/custom-agent.md"
+
+
+def test_run_stage_default_agent_path_when_no_override():
+    """run_stage uses _agent_path when agent_override is not provided."""
+    mock_config = {"agent": "planner", "model": None, "max_turns": 40, "schema": "plan.json"}
+    with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
+        with patch("worca.orchestrator.runner.run_agent", return_value={}) as mock_run:
+            run_stage(Stage.PLAN, {"prompt": "x"})
+    assert ".claude/worca/agents/core/planner.md" in mock_run.call_args.kwargs.get("agent", "")
+
+
+def test_run_stage_agent_override_none_uses_default_path():
+    """Explicitly passing agent_override=None still uses _agent_path."""
+    mock_config = {"agent": "tester", "model": None, "max_turns": 20, "schema": "test.json"}
+    with patch("worca.orchestrator.runner.get_stage_config", return_value=mock_config):
+        with patch("worca.orchestrator.runner.run_agent", return_value={}) as mock_run:
+            run_stage(Stage.TEST, {"prompt": "x"}, agent_override=None)
+    assert ".claude/worca/agents/core/tester.md" in mock_run.call_args.kwargs.get("agent", "")

@@ -635,22 +635,24 @@ This replaces the old `for key, value in template_vars.items(): content.replace(
 ```
 _render_agent_templates() — called once per run at startup (SIMPLIFIED):
 
-  For each agent .md in .claude/worca/agents/core/:
+  For each file in .claude/worca/agents/core/:
+    0. Skip .block.md files (they are resolved via resolve_block(), not as agent templates)
     1. Read core .md
     2. Overlay merge (project → template) via OverlayResolver.resolve()
     3. Write to {run_dir}/agents/{agent}.md
           ↑ This is the TEMPLATE — contains unresolved {{block:name}} and {{placeholder}} tokens
 
   (Step 2 from the old flow — {single-brace} substitution — is REMOVED.
-   All substitution now happens in resolve_agent() at stage invocation time.)
+   All substitution now happens in resolve_agent() at stage invocation time.
+   The .block.md exclusion filter prevents block files from being treated as agents.)
 ```
 
-**Important:** Block and placeholder resolution cannot happen at startup because context values (test failures, review issues, plan content) don't exist yet. The full resolution happens **per stage invocation** in `run_stage()`.
+**Important:** Block and placeholder resolution cannot happen at startup because context values (test failures, review issues, plan content) don't exist yet. The full resolution happens **per stage invocation** in the pipeline loop (runner.py:1416-1482), before `run_stage()` is called.
 
 ### Per-stage resolution flow
 
 ```
-run_stage() is called:
+Pipeline loop (before calling run_stage()):
   1. PromptBuilder.build_context(stage, iteration)
      - Selects which context values to populate (mode routing)
      - Pre-formats complex data (test failures → markdown)
@@ -660,7 +662,7 @@ run_stage() is called:
   3. resolve_agent(agent_content, context, resolver, core_dir, template_agents_dir)
      → produces the fully resolved agent document
   4. Write resolved content to a temp file
-  5. Pass temp file as --agent, work request as -p
+  5. Pass temp file as --agent override to run_stage(), work request as prompt_override
 ```
 
 ### What `-p` becomes
@@ -853,11 +855,24 @@ Add `resolve_block(block_name, core_dir, template_agents_dir)`:
 - `guardian.md` — add `{{block:pr}}`; remove REVIEW-related content
 - `learner.md` — add `{{block:learn}}` + 6-category analysis section
 
-### Task 6: Remove `{single-brace}` substitution from `_render_agent_templates()`
+### Task 6: Remove `{single-brace}` substitution from `_render_agent_templates()` and exclude `.block.md` files
 
 **Files:** Modify `src/worca/orchestrator/runner.py`
 
-Remove the `for key, value in template_vars.items(): content.replace(...)` loop from `_render_agent_templates()`. The function now only does: read core → overlay merge → write to `{run_dir}/agents/`. All placeholder substitution is deferred to `resolve_agent()` at stage invocation time.
+Two changes to `_render_agent_templates()`:
+
+1. **Add `.block.md` exclusion filter.** The existing loop iterates `os.listdir(src_dir)` filtering on `filename.endswith('.md')`. Files like `plan.block.md` match this filter and would be treated as agent templates — copied to `run_dir/agents/`, overlay-resolved as agents named `plan.block`, `implement.block`, etc. This creates a parallel overlay path that conflicts with the block-specific `resolve_block()` chain. Fix: add `if filename.endswith('.block.md'): continue` before the existing `.md` check, so block files are skipped entirely. Block files are only resolved through the `resolve_block()` chain at stage invocation time.
+
+```python
+for filename in os.listdir(src_dir):
+    if filename.endswith('.block.md'):
+        continue  # block files resolved via resolve_block(), not as agent templates
+    if not filename.endswith(".md"):
+        continue
+    # ... rest of loop
+```
+
+2. **Remove the `{single-brace}` substitution loop.** Delete the `for key, value in template_vars.items(): content.replace(...)` loop. The function now only does: read core → overlay merge → write to `{run_dir}/agents/`. All placeholder substitution is deferred to `resolve_agent()` at stage invocation time.
 
 Also delete `_STAGE_PROMPT_PREFIX` dict and `_build_stage_prompt()` function.
 
@@ -886,9 +901,28 @@ Extract list-formatting logic into helpers:
 
 **Files:** Modify `src/worca/orchestrator/prompt_builder.py`
 
+**Constructor change:** Add `resolver`, `core_dir`, and `template_agents_dir` parameters to `PromptBuilder.__init__()`. The current constructor (line 20-28) only accepts `work_request_title`, `work_request_description`, `claude_md_path`, `context_path`, and `master_plan_path`. The `build()` shim and `_load_agent_template()` need these to perform agent resolution. New signature:
+
+```python
+def __init__(self, work_request_title: str, work_request_description: str = "",
+             claude_md_path: str = "CLAUDE.md", context_path: str = None,
+             master_plan_path: str = "MASTER_PLAN.md",
+             resolver: OverlayResolver = None,
+             core_dir: str = None, template_agents_dir: str = None,
+             run_dir: str = None):
+    # ... existing init ...
+    self._resolver = resolver
+    self._core_dir = core_dir
+    self._template_agents_dir = template_agents_dir
+    self._run_dir = run_dir
+```
+
+All new parameters default to `None` for backward compatibility — existing callers that don't pass them still work (they just can't use the shim). The pipeline loop in runner.py (Task 10) passes these when constructing PromptBuilder.
+
 Add:
 - `build_context(stage, iteration) -> dict` — assembles context for block/placeholder resolution
 - `_apply_stage_context(stage, iteration, ctx)` — stage-specific context routing
+- `_load_agent_template(stage) -> str` — reads the overlay-merged agent `.md` template from `{run_dir}/agents/{agent}.md` (contains unresolved `{{block:name}}` and `{{placeholder}}` tokens)
 
 **Keep `build()` as a backward-compatible shim** during transition:
 
@@ -906,18 +940,25 @@ def build(self, stage: str, iteration: int = 0) -> str:
                          self._core_dir, self._template_agents_dir)
 ```
 
-This ensures the running pipeline (which uses the old `prompt_builder.build()` call in runner.py) continues to work even if Task 10 is not yet applied. The shim is removed as part of Task 10 when `run_stage()` is updated to call `build_context()` directly.
+This ensures the running pipeline (which uses the old `prompt_builder.build()` call in runner.py) continues to work even if Task 10 is not yet applied. The shim is removed as part of Task 10 when the pipeline loop is updated to call `build_context()` directly.
 
-### Task 10: Integrate per-stage resolution in runner.py
+### Task 10: Integrate per-stage resolution in the pipeline loop (runner.py)
 
 **Files:** Modify `src/worca/orchestrator/runner.py`
 
-Change `run_stage()`:
-- Call `prompt_builder.build_context(stage, iteration)` instead of `prompt_builder.build()`
-- Read agent `.md` template from `{run_dir}/agents/` (contains unresolved `{{block:name}}` and `{{placeholder}}` tokens)
-- Call `resolve_agent(content, context, ...)` to produce fully resolved agent document
-- Write to temp file, pass as `--agent`
-- Pass minimal work request as `-p`
+**Important:** The primary call site for `prompt_builder.build()` is the main pipeline loop at runner.py:1422 (`rendered_prompt = prompt_builder.build(current_stage.value, pb_iteration)`), NOT `run_stage()`. `run_stage()` receives the already-built prompt via `prompt_override`. The build happens in the loop before `run_stage()` is called (runner.py:1479-1482).
+
+Change the pipeline loop (around runner.py:1416-1482):
+1. Replace `prompt_builder.build(current_stage.value, pb_iteration)` with `prompt_builder.build_context(current_stage.value, pb_iteration)` to get the context dict
+2. Read the agent `.md` template from `{run_dir}/agents/{agent}.md` (overlay already applied, contains unresolved `{{block:name}}` and `{{placeholder}}` tokens). Use `STAGE_AGENT_MAP` to determine the agent name for the current stage
+3. Call `resolve_agent(agent_content, context, resolver, core_dir, template_agents_dir)` to produce the fully resolved agent document
+4. Write the resolved agent document to a temp file
+5. Pass the temp file path to `run_stage()` as an `--agent` override (or modify `run_stage()`/`run_agent()` to accept a resolved agent content parameter)
+6. Pass minimal work request (title + description) as `prompt_override` instead of the full PromptBuilder output
+
+Also update the PromptBuilder constructor call in the pipeline loop to pass the new parameters (`resolver`, `core_dir`, `template_agents_dir`, `run_dir`).
+
+Remove the `build()` shim from PromptBuilder (added in Task 9 as a transitional measure) — it is no longer needed once this task is complete.
 
 ### Task 11: Update tests
 
@@ -1048,6 +1089,13 @@ The tester agent's own prompt is built by the old `.claude/worca/` code. `pytest
 | `test_resolve_block_empty_override` | Empty project file → empty string (block removed) |
 | `test_resolve_block_introduced_by_project` | No core, project provides → returns content |
 | `test_resolve_block_introduced_by_template` | No core/project, template provides → returns content |
+
+**Agent template rendering (`tests/test_runner.py` or `tests/test_render_agent_templates.py`):**
+
+| Test | What it verifies |
+|---|---|
+| `test_render_agent_templates_skips_block_files` | `.block.md` files in `agents/core/` are NOT copied to `run_dir/agents/` or overlay-resolved as agent templates |
+| `test_render_agent_templates_copies_agent_md` | Regular `.md` files (e.g. `planner.md`) are still copied and overlay-resolved |
 
 **Pre-formatting helpers (`tests/test_prompt_builder.py` — rewritten):**
 
@@ -1203,9 +1251,12 @@ Verify the pipeline completes successfully — planner produces a plan, coordina
 - [ ] Three-tier overlay chain works for `.block.md` files (core → project → template)
 - [ ] Pipeline templates can override blocks, introduce new blocks, or remove blocks via empty overrides
 - [ ] All 6 builtin pipeline templates migrated to `<!-- append -->` mode
+- [ ] `_render_agent_templates()` skips `.block.md` files (exclusion filter prevents block files from being treated as agent templates)
 - [ ] `{single-brace}` substitution loop removed from `_render_agent_templates()`
 - [ ] `_STAGE_PROMPT_PREFIX` and `_build_stage_prompt()` deleted
+- [ ] PromptBuilder constructor accepts `resolver`, `core_dir`, `template_agents_dir`, `run_dir` parameters
 - [ ] PromptBuilder refactored to context assembler — `build_context()` replaces `build()`
+- [ ] Pipeline loop (runner.py:~1422) calls `build_context()` + `resolve_agent()` instead of `build()`
 - [ ] `-p` reduced to minimal work request
 - [ ] Learner analysis instructions moved to `learner.md`
 - [ ] Implementer retry rules moved to `implementer.md`

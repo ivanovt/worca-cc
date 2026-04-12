@@ -79,21 +79,6 @@ def _mock_beads():
 
 
 # ---------------------------------------------------------------------------
-# _STAGE_PROMPT_PREFIX entry
-# ---------------------------------------------------------------------------
-
-class TestStagePromptPrefix:
-    def test_plan_review_in_stage_prompt_prefix(self):
-        from worca.orchestrator.runner import _STAGE_PROMPT_PREFIX
-        assert Stage.PLAN_REVIEW in _STAGE_PROMPT_PREFIX
-
-    def test_plan_review_prompt_contains_plan_reference(self):
-        from worca.orchestrator.runner import _STAGE_PROMPT_PREFIX
-        prefix = _STAGE_PROMPT_PREFIX[Stage.PLAN_REVIEW]
-        assert "plan" in prefix.lower() or "review" in prefix.lower()
-
-
-# ---------------------------------------------------------------------------
 # Approve path
 # ---------------------------------------------------------------------------
 

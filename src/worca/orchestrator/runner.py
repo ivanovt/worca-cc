@@ -21,7 +21,7 @@ from worca.orchestrator.error_classifier import (
 )
 from worca.orchestrator.registry import update_pipeline
 from worca.orchestrator.control import read_control, delete_control
-from worca.orchestrator.overlay import OverlayResolver
+from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
@@ -263,12 +263,12 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
     resolver = OverlayResolver(overrides_dir=overrides_dir)
 
     for filename in os.listdir(src_dir):
+        if filename.endswith(".block.md"):
+            continue
         if not filename.endswith(".md"):
             continue
         with open(os.path.join(src_dir, filename)) as f:
             content = f.read()
-        for key, value in template_vars.items():
-            content = content.replace(f"{{{key}}}", str(value))
         agent_name = filename[:-3]  # strip .md
         content = resolver.resolve(agent_name, content,
                                    template_agents_dir=template_agents_dir)
@@ -476,57 +476,6 @@ def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs"
         json.dump(result, f, indent=2)
 
 
-_STAGE_PROMPT_PREFIX = {
-    Stage.PLAN: (
-        "Create a detailed implementation plan for the following work request. "
-        "Write the plan to the designated plan file.\n\n"
-        "Work request: {prompt}"
-    ),
-    Stage.COORDINATE: (
-        "Decompose the following work request into Beads tasks with dependencies. "
-        "Do NOT implement anything — only create tasks using `bd create`.\n\n"
-        "Work request: {prompt}"
-    ),
-    Stage.IMPLEMENT: (
-        "Implement the code changes described in the work request. "
-        "Follow the plan and complete the tasks assigned to you.\n\n"
-        "Work request: {prompt}"
-    ),
-    Stage.TEST: (
-        "Review and test the implementation for the following work request. "
-        "Run tests and report results. Do NOT modify code.\n\n"
-        "Work request: {prompt}"
-    ),
-    Stage.REVIEW: (
-        "Review the code changes for the following work request. "
-        "Check for correctness, style, and adherence to the plan. Do NOT modify code.\n\n"
-        "Work request: {prompt}"
-    ),
-    Stage.PR: (
-        "Create a pull request for the following work request. "
-        "Summarize the changes and ensure the commit history is clean.\n\n"
-        "Work request: {prompt}"
-    ),
-    Stage.PLAN_REVIEW: (
-        "Review the implementation plan for the following work request. "
-        "Validate completeness, feasibility, and quality. Do NOT modify the plan.\n\n"
-        "Work request: {prompt}"
-    ),
-    Stage.LEARN: (
-        "Analyze the completed pipeline run and produce a retrospective report. "
-        "Identify patterns, recurring issues, and improvement suggestions.\n\n"
-        "Run data: {prompt}"
-    ),
-}
-
-
-def _build_stage_prompt(stage: Stage, raw_prompt: str) -> str:
-    """Build a role-scoped prompt that reinforces the agent's purpose."""
-    template = _STAGE_PROMPT_PREFIX.get(stage)
-    if template:
-        return template.format(prompt=raw_prompt)
-    return raw_prompt
-
 
 def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                      termination_type, termination_reason, msize, logs_dir,
@@ -569,9 +518,35 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                 model="sonnet", trigger="initial", max_turns=0,
             ))
 
-        rendered = prompt_builder.build("learn", 0)
+        ctx_dict = prompt_builder.build_context("learn", 0)
+        _learn_agent_name = "learner"
+        _learn_template_path = (
+            os.path.join(run_dir, "agents", f"{_learn_agent_name}.md")
+            if run_dir else None
+        )
+        _learn_agent_override = None
+        if (
+            _learn_template_path
+            and os.path.exists(_learn_template_path)
+            and prompt_builder._resolver is not None
+        ):
+            with open(_learn_template_path) as _f:
+                _learn_content = _f.read()
+            _learn_resolved = resolve_agent(
+                _learn_content, ctx_dict,
+                prompt_builder._resolver, prompt_builder._core_dir,
+                prompt_builder._template_agents_dir,
+            )
+            _learn_resolved_dir = os.path.join(run_dir, "agents", "resolved")
+            os.makedirs(_learn_resolved_dir, exist_ok=True)
+            _learn_resolved_path = os.path.join(_learn_resolved_dir, f"learn-{_learn_agent_name}-iter-1.md")
+            with open(_learn_resolved_path, "w") as _f:
+                _f.write(_learn_resolved)
+            _learn_agent_override = _learn_resolved_path
+        rendered = ctx_dict.get("work_request", "")
         result, raw = run_stage(Stage.LEARN, {}, settings_path, msize=msize,
-                                prompt_override=rendered)
+                                prompt_override=rendered,
+                                agent_override=_learn_agent_override)
 
         # Complete iteration
         complete_iteration(status, "learn", status="completed", outcome="success",
@@ -745,6 +720,7 @@ def run_stage(
     msize: int = 1,
     iteration: int = 1,
     prompt_override: str = None,
+    agent_override: str = None,
     ctx: Optional[EventContext] = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
@@ -757,7 +733,9 @@ def run_stage(
         msize: Multiplier for max_turns (1-10). E.g. msize=2 doubles turns.
         iteration: Current iteration number (1-indexed). Controls log file path.
         prompt_override: When provided, used instead of context["prompt"].
-            This allows PromptBuilder output to reach the agent directly.
+        agent_override: When provided, used as the --agent path instead of the
+            default _agent_path(). Allows per-stage resolved templates to be
+            passed directly to the claude CLI.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
@@ -766,16 +744,17 @@ def run_stage(
     config = get_stage_config(stage, settings_path=settings_path)
     max_turns = config["max_turns"] * msize
     raw_prompt = context.get("prompt", "")
-    prompt = prompt_override if prompt_override is not None else _build_stage_prompt(stage, raw_prompt)
+    prompt = prompt_override if prompt_override is not None else raw_prompt
     logs_dir = context.get("_logs_dir", ".worca/logs")
     run_dir = context.get("_run_dir")
     log_dir = os.path.join(logs_dir, stage.value)
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"iter-{iteration}.log")
     on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
+    agent = agent_override if agent_override is not None else _agent_path(config["agent"], run_dir=run_dir)
     raw = run_agent(
         prompt=prompt,
-        agent=_agent_path(config["agent"], run_dir=run_dir),
+        agent=agent,
         max_turns=max_turns,
         output_format="stream-json",
         json_schema=_schema_path(config["schema"]),
@@ -1193,9 +1172,18 @@ def run_pipeline(
 
         # Initialize PromptBuilder for context threading across stages
         prompt_context_path = os.path.join(run_dir, "prompt_context.json") if run_dir else None
+        _pb_settings = load_settings(settings_path)
+        _pb_worca = _pb_settings.get("worca", {})
+        _pb_overrides_dir = _pb_worca.get("agent_overrides_dir", ".claude/agents")
+        _pb_template_agents_dir = _pb_worca.get("_template_agents_dir")
+        _pb_core_dir = ".claude/worca/agents/core"
         prompt_builder = PromptBuilder(
             work_request.title,
             work_request.description,
+            resolver=OverlayResolver(overrides_dir=_pb_overrides_dir),
+            core_dir=_pb_core_dir,
+            template_agents_dir=_pb_template_agents_dir,
+            run_dir=run_dir,
         )
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
@@ -1259,9 +1247,12 @@ def run_pipeline(
         # Ensure hook env vars are set for both new and resumed runs
         os.environ["WORCA_PLAN_FILE"] = status.get("plan_file") or ""
 
-        # Thread plan_file into PromptBuilder so _build_plan can reference it
+        # Thread template variables into PromptBuilder for {{placeholder}} resolution
         if status.get("plan_file"):
             prompt_builder.update_context("plan_file", status["plan_file"])
+        prompt_builder.update_context("run_id", status.get("run_id", ""))
+        prompt_builder.update_context("branch", branch_name)
+        prompt_builder.update_context("title", work_request.title)
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
 
@@ -1413,13 +1404,47 @@ def run_pipeline(
                     prompt_builder.update_context("assigned_bead_title", None)
                     prompt_builder.update_context("assigned_bead_description", None)
 
-            # Build stage-specific prompt via PromptBuilder (skip for script-based stages)
+            # Build stage-specific context and resolve agent template per-stage
             if current_stage != Stage.PREFLIGHT:
                 if current_stage.value == "implement":
                     pb_iteration = prompt_builder.get_context("bead_prompt_iteration") or 0
                 else:
                     pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
-                rendered_prompt = prompt_builder.build(current_stage.value, pb_iteration)
+
+                ctx_dict = prompt_builder.build_context(current_stage.value, pb_iteration)
+                _stage_agent_name = stage_config["agent"]
+                _template_path = (
+                    os.path.join(run_dir, "agents", f"{_stage_agent_name}.md")
+                    if run_dir else None
+                )
+
+                if (
+                    _template_path
+                    and os.path.exists(_template_path)
+                    and prompt_builder._resolver is not None
+                ):
+                    with open(_template_path) as _f:
+                        _agent_content = _f.read()
+                    _resolved = resolve_agent(
+                        _agent_content, ctx_dict,
+                        prompt_builder._resolver, prompt_builder._core_dir,
+                        prompt_builder._template_agents_dir,
+                    )
+                    _resolved_dir = os.path.join(run_dir, "agents", "resolved")
+                    os.makedirs(_resolved_dir, exist_ok=True)
+                    _resolved_path = os.path.join(
+                        _resolved_dir, f"{current_stage.value}-{_stage_agent_name}-iter-{iter_num}.md"
+                    )
+                    with open(_resolved_path, "w") as _f:
+                        _f.write(_resolved)
+                    _agent_override = _resolved_path
+                else:
+                    _agent_override = None
+
+                rendered_prompt = (
+                    f"## Work Request\n\n**{work_request.title}**\n\n"
+                    f"{work_request.description or work_request.title}"
+                )
 
                 # Store rendered prompt in status for UI visibility
                 status["stages"][current_stage.value]["prompt"] = rendered_prompt
@@ -1427,6 +1452,7 @@ def run_pipeline(
                 save_status(status, actual_status_path)
             else:
                 rendered_prompt = None
+                _agent_override = None
 
             # Run the stage
             try:
@@ -1474,12 +1500,11 @@ def run_pipeline(
                     result = run_preflight(context, settings_path, iteration=iter_num)
                     raw_envelope = {"type": "preflight", "checks": result.get("checks", [])}
                 else:
-                    # Pass rendered_prompt as prompt_override so PromptBuilder
-                    # output actually reaches the agent (not just stored for UI)
                     result, raw_envelope = run_stage(
                         current_stage, context, settings_path,
                         msize=msize, iteration=iter_num,
                         prompt_override=rendered_prompt,
+                        agent_override=_agent_override,
                         ctx=ctx,
                     )
             except InterruptedError:
@@ -1797,6 +1822,14 @@ def run_pipeline(
                 # Thread plan outputs into PromptBuilder for downstream stages
                 prompt_builder.update_context("plan_approach", result.get("approach", ""))
                 prompt_builder.update_context("plan_tasks_outline", result.get("tasks_outline", []))
+                # Read plan file content now so plan_review has it immediately
+                # (avoids race where plan_review starts before the file is flushed)
+                _plan_path = status.get("plan_file")
+                if _plan_path and os.path.exists(_plan_path):
+                    with open(_plan_path) as _pf:
+                        _plan_text = _pf.read().strip()
+                    if _plan_text:
+                        prompt_builder.update_context("plan_file_content", _plan_text)
 
             # Handle plan review results
             elif current_stage == Stage.PLAN_REVIEW:

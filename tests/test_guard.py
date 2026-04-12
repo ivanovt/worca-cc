@@ -636,6 +636,55 @@ class TestPlanReviewerMcpToolsPermitted:
             del os.environ["WORCA_AGENT"]
 
 
+# --- Block Reviewer writes ---
+
+class TestBlockReviewerWrites:
+    """reviewer is read-only: Write/Edit and file writes via Bash must be blocked."""
+
+    def test_blocks_reviewer_write(self):
+        os.environ["WORCA_AGENT"] = "reviewer"
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/app.py"})
+            assert code == 2
+            assert "reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_reviewer_edit(self):
+        os.environ["WORCA_AGENT"] = "reviewer"
+        try:
+            code, reason = check_guard("Edit", {"file_path": "/project/app.py"})
+            assert code == 2
+            assert "reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_reviewer_bash_file_write(self):
+        os.environ["WORCA_AGENT"] = "reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "cat > /project/out.txt << 'EOF'\ndata\nEOF"})
+            assert code == 2
+            assert "reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_reviewer_read(self):
+        os.environ["WORCA_AGENT"] = "reviewer"
+        try:
+            code, reason = check_guard("Read", {"file_path": "/project/app.py"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_allows_reviewer_safe_bash(self):
+        os.environ["WORCA_AGENT"] = "reviewer"
+        try:
+            code, reason = check_guard("Bash", {"command": "git diff HEAD~1"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+
 # --- cd prefix handling ---
 
 class TestCdPrefixHandling:
