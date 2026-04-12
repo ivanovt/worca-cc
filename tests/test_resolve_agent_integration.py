@@ -159,14 +159,18 @@ def test_plan_revision_contains_issues():
 # ---------------------------------------------------------------------------
 
 
-def test_coordinate_contains_work_request():
+def test_coordinator_system_prompt_excludes_work_request():
+    # The work request is delivered via the -p user message (see runner.py
+    # special-case for COORDINATE stage), NOT embedded in the coordinator's
+    # system prompt. Embedding it caused a role-violation regression where
+    # the coordinator started implementing instead of decomposing.
     result = _resolve("coordinator", {
         "plan_file": "MASTER_PLAN.md",
         "run_id": "run-20260411",
         "work_request": "Add user authentication",
         "plan_summary": "",
     })
-    assert "Add user authentication" in result
+    assert "Add user authentication" not in result
 
 
 def test_coordinate_contains_plan_file():
@@ -199,14 +203,16 @@ def test_coordinate_contains_governance():
     assert "Do NOT write implementation" in result
 
 
-def test_coordinate_includes_plan_summary_when_present():
+def test_coordinator_system_prompt_excludes_plan_summary():
+    # Like the work request, plan_summary is delivered via the -p user message
+    # (see coordinate.block.md), not in the coordinator's system prompt.
     result = _resolve("coordinator", {
         "plan_file": "MASTER_PLAN.md",
         "run_id": "run-1",
         "work_request": "Add auth",
         "plan_summary": "Use JWT tokens. Tasks: auth module, middleware.",
     })
-    assert "Use JWT tokens" in result
+    assert "Use JWT tokens" not in result
 
 
 def test_coordinate_no_unresolved_placeholders():

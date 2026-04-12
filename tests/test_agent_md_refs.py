@@ -50,9 +50,13 @@ def test_plan_reviewer_has_block_plan_review():
 # ---------------------------------------------------------------------------
 
 
-def test_coordinator_has_block_coordinate():
+def test_coordinator_does_not_embed_block_coordinate():
+    # The coordinate block is routed to the -p user message (see runner.py),
+    # not embedded in the coordinator's system prompt. Embedding the work
+    # request in the system prompt caused a role-violation regression where
+    # the coordinator started implementing instead of decomposing.
     content = _read("coordinator.md")
-    assert "{{block:coordinate}}" in content
+    assert "{{block:coordinate}}" not in content
 
 
 def test_coordinator_uses_double_brace_plan_file():

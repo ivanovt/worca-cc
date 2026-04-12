@@ -1446,6 +1446,23 @@ def run_pipeline(
                     f"{work_request.description or work_request.title}"
                 )
 
+                # Coordinator: route coordinate.block.md to the -p user message
+                # instead of the system prompt. Keeps the work request out of the
+                # agent's role definition so it reads as reference, not instructions.
+                if (
+                    current_stage == Stage.COORDINATE
+                    and prompt_builder._resolver is not None
+                    and prompt_builder._core_dir is not None
+                ):
+                    from worca.orchestrator.overlay import resolve_placeholders
+                    _block = prompt_builder._resolver.resolve_block(
+                        "coordinate",
+                        prompt_builder._core_dir,
+                        prompt_builder._template_agents_dir,
+                    )
+                    if _block:
+                        rendered_prompt = resolve_placeholders(_block, ctx_dict).strip()
+
                 # Store rendered prompt in status for UI visibility
                 status["stages"][current_stage.value]["prompt"] = rendered_prompt
                 iter_record["prompt"] = rendered_prompt
