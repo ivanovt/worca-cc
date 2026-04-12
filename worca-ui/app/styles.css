@@ -1504,7 +1504,8 @@ sl-details.log-history-panel::part(content) {
   font-size: 14px;
   font-weight: 600;
   color: var(--fg);
-  text-transform: capitalize;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
 }
 
 .settings-card-body {
@@ -1547,8 +1548,9 @@ sl-details.log-history-panel::part(content) {
 
 .settings-switch-row {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   padding: 6px 0;
 }
 
@@ -1576,19 +1578,10 @@ sl-details.log-history-panel::part(content) {
   align-items: center;
   gap: 4px;
   padding: 16px 0;
-  overflow-x: auto;
+  flex-wrap: wrap;
 }
 
 .pipeline-stage-node {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
-  padding: 10px 14px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--bg-secondary);
-  min-width: 140px;
   transition: opacity 0.2s, border-color 0.2s, background 0.2s;
 }
 
@@ -4015,7 +4008,7 @@ sl-details.learnings-panel::part(content) {
 .version-row { display: flex; align-items: center; padding: 4px 0; gap: 8px; }
 .version-row-label { font-size: 12px; color: var(--muted); white-space: nowrap; min-width: 64px; }
 .version-row-value { font-size: 13px; font-weight: 500; color: var(--fg); font-family: var(--sl-font-mono); white-space: nowrap; margin-left: auto; display: flex; align-items: center; gap: 6px; }
-.settings-card-header > sl-badge { margin-left: auto; }
+.settings-card-header > sl-badge, .settings-card-header > sl-switch { margin-left: auto; }
 .version-title-exact { text-transform: none; }
 .version-copy-btn {
   background: none; border: 1px solid var(--border); border-radius: 4px;

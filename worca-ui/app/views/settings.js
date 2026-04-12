@@ -7,7 +7,7 @@ import {
   ClipboardCopy,
   Coins,
   FolderOpen,
-  GitBranch,
+  Workflow,
   iconSvg,
   Plus,
   RefreshCw,
@@ -426,7 +426,6 @@ function agentsTab(worca, rerender) {
           return html`
             <div class="settings-card">
               <div class="settings-card-header">
-                <span class="settings-card-icon">${unsafeHTML(iconSvg(Users, 18))}</span>
                 <span class="settings-card-title">${name}</span>
               </div>
               <div class="settings-card-body">
@@ -494,14 +493,14 @@ function pipelineTab(worca, rerender) {
       </div>
 
       <h3 class="settings-section-title">Stage Configuration</h3>
-      <div class="pipeline-flow">
-        ${CONFIGURABLE_STAGES.map((stage, i) => {
+      <div class="settings-cards">
+        ${CONFIGURABLE_STAGES.map((stage) => {
           const stageConfig = stages[stage] || DEFAULT_STAGES[stage];
           const enabled = stageConfig.enabled !== false;
           return html`
-            <div class="pipeline-stage-node ${enabled ? 'pipeline-stage-node--enabled' : 'pipeline-stage-node--disabled'}">
-              <div class="pipeline-stage-header">
-                <span class="pipeline-stage-name ${enabled ? '' : 'pipeline-stage-name--disabled'}">${stage}</span>
+            <div class="settings-card pipeline-stage-node ${enabled ? 'pipeline-stage-node--enabled' : 'pipeline-stage-node--disabled'}">
+              <div class="settings-card-header">
+                <span class="settings-card-title ${enabled ? '' : 'pipeline-stage-name--disabled'}">${stage}</span>
                 <sl-switch id="stage-${stage}-enabled" ?checked=${enabled} size="small"
                   @sl-change=${(e) => {
                     const node = e.target.closest('.pipeline-stage-node');
@@ -509,31 +508,26 @@ function pipelineTab(worca, rerender) {
                       node.classList.remove('pipeline-stage-node--disabled');
                       node.classList.add('pipeline-stage-node--enabled');
                       node
-                        .querySelector('.pipeline-stage-name')
+                        .querySelector('.settings-card-title')
                         .classList.remove('pipeline-stage-name--disabled');
                     } else {
                       node.classList.remove('pipeline-stage-node--enabled');
                       node.classList.add('pipeline-stage-node--disabled');
                       node
-                        .querySelector('.pipeline-stage-name')
+                        .querySelector('.settings-card-title')
                         .classList.add('pipeline-stage-name--disabled');
                     }
                   }}></sl-switch>
               </div>
-              <div class="settings-field pipeline-stage-field">
-                <label class="settings-label">Agent</label>
-                <sl-select id="stage-${stage}-agent" .value="${stageConfig.agent || STAGE_AGENT_MAP[stage]}" size="small">
-                  ${AGENT_NAMES.map((a) => html`<sl-option value="${a}">${a}</sl-option>`)}
-                </sl-select>
+              <div class="settings-card-body">
+                <div class="settings-field">
+                  <label class="settings-label">Agent</label>
+                  <sl-select id="stage-${stage}-agent" .value="${stageConfig.agent || STAGE_AGENT_MAP[stage]}" size="small" hoist>
+                    ${AGENT_NAMES.map((a) => html`<sl-option value="${a}">${a}</sl-option>`)}
+                  </sl-select>
+                </div>
               </div>
             </div>
-            ${
-              i < CONFIGURABLE_STAGES.length - 1
-                ? html`
-              <span class="pipeline-arrow">${unsafeHTML(iconSvg(ChevronRight, 16))}</span>
-            `
-                : nothing
-            }
           `;
         })}
       </div>
@@ -1584,7 +1578,7 @@ export function projectSettingsView(
           Agents
         </sl-tab>
         <sl-tab slot="nav" panel="pipeline">
-          ${unsafeHTML(iconSvg(GitBranch, 14))}
+          ${unsafeHTML(iconSvg(Workflow, 14))}
           Pipeline
         </sl-tab>
         <sl-tab slot="nav" panel="governance">
