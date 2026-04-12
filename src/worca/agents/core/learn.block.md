@@ -1,3 +1,5 @@
+Produce a post-mortem for the terminated pipeline run described below.
+
 ## Work Request
 
 {{work_request}}

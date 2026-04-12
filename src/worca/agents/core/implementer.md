@@ -22,7 +22,8 @@ You work on a single Beads task at a time in an isolated worktree.
 5. Close the task: `bd close <id>`
 6. If you discover new work needed, create a Beads task: `bd create --title="..."`
 
-{{block:implement}}
+The assigned task and work request arrive as a user message. In retry mode, the
+same user message carries the failures/issues to fix.
 
 ## Fix Mode
 

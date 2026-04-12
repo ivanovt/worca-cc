@@ -72,6 +72,21 @@ from worca.events.types import (
     learn_completed_payload, learn_failed_payload,
 )
 
+# Maps pipeline stages to their user-message block files. The stage's
+# .block.md is resolved (three-tier overlay + placeholders) and passed as
+# the -p user message to the agent. Stages not listed (e.g. PREFLIGHT) fall
+# back to the default rendered_prompt (title + description).
+_STAGE_BLOCK_MAP = {
+    Stage.PLAN:         "plan",
+    Stage.PLAN_REVIEW:  "plan-review",
+    Stage.COORDINATE:   "coordinate",
+    Stage.IMPLEMENT:    "implement",
+    Stage.TEST:         "test",
+    Stage.REVIEW:       "review",
+    Stage.PR:           "pr",
+    Stage.LEARN:        "learn",
+}
+
 
 class LoopExhaustedError(Exception):
     """Raised when a loop reaches its maximum iterations."""
@@ -1441,26 +1456,31 @@ def run_pipeline(
                 else:
                     _agent_override = None
 
+                # Default -p payload: minimal work request. Used when no stage
+                # block exists, the resolver isn't configured, or for stages
+                # without an associated block (preflight — already excluded above).
                 rendered_prompt = (
                     f"## Work Request\n\n**{work_request.title}**\n\n"
                     f"{work_request.description or work_request.title}"
                 )
 
-                # Coordinator: route coordinate.block.md to the -p user message
-                # instead of the system prompt. Keeps the work request out of the
-                # agent's role definition so it reads as reference, not instructions.
+                # Route the stage's .block.md to the -p user message (pre-W-037
+                # contract): system prompt stays role/rules-only, dynamic
+                # per-iteration content travels as a user message. Keeps W-037's
+                # three-tier overlay + placeholder flexibility intact.
+                _block_name = _STAGE_BLOCK_MAP.get(current_stage)
                 if (
-                    current_stage == Stage.COORDINATE
+                    _block_name
                     and prompt_builder._resolver is not None
                     and prompt_builder._core_dir is not None
                 ):
                     from worca.orchestrator.overlay import resolve_placeholders
                     _block = prompt_builder._resolver.resolve_block(
-                        "coordinate",
+                        _block_name,
                         prompt_builder._core_dir,
                         prompt_builder._template_agents_dir,
                     )
-                    if _block:
+                    if isinstance(_block, str) and _block:
                         rendered_prompt = resolve_placeholders(_block, ctx_dict).strip()
 
                 # Store rendered prompt in status for UI visibility

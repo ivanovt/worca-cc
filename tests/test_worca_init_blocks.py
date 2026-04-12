@@ -193,10 +193,13 @@ def test_worca_init_installs_blocks_in_test_project():
         "reviewer.md not installed"
     )
 
-    # Verify agent files contain {{block:name}} references
+    # Verify agent files do NOT embed {{block:name}} references.
+    # Channel separation: blocks render into the -p user message via
+    # runner.py's _STAGE_BLOCK_MAP, not into the agent system prompt.
     planner_content = (core_installed / "planner.md").read_text()
-    assert "{{block:plan}}" in planner_content, (
-        "planner.md missing {{block:plan}} reference after install"
+    assert "{{block:plan}}" not in planner_content, (
+        "planner.md must not embed {{block:plan}} — block content is routed "
+        "to the user message, not the system prompt"
     )
 
     # Verify no {single-brace} in planner
@@ -218,5 +221,15 @@ def test_worca_init_installs_blocks_in_test_project():
     )
 
     assert "{{block:" not in resolved, "Unresolved block tokens after resolve_agent"
-    assert "Test install" in resolved, "work_request not in resolved output"
+    # work_request is delivered via the -p user message, not the system prompt
+    assert "Test install" not in resolved, "work_request leaked into agent .md"
     assert "MASTER_PLAN.md" in resolved, "plan_file placeholder not resolved"
+
+    # Verify the block file itself renders the work_request correctly
+    block = resolver.resolve_block("plan", str(core_installed))
+    from worca.orchestrator.overlay import resolve_placeholders
+    rendered_block = resolve_placeholders(
+        block,
+        {"work_request": "Test install", "claude_md": "", "plan_revision_mode": False},
+    )
+    assert "Test install" in rendered_block, "work_request not in rendered block"

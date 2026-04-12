@@ -1,7 +1,9 @@
-"""Tests for W-037 T5: {{block:name}} refs in agent .md files + {{double-brace}} migration.
+"""Tests that agent .md files are work-request-free and use double-brace placeholders.
 
-Verifies each agent .md file has been updated with the correct block reference
-and that single-brace placeholders have been migrated to double-brace syntax.
+Per the restored channel separation (see runner.py _STAGE_BLOCK_MAP), every
+agent's system prompt must stay static/role-only — the per-run block content
+is delivered via the -p user message. These tests assert no `{{block:X}}`
+embedding in any agent .md, plus the long-standing double-brace migration.
 """
 
 import pathlib
@@ -19,9 +21,9 @@ def _read(filename):
 # ---------------------------------------------------------------------------
 
 
-def test_planner_has_block_plan():
+def test_planner_does_not_embed_block_plan():
     content = _read("planner.md")
-    assert "{{block:plan}}" in content
+    assert "{{block:plan}}" not in content
 
 
 def test_planner_uses_double_brace_plan_file():
@@ -40,9 +42,9 @@ def test_planner_no_single_brace_plan_file():
 # ---------------------------------------------------------------------------
 
 
-def test_plan_reviewer_has_block_plan_review():
+def test_plan_reviewer_does_not_embed_block_plan_review():
     content = _read("plan_reviewer.md")
-    assert "{{block:plan-review}}" in content
+    assert "{{block:plan-review}}" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -84,9 +86,9 @@ def test_coordinator_no_single_brace_run_id():
 # ---------------------------------------------------------------------------
 
 
-def test_implementer_has_block_implement():
+def test_implementer_does_not_embed_block_implement():
     content = _read("implementer.md")
-    assert "{{block:implement}}" in content
+    assert "{{block:implement}}" not in content
 
 
 def test_implementer_has_retry_rules_section():
@@ -99,9 +101,9 @@ def test_implementer_has_retry_rules_section():
 # ---------------------------------------------------------------------------
 
 
-def test_tester_has_block_test():
+def test_tester_does_not_embed_block_test():
     content = _read("tester.md")
-    assert "{{block:test}}" in content
+    assert "{{block:test}}" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +111,9 @@ def test_tester_has_block_test():
 # ---------------------------------------------------------------------------
 
 
-def test_guardian_has_block_pr():
+def test_guardian_does_not_embed_block_pr():
     content = _read("guardian.md")
-    assert "{{block:pr}}" in content
+    assert "{{block:pr}}" not in content
 
 
 def test_guardian_no_review_stage_content():
@@ -125,9 +127,9 @@ def test_guardian_no_review_stage_content():
 # ---------------------------------------------------------------------------
 
 
-def test_reviewer_has_block_review():
+def test_reviewer_does_not_embed_block_review():
     content = _read("reviewer.md")
-    assert "{{block:review}}" in content
+    assert "{{block:review}}" not in content
 
 
 # ---------------------------------------------------------------------------
@@ -135,9 +137,9 @@ def test_reviewer_has_block_review():
 # ---------------------------------------------------------------------------
 
 
-def test_learner_has_block_learn():
+def test_learner_does_not_embed_block_learn():
     content = _read("learner.md")
-    assert "{{block:learn}}" in content
+    assert "{{block:learn}}" not in content
 
 
 def test_learner_has_six_analysis_categories():

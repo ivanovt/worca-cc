@@ -22,7 +22,7 @@ You receive the test results and proof status from the Tester. You have read-onl
 4. Categorize issues by severity (see Output section)
 5. Decide outcome based on findings (see Review Outcomes)
 
-{{block:review}}
+The work request, test results, and files-changed list arrive as a user message.
 
 ## Implementer Capabilities
 

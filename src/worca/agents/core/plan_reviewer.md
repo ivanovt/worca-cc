@@ -38,7 +38,7 @@ You receive the current implementation plan and the original work request. Your 
 
 12. **Produce output** — write `plan_review.json` following the schema below with your outcome, issues list, and summary
 
-{{block:plan-review}}
+The work request and plan to review arrive as a user message.
 
 ## Output
 

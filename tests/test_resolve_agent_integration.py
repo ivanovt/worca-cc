@@ -1,310 +1,219 @@
-"""Integration tests for W-037: resolve_agent() golden-fragment tests per stage × mode.
+"""Integration tests for agent .md + block resolution.
 
-Verifies that the full resolve_agent() pipeline — block insertion + placeholder
-resolution — produces output containing expected content fragments for each stage.
+Post channel-separation restoration (see runner.py _STAGE_BLOCK_MAP), the
+agent .md files carry only static role/process/rules content — the per-run
+block content travels via the -p user message. These tests split into two
+suites:
 
-Uses real block files and agent .md templates from src/worca/agents/core/.
+1. Agent .md resolution (resolve_agent) — static content only; verifies
+   placeholders like {{plan_file}} / {{run_id}} resolve, governance rules
+   survive, and NO dynamic content (work_request, plan, failures, etc.)
+   leaks into the system prompt.
+
+2. Block resolution (resolve_block + resolve_placeholders) — verifies each
+   .block.md renders the expected dynamic content for its stage.
 """
 
 import pathlib
 
 import pytest
 
-from worca.orchestrator.overlay import OverlayResolver, resolve_agent
+from worca.orchestrator.overlay import (
+    OverlayResolver,
+    resolve_agent,
+    resolve_placeholders,
+)
 
 CORE_DIR = pathlib.Path(__file__).parent.parent / "src" / "worca" / "agents" / "core"
 
 
-def _make_resolver(core_dir: pathlib.Path) -> OverlayResolver:
-    """Build a resolver with no project overrides (uses only core tier)."""
-    resolver = OverlayResolver(overrides_dir="/nonexistent/no/project/overrides")
-    return resolver
+def _make_resolver() -> OverlayResolver:
+    return OverlayResolver(overrides_dir="/nonexistent/no/project/overrides")
 
 
 def _load_agent(agent_name: str) -> str:
     return (CORE_DIR / f"{agent_name}.md").read_text()
 
 
-def _resolve(agent_name: str, context: dict, core_dir: pathlib.Path = CORE_DIR) -> str:
-    resolver = _make_resolver(core_dir)
-    agent_content = _load_agent(agent_name)
-    return resolve_agent(agent_content, context, resolver, str(core_dir))
+def _resolve_agent(agent_name: str, context: dict) -> str:
+    resolver = _make_resolver()
+    return resolve_agent(_load_agent(agent_name), context, resolver, str(CORE_DIR))
+
+
+def _resolve_block(block_name: str, context: dict) -> str:
+    resolver = _make_resolver()
+    raw = resolver.resolve_block(block_name, str(CORE_DIR))
+    assert raw is not None, f"block '{block_name}' not found under {CORE_DIR}"
+    return resolve_placeholders(raw, context)
 
 
 # ---------------------------------------------------------------------------
-# Plan stage — initial (no revision)
+# Agent .md — static role/rules only; no dynamic content leakage
 # ---------------------------------------------------------------------------
 
 
-def test_plan_initial_contains_work_request():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add user authentication",
-        "claude_md": "",
-    })
-    assert "Add user authentication" in result
+_DYNAMIC_KEYS_BY_AGENT = {
+    "planner":       ["Add user authentication", "# Plan v1", "My special plan content"],
+    "plan_reviewer": ["Add user authentication", "# Plan under review"],
+    "coordinator":   ["Add user authentication", "Use JWT tokens"],
+    "implementer":   ["Add user authentication", "Create JWT middleware",
+                      "401 != 200", "SQL injection"],
+    "tester":        ["Add user authentication", "files: auth.py"],
+    "reviewer":      ["Add user authentication", "PASSED", "auth.py"],
+    "guardian":      ["Add user authentication", "JWT approach"],
+    "learner":       ["Add user authentication", "run-xyz-99", '{"foo": 1}'],
+}
 
 
-def test_plan_initial_contains_plan_file():
-    result = _resolve("planner", {
-        "plan_file": "docs/plans/W-001-auth.md",
-        "work_request": "Add auth",
-        "claude_md": "",
-    })
-    assert "docs/plans/W-001-auth.md" in result
-
-
-def test_plan_initial_contains_governance():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "claude_md": "",
-    })
-    assert "Do NOT write implementation" in result
-
-
-def test_plan_initial_contains_output_schema():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "claude_md": "",
-    })
-    assert "plan.json" in result
-
-
-def test_plan_initial_includes_claude_md_when_provided():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "claude_md": "# My Project\n\nUses FastAPI.",
-    })
-    assert "# My Project" in result
-    assert "FastAPI" in result
-
-
-def test_plan_initial_omits_claude_md_section_when_empty():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "claude_md": "",
-    })
-    assert "Project Context (from CLAUDE.md)" not in result
-
-
-def test_plan_initial_no_unresolved_placeholders():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "claude_md": "",
-    })
-    assert "{{block:" not in result
-    assert "{{plan_file}}" not in result
-
-
-# ---------------------------------------------------------------------------
-# Plan stage — revision mode
-# ---------------------------------------------------------------------------
-
-
-def test_plan_revision_contains_work_request():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add user authentication",
-        "plan_revision_mode": True,
-        "plan_content": "# Plan v1\n\nPhase 1...",
-        "plan_review_issues_formatted": "1. [major] Missing error handling",
-        "plan_review_history_formatted": "",
-    })
-    assert "Add user authentication" in result
-
-
-def test_plan_revision_shows_revision_header():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "plan_revision_mode": True,
-        "plan_content": "# Plan v1",
-        "plan_review_issues_formatted": "1. [major] Issue here",
-        "plan_review_history_formatted": "",
-    })
-    assert "Revision" in result
-
-
-def test_plan_revision_contains_current_plan():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "plan_revision_mode": True,
-        "plan_content": "# Plan v1\n\nMy special plan content",
-        "plan_review_issues_formatted": "",
-        "plan_review_history_formatted": "",
-    })
-    assert "My special plan content" in result
-
-
-def test_plan_revision_contains_issues():
-    result = _resolve("planner", {
-        "plan_file": "MASTER_PLAN.md",
-        "work_request": "Add auth",
-        "plan_revision_mode": True,
-        "plan_content": "# Plan",
-        "plan_review_issues_formatted": "1. [critical] Security flaw in auth",
-        "plan_review_history_formatted": "",
-    })
-    assert "Security flaw in auth" in result
-
-
-# ---------------------------------------------------------------------------
-# Coordinate stage
-# ---------------------------------------------------------------------------
-
-
-def test_coordinator_system_prompt_excludes_work_request():
-    # The work request is delivered via the -p user message (see runner.py
-    # special-case for COORDINATE stage), NOT embedded in the coordinator's
-    # system prompt. Embedding it caused a role-violation regression where
-    # the coordinator started implementing instead of decomposing.
-    result = _resolve("coordinator", {
-        "plan_file": "MASTER_PLAN.md",
-        "run_id": "run-20260411",
-        "work_request": "Add user authentication",
-        "plan_summary": "",
-    })
-    assert "Add user authentication" not in result
-
-
-def test_coordinate_contains_plan_file():
-    result = _resolve("coordinator", {
-        "plan_file": "docs/plans/W-001.md",
-        "run_id": "run-abc",
-        "work_request": "Add auth",
-        "plan_summary": "",
-    })
-    assert "docs/plans/W-001.md" in result
-
-
-def test_coordinate_contains_run_id():
-    result = _resolve("coordinator", {
+@pytest.mark.parametrize("agent_name,needles", list(_DYNAMIC_KEYS_BY_AGENT.items()))
+def test_agent_md_excludes_dynamic_content(agent_name, needles):
+    """Agent .md must not embed any run-specific content — that lives in -p."""
+    # Context values are deliberately supplied; they must be dropped on the floor
+    # because the agent .md no longer embeds {{block:X}}.
+    ctx = {
         "plan_file": "MASTER_PLAN.md",
         "run_id": "run-xyz-99",
-        "work_request": "Add auth",
-        "plan_summary": "",
-    })
-    assert "run-xyz-99" in result
-
-
-def test_coordinate_contains_governance():
-    result = _resolve("coordinator", {
-        "plan_file": "MASTER_PLAN.md",
-        "run_id": "run-1",
-        "work_request": "Add auth",
-        "plan_summary": "",
-    })
-    assert "Do NOT write implementation" in result
-
-
-def test_coordinator_system_prompt_excludes_plan_summary():
-    # Like the work request, plan_summary is delivered via the -p user message
-    # (see coordinate.block.md), not in the coordinator's system prompt.
-    result = _resolve("coordinator", {
-        "plan_file": "MASTER_PLAN.md",
-        "run_id": "run-1",
-        "work_request": "Add auth",
-        "plan_summary": "Use JWT tokens. Tasks: auth module, middleware.",
-    })
-    assert "Use JWT tokens" not in result
-
-
-def test_coordinate_no_unresolved_placeholders():
-    result = _resolve("coordinator", {
-        "plan_file": "MASTER_PLAN.md",
-        "run_id": "run-1",
-        "work_request": "Add auth",
-        "plan_summary": "",
-    })
-    assert "{{block:" not in result
-    assert "{{plan_file}}" not in result
-    assert "{{run_id}}" not in result
-
-
-# ---------------------------------------------------------------------------
-# Implement stage — initial
-# ---------------------------------------------------------------------------
-
-
-def test_implement_initial_contains_work_request():
-    result = _resolve("implementer", {
-        "is_retry": False,
         "work_request": "Add user authentication",
-        "assigned_task": "",
-    })
-    assert "Add user authentication" in result
-
-
-def test_implement_initial_no_retry_header():
-    result = _resolve("implementer", {
-        "is_retry": False,
-        "work_request": "Add auth",
-        "assigned_task": "",
-    })
-    assert "PRIORITY: Fix" not in result
-
-
-def test_implement_initial_contains_assigned_task_when_present():
-    result = _resolve("implementer", {
-        "is_retry": False,
-        "work_request": "Add auth",
-        "assigned_task": "**worca-abc123**: Create JWT middleware",
-    })
-    assert "worca-abc123" in result
-    assert "Create JWT middleware" in result
-
-
-def test_implement_initial_no_unresolved_placeholders():
-    result = _resolve("implementer", {
-        "is_retry": False,
-        "work_request": "Add auth",
-        "assigned_task": "",
-    })
-    assert "{{block:" not in result
-    assert "{{is_retry}}" not in result
-
-
-# ---------------------------------------------------------------------------
-# Implement stage — retry
-# ---------------------------------------------------------------------------
-
-
-def test_implement_retry_contains_priority_header():
-    result = _resolve("implementer", {
+        "claude_md": "# Project CLAUDE.md content",
+        "plan_content": "# Plan v1\n\nMy special plan content",
+        "plan_summary": "Use JWT tokens. Tasks: auth module.",
+        "plan_revision_mode": True,
+        "plan_review_issues_formatted": "1. Missing error handling",
+        "plan_review_history_formatted": "- Attempt 1: issue",
         "is_retry": True,
         "issue_type": "Test Failures",
         "attempt_count": "2",
-        "test_failures_formatted": "1. **test_auth** — AssertionError: 401 != 200",
-        "review_issues_formatted": "",
+        "test_failures_formatted": "1. **test_login** — AssertionError: 401 != 200",
+        "review_issues_formatted": "1. [critical] `auth.py:42` — SQL injection",
         "previous_attempts": "",
-        "assigned_task": "",
-        "work_request": "Add auth",
+        "assigned_task": "**worca-abc123**: Create JWT middleware",
+        "test_results": "**Status:** PASSED",
+        "files_changed_formatted": "- auth.py\n- middleware.py",
+        "implementation_summary": "files: auth.py changed",
+        "plan_approach": "JWT approach with refresh tokens",
+        "termination_type": "success",
+        "termination_reason": "",
+        "run_data": '{"foo": 1}',
+    }
+    result = _resolve_agent(agent_name, ctx)
+    for needle in needles:
+        assert needle not in result, (
+            f"{agent_name}.md leaked dynamic content '{needle}' into system prompt"
+        )
+
+
+def test_planner_agent_md_has_placeholder_resolved():
+    result = _resolve_agent("planner", {"plan_file": "docs/plans/W-001-auth.md"})
+    assert "docs/plans/W-001-auth.md" in result
+
+
+def test_planner_agent_md_keeps_governance():
+    result = _resolve_agent("planner", {"plan_file": "p.md"})
+    assert "Do NOT write implementation" in result
+
+
+def test_coordinator_agent_md_has_placeholders_resolved():
+    result = _resolve_agent("coordinator", {"plan_file": "docs/plans/W-001.md", "run_id": "run-xyz-99"})
+    assert "docs/plans/W-001.md" in result
+    assert "run-xyz-99" in result
+
+
+def test_coordinator_agent_md_keeps_governance():
+    result = _resolve_agent("coordinator", {"plan_file": "p.md", "run_id": "r1"})
+    assert "Do NOT write implementation" in result
+
+
+def test_reviewer_agent_md_references_output_schema():
+    result = _resolve_agent("reviewer", {})
+    assert "review.json" in result
+
+
+@pytest.mark.parametrize("agent_name,context", [
+    ("planner", {"plan_file": "p.md"}),
+    ("plan_reviewer", {}),
+    ("coordinator", {"plan_file": "p.md", "run_id": "r1"}),
+    ("implementer", {}),
+    ("tester", {}),
+    ("reviewer", {}),
+    ("guardian", {}),
+    ("learner", {}),
+])
+def test_agent_md_no_unresolved_block_tokens(agent_name, context):
+    result = _resolve_agent(agent_name, context)
+    assert "{{block:" not in result, (
+        f"Agent '{agent_name}' resolved output still contains {{{{block:...}}}} tokens"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Block resolution — dynamic content flows through -p user message
+# ---------------------------------------------------------------------------
+
+
+def test_plan_block_initial_contains_work_request():
+    result = _resolve_block("plan", {
+        "work_request": "Add user authentication",
+        "claude_md": "",
+        "plan_revision_mode": False,
     })
-    assert "PRIORITY: Fix Test Failures" in result
+    assert "Add user authentication" in result
 
 
-def test_implement_retry_contains_attempt_count():
-    result = _resolve("implementer", {
-        "is_retry": True,
-        "issue_type": "Test Failures",
-        "attempt_count": "3",
-        "test_failures_formatted": "1. **test_x** — error",
-        "review_issues_formatted": "",
-        "previous_attempts": "",
-        "assigned_task": "",
+def test_plan_block_includes_claude_md_when_provided():
+    result = _resolve_block("plan", {
         "work_request": "Add auth",
+        "claude_md": "# My Project\n\nUses FastAPI.",
+        "plan_revision_mode": False,
     })
-    assert "3" in result
+    assert "# My Project" in result and "FastAPI" in result
 
 
-def test_implement_retry_contains_failures():
-    result = _resolve("implementer", {
+def test_plan_block_revision_contains_current_plan_and_issues():
+    result = _resolve_block("plan", {
+        "work_request": "Add auth",
+        "plan_revision_mode": True,
+        "plan_content": "# Plan v1\n\nMy special plan content",
+        "plan_review_issues_formatted": "1. [critical] Security flaw in auth",
+    })
+    assert "My special plan content" in result
+    assert "Security flaw in auth" in result
+
+
+def test_coordinate_block_contains_work_request():
+    result = _resolve_block("coordinate", {
+        "work_request": "Add user authentication",
+        "plan_summary": "",
+    })
+    assert "Add user authentication" in result
+
+
+def test_coordinate_block_includes_plan_summary_when_present():
+    result = _resolve_block("coordinate", {
+        "work_request": "Add auth",
+        "plan_summary": "Use JWT tokens. Tasks: auth module, middleware.",
+    })
+    assert "Use JWT tokens" in result
+
+
+def test_coordinate_block_carries_decompose_framing():
+    result = _resolve_block("coordinate", {"work_request": "X", "plan_summary": ""})
+    # Must explicitly frame content as reference, not instructions (regression guard).
+    assert "decompose" in result.lower()
+    assert "do not implement" in result.lower() or "NOT implement" in result
+
+
+def test_implement_block_initial_contains_work_request_and_task():
+    result = _resolve_block("implement", {
+        "is_retry": False,
+        "work_request": "Add user authentication",
+        "assigned_task": "**worca-abc123**: Create JWT middleware",
+    })
+    assert "Add user authentication" in result
+    assert "worca-abc123" in result and "Create JWT middleware" in result
+
+
+def test_implement_block_retry_contains_priority_and_failures():
+    result = _resolve_block("implement", {
         "is_retry": True,
         "issue_type": "Test Failures",
         "attempt_count": "2",
@@ -314,12 +223,12 @@ def test_implement_retry_contains_failures():
         "assigned_task": "",
         "work_request": "Add auth",
     })
-    assert "test_login" in result
-    assert "401 != 200" in result
+    assert "PRIORITY: Fix Test Failures" in result
+    assert "test_login" in result and "401 != 200" in result
 
 
-def test_implement_retry_review_issues_mode():
-    result = _resolve("implementer", {
+def test_implement_block_retry_review_issues_mode():
+    result = _resolve_block("implement", {
         "is_retry": True,
         "issue_type": "Review Issues",
         "attempt_count": "1",
@@ -333,76 +242,35 @@ def test_implement_retry_review_issues_mode():
     assert "SQL injection" in result
 
 
-# ---------------------------------------------------------------------------
-# Review stage
-# ---------------------------------------------------------------------------
-
-
-def test_review_contains_work_request():
-    result = _resolve("reviewer", {
+def test_review_block_contains_work_request_and_test_results():
+    result = _resolve_block("review", {
         "work_request": "Add user authentication",
-        "test_results": "",
-        "files_changed_formatted": "",
-    })
-    assert "Add user authentication" in result
-
-
-def test_review_contains_test_results_when_present():
-    result = _resolve("reviewer", {
-        "work_request": "Add auth",
         "test_results": "**Status:** PASSED\n**Coverage:** 87.5%",
-        "files_changed_formatted": "",
-    })
-    assert "PASSED" in result
-    assert "87.5%" in result
-
-
-def test_review_contains_files_changed_when_present():
-    result = _resolve("reviewer", {
-        "work_request": "Add auth",
-        "test_results": "",
         "files_changed_formatted": "- auth.py\n- middleware.py",
     })
-    assert "auth.py" in result
-    assert "middleware.py" in result
+    assert "Add user authentication" in result
+    assert "PASSED" in result and "87.5%" in result
+    assert "auth.py" in result and "middleware.py" in result
 
 
-def test_review_contains_output_schema():
-    result = _resolve("reviewer", {
+def test_plan_review_block_contains_read_only_framing():
+    result = _resolve_block("plan-review", {
         "work_request": "Add auth",
-        "test_results": "",
-        "files_changed_formatted": "",
+        "plan_content": "# Plan v1",
+        "plan_review_history_formatted": "",
     })
-    assert "review.json" in result
+    assert "read-only analyst" in result.lower() or "do NOT modify" in result
 
 
-def test_review_no_unresolved_placeholders():
-    result = _resolve("reviewer", {
+def test_learn_block_contains_postmortem_framing_and_run_data():
+    result = _resolve_block("learn", {
         "work_request": "Add auth",
-        "test_results": "",
-        "files_changed_formatted": "",
+        "termination_type": "success",
+        "termination_reason": "",
+        "plan_content": "",
+        "run_id": "run-xyz-99",
+        "run_data": '{"foo": 1}',
     })
-    assert "{{block:" not in result
-
-
-# ---------------------------------------------------------------------------
-# No raw block tokens remain after resolution
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("agent_name,context", [
-    ("planner", {"plan_file": "p.md", "work_request": "WR", "claude_md": ""}),
-    ("plan_reviewer", {"work_request": "WR", "plan_content": "# Plan", "plan_review_history_formatted": ""}),
-    ("coordinator", {"plan_file": "p.md", "run_id": "r1", "work_request": "WR", "plan_summary": ""}),
-    ("implementer", {"is_retry": False, "work_request": "WR", "assigned_task": ""}),
-    ("tester", {"work_request": "WR", "implementation_summary": ""}),
-    ("reviewer", {"work_request": "WR", "test_results": "", "files_changed_formatted": ""}),
-    ("guardian", {"work_request": "WR", "plan_approach": ""}),
-    ("learner", {"work_request": "WR", "termination_type": "success", "termination_reason": "", "plan_content": "", "run_id": "r1", "run_data": "{}"}),
-])
-def test_no_unresolved_block_tokens(agent_name, context):
-    """After resolution, no {{block:...}} tokens should remain."""
-    result = _resolve(agent_name, context)
-    assert "{{block:" not in result, (
-        f"Agent '{agent_name}' resolved output still contains {{{{block:...}}}} tokens"
-    )
+    assert "post-mortem" in result.lower()
+    assert "run-xyz-99" in result
+    assert '{"foo": 1}' in result

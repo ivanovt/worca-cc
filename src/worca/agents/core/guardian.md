@@ -24,7 +24,7 @@ You receive the review outcome and proof status from the Reviewer. You have acce
 | Reject | Close PR, clean up worktree, stop pipeline |
 | Restart Planning | Close PR, clean up, send back to Planner |
 
-{{block:pr}}
+The work request and approach summary arrive as a user message.
 
 ## Output
 

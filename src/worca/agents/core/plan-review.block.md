@@ -1,3 +1,6 @@
+Review the implementation plan below for completeness, feasibility, and quality.
+You are a read-only analyst — do NOT modify files, run tests, or execute commands.
+
 ## Work Request
 
 {{work_request}}

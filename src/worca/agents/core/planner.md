@@ -22,7 +22,7 @@ You receive a work request (hosted issue, Beads task, prompt, or spec file) and 
    - Branch naming
 6. Set `approved: true` in your output — plan approval is handled by the pipeline
 
-{{block:plan}}
+The work request arrives as a user message. Treat it as the subject of your plan.
 
 ## Output
 

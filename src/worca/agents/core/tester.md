@@ -16,7 +16,7 @@ You run after all Implementer tasks are complete. You verify that the full syste
 4. Collect proof artifacts (test output, coverage reports)
 5. Set proof status: verified or failed
 
-{{block:test}}
+The work request and implementation summary arrive as a user message.
 
 ## Output
 
