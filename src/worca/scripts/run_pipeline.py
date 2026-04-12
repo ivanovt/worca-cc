@@ -8,7 +8,7 @@ import sys
 import os
 from pathlib import Path
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.work_request import normalize, WorkRequest
 from worca.orchestrator.runner import run_pipeline, LoopExhaustedError, PipelineError

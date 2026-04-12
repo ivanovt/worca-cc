@@ -24,7 +24,7 @@ import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.work_request import normalize
 from worca.utils.claude_cli import _ARG_INLINE_LIMIT

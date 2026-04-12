@@ -11,7 +11,7 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.runner import _run_learn_stage

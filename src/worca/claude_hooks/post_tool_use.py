@@ -8,7 +8,7 @@ import subprocess
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 try:
     from worca.hooks.test_gate import check_test_gate, _state as _test_gate_state

@@ -19,7 +19,7 @@ from pathlib import Path
 
 # Allow running as a script or importing from tests
 _SCRIPTS_DIR = Path(__file__).parent
-_CLAUDE_DIR = _SCRIPTS_DIR.parent
+_CLAUDE_DIR = _SCRIPTS_DIR.parent.parent
 sys.path.insert(0, str(_CLAUDE_DIR))
 
 from worca.orchestrator.control import write_control  # noqa: E402
