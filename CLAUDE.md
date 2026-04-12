@@ -156,6 +156,10 @@ The `--port` flag takes precedence over the `PORT` env var. `HOST` / `--host` wo
 
 Global mode (the default) starts the UI without a fixed project root, serving all projects registered in `~/.worca/projects.d/`. Use `--project` to scope to a single project.
 
+## Migrating
+
+User-facing upgrade and cleanup steps live in [`MIGRATION.md`](./MIGRATION.md).
+
 ## Releasing
 
 Two independent packages — release by pushing tags. **Do not use twine or npm publish manually; CI handles publishing.**
