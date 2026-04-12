@@ -2,6 +2,58 @@
 
 Thank you for your interest in contributing to worca-cc!
 
+## Quick Start (Dogfooding Flow)
+
+The fastest path to contributing is to let worca itself drive development on its own repo. The flow below takes you from a clean clone to a PR that was planned, implemented, and tested by the pipeline.
+
+### 1. One-time setup
+
+1. Clone the repo: `git clone https://github.com/SinishaDjukic/worca-cc.git`
+2. Install both packages so you have the CLI and dashboard available globally:
+   ```bash
+   pip install worca-cc
+   npm install -g @worca/ui
+   ```
+3. Start the dashboard: `worca-ui` (defaults to http://127.0.0.1:3400)
+4. In the dashboard, open **Settings → Projects**, add your local `worca-cc` clone as a project, and confirm the install/update prompt when asked.
+
+That's it — worca is now running *on* the worca repo, ready to plan and implement changes against itself.
+
+> Prefer working from source (editable install, live reloads, pre-commit hooks)? See [Development Setup](#development-setup) below.
+
+### 2. Propose a feature or bugfix
+
+1. Open Claude Code inside the worca-cc repo: `cd worca-cc && claude`
+2. Discuss the change with Claude directly. Cover:
+   - Implications for both `worca-cc` (Python pipeline) and `worca-ui` (dashboard)
+   - Testing and validation strategy
+   - Backward compatibility
+3. Ask Claude to draft a detailed plan into `docs/plans/W-NNN-<slug>.md`. Tell it to use the **next available W number** (check existing files in `docs/plans/`).
+4. Have Claude commit and push the plan, then open a GitHub issue that links to it. The issue must follow the structure in [CLAUDE.md](./CLAUDE.md#github-issue-structure) — the pipeline parses the `## Plan` link to skip its own Planner stage.
+
+### 3. Implement via the pipeline
+
+1. In worca-ui, select the worca-cc project and click **New Pipeline**.
+2. Choose **Start from GitHub issue** and paste the issue URL.
+3. Pick a pipeline template — the default works for generic work, but **Feature Development** or **Bugfix** give tighter, role-specific prompts. Leave **Create a new branch** enabled.
+
+The pipeline will plan (or reuse your plan), implement, test, and open a PR.
+
+### 4. Validate the result
+
+Once the PR is up, verify it two ways:
+
+1. **Sanity check with a fresh Claude session.** Start a clean `claude` session anywhere and ask it to analyze the PR URL — an independent read catches issues the pipeline's own agents may have rationalized away.
+2. **Apply the PR locally.** Clone worca-cc into a second folder and run:
+   ```bash
+   /worca-sync-pr /path/to/second-clone <pr_number>
+   ```
+   This checks out the PR in the target dir, installs that PR's worca version into it, and starts a project-scoped worca-ui on **port 3401** — so you can exercise the change without disturbing your main dashboard on 3400.
+
+If it looks good, merge. If not, comment on the PR or reopen the issue with feedback.
+
+---
+
 ## Development Setup
 
 ```bash
@@ -177,8 +229,13 @@ cd ~/dev/worca-cc
 cd ~/dev/my-test-project
 claude                    # then type: /worca-sync
 
-# 3. Run a pipeline to verify
-python .claude/scripts/run_pipeline.py --prompt "your test task"
+# 3. Run a pipeline to verify — preferred: worca-ui
+#    Open http://127.0.0.1:3400, select the project, click "New Pipeline",
+#    and start from a GitHub issue or prompt. This is the same path real
+#    contributors use and exercises the full UI → server → orchestrator flow.
+#
+#    CLI fallback (headless/CI):
+#    python .claude/scripts/run_pipeline.py --prompt "your test task"
 ```
 
 ## Cutting Release Candidates
