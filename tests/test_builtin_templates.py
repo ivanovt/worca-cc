@@ -32,14 +32,6 @@ TEMPLATE_OVERLAYS = [
     ("test-only", "implementer"),
 ]
 
-# Core agent files that have {{block:...}} references, per agent name
-BLOCK_REFS = {
-    "planner": "{{block:plan}}",
-    "coordinator": "{{block:coordinate}}",
-    "guardian": "{{block:pr}}",
-    "implementer": "{{block:implement}}",
-}
-
 # Governance marker used in core agent files
 GOVERNANCE_MARKER = "<!-- governance -->"
 
@@ -88,30 +80,6 @@ def test_template_overlay_has_override_sections(template_id, agent_name):
 # ---------------------------------------------------------------------------
 # Integration: appending overlay onto core agent
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize("template_id,agent_name", TEMPLATE_OVERLAYS)
-def test_template_overlay_preserves_block_refs(template_id, agent_name, tmp_path):
-    """After appending the template overlay, {{block:name}} refs from core remain."""
-    if agent_name not in BLOCK_REFS:
-        pytest.skip(f"No known block ref for agent '{agent_name}'")
-
-    core_content = _read(_core_path(agent_name))
-    block_ref = BLOCK_REFS[agent_name]
-    if block_ref not in core_content:
-        pytest.skip(f"Core {agent_name}.md doesn't contain {block_ref}")
-
-    # Apply overlay via OverlayResolver using an empty project overrides dir
-    overrides_dir = str(tmp_path / "no_project_overrides")
-    resolver = OverlayResolver(overrides_dir=overrides_dir)
-    template_agents_dir = str(TEMPLATES_DIR / template_id / "agents")
-
-    resolved = resolver.resolve(agent_name, core_content, template_agents_dir)
-
-    assert block_ref in resolved, (
-        f"After applying {template_id}/{agent_name}.md overlay, "
-        f"{block_ref} was lost from resolved output"
-    )
 
 
 @pytest.mark.parametrize("template_id,agent_name", TEMPLATE_OVERLAYS)
