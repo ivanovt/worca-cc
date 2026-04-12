@@ -225,7 +225,12 @@ describe('getDevPathVersions', () => {
       '{ "version": "0.2.0-dev" }',
     );
     const result = getDevPathVersions(tmpDir);
-    expect(result).toEqual({ worcaCc: '0.7.0-dev', worcaUi: '0.2.0-dev' });
+    expect(result).toEqual({
+      worcaCc: '0.7.0-dev',
+      worcaUi: '0.2.0-dev',
+      worcaCcDev: null,
+      worcaUiDev: null,
+    });
   });
 
   it('returns null worcaCc when pyproject.toml is missing', () => {
@@ -248,12 +253,22 @@ describe('getDevPathVersions', () => {
 
   it('returns nulls for nonexistent path', () => {
     const result = getDevPathVersions('/nonexistent/path/abc123');
-    expect(result).toEqual({ worcaCc: null, worcaUi: null });
+    expect(result).toEqual({
+      worcaCc: null,
+      worcaUi: null,
+      worcaCcDev: null,
+      worcaUiDev: null,
+    });
   });
 
   it('returns nulls when sourceRepo is empty', () => {
     const result = getDevPathVersions('');
-    expect(result).toEqual({ worcaCc: null, worcaUi: null });
+    expect(result).toEqual({
+      worcaCc: null,
+      worcaUi: null,
+      worcaCcDev: null,
+      worcaUiDev: null,
+    });
   });
 });
 
