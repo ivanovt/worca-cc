@@ -30,6 +30,7 @@ MASTER_PLAN.md
 
 # Runtime / tooling
 .claude/worktrees/
+.claude/scheduled_tasks.lock
 .playwright-mcp/
 
 # Debug scripts
