@@ -161,12 +161,47 @@ export async function fetchPyPIVersions(packageName) {
 }
 
 /**
+ * Get git describe info for a repo: commits ahead of tag + dirty state.
+ * @param {string} repoPath
+ * @param {string} tagPrefix - e.g. 'worca-cc-v' or 'worca-ui-v'
+ * @returns {{ ahead: number, dirty: boolean } | null}
+ */
+function getGitDevStatus(repoPath, tagPrefix) {
+  try {
+    const desc = execFileSync(
+      'git',
+      ['describe', '--tags', '--long', '--match', `${tagPrefix}*`],
+      { cwd: repoPath, encoding: 'utf8', timeout: 3000 },
+    ).trim();
+    // Format: tagPrefix0.10.0-3-gabcdef
+    const m = desc.match(/-(\d+)-g[0-9a-f]+$/);
+    const ahead = m ? parseInt(m[1], 10) : 0;
+
+    const status = execFileSync('git', ['status', '--porcelain'], {
+      cwd: repoPath,
+      encoding: 'utf8',
+      timeout: 3000,
+    }).trim();
+    const dirty = status.length > 0;
+
+    return { ahead, dirty };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read versions from local dev path.
  * @param {string} sourceRepo - path to local worca-cc repo
- * @returns {{ worcaCc: string|null, worcaUi: string|null }}
+ * @returns {{ worcaCc: string|null, worcaUi: string|null, worcaCcDev: object|null, worcaUiDev: object|null }}
  */
 export function getDevPathVersions(sourceRepo) {
-  const result = { worcaCc: null, worcaUi: null };
+  const result = {
+    worcaCc: null,
+    worcaUi: null,
+    worcaCcDev: null,
+    worcaUiDev: null,
+  };
   if (!sourceRepo) return result;
   try {
     const pyproject = readFileSync(join(sourceRepo, 'pyproject.toml'), 'utf8');
@@ -183,6 +218,10 @@ export function getDevPathVersions(sourceRepo) {
   } catch {
     // package.json not found or unreadable
   }
+
+  result.worcaCcDev = getGitDevStatus(sourceRepo, 'worca-cc-v');
+  result.worcaUiDev = getGitDevStatus(sourceRepo, 'worca-ui-v');
+
   return result;
 }
 
@@ -262,6 +301,8 @@ export async function getVersionInfo({ prefsPath, worcaVersion, force } = {}) {
           path: sourceRepo,
           worcaCc: devVersions.worcaCc,
           worcaUi: devVersions.worcaUi,
+          worcaCcDev: devVersions.worcaCcDev,
+          worcaUiDev: devVersions.worcaUiDev,
         }
       : null,
     activeWorcaCc: devVersions?.worcaCc || installedCc,

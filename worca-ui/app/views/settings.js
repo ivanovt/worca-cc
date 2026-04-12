@@ -725,8 +725,9 @@ function copyInstallCmd(cmd, btn) {
   });
 }
 
-function versionRow(label, value, installCmd) {
+function versionRow(label, value, installCmd, tooltip) {
   if (value === undefined) return nothing;
+  const valueContent = html`${value || '—'}`;
   return html`
     <div class="version-row">
       <span class="version-row-label">${label}</span>
@@ -740,7 +741,7 @@ function versionRow(label, value, installCmd) {
         </sl-tooltip>
       `
           : nothing
-      }${value || '—'}</span>
+      }${tooltip ? html`<sl-tooltip content="${tooltip}">${valueContent}</sl-tooltip>` : valueContent}</span>
     </div>
   `;
 }
@@ -779,6 +780,27 @@ function versionsSection(rerender) {
 
   const { worcaCc, worcaUi, devPath, installDir, cachedAt } = versionsData;
 
+  function devVersionLabel(version, devStatus) {
+    if (!version) return null;
+    if (!devStatus || (devStatus.ahead === 0 && !devStatus.dirty))
+      return version;
+    const parts = [version];
+    if (devStatus.ahead > 0) parts.push(`+ ${devStatus.ahead}`);
+    if (devStatus.dirty) parts.push('(dirty)');
+    return parts.join(' ');
+  }
+
+  function devTooltip(devStatus) {
+    if (!devStatus || (devStatus.ahead === 0 && !devStatus.dirty)) return null;
+    const parts = [];
+    if (devStatus.ahead > 0)
+      parts.push(
+        `${devStatus.ahead} commit${devStatus.ahead === 1 ? '' : 's'} ahead of the last version tag`,
+      );
+    if (devStatus.dirty) parts.push('Working tree has uncommitted changes');
+    return parts.join('. ');
+  }
+
   return html`
     <h3 class="settings-section-title">Worca Versions</h3>
     <div class="settings-grid">
@@ -791,7 +813,7 @@ function versionsSection(rerender) {
           ${versionRow('Installed', worcaCc?.installed)}
           ${versionRow('Latest', worcaCc?.latest, worcaCc?.latest ? `pip install --upgrade worca-cc==${worcaCc.latest}` : null)}
           ${versionRow('Latest RC', worcaCc?.latestRc, worcaCc?.latestRc ? `pip install --upgrade worca-cc==${worcaCc.latestRc}` : null)}
-          ${versionRow('Local repo', devPath?.worcaCc || null)}
+          ${versionRow('Local repo', devVersionLabel(devPath?.worcaCc, devPath?.worcaCcDev), null, devTooltip(devPath?.worcaCcDev))}
         </div>
       </div>
       <div class="settings-card">
@@ -803,7 +825,7 @@ function versionsSection(rerender) {
           ${versionRow('Installed', worcaUi?.installed)}
           ${versionRow('Latest', worcaUi?.latest, worcaUi?.latest ? `npm install -g @worca/ui@${worcaUi.latest}` : null)}
           ${versionRow('Latest RC', worcaUi?.latestRc, worcaUi?.latestRc ? `npm install -g @worca/ui@${worcaUi.latestRc}` : null)}
-          ${versionRow('Local repo', devPath?.worcaUi || null)}
+          ${versionRow('Local repo', devVersionLabel(devPath?.worcaUi, devPath?.worcaUiDev), null, devTooltip(devPath?.worcaUiDev))}
         </div>
       </div>
     </div>
