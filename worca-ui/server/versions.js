@@ -1,8 +1,12 @@
 // server/versions.js — version fetching + caching for worca-cc and @worca/ui
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readPreferences } from './preferences.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const INSTALL_DIR = dirname(__dirname); // worca-ui root
 
 /** Cache: { data, timestamp } */
 let _cache = null;
@@ -66,18 +70,19 @@ export async function fetchNpmVersions(packageName) {
     }
     if (!res.ok) return nullResult;
     const data = await res.json();
-    const latest = data['dist-tags']?.latest || null;
+    const distLatest = data['dist-tags']?.latest || null;
     let latestRc = data['dist-tags']?.rc || null;
-    if (!latestRc && data.versions) {
-      // Scan version keys for highest *-rc.* pattern
-      let bestRc = null;
-      let bestRcNum = -1;
+
+    // Scan all versions for the highest stable and highest RC
+    let bestStable = null;
+    let bestRc = null;
+    let bestRcNum = -1;
+    if (data.versions) {
       for (const ver of Object.keys(data.versions)) {
         const rcMatch = ver.match(/^(.+)-rc\.(\d+)$/);
         if (rcMatch) {
           const rcNum = parseInt(rcMatch[2], 10);
           const base = rcMatch[1];
-          // Compare base+rcNum to find the highest RC
           if (
             !bestRc ||
             compareVersions(base, bestRc.base) > 0 ||
@@ -86,10 +91,21 @@ export async function fetchNpmVersions(packageName) {
             bestRc = { base, full: ver };
             bestRcNum = rcNum;
           }
+        } else if (!ver.includes('-')) {
+          // Stable version (no pre-release suffix)
+          if (!bestStable || compareVersions(ver, bestStable) > 0) {
+            bestStable = ver;
+          }
         }
       }
-      if (bestRc) latestRc = bestRc.full;
     }
+    if (!latestRc && bestRc) latestRc = bestRc.full;
+
+    // Use dist-tags latest only if it's a stable version, otherwise fall back
+    // to the highest stable version found in the registry
+    const isRc = distLatest?.includes('-');
+    const latest = isRc ? bestStable || distLatest : distLatest;
+
     return { latest, latestRc };
   } catch {
     return nullResult;
@@ -249,6 +265,7 @@ export async function getVersionInfo({ prefsPath, worcaVersion, force } = {}) {
         }
       : null,
     activeWorcaCc: devVersions?.worcaCc || installedCc,
+    installDir: INSTALL_DIR,
     cachedAt: new Date().toISOString(),
   };
 

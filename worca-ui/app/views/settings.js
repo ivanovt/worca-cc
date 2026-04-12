@@ -777,7 +777,7 @@ function versionsSection(rerender) {
 
   if (!versionsData) return nothing;
 
-  const { worcaCc, worcaUi, devPath, cachedAt } = versionsData;
+  const { worcaCc, worcaUi, devPath, installDir, cachedAt } = versionsData;
 
   return html`
     <h3 class="settings-section-title">Worca Versions</h3>
@@ -807,6 +807,16 @@ function versionsSection(rerender) {
         </div>
       </div>
     </div>
+    ${
+      installDir
+        ? html`
+      <div class="install-path-row">
+        <span class="install-path-label">Current worca-ui instance</span>
+        <code class="install-path-value">${installDir}</code>
+      </div>
+    `
+        : nothing
+    }
     <div class="version-refresh">
       <sl-button size="small" @click=${() => loadVersions(rerender, true)} ?loading=${versionsLoading}>
         ${unsafeHTML(iconSvg(RefreshCw, 14))}
