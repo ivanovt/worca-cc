@@ -48,8 +48,8 @@ import Timer from 'lucide/dist/esm/icons/timer';
 import Trash2 from 'lucide/dist/esm/icons/trash-2';
 import AlertTriangle from 'lucide/dist/esm/icons/triangle-alert';
 import Users from 'lucide/dist/esm/icons/users';
-import X from 'lucide/dist/esm/icons/x';
 import Workflow from 'lucide/dist/esm/icons/workflow';
+import X from 'lucide/dist/esm/icons/x';
 import Zap from 'lucide/dist/esm/icons/zap';
 
 function renderChildren(nodes) {

@@ -3,11 +3,9 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { confirmDialogTemplate, showConfirm } from '../utils/confirm-dialog.js';
 import {
   Bell,
-  ChevronRight,
   ClipboardCopy,
   Coins,
   FolderOpen,
-  Workflow,
   iconSvg,
   Plus,
   RefreshCw,
@@ -16,6 +14,7 @@ import {
   Shield,
   Trash2,
   Users,
+  Workflow,
   X,
   Zap,
 } from '../utils/icons.js';
