@@ -240,18 +240,118 @@ In the validator (`settings-validator.js`):
 
 ### 3.3 Settings UI improvements
 
-Since we're touching the dispatch section, improve it from raw comma-separated inputs:
+Since we're touching the dispatch section, improve it from raw comma-separated inputs.
 
 **Denylist notice:**
-- Display a small info badge below the dispatch table: _"`general-purpose` is always blocked and cannot be added to dispatch rules."_
+- Display a small `<sl-alert variant="neutral">` below the dispatch table: _"`general-purpose` is always blocked and cannot be added to dispatch rules."_
 
 **Defaults vs overrides indication:**
-- Visually distinguish agents with custom config vs defaults (e.g., a subtle "customized" badge or different input border)
-- Add a per-agent "reset to default" icon button that restores the value from `DEFAULT_SUBAGENT_DISPATCH`
+- Visually distinguish agents with custom config vs defaults (e.g., a subtle "customized" badge or different input border color)
+- Add a per-agent "reset to default" icon button (`<sl-icon-button name="arrow-counterclockwise">`) that restores the value from `DEFAULT_SUBAGENT_DISPATCH`
+- When a row matches its default, the reset button is hidden or disabled
 
-**Input improvement:**
-- Replace freeform text with a tag-style input (comma-separated values rendered as removable chips)
-- Known subagent types (`explore`, `feature-dev:code-reviewer`, `feature-dev:code-architect`, `feature-dev:code-explorer`) offered as autocomplete suggestions, with freeform entry for unknown types
+### 3.3.1 Tag input with suggestions popup
+
+Replace the current comma-separated `<sl-input>` per agent row with a tag input component. The value space is open-ended (any user-defined agent name is valid) but has a known subset of built-in and common plugin types.
+
+**Note on dual governance layers:** Claude Code has a built-in mechanism for restricting subagent dispatch via `Agent(type1, type2)` in agent `.md` frontmatter `tools` field. That layer filters the model's tool schema (prompt-level — the model never sees disallowed types). worca's `subagent_dispatch` is a runtime hook guard (defense in depth). Both accept the same agent type strings — built-in names (`explore`, `general-purpose`) and user-defined names (`feature-dev:code-reviewer`, custom `.claude/agents/*.md` names).
+
+**Component structure:**
+
+Each agent row renders a `dispatch-tags` container:
+
+```
+┌─────────────────────────────────────────────────────┐
+│ [explore ×] [feature-dev:code-reviewer ×]  |type..| │
+│                                                     │
+│  ┌─ suggestions popup ──────────────────────────┐   │
+│  │  explore                          (built-in) │   │
+│  │  feature-dev:code-reviewer         (plugin)  │   │
+│  │  feature-dev:code-architect        (plugin)  │   │
+│  │  feature-dev:code-explorer         (plugin)  │   │
+│  │  ── custom ──────────────────────────────── │   │
+│  │  Press Enter to add "typ..."                 │   │
+│  └──────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+**Behavior:**
+
+1. **Container** — a `div.dispatch-tag-input` styled to look like an input field (border, padding, focus ring). Contains tag chips + a small inline `<input type="text">`.
+2. **Tag chips** — each allowed subagent type rendered as a `<sl-tag size="small" removable>`. Click `×` to remove. Known types get a subtle variant color; custom/unknown types rendered plain.
+3. **Inline text input** — no border, grows with content. On focus or keydown, shows the suggestions popup below.
+4. **Suggestions popup** — a positioned `div.dispatch-suggestions` below the container:
+   - Filtered by current input text (fuzzy or prefix match)
+   - Excludes types already added as tags
+   - Groups: **Built-in** (`explore`) → **Plugin** (known plugin agents) → **Custom** (freeform entry prompt)
+   - Denylist items (`general-purpose`) shown greyed out / struck through with tooltip _"Blocked by denylist — cannot be used in pipeline mode"_
+   - Click or arrow-key + Enter to select
+   - Typing an unknown string and pressing Enter adds it as a custom tag
+5. **Keyboard:** Backspace on empty input removes the last tag. Escape closes popup. Tab moves focus out.
+
+**Known types list:**
+
+Built from three sources, in priority order:
+
+| Source | Types | Label |
+|--------|-------|-------|
+| Hardcoded built-ins | `explore`, `general-purpose`, `Plan` | `(built-in)` |
+| Common plugin agents | `feature-dev:code-reviewer`, `feature-dev:code-architect`, `feature-dev:code-explorer` | `(plugin)` |
+| Project agents (future) | Scanned from `.claude/agents/*.md` at server startup | `(project)` |
+
+Initially, only the first two sources are implemented. Project agent scanning is a follow-up (requires a server-side API to list discovered agents).
+
+**DOM read function:**
+
+`readGovernanceFromDom()` changes from reading comma-separated `<sl-input>` values to reading tag chip data attributes:
+
+```javascript
+const dispatch = {};
+for (const agent of AGENT_NAMES) {
+  const container = document.getElementById(`dispatch-${agent}`);
+  const tags = container?.querySelectorAll('sl-tag') || [];
+  dispatch[agent] = Array.from(tags).map(t => t.dataset.value);
+}
+```
+
+**Styling:**
+
+```css
+.dispatch-tag-input {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  align-items: center; padding: 4px 8px;
+  border: 1px solid var(--sl-color-neutral-300);
+  border-radius: var(--sl-border-radius-medium);
+  min-height: 32px; cursor: text;
+}
+.dispatch-tag-input:focus-within {
+  border-color: var(--sl-color-primary-500);
+  box-shadow: 0 0 0 var(--sl-focus-ring-width) var(--sl-color-primary-200);
+}
+.dispatch-tag-input input {
+  border: none; outline: none; flex: 1; min-width: 60px;
+  font-size: var(--sl-font-size-small);
+  background: transparent;
+}
+.dispatch-suggestions {
+  position: absolute; z-index: 100;
+  background: var(--sl-color-neutral-0);
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-medium);
+  box-shadow: var(--sl-shadow-large);
+  max-height: 200px; overflow-y: auto;
+}
+.dispatch-suggestions .item { padding: 6px 12px; cursor: pointer; }
+.dispatch-suggestions .item:hover,
+.dispatch-suggestions .item.active { background: var(--sl-color-primary-50); }
+.dispatch-suggestions .item.denied {
+  opacity: 0.5; text-decoration: line-through; cursor: not-allowed;
+}
+.dispatch-suggestions .group-label {
+  padding: 4px 12px; font-size: 11px; color: var(--sl-color-neutral-500);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+```
 
 ### 3.4 Dispatch activity visualization in run detail
 
@@ -299,7 +399,7 @@ In `run-detail.js`, add a `_dispatchEventsView(iter)` function (similar pattern 
 
 | File | Change |
 |------|--------|
-| `worca-ui/app/views/settings.js` | Rename `dispatch` → `subagent_dispatch` in DEFAULT_GOVERNANCE, load logic, DOM reads, render. Add legacy fallback with warning banner. Add denylist notice. Improve input UX. |
+| `worca-ui/app/views/settings.js` | Rename `dispatch` → `subagent_dispatch` in DEFAULT_GOVERNANCE, load logic, DOM reads, render. Add legacy fallback with warning banner. Add denylist notice. Replace comma-separated inputs with tag input + suggestions popup (see 3.3.1). |
 | `worca-ui/server/settings-validator.js` | Accept both `dispatch` and `subagent_dispatch`. Change value validation from VALID_AGENTS check to any-string check. |
 | `worca-ui/server/test/settings-api.test.js` | Update test payloads from `dispatch` to `subagent_dispatch`. Add tests for legacy key acceptance and migration-on-save. |
 | `worca-ui/app/views/run-detail.js` | Add `_dispatchEventsView()` for dispatch event strips in iteration detail. |
@@ -326,7 +426,7 @@ In `run-detail.js`, add a `_dispatchEventsView(iter)` function (similar pattern 
 
 | File | Change |
 |------|--------|
-| `worca-ui/app/views/settings.js` | Rename dispatch key, add legacy fallback + warning, denylist notice, input UX |
+| `worca-ui/app/views/settings.js` | Rename dispatch key, add legacy fallback + warning, denylist notice, tag input with suggestions |
 | `worca-ui/server/settings-validator.js` | Accept both keys, change value validation to any-string |
 | `worca-ui/server/test/settings-api.test.js` | Update dispatch test payloads, add legacy/migration tests |
 | `worca-ui/app/views/run-detail.js` | Add dispatch event visualization in iteration detail |
@@ -373,6 +473,13 @@ In `run-detail.js`, add a `_dispatchEventsView(iter)` function (similar pattern 
 | `run-detail: renders dispatch allowed events` | Green badge appears for allowed dispatch |
 | `run-detail: renders dispatch blocked events` | Red badge with reason for blocked dispatch |
 | `run-detail: no dispatch strip when no events` | Clean rendering when iteration has no dispatch events |
+| `settings: tag input adds known type from suggestions` | Clicking a suggestion adds a tag chip |
+| `settings: tag input adds custom freeform type` | Typing unknown string + Enter adds a custom tag |
+| `settings: tag input prevents denied types` | `general-purpose` shown greyed out, cannot be added |
+| `settings: tag input removes tag on X click` | Clicking remove on chip deletes the entry |
+| `settings: reset to default restores default tags` | Reset button restores `DEFAULT_SUBAGENT_DISPATCH` values |
+| `settings: legacy key shows migration warning` | Banner shown when `governance.dispatch` detected |
+| `settings: save with legacy key writes subagent_dispatch` | Saving migrates to new key |
 
 ---
 
