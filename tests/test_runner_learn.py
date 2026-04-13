@@ -436,3 +436,87 @@ def test_pipeline_does_not_call_learn_on_interrupted(
         )
 
     mock_learn.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# _run_learn_stage — routes learn.block.md to the -p user message
+# Regression: in the 2026-04-13 W-038 run, the learner received only the raw
+# work_request title/description because _run_learn_stage set
+# prompt_override = ctx_dict["work_request"], bypassing _STAGE_BLOCK_MAP.
+# The learner then misread prior iterations' output as "pre-existing."
+# ---------------------------------------------------------------------------
+
+
+def test_run_learn_stage_routes_block_to_prompt_override(tmp_path):
+    """learn.block.md must be resolved and used as prompt_override (-p)."""
+    from worca.orchestrator.overlay import OverlayResolver
+    from worca.orchestrator.prompt_builder import PromptBuilder
+
+    # Real block file the resolver will find
+    core_dir = tmp_path / "core"
+    core_dir.mkdir()
+    (core_dir / "learn.block.md").write_text(
+        "## Ground truth\n\n"
+        "run_id={{run_id}}\n"
+        "termination_type={{termination_type}}\n"
+        "files_changed_since_git_head={{files_changed_since_git_head}}\n"
+    )
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"worca": {"stages": {"learn": {"enabled": True}}}}))
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    pb = PromptBuilder(
+        "Some work request title",
+        "Some work request description",
+        resolver=OverlayResolver(overrides_dir=str(tmp_path / "nonexistent_overrides")),
+        core_dir=str(core_dir),
+        run_dir=str(run_dir),
+    )
+    # Stub _diff_since_git_head so the test doesn't shell out to real git
+    pb._diff_since_git_head = lambda _head: " foo.py | 3 ++-"
+
+    status = {
+        "stages": {},
+        "plan_file": None,
+        "git_head": "abc123",
+        "run_id": "run-xyz",
+    }
+
+    captured = {}
+
+    def _capture_run_stage(stage, env, settings_path, **kwargs):
+        captured["prompt_override"] = kwargs.get("prompt_override")
+        return ({
+            "observations": [], "suggestions": [], "recurring_patterns": {},
+            "run_summary": {"termination": "success", "total_iterations": 1},
+        }, {})
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=_capture_run_stage):
+        with patch("worca.orchestrator.runner.save_status"):
+            with patch("worca.orchestrator.runner.start_iteration", return_value={"number": 1}):
+                with patch("worca.orchestrator.runner.complete_iteration"):
+                    with patch("worca.orchestrator.runner.update_stage"):
+                        _run_learn_stage(
+                            status=status,
+                            prompt_builder=pb,
+                            settings_path=str(settings),
+                            run_dir=str(run_dir),
+                            termination_type="success",
+                            termination_reason="done",
+                            msize=1,
+                            logs_dir=str(tmp_path / "logs"),
+                        )
+
+    rendered = captured.get("prompt_override") or ""
+    # The block was routed as the user message — its content, not just the
+    # work_request title/description.
+    assert "Ground truth" in rendered, (
+        "learn.block.md was NOT routed to prompt_override (regression).\n"
+        f"Got: {rendered[:300]}"
+    )
+    assert "run-xyz" in rendered, "run_id placeholder not resolved"
+    assert "foo.py | 3" in rendered, "files_changed_since_git_head not injected"
+    # And the raw title should NOT be the whole prompt — that's the broken state.
+    assert rendered.strip() != "**Some work request title**\n\nSome work request description"

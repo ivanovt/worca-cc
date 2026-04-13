@@ -558,7 +558,32 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
             with open(_learn_resolved_path, "w") as _f:
                 _f.write(_learn_resolved)
             _learn_agent_override = _learn_resolved_path
+        # Route learn.block.md into the -p user message (same pattern as
+        # _STAGE_BLOCK_MAP in the main pipeline loop). This stage has its own
+        # code path outside that loop, so the routing needs to be duplicated
+        # here. Without this, the learner received only the raw work_request
+        # title/description and missed run_data + files_changed_since_git_head,
+        # which caused it to misread prior iterations' output as "pre-existing"
+        # (see 20260413-063311-958-8068 W-038 run).
         rendered = ctx_dict.get("work_request", "")
+        if prompt_builder._resolver and prompt_builder._core_dir:
+            from worca.orchestrator.overlay import resolve_placeholders
+            _learn_block = prompt_builder._resolver.resolve_block(
+                "learn",
+                prompt_builder._core_dir,
+                prompt_builder._template_agents_dir,
+            )
+            if isinstance(_learn_block, str) and _learn_block:
+                rendered = resolve_placeholders(_learn_block, ctx_dict).strip()
+
+        # Persist the rendered -p prompt for UI/debugging visibility
+        if status.get("stages", {}).get("learn"):
+            status["stages"]["learn"]["prompt"] = rendered
+            iters = status["stages"]["learn"].get("iterations", [])
+            if iters:
+                iters[-1]["prompt"] = rendered
+            save_status(status, actual_status_path)
+
         result, raw = run_stage(Stage.LEARN, {}, settings_path, msize=msize,
                                 prompt_override=rendered,
                                 agent_override=_learn_agent_override)
