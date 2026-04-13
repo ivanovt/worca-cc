@@ -407,7 +407,7 @@ export function createApp(options = {}) {
   });
 
   // POST /api/scan-directory — scan parent folder for immediate git subdirectories
-  app.post('/api/scan-directory', (req, res) => {
+  app.post('/api/scan-directory', async (req, res) => {
     const { path: dirPath } = req.body || {};
     if (!dirPath || typeof dirPath !== 'string') {
       return res.status(400).json({ ok: false, error: 'path is required' });
@@ -423,7 +423,7 @@ export function createApp(options = {}) {
         .json({ ok: false, error: `directory does not exist: ${dirPath}` });
     }
     try {
-      const subfolders = scanDirectory(dirPath);
+      const subfolders = await scanDirectory(dirPath);
       res.json({ ok: true, subfolders });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });

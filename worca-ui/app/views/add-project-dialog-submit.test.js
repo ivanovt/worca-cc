@@ -6,12 +6,27 @@
 
 import { render } from 'lit-html';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { _test, addProjectDialogView } from './add-project-dialog.js';
+import { _test, addProjectDialogView, slugify } from './add-project-dialog.js';
 
 function renderToContainer(template) {
   const container = document.createElement('div');
   render(template, container);
   return container;
+}
+
+/** Helper: set scannedFolders and compute resolvedNameMap for non-registered folders */
+function setScannedFolders(folders, existingProjects = []) {
+  _test.scannedFolders = folders;
+  const registeredPaths = new Set(
+    existingProjects.map((p) => (p.path || '').replace(/\/+$/, '')),
+  );
+  const map = new Map();
+  folders.forEach((f, i) => {
+    if (!registeredPaths.has((f.path || '').replace(/\/+$/, ''))) {
+      map.set(i, slugify(f.name));
+    }
+  });
+  _test.resolvedNameMap = map;
 }
 
 const baseState = { addProjectDialogOpen: true, projects: [] };
@@ -25,6 +40,7 @@ beforeEach(() => {
   _test.dialogMode = 'workspace';
   _test.scannedFolders = [];
   _test.selectedFolders = new Set();
+  _test.resolvedNameMap = new Map();
   _test.dialogError = '';
 });
 
@@ -34,10 +50,10 @@ afterEach(() => {
 
 describe('case 26 — submit calls batch endpoint', () => {
   it('POSTs to /api/projects/batch with selected entries', async () => {
-    _test.scannedFolders = [
+    setScannedFolders([
       { name: 'auth-service', path: '/ws/auth-service' },
       { name: 'web-app', path: '/ws/web-app' },
-    ];
+    ]);
     _test.selectedFolders = new Set([0, 1]);
 
     const fetchMock = vi
@@ -84,7 +100,7 @@ describe('case 26 — submit calls batch endpoint', () => {
   });
 
   it('calls onProjectAdd with the returned projects array on success', async () => {
-    _test.scannedFolders = [{ name: 'my-svc', path: '/ws/my-svc' }];
+    setScannedFolders([{ name: 'my-svc', path: '/ws/my-svc' }]);
     _test.selectedFolders = new Set([0]);
 
     const returnedProjects = [{ name: 'my-svc', path: '/ws/my-svc' }];
@@ -111,12 +127,12 @@ describe('case 26 — submit calls batch endpoint', () => {
 
 describe('case 27 — submit button shows count', () => {
   it('button reads "Add 2 Projects" when 2 of 4 folders selected', () => {
-    _test.scannedFolders = [
+    setScannedFolders([
       { name: 'alpha', path: '/ws/alpha' },
       { name: 'beta', path: '/ws/beta' },
       { name: 'gamma', path: '/ws/gamma' },
       { name: 'delta', path: '/ws/delta' },
-    ];
+    ]);
     _test.selectedFolders = new Set([0, 1]);
 
     const container = renderToContainer(
@@ -128,7 +144,7 @@ describe('case 27 — submit button shows count', () => {
   });
 
   it('button reads "Add 1 Project" (singular) when exactly 1 selected', () => {
-    _test.scannedFolders = [{ name: 'alpha', path: '/ws/alpha' }];
+    setScannedFolders([{ name: 'alpha', path: '/ws/alpha' }]);
     _test.selectedFolders = new Set([0]);
 
     const container = renderToContainer(
@@ -153,7 +169,7 @@ describe('case 27 — submit button shows count', () => {
 
 describe('case 28 — submit disabled when none selected', () => {
   it('disables submit button when no folders are selected', () => {
-    _test.scannedFolders = [{ name: 'alpha', path: '/ws/alpha' }];
+    setScannedFolders([{ name: 'alpha', path: '/ws/alpha' }]);
     _test.selectedFolders = new Set();
 
     const container = renderToContainer(
@@ -166,7 +182,7 @@ describe('case 28 — submit disabled when none selected', () => {
   });
 
   it('submit is enabled when at least one folder is selected', () => {
-    _test.scannedFolders = [{ name: 'alpha', path: '/ws/alpha' }];
+    setScannedFolders([{ name: 'alpha', path: '/ws/alpha' }]);
     _test.selectedFolders = new Set([0]);
 
     const container = renderToContainer(
@@ -179,7 +195,7 @@ describe('case 28 — submit disabled when none selected', () => {
   });
 
   it('disables submit while scan is in progress', () => {
-    _test.scannedFolders = [{ name: 'alpha', path: '/ws/alpha' }];
+    setScannedFolders([{ name: 'alpha', path: '/ws/alpha' }]);
     _test.selectedFolders = new Set([0]);
     _test.scanning = true;
 
@@ -195,7 +211,7 @@ describe('case 28 — submit disabled when none selected', () => {
 
 describe('case 30 — submit error shown in dialog', () => {
   it('sets dialogError and does not call onProjectAdd when server returns 400', async () => {
-    _test.scannedFolders = [{ name: 'auth', path: '/ws/auth' }];
+    setScannedFolders([{ name: 'auth', path: '/ws/auth' }]);
     _test.selectedFolders = new Set([0]);
 
     vi.stubGlobal('fetch', () =>
@@ -221,10 +237,10 @@ describe('case 30 — submit error shown in dialog', () => {
   });
 
   it('preserves selections when batch submit fails', async () => {
-    _test.scannedFolders = [
+    setScannedFolders([
       { name: 'svc-a', path: '/ws/svc-a' },
       { name: 'svc-b', path: '/ws/svc-b' },
-    ];
+    ]);
     _test.selectedFolders = new Set([0, 1]);
 
     vi.stubGlobal('fetch', () =>
@@ -247,7 +263,7 @@ describe('case 30 — submit error shown in dialog', () => {
   });
 
   it('shows network error message when fetch rejects', async () => {
-    _test.scannedFolders = [{ name: 'svc-a', path: '/ws/svc-a' }];
+    setScannedFolders([{ name: 'svc-a', path: '/ws/svc-a' }]);
     _test.selectedFolders = new Set([0]);
 
     vi.stubGlobal('fetch', () => Promise.reject(new Error('Network failure')));

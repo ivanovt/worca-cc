@@ -12,6 +12,8 @@ let _scanning = false;
 let _scanError = '';
 let scanAbortController = null;
 let _scanDebounceTimer = null;
+// Resolved name map: folder index → resolved slug (computed once after scan)
+let _resolvedNameMap = new Map();
 
 // Batch worca setup dialog state
 let _batchSetupOpen = false;
@@ -32,6 +34,7 @@ function triggerWorkspaceScan(path, state, rerender) {
     }
     scannedFolders = [];
     _selectedFolders = new Set();
+    _resolvedNameMap = new Map();
     _scanError = '';
     _scanning = false;
     rerender?.();
@@ -59,16 +62,37 @@ function triggerWorkspaceScan(path, state, rerender) {
               (p.path || '').replace(/\/+$/, ''),
             ),
           );
+          const existingNames = new Set(
+            (state.projects || []).map((p) => p.name),
+          );
           _selectedFolders = new Set();
+          // Compute resolved names once (fixes TOCTOU between render and submit)
+          const nonRegisteredFolders = [];
           scannedFolders.forEach((f, i) => {
             if (!registeredPaths.has((f.path || '').replace(/\/+$/, ''))) {
               _selectedFolders.add(i);
+              nonRegisteredFolders.push({ index: i, name: f.name });
             }
           });
+          // Filter out folders whose names produce empty slugs (e.g. all special chars)
+          const validFolders = nonRegisteredFolders.filter(
+            (f) => slugify(f.name) !== '',
+          );
+          const slugged = validFolders.map((f) => slugify(f.name));
+          const resolved = resolveCollisions(slugged, [...existingNames]);
+          _resolvedNameMap = new Map();
+          validFolders.forEach((f, idx) => {
+            _resolvedNameMap.set(f.index, resolved[idx]);
+          });
+          // Deselect folders with empty slugs
+          for (const f of nonRegisteredFolders) {
+            if (slugify(f.name) === '') _selectedFolders.delete(f.index);
+          }
         } else {
           _scanError = data.error || 'Scan failed';
           scannedFolders = [];
           _selectedFolders = new Set();
+          _resolvedNameMap = new Map();
         }
       })
       .catch((err) => {
@@ -76,6 +100,7 @@ function triggerWorkspaceScan(path, state, rerender) {
           _scanError = err.message || 'Scan failed';
           scannedFolders = [];
           _selectedFolders = new Set();
+          _resolvedNameMap = new Map();
         }
       })
       .finally(() => {
@@ -106,6 +131,7 @@ export function addProjectDialogView(
     dialogMode = 'single';
     scannedFolders = [];
     _selectedFolders = new Set();
+    _resolvedNameMap = new Map();
     _scanError = '';
     if (scanAbortController) {
       scanAbortController.abort();
@@ -121,32 +147,12 @@ export function addProjectDialogView(
     if (dialogMode === 'workspace') {
       if (_selectedFolders.size === 0) return;
 
-      const registeredPaths = new Set(
-        (state.projects || []).map((p) => (p.path || '').replace(/\/+$/, '')),
-      );
-      const existingNames = new Set((state.projects || []).map((p) => p.name));
-
-      const nonRegisteredFolders = scannedFolders
+      const entries = scannedFolders
         .map((f, i) => ({ ...f, index: i }))
         .filter(
-          (f) => !registeredPaths.has((f.path || '').replace(/\/+$/, '')),
-        );
-
-      const nonRegisteredSlugged = nonRegisteredFolders.map((f) =>
-        slugify(f.name),
-      );
-      const resolved = resolveCollisions(nonRegisteredSlugged, [
-        ...existingNames,
-      ]);
-
-      const resolvedMap = new Map();
-      nonRegisteredFolders.forEach((f, idx) => {
-        resolvedMap.set(f.index, resolved[idx]);
-      });
-
-      const entries = nonRegisteredFolders
-        .filter((f) => _selectedFolders.has(f.index))
-        .map((f) => ({ name: resolvedMap.get(f.index), path: f.path }));
+          (f) => _selectedFolders.has(f.index) && _resolvedNameMap.has(f.index),
+        )
+        .map((f) => ({ name: _resolvedNameMap.get(f.index), path: f.path }));
 
       if (entries.length === 0) return;
 
@@ -266,6 +272,7 @@ export function addProjectDialogView(
     dialogMode = e.target.value;
     scannedFolders = [];
     _selectedFolders = new Set();
+    _resolvedNameMap = new Map();
     _scanning = false;
     _scanError = '';
     clearTimeout(_scanDebounceTimer);
@@ -285,6 +292,7 @@ export function addProjectDialogView(
     dialogMode = 'single';
     scannedFolders = [];
     _selectedFolders = new Set();
+    _resolvedNameMap = new Map();
     _scanning = false;
     _scanError = '';
     clearTimeout(_scanDebounceTimer);
@@ -314,31 +322,11 @@ export function addProjectDialogView(
       return html`<div id="workspace-scan-area" style="margin-bottom: 16px;"></div>`;
     }
 
-    const registeredPaths = new Set(
-      (state.projects || []).map((p) => (p.path || '').replace(/\/+$/, '')),
-    );
-    const existingNames = new Set((state.projects || []).map((p) => p.name));
-
     const folders = scannedFolders.map((f, i) => ({
       ...f,
       index: i,
-      isRegistered: registeredPaths.has((f.path || '').replace(/\/+$/, '')),
+      isRegistered: !_resolvedNameMap.has(i),
     }));
-
-    const nonRegisteredSlugged = folders
-      .filter((f) => !f.isRegistered)
-      .map((f) => slugify(f.name));
-    const resolved = resolveCollisions(nonRegisteredSlugged, [
-      ...existingNames,
-    ]);
-
-    let nrIdx = 0;
-    const resolvedNameMap = new Map();
-    for (const f of folders) {
-      if (!f.isRegistered) {
-        resolvedNameMap.set(f.index, resolved[nrIdx++]);
-      }
-    }
 
     const selectableIndices = folders
       .filter((f) => !f.isRegistered)
@@ -385,7 +373,7 @@ export function addProjectDialogView(
                   <span style="color: var(--sl-color-neutral-500); font-size: 0.8em; margin-left: 4px;">(already registered)</span>
                 </sl-checkbox>`;
             }
-            const resolvedName = resolvedNameMap.get(f.index);
+            const resolvedName = _resolvedNameMap.get(f.index);
             const sluggedName = slugify(f.name);
             const nameDisplay =
               resolvedName !== sluggedName
@@ -537,7 +525,7 @@ function offerBatchWorcaSetup(projects, rerender) {
         .then((r) => r.json())
         .catch(() => ({
           ok: false,
-          installed: true,
+          installed: false,
           outdated: false,
           version: null,
         })),
@@ -699,10 +687,12 @@ export function resolveCollisions(scannedNames, existingNames) {
       resolved.push(name);
     } else {
       let counter = 2;
-      let candidate = `${name}-${counter}`;
+      let suffix = `-${counter}`;
+      let candidate = `${name.slice(0, 64 - suffix.length)}${suffix}`;
       while (taken.has(candidate)) {
         counter += 1;
-        candidate = `${name}-${counter}`;
+        suffix = `-${counter}`;
+        candidate = `${name.slice(0, 64 - suffix.length)}${suffix}`;
       }
       taken.add(candidate);
       resolved.push(candidate);
@@ -748,6 +738,12 @@ export const _test = {
   },
   set scanError(v) {
     _scanError = v;
+  },
+  get resolvedNameMap() {
+    return _resolvedNameMap;
+  },
+  set resolvedNameMap(v) {
+    _resolvedNameMap = v;
   },
   get batchSetupOpen() {
     return _batchSetupOpen;

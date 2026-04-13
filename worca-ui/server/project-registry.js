@@ -10,6 +10,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 
 export const SLUG_RE = /^[a-z0-9_-]{1,64}$/i;
@@ -24,6 +25,7 @@ export function slugify(name) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '-')
     .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
     .slice(0, 64);
 }
 
@@ -130,16 +132,18 @@ export function synthesizeDefaultProject(projectRoot) {
   };
 }
 
+const SCAN_MAX_RESULTS = 200;
+
 /**
  * Scan a directory for immediate child folders that contain a .git subdirectory.
  * Skips dotfiles (names starting with ".") and "node_modules".
- * Returns entries sorted alphabetically by name.
+ * Returns entries sorted alphabetically by name, capped at SCAN_MAX_RESULTS.
  *
  * @param {string} dirPath - Absolute path to the parent directory
- * @returns {{ name: string, path: string }[]}
+ * @returns {Promise<{ name: string, path: string }[]>}
  */
-export function scanDirectory(dirPath) {
-  const entries = readdirSync(dirPath, { withFileTypes: true });
+export async function scanDirectory(dirPath) {
+  const entries = await readdir(dirPath, { withFileTypes: true });
   const results = [];
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
@@ -147,6 +151,7 @@ export function scanDirectory(dirPath) {
     const childPath = join(dirPath, entry.name);
     if (existsSync(join(childPath, '.git'))) {
       results.push({ name: entry.name, path: childPath });
+      if (results.length >= SCAN_MAX_RESULTS) break;
     }
   }
   return results.sort((a, b) => a.name.localeCompare(b.name));

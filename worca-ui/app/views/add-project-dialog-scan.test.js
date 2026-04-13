@@ -6,12 +6,27 @@
 
 import { render } from 'lit-html';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { _test, addProjectDialogView } from './add-project-dialog.js';
+import { _test, addProjectDialogView, slugify } from './add-project-dialog.js';
 
 function renderToContainer(template) {
   const container = document.createElement('div');
   render(template, container);
   return container;
+}
+
+/** Helper: set scannedFolders and compute resolvedNameMap for non-registered folders */
+function setScannedFolders(folders, existingProjects = []) {
+  _test.scannedFolders = folders;
+  const registeredPaths = new Set(
+    existingProjects.map((p) => (p.path || '').replace(/\/+$/, '')),
+  );
+  const map = new Map();
+  folders.forEach((f, i) => {
+    if (!registeredPaths.has((f.path || '').replace(/\/+$/, ''))) {
+      map.set(i, slugify(f.name));
+    }
+  });
+  _test.resolvedNameMap = map;
 }
 
 const baseState = { addProjectDialogOpen: true, projects: [] };
@@ -25,6 +40,7 @@ beforeEach(() => {
   _test.dialogMode = 'workspace';
   _test.scannedFolders = [];
   _test.selectedFolders = new Set();
+  _test.resolvedNameMap = new Map();
 });
 
 afterEach(() => {
@@ -86,11 +102,11 @@ describe('case 21 — path change triggers scan', () => {
 
 describe('case 22 — scan results render checkbox list', () => {
   it('renders one sl-checkbox per scanned folder', () => {
-    _test.scannedFolders = [
+    setScannedFolders([
       { name: 'auth-service', path: '/ws/auth-service' },
       { name: 'web-app', path: '/ws/web-app' },
       { name: 'api-gateway', path: '/ws/api-gateway' },
-    ];
+    ]);
     _test.selectedFolders = new Set([0, 1, 2]);
 
     const container = renderToContainer(
@@ -101,10 +117,10 @@ describe('case 22 — scan results render checkbox list', () => {
   });
 
   it('renders checkboxes inside #workspace-scan-area', () => {
-    _test.scannedFolders = [
+    setScannedFolders([
       { name: 'alpha', path: '/ws/alpha' },
       { name: 'beta', path: '/ws/beta' },
-    ];
+    ]);
 
     const container = renderToContainer(
       addProjectDialogView(baseState, makeCallbacks()),
@@ -115,7 +131,7 @@ describe('case 22 — scan results render checkbox list', () => {
   });
 
   it('shows select-all and select-none links when results present', () => {
-    _test.scannedFolders = [{ name: 'foo', path: '/ws/foo' }];
+    setScannedFolders([{ name: 'foo', path: '/ws/foo' }]);
 
     const container = renderToContainer(
       addProjectDialogView(baseState, makeCallbacks()),
@@ -131,10 +147,13 @@ describe('case 23 — already-registered paths shown disabled', () => {
       addProjectDialogOpen: true,
       projects: [{ name: 'existing', path: '/ws/existing' }],
     };
-    _test.scannedFolders = [
-      { name: 'existing', path: '/ws/existing' },
-      { name: 'new-project', path: '/ws/new-project' },
-    ];
+    setScannedFolders(
+      [
+        { name: 'existing', path: '/ws/existing' },
+        { name: 'new-project', path: '/ws/new-project' },
+      ],
+      stateWithProjects.projects,
+    );
 
     const container = renderToContainer(
       addProjectDialogView(stateWithProjects, makeCallbacks()),
@@ -152,7 +171,10 @@ describe('case 23 — already-registered paths shown disabled', () => {
       addProjectDialogOpen: true,
       projects: [{ name: 'existing', path: '/ws/existing' }],
     };
-    _test.scannedFolders = [{ name: 'existing', path: '/ws/existing' }];
+    setScannedFolders(
+      [{ name: 'existing', path: '/ws/existing' }],
+      stateWithProjects.projects,
+    );
 
     const container = renderToContainer(
       addProjectDialogView(stateWithProjects, makeCallbacks()),
@@ -165,10 +187,13 @@ describe('case 23 — already-registered paths shown disabled', () => {
       addProjectDialogOpen: true,
       projects: [{ name: 'existing', path: '/ws/existing' }],
     };
-    _test.scannedFolders = [
-      { name: 'existing', path: '/ws/existing' }, // index 0 — registered
-      { name: 'new-one', path: '/ws/new-one' }, // index 1 — selectable
-    ];
+    setScannedFolders(
+      [
+        { name: 'existing', path: '/ws/existing' }, // index 0 — registered
+        { name: 'new-one', path: '/ws/new-one' }, // index 1 — selectable
+      ],
+      stateWithProjects.projects,
+    );
     _test.selectedFolders = new Set([1]); // simulate auto-select of non-registered
 
     const container = renderToContainer(
@@ -184,11 +209,11 @@ describe('case 23 — already-registered paths shown disabled', () => {
 
 describe('case 24 — select all / select none toggles', () => {
   it('select-all marks all selectable indices in selectedFolders', () => {
-    _test.scannedFolders = [
+    setScannedFolders([
       { name: 'alpha', path: '/ws/alpha' },
       { name: 'beta', path: '/ws/beta' },
       { name: 'gamma', path: '/ws/gamma' },
-    ];
+    ]);
     _test.selectedFolders = new Set(); // start with none selected
 
     const container = renderToContainer(
@@ -209,10 +234,10 @@ describe('case 24 — select all / select none toggles', () => {
   });
 
   it('select-none clears all selections from selectedFolders', () => {
-    _test.scannedFolders = [
+    setScannedFolders([
       { name: 'alpha', path: '/ws/alpha' },
       { name: 'beta', path: '/ws/beta' },
-    ];
+    ]);
     _test.selectedFolders = new Set([0, 1]); // start with all selected
 
     const container = renderToContainer(
@@ -234,10 +259,13 @@ describe('case 24 — select all / select none toggles', () => {
       addProjectDialogOpen: true,
       projects: [{ name: 'existing', path: '/ws/existing' }],
     };
-    _test.scannedFolders = [
-      { name: 'existing', path: '/ws/existing' }, // index 0 — registered, skipped
-      { name: 'new-one', path: '/ws/new-one' }, // index 1 — selectable
-    ];
+    setScannedFolders(
+      [
+        { name: 'existing', path: '/ws/existing' }, // index 0 — registered, skipped
+        { name: 'new-one', path: '/ws/new-one' }, // index 1 — selectable
+      ],
+      stateWithProjects.projects,
+    );
     _test.selectedFolders = new Set();
 
     const container = renderToContainer(
