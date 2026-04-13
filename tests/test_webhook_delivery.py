@@ -261,9 +261,16 @@ class TestDeliverWebhook:
 
         wh = _wh(events=["*"], max_retries=2)
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with patch("time.sleep"):  # speed up test
+            # Patch only the webhook module's sleep (retry backoff).
+            # A global patch("time.sleep") would also suppress our poll loop
+            # below, making the wait a no-op — which caused CI flakes when
+            # the worker thread hadn't finished all 3 attempts by assertion.
+            with patch("worca.events.webhook.time.sleep"):
                 deliver_webhook(SAMPLE_EVENT, wh)
-                time.sleep(0.3)
+                # Wait up to 5s for the worker thread to hit 3 attempts.
+                deadline = time.monotonic() + 5
+                while call_count[0] < 3 and time.monotonic() < deadline:
+                    time.sleep(0.01)
 
         # Initial attempt + 2 retries = 3 total
         assert call_count[0] == 3
@@ -299,9 +306,11 @@ class TestDeliverWebhook:
 
         wh = _wh(events=["*"], max_retries=2)
         with patch("urllib.request.urlopen", side_effect=fake_urlopen):
-            with patch("time.sleep"):
+            with patch("worca.events.webhook.time.sleep"):
                 deliver_webhook(SAMPLE_EVENT, wh)
-                time.sleep(0.3)
+                deadline = time.monotonic() + 5
+                while call_count[0] < 3 and time.monotonic() < deadline:
+                    time.sleep(0.01)
 
         assert call_count[0] == 3
 
@@ -337,10 +346,14 @@ class TestDeliverWebhook:
 
         wh = _wh(events=["*"], max_retries=1)
         with patch("urllib.request.urlopen", side_effect=URLError("oops")):
-            with patch("time.sleep"):
+            with patch("worca.events.webhook.time.sleep"):
                 # Must not raise
                 deliver_webhook(SAMPLE_EVENT, wh)
-                time.sleep(0.2)
+                # Wait for worker to complete (initial + 1 retry)
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    time.sleep(0.05)
+                    break  # single short wait — just verifying no exception
 
     def test_failure_logged_to_stderr(self, capsys):
         """Delivery failures are logged to stderr."""
