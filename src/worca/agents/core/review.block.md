@@ -1,3 +1,5 @@
+Review the code changes for correctness, style, security, and adherence to the plan. You are strictly read-only: do NOT modify code, do NOT run tests (the tester already produced proof artifacts). Produce your structured review output.
+
 ## Work Request
 
 {{work_request}}

@@ -30,6 +30,11 @@ Address each issue above. Preserve all parts of the plan that were not flagged.
 Write the updated plan. In your JSON output, set `approved: true` to signal
 that the revised plan is ready for review.
 {{else}}
+Create a detailed implementation plan for the following work request.
+Start by reading CLAUDE.md for project context (tech stack, build/test commands, conventions).
+Then explore the codebase to understand existing architecture.
+Write the plan to `{{plan_file|MASTER_PLAN.md}}`.
+
 ## Work Request
 
 {{work_request}}

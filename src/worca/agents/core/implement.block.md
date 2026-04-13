@@ -29,6 +29,8 @@
 {{/if}}
 {{work_request}}
 {{else}}
+Implement the code changes for the assigned task. Follow TDD: write a failing test first, then implement. When the assigned bead is complete, run `bd close <id>` and STOP — do not attempt `git commit` / `git push` / `git stash`. The guardian handles all git state changes.
+
 {{#if assigned_task}}
 ## Assigned Task
 
