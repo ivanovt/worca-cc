@@ -272,6 +272,55 @@ class PromptBuilder:
             if len(status_json) > self._MAX_STATUS_JSON_LEN:
                 status_json = status_json[:self._MAX_STATUS_JSON_LEN] + "\n... (truncated)"
             ctx["run_data"] = status_json
+            # Ground-truth diff since the run started. Learner must use this,
+            # not iteration prose, to decide what the pipeline produced.
+            ctx["files_changed_since_git_head"] = self._diff_since_git_head(
+                full_status.get("git_head"),
+            )
+
+    @staticmethod
+    def _diff_since_git_head(git_head: str | None) -> str:
+        """Return `git diff --stat` from git_head to the current tree.
+
+        Used by the learn stage to give the learner ground truth about what
+        the pipeline produced — prevents it from confusing "already complete
+        within a prior iteration" with "pre-existing before the session."
+
+        Returns the empty string if git_head is missing, the git call fails,
+        or the diff is empty (no changes). Safe on non-git projects.
+        """
+        if not git_head:
+            return ""
+        try:
+            import subprocess
+            # --stat gives a compact summary; --name-status is an alternative
+            # if the diffstat would be too long. 200KB cap prevents pathological
+            # cases from exploding the prompt.
+            result = subprocess.run(
+                ["git", "diff", "--stat", f"{git_head}..HEAD"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode != 0:
+                return ""
+            out = (result.stdout or "").strip()
+            # Also include uncommitted working-tree changes against HEAD — the
+            # guardian's commit may not have run, but the work still happened.
+            result_wt = subprocess.run(
+                ["git", "diff", "--stat", "HEAD"],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result_wt.returncode == 0:
+                wt_out = (result_wt.stdout or "").strip()
+                if wt_out:
+                    if out:
+                        out = out + "\n\n# Uncommitted working-tree changes\n" + wt_out
+                    else:
+                        out = "# Uncommitted working-tree changes\n" + wt_out
+            if len(out) > 200_000:
+                out = out[:200_000] + "\n... (truncated)"
+            return out
+        except (OSError, subprocess.SubprocessError):
+            return ""
 
     def _load_agent_template(self, stage: str) -> str:
         """Read the overlay-merged agent .md template for the given stage.

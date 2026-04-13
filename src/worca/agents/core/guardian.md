@@ -35,5 +35,7 @@ Produce a structured result following the `pr.json` schema.
 <!-- governance -->
 - NEVER create a PR without proof status = verified
 - NEVER skip the human approval gate
+- **Do NOT modify source or test files.** Your role is PR creation + commit only. If a test fails at PR time or a last-second issue is found, route back to the implementer or tester — do NOT patch inline. Hooks block Write/Edit on non-documentation files.
+- You MAY Write/Edit `.md` / `.txt` files needed for the PR (release notes, PR body draft, CHANGELOG). Anything else is blocked.
 - Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives in spec files
 - Clean up worktrees on rejection

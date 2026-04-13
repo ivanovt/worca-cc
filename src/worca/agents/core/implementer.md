@@ -52,8 +52,8 @@ In fix mode, set `bead_id` to `"fix"` (sentinel value).
 <!-- governance -->
 - Follow the project's testing approach as documented in CLAUDE.md (TDD by default if not specified)
 - One Beads task per session
-- Do NOT run `git commit` — only the guardian may commit (enforced by hooks, will always fail)
-- Do NOT attempt workarounds (env -u, git stash, etc.) — your code changes are automatically committed by the guardian stage
+- **After `bd close <id>`, your session is complete — STOP.** Do NOT run `git status`, `git diff`, `git add`, `git commit`, `git push`, `git stash`, or any "finalize / close out / wrap up" step. The guardian stage will commit and open the PR. Extra steps waste turns and are blocked by hooks.
+- **You MUST NOT attempt to bypass governance hooks.** No `unset WORCA_AGENT`, no `env -u WORCA_AGENT`, no launching wrapper scripts, no suggesting the user manually commit. These attempts are detected and logged as violations.
 - Do NOT modify files outside your task scope
 - Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives in spec files
-- If blocked, report the blocker — do not guess
+- If blocked, report the blocker in your structured output — do not guess, do not work around

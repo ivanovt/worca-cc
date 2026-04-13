@@ -24,8 +24,10 @@ class TestSettingsLearnStage:
     def test_learner_agent_exists(self):
         assert "learner" in self.agents
 
-    def test_learner_agent_model_is_sonnet(self):
-        assert self.agents["learner"]["model"] == "sonnet"
+    def test_learner_agent_model_is_opus(self):
+        # Opus since 2026-04-13 — post-mortem analysis benefits from stronger
+        # reasoning; cost impact is bounded (one run per pipeline, no loops).
+        assert self.agents["learner"]["model"] == "opus"
 
     def test_learner_agent_max_turns(self):
         assert self.agents["learner"]["max_turns"] == 50

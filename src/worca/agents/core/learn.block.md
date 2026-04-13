@@ -28,3 +28,15 @@ Produce a post-mortem for the terminated pipeline run described below.
 ```json
 {{run_data}}
 ```
+
+{{#if files_changed_since_git_head}}
+## Files Changed Since `git_head`
+
+The diff below is the ground truth for what this pipeline produced. If a file is
+listed here, the pipeline modified it — do not claim such work was "pre-existing"
+regardless of what iteration logs say.
+
+```
+{{files_changed_since_git_head}}
+```
+{{/if}}

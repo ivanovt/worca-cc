@@ -24,6 +24,60 @@ def _extract_actual_command(command: str) -> str:
 _SAFE_COMMAND_PREFIXES = ("bd ", "bd\t")
 
 
+# The format of WORCA_AGENT is "{stage}-{agent}-iter-{N}" (set by
+# utils/claude_cli.py from the resolved prompt filename). All role-based
+# checks must extract the agent component with `_role_from_worca_agent()`
+# — comparing the raw env var against a bare agent name silently fails.
+
+
+def _role_from_worca_agent(raw: str) -> str:
+    """Extract the agent role from a WORCA_AGENT env value.
+
+    The env value is the basename (sans extension) of the resolved prompt
+    file: ``{stage}-{agent}-iter-{N}``. Stage values and agent names never
+    contain ``-`` or ``iter`` tokens, so splitting is unambiguous. Returns
+    the empty string for an empty input.
+
+    Examples:
+        _role_from_worca_agent("test-tester-iter-5") -> "tester"
+        _role_from_worca_agent("pr-guardian-iter-1") -> "guardian"
+        _role_from_worca_agent("plan_review-plan_reviewer-iter-2") -> "plan_reviewer"
+        _role_from_worca_agent("guardian") -> "guardian"  # legacy / bare form
+    """
+    if not raw:
+        return ""
+    base = raw.rsplit("-iter-", 1)[0] if "-iter-" in raw else raw
+    parts = base.split("-")
+    return parts[-1] if parts else raw
+
+
+def _is_env_evasion(command: str) -> bool:
+    """Detect attempts to unset or override WORCA_AGENT (governance bypass).
+
+    Catches patterns like:
+      unset WORCA_AGENT
+      export WORCA_AGENT=...
+      WORCA_AGENT= <cmd>
+      env -u WORCA_AGENT <cmd>
+      env WORCA_AGENT=<whatever> <cmd>
+
+    Searches the full raw command (NOT the cd-stripped form) — evasions
+    typically appear on the left of `&&`, which the cd-strip would discard.
+    """
+    if _is_safe_command(command):
+        return False
+    patterns = (
+        r"\bunset\b[^\n]*\bWORCA_AGENT\b",
+        r"\bexport\b[^\n]*\bWORCA_AGENT\b",
+        r"\bWORCA_AGENT\s*=",
+        r"\benv\b[^\n]*(-u\s+WORCA_AGENT|WORCA_AGENT\s*=)",
+    )
+    for p in patterns:
+        if re.search(p, command):
+            return True
+    return False
+
+
 def _is_safe_command(command: str) -> bool:
     """Check if command is a safe CLI tool that should bypass all detection.
 
@@ -179,17 +233,24 @@ def check_guard(tool_name: str, tool_input: dict) -> tuple:
     if tool_name == "Bash" and _is_force_push(command):
         return (2, "Blocked: git push --force is not allowed.")
 
+    # Block WORCA_AGENT evasion attempts (unset / env -u / override).
+    # Runs BEFORE role checks so the agent cannot first erase its identity
+    # and then perform a restricted action.
+    if tool_name == "Bash" and _is_env_evasion(command):
+        return (2, "Blocked: WORCA_AGENT may not be unset, exported, or overridden — "
+                   "this is a governance bypass attempt and is logged.")
+
     # Block commits when not Guardian
+    raw_agent = os.environ.get("WORCA_AGENT")
+    role = _role_from_worca_agent(raw_agent) if raw_agent else None
     if tool_name == "Bash" and _is_git_commit(command):
-        agent = os.environ.get("WORCA_AGENT")
-        if agent is not None and agent != "guardian":
-            return (2, "Blocked: only the guardian agent may commit. Current agent: {}.".format(agent))
+        if role is not None and role != "guardian":
+            return (2, "Blocked: only the guardian agent may commit. Current agent: {}.".format(raw_agent))
 
     # Role-based restrictions (only enforced when WORCA_AGENT is set)
-    agent = os.environ.get("WORCA_AGENT")
-    if agent is not None:
+    if role:
         # Planner may only write the plan file
-        if tool_name in ("Write", "Edit") and agent == "planner":
+        if tool_name in ("Write", "Edit") and role == "planner":
             plan_file = os.environ.get("WORCA_PLAN_FILE")
             if plan_file:
                 allowed = os.path.abspath(plan_file)
@@ -201,18 +262,31 @@ def check_guard(tool_name: str, tool_input: dict) -> tuple:
                 if basename != "MASTER_PLAN.md" and not re.match(r'^plan-\d{3}\.md$', basename):
                     return (2, "Blocked: planner agent may only write MASTER_PLAN.md or plan-NNN.md, not {}.".format(basename))
 
-        # Read-only agents: coordinator, tester, plan_reviewer, and reviewer may not write files
+        # Read-only agents: coordinator, tester, plan_reviewer, and reviewer
+        # may not write files
         read_only_agents = ("coordinator", "tester", "plan_reviewer", "reviewer")
-        if agent in read_only_agents:
+        if role in read_only_agents:
             if tool_name in ("Write", "Edit"):
-                return (2, "Blocked: {} agent is read-only — may not write files.".format(agent))
+                return (2, "Blocked: {} agent is read-only — may not write files.".format(role))
             if tool_name == "Bash" and _is_file_write_via_bash(command):
-                return (2, "Blocked: {} agent is read-only — file writes via Bash are not allowed.".format(agent))
+                return (2, "Blocked: {} agent is read-only — file writes via Bash are not allowed.".format(role))
 
-        # Planner, Coordinator, and PlanReviewer may not run tests
-        if tool_name == "Bash" and agent in ("planner", "coordinator", "plan_reviewer"):
+        # Planner, Coordinator, PlanReviewer, and Reviewer may not run tests.
+        # Reviewer was observed running pytest/vitest to verify claims
+        # (2026-04-12 W-039 run) — reviewer must stay read-only.
+        if tool_name == "Bash" and role in ("planner", "coordinator", "plan_reviewer", "reviewer"):
             if _is_test_command(command):
-                return (2, "Blocked: {} agent may not run tests.".format(agent))
+                return (2, "Blocked: {} agent may not run tests.".format(role))
+
+        # Guardian (PR stage): may not modify source or test files.
+        # Its job is PR creation + commit, not code fixes. If tests or review
+        # fail at PR time, route back — do not patch inline.
+        if role == "guardian" and tool_name in ("Write", "Edit"):
+            # Allow docs/markdown only (PR bodies, release notes, etc.).
+            ext = os.path.splitext(file_path)[1].lower()
+            if ext not in (".md", ".markdown", ".txt", ""):
+                return (2, "Blocked: guardian agent may not modify source/test files — "
+                           "got {}. Route back to implementer/tester if a fix is needed.".format(file_path))
 
     # Allow everything else
     return (0, "")

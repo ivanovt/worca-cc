@@ -733,3 +733,189 @@ class TestCdPrefixHandling:
             assert code == 2
         finally:
             del os.environ["WORCA_AGENT"]
+
+
+# --- Role extraction from real WORCA_AGENT format ---
+# WORCA_AGENT is set from the resolved prompt filename as
+# "{stage}-{agent}-iter-{N}" (see utils/claude_cli.py). Prior to the
+# 2026-04-13 fix, role checks compared the full env value against bare
+# agent names and silently never matched, letting tester/reviewer edit
+# files freely.
+
+
+class TestRoleExtractionIterFormat:
+    def test_tester_iter_blocks_write(self):
+        os.environ["WORCA_AGENT"] = "test-tester-iter-5"
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/app.js"})
+            assert code == 2
+            assert "tester" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_tester_iter_blocks_edit(self):
+        os.environ["WORCA_AGENT"] = "test-tester-iter-5"
+        try:
+            code, _ = check_guard("Edit", {"file_path": "/project/routes.js"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_reviewer_iter_blocks_write(self):
+        os.environ["WORCA_AGENT"] = "review-reviewer-iter-2"
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/app.py"})
+            assert code == 2
+            assert "reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_reviewer_iter_blocks_pytest(self):
+        os.environ["WORCA_AGENT"] = "review-reviewer-iter-2"
+        try:
+            code, reason = check_guard("Bash", {"command": "pytest tests/"})
+            assert code == 2
+            assert "reviewer" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_coordinator_iter_blocks_pytest(self):
+        os.environ["WORCA_AGENT"] = "coordinate-coordinator-iter-1"
+        try:
+            code, _ = check_guard("Bash", {"command": "pytest tests/"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_plan_reviewer_iter_blocks_write(self):
+        # Note: plan_review stage with plan_reviewer agent →
+        # "plan_review-plan_reviewer-iter-1"
+        os.environ["WORCA_AGENT"] = "plan_review-plan_reviewer-iter-1"
+        try:
+            code, _ = check_guard("Write", {"file_path": "/project/config.json"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_implementer_iter_blocks_git_commit(self):
+        os.environ["WORCA_AGENT"] = "implement-implementer-iter-7"
+        try:
+            code, reason = check_guard("Bash", {"command": "git commit -m 'fix'"})
+            assert code == 2
+            assert "guardian" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_guardian_iter_allowed_to_commit(self):
+        os.environ["WORCA_AGENT"] = "pr-guardian-iter-1"
+        try:
+            code, _ = check_guard("Bash", {"command": "git commit -m 'release'"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_bare_agent_name_still_works(self):
+        # Legacy/direct invocation: WORCA_AGENT set to bare role name
+        os.environ["WORCA_AGENT"] = "tester"
+        try:
+            code, _ = check_guard("Write", {"file_path": "/project/app.py"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+
+# --- WORCA_AGENT evasion detection ---
+# The 2026-04-12 W-039 run had a tester try `unset WORCA_AGENT && git commit`
+# to bypass governance. The attempt was saved only by a Bash-subshell quirk.
+# These patterns must now be explicitly blocked.
+
+
+class TestBlockWorcaAgentEvasion:
+    def test_blocks_unset_worca_agent(self):
+        os.environ["WORCA_AGENT"] = "test-tester-iter-5"
+        try:
+            code, reason = check_guard("Bash", {
+                "command": "unset WORCA_AGENT && git commit -m 'x'"
+            })
+            assert code == 2
+            assert "bypass" in reason.lower() or "governance" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_env_u_worca_agent(self):
+        os.environ["WORCA_AGENT"] = "implement-implementer-iter-3"
+        try:
+            code, reason = check_guard("Bash", {
+                "command": "env -u WORCA_AGENT git commit -m 'sneak'"
+            })
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_env_override_worca_agent(self):
+        os.environ["WORCA_AGENT"] = "test-tester-iter-2"
+        try:
+            code, _ = check_guard("Bash", {
+                "command": "env WORCA_AGENT=guardian git commit -m 'lie'"
+            })
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_inline_worca_agent_assignment(self):
+        os.environ["WORCA_AGENT"] = "test-tester-iter-2"
+        try:
+            code, _ = check_guard("Bash", {
+                "command": "WORCA_AGENT=guardian git commit -m 'lie'"
+            })
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_blocks_export_worca_agent(self):
+        os.environ["WORCA_AGENT"] = "test-tester-iter-2"
+        try:
+            code, _ = check_guard("Bash", {
+                "command": "export WORCA_AGENT=guardian"
+            })
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+
+# --- Guardian source-write restriction ---
+
+
+class TestGuardianWriteScope:
+    def test_guardian_blocked_from_editing_python_source(self):
+        os.environ["WORCA_AGENT"] = "pr-guardian-iter-1"
+        try:
+            code, reason = check_guard("Edit", {"file_path": "/project/src/app.py"})
+            assert code == 2
+            assert "guardian" in reason.lower() and "source" in reason.lower()
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_guardian_blocked_from_editing_tests(self):
+        os.environ["WORCA_AGENT"] = "pr-guardian-iter-1"
+        try:
+            code, _ = check_guard("Edit", {"file_path": "/project/tests/test_foo.py"})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_guardian_allowed_markdown_write(self):
+        os.environ["WORCA_AGENT"] = "pr-guardian-iter-1"
+        try:
+            code, _ = check_guard("Write", {"file_path": "/project/PR_BODY.md"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_guardian_allowed_txt_write(self):
+        os.environ["WORCA_AGENT"] = "pr-guardian-iter-1"
+        try:
+            code, _ = check_guard("Write", {"file_path": "/project/release-notes.txt"})
+            assert code == 0
+        finally:
+            del os.environ["WORCA_AGENT"]

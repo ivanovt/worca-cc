@@ -155,7 +155,7 @@
         "max_turns": 50
       },
       "learner": {
-        "model": "sonnet",
+        "model": "opus",
         "max_turns": 50
       },
       "plan_reviewer": {

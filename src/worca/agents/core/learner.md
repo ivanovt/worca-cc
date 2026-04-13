@@ -29,12 +29,23 @@ Produce a structured result following the `learn.json` schema (LearnOutput). The
 - `recurring_patterns`: cross-bead patterns, test-fix loop patterns, review-fix loop patterns
 - `run_summary`: termination type/reason, iteration counts, loop counts
 
+## Interpreting iteration output
+
+Iteration logs contain agent prose like *"the implementation already looks complete"* or *"tests already pass"*. **These statements describe state WITHIN this run** — typically that a prior iteration already produced the artifact under review. They do NOT mean the work pre-existed the pipeline.
+
+Use these two signals as ground truth, not the iteration prose:
+
+1. **`git_head` field in the run data** is the commit SHA the pipeline started from. Anything present AFTER the run that wasn't at `git_head` was produced by this pipeline.
+2. **`files_changed_since_git_head`** (provided below the run data when available) is a diff summary from `git_head` to the current tree. If a file appears here, the pipeline modified it.
+
+When you observe "no fix loops, all tests passed first time," that can mean the implementers were effective — not that the work was pre-existing. Verify against `files_changed_since_git_head` before claiming pre-existence.
+
 ## Rules
 
 - Do NOT modify any files — you are strictly read-only
 - Do NOT run tests or execute any commands
 - Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives
 - Only analyze the provided run data and report findings
-- Be factual — base observations on evidence from the run data, not speculation
+- Be factual — base observations on evidence from the run data, not speculation. Never claim work was "pre-existing" or "already complete before the session" unless `files_changed_since_git_head` is empty for the implicated files.
 - Keep suggestions actionable and specific — avoid generic advice
 - Include the run ID and relevant log file paths in both observation evidence and suggestion descriptions so follow-up agents can locate and verify the source data
