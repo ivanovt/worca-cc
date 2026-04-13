@@ -323,8 +323,35 @@ export function validateSettingsPayload(body) {
                 continue;
               }
               for (const v of val) {
-                if (!VALID_AGENTS.includes(v)) {
-                  details.push(`Unknown agent "${v}" in dispatch for "${key}"`);
+                if (typeof v !== 'string') {
+                  details.push(`Dispatch entry for "${key}" must be a string`);
+                }
+              }
+            }
+          }
+        }
+        if (g.subagent_dispatch !== undefined) {
+          if (
+            typeof g.subagent_dispatch !== 'object' ||
+            g.subagent_dispatch === null ||
+            Array.isArray(g.subagent_dispatch)
+          ) {
+            details.push('governance.subagent_dispatch must be an object');
+          } else {
+            for (const [key, val] of Object.entries(g.subagent_dispatch)) {
+              if (!VALID_AGENTS.includes(key)) {
+                details.push(`Unknown subagent_dispatch agent: "${key}"`);
+                continue;
+              }
+              if (!Array.isArray(val)) {
+                details.push(`subagent_dispatch for "${key}" must be an array`);
+                continue;
+              }
+              for (const v of val) {
+                if (typeof v !== 'string') {
+                  details.push(
+                    `subagent_dispatch entry for "${key}" must be a string`,
+                  );
                 }
               }
             }

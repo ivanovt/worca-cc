@@ -228,6 +228,23 @@ function _classificationStripView(iter) {
   `;
 }
 
+function _dispatchEventsView(iter) {
+  const events = iter.dispatch_events;
+  if (!events || events.length === 0) return nothing;
+  return html`
+    <div class="dispatch-events-strip">
+      ${events.map((ev) => {
+        const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
+        const variant = isAllowed ? 'success' : 'danger';
+        const label = isAllowed
+          ? `${ev.subagent_type} dispatched`
+          : `${ev.subagent_type} blocked${ev.reason ? ` — ${ev.reason}` : ''}`;
+        return html`<sl-badge variant="${variant}" pill>${label}</sl-badge>`;
+      })}
+    </div>
+  `;
+}
+
 function _circuitBreakerBannerView(run, settings) {
   const cb = run.circuit_breaker;
   if (!cb) return nothing;
@@ -396,6 +413,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
       ${iter.trigger ? html`<div class="detail-row">${_triggerLabel(iter.trigger)}</div>` : nothing}
       ${iter.outcome ? html`<div class="detail-row">${_outcomeLabel(iter.outcome)}</div>` : nothing}
       ${_classificationStripView(iter)}
+      ${_dispatchEventsView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
     </div>
   `;
@@ -787,6 +805,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
                       ${iterations.length === 1 ? _classificationStripView(iterations[0]) : nothing}
+                      ${iterations.length === 1 ? _dispatchEventsView(iterations[0]) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>

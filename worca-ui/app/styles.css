@@ -1653,8 +1653,8 @@ sl-details.log-history-panel::part(content) {
 
 .settings-dispatch-row {
   display: grid;
-  grid-template-columns: 120px 1fr;
-  align-items: center;
+  grid-template-columns: 120px 1fr auto;
+  align-items: start;
   gap: 12px;
 }
 
@@ -1663,6 +1663,97 @@ sl-details.log-history-panel::part(content) {
   font-weight: 500;
   color: var(--fg);
   text-transform: capitalize;
+  padding-top: 6px;
+}
+
+/* Tag input component */
+.dispatch-tag-input-wrapper {
+  position: relative;
+}
+
+.dispatch-tag-input {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 8px;
+  border: 1px solid var(--sl-color-neutral-300);
+  border-radius: var(--sl-border-radius-medium);
+  min-height: 32px;
+  cursor: text;
+  background: var(--sl-color-neutral-0);
+}
+
+.dispatch-tag-input:focus-within {
+  border-color: var(--sl-color-primary-500);
+  box-shadow: 0 0 0 var(--sl-focus-ring-width) var(--sl-color-primary-200);
+}
+
+.dispatch-tag-input-field {
+  border: none;
+  outline: none;
+  flex: 1;
+  min-width: 60px;
+  font-size: var(--sl-font-size-small);
+  background: transparent;
+  color: var(--fg);
+}
+
+.dispatch-suggestions {
+  position: absolute;
+  z-index: 100;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  background: var(--sl-color-neutral-0);
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-medium);
+  box-shadow: var(--sl-shadow-large);
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dispatch-suggestions .item {
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: var(--sl-font-size-small);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.dispatch-suggestions .item:hover,
+.dispatch-suggestions .item.active {
+  background: var(--sl-color-primary-50);
+}
+
+.dispatch-suggestions .item.denied {
+  opacity: 0.5;
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+
+.dispatch-suggestions .item-label {
+  font-size: 11px;
+  color: var(--sl-color-neutral-500);
+}
+
+.dispatch-suggestions .group-label {
+  padding: 4px 12px;
+  font-size: 11px;
+  color: var(--sl-color-neutral-500);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--sl-color-neutral-50);
+}
+
+.dispatch-reset-btn {
+  padding-top: 2px;
+}
+
+.dispatch-reset-placeholder {
+  width: 28px;
+  display: inline-block;
 }
 
 /* Permissions list */

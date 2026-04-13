@@ -83,10 +83,11 @@ PIPELINE_CONSTANTS = [
     ("MILESTONE_SET",       "pipeline.milestone.set"),
     ("LOOP_TRIGGERED",      "pipeline.loop.triggered"),
     ("LOOP_EXHAUSTED",      "pipeline.loop.exhausted"),
-    # Hook & governance (3)
+    # Hook & governance (4)
     ("HOOK_BLOCKED",          "pipeline.hook.blocked"),
     ("HOOK_TEST_GATE",        "pipeline.hook.test_gate"),
     ("HOOK_DISPATCH_BLOCKED", "pipeline.hook.dispatch_blocked"),
+    ("HOOK_DISPATCH_ALLOWED", "pipeline.hook.dispatch_allowed"),
     # Preflight (2)
     ("PREFLIGHT_COMPLETED", "pipeline.preflight.completed"),
     ("PREFLIGHT_SKIPPED",   "pipeline.preflight.skipped"),
@@ -130,17 +131,18 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 50 pipeline.* outbound constants.
+    """There must be exactly 51 pipeline.* outbound constants.
 
-    48 original + 2 dedicated learn events (pipeline.learn.completed/failed) = 50.
+    48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
+    + 1 dispatch_allowed hook event = 51.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 50, (
-        f"Expected 50 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 51, (
+        f"Expected 51 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -216,6 +218,7 @@ EXPECTED_BUILDERS = [
     "hook_blocked_payload",
     "hook_test_gate_payload",
     "hook_dispatch_blocked_payload",
+    "hook_dispatch_allowed_payload",
     # pipeline.preflight.*
     "preflight_completed_payload",
     "preflight_skipped_payload",

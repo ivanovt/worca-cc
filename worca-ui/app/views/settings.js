@@ -9,6 +9,7 @@ import {
   iconSvg,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Settings,
   Shield,
@@ -20,6 +21,14 @@ import {
 } from '../utils/icons.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
 import { isVersionBehind } from '../utils/version-compare.js';
+import {
+  addTag,
+  filterSuggestions,
+  isCustomized,
+  KNOWN_TYPES,
+  removeTag,
+  SUBAGENT_DENYLIST,
+} from './dispatch-tag-state.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 export const STAGE_AGENT_MAP = {
@@ -101,12 +110,15 @@ const DEFAULT_GOVERNANCE = {
     restrict_git_commit: true,
   },
   test_gate_strikes: 2,
-  dispatch: {
-    planner: [],
-    coordinator: ['implementer'],
-    implementer: [],
-    tester: [],
-    guardian: [],
+  subagent_dispatch: {
+    planner: ['explore'],
+    coordinator: [],
+    implementer: ['explore'],
+    tester: ['explore'],
+    reviewer: ['explore'],
+    guardian: ['explore'],
+    plan_reviewer: ['explore'],
+    learner: [],
   },
 };
 
@@ -115,6 +127,25 @@ let settingsData = null;
 let saveStatus = null; // null | 'saving' | 'success' | 'error'
 let saveMessage = '';
 let _settingsProjectId = null; // track which project settings are loaded for
+
+// --- Dispatch tag state ---
+let _dispatchTagState = {}; // agent -> { tags, input, showSuggestions, activeIndex }
+
+function _getDispatchState(agent, initialTags) {
+  if (!_dispatchTagState[agent]) {
+    _dispatchTagState[agent] = {
+      tags: [...(initialTags || [])],
+      input: '',
+      showSuggestions: false,
+      activeIndex: -1,
+    };
+  }
+  return _dispatchTagState[agent];
+}
+
+function _resetDispatchTagState() {
+  _dispatchTagState = {};
+}
 
 function settingsUrl(projectId, suffix = '') {
   if (projectId) return `/api/projects/${projectId}/settings${suffix}`;
@@ -179,17 +210,22 @@ export async function loadSettings(projectId) {
     if (!settingsData.worca.governance) {
       settingsData.worca.governance = { ...DEFAULT_GOVERNANCE };
     } else {
+      const gov = settingsData.worca.governance;
+      // Legacy fallback: if only old dispatch key present, use it under new name
+      const hasNew = gov.subagent_dispatch !== undefined;
+      const hasLegacy = gov.dispatch !== undefined && !hasNew;
       settingsData.worca.governance = {
         ...DEFAULT_GOVERNANCE,
-        ...settingsData.worca.governance,
+        ...gov,
         guards: {
           ...DEFAULT_GOVERNANCE.guards,
-          ...(settingsData.worca.governance.guards || {}),
+          ...(gov.guards || {}),
         },
-        dispatch: {
-          ...DEFAULT_GOVERNANCE.dispatch,
-          ...(settingsData.worca.governance.dispatch || {}),
+        subagent_dispatch: {
+          ...DEFAULT_GOVERNANCE.subagent_dispatch,
+          ...(hasNew ? gov.subagent_dispatch : hasLegacy ? gov.dispatch : {}),
         },
+        _legacy_dispatch: hasLegacy,
       };
     }
     if (!settingsData.worca.events) {
@@ -206,6 +242,7 @@ export async function loadSettings(projectId) {
     if (!settingsData.worca.webhooks) {
       settingsData.worca.webhooks = [];
     }
+    _resetDispatchTagState();
   } catch (err) {
     settingsData = null;
     saveStatus = 'error';
@@ -363,19 +400,12 @@ function readGovernanceFromDom() {
   const strikeEl = document.getElementById('test-gate-strikes');
   const test_gate_strikes = parseInt(strikeEl?.value, 10) || 2;
 
-  const dispatch = {};
+  const subagent_dispatch = {};
   for (const agent of AGENT_NAMES) {
-    const el = document.getElementById(`dispatch-${agent}`);
-    const val = (el?.value || '').trim();
-    dispatch[agent] = val
-      ? val
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      : [];
+    subagent_dispatch[agent] = [...(_dispatchTagState[agent]?.tags || [])];
   }
 
-  return { guards, test_gate_strikes, dispatch };
+  return { guards, test_gate_strikes, subagent_dispatch };
 }
 
 export function readPermissionsFromDom() {
@@ -594,10 +624,169 @@ function pipelineTab(worca, rerender) {
   `;
 }
 
+function dispatchTagRowView(agent, initialTags, defaultTags, rerender) {
+  const state = _getDispatchState(agent, initialTags);
+  const suggestions = filterSuggestions(
+    state.input,
+    KNOWN_TYPES,
+    state.tags,
+    SUBAGENT_DENYLIST,
+  );
+  const customized = isCustomized(state.tags, defaultTags);
+
+  function handleInput(e) {
+    state.input = e.target.value;
+    state.showSuggestions = true;
+    state.activeIndex = -1;
+    rerender();
+  }
+
+  function handleFocus() {
+    state.showSuggestions = true;
+    rerender();
+  }
+
+  function handleBlur() {
+    // Delay to allow click on suggestion to fire first
+    setTimeout(() => {
+      state.showSuggestions = false;
+      rerender();
+    }, 150);
+  }
+
+  function handleKeydown(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (state.activeIndex >= 0 && suggestions[state.activeIndex]) {
+        const item = suggestions[state.activeIndex];
+        if (!item.denied) {
+          const result = addTag(state.tags, item.name, SUBAGENT_DENYLIST);
+          state.tags = result.tags;
+          state.input = '';
+          state.showSuggestions = false;
+          state.activeIndex = -1;
+          rerender();
+        }
+      } else if (state.input.trim()) {
+        const result = addTag(state.tags, state.input, SUBAGENT_DENYLIST);
+        state.tags = result.tags;
+        state.input = '';
+        state.showSuggestions = false;
+        state.activeIndex = -1;
+        rerender();
+      }
+    } else if (e.key === 'Backspace' && !state.input && state.tags.length > 0) {
+      state.tags = removeTag(state.tags, state.tags[state.tags.length - 1]);
+      rerender();
+    } else if (e.key === 'Escape') {
+      state.showSuggestions = false;
+      state.activeIndex = -1;
+      rerender();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      state.activeIndex = Math.min(
+        state.activeIndex + 1,
+        suggestions.length - 1,
+      );
+      rerender();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      state.activeIndex = Math.max(state.activeIndex - 1, -1);
+      rerender();
+    }
+  }
+
+  function pickSuggestion(item) {
+    if (item.denied) return;
+    const result = addTag(state.tags, item.name, SUBAGENT_DENYLIST);
+    state.tags = result.tags;
+    state.input = '';
+    state.showSuggestions = false;
+    state.activeIndex = -1;
+    rerender();
+  }
+
+  function resetToDefault() {
+    state.tags = [...defaultTags];
+    state.input = '';
+    state.showSuggestions = false;
+    state.activeIndex = -1;
+    rerender();
+  }
+
+  return html`
+    <div class="settings-dispatch-row">
+      <span class="settings-dispatch-agent">${agent}</span>
+      <div class="dispatch-tag-input-wrapper">
+        <div class="dispatch-tag-input" id="dispatch-${agent}">
+          ${state.tags.map(
+            (tag) => html`<sl-tag
+              size="small"
+              removable
+              data-value="${tag}"
+              @sl-remove=${() => {
+                state.tags = removeTag(state.tags, tag);
+                rerender();
+              }}
+            >${tag}</sl-tag>`,
+          )}
+          <input
+            type="text"
+            class="dispatch-tag-input-field"
+            placeholder="${state.tags.length === 0 ? 'none' : ''}"
+            .value=${state.input}
+            @input=${handleInput}
+            @focus=${handleFocus}
+            @blur=${handleBlur}
+            @keydown=${handleKeydown}
+          />
+        </div>
+        ${
+          state.showSuggestions && suggestions.length > 0
+            ? html`<div class="dispatch-suggestions">
+              ${(() => {
+                let lastGroup = null;
+                return suggestions.map((item, i) => {
+                  const groupHeader =
+                    item.group !== lastGroup
+                      ? html`<div class="group-label">${item.group}</div>`
+                      : nothing;
+                  lastGroup = item.group;
+                  return html`${groupHeader}<div
+                    class="item ${item.denied ? 'denied' : ''} ${i === state.activeIndex ? 'active' : ''}"
+                    title=${
+                      item.denied
+                        ? 'Blocked by denylist — cannot be used in pipeline mode'
+                        : ''
+                    }
+                    @mousedown=${() => pickSuggestion(item)}
+                  >${item.name} <span class="item-label">${item.label}</span></div>`;
+                });
+              })()}
+            </div>`
+            : nothing
+        }
+      </div>
+      ${
+        customized
+          ? html`<sl-icon-button
+            title="Reset to default"
+            label="Reset to default"
+            class="dispatch-reset-btn"
+            @click=${resetToDefault}
+          >${unsafeHTML(iconSvg(RotateCcw, 14))}</sl-icon-button>`
+          : html`<span class="dispatch-reset-placeholder"></span>`
+      }
+    </div>
+  `;
+}
+
 function governanceTab(worca, permissions, rerender) {
   const governance = worca.governance || DEFAULT_GOVERNANCE;
   const guards = governance.guards || DEFAULT_GOVERNANCE.guards;
-  const dispatch = governance.dispatch || DEFAULT_GOVERNANCE.dispatch;
+  const subagent_dispatch =
+    governance.subagent_dispatch || DEFAULT_GOVERNANCE.subagent_dispatch;
+  const isLegacy = governance._legacy_dispatch === true;
   if (!permissions.allow) permissions.allow = [];
   const permList = permissions.allow;
 
@@ -627,14 +816,28 @@ function governanceTab(worca, permissions, rerender) {
       </div>
 
       <h3 class="settings-section-title">Dispatch Rules</h3>
+      ${
+        isLegacy
+          ? html`
+        <sl-alert variant="warning" open>
+          <strong>Legacy configuration detected.</strong>
+          Your settings use the old <code>governance.dispatch</code> key.
+          Saving will migrate to <code>governance.subagent_dispatch</code>.
+        </sl-alert>
+      `
+          : nothing
+      }
+      <sl-alert variant="neutral" open>
+        <strong>Denylist:</strong> <code>general-purpose</code> is always blocked and cannot be added to dispatch rules.
+      </sl-alert>
       <div class="settings-dispatch-table">
-        ${AGENT_NAMES.map(
-          (agent) => html`
-          <div class="settings-dispatch-row">
-            <span class="settings-dispatch-agent">${agent}</span>
-            <sl-input id="dispatch-${agent}" value="${(dispatch[agent] || []).join(', ')}" size="small" placeholder="none"></sl-input>
-          </div>
-        `,
+        ${AGENT_NAMES.map((agent) =>
+          dispatchTagRowView(
+            agent,
+            subagent_dispatch[agent] || [],
+            DEFAULT_GOVERNANCE.subagent_dispatch[agent] || [],
+            rerender,
+          ),
         )}
       </div>
 

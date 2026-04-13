@@ -1,7 +1,23 @@
 """Tests for agent dispatch rules and Beads task sync hooks."""
 
+from io import StringIO
 from unittest.mock import patch
-from worca.hooks.tracking import check_dispatch, handle_agent_stop
+import pytest
+from worca.hooks.tracking import (
+    check_dispatch,
+    handle_agent_stop,
+    DEFAULT_SUBAGENT_DISPATCH,
+    _load_subagent_dispatch,
+    _reset_dispatch_cache,
+)
+
+
+@pytest.fixture(autouse=True)
+def reset_cache():
+    """Reset dispatch cache before and after each test for isolation."""
+    _reset_dispatch_cache()
+    yield
+    _reset_dispatch_cache()
 
 
 # --- check_dispatch tests ---
@@ -29,9 +45,10 @@ def test_blocks_coordinator_dispatching_anything():
     assert code == 2
 
 
-def test_blocks_tester_dispatching_anything():
+def test_allows_tester_dispatching_explore():
+    """tester can now dispatch explore (W-038)."""
     code, reason = check_dispatch("tester", "explore")
-    assert code == 2
+    assert code == 0
 
 
 def test_allows_guardian_dispatching_explore():
@@ -59,28 +76,157 @@ def test_blocks_unknown_parent_dispatching():
     assert code == 2
 
 
-def test_plan_reviewer_in_dispatch_rules():
-    """plan_reviewer must appear in DISPATCH_RULES (even with empty allowed set)."""
-    from worca.hooks.tracking import DISPATCH_RULES
-    assert "plan_reviewer" in DISPATCH_RULES
+def test_plan_reviewer_in_default_dispatch():
+    """plan_reviewer must appear in DEFAULT_SUBAGENT_DISPATCH."""
+    assert "plan_reviewer" in DEFAULT_SUBAGENT_DISPATCH
 
 
-def test_plan_reviewer_dispatch_rules_is_empty_set():
-    """plan_reviewer must have an empty set — no subagent dispatch allowed."""
-    from worca.hooks.tracking import DISPATCH_RULES
-    assert DISPATCH_RULES["plan_reviewer"] == set()
+def test_plan_reviewer_dispatch_allows_explore():
+    """plan_reviewer now allows explore for codebase verification (W-038)."""
+    assert DEFAULT_SUBAGENT_DISPATCH["plan_reviewer"] == {"explore"}
 
 
-def test_blocks_plan_reviewer_dispatching_anything():
-    """plan_reviewer cannot dispatch any subagent."""
+def test_allows_plan_reviewer_dispatching_explore():
+    """plan_reviewer can dispatch explore (W-038)."""
     code, reason = check_dispatch("plan_reviewer", "explore")
-    assert code == 2
-    assert "Blocked" in reason
+    assert code == 0
 
 
 def test_blocks_plan_reviewer_dispatching_implementer():
     code, reason = check_dispatch("plan_reviewer", "implementer")
     assert code == 2
+
+
+# --- New tests per plan §5.2-5.3 ---
+
+
+def test_reviewer_dispatching_explore():
+    """W-037 gap fix: reviewer can dispatch explore."""
+    code, reason = check_dispatch("reviewer", "explore")
+    assert code == 0
+
+
+def test_learner_in_default_dispatch():
+    """learner is present in DEFAULT_SUBAGENT_DISPATCH with empty set (completeness)."""
+    assert "learner" in DEFAULT_SUBAGENT_DISPATCH
+    assert DEFAULT_SUBAGENT_DISPATCH["learner"] == set()
+
+
+def test_denylist_blocks_general_purpose():
+    """general-purpose is blocked by denylist even when parent has no dispatch rules."""
+    code, reason = check_dispatch("coordinator", "general-purpose")
+    assert code == 2
+    assert "denylist" in reason.lower() or "Blocked" in reason
+
+
+def test_denylist_blocks_general_purpose_even_if_configured():
+    """User config with general-purpose is stripped; the denylist wins."""
+    settings = {
+        "worca": {
+            "governance": {
+                "subagent_dispatch": {
+                    "implementer": ["explore", "general-purpose"],
+                }
+            }
+        }
+    }
+    stderr_capture = StringIO()
+    with patch("sys.stderr", stderr_capture):
+        rules = _load_subagent_dispatch(settings_override=settings)
+
+    assert "general-purpose" not in rules.get("implementer", set())
+    warning = stderr_capture.getvalue()
+    assert "general-purpose" in warning
+
+
+def test_config_replaces_defaults_per_agent():
+    """User config implementer: ["explore", "foo"] fully replaces that agent's defaults."""
+    settings = {
+        "worca": {
+            "governance": {
+                "subagent_dispatch": {
+                    "implementer": ["explore", "foo"],
+                }
+            }
+        }
+    }
+    rules = _load_subagent_dispatch(settings_override=settings)
+    assert rules["implementer"] == {"explore", "foo"}
+    # Other agents still have their defaults
+    assert rules["planner"] == DEFAULT_SUBAGENT_DISPATCH["planner"]
+    assert rules["tester"] == DEFAULT_SUBAGENT_DISPATCH["tester"]
+
+
+def test_config_fallback_for_missing_agent():
+    """Agents not in user config fall back to DEFAULT_SUBAGENT_DISPATCH."""
+    settings = {
+        "worca": {
+            "governance": {
+                "subagent_dispatch": {
+                    "implementer": ["explore", "extra"],
+                }
+            }
+        }
+    }
+    rules = _load_subagent_dispatch(settings_override=settings)
+    # guardian not configured by user → gets default
+    assert rules["guardian"] == DEFAULT_SUBAGENT_DISPATCH["guardian"]
+    assert rules["coordinator"] == DEFAULT_SUBAGENT_DISPATCH["coordinator"]
+
+
+def test_config_empty_list_removes_all():
+    """User config planner: [] removes all explore access for planner."""
+    settings = {
+        "worca": {
+            "governance": {
+                "subagent_dispatch": {
+                    "planner": [],
+                }
+            }
+        }
+    }
+    rules = _load_subagent_dispatch(settings_override=settings)
+    assert rules["planner"] == set()
+
+
+def test_default_constant_matches_settings_json():
+    """DEFAULT_SUBAGENT_DISPATCH keys/values must match src/worca/settings.json defaults."""
+    import json
+    import os
+
+    settings_path = os.path.join(
+        os.path.dirname(__file__), "..", "src", "worca", "settings.json"
+    )
+    with open(settings_path) as f:
+        raw = json.load(f)
+
+    json_dispatch = raw.get("worca", {}).get("governance", {}).get("subagent_dispatch", {})
+
+    for agent, allowed_list in json_dispatch.items():
+        assert agent in DEFAULT_SUBAGENT_DISPATCH, f"{agent} missing from DEFAULT_SUBAGENT_DISPATCH"
+        assert DEFAULT_SUBAGENT_DISPATCH[agent] == set(allowed_list), (
+            f"Mismatch for {agent}: constant={DEFAULT_SUBAGENT_DISPATCH[agent]} json={set(allowed_list)}"
+        )
+
+    for agent in DEFAULT_SUBAGENT_DISPATCH:
+        assert agent in json_dispatch, f"{agent} missing from settings.json subagent_dispatch"
+
+
+def test_cache_reset_between_config_changes():
+    """After _reset_dispatch_cache(), a new settings_override is honoured."""
+    settings_a = {
+        "worca": {"governance": {"subagent_dispatch": {"planner": []}}}
+    }
+    settings_b = {
+        "worca": {"governance": {"subagent_dispatch": {"planner": ["explore"]}}}
+    }
+    rules_a = _load_subagent_dispatch(settings_override=settings_a)
+    assert rules_a["planner"] == set()
+
+    _reset_dispatch_cache()
+
+    rules_b = _load_subagent_dispatch(settings_override=settings_b)
+    assert rules_b["planner"] == {"explore"}
 
 
 # --- handle_agent_stop tests ---

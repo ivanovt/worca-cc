@@ -146,6 +146,25 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
         migrated["worca"] = worca_cfg
         changes.append("  stages.review.agent: guardian -> reviewer")
 
+    # Migrate governance.dispatch -> governance.subagent_dispatch (W-038)
+    governance_cfg = worca_cfg.get("governance", {})
+    if "dispatch" in governance_cfg and "subagent_dispatch" not in governance_cfg:
+        _SUBAGENT_DISPATCH_DEFAULTS = {
+            "planner": ["explore"],
+            "coordinator": [],
+            "implementer": ["explore"],
+            "tester": ["explore"],
+            "guardian": ["explore"],
+            "reviewer": ["explore"],
+            "plan_reviewer": ["explore"],
+            "learner": [],
+        }
+        del governance_cfg["dispatch"]
+        governance_cfg["subagent_dispatch"] = _SUBAGENT_DISPATCH_DEFAULTS
+        worca_cfg["governance"] = governance_cfg
+        migrated["worca"] = worca_cfg
+        changes.append("  governance.dispatch -> governance.subagent_dispatch (values replaced with new defaults)")
+
     return migrated, changes
 
 

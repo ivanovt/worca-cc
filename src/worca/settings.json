@@ -243,14 +243,15 @@
         "restrict_git_commit": true
       },
       "test_gate_strikes": 2,
-      "dispatch": {
-        "planner": [],
-        "coordinator": [
-          "implementer"
-        ],
-        "implementer": [],
-        "tester": [],
-        "guardian": []
+      "subagent_dispatch": {
+        "planner": ["explore"],
+        "coordinator": [],
+        "implementer": ["explore"],
+        "tester": ["explore"],
+        "guardian": ["explore"],
+        "reviewer": ["explore"],
+        "plan_reviewer": ["explore"],
+        "learner": []
       }
     },
     "defaults": {

@@ -30,6 +30,11 @@ def main():
                 "reason": reason,
             })
         print(reason, file=sys.stderr)
+    elif parent and emit_from_hook:
+        emit_from_hook("pipeline.hook.dispatch_allowed", {
+            "agent": parent,
+            "subagent_type": child,
+        })
     sys.exit(code)
 
 
