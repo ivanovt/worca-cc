@@ -21,7 +21,10 @@ import { sortByStartDesc } from './utils/sort-runs.js';
 import { statusIcon } from './utils/status-badge.js';
 import { applyTheme } from './utils/theme.js';
 import { formatTitle } from './utils/title.js';
-import { addProjectDialogView } from './views/add-project-dialog.js';
+import {
+  addProjectDialogView,
+  batchWorcaSetupDialogTemplate,
+} from './views/add-project-dialog.js';
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { dashboardView } from './views/dashboard.js';
 import { learningsSectionView } from './views/learnings-panel.js';
@@ -79,6 +82,10 @@ import '@shoelace-style/shoelace/dist/components/tab-panel/tab-panel.js';
 import '@shoelace-style/shoelace/dist/components/switch/switch.js';
 import '@shoelace-style/shoelace/dist/components/alert/alert.js';
 import '@shoelace-style/shoelace/dist/components/textarea/textarea.js';
+import '@shoelace-style/shoelace/dist/components/radio-group/radio-group.js';
+import '@shoelace-style/shoelace/dist/components/radio/radio.js';
+import '@shoelace-style/shoelace/dist/components/checkbox/checkbox.js';
+import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
 
 const store = createStore();
 
@@ -1757,8 +1764,8 @@ function mainContentView() {
         if (result?.openDialog) {
           store.setState({ addProjectDialogOpen: true });
           rerender();
-        } else if (result?.name) {
-          // New project added — re-fetch projects
+        } else if (Array.isArray(result) || result?.name) {
+          // New project(s) added — re-fetch projects
           fetch('/api/projects')
             .then((r) => r.json())
             .then((data) => {
@@ -1909,6 +1916,7 @@ function rerender() {
         : ''
     }
     ${confirmDialogTemplate()}
+    ${batchWorcaSetupDialogTemplate(rerender)}
     ${addProjectDialogView(state, {
       onProjectAdd: (_project) => {
         store.setState({ addProjectDialogOpen: false });

@@ -2,12 +2,14 @@
 
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
-import { basename, dirname, join } from 'node:path';
+import { existsSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { ProcessManager } from './process-manager.js';
+import { scanDirectory } from './project-registry.js';
 import {
   createProjectRoutes,
   createProjectScopedRoutes,
@@ -401,6 +403,30 @@ export function createApp(options = {}) {
       }
     } catch {
       res.json({ ok: false });
+    }
+  });
+
+  // POST /api/scan-directory — scan parent folder for immediate git subdirectories
+  app.post('/api/scan-directory', (req, res) => {
+    const { path: dirPath } = req.body || {};
+    if (!dirPath || typeof dirPath !== 'string') {
+      return res.status(400).json({ ok: false, error: 'path is required' });
+    }
+    if (!isAbsolute(dirPath)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'path must be absolute' });
+    }
+    if (!existsSync(dirPath)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: `directory does not exist: ${dirPath}` });
+    }
+    try {
+      const subfolders = scanDirectory(dirPath);
+      res.json({ ok: true, subfolders });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 

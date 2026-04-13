@@ -131,6 +131,28 @@ export function synthesizeDefaultProject(projectRoot) {
 }
 
 /**
+ * Scan a directory for immediate child folders that contain a .git subdirectory.
+ * Skips dotfiles (names starting with ".") and "node_modules".
+ * Returns entries sorted alphabetically by name.
+ *
+ * @param {string} dirPath - Absolute path to the parent directory
+ * @returns {{ name: string, path: string }[]}
+ */
+export function scanDirectory(dirPath) {
+  const entries = readdirSync(dirPath, { withFileTypes: true });
+  const results = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    const childPath = join(dirPath, entry.name);
+    if (existsSync(join(childPath, '.git'))) {
+      results.push({ name: entry.name, path: childPath });
+    }
+  }
+  return results.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/**
  * Read max projects from {prefsDir}/config.json. Defaults to 20.
  */
 export function getMaxProjects(prefsDir) {

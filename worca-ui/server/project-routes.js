@@ -23,6 +23,7 @@ import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import {
+  getMaxProjects,
   readProjects,
   removeProject,
   SLUG_RE,
@@ -36,6 +37,7 @@ import {
   readMergedSettings,
 } from './settings-merge.js';
 import { validateSettingsPayload } from './settings-validator.js';
+import { MIN_WORCA_CC, meetsMinimum } from './version-check.js';
 import { discoverRuns } from './watcher.js';
 import {
   checkWorcaInstalled,
@@ -180,6 +182,102 @@ export function createProjectRoutes({ prefsDir, projectRoot }) {
     }
     removeProject(prefsDir, id);
     res.json({ ok: true, removed: id });
+  });
+
+  // POST /api/projects/batch — register multiple projects atomically
+  router.post('/batch', (req, res) => {
+    const { projects: batch } = req.body || {};
+    if (!Array.isArray(batch) || batch.length === 0) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'projects must be a non-empty array' });
+    }
+
+    // Validate all entries first (all-or-nothing)
+    const failed = [];
+    for (const entry of batch) {
+      const validation = validateProjectEntry(entry);
+      if (!validation.valid) {
+        failed.push({ name: entry?.name ?? '', error: validation.error });
+        continue;
+      }
+      if (!existsSync(entry.path)) {
+        failed.push({
+          name: entry.name,
+          error: `directory does not exist: ${entry.path}`,
+        });
+      }
+    }
+    if (failed.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `${failed.length} project${failed.length > 1 ? 's' : ''} failed validation`,
+        failed,
+      });
+    }
+
+    // Check for intra-batch duplicate names
+    const batchNames = batch.map((e) => e?.name).filter(Boolean);
+    if (new Set(batchNames).size < batchNames.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Duplicate names within batch' });
+    }
+
+    // Check for intra-batch duplicate paths
+    const batchPaths = batch.map((e) => e?.path).filter(Boolean);
+    if (new Set(batchPaths).size < batchPaths.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Duplicate paths within batch' });
+    }
+
+    // Check for duplicate paths against existing projects
+    const existing = readProjects(prefsDir);
+    const existingPaths = new Set(
+      existing.map((p) => p.path.replace(/\/+$/, '')),
+    );
+    const duplicates = batch.filter((entry) =>
+      existingPaths.has(entry.path.replace(/\/+$/, '')),
+    );
+    if (duplicates.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `${duplicates.length} project${duplicates.length > 1 ? 's' : ''} already registered`,
+        failed: duplicates.map((entry) => ({
+          name: entry.name,
+          error: `path already registered: ${entry.path}`,
+        })),
+      });
+    }
+
+    // Check max projects limit
+    const max = getMaxProjects(prefsDir);
+    if (existing.length + batch.length > max) {
+      return res.status(400).json({
+        ok: false,
+        error: `adding ${batch.length} project${batch.length > 1 ? 's' : ''} would exceed the limit of ${max}`,
+      });
+    }
+
+    // Write all projects — roll back on partial failure
+    const written = [];
+    try {
+      for (const entry of batch) {
+        writeProject(prefsDir, entry);
+        written.push(entry.name);
+      }
+      res.status(201).json({ ok: true, projects: batch });
+    } catch (err) {
+      for (const name of written) {
+        try {
+          removeProject(prefsDir, name);
+        } catch {
+          // ignore rollback errors
+        }
+      }
+      res.status(400).json({ ok: false, error: err.message });
+    }
   });
 
   return router;
@@ -1215,8 +1313,20 @@ export function createProjectScopedRoutes() {
 
   // GET /api/projects/:projectId/worca-status — check worca installation state
   router.get('/worca-status', (req, res) => {
-    const installed = checkWorcaInstalled(req.project.projectRoot);
-    res.json({ ok: true, installed });
+    const { projectRoot } = req.project;
+    const installed = checkWorcaInstalled(projectRoot);
+    if (!installed) {
+      return res.json({
+        ok: true,
+        installed: false,
+        version: null,
+        outdated: false,
+      });
+    }
+    const version = readProjectWorcaVersion(projectRoot);
+    const outdated =
+      version != null ? !meetsMinimum(version, MIN_WORCA_CC) : false;
+    res.json({ ok: true, installed: true, version, outdated });
   });
 
   // POST /api/projects/:projectId/worca-setup — install or update worca
