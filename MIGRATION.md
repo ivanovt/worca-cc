@@ -54,7 +54,11 @@ The entire `.claude/worca/` directory is replaced with a fresh copy from the ins
 
 ### Settings deep-merge
 
-New default keys from the package's `src/worca/settings.json` are merged into the project's `.claude/settings.json`. Existing user settings are overwritten by the template defaults (use `.claude/settings.local.json` for project-specific customizations that should survive upgrades).
+New default keys from the package's `src/worca/settings.json` are merged into the project's `.claude/settings.json` **non-destructively**: missing keys are added, but existing user values are preserved. This means user-chosen agent models (`worca.agents.<name>.model`), custom `permissions.allow` entries, webhooks, loop counts, and other tuned values survive `--upgrade`.
+
+Forward-incompatible renames (e.g. `stages.review.agent: guardian -> reviewer` in W-037) are applied explicitly via `_migrate_settings_paths` *before* the merge, so they land deterministically and show up under `worca init --check`.
+
+If you want to hard-reset your settings to the current template, use `worca init --force` (destructive). Project-specific overrides that should never be touched by any upgrade still belong in `.claude/settings.local.json`.
 
 ### .gitignore entries
 

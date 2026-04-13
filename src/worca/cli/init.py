@@ -517,17 +517,21 @@ def run_init(
             shutil.copy2(str(source_settings), str(settings_path))
             print("Settings: replaced with template (--force)")
     elif settings_path.exists():
-        # Deep-merge: template values overwrite base, user customizations live in .local.json
+        # Non-destructive deep-merge: add new template keys, preserve user values
+        # (permissions.allow, worca.agents.*.model, worca.loops.*, webhooks, etc.).
+        # Forward-incompatible changes must go through _migrate_settings_paths so they
+        # apply deterministically and are visible under `worca init --check`. Use --force
+        # to replace the file with the template wholesale.
         with open(settings_path) as f:
             current = json.load(f)
         if source_settings.exists():
             with open(source_settings) as f:
                 template = json.load(f)
-            merged = _deep_merge_overwrite(current, template)
+            merged = _deep_merge(current, template)
             with open(settings_path, "w") as f:
                 json.dump(merged, f, indent=2)
                 f.write("\n")
-            print("Settings: updated to latest defaults")
+            print("Settings: added new template keys (user values preserved)")
     else:
         # Create from template
         if source_settings.exists():
