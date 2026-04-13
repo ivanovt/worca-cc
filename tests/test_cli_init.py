@@ -151,6 +151,94 @@ class TestMigrateSettingsPaths:
         _, changes = _migrate_settings_paths(settings)
         assert len(changes) == 0
 
+    def test_migrates_review_agent_guardian_to_reviewer(self):
+        settings = {
+            "worca": {"stages": {"review": {"agent": "guardian", "enabled": True}}}
+        }
+        migrated, changes = _migrate_settings_paths(settings)
+        assert migrated["worca"]["stages"]["review"]["agent"] == "reviewer"
+        assert any("stages.review.agent" in c for c in changes)
+
+    def test_upgrade_end_state_review_agent_is_reviewer(self):
+        """Regression: migration + non-destructive merge must end at 'reviewer'.
+
+        Reproduces the bug where _migrate_settings_paths rewrote guardian->reviewer
+        but the subsequent merge with the template clobbered it back to guardian
+        because (a) the template still carried the stale value and (b) the merge
+        used template-wins semantics. Both fixes are asserted here.
+        """
+        from pathlib import Path
+
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path) as f:
+            template = json.load(f)
+
+        # Template itself must carry the renamed value (new-install correctness).
+        assert template["worca"]["stages"]["review"]["agent"] == "reviewer"
+
+        current = {
+            "worca": {"stages": {"review": {"agent": "guardian", "enabled": True}}}
+        }
+        migrated, _ = _migrate_settings_paths(current)
+        merged = _deep_merge(migrated, template)
+
+        assert merged["worca"]["stages"]["review"]["agent"] == "reviewer"
+
+
+class TestUpgradePreservesUserValues:
+    """Upgrade must preserve user customizations outside of explicit migrations."""
+
+    def test_preserves_user_model_choices(self):
+        """User-chosen agent models survive --upgrade (no template clobber)."""
+        from pathlib import Path
+
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path) as f:
+            template = json.load(f)
+
+        current = {
+            "worca": {
+                "agents": {
+                    "planner": {"model": "sonnet", "max_turns": 100},
+                    "implementer": {"model": "haiku", "max_turns": 42},
+                }
+            }
+        }
+        merged = _deep_merge(current, template)
+
+        assert merged["worca"]["agents"]["planner"]["model"] == "sonnet"
+        assert merged["worca"]["agents"]["implementer"]["model"] == "haiku"
+        assert merged["worca"]["agents"]["implementer"]["max_turns"] == 42
+        # New agents from the template are still added.
+        assert "tester" in merged["worca"]["agents"]
+
+    def test_preserves_permissions_allow_list(self):
+        """The permissions.allow list is user-owned and must not be overwritten."""
+        from pathlib import Path
+
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path) as f:
+            template = json.load(f)
+
+        current = {"permissions": {"allow": ["Bash(my-custom-tool:*)"]}}
+        merged = _deep_merge(current, template)
+
+        assert merged["permissions"]["allow"] == ["Bash(my-custom-tool:*)"]
+
+    def test_adds_new_template_keys(self):
+        """Missing keys from the template are still added (the whole point of upgrade)."""
+        current = {"worca": {"stages": {"plan": {"agent": "planner"}}}}
+        template = {
+            "worca": {
+                "stages": {"plan": {"agent": "planner"}, "test": {"agent": "tester"}},
+                "new_feature": {"enabled": True},
+            }
+        }
+        merged = _deep_merge(current, template)
+
+        assert merged["worca"]["stages"]["test"] == {"agent": "tester"}
+        assert merged["worca"]["new_feature"] == {"enabled": True}
+
 
 # ---------------------------------------------------------------------------
 # Agent override migration

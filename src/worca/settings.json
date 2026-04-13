@@ -112,7 +112,7 @@
         "enabled": true
       },
       "review": {
-        "agent": "guardian",
+        "agent": "reviewer",
         "enabled": true
       },
       "pr": {
