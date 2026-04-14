@@ -7,6 +7,7 @@ const VALID_AGENTS = [
   'coordinator',
   'implementer',
   'tester',
+  'reviewer',
   'guardian',
   'learner',
 ];
