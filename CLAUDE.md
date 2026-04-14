@@ -223,3 +223,4 @@ Issues must follow this structure so the pipeline can auto-detect plan files whe
 - The `## Plan` section must contain a markdown link to `docs/plans/*.md` using an absolute blob URL (e.g. `https://github.com/SinishaDjukic/worca-cc/blob/main/docs/plans/W-NNN.md`) — the pipeline parses this link and skips the PLAN stage when the file exists
 - If no plan link is present, the pipeline runs the Planner to generate one
 - Plan files use the naming convention `W-NNN-short-description.md` in `docs/plans/`
+- When asked to write a new plan, follow the structure and conventions in [`docs/plans/_TEMPLATE.md`](./docs/plans/_TEMPLATE.md)
