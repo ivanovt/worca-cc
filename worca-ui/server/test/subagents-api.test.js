@@ -55,9 +55,12 @@ describe('GET /api/subagents', () => {
     const body = await res.json();
     expect(body.ok).toBe(true);
     const names = body.subagents.map((t) => t.name);
+    // All five built-in Claude Code subagents should be present by default.
     expect(names).toContain('explore');
     expect(names).toContain('general-purpose');
     expect(names).toContain('Plan');
+    expect(names).toContain('statusline-setup');
+    expect(names).toContain('claude-code-guide');
   });
 
   it('returns user-global agents alongside builtins', async () => {

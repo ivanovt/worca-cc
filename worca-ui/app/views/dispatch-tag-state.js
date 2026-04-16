@@ -17,6 +17,8 @@ export const KNOWN_TYPES = [
   { name: 'explore', label: '(built-in)', group: 'Built-in' },
   { name: 'general-purpose', label: '(built-in)', group: 'Built-in' },
   { name: 'Plan', label: '(built-in)', group: 'Built-in' },
+  { name: 'statusline-setup', label: '(built-in)', group: 'Built-in' },
+  { name: 'claude-code-guide', label: '(built-in)', group: 'Built-in' },
 ];
 
 /**
