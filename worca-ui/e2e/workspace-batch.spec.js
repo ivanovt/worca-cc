@@ -163,7 +163,7 @@ test.describe('workspace batch add — full flow (case 37)', () => {
 
     // Submit button should reflect 2 pre-selected projects
     const submitBtn = page.locator('#submit-btn');
-    await expect(submitBtn).toHaveText(/Add 2 Projects/i, { timeout: 5000 });
+    await expect(submitBtn).toHaveText(/Add Projects \(2\)/i, { timeout: 5000 });
 
     // Intercept the batch POST to capture the payload without blocking it
     const batchRequests = [];

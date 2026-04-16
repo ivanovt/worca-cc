@@ -20,48 +20,65 @@ function renderToContainer(template) {
 
 const makeRerender = () => vi.fn();
 
+/**
+ * Build a fetch mock that routes by URL.
+ *  - /api/versions           → returns { activeWorcaCc: '0.6.0' } by default
+ *  - /worca-status           → returns entries from `statuses` in order
+ *  - anything else (setup)   → returns { ok: true }
+ */
+function makeFetchMock({
+  statuses = [],
+  versions = { activeWorcaCc: '0.6.0' },
+} = {}) {
+  let idx = 0;
+  return vi.fn().mockImplementation((url) => {
+    if (url === '/api/versions') {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(versions),
+      });
+    }
+    if (typeof url === 'string' && url.includes('/worca-status')) {
+      const payload = statuses[idx] || {
+        ok: false,
+        installed: false,
+        version: null,
+      };
+      idx += 1;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(payload),
+      });
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ ok: true }),
+    });
+  });
+}
+
 beforeEach(() => {
   _test.batchSetupOpen = false;
   _test.batchSetupItems = [];
+  _test.batchSetupCompleted = false;
 });
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('case 33 — status fetch renders checkboxes with correct labels', () => {
-  it('renders 3 rows — not-installed checked, outdated checked, current unchecked', async () => {
-    const fetchMock = vi
-      .fn()
-      // worca-status calls
-      .mockResolvedValueOnce({
-        json: () =>
-          Promise.resolve({
-            ok: true,
-            installed: false,
-            version: null,
-            outdated: false,
-          }),
-      })
-      .mockResolvedValueOnce({
-        json: () =>
-          Promise.resolve({
-            ok: true,
-            installed: true,
-            version: '0.5.2',
-            outdated: true,
-          }),
-      })
-      .mockResolvedValueOnce({
-        json: () =>
-          Promise.resolve({
-            ok: true,
-            installed: true,
-            version: '0.6.0',
-            outdated: false,
-          }),
-      });
-    vi.stubGlobal('fetch', fetchMock);
+describe('case 33 — status fetch renders checkboxes with version badges', () => {
+  it('renders 3 rows — all pre-checked regardless of install status', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        statuses: [
+          { ok: true, installed: false, version: null },
+          { ok: true, installed: true, version: '0.5.2' },
+          { ok: true, installed: true, version: '0.6.0' },
+        ],
+      }),
+    );
 
     const projects = [
       { name: 'auth', path: '/ws/auth' },
@@ -83,29 +100,56 @@ describe('case 33 — status fetch renders checkboxes with correct labels', () =
     const checkboxes = container.querySelectorAll('sl-checkbox');
     expect(checkboxes.length).toBe(3);
 
-    // First two (not-installed, outdated) should be pre-checked
+    // All three should be pre-checked — the user just picked these projects,
+    // so default intent is to set up worca on all of them. Badges differentiate
+    // current vs outdated visually.
     expect(checkboxes[0].hasAttribute('checked')).toBe(true);
     expect(checkboxes[1].hasAttribute('checked')).toBe(true);
-    // Last (current) should NOT be pre-checked
-    expect(checkboxes[2].hasAttribute('checked')).toBe(false);
+    expect(checkboxes[2].hasAttribute('checked')).toBe(true);
 
     const text = container.textContent;
     expect(text).toMatch(/not installed/i);
-    expect(text).toMatch(/outdated/i);
-    expect(text).toMatch(/current/i);
+    expect(text).toContain('0.5.2');
+    expect(text).toContain('0.6.0');
   });
 
-  it('shows version in status label for outdated project', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: () =>
-        Promise.resolve({
-          ok: true,
-          installed: true,
-          version: '0.5.2',
-          outdated: true,
-        }),
-    });
-    vi.stubGlobal('fetch', fetchMock);
+  it('uses warning badge for behind version, success for current', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        statuses: [
+          { ok: true, installed: true, version: '0.5.2' },
+          { ok: true, installed: true, version: '0.6.0' },
+        ],
+      }),
+    );
+
+    const rerender = makeRerender();
+    offerBatchWorcaSetupForTest(
+      [
+        { name: 'behind', path: '/ws/behind' },
+        { name: 'current', path: '/ws/current' },
+      ],
+      rerender,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    const container = renderToContainer(
+      batchWorcaSetupDialogTemplate(rerender),
+    );
+    const badges = container.querySelectorAll('sl-badge');
+    expect(badges.length).toBe(2);
+    expect(badges[0].getAttribute('variant')).toBe('warning');
+    expect(badges[1].getAttribute('variant')).toBe('success');
+  });
+
+  it('uses warning badge when installed but version is unknown', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        statuses: [{ ok: true, installed: true, version: null }],
+      }),
+    );
 
     const rerender = makeRerender();
     offerBatchWorcaSetupForTest([{ name: 'svc', path: '/ws/svc' }], rerender);
@@ -114,30 +158,13 @@ describe('case 33 — status fetch renders checkboxes with correct labels', () =
     const container = renderToContainer(
       batchWorcaSetupDialogTemplate(rerender),
     );
-    expect(container.textContent).toContain('0.5.2');
-  });
-
-  it('shows version in status label for current project', async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: () =>
-        Promise.resolve({
-          ok: true,
-          installed: true,
-          version: '0.6.0',
-          outdated: false,
-        }),
-    });
-    vi.stubGlobal('fetch', fetchMock);
-
-    const rerender = makeRerender();
-    offerBatchWorcaSetupForTest([{ name: 'svc', path: '/ws/svc' }], rerender);
-    await new Promise((r) => setTimeout(r, 0));
-
-    const container = renderToContainer(
-      batchWorcaSetupDialogTemplate(rerender),
+    const badge = container.querySelector('sl-badge');
+    expect(badge.getAttribute('variant')).toBe('warning');
+    expect(badge.textContent).toContain('unknown');
+    // Should be pre-checked (unknown version is treated as needing install)
+    expect(container.querySelector('sl-checkbox').hasAttribute('checked')).toBe(
+      true,
     );
-    expect(container.textContent).toContain('0.6.0');
-    expect(container.textContent).toMatch(/current/i);
   });
 });
 
@@ -145,9 +172,9 @@ describe('case 34 — confirm triggers sequential worca-setup calls', () => {
   it('calls POST /worca-setup for each checked project', async () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'auth', statusLabel: 'not installed', checked: true },
-      { name: 'web', statusLabel: 'outdated — v0.5.2', checked: true },
-      { name: 'utils', statusLabel: 'v0.6.0 — current', checked: false },
+      { name: 'auth', installed: false, version: null, checked: true },
+      { name: 'web', installed: true, version: '0.5.2', checked: true },
+      { name: 'utils', installed: true, version: '0.6.0', checked: false },
     ];
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -179,7 +206,7 @@ describe('case 34 — confirm triggers sequential worca-setup calls', () => {
   it('calls setup with POST method', async () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'svc', statusLabel: 'not installed', checked: true },
+      { name: 'svc', installed: false, version: null, checked: true },
     ];
 
     const fetchMock = vi.fn().mockResolvedValue({
@@ -208,10 +235,16 @@ describe('case 34 — confirm triggers sequential worca-setup calls', () => {
   it('does not call setup for unchecked projects', async () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'checked-svc', statusLabel: 'not installed', checked: true },
+      {
+        name: 'checked-svc',
+        installed: false,
+        version: null,
+        checked: true,
+      },
       {
         name: 'unchecked-svc',
-        statusLabel: 'v0.6.0 — current',
+        installed: true,
+        version: '0.6.0',
         checked: false,
       },
     ];
@@ -243,7 +276,7 @@ describe('case 35 — skip closes dialog without setup calls', () => {
   it('skip button closes the dialog without making setup calls', () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'auth', statusLabel: 'not installed', checked: true },
+      { name: 'auth', installed: false, version: null, checked: true },
     ];
 
     const fetchMock = vi.fn();
@@ -265,7 +298,7 @@ describe('case 35 — skip closes dialog without setup calls', () => {
   it('skip resets all batch setup state', () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'svc', statusLabel: 'not installed', checked: true },
+      { name: 'svc', installed: false, version: null, checked: true },
     ];
 
     const rerender = makeRerender();
@@ -286,7 +319,7 @@ describe('case 35 — skip closes dialog without setup calls', () => {
   it('renders nothing after skip', () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'svc', statusLabel: 'not installed', checked: true },
+      { name: 'svc', installed: false, version: null, checked: true },
     ];
 
     const rerender = makeRerender();
@@ -303,13 +336,41 @@ describe('case 35 — skip closes dialog without setup calls', () => {
     );
     expect(afterContainer.querySelector('#batch-setup-dialog')).toBeNull();
   });
+
+  it('invokes onClose callback after the dialog is dismissed', async () => {
+    vi.stubGlobal(
+      'fetch',
+      makeFetchMock({
+        statuses: [{ ok: true, installed: false, version: null }],
+      }),
+    );
+
+    const rerender = makeRerender();
+    const onClose = vi.fn();
+    offerBatchWorcaSetupForTest(
+      [{ name: 'svc', path: '/ws/svc' }],
+      rerender,
+      onClose,
+    );
+    await new Promise((r) => setTimeout(r, 0));
+
+    const container = renderToContainer(
+      batchWorcaSetupDialogTemplate(rerender),
+    );
+
+    container
+      .querySelector('#batch-setup-skip-btn')
+      .dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('case 36 — setup progress shown inline', () => {
   it('shows spinner (pending) after confirm click and before fetch resolves', () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'auth', statusLabel: 'not installed', checked: true },
+      { name: 'auth', installed: false, version: null, checked: true },
     ];
 
     // fetch never resolves during this test
@@ -337,7 +398,7 @@ describe('case 36 — setup progress shown inline', () => {
   it('shows checkmark (started) after fetch resolves successfully', async () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'auth', statusLabel: 'not installed', checked: true },
+      { name: 'auth', installed: false, version: null, checked: true },
     ];
 
     let resolveFetch;
@@ -374,7 +435,7 @@ describe('case 36 — setup progress shown inline', () => {
   it('shows error marker when fetch rejects', async () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'svc', statusLabel: 'not installed', checked: true },
+      { name: 'svc', installed: false, version: null, checked: true },
     ];
 
     vi.stubGlobal('fetch', () =>
@@ -407,8 +468,8 @@ describe('case 36 — setup progress shown inline', () => {
   it('installs projects sequentially — second starts after first resolves', async () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'first', statusLabel: 'not installed', checked: true },
-      { name: 'second', statusLabel: 'not installed', checked: true },
+      { name: 'first', installed: false, version: null, checked: true },
+      { name: 'second', installed: false, version: null, checked: true },
     ];
 
     const resolvers = [];
@@ -443,10 +504,10 @@ describe('case 36 — setup progress shown inline', () => {
     expect(_test.batchSetupProgress.get('second')?.state).toBe('started');
   });
 
-  it('disables checkboxes and confirm button while installing', () => {
+  it('replaces checkboxes with spinner and disables confirm button while installing', () => {
     _test.batchSetupOpen = true;
     _test.batchSetupItems = [
-      { name: 'svc', statusLabel: 'not installed', checked: true },
+      { name: 'svc', installed: false, version: null, checked: true },
     ];
 
     vi.stubGlobal('fetch', () => new Promise(() => {}));
@@ -468,8 +529,8 @@ describe('case 36 — setup progress shown inline', () => {
         .querySelector('#batch-setup-confirm-btn')
         .hasAttribute('disabled'),
     ).toBe(true);
-    expect(
-      installingContainer.querySelector('sl-checkbox').hasAttribute('disabled'),
-    ).toBe(true);
+    // During install, rows no longer expose an sl-checkbox — spinner replaces it
+    expect(installingContainer.querySelector('sl-checkbox')).toBeNull();
+    expect(installingContainer.querySelector('sl-spinner')).not.toBeNull();
   });
 });

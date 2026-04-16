@@ -12,6 +12,7 @@ import {
 } from 'node:fs';
 import { readdir } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
+import { checkWorcaInstalled, readProjectWorcaVersion } from './worca-setup.js';
 
 export const SLUG_RE = /^[a-z0-9_-]{1,64}$/i;
 const DEFAULT_MAX_PROJECTS = 20;
@@ -150,7 +151,16 @@ export async function scanDirectory(dirPath) {
     if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
     const childPath = join(dirPath, entry.name);
     if (existsSync(join(childPath, '.git'))) {
-      results.push({ name: entry.name, path: childPath });
+      const installed = checkWorcaInstalled(childPath);
+      const worcaVersion = installed
+        ? readProjectWorcaVersion(childPath)
+        : null;
+      results.push({
+        name: entry.name,
+        path: childPath,
+        installed,
+        worcaVersion,
+      });
       if (results.length >= SCAN_MAX_RESULTS) break;
     }
   }

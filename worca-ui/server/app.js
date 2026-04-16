@@ -449,7 +449,7 @@ export function createApp(options = {}) {
     app.use(
       '/api/projects/:projectId',
       projectResolver({ prefsDir, projectRoot }),
-      createProjectScopedRoutes(),
+      createProjectScopedRoutes({ prefsDir }),
     );
   }
 

@@ -2,23 +2,28 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeProject } from '../project-registry.js';
 import {
   createProjectRoutes,
   createProjectScopedRoutes,
   projectResolver,
 } from '../project-routes.js';
-import { MIN_WORCA_CC } from '../version-check.js';
+import { clearCache } from '../versions.js';
+
+const ACTIVE_WORCA_CC = '0.6.0';
 
 async function createTestApp(prefsDir, projectRoot) {
   const app = express();
   app.use(express.json());
+  // Provide a known installed worca-cc version so getVersionInfo() resolves
+  // activeWorcaCc deterministically (no dev-path, no network fallback).
+  app.locals.worcaVersion = { installed: ACTIVE_WORCA_CC };
   app.use('/api/projects', createProjectRoutes({ prefsDir, projectRoot }));
   app.use(
     '/api/projects/:projectId',
     projectResolver({ prefsDir, projectRoot }),
-    createProjectScopedRoutes(),
+    createProjectScopedRoutes({ prefsDir }),
   );
   return app;
 }
@@ -50,8 +55,25 @@ async function request(app, method, path, body) {
 describe('GET /api/projects/:id/worca-status — version + outdated extension', () => {
   let prefsDir;
   let projectRoot;
+  let originalFetch;
 
   beforeEach(() => {
+    // Prevent getVersionInfo from making real npm/pypi calls, but pass through
+    // localhost requests (the test uses fetch to hit its own express server).
+    // Promise.allSettled swallows rejects so a stub that throws is fine.
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = vi.fn().mockImplementation((url, init) => {
+      const s = typeof url === 'string' ? url : url?.url || '';
+      if (
+        s.startsWith('http://127.0.0.1') ||
+        s.startsWith('http://localhost')
+      ) {
+        return originalFetch(url, init);
+      }
+      return Promise.reject(new Error('network disabled'));
+    });
+
+    clearCache();
     prefsDir = join(
       tmpdir(),
       `worca-prefs-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -67,16 +89,18 @@ describe('GET /api/projects/:id/worca-status — version + outdated extension', 
   });
 
   afterEach(() => {
+    globalThis.fetch = originalFetch;
+    clearCache();
     rmSync(prefsDir, { recursive: true, force: true });
     rmSync(projectRoot, { recursive: true, force: true });
   });
 
-  // Case 14: installed with version file — version matches MIN_WORCA_CC (not outdated)
-  it('returns version and outdated:false when version.json matches current minimum', async () => {
+  // Case 14: installed with version file — version matches active (not outdated)
+  it('returns version and outdated:false when version.json matches active worca-cc', async () => {
     mkdirSync(join(projectRoot, '.claude', 'worca'), { recursive: true });
     writeFileSync(
       join(projectRoot, '.claude', 'worca', 'version.json'),
-      JSON.stringify({ version: MIN_WORCA_CC }),
+      JSON.stringify({ version: ACTIVE_WORCA_CC }),
     );
 
     writeProject(prefsDir, { name: 'my-proj', path: projectRoot });
@@ -90,7 +114,7 @@ describe('GET /api/projects/:id/worca-status — version + outdated extension', 
     expect(status).toBe(200);
     expect(body.ok).toBe(true);
     expect(body.installed).toBe(true);
-    expect(body.version).toBe(MIN_WORCA_CC);
+    expect(body.version).toBe(ACTIVE_WORCA_CC);
     expect(body.outdated).toBe(false);
   });
 
@@ -132,8 +156,8 @@ describe('GET /api/projects/:id/worca-status — version + outdated extension', 
     expect(body.outdated).toBe(false);
   });
 
-  // Case 17: installed with outdated version — outdated:true
-  it('returns outdated:true when installed version is below current minimum', async () => {
+  // Case 17: installed with version strictly behind active — outdated:true
+  it('returns outdated:true when installed version is strictly behind active worca-cc', async () => {
     mkdirSync(join(projectRoot, '.claude', 'worca'), { recursive: true });
     writeFileSync(
       join(projectRoot, '.claude', 'worca', 'version.json'),
@@ -152,6 +176,27 @@ describe('GET /api/projects/:id/worca-status — version + outdated extension', 
     expect(body.ok).toBe(true);
     expect(body.installed).toBe(true);
     expect(body.version).toBe('0.1.0');
+    expect(body.outdated).toBe(true);
+  });
+
+  // RC vs stable: "0.6.0rc3" is behind "0.6.0"
+  it('returns outdated:true when installed is an RC of the current stable', async () => {
+    mkdirSync(join(projectRoot, '.claude', 'worca'), { recursive: true });
+    writeFileSync(
+      join(projectRoot, '.claude', 'worca', 'version.json'),
+      JSON.stringify({ version: '0.6.0rc3' }),
+    );
+
+    writeProject(prefsDir, { name: 'my-proj', path: projectRoot });
+    const app = await createTestApp(prefsDir, projectRoot);
+    const { status, body } = await request(
+      app,
+      'GET',
+      '/api/projects/my-proj/worca-status',
+    );
+
+    expect(status).toBe(200);
+    expect(body.version).toBe('0.6.0rc3');
     expect(body.outdated).toBe(true);
   });
 });

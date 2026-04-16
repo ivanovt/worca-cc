@@ -37,7 +37,8 @@ import {
   readMergedSettings,
 } from './settings-merge.js';
 import { validateSettingsPayload } from './settings-validator.js';
-import { MIN_WORCA_CC, meetsMinimum } from './version-check.js';
+import { isVersionBehind } from './version-check.js';
+import { getVersionInfo } from './versions.js';
 import { discoverRuns } from './watcher.js';
 import {
   checkWorcaInstalled,
@@ -286,9 +287,12 @@ export function createProjectRoutes({ prefsDir, projectRoot }) {
 /**
  * Router for project-scoped sub-routes.
  * The projectResolver middleware must run before this to set req.project.
+ * @param {{ prefsDir?: string|null }} [options] — prefsDir enables active
+ *   worca-cc version lookup for /worca-status' `outdated` flag.
  */
-export function createProjectScopedRoutes() {
+export function createProjectScopedRoutes({ prefsDir = null } = {}) {
   const router = Router({ mergeParams: true });
+  const prefsPath = prefsDir ? join(prefsDir, 'preferences.json') : null;
 
   // Guard: run-related, cost, and pipeline routes require worcaDir
   function requireWorcaDir(req, res, next) {
@@ -1311,8 +1315,10 @@ export function createProjectScopedRoutes() {
     res.json({ ok: true, templates });
   });
 
-  // GET /api/projects/:projectId/worca-status — check worca installation state
-  router.get('/worca-status', (req, res) => {
+  // GET /api/projects/:projectId/worca-status — check worca installation state.
+  // `outdated` is true when the project's installed worca-cc version is
+  // strictly behind the active (dev-path or globally-installed) worca-cc.
+  router.get('/worca-status', async (req, res) => {
     const { projectRoot } = req.project;
     const installed = checkWorcaInstalled(projectRoot);
     if (!installed) {
@@ -1324,8 +1330,19 @@ export function createProjectScopedRoutes() {
       });
     }
     const version = readProjectWorcaVersion(projectRoot);
-    const outdated =
-      version != null ? !meetsMinimum(version, MIN_WORCA_CC) : false;
+    let outdated = false;
+    if (version != null) {
+      try {
+        const versionInfo = await getVersionInfo({
+          prefsPath,
+          worcaVersion: req.app.locals.worcaVersion || null,
+        });
+        outdated = isVersionBehind(version, versionInfo.activeWorcaCc);
+      } catch {
+        // Best-effort — if version lookup fails, treat as not outdated
+        outdated = false;
+      }
+    }
     res.json({ ok: true, installed: true, version, outdated });
   });
 

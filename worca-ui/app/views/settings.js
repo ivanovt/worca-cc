@@ -19,6 +19,7 @@ import {
   Zap,
 } from '../utils/icons.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
+import { isVersionBehind } from '../utils/version-compare.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 export const STAGE_AGENT_MAP = {
@@ -1392,33 +1393,6 @@ function feedbackAlert(rerender) {
 
 // --- Projects tab ---
 
-function parseVersion(v) {
-  // "0.6.0rc7" → { parts: [0, 6, 0], rc: 7 }
-  // "0.6.0"    → { parts: [0, 6, 0], rc: Infinity } (stable > any rc)
-  // "0.1.0-rc.5" → { parts: [0, 1, 0], rc: 5 }
-  const rcMatch = v.match(/^(.+?)[-.]?rc\.?(\d+)$/);
-  const base = rcMatch ? rcMatch[1] : v;
-  const rc = rcMatch ? parseInt(rcMatch[2], 10) : Infinity;
-  const parts = base.split('.').map((s) => parseInt(s, 10) || 0);
-  return { parts, rc };
-}
-
-function isVersionBehind(project, active) {
-  if (!project || !active) return false;
-  const p = parseVersion(project);
-  const a = parseVersion(active);
-  const len = Math.max(p.parts.length, a.parts.length);
-  for (let i = 0; i < len; i++) {
-    const pv = p.parts[i] || 0;
-    const av = a.parts[i] || 0;
-    if (pv < av) return true;
-    if (pv > av) return false;
-  }
-  // Same base version — compare RC numbers
-  if (p.rc < a.rc) return true;
-  return false;
-}
-
 function projectsTab(
   projects,
   { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender: _rerender },
@@ -1492,7 +1466,7 @@ function projectsTab(
               <div class="project-path">${p.path}</div>
             </div>
             <div style="display:flex; align-items:center; gap:0.5rem;">
-              <sl-badge variant="${!p.worcaVersion || isVersionBehind(p.worcaVersion, activeWorcaCc) ? 'warning' : 'neutral'}" pill>worca-cc: ${p.worcaVersion || 'unknown'}</sl-badge>
+              <sl-badge variant="${!p.worcaVersion ? 'warning' : !activeWorcaCc ? 'neutral' : isVersionBehind(p.worcaVersion, activeWorcaCc) ? 'warning' : 'success'}" pill>worca-cc: ${p.worcaVersion || 'unknown'}</sl-badge>
               <sl-button
                 size="small"
                 variant="primary"

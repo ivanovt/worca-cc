@@ -166,7 +166,7 @@ describe('case 23 — already-registered paths shown disabled', () => {
     expect(checkboxes[1].hasAttribute('disabled')).toBe(false);
   });
 
-  it('shows "(already registered)" label for disabled entries', () => {
+  it('shows "(already added)" label for disabled entries', () => {
     const stateWithProjects = {
       addProjectDialogOpen: true,
       projects: [{ name: 'existing', path: '/ws/existing' }],
@@ -179,7 +179,7 @@ describe('case 23 — already-registered paths shown disabled', () => {
     const container = renderToContainer(
       addProjectDialogView(stateWithProjects, makeCallbacks()),
     );
-    expect(container.textContent).toContain('already registered');
+    expect(container.textContent).toContain('already added');
   });
 
   it('auto-selects non-registered entries and skips registered ones', () => {

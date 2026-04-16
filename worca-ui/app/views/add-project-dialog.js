@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { showConfirm } from '../utils/confirm-dialog.js';
 import { FolderOpen, iconSvg } from '../utils/icons.js';
+import { isVersionBehind } from '../utils/version-compare.js';
 
 let dialogError = '';
 let nameManuallyEdited = false;
@@ -10,6 +11,7 @@ let scannedFolders = [];
 let _selectedFolders = new Set();
 let _scanning = false;
 let _scanError = '';
+let _scanAttempted = false; // true once a scan has completed (to show empty-state)
 let scanAbortController = null;
 let _scanDebounceTimer = null;
 // Resolved name map: folder index → resolved slug (computed once after scan)
@@ -17,9 +19,13 @@ let _resolvedNameMap = new Map();
 
 // Batch worca setup dialog state
 let _batchSetupOpen = false;
-let _batchSetupItems = []; // [{ name, statusLabel, checked }]
+let _batchSetupItems = []; // [{ name, installed, version, checked }]
 let _batchSetupProgress = new Map(); // name → { state: 'pending'|'started'|'failed', error? }
 let _batchSetupInstalling = false;
+let _batchSetupCompleted = false; // true once an install pass has finished
+let _batchActiveWorcaCc = null;
+let _scanActiveWorcaCc = null; // cached active worca-cc version for scan-list badges
+let _batchSetupOnClose = null; // callback invoked when the batch setup dialog closes
 
 /**
  * Debounces then POSTs to /api/scan-directory, managing AbortController lifecycle.
@@ -37,6 +43,7 @@ function triggerWorkspaceScan(path, state, rerender) {
     _resolvedNameMap = new Map();
     _scanError = '';
     _scanning = false;
+    _scanAttempted = false;
     rerender?.();
     return;
   }
@@ -56,7 +63,18 @@ function triggerWorkspaceScan(path, state, rerender) {
       .then((r) => r.json())
       .then((data) => {
         if (data.ok) {
+          _scanAttempted = true;
           scannedFolders = data.subfolders || [];
+          // Fetch active worca-cc version for badge rendering (best-effort, cached)
+          if (_scanActiveWorcaCc == null) {
+            fetch('/api/versions')
+              .then((r) => r.json())
+              .then((v) => {
+                _scanActiveWorcaCc = v?.activeWorcaCc || null;
+                rerender?.();
+              })
+              .catch(() => {});
+          }
           const registeredPaths = new Set(
             (state.projects || []).map((p) =>
               (p.path || '').replace(/\/+$/, ''),
@@ -133,6 +151,7 @@ export function addProjectDialogView(
     _selectedFolders = new Set();
     _resolvedNameMap = new Map();
     _scanError = '';
+    _scanAttempted = false;
     if (scanAbortController) {
       scanAbortController.abort();
       scanAbortController = null;
@@ -166,7 +185,11 @@ export function addProjectDialogView(
         .then((data) => {
           if (data.ok) {
             onProjectAdd?.(data.projects);
-            offerBatchWorcaSetup(data.projects, rerender);
+            // Re-trigger onProjectAdd after the setup dialog closes so the
+            // project list picks up freshly-installed worca versions.
+            offerBatchWorcaSetup(data.projects, rerender, () =>
+              onProjectAdd?.(data.projects),
+            );
           } else {
             showError(data.error || 'Failed to add projects');
           }
@@ -275,11 +298,21 @@ export function addProjectDialogView(
     _resolvedNameMap = new Map();
     _scanning = false;
     _scanError = '';
+    _scanAttempted = false;
     clearTimeout(_scanDebounceTimer);
     _scanDebounceTimer = null;
     if (scanAbortController) {
       scanAbortController.abort();
       scanAbortController = null;
+    }
+    // If switching to workspace and a path is already entered, kick off a scan
+    // so the list populates immediately instead of waiting for the next input.
+    if (dialogMode === 'workspace') {
+      const pathEl = document.getElementById('add-project-path');
+      const currentPath = pathEl?.value?.trim() || '';
+      if (currentPath) {
+        triggerWorkspaceScan(currentPath, state, rerender);
+      }
     }
     rerender?.();
   }
@@ -295,6 +328,7 @@ export function addProjectDialogView(
     _resolvedNameMap = new Map();
     _scanning = false;
     _scanError = '';
+    _scanAttempted = false;
     clearTimeout(_scanDebounceTimer);
     _scanDebounceTimer = null;
     if (scanAbortController) {
@@ -319,6 +353,14 @@ export function addProjectDialogView(
         </div>`;
     }
     if (scannedFolders.length === 0) {
+      if (_scanAttempted) {
+        return html`
+          <div id="workspace-scan-area" style="margin-bottom: 16px;">
+            <div style="color: var(--sl-color-neutral-500); font-size: 0.85rem; padding: 8px;">
+              No git projects found in this directory
+            </div>
+          </div>`;
+      }
       return html`<div id="workspace-scan-area" style="margin-bottom: 16px;"></div>`;
     }
 
@@ -331,8 +373,6 @@ export function addProjectDialogView(
     const selectableIndices = folders
       .filter((f) => !f.isRegistered)
       .map((f) => f.index);
-    const registeredCount = folders.filter((f) => f.isRegistered).length;
-
     function selectAll(e) {
       e.preventDefault();
       for (const i of selectableIndices) _selectedFolders.add(i);
@@ -356,22 +396,49 @@ export function addProjectDialogView(
 
     return html`
       <div id="workspace-scan-area" style="margin-bottom: 16px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 0.85rem;">
-          <span>Found ${scannedFolders.length} git project${scannedFolders.length !== 1 ? 's' : ''}</span>
+        <div class="dialog-meta-row">
+          <span>Git projects found: <strong>${scannedFolders.length}</strong></span>
+          ${
+            _scanActiveWorcaCc
+              ? html`
+                <span class="sep">·</span>
+                <span>Active worca-cc: <strong>${_scanActiveWorcaCc}</strong></span>
+              `
+              : nothing
+          }
+          <span class="spacer"></span>
           <span>
             <a href="#" id="select-all-link" @click=${selectAll}>Select all</a>
             &nbsp;/&nbsp;
             <a href="#" id="select-none-link" @click=${selectNone}>Select none</a>
           </span>
         </div>
-        <div style="max-height: 300px; overflow-y: auto; border: 1px solid var(--sl-color-neutral-200); border-radius: 4px; padding: 4px;">
+        <sl-divider style="--spacing: 0.5rem;"></sl-divider>
+        <h4 class="dialog-section-heading">Select projects to add</h4>
+        <div class="dialog-list">
           ${folders.map((f) => {
+            // While active version is unknown, render neutral (gray) to avoid
+            // a green flash for outdated installs before /api/versions resolves.
+            const badgeVariant =
+              !f.installed || !f.worcaVersion
+                ? 'warning'
+                : !_scanActiveWorcaCc
+                  ? 'neutral'
+                  : isVersionBehind(f.worcaVersion, _scanActiveWorcaCc)
+                    ? 'warning'
+                    : 'success';
+            const badgeLabel = !f.installed
+              ? 'worca-cc: not installed'
+              : `worca-cc: ${f.worcaVersion || 'unknown'}`;
+            const badge = html`<sl-badge variant="${badgeVariant}" pill>${badgeLabel}</sl-badge>`;
             if (f.isRegistered) {
               return html`
-                <sl-checkbox disabled style="display: block;">
-                  ${f.name}
-                  <span style="color: var(--sl-color-neutral-500); font-size: 0.8em; margin-left: 4px;">(already registered)</span>
-                </sl-checkbox>`;
+                <div class="dialog-list-row is-terminal">
+                  <sl-checkbox disabled></sl-checkbox>
+                  <span class="dialog-list-row-name">${f.name}</span>
+                  ${badge}
+                  <span style="color: var(--sl-color-neutral-500); font-size: 0.8em;">(already added)</span>
+                </div>`;
             }
             const resolvedName = _resolvedNameMap.get(f.index);
             const sluggedName = slugify(f.name);
@@ -380,22 +447,16 @@ export function addProjectDialogView(
                 ? html`${sluggedName} → ${resolvedName}`
                 : sluggedName;
             return html`
-              <sl-checkbox
-                ?checked=${_selectedFolders.has(f.index)}
-                style="display: block;"
-                @sl-change=${(e) => handleCheckChange(f.index, e)}
-              >
-                ${nameDisplay}
-              </sl-checkbox>`;
+              <div class="dialog-list-row">
+                <sl-checkbox
+                  ?checked=${_selectedFolders.has(f.index)}
+                  @sl-change=${(e) => handleCheckChange(f.index, e)}
+                ></sl-checkbox>
+                <span class="dialog-list-row-name">${nameDisplay}</span>
+                ${badge}
+              </div>`;
           })}
         </div>
-        ${
-          registeredCount > 0
-            ? html`<div style="font-size: 0.8rem; color: var(--sl-color-neutral-500); margin-top: 4px;">
-              ${registeredCount} project${registeredCount !== 1 ? 's' : ''} already registered (greyed)
-            </div>`
-            : nothing
-        }
       </div>`;
   }
 
@@ -404,7 +465,7 @@ export function addProjectDialogView(
     dialogMode === 'workspace' && (_selectedFolders.size === 0 || _scanning);
   const submitLabel =
     dialogMode === 'workspace'
-      ? `Add ${selectedCount} Project${selectedCount !== 1 ? 's' : ''}`
+      ? `Add Projects (${selectedCount})`
       : 'Add Project';
 
   return html`
@@ -512,44 +573,44 @@ function offerWorcaSetup(projectName, rerender) {
  * install/update via a dialog with per-project checkboxes and inline progress.
  * Exported for testing; internal code calls it directly.
  */
-export function offerBatchWorcaSetupForTest(projects, rerender) {
-  return offerBatchWorcaSetup(projects, rerender);
+export function offerBatchWorcaSetupForTest(projects, rerender, onClose) {
+  return offerBatchWorcaSetup(projects, rerender, onClose);
 }
 
-function offerBatchWorcaSetup(projects, rerender) {
+function offerBatchWorcaSetup(projects, rerender, onClose) {
   if (!rerender || !projects || projects.length === 0) return;
+  _batchSetupOnClose = typeof onClose === 'function' ? onClose : null;
 
-  Promise.all(
-    projects.map((p) =>
-      fetch(`/api/projects/${p.name}/worca-status`)
-        .then((r) => r.json())
-        .catch(() => ({
-          ok: false,
-          installed: false,
-          outdated: false,
-          version: null,
-        })),
-    ),
-  )
-    .then((statuses) => {
+  const statusPromises = projects.map((p) =>
+    fetch(`/api/projects/${p.name}/worca-status`)
+      .then((r) => r.json())
+      .catch(() => ({
+        ok: false,
+        installed: false,
+        version: null,
+      })),
+  );
+
+  const versionsPromise = fetch('/api/versions')
+    .then((r) => r.json())
+    .catch(() => null);
+
+  Promise.all([Promise.all(statusPromises), versionsPromise])
+    .then(([statuses, versions]) => {
+      _batchActiveWorcaCc = versions?.activeWorcaCc || null;
       _batchSetupItems = projects.map((p, i) => {
         const s = statuses[i];
-        let statusLabel;
-        let checked;
-        if (!s.ok || !s.installed) {
-          statusLabel = 'not installed';
-          checked = true;
-        } else if (s.outdated) {
-          statusLabel = `outdated — v${s.version}`;
-          checked = true;
-        } else {
-          statusLabel = s.version ? `v${s.version} — current` : 'current';
-          checked = false;
-        }
-        return { name: p.name, statusLabel, checked };
+        const installed = !!(s.ok && s.installed);
+        const version = installed ? s.version : null;
+        // Default all newly-added projects to checked — the user just picked
+        // them, so the natural intent is "set up worca on all of these".
+        // Badges communicate which are already current so the user can
+        // uncheck them if they want to skip re-installation.
+        return { name: p.name, installed, version, checked: true };
       });
       _batchSetupProgress = new Map();
       _batchSetupInstalling = false;
+      _batchSetupCompleted = false;
       _batchSetupOpen = true;
       rerender();
     })
@@ -574,12 +635,17 @@ export function batchWorcaSetupDialogTemplate(rerender) {
     _batchSetupItems = [];
     _batchSetupProgress = new Map();
     _batchSetupInstalling = false;
+    _batchSetupCompleted = false;
+    const cb = _batchSetupOnClose;
+    _batchSetupOnClose = null;
     rerender?.();
+    cb?.();
   }
 
   async function handleInstall() {
     const selected = _batchSetupItems.filter((it) => it.checked);
     if (selected.length === 0) return;
+    _batchSetupCompleted = false;
     _batchSetupInstalling = true;
     for (const item of selected) {
       _batchSetupProgress.set(item.name, { state: 'pending' });
@@ -612,46 +678,108 @@ export function batchWorcaSetupDialogTemplate(rerender) {
       rerender?.();
     }
     _batchSetupInstalling = false;
+    _batchSetupCompleted = true;
     rerender?.();
   }
 
   const checkedCount = _batchSetupItems.filter((it) => it.checked).length;
   const total = _batchSetupItems.length;
+  const successCount = [..._batchSetupProgress.values()].filter(
+    (p) => p.state === 'started',
+  ).length;
+  const failedCount = [..._batchSetupProgress.values()].filter(
+    (p) => p.state === 'failed',
+  ).length;
+
+  const heading = _batchSetupCompleted
+    ? `Installed: ${successCount}${failedCount ? `, Failed: ${failedCount}` : ''}`
+    : 'Install worca on these projects?';
 
   return html`
     <sl-dialog id="batch-setup-dialog" label="Worca Setup" open @sl-after-hide=${handleSkip}>
-      <p>${total} project${total !== 1 ? 's' : ''} added. Install worca?</p>
-      ${_batchSetupItems.map((item) => {
-        const progress = _batchSetupProgress.get(item.name);
-        let progressEl = nothing;
-        if (progress) {
-          if (progress.state === 'pending') {
-            progressEl = html`<sl-spinner style="font-size: 0.9rem;"></sl-spinner>`;
-          } else if (progress.state === 'started') {
-            progressEl = html`<span class="batch-setup-started">✓</span>`;
-          } else if (progress.state === 'failed') {
-            progressEl = html`<span class="batch-setup-failed">✗ ${progress.error}</span>`;
-          }
+      <div class="dialog-meta-row">
+        <span>Projects added: <strong>${total}</strong></span>
+        ${
+          _batchActiveWorcaCc
+            ? html`
+              <span class="sep">·</span>
+              <span>Active worca-cc: <strong>${_batchActiveWorcaCc}</strong></span>
+            `
+            : nothing
         }
-        return html`
-          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-            <sl-checkbox
-              ?checked=${item.checked}
-              ?disabled=${_batchSetupInstalling}
-              @sl-change=${(e) => handleCheckChange(item.name, e)}
-            >${item.name} (${item.statusLabel})</sl-checkbox>
-            ${progressEl}
-          </div>
-        `;
-      })}
-      <div slot="footer" style="display:flex; justify-content:center; gap:0.75rem; width:100%">
-        <sl-button id="batch-setup-skip-btn" @click=${handleSkip}>Skip</sl-button>
-        <sl-button
-          id="batch-setup-confirm-btn"
-          variant="primary"
-          ?disabled=${checkedCount === 0 || _batchSetupInstalling}
-          @click=${handleInstall}
-        >Install/Update ${checkedCount}</sl-button>
+      </div>
+      <sl-divider style="--spacing: 0.5rem;"></sl-divider>
+      <h4 class="dialog-section-heading">${heading}</h4>
+      <div class="dialog-list">
+        ${_batchSetupItems.map((item) => {
+          const progress = _batchSetupProgress.get(item.name);
+          const isTerminal =
+            progress &&
+            (progress.state === 'started' || progress.state === 'failed');
+          // Badge: warning when not installed/unknown version/behind active;
+          // success (dark green) when current; neutral while active version is
+          // still loading (avoids a green flash for outdated installs).
+          const badgeVariant =
+            !item.installed || !item.version
+              ? 'warning'
+              : !_batchActiveWorcaCc
+                ? 'neutral'
+                : isVersionBehind(item.version, _batchActiveWorcaCc)
+                  ? 'warning'
+                  : 'success';
+          const badgeLabel = !item.installed
+            ? 'worca-cc: not installed'
+            : `worca-cc: ${item.version || 'unknown'}`;
+          // Leading slot: checkbox (pre-install) or spinner/✓/✗ (during/after)
+          let leadingEl;
+          if (!progress) {
+            leadingEl = html`
+              <sl-checkbox
+                ?checked=${item.checked}
+                ?disabled=${_batchSetupInstalling}
+                @sl-change=${(e) => handleCheckChange(item.name, e)}
+              ></sl-checkbox>
+            `;
+          } else if (progress.state === 'pending') {
+            leadingEl = html`
+              <span class="dialog-list-row-icon">
+                <sl-spinner style="font-size: 0.9rem;"></sl-spinner>
+              </span>
+            `;
+          } else if (progress.state === 'started') {
+            leadingEl = html`<span class="dialog-list-row-icon is-success">✓</span>`;
+          } else {
+            leadingEl = html`<span class="dialog-list-row-icon is-failed">✗</span>`;
+          }
+          return html`
+            <div class="dialog-list-row ${isTerminal ? 'is-terminal' : ''}">
+              ${leadingEl}
+              <span class="dialog-list-row-name">${item.name}</span>
+              <sl-badge variant="${badgeVariant}" pill>${badgeLabel}</sl-badge>
+              ${
+                progress?.state === 'failed'
+                  ? html`<span class="dialog-list-row-error">${progress.error}</span>`
+                  : nothing
+              }
+            </div>
+          `;
+        })}
+      </div>
+      <sl-divider style="--spacing: 0.5rem;"></sl-divider>
+      <div slot="footer" class="dialog-footer">
+        ${
+          _batchSetupCompleted
+            ? html`<sl-button id="batch-setup-close-btn" variant="primary" autofocus @click=${handleSkip}>Close</sl-button>`
+            : html`
+              <sl-button id="batch-setup-skip-btn" @click=${handleSkip}>Skip</sl-button>
+              <sl-button
+                id="batch-setup-confirm-btn"
+                variant="primary"
+                ?disabled=${checkedCount === 0 || _batchSetupInstalling}
+                @click=${handleInstall}
+              >Install/Update (${checkedCount})</sl-button>
+            `
+        }
       </div>
     </sl-dialog>
   `;
@@ -765,5 +893,11 @@ export const _test = {
   },
   set batchSetupInstalling(v) {
     _batchSetupInstalling = v;
+  },
+  get batchSetupCompleted() {
+    return _batchSetupCompleted;
+  },
+  set batchSetupCompleted(v) {
+    _batchSetupCompleted = v;
   },
 };

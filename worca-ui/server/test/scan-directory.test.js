@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -128,6 +128,36 @@ describe('POST /api/scan-directory', () => {
       'middle',
       'zebra',
     ]);
+  });
+
+  // Case 8: Enriched with worca installation status + version
+  it('returns installed + worcaVersion fields for each folder', async () => {
+    // repo-a: no worca installed
+    mkdirSync(join(tmpDir, 'repo-a', '.git'), { recursive: true });
+    // repo-b: worca installed with version.json
+    mkdirSync(join(tmpDir, 'repo-b', '.git'), { recursive: true });
+    mkdirSync(join(tmpDir, 'repo-b', '.claude', 'worca'), { recursive: true });
+    writeFileSync(
+      join(tmpDir, 'repo-b', '.claude', 'worca', 'version.json'),
+      JSON.stringify({ version: '0.6.0' }),
+    );
+    // repo-c: worca installed without version file
+    mkdirSync(join(tmpDir, 'repo-c', '.git'), { recursive: true });
+    mkdirSync(join(tmpDir, 'repo-c', '.claude', 'worca'), { recursive: true });
+
+    const { status, body } = await request(app, 'POST', '/api/scan-directory', {
+      path: tmpDir,
+    });
+
+    expect(status).toBe(200);
+    expect(body.ok).toBe(true);
+    const byName = Object.fromEntries(body.subfolders.map((s) => [s.name, s]));
+    expect(byName['repo-a'].installed).toBe(false);
+    expect(byName['repo-a'].worcaVersion).toBeNull();
+    expect(byName['repo-b'].installed).toBe(true);
+    expect(byName['repo-b'].worcaVersion).toBe('0.6.0');
+    expect(byName['repo-c'].installed).toBe(true);
+    expect(byName['repo-c'].worcaVersion).toBeNull();
   });
 
   // Case 7: No entry cap — all results returned

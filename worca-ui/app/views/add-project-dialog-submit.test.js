@@ -126,7 +126,7 @@ describe('case 26 — submit calls batch endpoint', () => {
 });
 
 describe('case 27 — submit button shows count', () => {
-  it('button reads "Add 2 Projects" when 2 of 4 folders selected', () => {
+  it('button reads "Add Projects (2)" when 2 of 4 folders selected', () => {
     setScannedFolders([
       { name: 'alpha', path: '/ws/alpha' },
       { name: 'beta', path: '/ws/beta' },
@@ -140,10 +140,10 @@ describe('case 27 — submit button shows count', () => {
     );
 
     const submitBtn = container.querySelector('#submit-btn');
-    expect(submitBtn.textContent.trim()).toBe('Add 2 Projects');
+    expect(submitBtn.textContent.trim()).toBe('Add Projects (2)');
   });
 
-  it('button reads "Add 1 Project" (singular) when exactly 1 selected', () => {
+  it('button reads "Add Projects (1)" when exactly 1 selected', () => {
     setScannedFolders([{ name: 'alpha', path: '/ws/alpha' }]);
     _test.selectedFolders = new Set([0]);
 
@@ -152,7 +152,7 @@ describe('case 27 — submit button shows count', () => {
     );
 
     const submitBtn = container.querySelector('#submit-btn');
-    expect(submitBtn.textContent.trim()).toBe('Add 1 Project');
+    expect(submitBtn.textContent.trim()).toBe('Add Projects (1)');
   });
 
   it('button reads "Add Project" in single mode', () => {
