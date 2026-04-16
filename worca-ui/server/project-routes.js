@@ -23,6 +23,7 @@ import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import {
+  getMaxProjects,
   readProjects,
   removeProject,
   SLUG_RE,
@@ -36,6 +37,8 @@ import {
   readMergedSettings,
 } from './settings-merge.js';
 import { validateSettingsPayload } from './settings-validator.js';
+import { isVersionBehind } from './version-check.js';
+import { getVersionInfo } from './versions.js';
 import { discoverRuns } from './watcher.js';
 import {
   checkWorcaInstalled,
@@ -182,15 +185,114 @@ export function createProjectRoutes({ prefsDir, projectRoot }) {
     res.json({ ok: true, removed: id });
   });
 
+  // POST /api/projects/batch — register multiple projects atomically
+  router.post('/batch', (req, res) => {
+    const { projects: batch } = req.body || {};
+    if (!Array.isArray(batch) || batch.length === 0) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'projects must be a non-empty array' });
+    }
+
+    // Validate all entries first (all-or-nothing)
+    const failed = [];
+    for (const entry of batch) {
+      const validation = validateProjectEntry(entry);
+      if (!validation.valid) {
+        failed.push({ name: entry?.name ?? '', error: validation.error });
+        continue;
+      }
+      if (!existsSync(entry.path)) {
+        failed.push({
+          name: entry.name,
+          error: `directory does not exist: ${entry.path}`,
+        });
+      }
+    }
+    if (failed.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `${failed.length} project${failed.length > 1 ? 's' : ''} failed validation`,
+        failed,
+      });
+    }
+
+    // Check for intra-batch duplicate names
+    const batchNames = batch.map((e) => e?.name).filter(Boolean);
+    if (new Set(batchNames).size < batchNames.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Duplicate names within batch' });
+    }
+
+    // Check for intra-batch duplicate paths
+    const batchPaths = batch.map((e) => e?.path).filter(Boolean);
+    if (new Set(batchPaths).size < batchPaths.length) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Duplicate paths within batch' });
+    }
+
+    // Check for duplicate paths against existing projects
+    const existing = readProjects(prefsDir);
+    const existingPaths = new Set(
+      existing.map((p) => p.path.replace(/\/+$/, '')),
+    );
+    const duplicates = batch.filter((entry) =>
+      existingPaths.has(entry.path.replace(/\/+$/, '')),
+    );
+    if (duplicates.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: `${duplicates.length} project${duplicates.length > 1 ? 's' : ''} already registered`,
+        failed: duplicates.map((entry) => ({
+          name: entry.name,
+          error: `path already registered: ${entry.path}`,
+        })),
+      });
+    }
+
+    // Check max projects limit
+    const max = getMaxProjects(prefsDir);
+    if (existing.length + batch.length > max) {
+      return res.status(400).json({
+        ok: false,
+        error: `adding ${batch.length} project${batch.length > 1 ? 's' : ''} would exceed the limit of ${max}`,
+      });
+    }
+
+    // Write all projects — roll back on partial failure
+    const written = [];
+    try {
+      for (const entry of batch) {
+        writeProject(prefsDir, entry);
+        written.push(entry.name);
+      }
+      res.status(201).json({ ok: true, projects: batch });
+    } catch (err) {
+      for (const name of written) {
+        try {
+          removeProject(prefsDir, name);
+        } catch {
+          // ignore rollback errors
+        }
+      }
+      res.status(400).json({ ok: false, error: err.message });
+    }
+  });
+
   return router;
 }
 
 /**
  * Router for project-scoped sub-routes.
  * The projectResolver middleware must run before this to set req.project.
+ * @param {{ prefsDir?: string|null }} [options] — prefsDir enables active
+ *   worca-cc version lookup for /worca-status' `outdated` flag.
  */
-export function createProjectScopedRoutes() {
+export function createProjectScopedRoutes({ prefsDir = null } = {}) {
   const router = Router({ mergeParams: true });
+  const prefsPath = prefsDir ? join(prefsDir, 'preferences.json') : null;
 
   // Guard: run-related, cost, and pipeline routes require worcaDir
   function requireWorcaDir(req, res, next) {
@@ -1213,10 +1315,35 @@ export function createProjectScopedRoutes() {
     res.json({ ok: true, templates });
   });
 
-  // GET /api/projects/:projectId/worca-status — check worca installation state
-  router.get('/worca-status', (req, res) => {
-    const installed = checkWorcaInstalled(req.project.projectRoot);
-    res.json({ ok: true, installed });
+  // GET /api/projects/:projectId/worca-status — check worca installation state.
+  // `outdated` is true when the project's installed worca-cc version is
+  // strictly behind the active (dev-path or globally-installed) worca-cc.
+  router.get('/worca-status', async (req, res) => {
+    const { projectRoot } = req.project;
+    const installed = checkWorcaInstalled(projectRoot);
+    if (!installed) {
+      return res.json({
+        ok: true,
+        installed: false,
+        version: null,
+        outdated: false,
+      });
+    }
+    const version = readProjectWorcaVersion(projectRoot);
+    let outdated = false;
+    if (version != null) {
+      try {
+        const versionInfo = await getVersionInfo({
+          prefsPath,
+          worcaVersion: req.app.locals.worcaVersion || null,
+        });
+        outdated = isVersionBehind(version, versionInfo.activeWorcaCc);
+      } catch {
+        // Best-effort — if version lookup fails, treat as not outdated
+        outdated = false;
+      }
+    }
+    res.json({ ok: true, installed: true, version, outdated });
   });
 
   // POST /api/projects/:projectId/worca-setup — install or update worca

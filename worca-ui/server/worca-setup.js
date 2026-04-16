@@ -20,10 +20,24 @@ export function checkWorcaInstalled(projectPath) {
 }
 
 /**
- * Read the worca-cc version from a project's .claude/worca/__init__.py.
+ * Read the worca-cc version from a project's worca installation.
+ * Tries .claude/worca/version.json first, then falls back to __init__.py.
  * Returns the version string or null if not found.
  */
 export function readProjectWorcaVersion(projectPath) {
+  // Try version.json first (preferred format)
+  try {
+    const versionJson = JSON.parse(
+      readFileSync(
+        join(projectPath, '.claude', 'worca', 'version.json'),
+        'utf8',
+      ),
+    );
+    if (versionJson.version) return versionJson.version;
+  } catch {
+    // fall through to __init__.py
+  }
+  // Fall back to __init__.py
   try {
     const initPy = readFileSync(
       join(projectPath, '.claude', 'worca', '__init__.py'),

@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { readProjects, synthesizeDefaultProject } from './project-registry.js';
 import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
+import { readProjectWorcaVersion } from './worca-setup.js';
 import { createBroadcaster } from './ws-broadcaster.js';
 import { createClientManager } from './ws-client-manager.js';
 import { createMessageRouter } from './ws-message-router.js';
@@ -157,9 +158,12 @@ export function attachWsServer(httpServer, config) {
     }
 
     // Broadcast projects-updated to all clients
+    // Shape must match GET /api/projects so frontend state stays consistent
+    // (include worcaVersion — without it, clients would show "unknown" after
+    // the WS event clobbers the enriched REST response on add/remove)
     const projectList = freshProjects.map((p) => ({
-      name: p.name,
-      path: p.path,
+      ...p,
+      worcaVersion: readProjectWorcaVersion(p.path),
     }));
     broadcaster.broadcast('projects-updated', { projects: projectList });
   }

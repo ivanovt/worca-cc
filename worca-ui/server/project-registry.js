@@ -10,7 +10,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
+import { readdir } from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
+import { checkWorcaInstalled, readProjectWorcaVersion } from './worca-setup.js';
 
 export const SLUG_RE = /^[a-z0-9_-]{1,64}$/i;
 const DEFAULT_MAX_PROJECTS = 20;
@@ -24,6 +26,7 @@ export function slugify(name) {
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '-')
     .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '')
     .slice(0, 64);
 }
 
@@ -128,6 +131,40 @@ export function synthesizeDefaultProject(projectRoot) {
     worcaDir: join(projectRoot, '.worca'),
     settingsPath: join(projectRoot, '.claude', 'settings.json'),
   };
+}
+
+const SCAN_MAX_RESULTS = 200;
+
+/**
+ * Scan a directory for immediate child folders that contain a .git subdirectory.
+ * Skips dotfiles (names starting with ".") and "node_modules".
+ * Returns entries sorted alphabetically by name, capped at SCAN_MAX_RESULTS.
+ *
+ * @param {string} dirPath - Absolute path to the parent directory
+ * @returns {Promise<{ name: string, path: string }[]>}
+ */
+export async function scanDirectory(dirPath) {
+  const entries = await readdir(dirPath, { withFileTypes: true });
+  const results = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+    const childPath = join(dirPath, entry.name);
+    if (existsSync(join(childPath, '.git'))) {
+      const installed = checkWorcaInstalled(childPath);
+      const worcaVersion = installed
+        ? readProjectWorcaVersion(childPath)
+        : null;
+      results.push({
+        name: entry.name,
+        path: childPath,
+        installed,
+        worcaVersion,
+      });
+      if (results.length >= SCAN_MAX_RESULTS) break;
+    }
+  }
+  return results.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /**

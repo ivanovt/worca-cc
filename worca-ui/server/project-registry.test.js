@@ -33,7 +33,7 @@ describe('project-registry', () => {
     });
 
     it('replaces non-alphanumeric chars with hyphens', () => {
-      expect(slugify('hello@world!')).toBe('hello-world-');
+      expect(slugify('hello@world!')).toBe('hello-world');
     });
 
     it('collapses consecutive hyphens', () => {
