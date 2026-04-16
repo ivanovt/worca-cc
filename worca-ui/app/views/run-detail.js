@@ -236,9 +236,11 @@ function _dispatchEventsView(iter) {
       ${events.map((ev) => {
         const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
         const variant = isAllowed ? 'success' : 'danger';
+        const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
+        const suffix = count ? ` (×${count})` : '';
         const label = isAllowed
-          ? `${ev.subagent_type} dispatched`
-          : `${ev.subagent_type} blocked${ev.reason ? ` — ${ev.reason}` : ''}`;
+          ? `${ev.subagent_type} dispatched${suffix}`
+          : `${ev.subagent_type} blocked${suffix}${ev.reason ? ` — ${ev.reason}` : ''}`;
         return html`<sl-badge variant="${variant}" pill>${label}</sl-badge>`;
       })}
     </div>

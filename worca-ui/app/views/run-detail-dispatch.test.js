@@ -93,4 +93,54 @@ describe('_dispatchEventsView', () => {
     const html = renderToString(runDetailView(run));
     expect(html).not.toContain('dispatch-events-strip');
   });
+
+  it('renders ×N suffix when count > 1 on allowed events', () => {
+    const run = makeRunWithDispatchEvents([
+      {
+        type: 'pipeline.hook.dispatch_allowed',
+        subagent_type: 'explore',
+        count: 5,
+      },
+    ]);
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('explore dispatched (×5)');
+  });
+
+  it('renders ×N suffix when count > 1 on blocked events, before the reason', () => {
+    const run = makeRunWithDispatchEvents([
+      {
+        type: 'pipeline.hook.dispatch_blocked',
+        subagent_type: 'general-purpose',
+        reason: 'blocked by denylist',
+        count: 3,
+      },
+    ]);
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain(
+      'general-purpose blocked (×3) — blocked by denylist',
+    );
+  });
+
+  it('omits the suffix when count is 1, absent, or invalid', () => {
+    const run = makeRunWithDispatchEvents([
+      {
+        type: 'pipeline.hook.dispatch_allowed',
+        subagent_type: 'one',
+        count: 1,
+      },
+      { type: 'pipeline.hook.dispatch_allowed', subagent_type: 'two' },
+      {
+        type: 'pipeline.hook.dispatch_allowed',
+        subagent_type: 'three',
+        count: 0,
+      },
+    ]);
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('one dispatched');
+    expect(html).not.toContain('one dispatched (×');
+    expect(html).toContain('two dispatched');
+    expect(html).not.toContain('two dispatched (×');
+    expect(html).toContain('three dispatched');
+    expect(html).not.toContain('three dispatched (×');
+  });
 });
