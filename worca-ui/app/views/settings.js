@@ -804,7 +804,7 @@ function versionsSection(rerender) {
 
   return html`
     <h3 class="settings-section-title">Worca Versions</h3>
-    <div class="settings-grid">
+    <div class="settings-grid settings-grid--versions">
       <div class="settings-card">
         <div class="settings-card-header">
           <span class="settings-card-title version-title-exact">worca-cc</span>
