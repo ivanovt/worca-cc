@@ -121,3 +121,51 @@ def test_migrate_no_op_when_no_dispatch_key():
     assert governance["test_gate_strikes"] == 3
     # no dispatch-rename change recorded
     assert not any("dispatch" in c for c in changes)
+
+
+def test_migrate_preserves_old_dispatch_values_at_legacy():
+    """Non-trivial old dispatch config is stashed at _dispatch_legacy for review."""
+    old_values = {
+        "planner": [],
+        "coordinator": ["implementer"],
+        "implementer": [],
+        "tester": [],
+        "guardian": [],
+    }
+    settings = {"worca": {"governance": {"dispatch": old_values}}}
+    migrated, changes = _migrate_settings_paths(settings)
+    governance = migrated["worca"]["governance"]
+    assert governance["_dispatch_legacy"] == old_values
+    # Change message mentions preservation so the user knows what to look for.
+    assert any("_dispatch_legacy" in c for c in changes)
+
+
+def test_migrate_omits_legacy_when_old_dispatch_empty():
+    """Empty old dispatch config is not preserved — keeps settings.json tidy."""
+    settings = {
+        "worca": {
+            "governance": {
+                "dispatch": {
+                    "planner": [],
+                    "coordinator": [],
+                    "implementer": [],
+                }
+            }
+        }
+    }
+    migrated, changes = _migrate_settings_paths(settings)
+    governance = migrated["worca"]["governance"]
+    assert "_dispatch_legacy" not in governance
+    assert "subagent_dispatch" in governance
+    # No mention of preservation in the change message.
+    assert not any("_dispatch_legacy" in c for c in changes)
+
+
+def test_migrate_omits_legacy_when_old_dispatch_is_empty_dict():
+    """dispatch: {} is treated the same as all-empty-values — no legacy stash."""
+    settings = {"worca": {"governance": {"dispatch": {}}}}
+    migrated, changes = _migrate_settings_paths(settings)
+    governance = migrated["worca"]["governance"]
+    assert "_dispatch_legacy" not in governance
+    assert "subagent_dispatch" in governance
+    assert not any("_dispatch_legacy" in c for c in changes)

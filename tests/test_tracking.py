@@ -229,6 +229,59 @@ def test_cache_reset_between_config_changes():
     assert rules_b["planner"] == {"explore"}
 
 
+def test_warns_on_malformed_settings_shape():
+    """Malformed settings shape (non-dict subagent_dispatch) logs a warning and falls back to defaults."""
+    # TypeError: .items() on a non-dict
+    settings = {
+        "worca": {"governance": {"subagent_dispatch": "not-a-dict"}}
+    }
+    stderr_capture = StringIO()
+    with patch("sys.stderr", stderr_capture):
+        rules = _load_subagent_dispatch(settings_override=settings)
+
+    assert rules == {
+        agent: set(allowed) for agent, allowed in DEFAULT_SUBAGENT_DISPATCH.items()
+    }
+    warning = stderr_capture.getvalue()
+    assert "Warning" in warning
+    assert "falling back to defaults" in warning
+
+
+def test_warns_on_malformed_allowed_list():
+    """Non-iterable allowed list surfaces a warning instead of failing silently."""
+    # set(12345) raises TypeError — caught by our narrower except clause.
+    settings = {
+        "worca": {"governance": {"subagent_dispatch": {"planner": 12345}}}
+    }
+    stderr_capture = StringIO()
+    with patch("sys.stderr", stderr_capture):
+        rules = _load_subagent_dispatch(settings_override=settings)
+
+    # planner should fall back to the default value
+    assert rules["planner"] == DEFAULT_SUBAGENT_DISPATCH["planner"]
+    warning = stderr_capture.getvalue()
+    assert "Warning" in warning
+
+
+def test_missing_settings_file_is_silent():
+    """FileNotFoundError during _load_settings() does not produce a warning."""
+    import worca.hooks.tracking as tracking
+
+    stderr_capture = StringIO()
+    # Simulate _load_settings raising FileNotFoundError
+    with patch.object(
+        tracking, "_load_settings", side_effect=FileNotFoundError("no file")
+    ):
+        with patch("sys.stderr", stderr_capture):
+            rules = _load_subagent_dispatch()
+
+    assert rules == {
+        agent: set(allowed) for agent, allowed in DEFAULT_SUBAGENT_DISPATCH.items()
+    }
+    # FileNotFoundError is a normal case — no noise.
+    assert stderr_capture.getvalue() == ""
+
+
 # --- handle_agent_stop tests ---
 
 

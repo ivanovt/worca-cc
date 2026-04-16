@@ -146,7 +146,13 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
         migrated["worca"] = worca_cfg
         changes.append("  stages.review.agent: guardian -> reviewer")
 
-    # Migrate governance.dispatch -> governance.subagent_dispatch (W-038)
+    # Migrate governance.dispatch -> governance.subagent_dispatch (W-038).
+    # The two keys use incompatible namespaces: the old `dispatch` maps
+    # pipeline-agent parents to lists of pipeline-agent children; the new
+    # `subagent_dispatch` maps parents to lists of subagent types
+    # (explore, feature-dev:code-reviewer, ...). Old values cannot be
+    # automatically translated, so we stash them under `_dispatch_legacy`
+    # for the user to review and re-enter under the new schema.
     governance_cfg = worca_cfg.get("governance", {})
     if "dispatch" in governance_cfg and "subagent_dispatch" not in governance_cfg:
         _SUBAGENT_DISPATCH_DEFAULTS = {
@@ -159,11 +165,24 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
             "plan_reviewer": ["explore"],
             "learner": [],
         }
-        del governance_cfg["dispatch"]
+        old_values = governance_cfg.pop("dispatch")
         governance_cfg["subagent_dispatch"] = _SUBAGENT_DISPATCH_DEFAULTS
+        # Preserve the old config only if it was non-trivial — skip empty or
+        # all-defaults-equivalent shells to keep settings.json tidy.
+        if old_values and any(v for v in old_values.values()):
+            governance_cfg["_dispatch_legacy"] = old_values
+            changes.append(
+                "  governance.dispatch -> governance.subagent_dispatch "
+                "(new defaults applied; old config preserved at "
+                "governance._dispatch_legacy — review and delete when no longer needed)"
+            )
+        else:
+            changes.append(
+                "  governance.dispatch -> governance.subagent_dispatch "
+                "(old key was empty; new defaults applied)"
+            )
         worca_cfg["governance"] = governance_cfg
         migrated["worca"] = worca_cfg
-        changes.append("  governance.dispatch -> governance.subagent_dispatch (values replaced with new defaults)")
 
     return migrated, changes
 

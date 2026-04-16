@@ -20,8 +20,15 @@ DEFAULT_SUBAGENT_DISPATCH = {
     "learner": set(),
 }
 
+# Keep in sync with SUBAGENT_DENYLIST in
+# worca-ui/app/views/dispatch-tag-state.js — the UI mirrors this to block the
+# same types from being added via the settings editor.
 _SUBAGENT_DENYLIST = frozenset({"general-purpose"})
 
+# Cache is process-lifetime. Hook subprocesses are short-lived so staleness is
+# not a concern in today's usage. If this module is ever imported from a
+# long-running process (e.g. a daemon), call _reset_dispatch_cache() when
+# settings.json changes or pass settings_override on every read.
 _cached_rules: dict | None = None
 
 
@@ -67,8 +74,14 @@ def _load_subagent_dispatch(settings_override: dict | None = None) -> dict:
                 )
                 allowed -= denied
             rules[agent] = allowed  # full replace per-agent key
-    except Exception:
-        pass  # fall back to defaults silently
+    except FileNotFoundError:
+        pass  # settings.json is optional; defaults apply silently
+    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
+        print(
+            f"[tracking] Warning: failed to load subagent_dispatch from settings "
+            f"({type(e).__name__}: {e}); falling back to defaults",
+            file=sys.stderr,
+        )
 
     if settings_override is None:
         _cached_rules = rules
