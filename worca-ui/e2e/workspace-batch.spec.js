@@ -158,8 +158,8 @@ test.describe('workspace batch add — full flow (case 37)', () => {
     // may complete before the spinner is even observed on a fast machine, so
     // we wait directly for the checkboxes rather than polling the spinner.
     const scanArea = page.locator('#workspace-scan-area');
-    await expect(scanArea.locator('sl-checkbox').filter({ hasText: 'repo-alpha' })).toBeAttached({ timeout: 15000 });
-    await expect(scanArea.locator('sl-checkbox').filter({ hasText: 'repo-beta' })).toBeAttached();
+    await expect(scanArea.locator('.dialog-list-row-name').filter({ hasText: 'repo-alpha' })).toBeAttached({ timeout: 15000 });
+    await expect(scanArea.locator('.dialog-list-row-name').filter({ hasText: 'repo-beta' })).toBeAttached();
 
     // Submit button should reflect 2 pre-selected projects
     const submitBtn = page.locator('#submit-btn');
