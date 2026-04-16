@@ -113,10 +113,10 @@ describe('discoverSubagents', () => {
   it('user discovery does not override a builtin with the same name', () => {
     const userDir = join(root, 'user');
     mkdirSync(userDir);
-    write(join(userDir, 'explore.md')); // shadows builtin
+    write(join(userDir, 'Explore.md')); // shadows builtin
 
     const result = discoverSubagents({ userDir });
-    const exploreEntries = result.filter((t) => t.name === 'explore');
+    const exploreEntries = result.filter((t) => t.name === 'Explore');
     expect(exploreEntries).toHaveLength(1);
     expect(exploreEntries[0].group).toBe('Built-in');
   });
@@ -139,7 +139,7 @@ describe('discoverSubagents', () => {
       projectAgentsDir: projectAgents,
     });
     const names = result.map((t) => t.name);
-    expect(names).toContain('explore'); // builtin
+    expect(names).toContain('Explore'); // builtin
     expect(names).toContain('user-one');
     expect(names).toContain('feature-dev:plug-one');
     expect(names).toContain('proj-one');

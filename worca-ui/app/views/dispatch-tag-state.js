@@ -14,7 +14,7 @@ export const SUBAGENT_DENYLIST = new Set(['general-purpose']);
 // this list mirrors `BUILTINS` in worca-ui/server/subagents-discovery.js
 // so the editor stays usable even if the discovery fetch fails.
 export const KNOWN_TYPES = [
-  { name: 'explore', label: '(built-in)', group: 'Built-in' },
+  { name: 'Explore', label: '(built-in)', group: 'Built-in' },
   { name: 'general-purpose', label: '(built-in)', group: 'Built-in' },
   { name: 'Plan', label: '(built-in)', group: 'Built-in' },
   { name: 'statusline-setup', label: '(built-in)', group: 'Built-in' },

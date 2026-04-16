@@ -57,22 +57,22 @@ test('renders tag input with current dispatch values', async ({ page }) => {
       worca: {
         governance: {
           subagent_dispatch: {
-            planner: ['explore'],
-            implementer: ['explore', 'feature-dev:code-reviewer'],
+            planner: ['Explore'],
+            implementer: ['Explore', 'feature-dev:code-reviewer'],
           },
         },
       },
     });
 
-    // planner row has exactly 1 chip: "explore"
+    // planner row has exactly 1 chip: "Explore"
     await expect(
-      page.locator('#dispatch-planner sl-tag[data-value="explore"]'),
+      page.locator('#dispatch-planner sl-tag[data-value="Explore"]'),
     ).toBeVisible();
     await expect(page.locator('#dispatch-planner sl-tag')).toHaveCount(1);
 
     // implementer row has exactly 2 chips
     await expect(
-      page.locator('#dispatch-implementer sl-tag[data-value="explore"]'),
+      page.locator('#dispatch-implementer sl-tag[data-value="Explore"]'),
     ).toBeVisible();
     await expect(
       page.locator(
@@ -97,22 +97,22 @@ test('add known subagent type via suggestions', async ({ page }) => {
     await input.click();
     await input.fill('exp');
 
-    // Suggestions popup should appear with "explore"
+    // Suggestions popup should appear with "Explore"
     const suggestions = page.locator(
       '.settings-dispatch-row:has(#dispatch-coordinator) .dispatch-suggestions',
     );
     await expect(suggestions).toBeVisible();
     const exploreItem = suggestions.locator('.item:not(.denied)').filter({
-      hasText: 'explore',
+      hasText: 'Explore',
     });
     await expect(exploreItem).toBeVisible();
 
     // Click the suggestion
     await exploreItem.click();
 
-    // "explore" chip should now be in coordinator row
+    // "Explore" chip should now be in coordinator row
     await expect(
-      page.locator('#dispatch-coordinator sl-tag[data-value="explore"]'),
+      page.locator('#dispatch-coordinator sl-tag[data-value="Explore"]'),
     ).toBeVisible();
   } finally {
     await ctx.close();
@@ -150,13 +150,13 @@ test('remove a tag chip', async ({ page }) => {
       worca: {
         governance: {
           subagent_dispatch: {
-            planner: ['explore'],
+            planner: ['Explore'],
           },
         },
       },
     });
 
-    const chip = page.locator('#dispatch-planner sl-tag[data-value="explore"]');
+    const chip = page.locator('#dispatch-planner sl-tag[data-value="Explore"]');
     await expect(chip).toBeVisible();
 
     // Dispatch the sl-remove event (remove button lives inside shadow DOM)
@@ -210,7 +210,7 @@ test('reset to default button restores default tags', async ({ page }) => {
       worca: {
         governance: {
           subagent_dispatch: {
-            implementer: ['explore', 'custom-thing'],
+            implementer: ['Explore', 'custom-thing'],
           },
         },
       },
@@ -218,7 +218,7 @@ test('reset to default button restores default tags', async ({ page }) => {
 
     // Both chips should be present (customized state)
     await expect(
-      page.locator('#dispatch-implementer sl-tag[data-value="explore"]'),
+      page.locator('#dispatch-implementer sl-tag[data-value="Explore"]'),
     ).toBeVisible();
     await expect(
       page.locator('#dispatch-implementer sl-tag[data-value="custom-thing"]'),
@@ -233,9 +233,9 @@ test('reset to default button restores default tags', async ({ page }) => {
     // Click reset
     await resetBtn.click();
 
-    // Default is ["explore"] — custom-thing should be gone
+    // Default is ["Explore"] — custom-thing should be gone
     await expect(
-      page.locator('#dispatch-implementer sl-tag[data-value="explore"]'),
+      page.locator('#dispatch-implementer sl-tag[data-value="Explore"]'),
     ).toBeVisible();
     await expect(
       page.locator('#dispatch-implementer sl-tag[data-value="custom-thing"]'),
@@ -258,8 +258,8 @@ test('legacy key shows migration warning and migrates to subagent_dispatch on sa
       worca: {
         governance: {
           dispatch: {
-            planner: ['explore'],
-            implementer: ['explore'],
+            planner: ['Explore'],
+            implementer: ['Explore'],
           },
         },
       },
@@ -273,7 +273,7 @@ test('legacy key shows migration warning and migrates to subagent_dispatch on sa
 
     // Values from legacy key should be rendered
     await expect(
-      page.locator('#dispatch-planner sl-tag[data-value="explore"]'),
+      page.locator('#dispatch-planner sl-tag[data-value="Explore"]'),
     ).toBeVisible();
 
     await saveGovernanceTab(page);
@@ -299,7 +299,7 @@ test('save round-trip preserves all dispatch values', async ({ page }) => {
     // Start with default settings
     await goToGovernance(page, ctx, {});
 
-    // implementer starts with ["explore"] by default; add a second tag
+    // implementer starts with ["Explore"] by default; add a second tag
     const input = page.locator('#dispatch-implementer .dispatch-tag-input-field');
     await input.click();
     await input.fill('feature-dev:code-reviewer');
@@ -319,7 +319,7 @@ test('save round-trip preserves all dispatch values', async ({ page }) => {
 
     // Both chips should still be present after reload
     await expect(
-      page.locator('#dispatch-implementer sl-tag[data-value="explore"]'),
+      page.locator('#dispatch-implementer sl-tag[data-value="Explore"]'),
     ).toBeVisible();
     await expect(
       page.locator(

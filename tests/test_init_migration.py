@@ -7,13 +7,13 @@ from worca.cli.init import _migrate_settings_paths
 
 
 _NEW_DEFAULTS = {
-    "planner": ["explore"],
+    "planner": ["Explore"],
     "coordinator": [],
-    "implementer": ["explore"],
-    "tester": ["explore"],
-    "guardian": ["explore"],
-    "reviewer": ["explore"],
-    "plan_reviewer": ["explore"],
+    "implementer": ["Explore"],
+    "tester": ["Explore"],
+    "guardian": ["Explore"],
+    "reviewer": ["Explore"],
+    "plan_reviewer": ["Explore"],
     "learner": [],
 }
 
@@ -86,8 +86,8 @@ def test_migrate_preserves_other_governance_keys():
 def test_migrate_no_op_when_subagent_dispatch_exists():
     """Already-migrated settings (subagent_dispatch present) are not modified."""
     existing = {
-        "planner": ["explore"],
-        "implementer": ["explore", "feature-dev:code-reviewer"],
+        "planner": ["Explore"],
+        "implementer": ["Explore", "feature-dev:code-reviewer"],
     }
     settings = {
         "worca": {
@@ -169,3 +169,56 @@ def test_migrate_omits_legacy_when_old_dispatch_is_empty_dict():
     assert "_dispatch_legacy" not in governance
     assert "subagent_dispatch" in governance
     assert not any("_dispatch_legacy" in c for c in changes)
+
+
+def test_migrate_normalizes_lowercase_explore_to_capitalized():
+    """Lowercase "explore" from early W-038 installs is renamed to "Explore"."""
+    settings = {
+        "worca": {
+            "governance": {
+                "subagent_dispatch": {
+                    "planner": ["explore"],
+                    "implementer": ["explore", "feature-dev:code-reviewer"],
+                    "coordinator": [],
+                }
+            }
+        }
+    }
+    migrated, changes = _migrate_settings_paths(settings)
+    sd = migrated["worca"]["governance"]["subagent_dispatch"]
+    assert sd["planner"] == ["Explore"]
+    assert sd["implementer"] == ["Explore", "feature-dev:code-reviewer"]
+    assert sd["coordinator"] == []
+    assert any('"explore" -> "Explore"' in c for c in changes)
+
+
+def test_migrate_normalization_no_op_when_already_capitalized():
+    """Already-correct "Explore" entries do not trigger a change message."""
+    settings = {
+        "worca": {
+            "governance": {
+                "subagent_dispatch": {"planner": ["Explore"]}
+            }
+        }
+    }
+    _migrated, changes = _migrate_settings_paths(settings)
+    assert not any('"explore" -> "Explore"' in c for c in changes)
+
+
+def test_migrate_normalization_preserves_other_values():
+    """Non-explore entries (plugin subagents, custom names) are left alone."""
+    settings = {
+        "worca": {
+            "governance": {
+                "subagent_dispatch": {
+                    "planner": ["explore", "feature-dev:code-reviewer", "custom"],
+                }
+            }
+        }
+    }
+    migrated, _changes = _migrate_settings_paths(settings)
+    assert migrated["worca"]["governance"]["subagent_dispatch"]["planner"] == [
+        "Explore",
+        "feature-dev:code-reviewer",
+        "custom",
+    ]

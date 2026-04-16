@@ -244,13 +244,13 @@
       },
       "test_gate_strikes": 2,
       "subagent_dispatch": {
-        "planner": ["explore"],
+        "planner": ["Explore"],
         "coordinator": [],
-        "implementer": ["explore"],
-        "tester": ["explore"],
-        "guardian": ["explore"],
-        "reviewer": ["explore"],
-        "plan_reviewer": ["explore"],
+        "implementer": ["Explore"],
+        "tester": ["Explore"],
+        "guardian": ["Explore"],
+        "reviewer": ["Explore"],
+        "plan_reviewer": ["Explore"],
         "learner": []
       }
     },

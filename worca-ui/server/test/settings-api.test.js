@@ -52,7 +52,7 @@ const SAMPLE_SETTINGS = {
         restrict_git_commit: true,
       },
       test_gate_strikes: 2,
-      subagent_dispatch: { planner: [], coordinator: ['explore'] },
+      subagent_dispatch: { planner: [], coordinator: ['Explore'] },
     },
   },
 };
@@ -416,8 +416,8 @@ describe('POST /api/settings - validation rejections', () => {
       worca: {
         governance: {
           subagent_dispatch: {
-            implementer: ['explore', 'feature-dev:code-reviewer'],
-            planner: ['explore'],
+            implementer: ['Explore', 'feature-dev:code-reviewer'],
+            planner: ['Explore'],
           },
         },
       },
@@ -430,7 +430,7 @@ describe('POST /api/settings - validation rejections', () => {
       worca: {
         governance: {
           subagent_dispatch: {
-            reviewer: ['explore'],
+            reviewer: ['Explore'],
           },
         },
       },
@@ -449,8 +449,8 @@ describe('POST /api/settings - validation rejections', () => {
     const res = await post({
       worca: {
         governance: {
-          dispatch: { planner: ['explore'] },
-          subagent_dispatch: { implementer: ['explore'] },
+          dispatch: { planner: ['Explore'] },
+          subagent_dispatch: { implementer: ['Explore'] },
         },
       },
     });
@@ -459,7 +459,7 @@ describe('POST /api/settings - validation rejections', () => {
 
   it('rejects non-array values in subagent_dispatch', async () => {
     const res = await post({
-      worca: { governance: { subagent_dispatch: { planner: 'explore' } } },
+      worca: { governance: { subagent_dispatch: { planner: 'Explore' } } },
     });
     expect(res.status).toBe(400);
     const data = await res.json();

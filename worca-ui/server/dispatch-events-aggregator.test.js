@@ -42,7 +42,7 @@ describe('readDispatchEventsFromJsonl', () => {
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:01:00.000Z',
-        payload: { agent: 'tester', subagent_type: 'explore' },
+        payload: { agent: 'tester', subagent_type: 'Explore' },
       },
       {
         event_type: 'pipeline.hook.dispatch_blocked',
@@ -73,7 +73,7 @@ describe('readDispatchEventsFromJsonl', () => {
       `${JSON.stringify({
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:00:00.000Z',
-        payload: { subagent_type: 'explore' },
+        payload: { subagent_type: 'Explore' },
       })}\n{not valid json\n\n`,
     );
     const result = readDispatchEventsFromJsonl(path);
@@ -118,7 +118,7 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
     ];
@@ -126,7 +126,7 @@ describe('assignEventsToIterations', () => {
     expect(result.implement.iterations[0].dispatch_events).toEqual([
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         count: 1,
       },
     ]);
@@ -142,7 +142,7 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T12:00:00.000Z', // after iteration ended
       },
     ];
@@ -160,7 +160,7 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
     ];
@@ -178,17 +178,17 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:03:00.000Z',
       },
     ];
@@ -196,7 +196,7 @@ describe('assignEventsToIterations', () => {
     expect(result.implement.iterations[0].dispatch_events).toEqual([
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         count: 3,
       },
     ]);
@@ -212,7 +212,7 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
@@ -225,7 +225,7 @@ describe('assignEventsToIterations', () => {
     const agg = result.implement.iterations[0].dispatch_events;
     expect(agg).toHaveLength(2);
     const byType = Object.fromEntries(agg.map((e) => [e.subagent_type, e]));
-    expect(byType.explore.count).toBe(1);
+    expect(byType.Explore.count).toBe(1);
     expect(byType['feature-dev:code-reviewer'].count).toBe(1);
   });
 
@@ -239,12 +239,12 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_blocked',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         reason: 'Blocked: rule mismatch',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
@@ -308,17 +308,17 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:02:00.000Z', // implement iter 1
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:07:00.000Z', // implement iter 2
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:12:00.000Z', // test iter 1
       },
     ];
@@ -349,7 +349,7 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T12:00:00.000Z',
       },
     ];
@@ -362,7 +362,7 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
     ];

@@ -23,7 +23,7 @@ import { basename, join } from 'node:path';
 // dispatch-tag-state.js (KNOWN_TYPES) so the UI falls back to the same set
 // when the /api/subagents fetch fails.
 export const BUILTINS = [
-  { name: 'explore', label: '(built-in)', group: 'Built-in' },
+  { name: 'Explore', label: '(built-in)', group: 'Built-in' },
   { name: 'general-purpose', label: '(built-in)', group: 'Built-in' },
   { name: 'Plan', label: '(built-in)', group: 'Built-in' },
   { name: 'statusline-setup', label: '(built-in)', group: 'Built-in' },

@@ -156,13 +156,13 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
     governance_cfg = worca_cfg.get("governance", {})
     if "dispatch" in governance_cfg and "subagent_dispatch" not in governance_cfg:
         _SUBAGENT_DISPATCH_DEFAULTS = {
-            "planner": ["explore"],
+            "planner": ["Explore"],
             "coordinator": [],
-            "implementer": ["explore"],
-            "tester": ["explore"],
-            "guardian": ["explore"],
-            "reviewer": ["explore"],
-            "plan_reviewer": ["explore"],
+            "implementer": ["Explore"],
+            "tester": ["Explore"],
+            "guardian": ["Explore"],
+            "reviewer": ["Explore"],
+            "plan_reviewer": ["Explore"],
             "learner": [],
         }
         old_values = governance_cfg.pop("dispatch")
@@ -183,6 +183,32 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
             )
         worca_cfg["governance"] = governance_cfg
         migrated["worca"] = worca_cfg
+
+    # Casing normalization: the initial W-038 landing shipped with lowercase
+    # `"explore"` in subagent_dispatch defaults. Claude Code's actual
+    # subagent_type for the built-in Explore subagent is capitalized
+    # (`"Explore"`), so lowercase entries are silently broken — the hook
+    # compares strings directly and blocks the dispatch. Normalize them in
+    # place so upgrading users self-heal without manual edits.
+    subagent_dispatch_cfg = worca_cfg.get("governance", {}).get(
+        "subagent_dispatch"
+    )
+    if isinstance(subagent_dispatch_cfg, dict):
+        normalized = False
+        for agent, allowed in list(subagent_dispatch_cfg.items()):
+            if not isinstance(allowed, list):
+                continue
+            if "explore" in allowed:
+                subagent_dispatch_cfg[agent] = [
+                    "Explore" if v == "explore" else v for v in allowed
+                ]
+                normalized = True
+        if normalized:
+            migrated["worca"] = worca_cfg
+            changes.append(
+                '  governance.subagent_dispatch: normalized "explore" -> "Explore" '
+                "(canonical Claude Code subagent name is capitalized)"
+            )
 
     return migrated, changes
 

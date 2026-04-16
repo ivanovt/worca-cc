@@ -30,29 +30,29 @@ def test_blocks_implementer_dispatching_planner():
 
 
 def test_allows_planner_dispatching_explore():
-    code, reason = check_dispatch("planner", "explore")
+    code, reason = check_dispatch("planner", "Explore")
     assert code == 0
     assert reason == ""
 
 
 def test_allows_implementer_dispatching_explore():
-    code, reason = check_dispatch("implementer", "explore")
+    code, reason = check_dispatch("implementer", "Explore")
     assert code == 0
 
 
 def test_blocks_coordinator_dispatching_anything():
-    code, reason = check_dispatch("coordinator", "explore")
+    code, reason = check_dispatch("coordinator", "Explore")
     assert code == 2
 
 
 def test_allows_tester_dispatching_explore():
     """tester can now dispatch explore (W-038)."""
-    code, reason = check_dispatch("tester", "explore")
+    code, reason = check_dispatch("tester", "Explore")
     assert code == 0
 
 
 def test_allows_guardian_dispatching_explore():
-    code, reason = check_dispatch("guardian", "explore")
+    code, reason = check_dispatch("guardian", "Explore")
     assert code == 0
 
 
@@ -72,7 +72,7 @@ def test_allows_all_in_interactive_mode_any_agent():
 
 
 def test_blocks_unknown_parent_dispatching():
-    code, reason = check_dispatch("unknown_agent", "explore")
+    code, reason = check_dispatch("unknown_agent", "Explore")
     assert code == 2
 
 
@@ -83,12 +83,12 @@ def test_plan_reviewer_in_default_dispatch():
 
 def test_plan_reviewer_dispatch_allows_explore():
     """plan_reviewer now allows explore for codebase verification (W-038)."""
-    assert DEFAULT_SUBAGENT_DISPATCH["plan_reviewer"] == {"explore"}
+    assert DEFAULT_SUBAGENT_DISPATCH["plan_reviewer"] == {"Explore"}
 
 
 def test_allows_plan_reviewer_dispatching_explore():
     """plan_reviewer can dispatch explore (W-038)."""
-    code, reason = check_dispatch("plan_reviewer", "explore")
+    code, reason = check_dispatch("plan_reviewer", "Explore")
     assert code == 0
 
 
@@ -102,7 +102,7 @@ def test_blocks_plan_reviewer_dispatching_implementer():
 
 def test_reviewer_dispatching_explore():
     """W-037 gap fix: reviewer can dispatch explore."""
-    code, reason = check_dispatch("reviewer", "explore")
+    code, reason = check_dispatch("reviewer", "Explore")
     assert code == 0
 
 
@@ -125,7 +125,7 @@ def test_denylist_blocks_general_purpose_even_if_configured():
         "worca": {
             "governance": {
                 "subagent_dispatch": {
-                    "implementer": ["explore", "general-purpose"],
+                    "implementer": ["Explore", "general-purpose"],
                 }
             }
         }
@@ -140,18 +140,18 @@ def test_denylist_blocks_general_purpose_even_if_configured():
 
 
 def test_config_replaces_defaults_per_agent():
-    """User config implementer: ["explore", "foo"] fully replaces that agent's defaults."""
+    """User config implementer: ["Explore", "foo"] fully replaces that agent's defaults."""
     settings = {
         "worca": {
             "governance": {
                 "subagent_dispatch": {
-                    "implementer": ["explore", "foo"],
+                    "implementer": ["Explore", "foo"],
                 }
             }
         }
     }
     rules = _load_subagent_dispatch(settings_override=settings)
-    assert rules["implementer"] == {"explore", "foo"}
+    assert rules["implementer"] == {"Explore", "foo"}
     # Other agents still have their defaults
     assert rules["planner"] == DEFAULT_SUBAGENT_DISPATCH["planner"]
     assert rules["tester"] == DEFAULT_SUBAGENT_DISPATCH["tester"]
@@ -163,7 +163,7 @@ def test_config_fallback_for_missing_agent():
         "worca": {
             "governance": {
                 "subagent_dispatch": {
-                    "implementer": ["explore", "extra"],
+                    "implementer": ["Explore", "extra"],
                 }
             }
         }
@@ -218,7 +218,7 @@ def test_cache_reset_between_config_changes():
         "worca": {"governance": {"subagent_dispatch": {"planner": []}}}
     }
     settings_b = {
-        "worca": {"governance": {"subagent_dispatch": {"planner": ["explore"]}}}
+        "worca": {"governance": {"subagent_dispatch": {"planner": ["Explore"]}}}
     }
     rules_a = _load_subagent_dispatch(settings_override=settings_a)
     assert rules_a["planner"] == set()
@@ -226,7 +226,7 @@ def test_cache_reset_between_config_changes():
     _reset_dispatch_cache()
 
     rules_b = _load_subagent_dispatch(settings_override=settings_b)
-    assert rules_b["planner"] == {"explore"}
+    assert rules_b["planner"] == {"Explore"}
 
 
 def test_warns_on_malformed_settings_shape():

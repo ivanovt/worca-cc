@@ -129,17 +129,17 @@ describe('watcher', () => {
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:01:00.000Z',
-        payload: { agent: 'implementer', subagent_type: 'explore' },
+        payload: { agent: 'implementer', subagent_type: 'Explore' },
       },
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:02:00.000Z',
-        payload: { agent: 'implementer', subagent_type: 'explore' },
+        payload: { agent: 'implementer', subagent_type: 'Explore' },
       },
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:03:00.000Z',
-        payload: { agent: 'implementer', subagent_type: 'explore' },
+        payload: { agent: 'implementer', subagent_type: 'Explore' },
       },
       {
         event_type: 'pipeline.hook.dispatch_blocked',
@@ -166,7 +166,7 @@ describe('watcher', () => {
     const allowed = iter.dispatch_events.find(
       (e) => e.type === 'pipeline.hook.dispatch_allowed',
     );
-    expect(allowed.subagent_type).toBe('explore');
+    expect(allowed.subagent_type).toBe('Explore');
     expect(allowed.count).toBe(3);
     const blocked = iter.dispatch_events.find(
       (e) => e.type === 'pipeline.hook.dispatch_blocked',

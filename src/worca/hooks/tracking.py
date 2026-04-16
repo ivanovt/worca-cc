@@ -10,13 +10,13 @@ import os
 import sys
 
 DEFAULT_SUBAGENT_DISPATCH = {
-    "planner": {"explore"},
+    "planner": {"Explore"},
     "coordinator": set(),
-    "implementer": {"explore"},
-    "tester": {"explore"},
-    "guardian": {"explore"},
-    "reviewer": {"explore"},
-    "plan_reviewer": {"explore"},
+    "implementer": {"Explore"},
+    "tester": {"Explore"},
+    "guardian": {"Explore"},
+    "reviewer": {"Explore"},
+    "plan_reviewer": {"Explore"},
     "learner": set(),
 }
 

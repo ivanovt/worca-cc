@@ -56,7 +56,7 @@ describe('GET /api/subagents', () => {
     expect(body.ok).toBe(true);
     const names = body.subagents.map((t) => t.name);
     // All five built-in Claude Code subagents should be present by default.
-    expect(names).toContain('explore');
+    expect(names).toContain('Explore');
     expect(names).toContain('general-purpose');
     expect(names).toContain('Plan');
     expect(names).toContain('statusline-setup');

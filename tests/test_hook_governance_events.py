@@ -313,7 +313,7 @@ class TestSubagentStartDispatchBlockedEvent:
         os.environ["WORCA_EVENTS_PATH"] = events_file
         os.environ["WORCA_RUN_ID"] = "run-001"
 
-        data = json.dumps({"agent_type": "explore"})
+        data = json.dumps({"agent_type": "Explore"})
         code = self._call_main(data, agent="implementer")
 
         assert code == 0
@@ -389,7 +389,7 @@ class TestSubagentStartDispatchAllowedEvent:
         os.environ["WORCA_EVENTS_PATH"] = events_file
         os.environ["WORCA_RUN_ID"] = "run-001"
 
-        data = json.dumps({"agent_type": "explore"})
+        data = json.dumps({"agent_type": "Explore"})
         code = self._call_main(data, agent="implementer")
 
         assert code == 0
@@ -399,14 +399,14 @@ class TestSubagentStartDispatchAllowedEvent:
         e = events[0]
         assert e["event_type"] == "pipeline.hook.dispatch_allowed"
         assert e["payload"]["agent"] == "implementer"
-        assert e["payload"]["subagent_type"] == "explore"
+        assert e["payload"]["subagent_type"] == "Explore"
 
     def test_dispatch_allowed_event_envelope_fields(self, tmp_path):
         events_file = str(tmp_path / "events.jsonl")
         os.environ["WORCA_EVENTS_PATH"] = events_file
         os.environ["WORCA_RUN_ID"] = "run-xyz"
 
-        data = json.dumps({"agent_type": "explore"})
+        data = json.dumps({"agent_type": "Explore"})
         self._call_main(data, agent="tester")
 
         e = json.loads(open(events_file).read())
@@ -420,7 +420,7 @@ class TestSubagentStartDispatchAllowedEvent:
         os.environ["WORCA_EVENTS_PATH"] = events_file
         os.environ["WORCA_RUN_ID"] = "run-001"
 
-        data = json.dumps({"agent_type": "explore"})
+        data = json.dumps({"agent_type": "Explore"})
         code = self._call_main(data)  # No WORCA_AGENT set
 
         assert code == 0
@@ -445,7 +445,7 @@ class TestSubagentStartDispatchAllowedEvent:
         """No crash when WORCA_EVENTS_PATH is not set — dispatch still succeeds."""
         os.environ["WORCA_RUN_ID"] = "run-001"
 
-        data = json.dumps({"agent_type": "explore"})
+        data = json.dumps({"agent_type": "Explore"})
         code = self._call_main(data, agent="implementer")
 
         assert code == 0  # Still allowed, emit silently skipped

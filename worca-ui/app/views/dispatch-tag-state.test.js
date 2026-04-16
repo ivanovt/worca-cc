@@ -11,14 +11,14 @@ import {
 describe('dispatch-tag-state', () => {
   describe('addTag', () => {
     it('adds a new type to the list', () => {
-      const result = addTag(['explore'], 'foo', SUBAGENT_DENYLIST);
-      expect(result.tags).toEqual(['explore', 'foo']);
+      const result = addTag(['Explore'], 'foo', SUBAGENT_DENYLIST);
+      expect(result.tags).toEqual(['Explore', 'foo']);
       expect(result.rejected).toBe(false);
     });
 
     it('rejects duplicate', () => {
-      const result = addTag(['explore'], 'explore', SUBAGENT_DENYLIST);
-      expect(result.tags).toEqual(['explore']);
+      const result = addTag(['Explore'], 'Explore', SUBAGENT_DENYLIST);
+      expect(result.tags).toEqual(['Explore']);
       expect(result.rejected).toBe(false);
     });
 
@@ -32,8 +32,8 @@ describe('dispatch-tag-state', () => {
 
   describe('removeTag', () => {
     it('removes existing type', () => {
-      const result = removeTag(['explore', 'foo'], 'foo');
-      expect(result).toEqual(['explore']);
+      const result = removeTag(['Explore', 'foo'], 'foo');
+      expect(result).toEqual(['Explore']);
     });
   });
 
@@ -42,10 +42,10 @@ describe('dispatch-tag-state', () => {
       const result = filterSuggestions(
         '',
         KNOWN_TYPES,
-        ['explore'],
+        ['Explore'],
         SUBAGENT_DENYLIST,
       );
-      expect(result.map((r) => r.name)).not.toContain('explore');
+      expect(result.map((r) => r.name)).not.toContain('Explore');
     });
 
     it('filters by input prefix', () => {
@@ -89,11 +89,11 @@ describe('dispatch-tag-state', () => {
 
   describe('isCustomized', () => {
     it('returns false when matching defaults', () => {
-      expect(isCustomized(['explore'], ['explore'])).toBe(false);
+      expect(isCustomized(['Explore'], ['Explore'])).toBe(false);
     });
 
     it('returns true when different from defaults', () => {
-      expect(isCustomized(['explore', 'foo'], ['explore'])).toBe(true);
+      expect(isCustomized(['Explore', 'foo'], ['Explore'])).toBe(true);
     });
   });
 });

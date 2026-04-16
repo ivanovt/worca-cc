@@ -44,13 +44,13 @@ describe('_dispatchEventsView', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         agent: 'tester',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
       },
     ]);
     const html = renderToString(runDetailView(run));
     expect(html).toContain('dispatch-events-strip');
     expect(html).toContain('variant="success"');
-    expect(html).toContain('explore dispatched');
+    expect(html).toContain('Explore dispatched');
   });
 
   it('renders dispatch blocked events as red badge with reason', () => {
@@ -74,7 +74,7 @@ describe('_dispatchEventsView', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         agent: 'tester',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
       },
       {
         type: 'pipeline.hook.dispatch_blocked',
@@ -84,7 +84,7 @@ describe('_dispatchEventsView', () => {
       },
     ]);
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('explore dispatched');
+    expect(html).toContain('Explore dispatched');
     expect(html).toContain('general-purpose blocked');
   });
 
@@ -98,12 +98,12 @@ describe('_dispatchEventsView', () => {
     const run = makeRunWithDispatchEvents([
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'explore',
+        subagent_type: 'Explore',
         count: 5,
       },
     ]);
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('explore dispatched (×5)');
+    expect(html).toContain('Explore dispatched (×5)');
   });
 
   it('renders ×N suffix when count > 1 on blocked events, before the reason', () => {
