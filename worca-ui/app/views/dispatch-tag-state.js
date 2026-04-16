@@ -3,15 +3,20 @@
  * These are extracted for testability and reuse in settings.js.
  */
 
+// Keep in sync with _SUBAGENT_DENYLIST in src/worca/hooks/tracking.py —
+// the backend is the authoritative enforcer; this set mirrors it so the
+// UI can show the same types as blocked.
 export const SUBAGENT_DENYLIST = new Set(['general-purpose']);
 
+// Fallback used when `GET /api/subagents` is unavailable or hasn't returned
+// yet. The server endpoint does the real directory walk (builtins + user +
+// plugin cache + project-local) and returns an identically-shaped array;
+// this list mirrors `BUILTINS` in worca-ui/server/subagents-discovery.js
+// so the editor stays usable even if the discovery fetch fails.
 export const KNOWN_TYPES = [
   { name: 'explore', label: '(built-in)', group: 'Built-in' },
   { name: 'general-purpose', label: '(built-in)', group: 'Built-in' },
   { name: 'Plan', label: '(built-in)', group: 'Built-in' },
-  { name: 'feature-dev:code-reviewer', label: '(plugin)', group: 'Plugin' },
-  { name: 'feature-dev:code-architect', label: '(plugin)', group: 'Plugin' },
-  { name: 'feature-dev:code-explorer', label: '(plugin)', group: 'Plugin' },
 ];
 
 /**

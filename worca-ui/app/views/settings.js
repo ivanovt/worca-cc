@@ -131,6 +131,10 @@ let _settingsProjectId = null; // track which project settings are loaded for
 // --- Dispatch tag state ---
 let _dispatchTagState = {}; // agent -> { tags, input, showSuggestions, activeIndex }
 
+// Discovered subagent types from GET /api/subagents. Falls back to KNOWN_TYPES
+// (imported from dispatch-tag-state.js) when the fetch hasn't returned or fails.
+let _discoveredKnownTypes = null;
+
 function _getDispatchState(agent, initialTags) {
   if (!_dispatchTagState[agent]) {
     _dispatchTagState[agent] = {
@@ -243,6 +247,20 @@ export async function loadSettings(projectId) {
       settingsData.worca.webhooks = [];
     }
     _resetDispatchTagState();
+    // Fetch the discovered subagents list for the dispatch editor. Best-effort:
+    // on failure we keep _discoveredKnownTypes = null and the editor uses the
+    // hardcoded KNOWN_TYPES fallback from dispatch-tag-state.js.
+    try {
+      const subRes = await fetch('/api/subagents');
+      if (subRes.ok) {
+        const body = await subRes.json();
+        if (body?.ok && Array.isArray(body.subagents)) {
+          _discoveredKnownTypes = body.subagents;
+        }
+      }
+    } catch {
+      // keep the fallback
+    }
   } catch (err) {
     settingsData = null;
     saveStatus = 'error';
@@ -626,9 +644,10 @@ function pipelineTab(worca, rerender) {
 
 function dispatchTagRowView(agent, initialTags, defaultTags, rerender) {
   const state = _getDispatchState(agent, initialTags);
+  const knownTypes = _discoveredKnownTypes || KNOWN_TYPES;
   const suggestions = filterSuggestions(
     state.input,
-    KNOWN_TYPES,
+    knownTypes,
     state.tags,
     SUBAGENT_DENYLIST,
   );

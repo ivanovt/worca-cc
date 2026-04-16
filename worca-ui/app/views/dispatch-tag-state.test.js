@@ -49,9 +49,24 @@ describe('dispatch-tag-state', () => {
     });
 
     it('filters by input prefix', () => {
+      // filterSuggestions takes knownTypes as a parameter — use a local fixture
+      // representing a discovery response (mix of builtins and plugin agents).
+      const discovered = [
+        ...KNOWN_TYPES,
+        {
+          name: 'feature-dev:code-reviewer',
+          label: '(plugin)',
+          group: 'Plugin',
+        },
+        {
+          name: 'feature-dev:code-architect',
+          label: '(plugin)',
+          group: 'Plugin',
+        },
+      ];
       const result = filterSuggestions(
         'feat',
-        KNOWN_TYPES,
+        discovered,
         [],
         SUBAGENT_DENYLIST,
       );
