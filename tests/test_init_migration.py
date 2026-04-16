@@ -14,7 +14,7 @@ _NEW_DEFAULTS = {
     "guardian": ["Explore"],
     "reviewer": ["Explore"],
     "plan_reviewer": ["Explore"],
-    "learner": [],
+    "learner": ["Explore"],
 }
 
 

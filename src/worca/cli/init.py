@@ -163,7 +163,7 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
             "guardian": ["Explore"],
             "reviewer": ["Explore"],
             "plan_reviewer": ["Explore"],
-            "learner": [],
+            "learner": ["Explore"],
         }
         old_values = governance_cfg.pop("dispatch")
         governance_cfg["subagent_dispatch"] = _SUBAGENT_DISPATCH_DEFAULTS

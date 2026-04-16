@@ -17,7 +17,7 @@ DEFAULT_SUBAGENT_DISPATCH = {
     "guardian": {"Explore"},
     "reviewer": {"Explore"},
     "plan_reviewer": {"Explore"},
-    "learner": set(),
+    "learner": {"Explore"},
 }
 
 # Keep in sync with SUBAGENT_DENYLIST in

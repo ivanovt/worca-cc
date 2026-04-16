@@ -118,7 +118,7 @@ const DEFAULT_GOVERNANCE = {
     reviewer: ['Explore'],
     guardian: ['Explore'],
     plan_reviewer: ['Explore'],
-    learner: [],
+    learner: ['Explore'],
   },
 };
 

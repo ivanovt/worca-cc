@@ -106,10 +106,15 @@ def test_reviewer_dispatching_explore():
     assert code == 0
 
 
-def test_learner_in_default_dispatch():
-    """learner is present in DEFAULT_SUBAGENT_DISPATCH with empty set (completeness)."""
+def test_learner_default_allows_explore():
+    """learner can dispatch Explore by default (consistency with other read-heavy stages)."""
     assert "learner" in DEFAULT_SUBAGENT_DISPATCH
-    assert DEFAULT_SUBAGENT_DISPATCH["learner"] == set()
+    assert DEFAULT_SUBAGENT_DISPATCH["learner"] == {"Explore"}
+
+
+def test_allows_learner_dispatching_explore():
+    code, _reason = check_dispatch("learner", "Explore")
+    assert code == 0
 
 
 def test_denylist_blocks_general_purpose():
