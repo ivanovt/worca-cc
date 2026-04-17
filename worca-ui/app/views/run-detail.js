@@ -181,7 +181,8 @@ function _triggerLabel(trigger) {
 
 function _outcomeLabel(outcome) {
   if (!outcome) return nothing;
-  const cls = outcome === 'success' ? 'success' : 'failure';
+  const isPositive = outcome === 'success' || outcome === 'approve';
+  const cls = isPositive ? 'success' : 'failure';
   return html`<span class="iteration-outcome ${cls}">${outcome.replace(/_/g, ' ')}</span>`;
 }
 
