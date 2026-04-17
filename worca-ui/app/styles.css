@@ -714,7 +714,7 @@ h1, h2, h3, h4, h5, h6 {
 
 .stage-node.status-in-progress .stage-icon {
   border-color: var(--status-in-progress);
-  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15);
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.15);
 }
 
 .stage-node.status-completed .stage-icon {

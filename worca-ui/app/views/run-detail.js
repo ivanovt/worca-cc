@@ -150,7 +150,8 @@ function _lastStageEnd(stages) {
 function _badgeVariant(status) {
   if (status === 'completed') return 'success';
   if (status === 'error') return 'danger';
-  if (status === 'in_progress' || status === 'interrupted') return 'warning';
+  if (status === 'in_progress') return 'primary';
+  if (status === 'interrupted') return 'warning';
   return 'neutral';
 }
 
@@ -525,7 +526,17 @@ export function runBeadsSectionView(beads) {
         <div slot="summary" class="run-beads-header">
           <span class="run-beads-icon">${unsafeHTML(iconSvg(List, 16))}</span>
           <span class="run-beads-title">Beads</span>
-          <span class="run-beads-count">${beads.filter((b) => b.status === 'closed').length}/${beads.length}</span>
+          ${(() => {
+            const closed = beads.filter((b) => b.status === 'closed').length;
+            const total = beads.length;
+            const variant =
+              total === 0
+                ? 'neutral'
+                : closed === total
+                  ? 'success'
+                  : 'primary';
+            return html`<sl-badge variant="${variant}" pill>${closed}/${total}</sl-badge>`;
+          })()}
         </div>
         <div class="run-beads-list">
           ${beads.map(
