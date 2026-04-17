@@ -147,7 +147,13 @@ class TestMigrateSettingsPaths:
         assert migrated["worca"]["agent_overrides_dir"] == ".claude/agents"
 
     def test_no_changes_for_already_migrated(self):
-        settings = {"worca": {"agent_overrides_dir": ".claude/agents"}}
+        settings = {
+            "worca": {"agent_overrides_dir": ".claude/agents"},
+            "hooks": {
+                "SubagentStart": [{"hooks": [{"type": "command", "command": "echo"}]}],
+                "SubagentStop": [{"hooks": [{"type": "command", "command": "echo"}]}],
+            },
+        }
         _, changes = _migrate_settings_paths(settings)
         assert len(changes) == 0
 
