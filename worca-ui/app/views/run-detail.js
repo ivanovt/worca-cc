@@ -5,7 +5,6 @@ import {
   ClipboardCopy,
   Clock,
   Coins,
-  Cpu,
   FileText,
   iconSvg,
   List,
