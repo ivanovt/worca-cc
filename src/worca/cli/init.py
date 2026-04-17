@@ -210,6 +210,24 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
                 "(canonical Claude Code subagent name is capitalized)"
             )
 
+    # Ensure SubagentStart + SubagentStop hooks are registered. The hook
+    # scripts have existed since the initial W-038 landing but were never
+    # wired into settings.json — making dispatch tracking dead code.
+    hooks = migrated.setdefault("hooks", {})
+    _hook_cmd_tpl = (
+        'python3 "$(cd "$(git rev-parse --git-common-dir)/.." && pwd)'
+        '/.claude/worca/claude_hooks/{script}"'
+    )
+    for hook_type, script in [
+        ("SubagentStart", "subagent_start.py"),
+        ("SubagentStop", "subagent_stop.py"),
+    ]:
+        if hook_type not in hooks:
+            hooks[hook_type] = [
+                {"hooks": [{"type": "command", "command": _hook_cmd_tpl.format(script=script)}]}
+            ]
+            changes.append(f"  hooks.{hook_type}: registered {script}")
+
     return migrated, changes
 
 
