@@ -20,7 +20,7 @@ function _sortedEntries(stages) {
 
 const BADGE_VARIANT = {
   completed: 'success',
-  in_progress: 'warning',
+  in_progress: 'primary',
   error: 'danger',
   interrupted: 'warning',
   pending: 'neutral',
