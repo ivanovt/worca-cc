@@ -330,9 +330,10 @@ describe('runCardView - archive/unarchive buttons', () => {
 
 describe('runCardView - duration for active run with completed stages', () => {
   it('shows a duration greater than the last stage end when active run has been running longer', () => {
-    const startedAt = '2026-04-10T10:00:00Z';
-    const stageEnd = '2026-04-10T10:05:43Z'; // 5m 43s into run
-    // Run is active and started 35 minutes ago (stage only completed 5m in)
+    // Use relative dates so the test doesn't rot over time
+    const now = Date.now();
+    const startedAt = new Date(now - 35 * 60 * 1000).toISOString(); // 35 min ago
+    const stageEnd = new Date(now - 30 * 60 * 1000).toISOString(); // completed 30 min ago (5m into run)
     const run = {
       id: '1',
       pipeline_status: 'running',
@@ -343,8 +344,8 @@ describe('runCardView - duration for active run with completed stages', () => {
       },
     };
     const output = renderToString(runCardView(run));
-    // Duration should NOT be "5m 43s" (the last stage end) but rather actual elapsed time
-    expect(output).not.toContain('5m 43s');
+    // Duration should show elapsed-to-now (~35m), not stage-based span (~5m)
+    expect(output).toContain('35m');
   });
 
   it('uses elapsed-to-now for duration when run is active regardless of stage completion', () => {

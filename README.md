@@ -11,7 +11,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 ### Pipeline
 
 - **9-stage pipeline** — Preflight → Plan → Plan Review → Coordinate → Implement → Test → Review → PR → Learn
-- **7 specialized agents** — Planner, Plan Reviewer, Coordinator, Guardian, Implementer, Tester, and Learner (model and max turns fully configurable per agent)
+- **8 specialized agents** — Planner, Plan Reviewer, Coordinator, Implementer, Tester, Reviewer, Guardian, and Learner (model and max turns fully configurable per agent)
 - **Pause, stop & resume** — pause mid-stage with clean checkpointing, stop with SIGTERM, resume from where you left off; the UI has pause/resume/stop buttons with real-time state transitions and force-cancel for stale runs
 - **Circuit breakers** — error classification with halt thresholds; when a stage fails too many times, the circuit breaker trips and prevents runaway cost
 - **Preflight checks** — language-agnostic environment validation that always runs before spending tokens, catching git state issues, missing dependencies, and configuration problems
@@ -27,6 +27,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 ### Governance & Safety
 
 - **Governance hooks** — block dangerous operations (rm -rf, force push, env writes), enforce test gates, validate plans (each guard can be toggled independently)
+- **Configurable subagent dispatch** — per-agent allowlists control which Claude Code subagents each pipeline agent can spawn; `general-purpose` is on an unbypassable denylist; dispatch events render as green/red badges per iteration in the UI
 - **Human approval gates** — optional checkpoints after planning, before merge, and before deploy (configurable per gate)
 - **Token and cost tracking** — per-agent usage with model-specific pricing, web search/fetch cost tracking, cache tier breakdown, budget warnings at configurable thresholds
 
@@ -72,7 +73,8 @@ Plan Review and Learn are disabled by default; enable via `worca.stages.plan_rev
 | **Coordinator** | Decomposes plan into beads tasks with dependencies and parallel groups |
 | **Implementer** | Claims task, implements with TDD, commits code, closes task |
 | **Tester** | Runs test suite, verifies coverage, collects proof artifacts |
-| **Guardian** | Verifies test proof, reviews code, creates PR, manages human gates |
+| **Reviewer** | Reviews code changes for bugs, quality, and convention adherence; approves or requests changes |
+| **Guardian** | Verifies test proof, commits code, creates PR, manages human gates |
 | **Learner** | Analyzes completed run, produces ranked observations and improvement suggestions |
 
 Governance hooks run at every tool call — `pre_tool_use` enforces guards and plan validation, `post_tool_use` enforces test gates and links beads tasks. The event system emits structured events at each stage transition, bead assignment, error, and governance violation.
@@ -156,10 +158,10 @@ See [Dashboard Guide](docs/dashboard.md) for the full screenshot walkthrough.
 
 All configuration lives in `.claude/settings.json` under the `worca` key:
 
-- **`worca.agents`** — model and max_turns per agent (planner, coordinator, implementer, tester, guardian, learner)
+- **`worca.agents`** — model and max_turns per agent (planner, plan_reviewer, coordinator, implementer, tester, reviewer, guardian, learner)
 - **`worca.stages`** — enable/disable pipeline stages (preflight, plan, coordinate, implement, test, review, pr, learn), assign agents
 - **`worca.loops`** — iteration limits (implement/test: 5, code review: 5, PR changes: 5, restart planning: 2)
-- **`worca.governance`** — guards (block rm -rf, force push, env writes), test gate strike limit, dispatch rules
+- **`worca.governance`** — guards (block rm -rf, force push, env writes), test gate strike limit, `subagent_dispatch` per-agent allowlists (user config replaces defaults per agent; `general-purpose` denylist enforced)
 - **`worca.milestones`** — human approval gates (plan, PR, deploy)
 - **`worca.pricing`** — per-model token pricing for cost tracking
 - **`worca.circuit_breaker`** — max failures before halting, transient error retry logic
