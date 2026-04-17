@@ -1405,8 +1405,8 @@ function contentHeaderView() {
     if (run) {
       const ps = run.pipeline_status || (run.active ? 'running' : 'completed');
       const variantMap = {
-        running: 'warning',
-        resuming: 'warning',
+        running: 'primary',
+        resuming: 'primary',
         paused: 'warning',
         completed: 'success',
         failed: 'danger',

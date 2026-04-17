@@ -3,6 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -15,6 +16,7 @@ import {
   createProjectScopedRoutes,
   projectResolver,
 } from './project-routes.js';
+import { discoverSubagents } from './subagents-discovery.js';
 import { getVersionInfo } from './versions.js';
 import { createInbox } from './webhook-inbox.js';
 
@@ -22,6 +24,9 @@ export function createApp(options = {}) {
   const app = express();
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
   const { settingsPath, worcaDir, projectRoot, prefsDir } = options;
+  // subagentDirs is a test-injection seam; production calls omit it and we
+  // resolve from homedir() + projectRoot.
+  const subagentDirs = options.subagentDirs || null;
 
   app.use(express.json());
 
@@ -93,6 +98,31 @@ export function createApp(options = {}) {
   );
 
   // ─── Unique routes (not in project-scoped router) ──────────────────────
+
+  // GET /api/subagents — list discoverable subagent types for the dispatch editor.
+  // Walks ~/.claude/agents/ (user-global), ~/.claude/plugins/cache/
+  // (plugin-cached), and the active project's .claude/agents/ (in single-project
+  // mode). Tests inject alternate dirs via createApp({ subagentDirs: {...} }).
+  app.get('/api/subagents', (_req, res) => {
+    try {
+      const userDir =
+        subagentDirs?.userDir ?? join(homedir(), '.claude', 'agents');
+      const pluginCacheDir =
+        subagentDirs?.pluginCacheDir ??
+        join(homedir(), '.claude', 'plugins', 'cache');
+      const projectAgentsDir =
+        subagentDirs?.projectAgentsDir ??
+        (projectRoot ? join(projectRoot, '.claude', 'agents') : undefined);
+      const subagents = discoverSubagents({
+        userDir,
+        pluginCacheDir,
+        projectAgentsDir,
+      });
+      res.json({ ok: true, subagents });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
 
   // GET /api/beads/issues
   app.get('/api/beads/issues', (_req, res) => {

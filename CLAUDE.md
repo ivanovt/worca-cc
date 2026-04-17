@@ -123,6 +123,8 @@ Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing 
 
 ## worca-ui Development
 
+**Badge color language:** all `sl-badge` variants and status colors follow the guide in [`worca-ui/docs/badge-color-language.md`](./worca-ui/docs/badge-color-language.md). Read it before adding or modifying badges — blue means active, orange means caution, green means done.
+
 After modifying any source files in `worca-ui/app/`, rebuild the bundle:
 
 ```bash

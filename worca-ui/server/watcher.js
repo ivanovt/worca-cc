@@ -2,6 +2,25 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, watch } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  assignEventsToIterations,
+  readDispatchEventsFromJsonl,
+} from './dispatch-events-aggregator.js';
+
+/**
+ * Enrich a status object with dispatch events read from events.jsonl in the
+ * same run directory. Mutates `status.stages` by adding `dispatch_events` to
+ * matching iterations. No-op when events.jsonl is missing (e.g. a run that
+ * started before the emit was wired, or a run with no dispatches).
+ */
+function enrichWithDispatchEvents(status, runDir) {
+  if (!status?.stages) return status;
+  const eventsPath = join(runDir, 'events.jsonl');
+  const events = readDispatchEventsFromJsonl(eventsPath);
+  if (events.length === 0) return status;
+  status.stages = assignEventsToIterations(events, status.stages);
+  return status;
+}
 
 export function createRunId(status) {
   // Prefer run_id from status (new per-run format)
@@ -35,9 +54,11 @@ export function discoverRuns(worcaDir) {
   if (existsSync(activeRunPath)) {
     try {
       const activeId = readFileSync(activeRunPath, 'utf8').trim();
-      const candidate = join(worcaDir, 'runs', activeId, 'status.json');
+      const runDir = join(worcaDir, 'runs', activeId);
+      const candidate = join(runDir, 'status.json');
       if (existsSync(candidate)) {
-        const status = JSON.parse(readFileSync(candidate, 'utf8'));
+        let status = JSON.parse(readFileSync(candidate, 'utf8'));
+        status = enrichWithDispatchEvents(status, runDir);
         const active =
           !isTerminal(status) && status.pipeline_status === 'running';
         const id = createRunId(status);
@@ -53,10 +74,12 @@ export function discoverRuns(worcaDir) {
   const runsDir = join(worcaDir, 'runs');
   if (existsSync(runsDir)) {
     for (const entry of readdirSync(runsDir)) {
-      const statusPath = join(runsDir, entry, 'status.json');
+      const runDir = join(runsDir, entry);
+      const statusPath = join(runDir, 'status.json');
       if (!existsSync(statusPath)) continue;
       try {
-        const status = JSON.parse(readFileSync(statusPath, 'utf8'));
+        let status = JSON.parse(readFileSync(statusPath, 'utf8'));
+        status = enrichWithDispatchEvents(status, runDir);
         const id = createRunId(status);
         if (seenIds.has(id)) continue;
         seenIds.add(id);
@@ -140,8 +163,10 @@ export async function discoverRunsAsync(worcaDir) {
   const activeRunPath = join(worcaDir, 'active_run');
   try {
     const activeId = (await readFile(activeRunPath, 'utf8')).trim();
-    const candidate = join(worcaDir, 'runs', activeId, 'status.json');
-    const status = JSON.parse(await readFile(candidate, 'utf8'));
+    const runDir = join(worcaDir, 'runs', activeId);
+    const candidate = join(runDir, 'status.json');
+    let status = JSON.parse(await readFile(candidate, 'utf8'));
+    status = enrichWithDispatchEvents(status, runDir);
     const active = !isTerminal(status) && status.pipeline_status === 'running';
     const id = createRunId(status);
     runs.push({ id, active, ...status });
@@ -156,15 +181,17 @@ export async function discoverRunsAsync(worcaDir) {
     const entries = await readdir(runsDir);
     const readPromises = entries.map(async (entry) => {
       try {
-        const statusPath = join(runsDir, entry, 'status.json');
+        const runDir = join(runsDir, entry);
+        const statusPath = join(runDir, 'status.json');
         const status = JSON.parse(await readFile(statusPath, 'utf8'));
-        return status;
+        return { status, runDir };
       } catch {
         return null;
       }
     });
-    for (const status of await Promise.all(readPromises)) {
-      if (!status) continue;
+    for (const result of await Promise.all(readPromises)) {
+      if (!result) continue;
+      const status = enrichWithDispatchEvents(result.status, result.runDir);
       const id = createRunId(status);
       if (seenIds.has(id)) continue;
       seenIds.add(id);

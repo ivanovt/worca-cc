@@ -106,6 +106,7 @@ LOOP_EXHAUSTED   = "pipeline.loop.exhausted"
 HOOK_BLOCKED          = "pipeline.hook.blocked"
 HOOK_TEST_GATE        = "pipeline.hook.test_gate"
 HOOK_DISPATCH_BLOCKED = "pipeline.hook.dispatch_blocked"
+HOOK_DISPATCH_ALLOWED = "pipeline.hook.dispatch_allowed"
 
 # ---------------------------------------------------------------------------
 # Preflight events (2 events)
@@ -713,6 +714,10 @@ def hook_dispatch_blocked_payload(
     if reason is not None:
         p["reason"] = reason
     return p
+
+
+def hook_dispatch_allowed_payload(agent: str, subagent_type: str) -> dict:
+    return {"agent": agent, "subagent_type": subagent_type}
 
 
 # ---------------------------------------------------------------------------

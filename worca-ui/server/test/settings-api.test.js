@@ -52,7 +52,7 @@ const SAMPLE_SETTINGS = {
         restrict_git_commit: true,
       },
       test_gate_strikes: 2,
-      dispatch: { planner: [], coordinator: ['implementer'] },
+      subagent_dispatch: { planner: [], coordinator: ['Explore'] },
     },
   },
 };
@@ -411,14 +411,71 @@ describe('POST /api/settings - validation rejections', () => {
     expect(res.status).toBe(400);
   });
 
-  it('rejects dispatch arrays containing unknown agent names', async () => {
+  it('accepts subagent_dispatch with arbitrary subagent types', async () => {
+    const res = await post({
+      worca: {
+        governance: {
+          subagent_dispatch: {
+            implementer: ['Explore', 'feature-dev:code-reviewer'],
+            planner: ['Explore'],
+          },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts reviewer in subagent_dispatch', async () => {
+    const res = await post({
+      worca: {
+        governance: {
+          subagent_dispatch: {
+            reviewer: ['Explore'],
+          },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts legacy dispatch key', async () => {
     const res = await post({
       worca: { governance: { dispatch: { planner: ['unknown_agent'] } } },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('accepts both dispatch and subagent_dispatch keys present', async () => {
+    const res = await post({
+      worca: {
+        governance: {
+          dispatch: { planner: ['Explore'] },
+          subagent_dispatch: { implementer: ['Explore'] },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects non-array values in subagent_dispatch', async () => {
+    const res = await post({
+      worca: { governance: { subagent_dispatch: { planner: 'Explore' } } },
     });
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error.details).toContainEqual(
-      expect.stringContaining('unknown_agent'),
+      expect.stringContaining('planner'),
+    );
+  });
+
+  it('rejects non-string array elements in subagent_dispatch', async () => {
+    const res = await post({
+      worca: { governance: { subagent_dispatch: { planner: [123] } } },
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.details).toContainEqual(
+      expect.stringContaining('planner'),
     );
   });
 

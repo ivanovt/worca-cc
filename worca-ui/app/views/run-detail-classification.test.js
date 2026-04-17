@@ -20,11 +20,10 @@ function renderToString(template) {
   return result;
 }
 
-describe('runDetailView classification strip', () => {
+describe('runDetailView classification row', () => {
   const classification = {
     category: 'infra_transient',
     retriable: true,
-    remediation: 'API rate limited. Wait 60s before retry.',
     similar_to_previous: false,
   };
 
@@ -46,13 +45,14 @@ describe('runDetailView classification strip', () => {
     };
   }
 
-  it('renders classification-strip when iter has classification field', () => {
+  it('renders Fail Category label and category value', () => {
     const run = makeRunSingleIter();
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('classification-strip');
+    expect(html).toContain('Fail Category:');
+    expect(html).toContain('infra_transient');
   });
 
-  it('does not render classification-strip when iter has no classification', () => {
+  it('does not render classification when iter has no classification', () => {
     const run = {
       stages: {
         implement: {
@@ -62,100 +62,69 @@ describe('runDetailView classification strip', () => {
       },
     };
     const html = renderToString(runDetailView(run));
-    expect(html).not.toContain('classification-strip');
+    expect(html).not.toContain('Fail Category:');
   });
 
-  it('renders category badge with warning variant for infra_transient', () => {
+  it('renders Severity as retriable when retriable is true', () => {
     const run = makeRunSingleIter({
       category: 'infra_transient',
       retriable: true,
-      remediation: 'Retry later',
       similar_to_previous: false,
     });
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('infra_transient');
-    expect(html).toContain('variant="warning"');
+    expect(html).toContain('Severity:');
+    expect(html).toContain('retriable');
   });
 
-  it('renders category badge with danger variant for infra_permanent', () => {
+  it('renders Severity as non-retriable when retriable is false', () => {
     const run = makeRunSingleIter({
       category: 'infra_permanent',
       retriable: false,
-      remediation: 'Auth failed',
       similar_to_previous: false,
     });
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('infra_permanent');
-    expect(html).toContain('variant="danger"');
+    expect(html).toContain('Severity:');
+    expect(html).toContain('non-retriable');
   });
 
-  it('renders category badge with danger variant for logic_stuck', () => {
+  it('shows Similar flag when similar_to_previous is true', () => {
     const run = makeRunSingleIter({
       category: 'logic_stuck',
       retriable: false,
-      remediation: 'Change approach',
       similar_to_previous: true,
     });
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('logic_stuck');
-    expect(html).toContain('variant="danger"');
+    expect(html).toContain('Similar:');
+    expect(html).toContain('yes');
   });
 
-  it('renders category badge with danger variant for env_missing', () => {
+  it('omits Similar flag when similar_to_previous is false', () => {
     const run = makeRunSingleIter({
-      category: 'env_missing',
-      retriable: false,
-      remediation: 'Install tool',
+      category: 'infra_transient',
+      retriable: true,
       similar_to_previous: false,
     });
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('env_missing');
-    expect(html).toContain('variant="danger"');
+    expect(html).not.toContain('Similar:');
   });
 
-  it('renders category badge with neutral variant for unknown', () => {
-    const run = makeRunSingleIter({
-      category: 'unknown',
-      retriable: false,
-      remediation: '',
-      similar_to_previous: false,
-    });
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('classification-strip');
-    expect(html).toContain('unknown');
-    expect(html).toContain('variant="neutral"');
-  });
-
-  it('renders retriable yes when retriable is true', () => {
-    const run = makeRunSingleIter();
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('Retriable');
-    expect(html).toContain('>yes<');
-  });
-
-  it('renders retriable no when retriable is false', () => {
-    const run = makeRunSingleIter({
-      category: 'infra_permanent',
-      retriable: false,
-      remediation: 'Fix auth',
-      similar_to_previous: false,
-    });
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('Retriable');
-    expect(html).toContain('>no<');
-  });
-
-  it('renders remediation text', () => {
-    const run = makeRunSingleIter();
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('Remediation');
-    expect(html).toContain('API rate limited. Wait 60s before retry.');
-  });
-
-  it('renders similar_to_previous no when false', () => {
-    const run = makeRunSingleIter();
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('Similar');
+  it('renders all category values correctly', () => {
+    for (const cat of [
+      'infra_transient',
+      'infra_permanent',
+      'logic_stuck',
+      'env_missing',
+      'unknown',
+    ]) {
+      const run = makeRunSingleIter({
+        category: cat,
+        retriable: false,
+        similar_to_previous: false,
+      });
+      const html = renderToString(runDetailView(run));
+      expect(html).toContain('Fail Category:');
+      expect(html).toContain(cat);
+    }
   });
 
   it('renders classification in multi-iteration stage', () => {
@@ -171,11 +140,11 @@ describe('runDetailView classification strip', () => {
       },
     };
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('classification-strip');
+    expect(html).toContain('Fail Category:');
     expect(html).toContain('infra_transient');
   });
 
-  it('does not render classification-strip for iteration without classification in multi-iter', () => {
+  it('does not render classification for iteration without it in multi-iter', () => {
     const run = {
       stages: {
         implement: {
@@ -188,6 +157,6 @@ describe('runDetailView classification strip', () => {
       },
     };
     const html = renderToString(runDetailView(run));
-    expect(html).not.toContain('classification-strip');
+    expect(html).not.toContain('Fail Category:');
   });
 });

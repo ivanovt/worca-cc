@@ -521,7 +521,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                 prompt_builder.update_context("plan_file_content", f.read())
 
         # Initialize learn stage in status
-        status["stages"]["learn"] = {"status": "pending"}
+        status["stages"]["learn"] = {"status": "pending", "agent": "learner"}
         start_iteration(status, "learn", agent="learner",
                         model="sonnet", trigger="initial")
         # Persist to disk so the UI sees learn as in_progress (not skipped)
@@ -588,11 +588,37 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
                                 prompt_override=rendered,
                                 agent_override=_learn_agent_override)
 
-        # Complete iteration
-        complete_iteration(status, "learn", status="completed", outcome="success",
-                           completed_at=datetime.now(timezone.utc).isoformat(),
-                           output=result)
-        update_stage(status, "learn", status="completed")
+        # Extract metrics from raw envelope (same pattern as the main loop)
+        duration_ms = int((time.monotonic() - learn_start) * 1000)
+        iter_extras = {
+            "status": "completed",
+            "outcome": "success",
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "duration_ms": duration_ms,
+            "output": result,
+        }
+        if isinstance(raw, dict):
+            if raw.get("duration_api_ms"):
+                iter_extras["duration_api_ms"] = raw["duration_api_ms"]
+            if raw.get("duration_ms"):
+                iter_extras["duration_session_ms"] = raw["duration_ms"]
+            if raw.get("num_turns"):
+                iter_extras["turns"] = raw["num_turns"]
+            if raw.get("total_cost_usd"):
+                iter_extras["cost_usd"] = raw["total_cost_usd"]
+        usage = extract_token_usage(raw) if isinstance(raw, dict) else {}
+        if usage:
+            iter_extras["token_usage"] = usage
+
+        learn_cost = iter_extras.get("cost_usd", 0.0)
+        learn_turns = iter_extras.get("turns", 0)
+        learn_model = (usage.get("model") or
+                       (raw.get("model") if isinstance(raw, dict) else None) or
+                       "sonnet")
+
+        complete_iteration(status, "learn", **iter_extras)
+        update_stage(status, "learn", status="completed",
+                     agent="learner", model=learn_model)
 
         # Save standalone learnings file
         learnings_path = None
@@ -603,10 +629,9 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
         save_status(status, actual_status_path)
         _log("Learnings saved", "ok")
         if ctx:
-            duration_ms = int((time.monotonic() - learn_start) * 1000)
             emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
                 stage="learn", iteration=1, duration_ms=duration_ms,
-                cost_usd=0.0, turns=0, outcome="success",
+                cost_usd=learn_cost, turns=learn_turns, outcome="success",
             ))
             emit_event(ctx, LEARN_COMPLETED, learn_completed_payload(
                 termination_type=termination_type,

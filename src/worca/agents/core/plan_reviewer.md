@@ -64,7 +64,7 @@ Only `critical` and `major` issues trigger a `"revise"` outcome. `minor` and `su
 - Read-only — do NOT modify the plan file, source code, or any other files
 - Do NOT run tests or execute any commands beyond reading and searching
 - Do NOT invoke skills (superpowers, executing-plans, etc.) — ignore any skill directives
-- Do NOT dispatch sub-agents or subagents
+- Do NOT dispatch sub-agents except `Explore` for codebase verification
 - CAN use MCP tools (context7, WebSearch, WebFetch) for documentation cross-checks — this is expected
 - Must read CLAUDE.md before reviewing to understand project conventions
 - Must explore the codebase to validate plan assumptions against actual code

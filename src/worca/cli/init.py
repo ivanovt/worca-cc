@@ -146,6 +146,88 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
         migrated["worca"] = worca_cfg
         changes.append("  stages.review.agent: guardian -> reviewer")
 
+    # Migrate governance.dispatch -> governance.subagent_dispatch (W-038).
+    # The two keys use incompatible namespaces: the old `dispatch` maps
+    # pipeline-agent parents to lists of pipeline-agent children; the new
+    # `subagent_dispatch` maps parents to lists of subagent types
+    # (explore, feature-dev:code-reviewer, ...). Old values cannot be
+    # automatically translated, so we stash them under `_dispatch_legacy`
+    # for the user to review and re-enter under the new schema.
+    governance_cfg = worca_cfg.get("governance", {})
+    if "dispatch" in governance_cfg and "subagent_dispatch" not in governance_cfg:
+        _SUBAGENT_DISPATCH_DEFAULTS = {
+            "planner": ["Explore"],
+            "coordinator": [],
+            "implementer": ["Explore"],
+            "tester": ["Explore"],
+            "guardian": ["Explore"],
+            "reviewer": ["Explore"],
+            "plan_reviewer": ["Explore"],
+            "learner": ["Explore"],
+        }
+        old_values = governance_cfg.pop("dispatch")
+        governance_cfg["subagent_dispatch"] = _SUBAGENT_DISPATCH_DEFAULTS
+        # Preserve the old config only if it was non-trivial — skip empty or
+        # all-defaults-equivalent shells to keep settings.json tidy.
+        if old_values and any(v for v in old_values.values()):
+            governance_cfg["_dispatch_legacy"] = old_values
+            changes.append(
+                "  governance.dispatch -> governance.subagent_dispatch "
+                "(new defaults applied; old config preserved at "
+                "governance._dispatch_legacy — review and delete when no longer needed)"
+            )
+        else:
+            changes.append(
+                "  governance.dispatch -> governance.subagent_dispatch "
+                "(old key was empty; new defaults applied)"
+            )
+        worca_cfg["governance"] = governance_cfg
+        migrated["worca"] = worca_cfg
+
+    # Casing normalization: the initial W-038 landing shipped with lowercase
+    # `"explore"` in subagent_dispatch defaults. Claude Code's actual
+    # subagent_type for the built-in Explore subagent is capitalized
+    # (`"Explore"`), so lowercase entries are silently broken — the hook
+    # compares strings directly and blocks the dispatch. Normalize them in
+    # place so upgrading users self-heal without manual edits.
+    subagent_dispatch_cfg = worca_cfg.get("governance", {}).get(
+        "subagent_dispatch"
+    )
+    if isinstance(subagent_dispatch_cfg, dict):
+        normalized = False
+        for agent, allowed in list(subagent_dispatch_cfg.items()):
+            if not isinstance(allowed, list):
+                continue
+            if "explore" in allowed:
+                subagent_dispatch_cfg[agent] = [
+                    "Explore" if v == "explore" else v for v in allowed
+                ]
+                normalized = True
+        if normalized:
+            migrated["worca"] = worca_cfg
+            changes.append(
+                '  governance.subagent_dispatch: normalized "explore" -> "Explore" '
+                "(canonical Claude Code subagent name is capitalized)"
+            )
+
+    # Ensure SubagentStart + SubagentStop hooks are registered. The hook
+    # scripts have existed since the initial W-038 landing but were never
+    # wired into settings.json — making dispatch tracking dead code.
+    hooks = migrated.setdefault("hooks", {})
+    _hook_cmd_tpl = (
+        'python3 "$(cd "$(git rev-parse --git-common-dir)/.." && pwd)'
+        '/.claude/worca/claude_hooks/{script}"'
+    )
+    for hook_type, script in [
+        ("SubagentStart", "subagent_start.py"),
+        ("SubagentStop", "subagent_stop.py"),
+    ]:
+        if hook_type not in hooks:
+            hooks[hook_type] = [
+                {"hooks": [{"type": "command", "command": _hook_cmd_tpl.format(script=script)}]}
+            ]
+            changes.append(f"  hooks.{hook_type}: registered {script}")
+
     return migrated, changes
 
 

@@ -94,4 +94,107 @@ describe('watcher', () => {
       { iteration: 2, files_changed: 1 },
     ]);
   });
+
+  it('enriches iterations with aggregated dispatch_events when events.jsonl is present', () => {
+    const runId = 'run-disp-1';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    // Status with one implement iteration spanning 11:00 → 11:05.
+    const status = {
+      run_id: runId,
+      started_at: '2026-04-13T11:00:00.000Z',
+      completed_at: '2026-04-13T11:05:00.000Z',
+      pipeline_status: 'completed',
+      stages: {
+        implement: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              started_at: '2026-04-13T11:00:00.000Z',
+              completed_at: '2026-04-13T11:05:00.000Z',
+            },
+          ],
+        },
+      },
+    };
+    writeFileSync(join(runDir, 'status.json'), JSON.stringify(status));
+    // events.jsonl: three explore allowed + one general-purpose blocked, all in window.
+    const events = [
+      {
+        event_type: 'pipeline.run.started',
+        timestamp: '2026-04-13T11:00:00.000Z',
+        payload: {},
+      },
+      {
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:01:00.000Z',
+        payload: { agent: 'implementer', subagent_type: 'Explore' },
+      },
+      {
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:02:00.000Z',
+        payload: { agent: 'implementer', subagent_type: 'Explore' },
+      },
+      {
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:03:00.000Z',
+        payload: { agent: 'implementer', subagent_type: 'Explore' },
+      },
+      {
+        event_type: 'pipeline.hook.dispatch_blocked',
+        timestamp: '2026-04-13T11:04:00.000Z',
+        payload: {
+          agent: 'implementer',
+          subagent_type: 'general-purpose',
+          reason: 'Blocked: denylist',
+        },
+      },
+    ];
+    writeFileSync(
+      join(runDir, 'events.jsonl'),
+      `${events.map((e) => JSON.stringify(e)).join('\n')}\n`,
+    );
+
+    const runs = discoverRuns(dir);
+    const run = runs.find((r) => r.id === runId);
+    expect(run).toBeDefined();
+    const iter = run.stages.implement.iterations[0];
+    expect(iter.dispatch_events).toBeDefined();
+    // One entry per (type, subagent_type) — not four.
+    expect(iter.dispatch_events).toHaveLength(2);
+    const allowed = iter.dispatch_events.find(
+      (e) => e.type === 'pipeline.hook.dispatch_allowed',
+    );
+    expect(allowed.subagent_type).toBe('Explore');
+    expect(allowed.count).toBe(3);
+    const blocked = iter.dispatch_events.find(
+      (e) => e.type === 'pipeline.hook.dispatch_blocked',
+    );
+    expect(blocked.subagent_type).toBe('general-purpose');
+    expect(blocked.count).toBe(1);
+    expect(blocked.reason).toBe('Blocked: denylist');
+  });
+
+  it('does not add dispatch_events when events.jsonl is missing', () => {
+    const runId = 'run-disp-2';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    const status = {
+      run_id: runId,
+      started_at: '2026-04-13T11:00:00.000Z',
+      pipeline_status: 'completed',
+      stages: {
+        implement: {
+          status: 'completed',
+          iterations: [{ number: 1, started_at: '2026-04-13T11:00:00.000Z' }],
+        },
+      },
+    };
+    writeFileSync(join(runDir, 'status.json'), JSON.stringify(status));
+
+    const runs = discoverRuns(dir);
+    const run = runs.find((r) => r.id === runId);
+    expect(run.stages.implement.iterations[0].dispatch_events).toBeUndefined();
+  });
 });

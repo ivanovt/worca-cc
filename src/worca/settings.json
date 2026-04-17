@@ -31,6 +31,26 @@
           }
         ]
       }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/subagent_start.py\""
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/subagent_stop.py\""
+          }
+        ]
+      }
     ]
   },
   "permissions": {
@@ -243,14 +263,15 @@
         "restrict_git_commit": true
       },
       "test_gate_strikes": 2,
-      "dispatch": {
-        "planner": [],
-        "coordinator": [
-          "implementer"
-        ],
-        "implementer": [],
-        "tester": [],
-        "guardian": []
+      "subagent_dispatch": {
+        "planner": ["Explore"],
+        "coordinator": [],
+        "implementer": ["Explore"],
+        "tester": ["Explore"],
+        "guardian": ["Explore"],
+        "reviewer": ["Explore"],
+        "plan_reviewer": ["Explore"],
+        "learner": ["Explore"]
       }
     },
     "defaults": {
