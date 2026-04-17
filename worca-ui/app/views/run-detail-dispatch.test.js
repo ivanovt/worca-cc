@@ -20,7 +20,7 @@ function renderToString(template) {
   return result;
 }
 
-function makeRunWithDispatchEvents(dispatchEvents) {
+function makeRun(iterOverrides = {}) {
   return {
     stages: {
       implement: {
@@ -30,7 +30,7 @@ function makeRunWithDispatchEvents(dispatchEvents) {
             number: 1,
             status: 'completed',
             outcome: 'success',
-            dispatch_events: dispatchEvents,
+            ...iterOverrides,
           },
         ],
       },
@@ -38,113 +38,185 @@ function makeRunWithDispatchEvents(dispatchEvents) {
   };
 }
 
-describe('_dispatchEventsView', () => {
-  it('renders dispatch allowed events as green badge', () => {
-    const run = makeRunWithDispatchEvents([
-      {
-        type: 'pipeline.hook.dispatch_allowed',
-        agent: 'tester',
-        subagent_type: 'Explore',
-      },
-    ]);
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('dispatch-events-strip');
+describe('iteration tags layout', () => {
+  // --- Trigger + Outcome row ---
+
+  it('renders trigger as neutral sl-badge pill with label', () => {
+    const html = renderToString(runDetailView(makeRun({ trigger: 'initial' })));
+    expect(html).toContain('Iteration Trigger:');
+    expect(html).toContain('variant="neutral"');
+    expect(html).toContain('Initial run');
+  });
+
+  it('renders outcome as colored sl-badge pill with label', () => {
+    const html = renderToString(runDetailView(makeRun({ outcome: 'approve' })));
+    expect(html).toContain('Iteration Outcome:');
     expect(html).toContain('variant="success"');
-    expect(html).toContain('Explore dispatched');
+    expect(html).toContain('approve');
   });
 
-  it('renders dispatch blocked events as short red badge with reason in tooltip', () => {
-    const run = makeRunWithDispatchEvents([
-      {
-        type: 'pipeline.hook.dispatch_blocked',
-        agent: 'tester',
-        subagent_type: 'general-purpose',
-        reason: 'tester cannot dispatch general-purpose',
-      },
-    ]);
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('dispatch-events-strip');
-    expect(html).toContain('variant="danger"');
-    expect(html).toContain('general-purpose blocked');
-    // Reason is in the title tooltip, not in the visible badge text
-    expect(html).toContain('title="tester cannot dispatch general-purpose"');
-    expect(html).not.toContain(
-      'general-purpose blocked — tester cannot dispatch general-purpose',
+  it('renders request_changes outcome as warning variant', () => {
+    const html = renderToString(
+      runDetailView(makeRun({ outcome: 'request_changes' })),
     );
+    expect(html).toContain('variant="warning"');
+    expect(html).toContain('request changes');
   });
 
-  it('renders multiple dispatch events for same iteration', () => {
-    const run = makeRunWithDispatchEvents([
-      {
-        type: 'pipeline.hook.dispatch_allowed',
-        agent: 'tester',
-        subagent_type: 'Explore',
-      },
-      {
-        type: 'pipeline.hook.dispatch_blocked',
-        agent: 'tester',
-        subagent_type: 'general-purpose',
-        reason: 'blocked by denylist',
-      },
-    ]);
+  it('renders rejected outcome as danger variant', () => {
+    const html = renderToString(
+      runDetailView(makeRun({ outcome: 'rejected' })),
+    );
+    expect(html).toContain('variant="danger"');
+  });
+
+  it('renders trigger and outcome on the same row', () => {
+    const html = renderToString(
+      runDetailView(makeRun({ trigger: 'test_failure', outcome: 'success' })),
+    );
+    // Both labels + badges inside a single iteration-tags-row
+    expect(html).toContain('Iteration Trigger:');
+    expect(html).toContain('Iteration Outcome:');
+    expect(html).toContain('Test failure');
+  });
+
+  it('omits tags row when neither trigger nor outcome present', () => {
+    const html = renderToString(
+      runDetailView(makeRun({ trigger: undefined, outcome: undefined })),
+    );
+    expect(html).not.toContain('Iteration Trigger:');
+    expect(html).not.toContain('Iteration Outcome:');
+  });
+
+  // --- Agent info strip ---
+
+  it('renders agent and model as labeled values', () => {
+    const run = makeRun({
+      agent: 'implementer',
+      model: 'claude-sonnet-4-6',
+      turns: 9,
+    });
+    // Set stage-level agent/model (used by single-iteration path)
+    run.stages.implement.agent = 'implementer';
+    run.stages.implement.model = 'claude-sonnet-4-6';
     const html = renderToString(runDetailView(run));
+    expect(html).toContain('Agent:');
+    expect(html).toContain('implementer');
+    expect(html).toContain('Model:');
+    expect(html).toContain('claude-sonnet-4-6');
+    // Old parenthesized format should not appear
+    expect(html).not.toContain('(claude-sonnet-4-6)');
+  });
+
+  // --- Subagents row ---
+
+  it('renders dispatch events with Subagents label', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Subagents:');
     expect(html).toContain('Explore dispatched');
-    expect(html).toContain('general-purpose blocked');
+    expect(html).toContain('variant="success"');
   });
 
-  it('renders nothing when no dispatch events', () => {
-    const run = makeRunWithDispatchEvents([]);
-    const html = renderToString(runDetailView(run));
-    expect(html).not.toContain('dispatch-events-strip');
+  it('renders blocked dispatch with tooltip', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_blocked',
+              subagent_type: 'general-purpose',
+              reason: 'denylist',
+              count: 2,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('general-purpose blocked (×2)');
+    expect(html).toContain('title="denylist"');
   });
 
-  it('renders ×N suffix when count > 1 on allowed events', () => {
-    const run = makeRunWithDispatchEvents([
-      {
-        type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
-        count: 5,
-      },
-    ]);
-    const html = renderToString(runDetailView(run));
+  it('omits Subagents row when no dispatch events', () => {
+    const html = renderToString(runDetailView(makeRun()));
+    expect(html).not.toContain('Subagents:');
+  });
+
+  it('renders ×N suffix only when count > 1', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              count: 5,
+            },
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Plan',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
     expect(html).toContain('Explore dispatched (×5)');
+    expect(html).toContain('Plan dispatched');
+    expect(html).not.toContain('Plan dispatched (×');
   });
 
-  it('renders ×N suffix when count > 1 on blocked events, reason in tooltip only', () => {
-    const run = makeRunWithDispatchEvents([
-      {
-        type: 'pipeline.hook.dispatch_blocked',
-        subagent_type: 'general-purpose',
-        reason: 'blocked by denylist',
-        count: 3,
-      },
-    ]);
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('general-purpose blocked (×3)');
-    expect(html).toContain('title="blocked by denylist"');
-    expect(html).not.toContain('general-purpose blocked (×3) —');
+  // --- Classification row ---
+
+  it('renders classification as inline label:value pairs', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          classification: {
+            category: 'logic_stuck',
+            retriable: false,
+            similar_to_previous: false,
+          },
+        }),
+      ),
+    );
+    expect(html).toContain('Fail Category:');
+    expect(html).toContain('logic_stuck');
+    expect(html).toContain('Severity:');
+    // Old bordered classification-strip should not appear
+    expect(html).not.toContain('classification-strip');
   });
 
-  it('omits the suffix when count is 1, absent, or invalid', () => {
-    const run = makeRunWithDispatchEvents([
-      {
-        type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'one',
-        count: 1,
-      },
-      { type: 'pipeline.hook.dispatch_allowed', subagent_type: 'two' },
-      {
-        type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'three',
-        count: 0,
-      },
-    ]);
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('one dispatched');
-    expect(html).not.toContain('one dispatched (×');
-    expect(html).toContain('two dispatched');
-    expect(html).not.toContain('two dispatched (×');
-    expect(html).toContain('three dispatched');
-    expect(html).not.toContain('three dispatched (×');
+  it('shows similar flag when true', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          classification: {
+            category: 'infra_transient',
+            retriable: true,
+            similar_to_previous: true,
+          },
+        }),
+      ),
+    );
+    expect(html).toContain('Similar:');
+    expect(html).toContain('yes');
+  });
+
+  it('omits classification row when absent', () => {
+    const html = renderToString(runDetailView(makeRun()));
+    expect(html).not.toContain('Fail Category:');
   });
 });

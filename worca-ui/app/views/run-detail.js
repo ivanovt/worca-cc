@@ -168,22 +168,29 @@ function _iterStatusIcon(iter) {
   return nothing;
 }
 
-function _triggerLabel(trigger) {
+function _triggerBadge(trigger) {
   if (!trigger) return nothing;
   const labels = {
     initial: 'Initial run',
     test_failure: 'Test failure',
     review_changes: 'Review changes',
     restart_planning: 'Restart planning',
+    plan_review_revise: 'Plan revision',
+    next_bead: 'Next bead',
   };
-  return html`<span class="iteration-trigger">${labels[trigger] || trigger}</span>`;
+  return html`<sl-badge variant="neutral" pill>${labels[trigger] || trigger.replace(/_/g, ' ')}</sl-badge>`;
 }
 
-function _outcomeLabel(outcome) {
+function _outcomeVariant(outcome) {
+  if (outcome === 'success' || outcome === 'approve') return 'success';
+  if (outcome === 'revise' || outcome === 'request_changes') return 'warning';
+  if (outcome === 'rejected' || outcome === 'restart_planning') return 'danger';
+  return 'neutral';
+}
+
+function _outcomeBadge(outcome) {
   if (!outcome) return nothing;
-  const isPositive = outcome === 'success' || outcome === 'approve';
-  const cls = isPositive ? 'success' : 'failure';
-  return html`<span class="iteration-outcome ${cls}">${outcome.replace(/_/g, ' ')}</span>`;
+  return html`<sl-badge variant="${_outcomeVariant(outcome)}" pill>${outcome.replace(/_/g, ' ')}</sl-badge>`;
 }
 
 function _classificationVariant(category) {
@@ -197,31 +204,22 @@ function _classificationVariant(category) {
   return 'neutral';
 }
 
-function _classificationStripView(iter) {
+function _classificationRowView(iter) {
   const c = iter.classification;
   if (!c) return nothing;
-  const variant = _classificationVariant(c.category);
   return html`
-    <div class="classification-strip">
-      <span class="classification-strip-item">
-        <span class="classification-strip-label">Category:</span>
-        <sl-badge variant="${variant}" pill>${c.category}</sl-badge>
-      </span>
-      <span class="classification-strip-item">
-        <span class="classification-strip-label">Retriable:</span>
-        <span class="classification-strip-value">${c.retriable ? 'yes' : 'no'}</span>
-      </span>
-      <span class="classification-strip-item">
-        <span class="classification-strip-label">Similar:</span>
-        <span class="classification-strip-value">${c.similar_to_previous ? 'yes' : 'no'}</span>
-      </span>
+    <div class="iteration-tags-row">
+      <span class="meta-label">Fail Category:</span>
+      <span class="meta-value">${c.category}</span>
+      <span class="iteration-tags-sep">·</span>
+      <span class="meta-label">Severity:</span>
+      <span class="meta-value">${c.retriable ? 'retriable' : 'non-retriable'}</span>
       ${
-        c.remediation
+        c.similar_to_previous
           ? html`
-        <span class="classification-strip-item classification-remediation">
-          <span class="classification-strip-label">Remediation:</span>
-          <span class="classification-strip-value">${c.remediation}</span>
-        </span>
+        <span class="iteration-tags-sep">·</span>
+        <span class="meta-label">Similar:</span>
+        <span class="meta-value">yes</span>
       `
           : nothing
       }
@@ -229,11 +227,12 @@ function _classificationStripView(iter) {
   `;
 }
 
-function _dispatchEventsView(iter) {
+function _dispatchEventsRowView(iter) {
   const events = iter.dispatch_events;
   if (!events || events.length === 0) return nothing;
   return html`
-    <div class="dispatch-events-strip">
+    <div class="iteration-tags-row">
+      <span class="meta-label">Subagents:</span>
       ${events.map((ev) => {
         const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
         const variant = isAllowed ? 'success' : 'danger';
@@ -352,6 +351,10 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
       duration_api_ms: it.duration_api_ms || undefined,
       started_at: it.started_at || undefined,
       completed_at: it.completed_at || undefined,
+      classification: it.classification || undefined,
+      dispatch_events: it.dispatch_events?.length
+        ? it.dispatch_events
+        : undefined,
     })),
     prompts: promptData
       ? {
@@ -408,16 +411,25 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
     <div class="iteration-detail">
       ${timingStripView(iter.started_at, iter.completed_at)}
       <div class="stage-info-strip">
-        ${agentName ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${agentName}${model ? html` <span class="text-muted">(${model})</span>` : ''}</span>` : nothing}
+        ${agentName ? html`<span class="stage-info-item"><span class="meta-label">Agent:</span> <span class="meta-value">${agentName}</span></span>` : nothing}
+        ${model ? html`<span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${model}</span></span>` : nothing}
         ${iter.turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iter.turns}</span></span>` : nothing}
-        ${iter.duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API Duration:</span> <span class="meta-value">${formatDuration(iter.duration_api_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round((iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at)) * 100)}%)` : ''}</span></span>` : nothing}
-        ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Iteration Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
-        ${iterDur ? html`<span class="stage-info-item"><span class="meta-label">Iteration Duration:</span> <span class="meta-value">${iterDur}</span></span>` : nothing}
+        ${iter.duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iter.duration_api_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round((iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at)) * 100)}%)` : ''}</span></span>` : nothing}
+        ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
+        ${iterDur ? html`<span class="stage-info-item"><span class="meta-label">Duration:</span> <span class="meta-value">${iterDur}</span></span>` : nothing}
       </div>
-      ${iter.trigger ? html`<div class="detail-row">${_triggerLabel(iter.trigger)}</div>` : nothing}
-      ${iter.outcome ? html`<div class="detail-row">${_outcomeLabel(iter.outcome)}</div>` : nothing}
-      ${_classificationStripView(iter)}
-      ${_dispatchEventsView(iter)}
+      ${
+        iter.trigger || iter.outcome
+          ? html`
+        <div class="iteration-tags-row">
+          ${iter.trigger ? html`<span class="meta-label">Iteration Trigger:</span> ${_triggerBadge(iter.trigger)}` : nothing}
+          ${iter.outcome ? html`<span class="meta-label">Iteration Outcome:</span> ${_outcomeBadge(iter.outcome)}` : nothing}
+        </div>
+      `
+          : nothing
+      }
+      ${_classificationRowView(iter)}
+      ${_dispatchEventsRowView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
     </div>
   `;
@@ -799,17 +811,27 @@ export function runDetailView(run, settings = {}, options = {}) {
                     <div class="stage-detail">
                       ${timingStripView(stage.started_at, stage.completed_at)}
                       <div class="stage-info-strip">
-                        ${stageAgent ? html`<span class="stage-info-item"><span class="stage-meta-icon">${unsafeHTML(iconSvg(Cpu, 12))}</span> ${stageAgent}${stageModel ? html` <span class="text-muted">(${stageModel})</span>` : ''}</span>` : nothing}
+                        ${stageAgent ? html`<span class="stage-info-item"><span class="meta-label">Agent:</span> <span class="meta-value">${stageAgent}</span></span>` : nothing}
+                        ${stageModel ? html`<span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${stageModel}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
-                        ${iterations.length === 1 && iterations[0].duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API Duration:</span> <span class="meta-value">${formatDuration(iterations[0].duration_api_ms)}${stageMs > 0 ? ` (${Math.round((iterations[0].duration_api_ms / stageMs) * 100)}%)` : ''}</span></span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iterations[0].duration_api_ms)}${stageMs > 0 ? ` (${Math.round((iterations[0].duration_api_ms / stageMs) * 100)}%)` : ''}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
                       </div>
-                      ${iterations.length === 1 && iterations[0].trigger ? html`<div class="detail-row">${_triggerLabel(iterations[0].trigger)}</div>` : nothing}
-                      ${iterations.length === 1 && iterations[0].outcome ? html`<div class="detail-row">${_outcomeLabel(iterations[0].outcome)}</div>` : nothing}
+                      ${
+                        iterations.length === 1 &&
+                        (iterations[0].trigger || iterations[0].outcome)
+                          ? html`
+                        <div class="iteration-tags-row">
+                          ${iterations[0].trigger ? html`<span class="meta-label">Iteration Trigger:</span> ${_triggerBadge(iterations[0].trigger)}` : nothing}
+                          ${iterations[0].outcome ? html`<span class="meta-label">Iteration Outcome:</span> ${_outcomeBadge(iterations[0].outcome)}` : nothing}
+                        </div>
+                      `
+                          : nothing
+                      }
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
-                      ${iterations.length === 1 ? _classificationStripView(iterations[0]) : nothing}
-                      ${iterations.length === 1 ? _dispatchEventsView(iterations[0]) : nothing}
+                      ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
+                      ${iterations.length === 1 ? _dispatchEventsRowView(iterations[0]) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
