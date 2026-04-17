@@ -22,7 +22,7 @@ python .claude/scripts/run_pipeline.py --prompt "Add user auth"
 
 ## Architecture
 
-9 stages: Preflight → Planner (Opus) → Plan Reviewer (Opus) → Coordinator (Opus) → Implementer(s) (Sonnet) → Tester (Sonnet) → Guardian (Opus) → Learner (Sonnet)
+10 stages: Preflight → Planner (Opus) → Plan Reviewer (Opus) → Coordinator (Opus) → Implementer(s) (Sonnet) → Tester (Sonnet) → Reviewer (Opus) → Guardian (Opus) → Learner (Opus)
 
 Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
 

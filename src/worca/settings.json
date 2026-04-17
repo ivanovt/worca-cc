@@ -170,6 +170,10 @@
         "model": "sonnet",
         "max_turns": 100
       },
+      "reviewer": {
+        "model": "opus",
+        "max_turns": 50
+      },
       "guardian": {
         "model": "opus",
         "max_turns": 50
