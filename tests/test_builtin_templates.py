@@ -23,7 +23,7 @@ TEMPLATE_OVERLAYS = [
     ("bugfix", "planner"),
     ("bugfix", "coordinator"),
     ("refactor", "planner"),
-    ("refactor", "guardian"),
+    ("refactor", "reviewer"),
     ("quick-fix", "planner"),
     ("quick-fix", "coordinator"),
     ("investigate", "planner"),

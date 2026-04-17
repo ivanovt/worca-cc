@@ -13,7 +13,7 @@ PRESETS = ["bugfix", "feature", "refactor", "quick-fix", "investigate", "test-on
 EXPECTED_OVERLAYS = {
     "bugfix":      {"planner.md", "coordinator.md"},
     "feature":     set(),
-    "refactor":    {"planner.md", "guardian.md"},
+    "refactor":    {"planner.md", "reviewer.md"},
     "quick-fix":   {"planner.md", "coordinator.md"},
     "investigate": {"planner.md"},
     "test-only":   {"planner.md", "coordinator.md", "implementer.md"},
@@ -91,8 +91,8 @@ class TestBugfixConfig:
     def _config(self):
         return json.loads((TEMPLATES_DIR / "bugfix" / "template.json").read_text())["config"]
 
-    def test_planner_model_sonnet(self):
-        assert self._config()["agents"]["planner"]["model"] == "sonnet"
+    def test_planner_model_opus(self):
+        assert self._config()["agents"]["planner"]["model"] == "opus"
 
     def test_coordinator_model_sonnet(self):
         assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
@@ -121,8 +121,8 @@ class TestQuickFixConfig:
     def _config(self):
         return json.loads((TEMPLATES_DIR / "quick-fix" / "template.json").read_text())["config"]
 
-    def test_planner_model_haiku(self):
-        assert self._config()["agents"]["planner"]["model"] == "haiku"
+    def test_planner_model_opus(self):
+        assert self._config()["agents"]["planner"]["model"] == "opus"
 
     def test_coordinator_model_sonnet(self):
         assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
@@ -155,8 +155,8 @@ class TestTestOnlyConfig:
     def _config(self):
         return json.loads((TEMPLATES_DIR / "test-only" / "template.json").read_text())["config"]
 
-    def test_planner_model_sonnet(self):
-        assert self._config()["agents"]["planner"]["model"] == "sonnet"
+    def test_planner_model_opus(self):
+        assert self._config()["agents"]["planner"]["model"] == "opus"
 
     def test_coordinator_model_sonnet(self):
         assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
