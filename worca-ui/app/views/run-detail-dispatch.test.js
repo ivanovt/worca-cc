@@ -53,7 +53,7 @@ describe('_dispatchEventsView', () => {
     expect(html).toContain('Explore dispatched');
   });
 
-  it('renders dispatch blocked events as red badge with reason', () => {
+  it('renders dispatch blocked events as short red badge with reason in tooltip', () => {
     const run = makeRunWithDispatchEvents([
       {
         type: 'pipeline.hook.dispatch_blocked',
@@ -66,7 +66,11 @@ describe('_dispatchEventsView', () => {
     expect(html).toContain('dispatch-events-strip');
     expect(html).toContain('variant="danger"');
     expect(html).toContain('general-purpose blocked');
-    expect(html).toContain('tester cannot dispatch general-purpose');
+    // Reason is in the title tooltip, not in the visible badge text
+    expect(html).toContain('title="tester cannot dispatch general-purpose"');
+    expect(html).not.toContain(
+      'general-purpose blocked — tester cannot dispatch general-purpose',
+    );
   });
 
   it('renders multiple dispatch events for same iteration', () => {
@@ -106,7 +110,7 @@ describe('_dispatchEventsView', () => {
     expect(html).toContain('Explore dispatched (×5)');
   });
 
-  it('renders ×N suffix when count > 1 on blocked events, before the reason', () => {
+  it('renders ×N suffix when count > 1 on blocked events, reason in tooltip only', () => {
     const run = makeRunWithDispatchEvents([
       {
         type: 'pipeline.hook.dispatch_blocked',
@@ -116,9 +120,9 @@ describe('_dispatchEventsView', () => {
       },
     ]);
     const html = renderToString(runDetailView(run));
-    expect(html).toContain(
-      'general-purpose blocked (×3) — blocked by denylist',
-    );
+    expect(html).toContain('general-purpose blocked (×3)');
+    expect(html).toContain('title="blocked by denylist"');
+    expect(html).not.toContain('general-purpose blocked (×3) —');
   });
 
   it('omits the suffix when count is 1, absent, or invalid', () => {

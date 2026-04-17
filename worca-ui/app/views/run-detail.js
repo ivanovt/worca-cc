@@ -240,8 +240,9 @@ function _dispatchEventsView(iter) {
         const suffix = count ? ` (×${count})` : '';
         const label = isAllowed
           ? `${ev.subagent_type} dispatched${suffix}`
-          : `${ev.subagent_type} blocked${suffix}${ev.reason ? ` — ${ev.reason}` : ''}`;
-        return html`<sl-badge variant="${variant}" pill>${label}</sl-badge>`;
+          : `${ev.subagent_type} blocked${suffix}`;
+        const tooltip = ev.reason || '';
+        return html`<sl-badge variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
       })}
     </div>
   `;
