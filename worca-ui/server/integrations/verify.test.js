@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { verify } from './verify.js';
 
 function sign(body, secret) {
-  return 'sha256=' + createHmac('sha256', secret).update(body).digest('hex');
+  return `sha256=${createHmac('sha256', secret).update(body).digest('hex')}`;
 }
 
 const BODY = 'hello world';
