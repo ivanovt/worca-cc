@@ -428,6 +428,8 @@ def _atexit_cleanup():
             if _signal_status.get("pipeline_status") == "running":
                 if _signal_event_ctx is not None:
                     _signal_status["pipeline_status"] = "interrupted"
+                    if not _signal_status.get("stop_reason"):
+                        _signal_status["stop_reason"] = "unexpected_exit"
                     save_status(_signal_status, _signal_status_path)
                     _emit_interrupted_event(_signal_event_ctx, _signal_status, "atexit")
                 else:

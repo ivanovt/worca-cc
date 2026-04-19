@@ -213,7 +213,7 @@ export class ProcessManager {
             event_id: randomUUID(),
             event_type: 'pipeline.run.interrupted',
             timestamp: new Date().toISOString(),
-            ...(status.run_id ? { run_id: status.run_id } : {}),
+            run_id: status.run_id ?? runId,
             pipeline: {
               branch: status.branch ?? null,
               work_request: status.work_request ?? null,

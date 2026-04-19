@@ -3629,6 +3629,46 @@ def test_atexit_cleanup_sets_interrupted_status_when_ctx_available(tmp_path):
 
     assert saved_statuses, "save_status was never called"
     assert saved_statuses[-1]["pipeline_status"] == "interrupted"
+    # Stop reason must be set so consumers can distinguish atexit from signal.
+    assert saved_statuses[-1]["stop_reason"] == "unexpected_exit"
+
+
+def test_atexit_cleanup_preserves_existing_stop_reason_when_ctx_set(tmp_path):
+    """_atexit_cleanup() does not overwrite a stop_reason that callers set earlier."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    ctx = EventContext(
+        run_id="atexit-run-preserve",
+        branch="feat/preserve",
+        work_request={"title": "Preserve"},
+        events_path=str(tmp_path / "events.jsonl"),
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    status = {"pipeline_status": "running", "current_stage": "test", "stop_reason": "user_stop"}
+    saved_statuses = []
+
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = str(tmp_path / "status.json")
+    runner_mod._signal_project_status_path = None
+
+    try:
+        with patch("worca.orchestrator.runner.save_status",
+                   side_effect=lambda s, _p: saved_statuses.append(dict(s))):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                runner_mod._atexit_cleanup()
+    finally:
+        runner_mod._signal_event_ctx = None
+        runner_mod._signal_status = None
+        runner_mod._signal_status_path = None
+
+    assert saved_statuses[-1]["stop_reason"] == "user_stop"
 
 
 def test_atexit_cleanup_falls_back_to_failed_without_ctx(tmp_path):
