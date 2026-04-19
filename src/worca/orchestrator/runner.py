@@ -1363,6 +1363,11 @@ def run_pipeline(
         )
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
+            # Restore max_beads from persisted context — the COORDINATE stage
+            # that originally set it will be skipped on resume.
+            resumed_beads = prompt_builder.get_context("beads_ids")
+            if resumed_beads:
+                max_beads = len(resumed_beads)
 
         # Transition pipeline to running state
         status["pipeline_status"] = "running"

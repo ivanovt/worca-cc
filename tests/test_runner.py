@@ -580,6 +580,126 @@ def test_bead_limit_derived_from_coordinator(tmp_path):
     assert implement_count[0] == 3
 
 
+def test_resume_restores_max_beads_from_prompt_context(tmp_path):
+    """On resume, max_beads must be restored from persisted beads_ids.
+
+    Regression: when COORDINATE is skipped on resume, max_beads stayed at 0,
+    causing the bead loop to exit immediately after the first resumed bead.
+    """
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": True},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {
+                "coordinator": {"model": "opus", "max_turns": 10},
+                "implementer": {"model": "sonnet", "max_turns": 10},
+            },
+            "loops": {},
+        }
+    }))
+
+    # Create run directory with persisted prompt context (as if coordinate already ran)
+    run_dir = tmp_path / ".worca" / "runs" / "test-resume-run"
+    run_dir.mkdir(parents=True)
+
+    bead_ids = ["beads-aaa", "beads-bbb", "beads-ccc"]
+    prompt_context = {
+        "beads_ids": bead_ids,
+        "dependency_graph": {},
+        "plan_file_path": str(plan),
+    }
+    (run_dir / "prompt_context.json").write_text(json.dumps(prompt_context))
+
+    # Pre-populate status as if coordinate completed and implement iter 1 completed
+    status = {
+        "schema_version": 1,
+        "work_request": {
+            "source_type": "prompt",
+            "title": "Test resume beads",
+        },
+        "pipeline_status": "failed",
+        "stage": "implement",
+        "run_id": "test-resume-run",
+        "branch": "test-branch",
+        "plan_file": str(plan),
+        "git_head": None,
+        "loop_counters": {"bead_iteration": 1},
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "completed_at": None,
+        "stages": {
+            "preflight": {"status": "completed"},
+            "coordinate": {
+                "status": "completed",
+                "iterations": [{"number": 1, "status": "completed", "outcome": "success"}],
+            },
+            "implement": {
+                "status": "in_progress",
+                "iterations": [
+                    {"number": 1, "status": "completed", "outcome": "success"},
+                    {"number": 2, "status": "in_progress"},  # dirty — crashed mid-bead
+                ],
+            },
+        },
+    }
+    # Write status to the run directory
+    with open(str(run_dir / "status.json"), "w") as f:
+        json.dump(status, f)
+    # Point active_run to this run so the runner finds it
+    worca_dir = tmp_path / ".worca"
+    (worca_dir / "active_run").write_text("test-resume-run")
+    status_path = str(worca_dir / "status.json")
+
+    wr = WorkRequest(source_type="prompt", title="Test resume beads")
+
+    implement_count = [0]
+    bead_queue = iter(bead_ids[1:])  # aaa was done; bbb and ccc remain
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
+        if stage == Stage.IMPLEMENT:
+            implement_count[0] += 1
+            return {"files_changed": [], "tests_added": []}, {"type": "result"}
+        return {}, {"type": "result"}
+
+    def mock_query_ready(allowed_ids=None):
+        try:
+            bead_id = next(bead_queue)
+            return {"id": bead_id, "title": f"Bead {bead_id}"}
+        except StopIteration:
+            return None
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+        with patch("worca.orchestrator.runner._query_ready_bead", side_effect=mock_query_ready):
+            with patch("worca.orchestrator.runner._claim_bead", return_value=True):
+                with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
+                    with patch("worca.orchestrator.runner.bd_close", return_value=True):
+                        with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
+                            with patch("worca.orchestrator.runner.create_branch"):
+                                with patch("worca.orchestrator.runner._write_pid"):
+                                    with patch("worca.orchestrator.runner._remove_pid"):
+                                        run_pipeline(
+                                            wr,
+                                            plan_file=str(plan),
+                                            resume=True,
+                                            settings_path=str(settings),
+                                            status_path=status_path,
+                                        )
+
+    # Must implement the 2 remaining beads (bbb and ccc), not stop after 1
+    assert implement_count[0] == 2
+
+
 # --- gh_issue_start integration ---
 
 def test_run_pipeline_calls_gh_issue_start_for_github_source(tmp_path):
