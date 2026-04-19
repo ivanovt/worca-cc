@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 
 async function runBd(args, dbPath) {
-  const fullArgs = [...args, '--json', '--db', dbPath, '--readonly'];
+  const fullArgs = [...args, '--json', '--db', dbPath];
   const { stdout } = await execFileAsync('bd', fullArgs, {
     encoding: 'utf8',
     timeout: 10000,

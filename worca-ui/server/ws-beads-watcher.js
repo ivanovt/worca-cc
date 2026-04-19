@@ -1,14 +1,15 @@
 /**
  * Beads database watcher — monitors .beads/beads.db for changes.
- * Watches the directory (not just the file) because SQLite WAL mode
- * writes to beads.db-wal first.
+ * Uses both fs.watch (directory events) and fs.watchFile (stat-based polling)
+ * because fs.watch on macOS misses SQLite WAL writes done via mmap.
  */
 
-import { existsSync, watch } from 'node:fs';
+import { existsSync, unwatchFile, watch, watchFile } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { listIssues } from './beads-reader.js';
 
 const BEADS_DEBOUNCE_MS = 500;
+const BEADS_POLL_MS = 2000;
 
 /**
  * @param {{ worcaDir: string, broadcaster: { broadcast: Function }, projectId?: string }} deps
@@ -16,7 +17,8 @@ const BEADS_DEBOUNCE_MS = 500;
 export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   const beadsDbPath = resolve(join(worcaDir, '..', '.beads', 'beads.db'));
   const beadsDir = resolve(join(worcaDir, '..', '.beads'));
-  let beadsWatcher = null;
+  const beadsWalPath = `${beadsDbPath}-wal`;
+  let fsWatcher = null;
   let BEADS_REFRESH_TIMER = null;
 
   function scheduleBeadsRefresh() {
@@ -41,13 +43,22 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   }
 
   if (existsSync(beadsDir)) {
+    // fs.watch for directory-level events (checkpoint writes to main db)
     try {
-      beadsWatcher = watch(beadsDir, (_event, filename) => {
+      fsWatcher = watch(beadsDir, (_event, filename) => {
         if (filename?.startsWith('beads.db')) scheduleBeadsRefresh();
       });
     } catch {
       /* ignore */
     }
+
+    // fs.watchFile (stat-based polling) for WAL — fs.watch misses mmap writes
+    // on macOS. watchFile tolerates a missing file; it starts firing once created.
+    watchFile(beadsWalPath, { interval: BEADS_POLL_MS }, (curr, prev) => {
+      if (curr.mtimeMs !== prev.mtimeMs || curr.size !== prev.size) {
+        scheduleBeadsRefresh();
+      }
+    });
   }
 
   function getBeadsDbPath() {
@@ -55,7 +66,12 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   }
 
   function destroy() {
-    if (beadsWatcher) beadsWatcher.close();
+    if (fsWatcher) fsWatcher.close();
+    try {
+      unwatchFile(beadsWalPath);
+    } catch {
+      /* */
+    }
   }
 
   return { getBeadsDbPath, destroy };
