@@ -143,6 +143,16 @@ cd worca-ui && npm run lint:fix && npx vitest run
 
 Run both checks from inside `worca-ui/` so config paths resolve correctly. Do not commit if either fails — fix them first.
 
+**Whenever you add a new file or directory under `worca-ui/server/` or `worca-ui/app/`, verify it ships in the npm package.** The `files` field in `worca-ui/package.json` is an allowlist — anything not matched is silently dropped from the published tarball. The CLI spawns the server with `stdio: 'ignore'`, so a missing-module crash in the published package looks like "started (PID …)" followed by the browser failing to connect — the underlying error is invisible.
+
+Run this before committing any new `server/` or `app/` path:
+
+```bash
+cd worca-ui && npm pack --dry-run | grep <new-path>
+```
+
+If the new file is absent, extend the `files` glob (e.g. `server/**/*.js` rather than `server/*.js`) and re-check.
+
 ### Running the UI
 
 ```bash

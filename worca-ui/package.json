@@ -23,9 +23,10 @@
   },
   "files": [
     "bin/worca-ui.js",
-    "server/*.js",
-    "!server/*.test.js",
-    "!server/test/",
+    "server/**/*.js",
+    "!server/**/*.test.js",
+    "!server/test/**",
+    "!server/**/test/**",
     "app/favicon-*.svg",
     "app/index.html",
     "app/main.bundle.js",
