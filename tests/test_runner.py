@@ -3658,3 +3658,87 @@ def test_atexit_cleanup_falls_back_to_failed_without_ctx(tmp_path):
     assert saved_statuses, "save_status was never called"
     assert saved_statuses[-1]["pipeline_status"] == "failed"
     assert saved_statuses[-1]["stop_reason"] == "unexpected_exit"
+
+
+def test_signal_and_atexit_emit_identical_event_shape(tmp_path):
+    """Both stop paths must emit the same event keys/shape so consumers see one schema."""
+    import signal as _signal
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    def _run_signal_path(events_path):
+        ctx = EventContext(
+            run_id="parity-signal",
+            branch="feat/parity",
+            work_request={"title": "Parity"},
+            events_path=events_path,
+            settings_path="",
+            enabled=True,
+            _webhooks=[],
+            _control_webhooks=[],
+            _shell_hooks={},
+        )
+        status = {"pipeline_status": "running", "current_stage": "implement", "stop_reason": ""}
+        runner_mod._signal_event_ctx = ctx
+        runner_mod._signal_status = status
+        runner_mod._signal_status_path = str(tmp_path / "status_signal.json")
+        runner_mod._signal_project_status_path = None
+        original = _signal.getsignal(_signal.SIGTERM)
+        try:
+            with patch("worca.orchestrator.runner.terminate_current"):
+                with patch("worca.orchestrator.runner.save_status"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        runner_mod._install_signal_handlers()
+                        _signal.getsignal(_signal.SIGTERM)(_signal.SIGTERM, None)
+        finally:
+            _signal.signal(_signal.SIGTERM, original)
+            runner_mod._signal_event_ctx = None
+            runner_mod._signal_status = None
+            runner_mod._signal_status_path = None
+
+    def _run_atexit_path(events_path):
+        ctx = EventContext(
+            run_id="parity-atexit",
+            branch="feat/parity",
+            work_request={"title": "Parity"},
+            events_path=events_path,
+            settings_path="",
+            enabled=True,
+            _webhooks=[],
+            _control_webhooks=[],
+            _shell_hooks={},
+        )
+        status = {"pipeline_status": "running", "current_stage": "implement", "stop_reason": ""}
+        runner_mod._signal_event_ctx = ctx
+        runner_mod._signal_status = status
+        runner_mod._signal_status_path = str(tmp_path / "status_atexit.json")
+        runner_mod._signal_project_status_path = None
+        try:
+            with patch("worca.orchestrator.runner.save_status"):
+                with patch("worca.orchestrator.runner._remove_pid"):
+                    runner_mod._atexit_cleanup()
+        finally:
+            runner_mod._signal_event_ctx = None
+            runner_mod._signal_status = None
+            runner_mod._signal_status_path = None
+
+    sig_path = tmp_path / "events_signal.jsonl"
+    atexit_path = tmp_path / "events_atexit.jsonl"
+    _run_signal_path(str(sig_path))
+    _run_atexit_path(str(atexit_path))
+
+    sig_event = json.loads(sig_path.read_text().strip().splitlines()[0])
+    atexit_event = json.loads(atexit_path.read_text().strip().splitlines()[0])
+
+    # Top-level keys identical.
+    assert set(sig_event.keys()) == set(atexit_event.keys())
+    # Nested keys identical.
+    assert set(sig_event["pipeline"].keys()) == set(atexit_event["pipeline"].keys())
+    assert set(sig_event["payload"].keys()) == set(atexit_event["payload"].keys())
+    # Static fields match.
+    assert sig_event["schema_version"] == atexit_event["schema_version"] == "1"
+    assert sig_event["event_type"] == atexit_event["event_type"] == "pipeline.run.interrupted"
+    assert sig_event["payload"]["interrupted_stage"] == atexit_event["payload"]["interrupted_stage"]
+    # Source distinguishes the two paths.
+    assert sig_event["payload"]["source"] == "signal"
+    assert atexit_event["payload"]["source"] == "atexit"

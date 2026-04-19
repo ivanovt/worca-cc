@@ -340,6 +340,49 @@ def _remove_pid(status_path: str) -> None:
         pass
 
 
+def _emit_interrupted_event(ctx, status, source: str) -> None:
+    """Append a pipeline.run.interrupted event using only signal-safe file I/O.
+
+    Shared by the signal handler and atexit cleanup so the on-disk event shape
+    stays in lockstep across both paths. Swallows all errors — callers run in
+    contexts where exceptions cannot be propagated.
+    """
+    import json as _json
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+
+    fh = None
+    try:
+        event = {
+            "schema_version": "1",
+            "event_id": str(_uuid.uuid4()),
+            "event_type": RUN_INTERRUPTED,
+            "timestamp": _dt.now(_tz.utc).isoformat(),
+            "run_id": ctx.run_id,
+            "pipeline": {
+                "branch": ctx.branch,
+                "work_request": ctx.work_request,
+            },
+            "payload": {
+                "interrupted_stage": status.get("current_stage", "unknown"),
+                "elapsed_ms": 0,
+                "source": source,
+            },
+        }
+        line = _json.dumps(event, ensure_ascii=False)
+        fh = open(ctx.events_path, "a", encoding="utf-8")
+        fh.write(line + "\n")
+        fh.flush()
+    except Exception:
+        pass
+    finally:
+        if fh is not None:
+            try:
+                fh.close()
+            except Exception:
+                pass
+
+
 def _install_signal_handlers():
     """Install SIGTERM/SIGINT handlers that set the shutdown flag and kill the subprocess."""
     global _shutdown_requested
@@ -357,32 +400,8 @@ def _install_signal_handlers():
                 save_status(_signal_status, _signal_status_path)
             except Exception:
                 pass
-            # Emit pipeline.run.interrupted via signal-safe file I/O only
             if _signal_event_ctx is not None:
-                try:
-                    interrupted_stage = _signal_status.get("current_stage", "unknown")
-                    import json as _json
-                    import uuid as _uuid
-                    from datetime import datetime as _dt, timezone as _tz
-                    event = {
-                        "schema_version": "1",
-                        "event_id": str(_uuid.uuid4()),
-                        "event_type": RUN_INTERRUPTED,
-                        "timestamp": _dt.now(_tz.utc).isoformat(),
-                        "run_id": _signal_event_ctx.run_id,
-                        "pipeline": {
-                            "branch": _signal_event_ctx.branch,
-                            "work_request": _signal_event_ctx.work_request,
-                        },
-                        "payload": {"interrupted_stage": interrupted_stage, "elapsed_ms": 0, "source": "signal"},
-                    }
-                    line = _json.dumps(event, ensure_ascii=False)
-                    fh = open(_signal_event_ctx.events_path, "a", encoding="utf-8")
-                    fh.write(line + "\n")
-                    fh.flush()
-                    fh.close()
-                except Exception:
-                    pass
+                _emit_interrupted_event(_signal_event_ctx, _signal_status, "signal")
             # Clean up PID files (per-run + project-level)
             _remove_pid(_signal_status_path)
             if _signal_project_status_path:
@@ -410,34 +429,7 @@ def _atexit_cleanup():
                 if _signal_event_ctx is not None:
                     _signal_status["pipeline_status"] = "interrupted"
                     save_status(_signal_status, _signal_status_path)
-                    # Emit pipeline.run.interrupted via signal-safe file I/O only
-                    try:
-                        import json as _json
-                        import uuid as _uuid
-                        from datetime import datetime as _dt, timezone as _tz
-                        event = {
-                            "schema_version": "1",
-                            "event_id": str(_uuid.uuid4()),
-                            "event_type": RUN_INTERRUPTED,
-                            "timestamp": _dt.now(_tz.utc).isoformat(),
-                            "run_id": _signal_event_ctx.run_id,
-                            "pipeline": {
-                                "branch": _signal_event_ctx.branch,
-                                "work_request": _signal_event_ctx.work_request,
-                            },
-                            "payload": {
-                                "interrupted_stage": _signal_status.get("current_stage", "unknown"),
-                                "elapsed_ms": 0,
-                                "source": "atexit",
-                            },
-                        }
-                        line = _json.dumps(event, ensure_ascii=False)
-                        fh = open(_signal_event_ctx.events_path, "a", encoding="utf-8")
-                        fh.write(line + "\n")
-                        fh.flush()
-                        fh.close()
-                    except Exception:
-                        pass
+                    _emit_interrupted_event(_signal_event_ctx, _signal_status, "atexit")
                 else:
                     _signal_status["pipeline_status"] = "failed"
                     if not _signal_status.get("stop_reason"):

@@ -209,11 +209,20 @@ export class ProcessManager {
       if (!hasTerminalEvent) {
         try {
           const evt = {
-            event_type: 'pipeline.run.interrupted',
+            schema_version: '1',
             event_id: randomUUID(),
+            event_type: 'pipeline.run.interrupted',
             timestamp: new Date().toISOString(),
-            source: 'reconcile',
             ...(status.run_id ? { run_id: status.run_id } : {}),
+            pipeline: {
+              branch: status.branch ?? null,
+              work_request: status.work_request ?? null,
+            },
+            payload: {
+              interrupted_stage: status.current_stage ?? 'unknown',
+              elapsed_ms: 0,
+              source: 'reconcile',
+            },
           };
           appendFileSync(eventsPath, `${JSON.stringify(evt)}\n`, 'utf8');
         } catch {

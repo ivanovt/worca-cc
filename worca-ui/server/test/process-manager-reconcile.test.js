@@ -128,7 +128,9 @@ describe('reconcileStatus', () => {
     writeStatus(worcaDir, 'run-evt-1', {
       pipeline_status: 'running',
       run_id: 'run-evt-1',
-      stage: 'plan',
+      branch: 'feat/reconcile',
+      work_request: { title: 'Test reconcile' },
+      current_stage: 'plan',
     });
 
     reconcileStatus(worcaDir);
@@ -137,14 +139,40 @@ describe('reconcileStatus', () => {
     const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
     expect(lines).toHaveLength(1);
     const evt = JSON.parse(lines[0]);
+    expect(evt.schema_version).toBe('1');
     expect(evt.event_type).toBe('pipeline.run.interrupted');
     expect(evt.event_id).toBeDefined();
     expect(evt.timestamp).toBeDefined();
-    expect(evt.source).toBe('reconcile');
     expect(evt.run_id).toBe('run-evt-1');
+    expect(evt.pipeline).toEqual({
+      branch: 'feat/reconcile',
+      work_request: { title: 'Test reconcile' },
+    });
+    expect(evt.payload).toEqual({
+      interrupted_stage: 'plan',
+      elapsed_ms: 0,
+      source: 'reconcile',
+    });
     expect(evt.event).toBeUndefined();
     expect(evt.id).toBeUndefined();
     expect(evt.ts).toBeUndefined();
+  });
+
+  it('synthetic event falls back to nulls/unknown when status fields are missing', () => {
+    writeStatus(worcaDir, 'run-evt-3', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-3',
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-3', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.pipeline).toEqual({ branch: null, work_request: null });
+    expect(evt.payload.interrupted_stage).toBe('unknown');
+    expect(evt.payload.source).toBe('reconcile');
   });
 
   it('does not append synthetic event when terminal event already exists', () => {
