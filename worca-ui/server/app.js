@@ -20,6 +20,7 @@ import {
 } from './project-routes.js';
 import { validateIntegrationsConfig } from './settings-validator.js';
 import { discoverSubagents } from './subagents-discovery.js';
+import { checkWorcaVersion } from './version-check.js';
 import { getVersionInfo } from './versions.js';
 import { createInbox } from './webhook-inbox.js';
 
@@ -502,6 +503,10 @@ export function createApp(options = {}) {
   app.get('/api/versions', async (req, res) => {
     const force = req.query.force === '1';
     const prefsPath = prefsDir ? join(prefsDir, 'preferences.json') : null;
+    // Re-check installed worca-cc version on force refresh
+    if (force) {
+      app.locals.worcaVersion = await checkWorcaVersion();
+    }
     const worcaVersion = app.locals.worcaVersion || null;
     try {
       const data = await getVersionInfo({ prefsPath, worcaVersion, force });
