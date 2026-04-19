@@ -80,6 +80,8 @@ This project uses **GitHub** with the `gh` CLI. PR creation command:
 gh pr create --title "..." --body "..."
 ```
 
+**Merging PRs:** Always use `gh pr merge <number> --merge` (not local `git merge` + push). This ensures GitHub auto-closes the PR and links the merge commit properly.
+
 The guardian agent uses this when creating PRs. Adapt this section for GitLab (`glab`), Bitbucket, or other hosting platforms.
 
 ## Development Approach
