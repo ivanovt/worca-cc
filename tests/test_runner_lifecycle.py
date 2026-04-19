@@ -1,37 +1,58 @@
 """Tests for pipeline lifecycle state management (signal handler, atexit, finally, resume, beads)."""
 
+import json
 import os
 import signal
 from unittest.mock import patch
 
-
 import worca.orchestrator.runner as runner
+from worca.events.emitter import EventContext
 from worca.orchestrator.control import write_control, control_path
 from worca.state.status import save_status, load_status
 
 
-# --- Layer 1: signal handler saves failed status ---
+def _make_ctx(tmp_path, run_id="test-run-1"):
+    events_path = str(tmp_path / "events.jsonl")
+    return EventContext(
+        run_id=run_id,
+        branch="main",
+        work_request={},
+        events_path=events_path,
+        settings_path=str(tmp_path / "settings.json"),
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+
+# --- Layer 1: signal handler saves interrupted status ---
 
 
 def test_signal_handler_saves_failed_status(tmp_path):
-    """Calling the signal handler writes pipeline_status='failed' with stop_reason='signal'."""
+    """Calling the signal handler writes pipeline_status='interrupted' with stop_reason='signal'
+    and emits a pipeline.run.interrupted event to events.jsonl."""
     status_path = str(tmp_path / "status.json")
-    status = {"pipeline_status": "running", "stage": "plan"}
+    status = {"pipeline_status": "running", "current_stage": "plan", "stop_reason": ""}
     save_status(status, status_path)
+    ctx = _make_ctx(tmp_path)
 
-    # Wire up module-level refs
     runner._signal_status = status
     runner._signal_status_path = status_path
+    runner._signal_event_ctx = ctx
     try:
-        # Install handlers so we can invoke the internal handler
         runner._install_signal_handlers()
-        # Send SIGINT to ourselves — the handler should save status
         os.kill(os.getpid(), signal.SIGINT)
 
         on_disk = load_status(status_path)
-        assert on_disk["pipeline_status"] == "failed"
+        assert on_disk["pipeline_status"] == "interrupted"
         assert on_disk["stop_reason"] == "signal"
+
+        lines = (tmp_path / "events.jsonl").read_text().strip().splitlines()
+        assert len(lines) == 1
+        event = json.loads(lines[0])
+        assert event["event_type"] == "pipeline.run.interrupted"
     finally:
+        runner._signal_event_ctx = None
         runner._signal_status = None
         runner._signal_status_path = None
         runner._shutdown_requested = False
@@ -66,9 +87,85 @@ def test_signal_handler_preserves_existing_stop_reason(tmp_path):
         os.kill(os.getpid(), signal.SIGINT)
 
         on_disk = load_status(status_path)
-        assert on_disk["pipeline_status"] == "failed"
+        assert on_disk["pipeline_status"] == "interrupted"
         assert on_disk["stop_reason"] == "stopped"  # preserved, not "signal"
     finally:
+        runner._signal_status = None
+        runner._signal_status_path = None
+        runner._shutdown_requested = False
+        runner._restore_signal_handlers()
+
+
+def test_signal_handler_emits_interrupted_event(tmp_path):
+    """_handler() writes pipeline.run.interrupted to events.jsonl when _signal_event_ctx is set."""
+    status_path = str(tmp_path / "status.json")
+    status = {"pipeline_status": "running", "current_stage": "implement", "stop_reason": ""}
+    save_status(status, status_path)
+    ctx = _make_ctx(tmp_path)
+
+    runner._signal_status = status
+    runner._signal_status_path = status_path
+    runner._signal_event_ctx = ctx
+    try:
+        runner._install_signal_handlers()
+        os.kill(os.getpid(), signal.SIGINT)
+
+        lines = (tmp_path / "events.jsonl").read_text().strip().splitlines()
+        assert len(lines) == 1
+        event = json.loads(lines[0])
+        assert event["event_type"] == "pipeline.run.interrupted"
+        assert event["payload"]["interrupted_stage"] == "implement"
+        assert event["payload"]["source"] == "signal"
+        assert event["run_id"] == "test-run-1"
+    finally:
+        runner._signal_event_ctx = None
+        runner._signal_status = None
+        runner._signal_status_path = None
+        runner._shutdown_requested = False
+        runner._restore_signal_handlers()
+
+
+def test_signal_handler_no_event_when_ctx_not_set(tmp_path):
+    """_handler() is safe when _signal_event_ctx is None — no crash, no events file."""
+    status_path = str(tmp_path / "status.json")
+    status = {"pipeline_status": "running", "stop_reason": ""}
+    save_status(status, status_path)
+
+    runner._signal_status = status
+    runner._signal_status_path = status_path
+    runner._signal_event_ctx = None
+    try:
+        runner._install_signal_handlers()
+        os.kill(os.getpid(), signal.SIGINT)
+
+        assert not (tmp_path / "events.jsonl").exists()
+        on_disk = load_status(status_path)
+        assert on_disk["pipeline_status"] == "interrupted"
+    finally:
+        runner._signal_status = None
+        runner._signal_status_path = None
+        runner._shutdown_requested = False
+        runner._restore_signal_handlers()
+
+
+def test_signal_handler_sets_interrupted_status(tmp_path):
+    """_handler() sets pipeline_status='interrupted', not 'failed'."""
+    status_path = str(tmp_path / "status.json")
+    status = {"pipeline_status": "running", "current_stage": "test", "stop_reason": ""}
+    save_status(status, status_path)
+    ctx = _make_ctx(tmp_path)
+
+    runner._signal_status = status
+    runner._signal_status_path = status_path
+    runner._signal_event_ctx = ctx
+    try:
+        runner._install_signal_handlers()
+        os.kill(os.getpid(), signal.SIGINT)
+
+        on_disk = load_status(status_path)
+        assert on_disk["pipeline_status"] == "interrupted"
+    finally:
+        runner._signal_event_ctx = None
         runner._signal_status = None
         runner._signal_status_path = None
         runner._shutdown_requested = False
@@ -79,13 +176,14 @@ def test_signal_handler_preserves_existing_stop_reason(tmp_path):
 
 
 def test_atexit_cleanup_saves_when_running(tmp_path):
-    """atexit handler transitions 'running' → 'failed' with stop_reason='unexpected_exit'."""
+    """atexit handler transitions 'running' → 'failed' (no ctx) with stop_reason='unexpected_exit'."""
     status_path = str(tmp_path / "status.json")
     status = {"pipeline_status": "running"}
     save_status(status, status_path)
 
     runner._signal_status = status
     runner._signal_status_path = status_path
+    runner._signal_event_ctx = None
     try:
         runner._atexit_cleanup()
 
@@ -112,6 +210,54 @@ def test_atexit_cleanup_noop_when_already_failed(tmp_path):
         assert on_disk["pipeline_status"] == "failed"
         assert on_disk["stop_reason"] == "signal"  # unchanged
     finally:
+        runner._signal_status = None
+        runner._signal_status_path = None
+
+
+def test_atexit_emits_event(tmp_path):
+    """_atexit_cleanup() writes pipeline.run.interrupted to events.jsonl when status was 'running'."""
+    status_path = str(tmp_path / "status.json")
+    status = {"pipeline_status": "running", "current_stage": "review", "stop_reason": ""}
+    save_status(status, status_path)
+    ctx = _make_ctx(tmp_path, run_id="atexit-run-1")
+
+    runner._signal_status = status
+    runner._signal_status_path = status_path
+    runner._signal_event_ctx = ctx
+    try:
+        runner._atexit_cleanup()
+
+        lines = (tmp_path / "events.jsonl").read_text().strip().splitlines()
+        assert len(lines) == 1
+        event = json.loads(lines[0])
+        assert event["event_type"] == "pipeline.run.interrupted"
+        assert event["run_id"] == "atexit-run-1"
+        assert event["payload"]["source"] == "atexit"
+        assert event["payload"]["interrupted_stage"] == "review"
+    finally:
+        runner._signal_event_ctx = None
+        runner._signal_status = None
+        runner._signal_status_path = None
+
+
+def test_atexit_no_event_when_already_terminal(tmp_path):
+    """_atexit_cleanup() skips event emission when status is already terminal ('failed')."""
+    status_path = str(tmp_path / "status.json")
+    status = {"pipeline_status": "failed", "stop_reason": "error"}
+    save_status(status, status_path)
+    ctx = _make_ctx(tmp_path)
+
+    runner._signal_status = status
+    runner._signal_status_path = status_path
+    runner._signal_event_ctx = ctx
+    try:
+        runner._atexit_cleanup()
+
+        assert not (tmp_path / "events.jsonl").exists()
+        on_disk = load_status(status_path)
+        assert on_disk["pipeline_status"] == "failed"
+    finally:
+        runner._signal_event_ctx = None
         runner._signal_status = None
         runner._signal_status_path = None
 

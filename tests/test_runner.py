@@ -3381,3 +3381,669 @@ def test_run_stage_agent_override_none_uses_default_path():
         with patch("worca.orchestrator.runner.run_agent", return_value={}) as mock_run:
             run_stage(Stage.TEST, {"prompt": "x"}, agent_override=None)
     assert ".claude/worca/agents/core/tester.md" in mock_run.call_args.kwargs.get("agent", "")
+
+
+def test_signal_event_ctx_module_level_exists():
+    """_signal_event_ctx module-level reference exists in runner."""
+    import worca.orchestrator.runner as runner_mod
+    assert hasattr(runner_mod, "_signal_event_ctx")
+
+
+def test_handler_emits_interrupted_event_to_jsonl(tmp_path):
+    """_handler() writes pipeline.run.interrupted to events.jsonl after saving status."""
+    import signal as _signal
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    status_path = str(tmp_path / "status.json")
+
+    ctx = EventContext(
+        run_id="test-run-1",
+        branch="feat/test",
+        work_request={"title": "Test"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    status = {"pipeline_status": "running", "current_stage": "implement", "stop_reason": ""}
+
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = status_path
+    runner_mod._signal_project_status_path = None
+
+    with patch("worca.orchestrator.runner.terminate_current"):
+        with patch("worca.orchestrator.runner.save_status"):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                # Invoke handler directly
+                handler = None
+                original = _signal.getsignal(_signal.SIGTERM)
+                try:
+                    runner_mod._install_signal_handlers()
+                    handler = _signal.getsignal(_signal.SIGTERM)
+                    handler(_signal.SIGTERM, None)
+                finally:
+                    _signal.signal(_signal.SIGTERM, original)
+                    runner_mod._signal_event_ctx = None
+                    runner_mod._signal_status = None
+                    runner_mod._signal_status_path = None
+
+    assert (tmp_path / "events.jsonl").exists()
+    lines = (tmp_path / "events.jsonl").read_text().strip().splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["event_type"] == "pipeline.run.interrupted"
+    assert event["payload"]["interrupted_stage"] == "implement"
+    assert event["payload"]["source"] == "signal"
+
+
+def test_handler_sets_interrupted_status(tmp_path):
+    """_handler() sets pipeline_status='interrupted' not 'failed'."""
+    import signal as _signal
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    status_path = str(tmp_path / "status.json")
+
+    ctx = EventContext(
+        run_id="test-run-2",
+        branch="feat/test",
+        work_request={"title": "Test"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    status = {"pipeline_status": "running", "current_stage": "test", "stop_reason": ""}
+
+    saved_statuses = []
+
+    def capture_save(s, path):
+        saved_statuses.append(dict(s))
+
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = status_path
+    runner_mod._signal_project_status_path = None
+
+    with patch("worca.orchestrator.runner.terminate_current"):
+        with patch("worca.orchestrator.runner.save_status", side_effect=capture_save):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                original = _signal.getsignal(_signal.SIGTERM)
+                try:
+                    runner_mod._install_signal_handlers()
+                    handler = _signal.getsignal(_signal.SIGTERM)
+                    handler(_signal.SIGTERM, None)
+                finally:
+                    _signal.signal(_signal.SIGTERM, original)
+                    runner_mod._signal_event_ctx = None
+                    runner_mod._signal_status = None
+                    runner_mod._signal_status_path = None
+
+    assert saved_statuses, "save_status was never called"
+    assert saved_statuses[-1]["pipeline_status"] == "interrupted"
+
+
+def test_handler_emits_interrupted_with_unknown_stage_when_no_current_stage(tmp_path):
+    """_handler() uses 'unknown' for interrupted_stage when current_stage is absent."""
+    import signal as _signal
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    status_path = str(tmp_path / "status.json")
+
+    ctx = EventContext(
+        run_id="test-run-3",
+        branch="feat/test",
+        work_request={"title": "Test"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    status = {"pipeline_status": "running"}  # no current_stage key
+
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = status_path
+    runner_mod._signal_project_status_path = None
+
+    with patch("worca.orchestrator.runner.terminate_current"):
+        with patch("worca.orchestrator.runner.save_status"):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                original = _signal.getsignal(_signal.SIGTERM)
+                try:
+                    runner_mod._install_signal_handlers()
+                    handler = _signal.getsignal(_signal.SIGTERM)
+                    handler(_signal.SIGTERM, None)
+                finally:
+                    _signal.signal(_signal.SIGTERM, original)
+                    runner_mod._signal_event_ctx = None
+                    runner_mod._signal_status = None
+                    runner_mod._signal_status_path = None
+
+    lines = (tmp_path / "events.jsonl").read_text().strip().splitlines()
+    event = json.loads(lines[0])
+    assert event["payload"]["interrupted_stage"] == "unknown"
+    assert runner_mod._signal_event_ctx is None
+
+
+def test_atexit_cleanup_emits_interrupted_event_when_ctx_available(tmp_path):
+    """_atexit_cleanup() writes pipeline.run.interrupted to events.jsonl when ctx is set."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    status_path = str(tmp_path / "status.json")
+
+    ctx = EventContext(
+        run_id="atexit-run-1",
+        branch="feat/stop",
+        work_request={"title": "Test"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    status = {"pipeline_status": "running", "current_stage": "implement", "stop_reason": ""}
+
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = status_path
+    runner_mod._signal_project_status_path = None
+
+    try:
+        with patch("worca.orchestrator.runner.save_status"):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                runner_mod._atexit_cleanup()
+    finally:
+        runner_mod._signal_event_ctx = None
+        runner_mod._signal_status = None
+        runner_mod._signal_status_path = None
+
+    assert (tmp_path / "events.jsonl").exists()
+    lines = (tmp_path / "events.jsonl").read_text().strip().splitlines()
+    assert len(lines) == 1
+    event = json.loads(lines[0])
+    assert event["event_type"] == "pipeline.run.interrupted"
+    assert event["run_id"] == "atexit-run-1"
+    assert event["payload"]["source"] == "atexit"
+    assert event["payload"]["interrupted_stage"] == "implement"
+
+
+def test_atexit_cleanup_sets_interrupted_status_when_ctx_available(tmp_path):
+    """_atexit_cleanup() sets pipeline_status='interrupted' when ctx is set."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    status_path = str(tmp_path / "status.json")
+
+    ctx = EventContext(
+        run_id="atexit-run-2",
+        branch="feat/stop",
+        work_request={"title": "Test"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    status = {"pipeline_status": "running", "current_stage": "test", "stop_reason": ""}
+    saved_statuses = []
+
+    def capture_save(s, path):
+        saved_statuses.append(dict(s))
+
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = status_path
+    runner_mod._signal_project_status_path = None
+
+    try:
+        with patch("worca.orchestrator.runner.save_status", side_effect=capture_save):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                runner_mod._atexit_cleanup()
+    finally:
+        runner_mod._signal_event_ctx = None
+        runner_mod._signal_status = None
+        runner_mod._signal_status_path = None
+
+    assert saved_statuses, "save_status was never called"
+    assert saved_statuses[-1]["pipeline_status"] == "interrupted"
+    # Stop reason must be set so consumers can distinguish atexit from signal.
+    assert saved_statuses[-1]["stop_reason"] == "unexpected_exit"
+
+
+def test_atexit_cleanup_preserves_existing_stop_reason_when_ctx_set(tmp_path):
+    """_atexit_cleanup() does not overwrite a stop_reason that callers set earlier."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    ctx = EventContext(
+        run_id="atexit-run-preserve",
+        branch="feat/preserve",
+        work_request={"title": "Preserve"},
+        events_path=str(tmp_path / "events.jsonl"),
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    status = {"pipeline_status": "running", "current_stage": "test", "stop_reason": "user_stop"}
+    saved_statuses = []
+
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = str(tmp_path / "status.json")
+    runner_mod._signal_project_status_path = None
+
+    try:
+        with patch("worca.orchestrator.runner.save_status",
+                   side_effect=lambda s, _p: saved_statuses.append(dict(s))):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                runner_mod._atexit_cleanup()
+    finally:
+        runner_mod._signal_event_ctx = None
+        runner_mod._signal_status = None
+        runner_mod._signal_status_path = None
+
+    assert saved_statuses[-1]["stop_reason"] == "user_stop"
+
+
+def test_atexit_cleanup_falls_back_to_failed_without_ctx(tmp_path):
+    """_atexit_cleanup() uses 'failed'/'unexpected_exit' when no ctx is set."""
+    import worca.orchestrator.runner as runner_mod
+
+    status_path = str(tmp_path / "status.json")
+    status = {"pipeline_status": "running", "stop_reason": ""}
+    saved_statuses = []
+
+    def capture_save(s, path):
+        saved_statuses.append(dict(s))
+
+    runner_mod._signal_event_ctx = None
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = status_path
+    runner_mod._signal_project_status_path = None
+
+    try:
+        with patch("worca.orchestrator.runner.save_status", side_effect=capture_save):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                runner_mod._atexit_cleanup()
+    finally:
+        runner_mod._signal_status = None
+        runner_mod._signal_status_path = None
+
+    assert saved_statuses, "save_status was never called"
+    assert saved_statuses[-1]["pipeline_status"] == "failed"
+    assert saved_statuses[-1]["stop_reason"] == "unexpected_exit"
+
+
+def test_signal_and_atexit_emit_identical_event_shape(tmp_path):
+    """Both stop paths must emit the same event keys/shape so consumers see one schema."""
+    import signal as _signal
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    def _run_signal_path(events_path):
+        ctx = EventContext(
+            run_id="parity-signal",
+            branch="feat/parity",
+            work_request={"title": "Parity"},
+            events_path=events_path,
+            settings_path="",
+            enabled=True,
+            _webhooks=[],
+            _control_webhooks=[],
+            _shell_hooks={},
+        )
+        status = {"pipeline_status": "running", "current_stage": "implement", "stop_reason": ""}
+        runner_mod._signal_event_ctx = ctx
+        runner_mod._signal_status = status
+        runner_mod._signal_status_path = str(tmp_path / "status_signal.json")
+        runner_mod._signal_project_status_path = None
+        original = _signal.getsignal(_signal.SIGTERM)
+        try:
+            with patch("worca.orchestrator.runner.terminate_current"):
+                with patch("worca.orchestrator.runner.save_status"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        runner_mod._install_signal_handlers()
+                        _signal.getsignal(_signal.SIGTERM)(_signal.SIGTERM, None)
+        finally:
+            _signal.signal(_signal.SIGTERM, original)
+            runner_mod._signal_event_ctx = None
+            runner_mod._signal_status = None
+            runner_mod._signal_status_path = None
+
+    def _run_atexit_path(events_path):
+        ctx = EventContext(
+            run_id="parity-atexit",
+            branch="feat/parity",
+            work_request={"title": "Parity"},
+            events_path=events_path,
+            settings_path="",
+            enabled=True,
+            _webhooks=[],
+            _control_webhooks=[],
+            _shell_hooks={},
+        )
+        status = {"pipeline_status": "running", "current_stage": "implement", "stop_reason": ""}
+        runner_mod._signal_event_ctx = ctx
+        runner_mod._signal_status = status
+        runner_mod._signal_status_path = str(tmp_path / "status_atexit.json")
+        runner_mod._signal_project_status_path = None
+        try:
+            with patch("worca.orchestrator.runner.save_status"):
+                with patch("worca.orchestrator.runner._remove_pid"):
+                    runner_mod._atexit_cleanup()
+        finally:
+            runner_mod._signal_event_ctx = None
+            runner_mod._signal_status = None
+            runner_mod._signal_status_path = None
+
+    sig_path = tmp_path / "events_signal.jsonl"
+    atexit_path = tmp_path / "events_atexit.jsonl"
+    _run_signal_path(str(sig_path))
+    _run_atexit_path(str(atexit_path))
+
+    sig_event = json.loads(sig_path.read_text().strip().splitlines()[0])
+    atexit_event = json.loads(atexit_path.read_text().strip().splitlines()[0])
+
+    # Top-level keys identical.
+    assert set(sig_event.keys()) == set(atexit_event.keys())
+    # Nested keys identical.
+    assert set(sig_event["pipeline"].keys()) == set(atexit_event["pipeline"].keys())
+    assert set(sig_event["payload"].keys()) == set(atexit_event["payload"].keys())
+    # Static fields match.
+    assert sig_event["schema_version"] == atexit_event["schema_version"] == "1"
+    assert sig_event["event_type"] == atexit_event["event_type"] == "pipeline.run.interrupted"
+    assert sig_event["payload"]["interrupted_stage"] == atexit_event["payload"]["interrupted_stage"]
+    # Source distinguishes the two paths.
+    assert sig_event["payload"]["source"] == "signal"
+    assert atexit_event["payload"]["source"] == "atexit"
+
+
+def test_emit_interrupted_event_swallows_io_failure(tmp_path):
+    """The helper must never propagate exceptions — callers run in signal/atexit context."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    # Point events_path at the directory itself so open(..., "a") raises IsADirectoryError.
+    bad_path = str(tmp_path)
+
+    ctx = EventContext(
+        run_id="io-fail",
+        branch="feat/io",
+        work_request={"title": "IO"},
+        events_path=bad_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+    status = {"pipeline_status": "running", "current_stage": "implement"}
+
+    # Must not raise.
+    runner_mod._emit_interrupted_event_signal_safe(ctx, status)
+
+
+def test_emit_interrupted_event_uses_started_at_for_elapsed_ms(tmp_path):
+    """elapsed_ms is computed from status.started_at (not hardcoded to 0)."""
+    from datetime import datetime, timezone, timedelta
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    started = (datetime.now(timezone.utc) - timedelta(milliseconds=2500)).isoformat()
+
+    ctx = EventContext(
+        run_id="elapsed-1",
+        branch="feat/elapsed",
+        work_request={"title": "Elapsed"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+    status = {"pipeline_status": "running", "current_stage": "implement", "started_at": started}
+
+    runner_mod._emit_interrupted_event_signal_safe(ctx, status)
+
+    event = json.loads((tmp_path / "events.jsonl").read_text().strip())
+    assert event["payload"]["elapsed_ms"] >= 2500
+    assert event["payload"]["elapsed_ms"] < 60_000
+
+
+def test_emit_interrupted_event_falls_back_to_zero_on_bad_started_at(tmp_path):
+    """elapsed_ms falls back to 0 when started_at is missing or unparseable."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    ctx = EventContext(
+        run_id="elapsed-2",
+        branch="feat/elapsed",
+        work_request={"title": "Elapsed"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+    status = {"pipeline_status": "running", "current_stage": "plan", "started_at": "garbage"}
+
+    runner_mod._emit_interrupted_event_signal_safe(ctx, status)
+
+    event = json.loads((tmp_path / "events.jsonl").read_text().strip())
+    assert event["payload"]["elapsed_ms"] == 0
+
+
+def test_signal_handler_stashes_event_for_deferred_dispatch(tmp_path):
+    """Signal-safe write must stash the event in _pending_signal_event for later dispatch."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    ctx = EventContext(
+        run_id="stash-1",
+        branch="feat/stash",
+        work_request={"title": "Stash"},
+        events_path=str(tmp_path / "events.jsonl"),
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+    status = {"pipeline_status": "running", "current_stage": "implement", "started_at": ""}
+
+    runner_mod._pending_signal_event = None
+    try:
+        runner_mod._emit_interrupted_event_signal_safe(ctx, status)
+        stashed = runner_mod._pending_signal_event
+    finally:
+        runner_mod._pending_signal_event = None
+
+    assert stashed is not None
+    assert stashed["event_type"] == "pipeline.run.interrupted"
+    assert stashed["payload"]["source"] == "signal"
+
+
+def test_dispatch_pending_signal_event_fires_webhooks_and_clears(tmp_path):
+    """The deferred-dispatch helper must call dispatch_event and clear the stash (idempotent)."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    delivered = []
+
+    def fake_dispatch(_ctx, event):
+        delivered.append(event)
+
+    ctx = EventContext(
+        run_id="dispatch-1",
+        branch="feat/dispatch",
+        work_request={"title": "Dispatch"},
+        events_path=str(tmp_path / "events.jsonl"),
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    sample = {"event_type": "pipeline.run.interrupted", "payload": {"source": "signal"}}
+    runner_mod._pending_signal_event = sample
+
+    try:
+        with patch("worca.orchestrator.runner.dispatch_event", side_effect=fake_dispatch):
+            runner_mod._dispatch_pending_signal_event(ctx)
+            # Second call must be a no-op (stash cleared after first dispatch).
+            runner_mod._dispatch_pending_signal_event(ctx)
+    finally:
+        runner_mod._pending_signal_event = None
+
+    assert delivered == [sample], "dispatch_event must be called exactly once"
+    assert runner_mod._pending_signal_event is None
+
+
+def test_dispatch_pending_signal_event_noop_when_unset(tmp_path):
+    """When no signal happened, deferred dispatch must be a no-op (no error, no calls)."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    ctx = EventContext(
+        run_id="noop",
+        branch="feat/noop",
+        work_request={"title": "Noop"},
+        events_path=str(tmp_path / "events.jsonl"),
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    runner_mod._pending_signal_event = None
+    with patch("worca.orchestrator.runner.dispatch_event") as m:
+        runner_mod._dispatch_pending_signal_event(ctx)
+    m.assert_not_called()
+
+
+def test_atexit_full_emit_dispatches_webhooks_and_hooks(tmp_path):
+    """When atexit emits an interrupted event (status was 'running'), it must use full emit_event
+    so webhooks AND integration shell-hooks fire — not just write to events.jsonl.
+    """
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    delivered_webhooks = []
+    dispatched_hooks = []
+
+    def fake_deliver(event, wh):
+        delivered_webhooks.append((event["event_type"], wh))
+
+    def fake_dispatch_hooks(event, hooks):
+        dispatched_hooks.append((event["event_type"], hooks))
+
+    ctx = EventContext(
+        run_id="atexit-fire",
+        branch="feat/fire",
+        work_request={"title": "Fire"},
+        events_path=str(tmp_path / "events.jsonl"),
+        settings_path="",
+        enabled=True,
+        _webhooks=[{"url": "https://example.test/webhook"}],
+        _control_webhooks=[],
+        _shell_hooks={"pipeline.run.interrupted": [{"command": "echo hi"}]},
+    )
+
+    status = {"pipeline_status": "running", "current_stage": "plan", "stop_reason": "", "started_at": ""}
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = str(tmp_path / "status.json")
+    runner_mod._signal_project_status_path = None
+    runner_mod._pending_signal_event = None
+
+    try:
+        with patch("worca.events.webhook.deliver_webhook", side_effect=fake_deliver):
+            with patch("worca.orchestrator.events.dispatch_shell_hooks", side_effect=fake_dispatch_hooks):
+                with patch("worca.orchestrator.runner.save_status"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        runner_mod._atexit_cleanup()
+    finally:
+        runner_mod._signal_event_ctx = None
+        runner_mod._signal_status = None
+        runner_mod._signal_status_path = None
+        runner_mod._pending_signal_event = None
+
+    assert len(delivered_webhooks) == 1, "webhook must fire from atexit path"
+    assert delivered_webhooks[0][0] == "pipeline.run.interrupted"
+    assert len(dispatched_hooks) == 1, "shell hook (integration) must fire from atexit path"
+    assert dispatched_hooks[0][0] == "pipeline.run.interrupted"
+
+
+def test_atexit_dispatches_pending_signal_event_when_status_already_interrupted(tmp_path):
+    """If the signal handler ran but finally didn't, atexit must dispatch the stashed event."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    delivered = []
+
+    ctx = EventContext(
+        run_id="atexit-stash",
+        branch="feat/stash",
+        work_request={"title": "Stash"},
+        events_path=str(tmp_path / "events.jsonl"),
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+
+    sample = {"event_type": "pipeline.run.interrupted", "payload": {"source": "signal"}}
+
+    # Status reflects post-signal state: already "interrupted" with stop_reason=signal.
+    status = {"pipeline_status": "interrupted", "stop_reason": "signal", "current_stage": "plan"}
+    runner_mod._signal_event_ctx = ctx
+    runner_mod._signal_status = status
+    runner_mod._signal_status_path = str(tmp_path / "status.json")
+    runner_mod._signal_project_status_path = None
+    runner_mod._pending_signal_event = sample
+
+    try:
+        with patch("worca.orchestrator.runner.dispatch_event",
+                   side_effect=lambda c, e: delivered.append(e)):
+            with patch("worca.orchestrator.runner._remove_pid"):
+                runner_mod._atexit_cleanup()
+    finally:
+        runner_mod._signal_event_ctx = None
+        runner_mod._signal_status = None
+        runner_mod._signal_status_path = None
+        runner_mod._pending_signal_event = None
+
+    assert delivered == [sample], "atexit must dispatch the stashed signal event when finally didn't"

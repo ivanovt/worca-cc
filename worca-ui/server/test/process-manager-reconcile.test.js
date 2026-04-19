@@ -50,7 +50,7 @@ describe('reconcileStatus', () => {
 
     expect(fixed).toBe(true);
     const status = readStatus(worcaDir, 'run-001');
-    expect(status.pipeline_status).toBe('failed');
+    expect(status.pipeline_status).toBe('interrupted');
     expect(status.stop_reason).toBe('stale');
   });
 
@@ -124,6 +124,127 @@ describe('reconcileStatus', () => {
     expect(fixed).toBe(false);
   });
 
+  it('appends synthetic event with Python schema fields when no terminal event exists', () => {
+    writeStatus(worcaDir, 'run-evt-1', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-1',
+      branch: 'feat/reconcile',
+      work_request: { title: 'Test reconcile' },
+      current_stage: 'plan',
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-1', 'events.jsonl');
+    const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+    const evt = JSON.parse(lines[0]);
+    expect(evt.schema_version).toBe('1');
+    expect(evt.event_type).toBe('pipeline.run.interrupted');
+    expect(evt.event_id).toBeDefined();
+    expect(evt.timestamp).toBeDefined();
+    expect(evt.run_id).toBe('run-evt-1');
+    expect(evt.pipeline).toEqual({
+      branch: 'feat/reconcile',
+      work_request: { title: 'Test reconcile' },
+    });
+    expect(evt.payload).toEqual({
+      interrupted_stage: 'plan',
+      elapsed_ms: 0,
+      source: 'reconcile',
+    });
+    expect(evt.event).toBeUndefined();
+    expect(evt.id).toBeUndefined();
+    expect(evt.ts).toBeUndefined();
+  });
+
+  it('synthetic event falls back to nulls/unknown when status fields are missing', () => {
+    writeStatus(worcaDir, 'run-evt-3', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-3',
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-3', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.pipeline).toEqual({ branch: null, work_request: null });
+    expect(evt.payload.interrupted_stage).toBe('unknown');
+    expect(evt.payload.source).toBe('reconcile');
+  });
+
+  it('synthetic event uses the runId directory as run_id fallback when status omits it', () => {
+    writeStatus(worcaDir, 'run-evt-4', {
+      pipeline_status: 'running',
+      branch: 'feat/x',
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-4', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.run_id).toBe('run-evt-4');
+  });
+
+  it('synthetic event computes elapsed_ms from status.started_at', () => {
+    const startedAt = new Date(Date.now() - 1500).toISOString();
+    writeStatus(worcaDir, 'run-evt-5', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-5',
+      started_at: startedAt,
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-5', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.payload.elapsed_ms).toBeGreaterThanOrEqual(1500);
+    expect(evt.payload.elapsed_ms).toBeLessThan(60_000);
+  });
+
+  it('synthetic event falls back to elapsed_ms=0 when started_at is unparseable', () => {
+    writeStatus(worcaDir, 'run-evt-6', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-6',
+      started_at: 'not-a-date',
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-6', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.payload.elapsed_ms).toBe(0);
+  });
+
+  it('does not append synthetic event when terminal event already exists', () => {
+    writeStatus(worcaDir, 'run-evt-2', {
+      pipeline_status: 'running',
+      stage: 'implement',
+    });
+    const runDir = join(worcaDir, 'runs', 'run-evt-2');
+    const eventsPath = join(runDir, 'events.jsonl');
+    const existing = {
+      event_type: 'pipeline.run.interrupted',
+      event_id: 'abc',
+      timestamp: '2024-01-01T00:00:00Z',
+      source: 'signal',
+    };
+    writeFileSync(eventsPath, `${JSON.stringify(existing)}\n`, 'utf8');
+
+    reconcileStatus(worcaDir);
+
+    const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+  });
+
   it('fixes multiple stale runs with per-run PID files', () => {
     // Two runs both with stale PID files (non-existent PIDs)
     writeStatus(worcaDir, 'run-multi-1', {
@@ -152,9 +273,13 @@ describe('reconcileStatus', () => {
     const fixed = reconcileStatus(worcaDir);
 
     expect(fixed).toBe(true);
-    expect(readStatus(worcaDir, 'run-multi-1').pipeline_status).toBe('failed');
+    expect(readStatus(worcaDir, 'run-multi-1').pipeline_status).toBe(
+      'interrupted',
+    );
     expect(readStatus(worcaDir, 'run-multi-1').stop_reason).toBe('stale');
-    expect(readStatus(worcaDir, 'run-multi-2').pipeline_status).toBe('failed');
+    expect(readStatus(worcaDir, 'run-multi-2').pipeline_status).toBe(
+      'interrupted',
+    );
     expect(readStatus(worcaDir, 'run-multi-2').stop_reason).toBe('stale');
   });
 });

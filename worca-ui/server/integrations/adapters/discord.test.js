@@ -185,7 +185,7 @@ describe('createDiscordAdapter.send', () => {
     });
     await adapter.send('c', { title: null, body: [], severity: 'info' });
     const [, init] = fetchFn.mock.calls[0];
-    expect(init.headers['Authorization']).toBe('Bot myrawtoken');
+    expect(init.headers.Authorization).toBe('Bot myrawtoken');
   });
 
   it('does not double-prefix Bot when token already starts with Bot', async () => {
@@ -197,7 +197,7 @@ describe('createDiscordAdapter.send', () => {
     });
     await adapter.send('c', { title: null, body: [], severity: 'info' });
     const [, init] = fetchFn.mock.calls[0];
-    expect(init.headers['Authorization']).toBe('Bot alreadyprefixed');
+    expect(init.headers.Authorization).toBe('Bot alreadyprefixed');
   });
 
   it('retries on 429 with retry_after from response', async () => {

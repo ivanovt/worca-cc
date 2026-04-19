@@ -29,4 +29,17 @@ describe('CSS status color variables', () => {
     expect(match[1]).toContain('stroke: var(--status-blocked)');
     expect(match[1]).not.toContain('var(--status-in-progress)');
   });
+
+  it('--status-interrupted uses amber (#f59e0b) for caution/warning state', () => {
+    const match = css.match(/--status-interrupted:\s*([^;]+);/);
+    expect(match).not.toBeNull();
+    expect(match[1].trim()).toBe('#f59e0b');
+  });
+
+  it('.status-interrupted uses var(--status-interrupted) not blue', () => {
+    const match = css.match(/\.status-interrupted\s*\{([^}]+)\}/);
+    expect(match).not.toBeNull();
+    expect(match[1]).toContain('var(--status-interrupted)');
+    expect(match[1]).not.toContain('var(--status-in-progress)');
+  });
 });

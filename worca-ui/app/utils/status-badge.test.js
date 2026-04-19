@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { statusClass, statusIcon } from './status-badge.js';
+import { resolveStatus, statusClass, statusIcon } from './status-badge.js';
 
 describe('status-badge', () => {
   it('maps pending to correct class', () => {
@@ -64,5 +64,25 @@ describe('status-badge', () => {
   });
   it('statusIcon adds icon-spin class for resuming', () => {
     expect(statusIcon('resuming')).toContain('class="icon-spin"');
+  });
+
+  // interrupted status
+  it('maps interrupted to status-interrupted', () => {
+    expect(statusClass('interrupted')).toBe('status-interrupted');
+  });
+  it('statusIcon returns SVG for interrupted', () => {
+    expect(statusIcon('interrupted')).toContain('<svg');
+  });
+  it('statusIcon does NOT add icon-spin for interrupted', () => {
+    expect(statusIcon('interrupted')).not.toContain('icon-spin');
+  });
+  it('resolveStatus returns interrupted for in_progress when not active', () => {
+    expect(resolveStatus('in_progress', false)).toBe('interrupted');
+  });
+  it('resolveStatus preserves in_progress when active', () => {
+    expect(resolveStatus('in_progress', true)).toBe('in_progress');
+  });
+  it('resolveStatus passes through interrupted unchanged', () => {
+    expect(resolveStatus('interrupted', false)).toBe('interrupted');
   });
 });

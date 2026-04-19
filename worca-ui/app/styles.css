@@ -24,6 +24,7 @@
   --status-failed: #ef4444;
   --status-resuming: #3b82f6;
   --status-skipped: #94a3b8;
+  --status-interrupted: #f59e0b;
   /* legacy */
   --status-in-progress: #3b82f6;
   --status-error: #ef4444;
@@ -730,8 +731,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .stage-node.status-interrupted .stage-icon {
-  border-color: var(--status-in-progress);
-  opacity: 0.6;
+  border-color: var(--status-interrupted);
 }
 
 .stage-label {
@@ -1110,8 +1110,7 @@ sl-details.log-history-panel::part(content) {
 }
 
 .status-interrupted {
-  color: var(--status-in-progress);
-  opacity: 0.6;
+  color: var(--status-interrupted);
 }
 
 .status-running {
@@ -4352,23 +4351,12 @@ sl-tooltip.bead-tooltip::part(body) {
   opacity: 0.7;
 }
 
-.ig-card--pending {
-  border-left: 3px solid var(--sl-color-warning-500);
-}
-
 .ig-card-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-top: 0.75rem;
   padding-left: 2.75rem;
-}
-
-.ig-card-pending-hint {
-  font-size: 0.8rem;
-  color: var(--sl-color-warning-700);
-  padding-left: 2.75rem;
-  margin-top: 0.4rem;
 }
 
 .ig-card--disconnected {

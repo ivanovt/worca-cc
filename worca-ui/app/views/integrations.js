@@ -171,34 +171,6 @@ function configuredCard(
   `;
 }
 
-// ── Pending card (configured but adapter not started) ───────────────────
-
-function pendingCard(meta, cfg, { onEdit, onRemove, onToggleEnabled }) {
-  const isEnabled = cfg?.enabled !== false;
-  return html`
-    <div class="ig-card ig-card--pending">
-      <div class="ig-card-header">
-        <span class="ig-card-icon">${unsafeHTML(meta.icon)}</span>
-        <div class="ig-card-title">
-          <span class="ig-card-name">${meta.label}</span>
-          <span class="ig-card-desc">${meta.desc}</span>
-        </div>
-        <sl-badge variant="warning" pill>Not connected</sl-badge>
-      </div>
-      <div class="ig-card-pending-hint">Configuration saved but adapter failed to connect. Check the token and server logs.</div>
-      <div class="ig-card-footer">
-        <div class="ig-card-actions">
-          <sl-button size="small" @click=${onEdit}>Edit</sl-button>
-          <sl-button size="small" variant="danger" outline @click=${onRemove}>Remove</sl-button>
-        </div>
-        <sl-switch size="small" ?checked=${isEnabled}
-          @sl-change=${(e) => onToggleEnabled(e.target.checked)}
-        >${isEnabled ? 'Enabled' : 'Disabled'}</sl-switch>
-      </div>
-    </div>
-  `;
-}
-
 // ── Unconfigured card ───────────────────────────────────────────────────
 
 function unconfiguredCard(

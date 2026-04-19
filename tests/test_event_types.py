@@ -282,6 +282,9 @@ def test_run_interrupted_payload_required_fields():
     p = run_interrupted_payload(interrupted_stage="IMPLEMENT", elapsed_ms=30000)
     assert p["interrupted_stage"] == "IMPLEMENT"
     assert p["elapsed_ms"] == 30000
+    assert p["source"] == "orchestrator"  # default
+    p2 = run_interrupted_payload(interrupted_stage="PLAN", elapsed_ms=1, source="signal")
+    assert p2["source"] == "signal"
 
 
 def test_run_resumed_payload_required_fields():
