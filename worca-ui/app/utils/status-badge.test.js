@@ -85,4 +85,15 @@ describe('status-badge', () => {
   it('resolveStatus passes through interrupted unchanged', () => {
     expect(resolveStatus('interrupted', false)).toBe('interrupted');
   });
+
+  // cancelled status
+  it('maps cancelled to status-cancelled', () => {
+    expect(statusClass('cancelled')).toBe('status-cancelled');
+  });
+  it('statusIcon returns SVG for cancelled', () => {
+    expect(statusIcon('cancelled')).toContain('<svg');
+  });
+  it('statusIcon does NOT add icon-spin for cancelled', () => {
+    expect(statusIcon('cancelled')).not.toContain('icon-spin');
+  });
 });

@@ -23,6 +23,7 @@ const BADGE_VARIANT = {
   in_progress: 'primary',
   error: 'danger',
   interrupted: 'warning',
+  cancelled: 'neutral',
   pending: 'neutral',
 };
 

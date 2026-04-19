@@ -1612,6 +1612,8 @@ function contentHeaderView() {
         paused: 'warning',
         completed: 'success',
         failed: 'danger',
+        cancelled: 'neutral',
+        interrupted: 'warning',
       };
       const variant = variantMap[ps] || 'neutral';
       const label = ps.charAt(0).toUpperCase() + ps.slice(1);

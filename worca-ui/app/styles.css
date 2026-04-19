@@ -25,6 +25,7 @@
   --status-resuming: #3b82f6;
   --status-skipped: #94a3b8;
   --status-interrupted: #f59e0b;
+  --status-cancelled: #94a3b8;
   /* legacy */
   --status-in-progress: #3b82f6;
   --status-error: #ef4444;
@@ -1129,6 +1130,10 @@ sl-details.log-history-panel::part(content) {
   color: var(--status-resuming);
 }
 
+.status-cancelled {
+  color: var(--status-cancelled);
+}
+
 /* --- 18b. Control Buttons --- */
 .action-btn--amber {
   border-color: var(--status-paused);
@@ -1286,6 +1291,7 @@ sl-details.log-history-panel::part(content) {
 .run-card.status-completed { border-left: 3px solid var(--status-completed); }
 .run-card.status-failed   { border-left: 3px solid var(--status-failed); }
 .run-card.status-pending  { border-left: 3px solid var(--status-pending); }
+.run-card.status-cancelled { border-left: 3px solid var(--status-cancelled); }
 
 /* --- 21. Dashboard --- */
 .dashboard {

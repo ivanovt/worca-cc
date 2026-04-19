@@ -152,6 +152,7 @@ function _badgeVariant(status) {
   if (status === 'error') return 'danger';
   if (status === 'in_progress') return 'primary';
   if (status === 'interrupted') return 'warning';
+  if (status === 'cancelled') return 'neutral';
   return 'neutral';
 }
 
