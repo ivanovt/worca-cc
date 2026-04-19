@@ -3782,3 +3782,82 @@ def test_signal_and_atexit_emit_identical_event_shape(tmp_path):
     # Source distinguishes the two paths.
     assert sig_event["payload"]["source"] == "signal"
     assert atexit_event["payload"]["source"] == "atexit"
+
+
+def test_emit_interrupted_event_swallows_io_failure(tmp_path):
+    """The helper must never propagate exceptions — callers run in signal/atexit context."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    # Point events_path at the directory itself so open(..., "a") raises IsADirectoryError.
+    bad_path = str(tmp_path)
+
+    ctx = EventContext(
+        run_id="io-fail",
+        branch="feat/io",
+        work_request={"title": "IO"},
+        events_path=bad_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+    status = {"pipeline_status": "running", "current_stage": "implement"}
+
+    # Must not raise.
+    runner_mod._emit_interrupted_event(ctx, status, "signal")
+
+
+def test_emit_interrupted_event_uses_started_at_for_elapsed_ms(tmp_path):
+    """elapsed_ms is computed from status.started_at (not hardcoded to 0)."""
+    from datetime import datetime, timezone, timedelta
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    started = (datetime.now(timezone.utc) - timedelta(milliseconds=2500)).isoformat()
+
+    ctx = EventContext(
+        run_id="elapsed-1",
+        branch="feat/elapsed",
+        work_request={"title": "Elapsed"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+    status = {"pipeline_status": "running", "current_stage": "implement", "started_at": started}
+
+    runner_mod._emit_interrupted_event(ctx, status, "signal")
+
+    event = json.loads((tmp_path / "events.jsonl").read_text().strip())
+    assert event["payload"]["elapsed_ms"] >= 2500
+    assert event["payload"]["elapsed_ms"] < 60_000
+
+
+def test_emit_interrupted_event_falls_back_to_zero_on_bad_started_at(tmp_path):
+    """elapsed_ms falls back to 0 when started_at is missing or unparseable."""
+    import worca.orchestrator.runner as runner_mod
+    from worca.events.emitter import EventContext
+
+    events_path = str(tmp_path / "events.jsonl")
+    ctx = EventContext(
+        run_id="elapsed-2",
+        branch="feat/elapsed",
+        work_request={"title": "Elapsed"},
+        events_path=events_path,
+        settings_path="",
+        enabled=True,
+        _webhooks=[],
+        _control_webhooks=[],
+        _shell_hooks={},
+    )
+    status = {"pipeline_status": "running", "current_stage": "plan", "started_at": "garbage"}
+
+    runner_mod._emit_interrupted_event(ctx, status, "signal")
+
+    event = json.loads((tmp_path / "events.jsonl").read_text().strip())
+    assert event["payload"]["elapsed_ms"] == 0

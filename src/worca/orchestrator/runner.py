@@ -340,12 +340,32 @@ def _remove_pid(status_path: str) -> None:
         pass
 
 
+def _elapsed_ms_since(started_at_iso: str) -> int:
+    """Return milliseconds elapsed since an ISO 8601 timestamp, or 0 if unparseable."""
+    if not started_at_iso:
+        return 0
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        started = _dt.fromisoformat(started_at_iso)
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=_tz.utc)
+        delta = _dt.now(_tz.utc) - started
+        return max(0, int(delta.total_seconds() * 1000))
+    except (ValueError, TypeError):
+        return 0
+
+
 def _emit_interrupted_event(ctx, status, source: str) -> None:
-    """Append a pipeline.run.interrupted event using only signal-safe file I/O.
+    """Append a pipeline.run.interrupted event from a signal handler or atexit hook.
 
     Shared by the signal handler and atexit cleanup so the on-disk event shape
     stays in lockstep across both paths. Swallows all errors — callers run in
     contexts where exceptions cannot be propagated.
+
+    Signal-safety note: json.dumps, uuid.uuid4, and open() are not POSIX
+    async-signal-safe in the strict sense. This relies on CPython's behavior of
+    delivering signals between bytecode operations rather than mid-instruction,
+    which makes it safe in practice but not portable to other Python runtimes.
     """
     import json as _json
     import uuid as _uuid
@@ -365,7 +385,7 @@ def _emit_interrupted_event(ctx, status, source: str) -> None:
             },
             "payload": {
                 "interrupted_stage": status.get("current_stage", "unknown"),
-                "elapsed_ms": 0,
+                "elapsed_ms": _elapsed_ms_since(status.get("started_at", "")),
                 "source": source,
             },
         }
@@ -426,17 +446,16 @@ def _atexit_cleanup():
     if _signal_status is not None and _signal_status_path is not None:
         try:
             if _signal_status.get("pipeline_status") == "running":
+                # ctx-present → emit interrupted event; ctx-absent → fall back to failed.
+                # Both paths default stop_reason to "unexpected_exit" and persist status.
+                _signal_status["pipeline_status"] = (
+                    "interrupted" if _signal_event_ctx is not None else "failed"
+                )
+                if not _signal_status.get("stop_reason"):
+                    _signal_status["stop_reason"] = "unexpected_exit"
+                save_status(_signal_status, _signal_status_path)
                 if _signal_event_ctx is not None:
-                    _signal_status["pipeline_status"] = "interrupted"
-                    if not _signal_status.get("stop_reason"):
-                        _signal_status["stop_reason"] = "unexpected_exit"
-                    save_status(_signal_status, _signal_status_path)
                     _emit_interrupted_event(_signal_event_ctx, _signal_status, "atexit")
-                else:
-                    _signal_status["pipeline_status"] = "failed"
-                    if not _signal_status.get("stop_reason"):
-                        _signal_status["stop_reason"] = "unexpected_exit"
-                    save_status(_signal_status, _signal_status_path)
         except Exception:
             pass
         # Clean up PID files (per-run + project-level)

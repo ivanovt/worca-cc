@@ -190,6 +190,40 @@ describe('reconcileStatus', () => {
     expect(evt.run_id).toBe('run-evt-4');
   });
 
+  it('synthetic event computes elapsed_ms from status.started_at', () => {
+    const startedAt = new Date(Date.now() - 1500).toISOString();
+    writeStatus(worcaDir, 'run-evt-5', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-5',
+      started_at: startedAt,
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-5', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.payload.elapsed_ms).toBeGreaterThanOrEqual(1500);
+    expect(evt.payload.elapsed_ms).toBeLessThan(60_000);
+  });
+
+  it('synthetic event falls back to elapsed_ms=0 when started_at is unparseable', () => {
+    writeStatus(worcaDir, 'run-evt-6', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-6',
+      started_at: 'not-a-date',
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-6', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.payload.elapsed_ms).toBe(0);
+  });
+
   it('does not append synthetic event when terminal event already exists', () => {
     writeStatus(worcaDir, 'run-evt-2', {
       pipeline_status: 'running',

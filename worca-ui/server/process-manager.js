@@ -29,6 +29,13 @@ const TERMINAL_EVENTS = [
   'pipeline.run.completed',
 ];
 
+function elapsedMsSince(startedAtIso) {
+  if (!startedAtIso) return 0;
+  const started = Date.parse(startedAtIso);
+  if (Number.isNaN(started)) return 0;
+  return Math.max(0, Date.now() - started);
+}
+
 /**
  * Write content to a temp file with restricted permissions (0o600) and return its path.
  * Used to avoid E2BIG when passing large prompts as CLI arguments.
@@ -220,7 +227,7 @@ export class ProcessManager {
             },
             payload: {
               interrupted_stage: status.current_stage ?? 'unknown',
-              elapsed_ms: 0,
+              elapsed_ms: elapsedMsSince(status.started_at),
               source: 'reconcile',
             },
           };
