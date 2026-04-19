@@ -49,7 +49,7 @@ describe('reconcileStatus', () => {
 
     expect(fixed).toBe(true);
     const status = readStatus(worcaDir, 'run-001');
-    expect(status.pipeline_status).toBe('interrupted');
+    expect(status.pipeline_status).toBe('failed');
     expect(status.stop_reason).toBe('stale');
   });
 
@@ -267,13 +267,9 @@ describe('reconcileStatus', () => {
     const fixed = await reconcileStatus(worcaDir);
 
     expect(fixed).toBe(true);
-    expect(readStatus(worcaDir, 'run-multi-1').pipeline_status).toBe(
-      'interrupted',
-    );
+    expect(readStatus(worcaDir, 'run-multi-1').pipeline_status).toBe('failed');
     expect(readStatus(worcaDir, 'run-multi-1').stop_reason).toBe('stale');
-    expect(readStatus(worcaDir, 'run-multi-2').pipeline_status).toBe(
-      'interrupted',
-    );
+    expect(readStatus(worcaDir, 'run-multi-2').pipeline_status).toBe('failed');
     expect(readStatus(worcaDir, 'run-multi-2').stop_reason).toBe('stale');
   });
 });

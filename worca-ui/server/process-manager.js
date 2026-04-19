@@ -185,8 +185,7 @@ export class ProcessManager {
       if (!status.stop_reason) {
         status.stop_reason = 'stale';
       }
-      status.pipeline_status =
-        status.stop_reason === 'stale' ? 'interrupted' : 'failed';
+      status.pipeline_status = 'failed';
       try {
         writeFileSync(
           statusPath,
@@ -224,25 +223,9 @@ export class ProcessManager {
           elapsed_ms: elapsedMsSince(status.started_at),
           source: 'stale',
         };
-        try {
-          const evt = {
-            schema_version: '1',
-            event_id: randomUUID(),
-            event_type: 'pipeline.run.interrupted',
-            timestamp: new Date().toISOString(),
-            run_id: status.run_id ?? runId,
-            pipeline: {
-              branch: status.branch ?? null,
-              work_request: status.work_request ?? null,
-            },
-            payload: { ...payload, source: 'reconcile' },
-          };
-          appendFileSync(eventsPath, `${JSON.stringify(evt)}\n`, 'utf8');
-        } catch {
-          /* ignore */
-        }
 
         if (this.settingsPath) {
+          // dispatchExternal writes to events.jsonl via Python's emit_event
           dispatches.push(
             dispatchExternal({
               runDir: join(this.worcaDir, 'runs', runId),
@@ -251,6 +234,25 @@ export class ProcessManager {
               payload,
             }).catch(() => {}),
           );
+        } else {
+          // No settingsPath → can't dispatch; write a local synthetic event
+          try {
+            const evt = {
+              schema_version: '1',
+              event_id: randomUUID(),
+              event_type: 'pipeline.run.interrupted',
+              timestamp: new Date().toISOString(),
+              run_id: status.run_id ?? runId,
+              pipeline: {
+                branch: status.branch ?? null,
+                work_request: status.work_request ?? null,
+              },
+              payload: { ...payload, source: 'reconcile' },
+            };
+            appendFileSync(eventsPath, `${JSON.stringify(evt)}\n`, 'utf8');
+          } catch {
+            /* ignore */
+          }
         }
       }
     }

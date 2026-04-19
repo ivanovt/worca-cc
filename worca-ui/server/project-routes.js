@@ -872,7 +872,7 @@ export function createProjectScopedRoutes({
         .json({ ok: false, error: `Run "${runId}" not found` });
     }
     try {
-      const st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      let st = JSON.parse(readFileSync(statusPath, 'utf8'));
       if (
         st.pipeline_status === 'completed' ||
         st.pipeline_status === 'cancelled'
@@ -888,6 +888,12 @@ export function createProjectScopedRoutes({
           await req.project.pm.stopPipelineSync(runId, { timeoutMs: 5000 });
         } catch {
           /* already-dead is fine; continue to cancel state-write */
+        }
+        // Re-read: Python's signal/atexit handler may have updated status.json
+        try {
+          st = JSON.parse(readFileSync(statusPath, 'utf8'));
+        } catch {
+          /* use pre-stop snapshot */
         }
       }
 
@@ -913,6 +919,12 @@ export function createProjectScopedRoutes({
           elapsed_ms: elapsedMs,
           source: 'user_cancel',
         },
+      }).then((result) => {
+        if (!result.ok) {
+          console.error(
+            `[cancel] dispatchExternal failed for run ${runId}: ${result.reason}${result.stderr ? ` — ${result.stderr}` : ''}`,
+          );
+        }
       });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
