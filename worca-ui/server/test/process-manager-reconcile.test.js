@@ -50,7 +50,7 @@ describe('reconcileStatus', () => {
 
     expect(fixed).toBe(true);
     const status = readStatus(worcaDir, 'run-001');
-    expect(status.pipeline_status).toBe('failed');
+    expect(status.pipeline_status).toBe('interrupted');
     expect(status.stop_reason).toBe('stale');
   });
 
@@ -124,6 +124,50 @@ describe('reconcileStatus', () => {
     expect(fixed).toBe(false);
   });
 
+  it('appends synthetic event with Python schema fields when no terminal event exists', () => {
+    writeStatus(worcaDir, 'run-evt-1', {
+      pipeline_status: 'running',
+      run_id: 'run-evt-1',
+      stage: 'plan',
+    });
+
+    reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-evt-1', 'events.jsonl');
+    const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+    const evt = JSON.parse(lines[0]);
+    expect(evt.event_type).toBe('pipeline.run.interrupted');
+    expect(evt.event_id).toBeDefined();
+    expect(evt.timestamp).toBeDefined();
+    expect(evt.source).toBe('reconcile');
+    expect(evt.run_id).toBe('run-evt-1');
+    expect(evt.event).toBeUndefined();
+    expect(evt.id).toBeUndefined();
+    expect(evt.ts).toBeUndefined();
+  });
+
+  it('does not append synthetic event when terminal event already exists', () => {
+    writeStatus(worcaDir, 'run-evt-2', {
+      pipeline_status: 'running',
+      stage: 'implement',
+    });
+    const runDir = join(worcaDir, 'runs', 'run-evt-2');
+    const eventsPath = join(runDir, 'events.jsonl');
+    const existing = {
+      event_type: 'pipeline.run.interrupted',
+      event_id: 'abc',
+      timestamp: '2024-01-01T00:00:00Z',
+      source: 'signal',
+    };
+    writeFileSync(eventsPath, `${JSON.stringify(existing)}\n`, 'utf8');
+
+    reconcileStatus(worcaDir);
+
+    const lines = readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+  });
+
   it('fixes multiple stale runs with per-run PID files', () => {
     // Two runs both with stale PID files (non-existent PIDs)
     writeStatus(worcaDir, 'run-multi-1', {
@@ -152,9 +196,13 @@ describe('reconcileStatus', () => {
     const fixed = reconcileStatus(worcaDir);
 
     expect(fixed).toBe(true);
-    expect(readStatus(worcaDir, 'run-multi-1').pipeline_status).toBe('failed');
+    expect(readStatus(worcaDir, 'run-multi-1').pipeline_status).toBe(
+      'interrupted',
+    );
     expect(readStatus(worcaDir, 'run-multi-1').stop_reason).toBe('stale');
-    expect(readStatus(worcaDir, 'run-multi-2').pipeline_status).toBe('failed');
+    expect(readStatus(worcaDir, 'run-multi-2').pipeline_status).toBe(
+      'interrupted',
+    );
     expect(readStatus(worcaDir, 'run-multi-2').stop_reason).toBe('stale');
   });
 });

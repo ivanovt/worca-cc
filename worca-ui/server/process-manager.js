@@ -4,8 +4,9 @@
  */
 
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   mkdirSync,
@@ -21,6 +22,12 @@ import { join } from 'node:path';
 
 /** Byte threshold — must match claude_cli.py _ARG_INLINE_LIMIT */
 const ARG_INLINE_LIMIT = 128 * 1024;
+
+const TERMINAL_EVENTS = [
+  'pipeline.run.interrupted',
+  'pipeline.run.failed',
+  'pipeline.run.completed',
+];
 
 /**
  * Write content to a temp file with restricted permissions (0o600) and return its path.
@@ -163,10 +170,11 @@ export class ProcessManager {
 
       if (status.pipeline_status !== 'running') continue;
 
-      status.pipeline_status = 'failed';
       if (!status.stop_reason) {
         status.stop_reason = 'stale';
       }
+      status.pipeline_status =
+        status.stop_reason === 'stale' ? 'interrupted' : 'failed';
       try {
         writeFileSync(
           statusPath,
@@ -176,6 +184,41 @@ export class ProcessManager {
         fixed = true;
       } catch {
         /* ignore */
+      }
+
+      // Append synthetic interrupted event if no terminal event exists yet
+      const eventsPath = join(this.worcaDir, 'runs', runId, 'events.jsonl');
+      let hasTerminalEvent = false;
+      if (existsSync(eventsPath)) {
+        try {
+          const lines = readFileSync(eventsPath, 'utf8')
+            .split('\n')
+            .filter(Boolean);
+          hasTerminalEvent = lines.some((line) => {
+            try {
+              const evt = JSON.parse(line);
+              return TERMINAL_EVENTS.includes(evt.event_type);
+            } catch {
+              return false;
+            }
+          });
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!hasTerminalEvent) {
+        try {
+          const evt = {
+            event_type: 'pipeline.run.interrupted',
+            event_id: randomUUID(),
+            timestamp: new Date().toISOString(),
+            source: 'reconcile',
+            ...(status.run_id ? { run_id: status.run_id } : {}),
+          };
+          appendFileSync(eventsPath, `${JSON.stringify(evt)}\n`, 'utf8');
+        } catch {
+          /* ignore */
+        }
       }
     }
 

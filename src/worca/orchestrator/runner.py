@@ -115,6 +115,7 @@ _shutdown_requested = False
 _signal_status = None
 _signal_status_path = None
 _signal_project_status_path = None  # project-level status.json for PID cleanup
+_signal_event_ctx = None  # set to EventContext when run starts; signal-safe event emission
 
 
 def _check_control_file(
@@ -347,15 +348,41 @@ def _install_signal_handlers():
         global _shutdown_requested
         _shutdown_requested = True
         terminate_current()
-        # Layer 1: immediately persist failed status on signal
+        # Layer 1: immediately persist interrupted status on signal
         if _signal_status is not None and _signal_status_path is not None:
             try:
-                _signal_status["pipeline_status"] = "failed"
+                _signal_status["pipeline_status"] = "interrupted"
                 if not _signal_status.get("stop_reason"):
                     _signal_status["stop_reason"] = "signal"
                 save_status(_signal_status, _signal_status_path)
             except Exception:
                 pass
+            # Emit pipeline.run.interrupted via signal-safe file I/O only
+            if _signal_event_ctx is not None:
+                try:
+                    interrupted_stage = _signal_status.get("current_stage", "unknown")
+                    import json as _json
+                    import uuid as _uuid
+                    from datetime import datetime as _dt, timezone as _tz
+                    event = {
+                        "schema_version": "1",
+                        "event_id": str(_uuid.uuid4()),
+                        "event_type": RUN_INTERRUPTED,
+                        "timestamp": _dt.now(_tz.utc).isoformat(),
+                        "run_id": _signal_event_ctx.run_id,
+                        "pipeline": {
+                            "branch": _signal_event_ctx.branch,
+                            "work_request": _signal_event_ctx.work_request,
+                        },
+                        "payload": {"interrupted_stage": interrupted_stage, "elapsed_ms": 0, "source": "signal"},
+                    }
+                    line = _json.dumps(event, ensure_ascii=False)
+                    fh = open(_signal_event_ctx.events_path, "a", encoding="utf-8")
+                    fh.write(line + "\n")
+                    fh.flush()
+                    fh.close()
+                except Exception:
+                    pass
             # Clean up PID files (per-run + project-level)
             _remove_pid(_signal_status_path)
             if _signal_project_status_path:
@@ -380,10 +407,42 @@ def _atexit_cleanup():
     if _signal_status is not None and _signal_status_path is not None:
         try:
             if _signal_status.get("pipeline_status") == "running":
-                _signal_status["pipeline_status"] = "failed"
-                if not _signal_status.get("stop_reason"):
-                    _signal_status["stop_reason"] = "unexpected_exit"
-                save_status(_signal_status, _signal_status_path)
+                if _signal_event_ctx is not None:
+                    _signal_status["pipeline_status"] = "interrupted"
+                    save_status(_signal_status, _signal_status_path)
+                    # Emit pipeline.run.interrupted via signal-safe file I/O only
+                    try:
+                        import json as _json
+                        import uuid as _uuid
+                        from datetime import datetime as _dt, timezone as _tz
+                        event = {
+                            "schema_version": "1",
+                            "event_id": str(_uuid.uuid4()),
+                            "event_type": RUN_INTERRUPTED,
+                            "timestamp": _dt.now(_tz.utc).isoformat(),
+                            "run_id": _signal_event_ctx.run_id,
+                            "pipeline": {
+                                "branch": _signal_event_ctx.branch,
+                                "work_request": _signal_event_ctx.work_request,
+                            },
+                            "payload": {
+                                "interrupted_stage": _signal_status.get("current_stage", "unknown"),
+                                "elapsed_ms": 0,
+                                "source": "atexit",
+                            },
+                        }
+                        line = _json.dumps(event, ensure_ascii=False)
+                        fh = open(_signal_event_ctx.events_path, "a", encoding="utf-8")
+                        fh.write(line + "\n")
+                        fh.flush()
+                        fh.close()
+                    except Exception:
+                        pass
+                else:
+                    _signal_status["pipeline_status"] = "failed"
+                    if not _signal_status.get("stop_reason"):
+                        _signal_status["stop_reason"] = "unexpected_exit"
+                    save_status(_signal_status, _signal_status_path)
         except Exception:
             pass
         # Clean up PID files (per-run + project-level)
@@ -1036,7 +1095,7 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path
+    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx
     _shutdown_requested = False
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
@@ -1187,6 +1246,7 @@ def run_pipeline(
                 events_path=events_path,
                 settings_path=settings_path,
             )
+            _signal_event_ctx = ctx
             os.environ["WORCA_EVENTS_PATH"] = events_path
 
             # Validate control webhooks: warn and skip those without a secret.
@@ -2608,6 +2668,7 @@ def run_pipeline(
         _signal_status = None
         _signal_status_path = None
         _signal_project_status_path = None
+        _signal_event_ctx = None
         try:
             atexit.unregister(_atexit_cleanup)
         except Exception:
