@@ -620,10 +620,10 @@ function fetchAndUpdateRuns() {
 }
 
 ws.on('run-started', () => {
-  fetchAndUpdateRuns().catch(() => {});
-  // Retry after delay — the Python pipeline process needs time to write
-  // active_run and status.json before discoverRuns() can find the run.
-  setTimeout(() => fetchAndUpdateRuns().catch(() => {}), 2000);
+  // Do not call fetchAndUpdateRuns() here. In multi-project mode it calls
+  // setRunsBulk() which replaces all runs without _project tags, causing
+  // the sidebar counters to drop to zero. The status watcher's runs-list
+  // push (which properly stamps _project) handles the update instead.
 });
 
 ws.on('run-archived', (payload) => {
