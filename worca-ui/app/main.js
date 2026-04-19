@@ -540,6 +540,7 @@ ws.on('run-update', (payload) => {
     if (route.runId === payload.id) {
       autoResetLogFilterOnStageChange(prevRun, payload);
       updateActiveStage(payload);
+      fetchRunBeads(payload.id);
     }
     if (pipelineAction) {
       pipelineAction = null;
