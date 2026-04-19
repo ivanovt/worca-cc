@@ -179,6 +179,56 @@ describe('runListView - onPause/onResume passthrough', () => {
   });
 });
 
+describe('runListView - onStop/onCancel passthrough', () => {
+  it('passes onStop to run card — shows btn-quick-stop for running run', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'running',
+        active: true,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'active', { onSelectRun: () => {}, onStop: () => {} }),
+    );
+    expect(output).toContain('btn-quick-stop');
+  });
+
+  it('passes onCancel to run card — shows btn-quick-cancel for paused run', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'paused',
+        active: false,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'history', {
+        onSelectRun: () => {},
+        onCancel: () => {},
+      }),
+    );
+    expect(output).toContain('btn-quick-cancel');
+  });
+
+  it('does not show btn-quick-stop when onStop not provided', () => {
+    const runs = [
+      {
+        id: '1',
+        pipeline_status: 'running',
+        active: true,
+        started_at: '2026-01-01T00:00:00Z',
+      },
+    ];
+    const output = renderToString(
+      runListView(runs, 'active', { onSelectRun: () => {} }),
+    );
+    expect(output).not.toContain('btn-quick-stop');
+  });
+});
+
 describe('runListView - archived filter chip + archivedRuns', () => {
   const archivedRuns = [
     {

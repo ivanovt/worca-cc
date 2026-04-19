@@ -505,7 +505,7 @@ export function createMessageRouter({
           }
           if (!alive || checks >= maxChecks) {
             clearInterval(pollInterval);
-            reconcileStatus(proj.worcaDir);
+            reconcileStatus(proj.worcaDir, proj.settingsPath);
             proj.wset.statusWatcher?.scheduleRefresh();
           }
         }, 500);

@@ -6,7 +6,8 @@
 
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { Clock, iconSvg, Pause, Play, Square } from '../utils/icons.js';
+import { Clock, iconSvg, Pause, Play, Square, X } from '../utils/icons.js';
+import { actionAllowed } from '../utils/state-actions.js';
 
 const STAGES = ['plan', 'coordinate', 'implement', 'test', 'review'];
 
@@ -51,7 +52,7 @@ function pipelineStatusClass(status) {
 
 export function pipelineCardView(
   pipeline,
-  { onPause, onStop, onResume, onClick } = {},
+  { onPause, onStop, onResume, onCancel, onClick } = {},
 ) {
   const status = pipeline.status;
   return html`
@@ -81,44 +82,62 @@ export function pipelineCardView(
         </span>
         <span class="pipeline-run-id">${pipeline.run_id || ''}</span>
         ${
-          status === 'running'
+          actionAllowed('pause', status) ||
+          actionAllowed('stop', status) ||
+          actionAllowed('resume', status) ||
+          actionAllowed('cancel', status)
             ? html`
               <span
                 class="pipeline-actions"
                 @click=${(e) => e.stopPropagation()}
               >
-                <button
-                  class="pipeline-action-btn"
-                  title="Pause"
-                  @click=${() => onPause?.(pipeline.run_id)}
-                >
-                  ${unsafeHTML(iconSvg(Pause, 14))}
-                </button>
-                <button
-                  class="pipeline-action-btn"
-                  title="Stop"
-                  @click=${() => onStop?.(pipeline.run_id)}
-                >
-                  ${unsafeHTML(iconSvg(Square, 14))}
-                </button>
+                ${
+                  onPause && actionAllowed('pause', status)
+                    ? html`<button
+                        class="pipeline-action-btn"
+                        title="Pause"
+                        @click=${() => onPause(pipeline.run_id)}
+                      >
+                        ${unsafeHTML(iconSvg(Pause, 14))}
+                      </button>`
+                    : nothing
+                }
+                ${
+                  onStop && actionAllowed('stop', status)
+                    ? html`<button
+                        class="pipeline-action-btn"
+                        title="Stop"
+                        @click=${() => onStop(pipeline.run_id)}
+                      >
+                        ${unsafeHTML(iconSvg(Square, 14))}
+                      </button>`
+                    : nothing
+                }
+                ${
+                  onResume && actionAllowed('resume', status)
+                    ? html`<button
+                        class="pipeline-action-btn"
+                        title="Resume"
+                        @click=${() => onResume(pipeline.run_id)}
+                      >
+                        ${unsafeHTML(iconSvg(Play, 14))}
+                      </button>`
+                    : nothing
+                }
+                ${
+                  onCancel && actionAllowed('cancel', status)
+                    ? html`<button
+                        class="pipeline-action-btn"
+                        title="Cancel"
+                        @click=${() => onCancel(pipeline.run_id)}
+                      >
+                        ${unsafeHTML(iconSvg(X, 14))}
+                      </button>`
+                    : nothing
+                }
               </span>
             `
-            : status === 'paused'
-              ? html`
-                <span
-                  class="pipeline-actions"
-                  @click=${(e) => e.stopPropagation()}
-                >
-                  <button
-                    class="pipeline-action-btn"
-                    title="Resume"
-                    @click=${() => onResume?.(pipeline.run_id)}
-                  >
-                    ${unsafeHTML(iconSvg(Play, 14))}
-                  </button>
-                </span>
-              `
-              : nothing
+            : nothing
         }
       </div>
     </div>
@@ -127,7 +146,7 @@ export function pipelineCardView(
 
 export function multiPipelineDashboardView(
   pipelines,
-  { onPause, onStop, onResume, onClick } = {},
+  { onPause, onStop, onResume, onCancel, onClick } = {},
 ) {
   const entries = Object.values(pipelines || {});
   if (entries.length === 0) return nothing;
@@ -137,7 +156,7 @@ export function multiPipelineDashboardView(
   const completed = entries.filter(
     (p) => p.status !== 'running' && p.status !== 'paused',
   );
-  const cardOpts = { onPause, onStop, onResume, onClick };
+  const cardOpts = { onPause, onStop, onResume, onCancel, onClick };
 
   return html`
     <div class="multi-pipeline-section">

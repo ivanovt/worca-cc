@@ -1264,9 +1264,44 @@ function handleStopRun(runId) {
             method: 'POST',
           });
           const data = await res.json();
-          if (!data.ok) showActionError(data.error || 'Failed to stop run');
+          if (res.status === 409 && data.code === 'no_running_process') {
+            showActionError(
+              'Process is no longer running. Use Cancel to force the run into cancelled state.',
+            );
+          } else if (!data.ok) {
+            showActionError(data.error || 'Failed to stop run');
+          }
         } catch (err) {
           showActionError(err?.message || 'Failed to stop run');
+        } finally {
+          _controlPending = null;
+          rerender();
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+function handleCancelRun(runId) {
+  showConfirm(
+    {
+      label: 'Cancel Pipeline?',
+      message:
+        'This will force the run into cancelled state. Any running process will be terminated.',
+      confirmLabel: 'Cancel Run',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        _controlPending = { action: 'cancel', runId };
+        rerender();
+        try {
+          const res = await fetch(projectUrl(`/runs/${runId}/cancel`), {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) showActionError(data.error || 'Failed to cancel run');
+        } catch (err) {
+          showActionError(err?.message || 'Failed to cancel run');
         } finally {
           _controlPending = null;
           rerender();
@@ -2024,6 +2059,8 @@ function mainContentView() {
     return runListView(runs, 'history', {
       onSelectRun: handleSelectRun,
       onResume: handleResumeRun,
+      onStop: handleStopRun,
+      onCancel: handleCancelRun,
       onArchive: archiveRun,
       onUnarchive: unarchiveRun,
       archivedRuns,
@@ -2050,6 +2087,8 @@ function mainContentView() {
                 onClick: handleSelectRun,
                 onPause: handlePauseRun,
                 onResume: handleResumeRun,
+                onStop: handleStopRun,
+                onCancel: handleCancelRun,
                 onArchive: archiveRun,
               }),
             )}
@@ -2079,6 +2118,8 @@ function mainContentView() {
       },
       onPause: handlePauseRun,
       onResume: handleResumeRun,
+      onStop: handleStopRun,
+      onCancel: handleCancelRun,
     })}
     ${multiPipelineDashboardView(state.pipelines, {
       onPause: handlePauseParallelPipeline,

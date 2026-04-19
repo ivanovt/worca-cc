@@ -287,6 +287,17 @@ def run_agent(
     with _proc_lock:
         _current_proc = proc
 
+    agent_pid_path = None
+    if log_path:
+        run_dir = os.path.dirname(log_path)
+        agent_pid_path = os.path.join(run_dir, "agent.pid")
+        try:
+            os.makedirs(run_dir, exist_ok=True)
+            with open(agent_pid_path, "w") as f:
+                f.write(str(proc.pid))
+        except OSError:
+            agent_pid_path = None
+
     try:
         log_file = None
         if log_path:
@@ -319,6 +330,11 @@ def run_agent(
     finally:
         with _proc_lock:
             _current_proc = None
+        if agent_pid_path:
+            try:
+                os.unlink(agent_pid_path)
+            except OSError:
+                pass
         if log_file:
             log_file.close()
         # Clean up the temporary prompt file if one was created

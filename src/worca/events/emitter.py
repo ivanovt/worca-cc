@@ -164,6 +164,7 @@ def emit_event(
     ctx: EventContext,
     event_type: str,
     payload: dict,
+    sync: bool = False,
 ) -> Optional[dict]:
     """Emit a pipeline event.
 
@@ -204,24 +205,30 @@ def emit_event(
         print(f"[worca.events] Write error for {event_type}: {exc}", file=sys.stderr)
         return None
 
-    dispatch_event(ctx, event)
+    dispatch_event(ctx, event, sync=sync)
     return event
 
 
-def dispatch_event(ctx: "EventContext", event: dict) -> None:
+def dispatch_event(ctx: "EventContext", event: dict, sync: bool = False) -> None:
     """Deliver an already-built event to observer webhooks and shell hooks.
 
     Used both as the tail of emit_event() and standalone for events that were
     written to events.jsonl by a signal-safe path (where network I/O and
     threaded webhook delivery are unsafe). Never raises.
+
+    When sync=True, uses deliver_webhook_sync() (blocking) instead of the
+    default daemon-thread deliver_webhook().
     """
-    # Observer webhooks: queued non-blocking, best-effort.
-    # Control webhooks are sync-only at pause points via _check_control_response().
     if ctx._webhooks:
         try:
-            from worca.events.webhook import deliver_webhook
-            for wh in ctx._webhooks:
-                deliver_webhook(event, wh)
+            if sync:
+                from worca.events.webhook import deliver_webhook_sync
+                for wh in ctx._webhooks:
+                    deliver_webhook_sync(event, wh)
+            else:
+                from worca.events.webhook import deliver_webhook
+                for wh in ctx._webhooks:
+                    deliver_webhook(event, wh)
         except Exception as exc:
             print(f"[worca.events] Webhook dispatch error: {exc}", file=sys.stderr)
 

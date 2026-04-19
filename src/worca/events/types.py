@@ -9,13 +9,14 @@ No external runtime dependencies (stdlib only).
 """
 
 # ---------------------------------------------------------------------------
-# Pipeline lifecycle (5 events)
+# Pipeline lifecycle (6 events)
 # ---------------------------------------------------------------------------
 
 RUN_STARTED      = "pipeline.run.started"
 RUN_COMPLETED    = "pipeline.run.completed"
 RUN_FAILED       = "pipeline.run.failed"
 RUN_INTERRUPTED  = "pipeline.run.interrupted"
+RUN_CANCELLED    = "pipeline.run.cancelled"
 RUN_RESUMED      = "pipeline.run.resumed"
 
 # ---------------------------------------------------------------------------
@@ -205,6 +206,22 @@ def run_interrupted_payload(
         "elapsed_ms": elapsed_ms,
         "source": source,
     }
+
+
+def run_cancelled_payload(
+    cancelled_stage: str,
+    elapsed_ms: int,
+    source: str,
+    reason: str = None,
+) -> dict:
+    p: dict = {
+        "cancelled_stage": cancelled_stage,
+        "elapsed_ms": elapsed_ms,
+        "source": source,
+    }
+    if reason is not None:
+        p["reason"] = reason
+    return p
 
 
 def run_resumed_payload(

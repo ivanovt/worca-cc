@@ -104,8 +104,11 @@ class CircuitBreakerTripped(PipelineError):
 
 
 class PipelineInterrupted(Exception):
-    """Raised when the pipeline is interrupted by a signal."""
-    pass
+    """Raised when the pipeline is interrupted by a signal, control file, or control webhook."""
+
+    def __init__(self, message, *, stop_reason):
+        super().__init__(message)
+        self.stop_reason = stop_reason
 
 
 # Shutdown flag set by signal handlers
@@ -132,8 +135,8 @@ def _check_control_file(
     Deletes the file after reading.
 
     On pause: sets pipeline_status=paused, saves status, exits 0.
-    On stop: SIGTERMs the Claude subprocess, sets pipeline_status=failed
-             with stop_reason=stopped, saves status, raises PipelineInterrupted.
+    On stop: SIGTERMs the Claude subprocess, sets pipeline_status=interrupted
+             with stop_reason=control_file, saves status, raises PipelineInterrupted.
     """
     if not run_id:
         return
@@ -156,11 +159,11 @@ def _check_control_file(
 
     elif action == "stop":
         terminate_current()
-        status["pipeline_status"] = "failed"
-        status["stop_reason"] = "stopped"
+        status["pipeline_status"] = "interrupted"
+        status["stop_reason"] = "control_file"
         save_status(status, status_path)
         _log("Pipeline stopped by control file", "warn")
-        raise PipelineInterrupted("Pipeline stopped via control file")
+        raise PipelineInterrupted("Pipeline stopped via control file", stop_reason="control_file")
 
 
 def _handle_pause(ctx: EventContext, reason: str) -> None:
@@ -176,7 +179,7 @@ def _handle_pause(ctx: EventContext, reason: str) -> None:
     while True:
         for _ in range(30):
             if _shutdown_requested:
-                raise PipelineInterrupted("Interrupted by signal during pause")
+                raise PipelineInterrupted("Interrupted by signal during pause", stop_reason="signal")
             time.sleep(1)
         poll_event = emit_event(ctx, RUN_PAUSED, run_paused_payload(reason=reason, waiting=True))
         action = _check_control_response(ctx, poll_event or pause_event)
@@ -187,7 +190,7 @@ def _handle_pause(ctx: EventContext, reason: str) -> None:
             _log("Pipeline resumed by control webhook", "ok")
             return
         elif action == "abort":
-            raise PipelineInterrupted(f"Aborted via control webhook: {reason}")
+            raise PipelineInterrupted(f"Aborted via control webhook: {reason}", stop_reason="control_webhook")
 
 
 def _base62(n: int, length: int = 3) -> str:
@@ -1449,7 +1452,7 @@ def run_pipeline(
                     if _action == "pause":
                         _handle_pause(ctx, "plan_approved milestone")
                     elif _action == "abort":
-                        raise PipelineInterrupted("Aborted via control webhook")
+                        raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
             save_status(status, actual_status_path)
 
             # Start from the beginning (includes PREFLIGHT) — PLAN will be
@@ -1549,7 +1552,7 @@ def run_pipeline(
                         iteration=iter_num,
                         elapsed_ms=int((time.time() - t0) * 1000),
                     ))
-                raise PipelineInterrupted("Pipeline interrupted before stage start")
+                raise PipelineInterrupted("Pipeline interrupted before stage start", stop_reason="signal")
 
             # --- Phase 1 bead assignment (IMPLEMENT only) ---
             if current_stage == Stage.IMPLEMENT:
@@ -1691,7 +1694,7 @@ def run_pipeline(
                             if _action == "pause":
                                 _handle_pause(ctx, f"{current_stage.value} stage.completed")
                             elif _action == "abort":
-                                raise PipelineInterrupted("Aborted via control webhook")
+                                raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                     stage_idx += 1
                     continue
                 elif current_stage == Stage.PREFLIGHT:
@@ -1724,7 +1727,7 @@ def run_pipeline(
                         iteration=iter_num,
                         elapsed_ms=int((time.time() - t0) * 1000),
                     ))
-                raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}")
+                raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
             except Exception as e:
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
@@ -1965,7 +1968,7 @@ def run_pipeline(
                         if _action == "pause":
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
 
             # Milestone gate after PLAN
             elif current_stage == Stage.PLAN:
@@ -1996,7 +1999,7 @@ def run_pipeline(
                         elif _action == "pause":
                             _handle_pause(ctx, "plan_approved milestone")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                 save_status(status, actual_status_path)
                 if ctx:
                     _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
@@ -2012,7 +2015,7 @@ def run_pipeline(
                         if _action == "pause":
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                 if not approved:
                     _log("PLAN not approved — stopping", "err")
                     raise PipelineError("Plan not approved")
@@ -2053,7 +2056,7 @@ def run_pipeline(
                         if _action == "pause":
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
 
                 # Revise gate: outcome == "revise" AND (critical issues present OR issues list empty)
                 # Minor/suggestion-only issues are treated as approve.
@@ -2093,7 +2096,7 @@ def run_pipeline(
                                 if _action == "pause":
                                     _handle_pause(ctx, "plan_review loop.triggered")
                                 elif _action == "abort":
-                                    raise PipelineInterrupted("Aborted via control webhook")
+                                    raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
 
                         # --- Atomic loop-back sequence ---
                         # 1. Reset PLAN stage status and clear plan_approved milestone
@@ -2175,7 +2178,7 @@ def run_pipeline(
                         if _action == "pause":
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                 # Thread coordinate outputs into PromptBuilder
                 beads_ids = result.get("beads_ids", [])
                 max_beads = len(beads_ids)
@@ -2283,7 +2286,7 @@ def run_pipeline(
                         if _action == "pause":
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
 
             # Handle test results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.TEST:
@@ -2324,7 +2327,7 @@ def run_pipeline(
                             if _action == "pause":
                                 _handle_pause(ctx, f"{current_stage.value} stage.completed")
                             elif _action == "abort":
-                                raise PipelineInterrupted("Aborted via control webhook")
+                                raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                     if Stage.IMPLEMENT not in stage_order:
                         _log("Tests failed but IMPLEMENT stage is disabled — treating as pass", "warn")
                     else:
@@ -2353,7 +2356,7 @@ def run_pipeline(
                                     if _action == "pause":
                                         _handle_pause(ctx, "implement_test loop.triggered")
                                     elif _action == "abort":
-                                        raise PipelineInterrupted("Aborted via control webhook")
+                                        raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                             _next_trigger[Stage.IMPLEMENT.value] = "test_failure"
                             stage_idx = stage_order.index(Stage.IMPLEMENT)
                             continue
@@ -2389,7 +2392,7 @@ def run_pipeline(
                             if _action == "pause":
                                 _handle_pause(ctx, f"{current_stage.value} stage.completed")
                             elif _action == "abort":
-                                raise PipelineInterrupted("Aborted via control webhook")
+                                raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                     _log("Tests passed", "ok")
 
             # Handle review results — simplified (flat counter, no per-bead logic)
@@ -2425,7 +2428,7 @@ def run_pipeline(
                         if _action == "pause":
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                 if next_stage is None:
                     if outcome == "reject":
                         _log("PR rejected — stopping", "err")
@@ -2476,7 +2479,7 @@ def run_pipeline(
                                         if _action == "pause":
                                             _handle_pause(ctx, "pr_changes loop.triggered")
                                         elif _action == "abort":
-                                            raise PipelineInterrupted("Aborted via control webhook")
+                                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                                 _next_trigger[Stage.IMPLEMENT.value] = "review_changes"
                                 stage_idx = stage_order.index(Stage.IMPLEMENT)
                                 continue
@@ -2520,7 +2523,7 @@ def run_pipeline(
                                 if _action == "pause":
                                     _handle_pause(ctx, "restart_planning loop.triggered")
                                 elif _action == "abort":
-                                    raise PipelineInterrupted("Aborted via control webhook")
+                                    raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                         _next_trigger[Stage.PLAN.value] = "restart_planning"
                         stage_idx = stage_order.index(Stage.PLAN)
                         continue
@@ -2545,7 +2548,7 @@ def run_pipeline(
                         if _action == "pause":
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
-                            raise PipelineInterrupted("Aborted via control webhook")
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                 # PR stage: emit git.pr_created if result has pr_url
                 if ctx and current_stage == Stage.PR and isinstance(result, dict):
                     _pr_url = result.get("pr_url")
@@ -2638,14 +2641,15 @@ def run_pipeline(
             ))
 
         return status
-    except PipelineInterrupted:
-        status["pipeline_status"] = "failed"
-        status["stop_reason"] = "stopped"
+    except PipelineInterrupted as exc:
+        status["pipeline_status"] = "interrupted"
+        status["stop_reason"] = exc.stop_reason
         save_status(status, actual_status_path)
-        if ctx:
+        if ctx and _pending_signal_event is None:
             emit_event(ctx, RUN_INTERRUPTED, run_interrupted_payload(
                 interrupted_stage=status.get("stage", ""),
                 elapsed_ms=int((time.time() - pipeline_t0) * 1000),
+                source=exc.stop_reason,
             ))
         raise  # Do NOT run learn on user interruption
     except LoopExhaustedError as e:

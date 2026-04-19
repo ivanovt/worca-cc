@@ -16,6 +16,7 @@ const TIER1_EVENTS = [
   'pipeline.run.completed',
   'pipeline.run.failed',
   'pipeline.run.interrupted',
+  'pipeline.run.cancelled',
   'pipeline.run.paused',
   'pipeline.run.resumed',
   'pipeline.run.resumed_from_pause',
