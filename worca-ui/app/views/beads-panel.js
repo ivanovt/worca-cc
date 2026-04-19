@@ -195,8 +195,11 @@ export function beadTooltipContent(issue) {
         <span class="bead-tooltip-id">Bead ID: ${issue.id}</span>
         <span class="bead-tooltip-badges">
           <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-          <sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>
-          ${issue.blocked_by && issue.blocked_by.length > 0 ? html`<sl-badge variant="warning" pill>blocked</sl-badge>` : ''}
+          ${
+            issue.blocked_by && issue.blocked_by.length > 0
+              ? html`<sl-badge variant="warning" pill>blocked</sl-badge>`
+              : html`<sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>`
+          }
         </span>
       </div>
       <hr class="bead-tooltip-separator">
@@ -218,7 +221,11 @@ export function beadChipTooltip(depId, issuesById) {
       ${
         dep
           ? html`<span class="bead-chip-tooltip-title">${dep.title}</span>
-        <sl-badge variant="${statusVariant(dep.status, dep)}">${dep.status}</sl-badge>`
+        ${
+          dep.blocked_by && dep.blocked_by.length > 0
+            ? html`<sl-badge variant="warning">blocked</sl-badge>`
+            : html`<sl-badge variant="${statusVariant(dep.status, dep)}">${dep.status}</sl-badge>`
+        }`
           : ''
       }
     </div>
@@ -234,7 +241,11 @@ export function beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
   return html`
     <div class="beads-issue-row ${isClosed ? 'beads-issue-row--closed' : ''}">
       <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-      <sl-badge variant="${statusVariant(issue.status)}">${issue.status}</sl-badge>
+      ${
+        isBlocked
+          ? html`<sl-badge variant="warning">blocked</sl-badge>`
+          : html`<sl-badge variant="${statusVariant(issue.status)}">${issue.status}</sl-badge>`
+      }
       <div class="beads-issue-body">
         <div class="beads-issue-title">${issue.title}</div>
         ${issue.body ? html`<div class="beads-issue-excerpt">${(issue.body || '').slice(0, 120)}</div>` : ''}

@@ -545,9 +545,12 @@ export function runBeadsSectionView(beads) {
             <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
               <div slot="content">${beadTooltipContent(issue)}</div>
               <div class="run-bead-row">
-                <sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>
-                ${issue.blocked_by?.length ? html`<sl-badge variant="warning" pill>blocked</sl-badge>` : ''}
                 <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+                ${
+                  issue.blocked_by?.length
+                    ? html`<sl-badge variant="warning" pill>blocked</sl-badge>`
+                    : html`<sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>`
+                }
                 <span class="run-bead-id">#${issue.id}</span>
                 <span class="run-bead-title">${issue.title}</span>
               </div>
