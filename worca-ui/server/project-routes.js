@@ -1019,6 +1019,49 @@ export function createProjectScopedRoutes({
     }
   });
 
+  // POST /api/projects/:projectId/runs/:id/delete — permanently remove a run
+  router.post('/runs/:id/delete', requireWorcaDir, (req, res) => {
+    const runId = req.params.id;
+    if (!validateRunId(runId)) {
+      return res.status(400).json({ ok: false, error: 'Invalid runId' });
+    }
+    const { worcaDir } = req.project;
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      if (!actionAllowed('delete', st.pipeline_status)) {
+        return res.status(409).json({
+          ok: false,
+          code: 'action_not_allowed',
+          error: `Cannot delete a run with status "${st.pipeline_status}" — stop or cancel it first`,
+        });
+      }
+    } catch (err) {
+      return res
+        .status(500)
+        .json({ ok: false, error: `Failed to read status: ${err.message}` });
+    }
+    try {
+      req.project.pm.deleteRun(runId);
+      const { broadcast } = req.app.locals;
+      if (broadcast) broadcast('run-deleted', { runId });
+      res.json({ ok: true, deleted: true, runId });
+    } catch (err) {
+      if (err.code === 'still_running') {
+        return res.status(409).json({ ok: false, error: err.message });
+      }
+      if (err.code === 'not_found') {
+        return res.status(404).json({ ok: false, error: err.message });
+      }
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // POST /api/projects/:projectId/runs/:id/stages/:stage/restart
   router.post(
     '/runs/:id/stages/:stage/restart',

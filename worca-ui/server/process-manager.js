@@ -13,6 +13,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -572,6 +573,45 @@ export class ProcessManager {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Delete a run directory and clean up references.
+   * Refuses if the pipeline is currently running.
+   * @param {string} runId
+   * @returns {{ deleted: boolean }}
+   */
+  deleteRun(runId) {
+    const running = this.getRunningPid(runId);
+    if (running) {
+      const err = new Error(
+        'Cannot delete a running pipeline — stop or cancel it first',
+      );
+      err.code = 'still_running';
+      throw err;
+    }
+
+    const runDir = join(this.worcaDir, 'runs', runId);
+    if (!existsSync(runDir)) {
+      const err = new Error(`Run "${runId}" not found`);
+      err.code = 'not_found';
+      throw err;
+    }
+
+    rmSync(runDir, { recursive: true, force: true });
+
+    // Clear active_run pointer if it references this run
+    const activeRunPath = join(this.worcaDir, 'active_run');
+    if (existsSync(activeRunPath)) {
+      try {
+        const activeId = readFileSync(activeRunPath, 'utf8').trim();
+        if (activeId === runId) unlinkSync(activeRunPath);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return { deleted: true };
   }
 
   /**

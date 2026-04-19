@@ -83,7 +83,7 @@ export function sidebarView(
       : allRunList;
   const activeCount = runList.filter((r) => {
     const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
-    return ps === 'running' || ps === 'resuming';
+    return ps === 'running';
   }).length;
   const historyCount = runList.length;
 

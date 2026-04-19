@@ -368,12 +368,12 @@ def test_resolve_status_maps_error_to_failed():
     assert resolve_status("error") == "failed"
 
 
-def test_resolve_status_maps_interrupted_to_paused():
-    assert resolve_status("interrupted") == "paused"
+def test_resolve_status_passes_interrupted_through():
+    assert resolve_status("interrupted") == "interrupted"
 
 
 def test_resolve_status_passthrough_known_values():
-    for status in ("pending", "running", "paused", "completed", "failed", "resuming"):
+    for status in ("pending", "running", "paused", "completed", "failed", "interrupted"):
         assert resolve_status(status) == status
 
 

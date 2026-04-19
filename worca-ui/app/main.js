@@ -1643,7 +1643,6 @@ function contentHeaderView() {
       const ps = run.pipeline_status || (run.active ? 'running' : 'completed');
       const variantMap = {
         running: 'primary',
-        resuming: 'primary',
         paused: 'warning',
         completed: 'success',
         failed: 'danger',

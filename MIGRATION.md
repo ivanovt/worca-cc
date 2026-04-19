@@ -197,6 +197,26 @@ The packaging migration. This is the release that moved pipeline code from `.cla
 - W-037: Agent prompts extracted into composable block files
 - `stages.review.agent` renamed from `guardian` to `reviewer` (auto-migrated by `worca init --upgrade`)
 
+### 0.15.x → 0.16.0
+
+W-043: Unified pipeline state model and universal event dispatch.
+
+**Breaking changes:**
+
+1. **Terminal state for user-stop unified to `interrupted`** — Previously, stopping a running pipeline via the UI wrote `pipeline_status: "failed"`. Now all stop paths (control-file, webhook, signal) produce `"interrupted"` with a discriminating `stop_reason` (`control_file`, `control_webhook`, `signal`, `force_cancelled`). Code that checks for `"failed"` to detect user-initiated stops must now check for `"interrupted"` instead.
+
+2. **`POST /runs/:id/stop` rejects dead-PID with 409** — If the pipeline process is no longer alive but `pipeline_status` is still `running` or `paused`, the stop endpoint now returns `409 { code: "no_running_process", suggested_action: "cancel" }` instead of silently rewriting the status. Use the cancel endpoint to clean up dead runs.
+
+3. **`DELETE /runs/:id` removed** — The old DELETE alias for stopping a pipeline has been removed. Use `POST /runs/:id/stop` to stop a running pipeline. A new `POST /runs/:id/delete` endpoint permanently removes a run directory (refuses if the pipeline is still running).
+
+4. **New `pipeline.run.cancelled` event type** — Cancelling a run via `POST /runs/:id/cancel` now emits a `pipeline.run.cancelled` event through the universal dispatch pipeline (webhooks, integrations). Previously, cancel was a silent status rewrite.
+
+5. **`resuming` pipeline status removed** — The `resuming` status is no longer emitted by any code path. Pipelines go directly from `paused` to `running` on resume. UI components no longer render a `resuming` badge. The legacy `interrupted → paused` status mapping has also been removed — `interrupted` is now a canonical terminal state.
+
+6. **Windows stop semantics** — On Windows, `SIGTERM` does not propagate to child processes. The stop flow now kills the agent subprocess directly via `agent.pid` when `process.platform === 'win32'`.
+
+**No automatic migrations required** — these are runtime behavior changes. Update any external integrations or scripts that depend on the old behavior.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

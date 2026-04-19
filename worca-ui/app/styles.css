@@ -22,7 +22,6 @@
   --status-paused: #f59e0b;
   --status-completed: #22c55e;
   --status-failed: #ef4444;
-  --status-resuming: #3b82f6;
   --status-skipped: #94a3b8;
   --status-interrupted: #f59e0b;
   --status-cancelled: #94a3b8;
@@ -1126,10 +1125,6 @@ sl-details.log-history-panel::part(content) {
   color: var(--status-failed);
 }
 
-.status-resuming {
-  color: var(--status-resuming);
-}
-
 .status-cancelled {
   color: var(--status-cancelled);
 }
@@ -1286,7 +1281,6 @@ sl-details.log-history-panel::part(content) {
 
 /* Status-colored left border accent on run cards */
 .run-card.status-running  { border-left: 3px solid var(--status-running); }
-.run-card.status-resuming { border-left: 3px solid var(--status-resuming); }
 .run-card.status-paused   { border-left: 3px solid var(--status-paused); }
 .run-card.status-completed { border-left: 3px solid var(--status-completed); }
 .run-card.status-failed   { border-left: 3px solid var(--status-failed); }

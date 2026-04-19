@@ -36,8 +36,7 @@ function _statusTooltip(run, status) {
   if (!ref) return null;
   const ms = elapsed(ref, null);
   const dur = formatDuration(ms);
-  if (status === 'running' || status === 'resuming')
-    return `Running for ${dur}`;
+  if (status === 'running') return `Running for ${dur}`;
   const label = status.charAt(0).toUpperCase() + status.slice(1);
   return `${label} ${dur} ago`;
 }

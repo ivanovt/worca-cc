@@ -66,17 +66,6 @@ describe('runCardView - status class on card', () => {
     expect(output).toContain('status-failed');
   });
 
-  it('adds status-resuming class when pipeline_status is resuming', () => {
-    const run = {
-      id: '1',
-      pipeline_status: 'resuming',
-      active: true,
-      started_at: '2026-01-01T00:00:00Z',
-    };
-    const output = renderToString(runCardView(run));
-    expect(output).toContain('status-resuming');
-  });
-
   it('falls back to status-running for active run without pipeline_status', () => {
     const run = { id: '1', active: true, started_at: '2026-01-01T00:00:00Z' };
     const output = renderToString(runCardView(run));
