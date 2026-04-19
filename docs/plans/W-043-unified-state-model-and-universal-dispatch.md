@@ -1,11 +1,19 @@
 # W-043: Unified pipeline state model + universal event dispatch
 
-**Status:** Draft (rev 2 — cross-platform + dispatch-lifetime revisions after code review)
+**Status:** Draft (rev 3 — concern-driven amendments: dispatch timeout, stop_reason safety, Windows polling gap)
 **Priority:** P1
 **Area:** cc + ui
 **Date:** 2026-04-19
 **Depends on:** W-042 (PR #108) — `dispatch_event()` helper, `_pending_signal_event`, signal-deferred dispatch are introduced there and assumed present.
 **Target platforms:** macOS, Linux, Windows — see §12 for platform-specific handling.
+
+## Revision Notes (rev 3)
+
+Rev 3 addresses three concerns identified during deep code analysis of rev 2:
+
+- **Concern 1 — Daemon thread latency underestimated.** §3.1 claimed "~10s per webhook" for `deliver_webhook_sync()`. Actual worst case with defaults (`timeout_ms=5000`, `max_retries=3`, exponential backoff 1+2+4s) is **27s per webhook**. The `dispatchExternal` timeout was 15s — would kill the subprocess mid-retry on the first webhook. §3.1 now states the real formula; §6/C+D raises `dispatchExternal` default timeout to 60s. Safe because dispatch runs after the HTTP response is sent.
+- **Concern 2 — Silent failure on missed `stop_reason`.** `PipelineInterrupted(message, stop_reason="stopped")` with a default meant missed sites silently produce wrong metadata. §5.2 now makes `stop_reason` a **required keyword argument** (no default) — any missed site raises `TypeError` at runtime. The f-string variant at line 190 is explicitly called out in the Phase B table.
+- **Concern 3 — Windows control-file polling gap.** `_check_control_file()` polls once per stage loop iteration. During a blocking `run_agent()` call (2-5 minutes for a Claude turn), no polling occurs. The 5s `stopPipelineSync` timeout force-kills every time. §12.1 now: (a) increases Windows timeout to 30s, (b) adds agent subprocess termination to unblock polling, (c) writes agent PID to `<run_dir>/agent.pid` for Node-side kill. New integration test validates mid-stage graceful stop on Windows.
 
 ## Revision Notes (rev 2)
 
@@ -159,7 +167,7 @@ def emit_event(ctx, event_type, payload, *, sync: bool = False):
 
 CLI invokes `emit_event(..., sync=True)`. Orchestrator in-process call sites keep the default (`sync=False`) — unchanged behavior.
 
-**Trade-off:** sequential webhook delivery in the CLI. For terminal-state events with 1–2 subscribers typical, bounded latency is `timeout_ms × (max_retries + 1) × N_webhooks`. Default config caps this at ~10s per webhook. The JS caller (`dispatchExternal`) imposes its own `timeoutMs` (default 15s) and decouples dispatch from the HTTP response — see §6.
+**Trade-off:** sequential webhook delivery in the CLI. Bounded latency per webhook is `timeout_ms × (max_retries + 1) + Σ(2^i for i in 0..max_retries-1)`. With defaults (`timeout_ms=5000`, `max_retries=3`): 5s × 4 attempts + 7s backoff = **27s per webhook**. With 2 subscribers: ~54s worst case. The JS caller (`dispatchExternal`) imposes its own `timeoutMs` (default 60s — must exceed the worst-case delivery time for configured webhooks) and decouples dispatch from the HTTP response — see §6. The user never waits; only webhook delivery is subject to this latency.
 
 #### 3.2 Invocation contract
 
@@ -294,15 +302,21 @@ elif action == "stop":
 ```python
 # src/worca/orchestrator/runner.py
 class PipelineInterrupted(Exception):
-    def __init__(self, message, stop_reason="stopped"):
+    def __init__(self, message, *, stop_reason):  # keyword-only, REQUIRED — no default
         super().__init__(message)
         self.stop_reason = stop_reason
+```
 
+`stop_reason` is intentionally required (no default). Any call site that omits it raises `TypeError: missing required keyword argument 'stop_reason'` at runtime — failing loudly rather than silently producing wrong metadata. The AST lint test (Phase B task 7) is a belt-and-suspenders check, not the sole safety net.
+
+```python
 # call sites:
 raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
 raise PipelineInterrupted("Pipeline interrupted before stage start", stop_reason="signal")
 raise PipelineInterrupted("Pipeline stopped via control file", stop_reason="control_file")
 ```
+
+**Note:** line 190 is an f-string variant: `f"Aborted via control webhook: {reason}"` — it must not be missed during the bulk find/replace of the 16 identical bare-string sites.
 
 #### 5.3 `_shutdown_requested` between stages
 
@@ -398,7 +412,7 @@ router.post('/runs/:id/cancel', requireWorcaDir, async (req, res) => {
 });
 ```
 
-`dispatchExternal()` is a small JS wrapper around `child_process.spawn('python', ['-m', 'worca.events.dispatch_external', ...])` that swallows non-zero exits but logs them. Lives in `worca-ui/server/dispatch-external.js`.
+`dispatchExternal()` is a small JS wrapper around `child_process.spawn('python', ['-m', 'worca.events.dispatch_external', ...])` that swallows non-zero exits but logs them. Lives in `worca-ui/server/dispatch-external.js`. Default `timeoutMs` is **60s** — must exceed the worst-case `deliver_webhook_sync` latency for 2 webhooks with default retry config (~54s). Safe because dispatch runs after the HTTP response is sent (§Considerations).
 
 ### 7. JS routes: route every state mutation through dispatch helper
 
@@ -529,7 +543,12 @@ The pipeline runs on all three OSes. Signal, subprocess, and I/O semantics diffe
 
 ```javascript
 // worca-ui/server/process-manager.js
-async stopPipelineSync(runId, { timeoutMs = 5000 } = {}) {
+async stopPipelineSync(runId, { timeoutMs } = {}) {
+  // Default timeout: 5s on Unix (SIGTERM interrupts blocking I/O immediately),
+  // 30s on Windows (must wait for agent subprocess exit + control.json poll).
+  if (timeoutMs === undefined) {
+    timeoutMs = process.platform === 'win32' ? 30000 : 5000;
+  }
   const pid = this.getRunningPid(runId);
   if (!pid) { const e = new Error('not running'); e.code = 'not_running'; throw e; }
 
@@ -539,8 +558,13 @@ async stopPipelineSync(runId, { timeoutMs = 5000 } = {}) {
   if (process.platform !== 'win32') {
     // 2a. Unix: also send SIGTERM to nudge the signal handler.
     try { process.kill(pid, 'SIGTERM'); } catch { /* already dead */ }
+  } else {
+    // 2b. Windows: SIGTERM is TerminateProcess (instant kill, no handler).
+    // Instead, terminate the agent subprocess to unblock run_agent()'s
+    // subprocess.communicate(), allowing the orchestrator to loop back and
+    // poll control.json. Agent PID is written to <run_dir>/agent.pid.
+    this._killAgentSubprocess(runId);
   }
-  // 2b. Windows: SIGTERM equivalent is TerminateProcess — skip, rely on control.json poll.
 
   // 3. Poll for exit.
   const deadline = Date.now() + timeoutMs;
@@ -553,9 +577,46 @@ async stopPipelineSync(runId, { timeoutMs = 5000 } = {}) {
   try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
   return { pid, exitCode: null, forced: true };
 }
+
+/**
+ * Kill the active Claude agent subprocess to unblock the orchestrator.
+ * Reads PID from <run_dir>/agent.pid (written by claude_cli.py on spawn).
+ * No-op if file missing or process already dead.
+ */
+_killAgentSubprocess(runId) {
+  const agentPidPath = join(this.worcaDir, 'runs', runId, 'agent.pid');
+  try {
+    const agentPid = parseInt(readFileSync(agentPidPath, 'utf8').trim(), 10);
+    if (agentPid) process.kill(agentPid, 'SIGTERM');
+  } catch { /* missing file or already dead — expected */ }
+}
 ```
 
-On Unix, step 2a delivers SIGTERM (handler runs, status persisted). On Windows, step 2a is skipped — we rely on the orchestrator's next `control.json` poll at a stage boundary. If the timeout fires before the poll, the reconciler fires `RUN_INTERRUPTED` with `stop_reason="stale"` afterwards. Both OSes converge on correct terminal state + dispatch; only the grace window differs.
+**Platform behavior:**
+
+| OS | Step 2 | Effect | Typical time to graceful exit |
+|---|---|---|---|
+| Unix | SIGTERM to orchestrator | Signal handler runs immediately, interrupts blocking I/O | <1s |
+| Windows | Kill agent subprocess | Unblocks `run_agent()` → orchestrator loops → reads `control.json` → exits gracefully | 1-5s (depends on cleanup) |
+
+On Unix, step 2a delivers SIGTERM (handler runs, status persisted). On Windows, step 2b kills the agent subprocess, unblocking the orchestrator so it can poll `control.json` on the next loop iteration. The 30s Windows timeout accommodates the orchestrator's cleanup and status persistence. If the timeout fires before the poll (e.g., orchestrator stuck in non-agent blocking I/O), the reconciler fires `RUN_INTERRUPTED` with `stop_reason="stale"` afterwards. Both OSes converge on correct terminal state + dispatch.
+
+#### 12.1.1 Agent subprocess PID file
+
+To support Windows graceful stop, `claude_cli.py` writes the agent subprocess PID to `<run_dir>/agent.pid` immediately after `subprocess.Popen`:
+
+```python
+# src/worca/utils/claude_cli.py — inside run_agent(), after Popen
+agent_pid_path = os.path.join(run_dir, "agent.pid") if run_dir else None
+if agent_pid_path:
+    try:
+        with open(agent_pid_path, "w") as f:
+            f.write(str(proc.pid))
+    except OSError:
+        pass  # best-effort; Windows stop degrades to timeout+reconciler
+```
+
+The file is cleaned up in the `finally` block of `run_agent()`. On Unix this file is also written but `_killAgentSubprocess` is not called (SIGTERM handles it). The file serves as a cross-platform diagnostic aid regardless.
 
 #### 12.2 JS → Python subprocess invocation
 
@@ -662,16 +723,17 @@ Python tests run on all three OSes via GitHub Actions matrix (`ubuntu-latest`, `
 - `tests/test_runner.py`, `tests/test_runner_lifecycle.py`
 
 **Tasks:**
-1. Extend `PipelineInterrupted` exception to carry `stop_reason` (default `"stopped"` for backward compat until all sites migrate).
+1. Extend `PipelineInterrupted` exception to carry `stop_reason` as a **required keyword argument** (no default — any missed site raises `TypeError` at runtime). See §5.2.
 2. Update **all 21** `raise PipelineInterrupted(...)` call sites in `runner.py` to pass `stop_reason` explicitly. Verify count with `grep -c "raise PipelineInterrupted" src/worca/orchestrator/runner.py`. Distribution at time of writing:
 
    | Count | `stop_reason` | Sites |
    |---|---|---|
    | 1 | `"control_file"` | line 163 (control-file stop) |
-   | 2 | `"signal"` | line 179 (signal during pause), 1552 (before stage), 1727 (during stage) — actually 3 |
-   | 17 | `"control_webhook"` | lines 190, 1452, 1694, 1968, 1999, 2015, 2056, 2096, 2178, 2286, 2327, 2356, 2392, 2428, 2479, 2523, 2548 |
+   | 3 | `"signal"` | line 179 (signal during pause), 1552 (before stage), 1727 (during stage) |
+   | 1 | `"control_webhook"` | line 190 — **f-string variant**: `f"Aborted via control webhook: {reason}"` — must not be missed during bulk replace |
+   | 16 | `"control_webhook"` | lines 1452, 1694, 1968, 1999, 2015, 2056, 2096, 2178, 2286, 2327, 2356, 2392, 2428, 2479, 2523, 2548 |
 
-   The 17 control-webhook sites are mechanically identical (`raise PipelineInterrupted("Aborted via control webhook")`) — a single bulk find/replace is sufficient. Second pass: verify none were in strings / docstrings / comments (the grep will flag those too).
+   The 16 bare-string control-webhook sites are mechanically identical (`raise PipelineInterrupted("Aborted via control webhook")`) — a single bulk find/replace is sufficient. **Line 190 is a separate f-string variant** — handle it individually. Second pass: verify none were in strings / docstrings / comments (the grep will flag those too).
 
 3. Rewrite the `except PipelineInterrupted:` handler at `runner.py:2641-2650` per §5.4 (verify line range — post-W-042 rebases may have shifted it).
 4. Update `_check_control_file()` `action=stop` branch (`runner.py:157-163`) per §5.1.
@@ -704,7 +766,7 @@ Python tests run on all three OSes via GitHub Actions matrix (`ubuntu-latest`, `
 - `worca-ui/app/views/multi-dashboard.js` (bulk action gating)
 
 **Tasks:**
-1. Implement `dispatch-external.js` — `await dispatchExternal({ runDir, settingsPath, eventType, payload, timeoutMs = 15000 })`. Python discovery + spawn-with-fallback per §12.2. On timeout: kill the subprocess, log to stderr, resolve with `{ ok: false, reason: 'timeout' }` (do not reject — callers should not block the HTTP response on dispatch failure).
+1. Implement `dispatch-external.js` — `await dispatchExternal({ runDir, settingsPath, eventType, payload, timeoutMs = 60000 })`. Python discovery + spawn-with-fallback per §12.2. Timeout default is 60s (must exceed worst-case webhook delivery for 2 subscribers with default retries — see §3.1). On timeout: kill the subprocess, log to stderr, resolve with `{ ok: false, reason: 'timeout' }` (do not reject — callers should not block the HTTP response on dispatch failure).
 2. Thread `settingsPath` through `ProcessManager` constructor and `reconcileStatus(worcaDir, settingsPath)`. Fix the standalone helper at `process-manager.js:644`. Fix the ws-router call at `ws-message-router.js:508` to pass `proj.settingsPath` (already in scope per line 68).
 3. Implement `pm.stopPipelineSync(runId, { timeoutMs })` per §12.1 — cross-platform body (control.json + optional SIGTERM on Unix + poll + force-terminate).
 4. Rewrite cancel route per §6. Use `actionAllowed('cancel', currentStatus)` as a pre-check (§8.1); return `409 { code: 'action_not_allowed' }` when disallowed.
@@ -755,7 +817,8 @@ Python tests run on all three OSes via GitHub Actions matrix (`ubuntu-latest`, `
 | `tests/test_event_types.py` | A | Extend with `RUN_CANCELLED` cases |
 | `tests/test_emitter_sync.py` | A | New — verify sync vs async dispatch routing |
 | `tests/test_dispatch_external.py` | A | New — CLI matrix on macOS/Linux/Windows |
-| `src/worca/orchestrator/runner.py` | B | `PipelineInterrupted` constructor; **21** `raise` call sites; except handler; `_check_control_file` stop branch |
+| `src/worca/orchestrator/runner.py` | B | `PipelineInterrupted` constructor (required `stop_reason` kwarg); **21** `raise` call sites; except handler; `_check_control_file` stop branch |
+| `src/worca/utils/claude_cli.py` | C+D | Write agent subprocess PID to `<run_dir>/agent.pid` for Windows graceful stop (§12.1.1) |
 | `tests/test_runner.py` | B | Update existing tests; add new; AST lint test for 21-site coverage |
 | `tests/test_runner_lifecycle.py` | B | Update lifecycle tests for new terminal state (OS-skip where signal-dependent) |
 | `worca-ui/server/dispatch-external.js` | C+D | New — JS wrapper with per-OS Python discovery, timeout, `WORCA_PYTHON` support |
@@ -832,6 +895,8 @@ Acceptable for cancel/stop frequency on all three OSes. Mitigation for Windows: 
 
 Covered in detail in §3.1. Summary: `deliver_webhook` uses daemon threads that die when the interpreter exits. The CLI helper MUST invoke `emit_event(..., sync=True)` to avoid silently truncating webhook delivery. Regression guard is `tests/test_dispatch_external.py::test_cli_waits_for_webhook_delivery` — a local HTTP server records receipt; the CLI must exit only after the POST completes.
 
+**Timeout alignment:** `dispatchExternal` timeout (60s) must exceed the worst-case `deliver_webhook_sync` latency. With default config and 2 subscribers: `(5s timeout × 4 attempts + 7s backoff) × 2 webhooks = 54s`. The 60s default covers this with a 6s buffer. If users configure more than 2 webhooks or increase `max_retries`, they must also increase `dispatchExternal` timeout (documented in MIGRATION.md). Future improvement: read webhook count from settings and compute the timeout dynamically — out of scope for v1.
+
 ### HTTP-response vs dispatch decoupling
 
 In §6, the cancel endpoint's order of operations is:
@@ -851,6 +916,7 @@ Implementation: `dispatchExternal` returns a promise that `project-routes.js` `a
 - **Concurrent cancel + signal:** if user clicks cancel while SIGTERM is already in flight (or the orchestrator's pause-handler is already processing), both paths may write `events.jsonl`. Expected behavior: webhook subscribers see `pipeline.run.interrupted` (from signal, exactly once — guarded by `_pending_signal_event`) then `pipeline.run.cancelled`. Cancel's status rewrite (`cancelled`) overwrites `interrupted`, so resume is correctly blocked. Dedicated integration test — see §Test Plan.
 - **Cancel on `paused`:** no live PID, but state goes to `cancelled` and `RUN_CANCELLED` fires. Correct.
 - **Reconcile race with running orchestrator:** if the reconciler triggers between status update and PID cleanup, it may emit a spurious `interrupted/stale` event. Mitigation: reconciler already checks PID liveness; the race window is the brief gap between the orchestrator's `finally` block and PID-file removal. In practice never observed; if it surfaces, add a 500ms grace period to the reconciler.
+- **Windows graceful stop (agent.pid mechanism):** On Windows, `stopPipelineSync` writes `control.json` then kills the Claude agent subprocess via `<run_dir>/agent.pid` (§12.1.1). This unblocks the orchestrator's `run_agent()` call, causing it to loop back to `_check_control_file()` and exit gracefully with `stop_reason="control_file"`. The 30s Windows timeout (vs 5s on Unix) accommodates cleanup. If the agent.pid file is missing or the orchestrator is stuck in non-agent blocking I/O, the timeout fires, SIGKILL lands, and the reconciler sets `stop_reason="stale"` as the fallback path.
 - **Windows force-kill (no signal handler):** `process.kill(pid, 'SIGTERM')` on Windows invokes `TerminateProcess`; the Python handler never runs, so `_signal_status` is never set to `interrupted` and no `_pending_signal_event` is stashed. The status stays `running` with the PID dead. The reconciler picks this up on its next scan (WS reconnect, UI refresh, or next route request) and fires `RUN_INTERRUPTED` with `stop_reason="stale"`. First-class path on Windows; fallback on Unix.
 - **User-provided shell hooks that themselves call webhooks:** user-written hook commands may take seconds (e.g., `curl -X POST ...`). On Unix they survive parent exit cleanly; on Windows same (no job-object binding). No action needed.
 - **WSL / Cygwin / MSYS:** treated as `win32` by Node's `process.platform` only if running native Windows Node; running `node` under WSL reports `linux`. Plan behavior: follow the reported platform. Users running cross-environment setups must export `WORCA_PYTHON` to disambiguate.
@@ -885,6 +951,9 @@ Implementation: `dispatchExternal` returns a promise that `project-routes.js` `a
 | JS | reconciler invokes dispatchExternal | §7 | all |
 | JS | `stopPipelineSync` control.json write + SIGTERM on Unix | §12.1 branch for non-win32 | Unix only |
 | JS | `stopPipelineSync` control.json only on Windows (no SIGTERM send) | §12.1 win32 branch | Windows only |
+| JS | `stopPipelineSync` kills agent subprocess on Windows via agent.pid | §12.1.1 — unblocks orchestrator polling | Windows only |
+| JS | `stopPipelineSync` Windows timeout is 30s (not 5s) | §12.1 platform-specific default | Windows only |
+| JS | `dispatchExternal` timeout is 60s default | §3.1 latency bound for 2 webhooks | all |
 
 ### Integration tests
 
@@ -898,6 +967,7 @@ Every integration test runs on the full OS matrix unless explicitly marked Unix-
 | Start → SIGTERM during pause-poll | Unix only | Status: `interrupted`. Events: `RUN_STARTED`, `RUN_PAUSED`, `RUN_INTERRUPTED` (once; `_pending_signal_event` suppresses the orchestrator-path duplicate). |
 | Start → control-file stop | all | Status: `interrupted` (`stop_reason=control_file`). Webhook gets `RUN_INTERRUPTED`. **Primary graceful path on Windows.** |
 | Start → control-webhook abort | all | Status: `interrupted` (`stop_reason=control_webhook`). |
+| Start → stop during mid-stage Claude call | Windows primary, also Unix | Agent subprocess killed → orchestrator unblocks → polls `control.json` → graceful `interrupted` (not `stale`). Validates §12.1.1 agent.pid mechanism. |
 | Pause → stop (user-reported bug) | all | UI button greyed out (§8). Programmatic POST returns 409. No silent mutation. |
 | Cancel after force-kill | all | Reconciler emits `RUN_INTERRUPTED` first (`stop_reason=stale`) via dispatch helper, then cancel emits `RUN_CANCELLED`. Status ends `cancelled`. Two event types; each delivered exactly once. |
 | **Concurrent cancel + signal (race)** | Unix only | SIGTERM in-flight; user clicks cancel in same ~50ms window. Expected timeline: signal handler stashes `_pending_signal_event` → main thread raises → except handler sees `_pending_signal_event` set and skips emit → cancel route fires `RUN_CANCELLED`. Final status: `cancelled`. Events: `RUN_INTERRUPTED` (from signal, once) + `RUN_CANCELLED` (from cancel, once). No duplicates. |
