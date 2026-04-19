@@ -1,10 +1,23 @@
 # W-043: Unified pipeline state model + universal event dispatch
 
-**Status:** Draft
+**Status:** Draft (rev 2 — cross-platform + dispatch-lifetime revisions after code review)
 **Priority:** P1
 **Area:** cc + ui
 **Date:** 2026-04-19
 **Depends on:** W-042 (PR #108) — `dispatch_event()` helper, `_pending_signal_event`, signal-deferred dispatch are introduced there and assumed present.
+**Target platforms:** macOS, Linux, Windows — see §12 for platform-specific handling.
+
+## Revision Notes (rev 2)
+
+Rev 2 incorporates findings from a code-level review of rev 1:
+
+- **Critical:** `deliver_webhook()` (`src/worca/events/webhook.py:263`) starts a **daemon thread** for each HTTP POST. In a short-lived `dispatch_external` CLI subprocess, the interpreter exits before the thread finishes and webhooks are silently truncated. §3.1 now specifies a `sync=True` path through `deliver_webhook_sync()`.
+- **Cross-platform:** Windows has no SIGTERM-to-user-handler delivery; `process.kill(pid, 'SIGTERM')` on Windows is equivalent to `TerminateProcess`. The signal-unification in §5 is Unix-only; on Windows, `control.json` (graceful) + reconciler (fallback) are the primary paths. New §12 documents the full platform matrix.
+- **Scope correction:** Phase B previously claimed "5 `raise PipelineInterrupted(...)` call sites" — there are actually **21** in `runner.py` (17 are identical `"Aborted via control webhook"` inside stage loops). Task list updated.
+- **Line-reference drift fixed:** `runner.py:2603-2611` → `2641-2650` (except handler); `project-routes.js:102-127` → `842-867` (stop fallback); `process-manager.js:189-222` → `131-238` (reconcileStatus). Rev 1 references were from an older snapshot.
+- **§7 mischaracterization fixed:** the stop-on-dead-PID fallback writes `cancelled/force_cancelled` today (identical to `/cancel`), not `failed/stale` as rev 1 claimed.
+- **Phase ordering:** C and D now ship as one PR — shipping C alone would produce silent Stop-button failures for paused runs because the UI has no Cancel button yet.
+- **New edge cases:** concurrent cancel+signal and Windows force-kill paths added to §Test Plan.
 
 ## Problem
 
@@ -106,10 +119,51 @@ Behavioral rules derived from the matrix:
 
 **Obstacle:** Node-side state mutators (UI server's `cancel`, `stop`-on-dead-PID, `reconcileStatus`) cannot import Python. Today they write to `events.jsonl` and `status.json` directly, bypassing dispatch.
 
-**Resolution:** Add a small Python CLI: `python -m worca.events.dispatch_external` that accepts an event payload via JSON on stdin (or `--event-json`), constructs an `EventContext` from `<run_dir>` + `settings.json`, and calls `emit_event()` (full path: write + dispatch). Node forks this process for each terminal-state mutation. Reuses 100% of the existing dispatch machinery — no logic duplicated in Node.
+**Resolution:** Add a small Python CLI: `python -m worca.events.dispatch_external` that accepts event args on argv, constructs an `EventContext` from `<run_dir>` + `settings.json`, and calls `emit_event(..., sync=True)` (full path: write + sync dispatch). Node forks this process for each terminal-state mutation. Reuses the existing dispatch machinery — no logic duplicated in Node.
+
+#### 3.1 Dispatch-lifetime contract (critical — daemon-thread trap)
+
+`deliver_webhook()` (`src/worca/events/webhook.py:263`) starts a **daemon thread** per HTTP POST and returns immediately:
+
+```python
+t = threading.Thread(target=_do_post, args=(event, webhook_cfg), daemon=True)
+t.start()
+```
+
+In the long-lived orchestrator this is safe — the process lives long enough for the daemon thread to complete its round-trip. In a short-lived CLI helper, `emit_event()` returns in milliseconds, the interpreter exits, and **all daemon threads are killed mid-flight**. Webhooks would be silently truncated (swapping one silent-failure mode for another).
+
+**Resolution:** `dispatch_event()` gains a `sync: bool = False` parameter. When `sync=True`:
+
+- Webhook delivery uses `deliver_webhook_sync()` (already implemented for control webhooks — same signing, retries, filtering, error handling — just blocking).
+- Shell-hook dispatch stays `subprocess.Popen` fire-and-forget. On Unix AND Windows, spawned children survive parent exit (no job-object binding). Stdin is written and closed synchronously before Popen returns, so hook commands receive the full event payload even if the CLI exits immediately after.
+
+```python
+# src/worca/events/emitter.py (change)
+def dispatch_event(ctx, event, *, sync: bool = False) -> None:
+    if ctx._webhooks:
+        from worca.events.webhook import deliver_webhook, deliver_webhook_sync
+        deliver = deliver_webhook_sync if sync else deliver_webhook
+        try:
+            for wh in ctx._webhooks:
+                deliver(event, wh)
+        except Exception as exc:
+            print(f"[worca.events] Webhook dispatch error: {exc}", file=sys.stderr)
+    # Shell hooks unchanged — Popen(shell=True) fire-and-forget is cross-platform safe.
+    ...
+
+def emit_event(ctx, event_type, payload, *, sync: bool = False):
+    # ... existing write to events.jsonl ...
+    dispatch_event(ctx, event, sync=sync)
+    return event
+```
+
+CLI invokes `emit_event(..., sync=True)`. Orchestrator in-process call sites keep the default (`sync=False`) — unchanged behavior.
+
+**Trade-off:** sequential webhook delivery in the CLI. For terminal-state events with 1–2 subscribers typical, bounded latency is `timeout_ms × (max_retries + 1) × N_webhooks`. Default config caps this at ~10s per webhook. The JS caller (`dispatchExternal`) imposes its own `timeoutMs` (default 15s) and decouples dispatch from the HTTP response — see §6.
+
+#### 3.2 Invocation contract
 
 ```bash
-# Invocation contract
 python -m worca.events.dispatch_external \
     --run-dir .worca/runs/<run_id> \
     --settings .claude/settings.json \
@@ -117,19 +171,27 @@ python -m worca.events.dispatch_external \
     --payload-json '{"cancelled_stage": "implement", "elapsed_ms": 12000, "source": "user_cancel"}'
 ```
 
-Output (stdout, JSON line on success):
+Output (stdout, one JSON line on success):
 
 ```json
 {"ok": true, "event_id": "uuid", "dispatched_webhooks": 2, "dispatched_hooks": 1}
 ```
 
-Exit codes: `0` success, `1` invalid args, `2` settings/run-dir not found, `3` dispatch error (still wrote to events.jsonl, but webhook/hook delivery had errors — non-fatal for caller).
+Exit codes: `0` success, `1` invalid args, `2` settings/run-dir/status.json not found, `3` event written to events.jsonl but one or more deliveries failed (non-fatal for caller; details on stderr).
 
-Implementation location: `src/worca/events/dispatch_external.py` with `__main__` entry. Approximately 80 lines:
+Argv form (not stdin) is chosen deliberately: Windows `child_process.spawn` pipe semantics can differ from Unix for large stdin writes, and argv is simpler for small event payloads. If payloads ever exceed ~32KB (Windows argv limit is 32767 chars), switch to `--payload-file <path>`.
+
+#### 3.3 Cross-platform invocation
+
+Node resolves the Python interpreter per OS — see §12.2. The CLI forces UTF-8 on stdout/stderr — see §12.3.
+
+#### 3.4 Skeleton
+
+Implementation location: `src/worca/events/dispatch_external.py` with `__main__` entry. Approximately 100 lines:
 
 ```python
 # src/worca/events/dispatch_external.py (skeleton)
-import argparse, json, sys
+import argparse, io, json, sys
 from pathlib import Path
 from worca.events.emitter import EventContext, emit_event
 from worca.events.types import (
@@ -138,21 +200,25 @@ from worca.events.types import (
 
 VALID_EVENT_TYPES = {RUN_INTERRUPTED, RUN_CANCELLED, RUN_FAILED}
 
+
 def main(argv=None):
+    # Force UTF-8 I/O — Windows defaults stdout/stderr to cp1252 which breaks
+    # on branch names / work_request strings containing non-ASCII characters.
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="\n")
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", newline="\n")
+
     p = argparse.ArgumentParser(prog="worca.events.dispatch_external")
-    p.add_argument("--run-dir", required=True, help="Path to .worca/runs/<run_id>")
-    p.add_argument("--settings", required=True, help="Path to .claude/settings.json")
+    p.add_argument("--run-dir", required=True)
+    p.add_argument("--settings", required=True)
     p.add_argument("--event-type", required=True, choices=sorted(VALID_EVENT_TYPES))
     p.add_argument("--payload-json", required=True)
     args = p.parse_args(argv)
 
     run_dir = Path(args.run_dir)
-    if not run_dir.exists():
-        sys.exit(2)
     status_path = run_dir / "status.json"
-    if not status_path.exists():
+    if not run_dir.exists() or not status_path.exists():
         sys.exit(2)
-    status = json.loads(status_path.read_text())
+    status = json.loads(status_path.read_text(encoding="utf-8"))
 
     ctx = EventContext(
         run_id=status.get("run_id", run_dir.name),
@@ -161,11 +227,15 @@ def main(argv=None):
         events_path=str(run_dir / "events.jsonl"),
         settings_path=args.settings,
     )
-    payload = json.loads(args.payload_json)
-    event = emit_event(ctx, args.event_type, payload)
+    try:
+        payload = json.loads(args.payload_json)
+        event = emit_event(ctx, args.event_type, payload, sync=True)
+    finally:
+        ctx.close()
     if event is None:
         sys.exit(3)
     print(json.dumps({"ok": True, "event_id": event["event_id"]}))
+
 
 if __name__ == "__main__":
     main()
@@ -240,7 +310,7 @@ Same: `raise PipelineInterrupted("Pipeline interrupted ...", stop_reason="signal
 
 #### 5.4 Unified `PipelineInterrupted` except handler
 
-**Current** (`runner.py:2603-2611`):
+**Current** (`runner.py:2641-2650` — verify line range before editing, as post-W-042 surgery may have shifted them further):
 
 ```python
 except PipelineInterrupted:
@@ -332,15 +402,16 @@ router.post('/runs/:id/cancel', requireWorcaDir, async (req, res) => {
 
 ### 7. JS routes: route every state mutation through dispatch helper
 
-Three call sites in `worca-ui/server/`:
+Four call sites in `worca-ui/server/`:
 
 | Site | Current behavior | After W-043 |
 |---|---|---|
-| `POST /runs/:id/cancel` (`project-routes.js:875`) | Silent status rewrite | Stop-if-alive + status rewrite + `dispatchExternal(RUN_CANCELLED)` |
-| `POST /runs/:id/stop` fallback when PID dead (`project-routes.js:102-127`) | Silent rewrite to `failed/stale` | Reject with `409 Conflict { code: "no_running_process", suggested_action: "cancel" }` — no silent mutation |
-| `reconcileStatus()` (`process-manager.js:189-222` post-W-042) | Writes synthetic event to JSONL only | After writing, also `dispatchExternal(RUN_INTERRUPTED, source="stale")` |
+| `POST /runs/:id/cancel` (`project-routes.js:875-905`) | Silent rewrite to `cancelled/force_cancelled`; no event, no webhook, no integration | Stop-if-alive (`stopPipelineSync`) + status rewrite + `dispatchExternal(RUN_CANCELLED)` |
+| `POST /runs/:id/stop` fallback when PID dead (`project-routes.js:842-867`) | Silent rewrite to `cancelled/force_cancelled` — **identical behavior to the cancel endpoint today**, making stop an undocumented alias for cancel | Reject with `409 Conflict { code: "no_running_process", suggested_action: "cancel" }` — no silent mutation |
+| `DELETE /runs/:id` (`project-routes.js:742-754`) | Silent `pm.stopPipeline()` — not a deletion despite the verb | Remove the route; add real `POST /runs/:id/delete` (§9) |
+| `reconcileStatus()` (`process-manager.js:131-238` post-W-042) | Maps stale `running` → `interrupted/stale`; writes synthetic event to JSONL only | After writing, also `dispatchExternal(RUN_INTERRUPTED, source="stale")` — this becomes the **primary** terminal-state path on Windows (see §12.1) |
 
-The `stop` endpoint **stops being a fallback force-cancel**. Its only job becomes "send signal to live process". This removes the `pause`→`stop` silent-mutation bug — clicking `stop` after `pause` now returns `409 Conflict` with a hint to use `cancel` instead. The UI button is also greyed out per Section 8.
+The `stop` endpoint **stops being a fallback force-cancel**. Its only job becomes "signal the live process" (Unix) or "write control.json and wait, with reconciler fallback" (Windows — see §12). This removes the `pause`→`stop` silent-mutation bug: clicking `stop` after `pause` now returns `409 Conflict` with `suggested_action: "cancel"`. The UI button is also greyed out per §8.
 
 ### 8. UI button gating
 
@@ -368,6 +439,14 @@ export function actionAllowed(action, status) {
 ```
 
 Buttons render with `?disabled=${!actionAllowed(action, run.pipeline_status)}` and a tooltip explaining why when disabled. This eliminates inconsistency #11.
+
+#### 8.1 Shared matrix: single source of truth
+
+`ACTION_MATRIX` is the canonical definition. To prevent drift between client-side gating and server-side validation:
+
+- **Server imports the same matrix.** `project-routes.js` imports `actionAllowed` from `../app/utils/state-actions.js`. The module is pure JS with no DOM references; it is safe to load in Node. Each mutating endpoint calls `actionAllowed(action, currentStatus)` before mutating and returns `409 Conflict { code: "action_not_allowed" }` when it returns false — a belt-and-braces check behind the UI gating.
+- **Unit test enforces completeness.** `state-actions.test.js` iterates the cartesian product of `STATES × actions` and fails if a cell is neither `true` nor explicitly absent. New states therefore require explicit matrix entries before tests pass.
+- **Python does not import the matrix.** The orchestrator is the authority that writes states; the UI and server enforce the matrix against user-originated actions. Python's role is to emit correct transitions (§5), not to validate UI-initiated ones.
 
 ### 9. Real `delete` endpoint + remove `DELETE /runs/:id` alias
 
@@ -425,75 +504,228 @@ Buttons render with `?disabled=${!actionAllowed(action, run.pipeline_status)}` a
 
 Single contract: every state mutation that affects observers goes through `emit_event` → `dispatch_event`. No silent mutations.
 
+### 12. Cross-platform support (macOS / Linux / Windows)
+
+The pipeline runs on all three OSes. Signal, subprocess, and I/O semantics differ enough to warrant explicit handling. Two hard rules anchor the rest of this section:
+
+- **Graceful stop must never depend on POSIX signals alone.** On Windows, `process.kill(pid, 'SIGTERM')` is equivalent to `TerminateProcess` — the orchestrator's Python signal handler never runs. Graceful shutdown flows through `control.json` (file-based, OS-agnostic); signal is the emergency force-terminate fallback only.
+- **Reconciler is the primary terminal-state path on Windows.** When the orchestrator is force-killed, no `_signal_status["pipeline_status"] = "interrupted"` runs and no `_pending_signal_event` is stashed. The reconciler (§7, now dispatching through `dispatch_external`) MUST produce `pipeline.run.interrupted` with `stop_reason="stale"`.
+
+#### 12.1 Orchestrator signal handling per OS
+
+| OS | `process.kill(pid, 'SIGTERM')` effect | Python handler runs? | Graceful path |
+|---|---|---|---|
+| macOS | Sends SIGTERM; user handler runs before default action. | ✅ | `_handler()` sets `interrupted` + stashes `_pending_signal_event`. |
+| Linux | Sends SIGTERM; user handler runs before default action. | ✅ | Same as macOS. |
+| Windows | Calls `TerminateProcess`. Immediate kill. | ❌ | `control.json` poll (orchestrator sees it at next stage boundary); signal path is force-kill → reconciler cleans up. |
+
+**Consequence:** the signal-path unification in §5.3 (`_shutdown_requested` between stages → `PipelineInterrupted(stop_reason="signal")`) is an effective path on macOS/Linux only. On Windows it never fires. That's acceptable because:
+
+1. `control.json` (§5.1) works identically on all three OSes and is the documented graceful path.
+2. `reconcileStatus()` (§7, updated to dispatch) handles force-kill on all three OSes.
+3. Any future introduction of `CTRL_BREAK_EVENT` as a Windows graceful-stop mechanism can be added without changing the `interrupted` semantics defined here.
+
+`stopPipelineSync(runId, { timeoutMs })` MUST behave as follows:
+
+```javascript
+// worca-ui/server/process-manager.js
+async stopPipelineSync(runId, { timeoutMs = 5000 } = {}) {
+  const pid = this.getRunningPid(runId);
+  if (!pid) { const e = new Error('not running'); e.code = 'not_running'; throw e; }
+
+  // 1. Request graceful stop (control.json) — cross-platform.
+  this._writeControlJson(runId, { action: 'stop' });
+
+  if (process.platform !== 'win32') {
+    // 2a. Unix: also send SIGTERM to nudge the signal handler.
+    try { process.kill(pid, 'SIGTERM'); } catch { /* already dead */ }
+  }
+  // 2b. Windows: SIGTERM equivalent is TerminateProcess — skip, rely on control.json poll.
+
+  // 3. Poll for exit.
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try { process.kill(pid, 0); } catch { return { pid, exitCode: null }; }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+
+  // 4. Timeout — force terminate.
+  try { process.kill(pid, 'SIGKILL'); } catch { /* already dead */ }
+  return { pid, exitCode: null, forced: true };
+}
+```
+
+On Unix, step 2a delivers SIGTERM (handler runs, status persisted). On Windows, step 2a is skipped — we rely on the orchestrator's next `control.json` poll at a stage boundary. If the timeout fires before the poll, the reconciler fires `RUN_INTERRUPTED` with `stop_reason="stale"` afterwards. Both OSes converge on correct terminal state + dispatch; only the grace window differs.
+
+#### 12.2 JS → Python subprocess invocation
+
+`dispatch-external.js` wraps `child_process.spawn()`. Python discovery order:
+
+1. `process.env.WORCA_PYTHON` (escape hatch, all OSes — also usable in CI).
+2. `python3` (macOS / Linux / WSL).
+3. Windows only: `py -3` (launcher bundled with python.org installers), then `python` / `python.exe` on PATH.
+
+```javascript
+// worca-ui/server/dispatch-external.js
+function resolvePythonCmd() {
+  if (process.env.WORCA_PYTHON) return [process.env.WORCA_PYTHON];
+  if (process.platform === 'win32') {
+    // Prefer the py launcher, then fall back to python on PATH.
+    // Actual fallback happens in spawnWithFallback() — see below.
+    return ['py', '-3'];
+  }
+  return ['python3'];
+}
+
+async function spawnWithFallback(argv, opts) {
+  const candidates = [
+    resolvePythonCmd(),
+    process.platform === 'win32' ? ['python'] : ['python'],  // last-resort
+  ];
+  let lastErr;
+  for (const [cmd, ...prefix] of candidates) {
+    try {
+      return await spawnOnce(cmd, [...prefix, ...argv], opts);
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+      lastErr = err;
+    }
+  }
+  throw lastErr;
+}
+```
+
+Always use the **arg-array** form of `spawn()` — never the shell-string form — so paths with spaces work identically across OSes and no OS-specific quoting is required.
+
+#### 12.3 Python CLI — encoding, line endings, paths
+
+- **Encoding.** Windows defaults stdout/stderr/stdin to `cp1252`. The CLI must wrap them in UTF-8 `TextIOWrapper` at startup (see §3.4 skeleton). `status.json` and `events.jsonl` reads/writes MUST pass `encoding="utf-8"` explicitly.
+- **Line endings.** `newline="\n"` on writes; readers must be tolerant of both `\n` and `\r\n` (they already are — `.split('\n')` followed by `.trim()` in Node, and Python's default universal-newlines on read).
+- **Paths.** Everywhere: `pathlib.Path` in Python and `path.join()` in Node. Never string-concatenate with `'/'`. The `run_dir` argument to the CLI is accepted as an OS-native path and resolved with `Path()`.
+- **JSON argv size.** Windows caps `CreateProcess` argv at 32767 chars. Event payloads are <1KB typical (stage name + ms + source). If this ceiling is ever approached, switch to `--payload-file <path>` — out of scope for v1.
+
+#### 12.4 Process liveness check
+
+| OS | Node | Python |
+|---|---|---|
+| macOS / Linux | `process.kill(pid, 0)` → throws `ESRCH` if dead | `os.kill(pid, 0)` → raises `ProcessLookupError` if dead |
+| Windows | `process.kill(pid, 0)` → throws `ESRCH` if dead (Node translates `GetExitCodeProcess`/`OpenProcess`) | `os.kill(pid, 0)` → raises `OSError` if dead |
+
+`getRunningPid()` in `process-manager.js` already uses `process.kill(pid, 0)` — portable and unchanged. Reconciler liveness check is unchanged.
+
+#### 12.5 Shell-hook portability
+
+`dispatch_shell_hooks()` uses `subprocess.Popen(cmd, shell=True)` — this spawns `cmd.exe /c <cmd>` on Windows and `/bin/sh -c <cmd>` on Unix. User hook commands are **not** portable by default (e.g., `curl -X POST` works on both; `| jq` needs `jq` on PATH; `echo "foo"` semantics differ between cmd.exe and sh).
+
+- Document in `MIGRATION.md` and the worca hooks docs: hook commands target the default shell of the host OS.
+- If cross-platform hook demand surfaces, add a `shell: "bash" | "cmd" | "powershell"` field to hook config. Out of scope for W-043.
+
+Children spawned by Popen **do** survive parent exit on Windows (no job-object binding by default) — same as Unix. Fire-and-forget is safe.
+
+#### 12.6 File operations
+
+- `status.json` writes use `fs.writeFileSync` / `Path.write_text` — non-atomic. On Windows, a concurrent read during the write window can briefly see a partial file. Not introduced by W-043; tracked separately if it surfaces.
+- PID-file cleanup (`_remove_pid`) must `unlink` a file the parent may still have open on Windows (Windows refuses `unlink` of an in-use file). Current code already uses a best-effort try/except — unchanged.
+
+#### 12.7 CI coverage
+
+Python tests run on all three OSes via GitHub Actions matrix (`ubuntu-latest`, `macos-latest`, `windows-latest`). The new Phase C+D JS tests (dispatch-external, cancel-route, reconciler) also run on the matrix. Phase B tests that exercise signal handlers are skipped on `sys.platform == 'win32'` with a clear marker (`@pytest.mark.skipif(sys.platform == 'win32', reason='SIGTERM handler unreachable on Windows — covered by reconciler tests')`).
+
 ## Implementation Plan
 
-### Phase A: Foundation (event type + dispatch CLI)
+### Phase A: Foundation (event type + sync dispatch + CLI)
 
 **Files:**
 - `src/worca/events/types.py` (add `RUN_CANCELLED`, `run_cancelled_payload`)
+- `src/worca/events/emitter.py` (add `sync: bool = False` parameter to `dispatch_event` / `emit_event`)
 - `src/worca/events/dispatch_external.py` (new — CLI helper)
 - `tests/test_event_types.py` (extend)
+- `tests/test_emitter_sync.py` (new — verify `sync=True` uses `deliver_webhook_sync`)
 - `tests/test_dispatch_external.py` (new)
 
 **Tasks:**
-1. Add `RUN_CANCELLED` constant + `run_cancelled_payload()` builder in `events/types.py`.
-2. Implement `src/worca/events/dispatch_external.py` per Section 3.
-3. Unit tests: payload builder, CLI argument parsing, exit codes for missing run-dir / invalid event-type / dispatch error.
-4. Integration test: spawn the CLI as a subprocess, point it at a tmp run-dir with a fake `events.jsonl`, assert the event is written and (if a `worca.webhooks` config is present in settings) `deliver_webhook` is called.
+1. Add `RUN_CANCELLED` constant + `run_cancelled_payload()` builder in `events/types.py`. `source` enum: `user_cancel`, `force_cancel`, `bulk_cancel`.
+2. Add `sync: bool = False` parameter to `dispatch_event()` and `emit_event()` per §3.1. Default preserves existing async behavior; sync path routes through `deliver_webhook_sync`. Orchestrator call sites unchanged.
+3. Implement `src/worca/events/dispatch_external.py` per §3.4 — forces UTF-8 I/O (Windows parity) and invokes `emit_event(..., sync=True)`.
+4. Unit tests:
+   - `test_emit_event_sync_uses_deliver_webhook_sync` — patch both deliver functions; verify sync path is taken.
+   - `test_emit_event_async_default_unchanged` — regression: orchestrator path still uses `deliver_webhook`.
+   - `test_dispatch_external_utf8_io` — invoke the CLI with a non-ASCII branch name; assert the stdout JSON parses cleanly.
+   - `test_dispatch_external_exit_codes` — missing run-dir → 2; invalid event-type → 1 (argparse); dispatch fail → 3.
+5. Integration test: spawn the CLI as a subprocess via `subprocess.run(..., check=False)`, point it at a tmp run-dir with a fake `events.jsonl` + test-local webhook (using `http.server.HTTPServer` in a thread), assert the event was delivered before the CLI exited. This is the regression guard against the daemon-thread trap.
+6. CI: add matrix job (`ubuntu-latest`, `macos-latest`, `windows-latest`) — run the Phase A test files on all three. This is where the UTF-8 and argv-size assumptions are validated.
 
 ### Phase B: Python in-process unification
 
 **Files:**
-- `src/worca/orchestrator/runner.py` (PipelineInterrupted constructor, except handler, control-file/control-webhook stop_reason)
+- `src/worca/orchestrator/runner.py` (PipelineInterrupted constructor, **21** `raise` call sites, except handler, control-file stop branch)
 - `tests/test_runner.py`, `tests/test_runner_lifecycle.py`
 
 **Tasks:**
-1. Extend `PipelineInterrupted` exception to carry `stop_reason`.
-2. Update all `raise PipelineInterrupted(...)` call sites (5 locations) to pass `stop_reason`.
-3. Rewrite the `except PipelineInterrupted:` handler at `runner.py:2603-2611` per Section 5.4.
-4. Update `_check_control_file()` `action=stop` branch per Section 5.1.
-5. Tests:
-   - `test_pipeline_interrupted_lands_on_interrupted_state` — was previously asserting `failed`.
-   - `test_signal_then_stage_boundary_does_not_double_emit` — verify `_pending_signal_event` suppresses the orchestrator-path emit.
-   - `test_control_file_stop_lands_on_interrupted` (was `failed`).
-   - `test_control_webhook_abort_lands_on_interrupted` (was `failed`).
-   - `test_pipeline_interrupted_carries_stop_reason` — new exception API.
+1. Extend `PipelineInterrupted` exception to carry `stop_reason` (default `"stopped"` for backward compat until all sites migrate).
+2. Update **all 21** `raise PipelineInterrupted(...)` call sites in `runner.py` to pass `stop_reason` explicitly. Verify count with `grep -c "raise PipelineInterrupted" src/worca/orchestrator/runner.py`. Distribution at time of writing:
 
-### Phase C: JS routes use universal dispatch
+   | Count | `stop_reason` | Sites |
+   |---|---|---|
+   | 1 | `"control_file"` | line 163 (control-file stop) |
+   | 2 | `"signal"` | line 179 (signal during pause), 1552 (before stage), 1727 (during stage) — actually 3 |
+   | 17 | `"control_webhook"` | lines 190, 1452, 1694, 1968, 1999, 2015, 2056, 2096, 2178, 2286, 2327, 2356, 2392, 2428, 2479, 2523, 2548 |
+
+   The 17 control-webhook sites are mechanically identical (`raise PipelineInterrupted("Aborted via control webhook")`) — a single bulk find/replace is sufficient. Second pass: verify none were in strings / docstrings / comments (the grep will flag those too).
+
+3. Rewrite the `except PipelineInterrupted:` handler at `runner.py:2641-2650` per §5.4 (verify line range — post-W-042 rebases may have shifted it).
+4. Update `_check_control_file()` `action=stop` branch (`runner.py:157-163`) per §5.1.
+5. Tests (all Python; mark Windows-skip where signal-dependent):
+   - `test_pipeline_interrupted_lands_on_interrupted_state` — was previously asserting `failed`.
+   - `test_pipeline_interrupted_carries_stop_reason` — new exception API.
+   - `test_control_file_stop_lands_on_interrupted_all_os` — runs everywhere (no signal dependency). **Was `failed`.**
+   - `test_control_webhook_abort_lands_on_interrupted_all_os` — runs everywhere. **Was `failed`.**
+   - `test_signal_then_stage_boundary_does_not_double_emit` — Unix only (`@skipif win32`). Verifies `_pending_signal_event` suppresses the orchestrator-path emit.
+   - `test_signal_handler_sets_interrupted_status` — Unix only.
+   - `test_all_pipeline_interrupted_sites_have_stop_reason` — AST-based lint test that parses `runner.py` and asserts every `raise PipelineInterrupted(...)` call supplies a `stop_reason` kwarg. Prevents regressions from future copy/paste. Runs on all OSes.
+
+### Phase C + D: JS routes + UI gating (ship together)
+
+**Bundling rationale.** Phases C and D ship as **one PR**, not two. Today the UI only calls `/runs/:id/stop` (`worca-ui/app/main.js:1169, 1263`) — there is no Cancel button anywhere in the frontend. If Phase C ships alone, clicking Stop on a paused run returns `409 Conflict` and the UI has no handler, producing a silent breakage. Bundling avoids this window. If the PR proves too large in review, split into "C-server-only behind `WORCA_STRICT_STOP=1` flag" + "D-UI + flip flag" — but default to bundled.
 
 **Files:**
 - `worca-ui/server/dispatch-external.js` (new — JS wrapper around the CLI)
 - `worca-ui/server/project-routes.js` (cancel route, stop route)
-- `worca-ui/server/process-manager.js` (reconcileStatus, stopPipelineSync)
+- `worca-ui/server/process-manager.js` (`reconcileStatus(worcaDir, settingsPath)`, `stopPipelineSync` — see §12.1 for cross-platform body)
+- `worca-ui/server/ws-message-router.js` (thread `proj.settingsPath` through the reconciler call at line 508 — currently only `proj.worcaDir` is passed)
 - `worca-ui/server/test/project-routes-cancel.test.js` (new)
+- `worca-ui/server/test/project-routes-stop-409.test.js` (new)
 - `worca-ui/server/test/process-manager-reconcile.test.js` (extend)
-
-**Tasks:**
-1. Implement `dispatch-external.js` — `await dispatchExternal({ runDir, settingsPath, eventType, payload })`.
-2. Add `pm.stopPipelineSync(runId, { timeoutMs })` — SIGTERM, wait for exit, SIGKILL if timeout. Returns `{ pid, exitCode }`.
-3. Rewrite cancel route per Section 6.
-4. Rewrite stop route's PID-dead fallback to return `409 Conflict` (no silent mutation). Document in MIGRATION.md.
-5. Update `reconcileStatus()` to call `dispatchExternal` after writing the synthetic event.
-6. Tests:
-   - cancel from each starting state (`running`, `paused`, `failed`, `interrupted`) hits dispatch helper.
-   - cancel on `cancelled` is a no-op (returns `already: cancelled`).
-   - stop on dead PID returns 409 with `code: "no_running_process"`.
-   - reconcile invokes `dispatchExternal` (mocked).
-
-### Phase D: UI button gating
-
-**Files:**
+- `worca-ui/server/test/dispatch-external.test.js` (new — resolves Python per OS, respects `WORCA_PYTHON`, timeout handling)
 - `worca-ui/app/utils/state-actions.js` (new)
-- `worca-ui/app/utils/state-actions.test.js` (new)
-- `worca-ui/app/views/run-card.js`
-- `worca-ui/app/views/run-list.js`
+- `worca-ui/app/utils/state-actions.test.js` (new — 56 cells × action × state coverage)
+- `worca-ui/app/views/run-card.js` (import `actionAllowed`; add Cancel button next to Stop)
+- `worca-ui/app/views/run-list.js` (import `actionAllowed`)
 - `worca-ui/app/views/multi-dashboard.js` (bulk action gating)
 
 **Tasks:**
-1. Implement `actionAllowed(action, status)` per Section 8.
-2. Wire into all run-action buttons. Add `<sl-tooltip>` with reason when disabled.
-3. Unit tests for `actionAllowed` covering all 7 states × 8 actions = 56 cells.
-4. Add a Cancel button next to Stop in run-card (currently only Stop exists).
+1. Implement `dispatch-external.js` — `await dispatchExternal({ runDir, settingsPath, eventType, payload, timeoutMs = 15000 })`. Python discovery + spawn-with-fallback per §12.2. On timeout: kill the subprocess, log to stderr, resolve with `{ ok: false, reason: 'timeout' }` (do not reject — callers should not block the HTTP response on dispatch failure).
+2. Thread `settingsPath` through `ProcessManager` constructor and `reconcileStatus(worcaDir, settingsPath)`. Fix the standalone helper at `process-manager.js:644`. Fix the ws-router call at `ws-message-router.js:508` to pass `proj.settingsPath` (already in scope per line 68).
+3. Implement `pm.stopPipelineSync(runId, { timeoutMs })` per §12.1 — cross-platform body (control.json + optional SIGTERM on Unix + poll + force-terminate).
+4. Rewrite cancel route per §6. Use `actionAllowed('cancel', currentStatus)` as a pre-check (§8.1); return `409 { code: 'action_not_allowed' }` when disallowed.
+5. Rewrite stop route's PID-dead fallback to return `409 Conflict { code: 'no_running_process', suggested_action: 'cancel' }`.
+6. Update `reconcileStatus()` to call `dispatchExternal` after writing the synthetic event. This is the primary `RUN_INTERRUPTED` path on Windows (§12.1).
+7. Remove `DELETE /runs/:id` route (§9).
+8. Implement `actionAllowed(action, status)` per §8. Server-side import at `project-routes.js` header.
+9. Wire `actionAllowed` into all run-action buttons (`run-card.js`, `run-list.js`). Add `<sl-tooltip>` with reason when disabled.
+10. Add a Cancel button next to Stop in `run-card.js`.
+11. UI handler for `409 { code: 'no_running_process' }` — display a toast prompting the user to use Cancel, with a one-click redirect (covers the case where state changed between render and click).
+12. Tests — server:
+    - cancel from each starting state (`running`, `paused`, `failed`, `interrupted`, `pending`) hits dispatch helper.
+    - cancel on `cancelled` is an idempotent no-op (returns `{ ok: true, already: 'cancelled' }`, no dispatch spawned).
+    - stop on dead PID returns 409 with `code: "no_running_process"`.
+    - reconcile invokes `dispatchExternal` (mocked).
+    - `dispatchExternal` respects `WORCA_PYTHON`, falls back on `ENOENT`, and times out cleanly on unresponsive Python.
+13. Tests — UI:
+    - `actionAllowed` 56-cell matrix.
+    - Stop button disabled on paused runs.
+    - Cancel button present on run-card for all non-terminal + reversibly-terminal states.
+14. CI: entire Phase C+D PR runs on `ubuntu-latest`, `macos-latest`, `windows-latest` (vitest + playwright workers=1). Windows playwright step validates the control.json-based graceful stop (see §Test Plan).
 
 ### Phase E: Cleanup
 
@@ -518,28 +750,34 @@ Single contract: every state mutation that affects observers goes through `emit_
 | File | Phase | Change |
 |------|-------|--------|
 | `src/worca/events/types.py` | A | Add `RUN_CANCELLED`, `run_cancelled_payload` |
-| `src/worca/events/dispatch_external.py` | A | New — CLI helper |
+| `src/worca/events/emitter.py` | A | Add `sync: bool = False` parameter to `dispatch_event` and `emit_event` |
+| `src/worca/events/dispatch_external.py` | A | New — CLI helper; UTF-8 I/O wrappers; `sync=True` dispatch |
 | `tests/test_event_types.py` | A | Extend with `RUN_CANCELLED` cases |
-| `tests/test_dispatch_external.py` | A | New |
-| `src/worca/orchestrator/runner.py` | B | `PipelineInterrupted` constructor; 5 `raise` call sites; except handler; `_check_control_file` stop branch |
-| `tests/test_runner.py` | B | Update existing PipelineInterrupted tests; add new |
-| `tests/test_runner_lifecycle.py` | B | Update lifecycle tests for new terminal state |
-| `worca-ui/server/dispatch-external.js` | C | New — JS wrapper |
-| `worca-ui/server/project-routes.js` | C, E | Cancel route rewrite; stop route 409; remove DELETE alias; add delete route |
-| `worca-ui/server/process-manager.js` | C, E | `stopPipelineSync`, reconciler dispatch call, `deleteRun` |
-| `worca-ui/server/test/project-routes-cancel.test.js` | C | New |
-| `worca-ui/server/test/process-manager-reconcile.test.js` | C | Extend |
-| `worca-ui/app/utils/state-actions.js` | D | New |
-| `worca-ui/app/utils/state-actions.test.js` | D | New |
-| `worca-ui/app/views/run-card.js` | D | Use `actionAllowed`; add Cancel button |
-| `worca-ui/app/views/run-list.js` | D | Use `actionAllowed` |
-| `worca-ui/app/views/multi-dashboard.js` | D | Bulk action gating |
+| `tests/test_emitter_sync.py` | A | New — verify sync vs async dispatch routing |
+| `tests/test_dispatch_external.py` | A | New — CLI matrix on macOS/Linux/Windows |
+| `src/worca/orchestrator/runner.py` | B | `PipelineInterrupted` constructor; **21** `raise` call sites; except handler; `_check_control_file` stop branch |
+| `tests/test_runner.py` | B | Update existing tests; add new; AST lint test for 21-site coverage |
+| `tests/test_runner_lifecycle.py` | B | Update lifecycle tests for new terminal state (OS-skip where signal-dependent) |
+| `worca-ui/server/dispatch-external.js` | C+D | New — JS wrapper with per-OS Python discovery, timeout, `WORCA_PYTHON` support |
+| `worca-ui/server/project-routes.js` | C+D, E | Cancel route rewrite; stop route 409; server-side `actionAllowed` check; remove DELETE alias; add real delete route |
+| `worca-ui/server/process-manager.js` | C+D, E | `stopPipelineSync` (cross-platform per §12.1); reconciler dispatch call with `settingsPath`; `deleteRun` |
+| `worca-ui/server/ws-message-router.js` | C+D | Thread `proj.settingsPath` through the reconciler call at line 508 |
+| `worca-ui/server/test/project-routes-cancel.test.js` | C+D | New |
+| `worca-ui/server/test/project-routes-stop-409.test.js` | C+D | New |
+| `worca-ui/server/test/process-manager-reconcile.test.js` | C+D | Extend with `dispatchExternal` mock |
+| `worca-ui/server/test/dispatch-external.test.js` | C+D | New — per-OS Python resolution, timeout, fallback |
+| `worca-ui/app/utils/state-actions.js` | C+D | New — canonical action × state matrix (shared with server) |
+| `worca-ui/app/utils/state-actions.test.js` | C+D | New — 56-cell coverage |
+| `worca-ui/app/views/run-card.js` | C+D | Use `actionAllowed`; add Cancel button; handle 409 → toast |
+| `worca-ui/app/views/run-list.js` | C+D | Use `actionAllowed` |
+| `worca-ui/app/views/multi-dashboard.js` | C+D | Bulk action gating |
 | `worca-ui/app/utils/status-badge.js` | E | Remove `resuming` |
 | `worca-ui/app/views/stage-timeline.js` | E | Remove `resuming` checks |
 | `src/worca/state/status.py` | E | Remove legacy `interrupted → paused` |
 | `tests/test_status.py` | E | Remove obsolete test |
-| `MIGRATION.md` | E | Document breaking changes |
-| `CLAUDE.md` | C | Add rule: "JS state mutations must invoke `dispatch_external`" |
+| `MIGRATION.md` | E | Document breaking changes (incl. Windows stop semantics note) |
+| `CLAUDE.md` | C+D | Add rule: "JS state mutations must invoke `dispatch_external`"; note Windows SIGTERM semantics |
+| `.github/workflows/*.yml` | A, C+D | Extend matrix to include `macos-latest` and `windows-latest` for affected test files |
 
 ## Considerations
 
@@ -547,9 +785,10 @@ Single contract: every state mutation that affects observers goes through `emit_
 
 1. **Control-file `stop` action terminal state changes from `failed` to `interrupted`.** Anyone querying `pipeline_status === 'failed'` to detect user-stops will miss them after upgrade. Mitigation: webhook subscribers should always look at `event_type` (`pipeline.run.interrupted` vs `pipeline.run.failed`), not status.json. Documented in MIGRATION.md.
 2. **Control-webhook `abort` action terminal state changes from `failed` to `interrupted`.** Same mitigation.
-3. **`POST /runs/:id/stop` no longer silently force-cancels dead PIDs.** Returns `409 Conflict` with `code: "no_running_process"`. Callers (UI, third-party scripts) must switch to `POST /runs/:id/cancel` for force-terminate semantics. UI is updated in Phase D.
-4. **`DELETE /runs/:id` removed.** Was a duplicate of stop. Callers migrate to `POST /runs/:id/stop` (signal) or `POST /runs/:id/cancel` (force).
+3. **`POST /runs/:id/stop` no longer silently force-cancels dead PIDs.** Returns `409 Conflict` with `code: "no_running_process"` instead of silently rewriting status to `cancelled`. Callers (UI, third-party scripts) must switch to `POST /runs/:id/cancel` for force-terminate semantics. UI handles this gracefully with a toast + one-click redirect (§C+D).
+4. **`DELETE /runs/:id` removed.** Was a duplicate of stop. Callers migrate to `POST /runs/:id/stop` (signal) or `POST /runs/:id/cancel` (force). A real delete endpoint is now `POST /runs/:id/delete`.
 5. **`pipeline.run.cancelled` is a new event type.** Webhook/integration subscribers may receive a previously-unseen event type. Default `TIER1_EVENTS` (UI integration setup) includes it so users get notifications by default.
+6. **Windows graceful-stop behavior (documentation change, not code regression).** On Windows, the UI's stop button invokes control.json + a short grace window, NOT SIGTERM. If the orchestrator doesn't poll control.json within the timeout, the process is force-terminated and the reconciler fires `RUN_INTERRUPTED` with `stop_reason="stale"` afterwards. Subscribers see the same final state (`interrupted`) but with a slightly different `stop_reason` than on Unix. Documented in MIGRATION.md.
 
 ### Migration
 
@@ -565,6 +804,8 @@ Single contract: every state mutation that affects observers goes through `emit_
 - **`DELETE /runs/:id` removed.** It was an alias for stop. Use `POST /runs/:id/stop` or `POST /runs/:id/cancel`. A real delete endpoint is now `POST /runs/:id/delete`.
 
 - **New event `pipeline.run.cancelled`.** Fires whenever a pipeline reaches terminal state via the cancel action. Subscribed by default in the integration TIER1_EVENTS list.
+
+- **Windows users:** the Stop button on the dashboard now targets `control.json` (graceful) rather than SIGTERM. If a pipeline is mid-stage and does not poll the control file within the ~5s grace window, it is force-terminated by the UI server and the reconciler fires `pipeline.run.interrupted` with `stop_reason="stale"` shortly after. If you monitor `stop_reason` on Windows specifically, expect `"stale"` more often than `"signal"`.
 ```
 
 ### Governance / dispatch invariant
@@ -577,62 +818,109 @@ Add this as a code-review checklist item in `CLAUDE.md`. A future post_tool_use 
 
 ### Performance
 
-`dispatchExternal()` spawns a Python subprocess per state mutation. State mutations are user-initiated and rare (cancel, reconcile-stale, etc.) — not in any hot path. Cold-start cost ~150ms per invocation, acceptable for these flows. If profile shows it matters, batch via a long-running helper process; not worth optimising now.
+`dispatchExternal()` spawns a Python subprocess per state mutation. State mutations are user-initiated and rare (cancel, reconcile-stale, etc.) — not in any hot path. Cold-start cost approximately:
+
+| OS | Cold-start (Python import + emit) | Warm-start (OS fs cache hot) |
+|---|---|---|
+| Linux | ~120ms | ~60ms |
+| macOS | ~150ms | ~80ms |
+| Windows | ~250-400ms (process creation is slower; py launcher adds overhead) | ~150ms |
+
+Acceptable for cancel/stop frequency on all three OSes. Mitigation for Windows: `dispatchExternal` runs **after** the HTTP response is sent (see §6 sidebar below), so the user perceives cancel as instant and only the webhook delivery is subject to Windows process-creation latency. If this becomes a bottleneck, batch via a long-running helper process — out of scope for v1.
+
+### Dispatch lifetime
+
+Covered in detail in §3.1. Summary: `deliver_webhook` uses daemon threads that die when the interpreter exits. The CLI helper MUST invoke `emit_event(..., sync=True)` to avoid silently truncating webhook delivery. Regression guard is `tests/test_dispatch_external.py::test_cli_waits_for_webhook_delivery` — a local HTTP server records receipt; the CLI must exit only after the POST completes.
+
+### HTTP-response vs dispatch decoupling
+
+In §6, the cancel endpoint's order of operations is:
+
+1. `stopPipelineSync` (if alive) — blocking but bounded by `timeoutMs`.
+2. Status.json rewrite — fast, local.
+3. WebSocket broadcast to clients — fast, local.
+4. HTTP 200 response to the user.
+5. `dispatchExternal` spawn — the Python subprocess — does NOT block the response; it runs after `res.json()` and its completion is logged for observability but never bubbles back to the user.
+
+Rationale: dispatch is best-effort and cross-OS slow (especially Windows). A stalled webhook subscriber must not delay the UI response. If dispatch fails, the event is already in `events.jsonl`, so no observable state is lost — webhook retries are already bounded internally.
+
+Implementation: `dispatchExternal` returns a promise that `project-routes.js` `await`s **after** `res.json()` has been called (Express allows further work after response, but awaiting after response is sent is idempotent). For stricter guarantees, pass the promise to a small in-memory queue that drains on server shutdown — out of scope unless the unresolved-promise count grows.
 
 ### Edge cases
 
-- **Concurrent cancel + signal:** if user clicks cancel while SIGTERM is already in flight from another source, both write `events.jsonl` (signal handler stashes, then cancel emits RUN_CANCELLED). Expected behaviour: webhook subscribers see `pipeline.run.interrupted` (from signal) followed by `pipeline.run.cancelled`. The `cancel` rewrites the terminal status to `cancelled` (overwrites `interrupted`), so resume is correctly blocked. Document in test plan.
+- **Concurrent cancel + signal:** if user clicks cancel while SIGTERM is already in flight (or the orchestrator's pause-handler is already processing), both paths may write `events.jsonl`. Expected behavior: webhook subscribers see `pipeline.run.interrupted` (from signal, exactly once — guarded by `_pending_signal_event`) then `pipeline.run.cancelled`. Cancel's status rewrite (`cancelled`) overwrites `interrupted`, so resume is correctly blocked. Dedicated integration test — see §Test Plan.
 - **Cancel on `paused`:** no live PID, but state goes to `cancelled` and `RUN_CANCELLED` fires. Correct.
-- **Reconcile race with running orchestrator:** if reconciler triggers between status update and PID cleanup, it may emit a spurious `interrupted/stale` event. Mitigation: reconciler already checks PID liveness; the race window is the brief gap between the orchestrator's `finally` block and PID-file removal. In practice never observed; if it surfaces, add a 500ms grace period to the reconciler.
+- **Reconcile race with running orchestrator:** if the reconciler triggers between status update and PID cleanup, it may emit a spurious `interrupted/stale` event. Mitigation: reconciler already checks PID liveness; the race window is the brief gap between the orchestrator's `finally` block and PID-file removal. In practice never observed; if it surfaces, add a 500ms grace period to the reconciler.
+- **Windows force-kill (no signal handler):** `process.kill(pid, 'SIGTERM')` on Windows invokes `TerminateProcess`; the Python handler never runs, so `_signal_status` is never set to `interrupted` and no `_pending_signal_event` is stashed. The status stays `running` with the PID dead. The reconciler picks this up on its next scan (WS reconnect, UI refresh, or next route request) and fires `RUN_INTERRUPTED` with `stop_reason="stale"`. First-class path on Windows; fallback on Unix.
+- **User-provided shell hooks that themselves call webhooks:** user-written hook commands may take seconds (e.g., `curl -X POST ...`). On Unix they survive parent exit cleanly; on Windows same (no job-object binding). No action needed.
+- **WSL / Cygwin / MSYS:** treated as `win32` by Node's `process.platform` only if running native Windows Node; running `node` under WSL reports `linux`. Plan behavior: follow the reported platform. Users running cross-environment setups must export `WORCA_PYTHON` to disambiguate.
 
 ## Test Plan
 
 ### Unit tests
 
-| Layer | Test | Validates |
-|-------|------|-----------|
-| Python | `test_run_cancelled_payload_required_fields` | New payload builder shape + `source` enum |
-| Python | `test_dispatch_external_writes_event` | CLI subprocess writes correct event to events.jsonl |
-| Python | `test_dispatch_external_invokes_dispatch_event` | CLI subprocess calls `dispatch_event` (webhook + shell-hook) |
-| Python | `test_dispatch_external_exits_2_on_missing_run_dir` | Error handling |
-| Python | `test_pipeline_interrupted_carries_stop_reason` | Exception API |
-| Python | `test_pipeline_interrupted_handler_lands_on_interrupted` | Was `failed` |
-| Python | `test_control_file_stop_lands_on_interrupted` | Section 5.1 |
-| Python | `test_control_webhook_abort_lands_on_interrupted` | Section 5.2 |
-| Python | `test_signal_does_not_duplicate_emit` | `_pending_signal_event` suppression |
-| JS | `actionAllowed`: 56 cells | Action × state matrix coverage |
-| JS | `dispatchExternal` spawns Python with correct args | Subprocess wrapper |
-| JS | cancel from each state | Section 6 |
-| JS | stop on dead PID returns 409 | Section 7 |
-| JS | reconciler invokes dispatchExternal | Section 7 |
+| Layer | Test | Validates | OS scope |
+|-------|------|-----------|---|
+| Python | `test_run_cancelled_payload_required_fields` | New payload builder shape + `source` enum | all |
+| Python | `test_emit_event_sync_uses_deliver_webhook_sync` | §3.1 — sync path avoids daemon threads | all |
+| Python | `test_emit_event_async_default_unchanged` | Regression: orchestrator path still uses `deliver_webhook` | all |
+| Python | `test_dispatch_external_writes_event` | CLI subprocess writes correct event to events.jsonl | all |
+| Python | `test_dispatch_external_invokes_dispatch_event_sync` | CLI uses sync dispatch — webhook delivered before CLI exits (see below) | all |
+| Python | `test_cli_waits_for_webhook_delivery` | Daemon-thread regression guard — local HTTP server records receipt; CLI exit code 0 only after POST lands | all |
+| Python | `test_dispatch_external_exits_2_on_missing_run_dir` | Error handling | all |
+| Python | `test_dispatch_external_utf8_branch_name` | UTF-8 I/O (§12.3) — non-ASCII branch name roundtrips cleanly | **Windows** primary; also run on Unix |
+| Python | `test_pipeline_interrupted_carries_stop_reason` | Exception API | all |
+| Python | `test_pipeline_interrupted_handler_lands_on_interrupted` | Was `failed` | all |
+| Python | `test_control_file_stop_lands_on_interrupted` | §5.1 | all |
+| Python | `test_control_webhook_abort_lands_on_interrupted` | §5.2 | all |
+| Python | `test_signal_does_not_duplicate_emit` | `_pending_signal_event` suppression | **Unix only** (`@skipif win32`) |
+| Python | `test_all_pipeline_interrupted_sites_have_stop_reason` | AST lint — every `raise PipelineInterrupted(...)` has `stop_reason` kwarg | all |
+| JS | `actionAllowed`: 56 cells | Action × state matrix coverage | all |
+| JS | `dispatchExternal` spawns with correct args | Subprocess wrapper shape | all |
+| JS | `dispatchExternal` resolves Python per OS | Respects `WORCA_PYTHON`; prefers `py -3` on Windows; falls back on `ENOENT` | per-OS mocks |
+| JS | `dispatchExternal` times out cleanly | Unresponsive Python → kill subprocess; `{ ok: false, reason: 'timeout' }` | all |
+| JS | cancel from each state | §6 | all |
+| JS | cancel endpoint awaits stopPipelineSync before status rewrite | Prevents cancel-before-stop race | all |
+| JS | stop on dead PID returns 409 | §7 | all |
+| JS | reconciler invokes dispatchExternal | §7 | all |
+| JS | `stopPipelineSync` control.json write + SIGTERM on Unix | §12.1 branch for non-win32 | Unix only |
+| JS | `stopPipelineSync` control.json only on Windows (no SIGTERM send) | §12.1 win32 branch | Windows only |
 
 ### Integration tests
 
-| Scenario | Expected outcome |
-|---|---|
-| Start → pause → cancel | Status: `cancelled`. Events: `RUN_STARTED`, `RUN_PAUSED`, `RUN_CANCELLED`. Webhook + integration each receive 3 events. |
-| Start → SIGTERM → wait | Status: `interrupted` (`stop_reason=signal`). Events: `RUN_STARTED`, `RUN_INTERRUPTED` (exactly once). |
-| Start → SIGTERM during pause-poll | Status: `interrupted`. Events: `RUN_STARTED`, `RUN_PAUSED`, `RUN_INTERRUPTED`. |
-| Start → control-file stop | Status: `interrupted` (`stop_reason=control_file`). Webhook gets `RUN_INTERRUPTED`. |
-| Start → control-webhook abort | Status: `interrupted` (`stop_reason=control_webhook`). |
-| Pause → stop (user-reported bug) | UI button greyed out. Programmatic POST returns 409. No silent mutation. |
-| Cancel after SIGKILL | Reconciler emits `RUN_INTERRUPTED` first (`stop_reason=stale`), cancel emits `RUN_CANCELLED`. Status ends `cancelled`. |
-| Resume from `cancelled` | UI button greyed out. Programmatic POST returns 409. |
+Every integration test runs on the full OS matrix unless explicitly marked Unix-only (signal-dependent) or Windows-only.
+
+| Scenario | OS scope | Expected outcome |
+|---|---|---|
+| Start → pause → cancel | all | Status: `cancelled`. Events: `RUN_STARTED`, `RUN_PAUSED`, `RUN_CANCELLED`. Webhook + integration each receive 3 events. |
+| Start → SIGTERM → wait | Unix only | Status: `interrupted` (`stop_reason=signal`). Events: `RUN_STARTED`, `RUN_INTERRUPTED` (exactly once). |
+| Start → `TerminateProcess` (force-kill) → reconcile | Windows only | Status: `interrupted` (`stop_reason=stale`). Events: `RUN_STARTED`, `RUN_INTERRUPTED` fired by reconciler via dispatch helper. Zero silent mutations. |
+| Start → SIGTERM during pause-poll | Unix only | Status: `interrupted`. Events: `RUN_STARTED`, `RUN_PAUSED`, `RUN_INTERRUPTED` (once; `_pending_signal_event` suppresses the orchestrator-path duplicate). |
+| Start → control-file stop | all | Status: `interrupted` (`stop_reason=control_file`). Webhook gets `RUN_INTERRUPTED`. **Primary graceful path on Windows.** |
+| Start → control-webhook abort | all | Status: `interrupted` (`stop_reason=control_webhook`). |
+| Pause → stop (user-reported bug) | all | UI button greyed out (§8). Programmatic POST returns 409. No silent mutation. |
+| Cancel after force-kill | all | Reconciler emits `RUN_INTERRUPTED` first (`stop_reason=stale`) via dispatch helper, then cancel emits `RUN_CANCELLED`. Status ends `cancelled`. Two event types; each delivered exactly once. |
+| **Concurrent cancel + signal (race)** | Unix only | SIGTERM in-flight; user clicks cancel in same ~50ms window. Expected timeline: signal handler stashes `_pending_signal_event` → main thread raises → except handler sees `_pending_signal_event` set and skips emit → cancel route fires `RUN_CANCELLED`. Final status: `cancelled`. Events: `RUN_INTERRUPTED` (from signal, once) + `RUN_CANCELLED` (from cancel, once). No duplicates. |
+| Resume from `cancelled` | all | UI button greyed out. Programmatic POST returns 409. |
+| `dispatchExternal` when Python not on PATH | all | Falls back through candidate list (§12.2). If all fail, logs to stderr; event still written to `events.jsonl`; webhook not delivered (best-effort contract). |
+| UTF-8 branch name end-to-end | all | Branch name contains non-ASCII; event payload written correctly; webhook receives intact body. |
 
 ### Existing tests to update
 
 - `tests/test_status.py::test_resolve_status_maps_interrupted_to_paused` — **delete** (legacy mapping removed).
 - `tests/test_runner.py` — any test asserting `pipeline_status == 'failed'` after `PipelineInterrupted` must change to `interrupted`.
-- `worca-ui/server/test/process-manager-reconcile.test.js` — extend to verify `dispatchExternal` is called (mocked).
+- `worca-ui/server/test/process-manager-reconcile.test.js` — extend to verify `dispatchExternal` is called with `settingsPath` (mocked).
 - W-042 tests for `_pending_signal_event` already exist; extend to cover the orchestrator-path suppression.
 
 ### Done criteria
 
-- All Python tests pass (`pytest tests/`).
-- All JS tests pass (`npx vitest run` in `worca-ui/`).
-- `ruff check .` clean.
+- All Python tests pass on `ubuntu-latest`, `macos-latest`, **and** `windows-latest` (`pytest tests/`).
+- All JS tests pass on the same matrix (`npx vitest run` in `worca-ui/`).
+- Playwright e2e tests pass on all three OSes with `--workers=1`.
+- `ruff check .` clean on Unix and Windows (ruff is cross-platform).
 - `cd worca-ui && npm run lint` clean.
 - Manual smoke test on `test-multi-02` matching the user's pause→stop scenario: notification fires for `RUN_PAUSED` AND for `RUN_CANCELLED`.
+- Windows-specific smoke test: start a pipeline, kill via Task Manager (force-terminate), wait for reconciler to tick, verify `pipeline.run.interrupted` with `stop_reason="stale"` landed in events.jsonl AND that the webhook URL received exactly one POST.
 
 ## Files to Create/Modify
 
