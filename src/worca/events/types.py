@@ -197,8 +197,14 @@ def run_failed_payload(
     return p
 
 
-def run_interrupted_payload(interrupted_stage: str, elapsed_ms: int) -> dict:
-    return {"interrupted_stage": interrupted_stage, "elapsed_ms": elapsed_ms}
+def run_interrupted_payload(
+    interrupted_stage: str, elapsed_ms: int, source: str = "orchestrator"
+) -> dict:
+    return {
+        "interrupted_stage": interrupted_stage,
+        "elapsed_ms": elapsed_ms,
+        "source": source,
+    }
 
 
 def run_resumed_payload(

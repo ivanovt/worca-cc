@@ -39,7 +39,7 @@ from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.settings import load_settings
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
-from worca.events.emitter import EventContext, emit_event, _check_control_response
+from worca.events.emitter import EventContext, emit_event, dispatch_event, _check_control_response
 from worca.events.types import (
     RUN_STARTED, RUN_COMPLETED, RUN_FAILED, RUN_INTERRUPTED,
     RUN_RESUMED, RUN_PAUSED, RUN_RESUMED_FROM_PAUSE,
@@ -116,6 +116,7 @@ _signal_status = None
 _signal_status_path = None
 _signal_project_status_path = None  # project-level status.json for PID cleanup
 _signal_event_ctx = None  # set to EventContext when run starts; signal-safe event emission
+_pending_signal_event = None  # signal handler stashes interrupted-event dict here for deferred dispatch
 
 
 def _check_control_file(
@@ -355,18 +356,23 @@ def _elapsed_ms_since(started_at_iso: str) -> int:
         return 0
 
 
-def _emit_interrupted_event(ctx, status, source: str) -> None:
-    """Append a pipeline.run.interrupted event from a signal handler or atexit hook.
+def _emit_interrupted_event_signal_safe(ctx, status) -> None:
+    """Append a pipeline.run.interrupted event from a signal handler.
 
-    Shared by the signal handler and atexit cleanup so the on-disk event shape
-    stays in lockstep across both paths. Swallows all errors — callers run in
-    contexts where exceptions cannot be propagated.
+    Writes the event to events.jsonl using only signal-safe file I/O AND stashes
+    the event dict in _pending_signal_event so the main thread (run_pipeline's
+    finally block) or atexit can later dispatch it to webhooks and integration
+    shell-hooks. Webhook and shell-hook delivery cannot run in a signal handler
+    because they perform network I/O, spawn threads, and import urllib/requests.
+
+    Swallows all errors — signal-context callers cannot propagate exceptions.
 
     Signal-safety note: json.dumps, uuid.uuid4, and open() are not POSIX
     async-signal-safe in the strict sense. This relies on CPython's behavior of
     delivering signals between bytecode operations rather than mid-instruction,
     which makes it safe in practice but not portable to other Python runtimes.
     """
+    global _pending_signal_event
     import json as _json
     import uuid as _uuid
     from datetime import datetime as _dt, timezone as _tz
@@ -386,13 +392,15 @@ def _emit_interrupted_event(ctx, status, source: str) -> None:
             "payload": {
                 "interrupted_stage": status.get("current_stage", "unknown"),
                 "elapsed_ms": _elapsed_ms_since(status.get("started_at", "")),
-                "source": source,
+                "source": "signal",
             },
         }
         line = _json.dumps(event, ensure_ascii=False)
         fh = open(ctx.events_path, "a", encoding="utf-8")
         fh.write(line + "\n")
         fh.flush()
+        # Stash for deferred dispatch — signal context cannot run network/thread I/O.
+        _pending_signal_event = event
     except Exception:
         pass
     finally:
@@ -401,6 +409,24 @@ def _emit_interrupted_event(ctx, status, source: str) -> None:
                 fh.close()
             except Exception:
                 pass
+
+
+def _dispatch_pending_signal_event(ctx) -> None:
+    """Dispatch the signal-stashed interrupted event to webhooks and shell hooks.
+
+    Called from run_pipeline's finally block (normal exit after signal) and from
+    _atexit_cleanup (process exit before finally completed). Idempotent: clears
+    _pending_signal_event after dispatch so a follow-up call is a no-op.
+    """
+    global _pending_signal_event
+    if _pending_signal_event is None or ctx is None:
+        return
+    event = _pending_signal_event
+    _pending_signal_event = None
+    try:
+        dispatch_event(ctx, event)
+    except Exception:
+        pass
 
 
 def _install_signal_handlers():
@@ -421,7 +447,7 @@ def _install_signal_handlers():
             except Exception:
                 pass
             if _signal_event_ctx is not None:
-                _emit_interrupted_event(_signal_event_ctx, _signal_status, "signal")
+                _emit_interrupted_event_signal_safe(_signal_event_ctx, _signal_status)
             # Clean up PID files (per-run + project-level)
             _remove_pid(_signal_status_path)
             if _signal_project_status_path:
@@ -455,7 +481,18 @@ def _atexit_cleanup():
                     _signal_status["stop_reason"] = "unexpected_exit"
                 save_status(_signal_status, _signal_status_path)
                 if _signal_event_ctx is not None:
-                    _emit_interrupted_event(_signal_event_ctx, _signal_status, "atexit")
+                    # Full emit: writes to events.jsonl AND fires webhooks/integrations.
+                    # atexit runs in normal Python context — network I/O is safe here.
+                    emit_event(_signal_event_ctx, RUN_INTERRUPTED, run_interrupted_payload(
+                        interrupted_stage=_signal_status.get("current_stage", "unknown"),
+                        elapsed_ms=_elapsed_ms_since(_signal_status.get("started_at", "")),
+                        source="atexit",
+                    ))
+            elif _signal_event_ctx is not None and _pending_signal_event is not None:
+                # Signal handler already wrote an interrupted event but the main
+                # thread's finally block didn't run (e.g. os._exit). Dispatch the
+                # stashed event to webhooks/integrations now.
+                _dispatch_pending_signal_event(_signal_event_ctx)
         except Exception:
             pass
         # Clean up PID files (per-run + project-level)
@@ -1108,8 +1145,9 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx
+    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx, _pending_signal_event
     _shutdown_requested = False
+    _pending_signal_event = None
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
     run_dir = None
@@ -2652,6 +2690,13 @@ def run_pipeline(
             ))
         raise
     finally:
+        # Dispatch any signal-stashed interrupted event to webhooks/integrations.
+        # Must run BEFORE ctx.close() so the dispatch helper can read ctx state.
+        # No-op if the signal handler didn't fire or the dispatch already happened.
+        try:
+            _dispatch_pending_signal_event(ctx)
+        except Exception:
+            pass
         if ctx is not None:
             ctx.close()
         # Safety net: ensure pipeline_status is never left as "running" on exit
@@ -2682,6 +2727,7 @@ def run_pipeline(
         _signal_status_path = None
         _signal_project_status_path = None
         _signal_event_ctx = None
+        _pending_signal_event = None
         try:
             atexit.unregister(_atexit_cleanup)
         except Exception:

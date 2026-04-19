@@ -204,8 +204,19 @@ def emit_event(
         print(f"[worca.events] Write error for {event_type}: {exc}", file=sys.stderr)
         return None
 
-    # Queue webhook delivery (non-blocking, best-effort) for observer webhooks only.
-    # Control webhooks receive sync delivery only at pause points via _check_control_response().
+    dispatch_event(ctx, event)
+    return event
+
+
+def dispatch_event(ctx: "EventContext", event: dict) -> None:
+    """Deliver an already-built event to observer webhooks and shell hooks.
+
+    Used both as the tail of emit_event() and standalone for events that were
+    written to events.jsonl by a signal-safe path (where network I/O and
+    threaded webhook delivery are unsafe). Never raises.
+    """
+    # Observer webhooks: queued non-blocking, best-effort.
+    # Control webhooks are sync-only at pause points via _check_control_response().
     if ctx._webhooks:
         try:
             from worca.events.webhook import deliver_webhook
@@ -214,15 +225,14 @@ def emit_event(
         except Exception as exc:
             print(f"[worca.events] Webhook dispatch error: {exc}", file=sys.stderr)
 
-    # Shell hook dispatch (worca.hooks config): fire-and-forget, never raises.
+    # Shell hook dispatch (worca.hooks config) — this is what fires integrations
+    # (Discord, Slack, Telegram, webhook_out, etc.). Fire-and-forget, never raises.
     if ctx._shell_hooks:
         try:
             from worca.orchestrator.events import dispatch_shell_hooks
             dispatch_shell_hooks(event, ctx._shell_hooks)
         except Exception as exc:
             print(f"[worca.events] Shell hook dispatch error: {exc}", file=sys.stderr)
-
-    return event
 
 
 # ---------------------------------------------------------------------------
