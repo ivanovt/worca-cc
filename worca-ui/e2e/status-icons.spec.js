@@ -9,7 +9,6 @@ const CARD_BORDER_COLORS = {
   paused:    'rgb(245, 158, 11)',
   failed:    'rgb(239, 68, 68)',
   completed: 'rgb(34, 197, 94)',
-  resuming:  'rgb(59, 130, 246)',
   pending:   'rgb(148, 163, 184)',  // --status-pending: #94a3b8
 };
 
