@@ -6,6 +6,28 @@ from unittest.mock import patch, MagicMock
 from worca.utils.claude_cli import run_agent, build_command
 
 
+# --- WORCA_CLAUDE_BIN env var override ---
+
+def test_claude_bin_default(monkeypatch):
+    monkeypatch.delenv("WORCA_CLAUDE_BIN", raising=False)
+    cmd, _ = build_command("prompt", agent="planner")
+    assert cmd[0] == "claude"
+
+
+def test_claude_bin_env_override(monkeypatch):
+    monkeypatch.setenv("WORCA_CLAUDE_BIN", "/usr/local/bin/my-claude")
+    cmd, _ = build_command("prompt", agent="planner")
+    assert cmd[0] == "/usr/local/bin/my-claude"
+
+
+def test_claude_bin_multiword(monkeypatch):
+    monkeypatch.setenv("WORCA_CLAUDE_BIN", "python3 /path/to/mock_claude.py")
+    cmd, _ = build_command("prompt", agent="planner")
+    assert cmd[0] == "python3"
+    assert cmd[1] == "/path/to/mock_claude.py"
+    assert "-p" in cmd
+
+
 # --- build_command ---
 
 def test_build_command_basic():

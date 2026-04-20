@@ -120,6 +120,7 @@ _signal_status_path = None
 _signal_project_status_path = None  # project-level status.json for PID cleanup
 _signal_event_ctx = None  # set to EventContext when run starts; signal-safe event emission
 _pending_signal_event = None  # signal handler stashes interrupted-event dict here for deferred dispatch
+_signal_event_emitted = False  # guards against duplicate events.jsonl writes from repeated signals
 
 
 def _check_control_file(
@@ -375,7 +376,10 @@ def _emit_interrupted_event_signal_safe(ctx, status) -> None:
     delivering signals between bytecode operations rather than mid-instruction,
     which makes it safe in practice but not portable to other Python runtimes.
     """
-    global _pending_signal_event
+    global _pending_signal_event, _signal_event_emitted
+    if _signal_event_emitted:
+        return
+    _signal_event_emitted = True
     import json as _json
     import uuid as _uuid
     from datetime import datetime as _dt, timezone as _tz
@@ -398,12 +402,13 @@ def _emit_interrupted_event_signal_safe(ctx, status) -> None:
                 "source": "signal",
             },
         }
+        # Stash for deferred webhook dispatch before file I/O — ensures the event
+        # is available for the webhook path even if the file write fails.
+        _pending_signal_event = event
         line = _json.dumps(event, ensure_ascii=False)
         fh = open(ctx.events_path, "a", encoding="utf-8")
         fh.write(line + "\n")
         fh.flush()
-        # Stash for deferred dispatch — signal context cannot run network/thread I/O.
-        _pending_signal_event = event
     except Exception:
         pass
     finally:
@@ -1099,6 +1104,8 @@ def _claim_bead(bead_id: str) -> bool:
 def _ensure_beads_initialized() -> None:
     """Check if beads is initialized in the current project, init if not."""
     import subprocess
+    if os.environ.get("WORCA_SKIP_BEADS"):
+        return
     from worca.utils.env import get_env
     env = get_env()
     result = subprocess.run(
@@ -1148,9 +1155,10 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx, _pending_signal_event
+    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx, _pending_signal_event, _signal_event_emitted
     _shutdown_requested = False
     _pending_signal_event = None
+    _signal_event_emitted = False
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
     run_dir = None
@@ -1442,7 +1450,13 @@ def run_pipeline(
 
         # Determine starting index
         if resume_stage:
-            stage_idx = stage_order.index(resume_stage)
+            if resume_stage in stage_order:
+                stage_idx = stage_order.index(resume_stage)
+            else:
+                raise PipelineError(
+                    f"Cannot resume: unknown stage {resume_stage!r}. "
+                    f"Valid stages: {[s.value for s in stage_order]}"
+                )
         elif plan_file:
             # Mark PLAN stage as completed with pre-loaded status
             update_stage(status, Stage.PLAN.value,
@@ -1739,6 +1753,17 @@ def run_pipeline(
                     ))
                 raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
             except Exception as e:
+                if _shutdown_requested:
+                    stage_completed = datetime.now(timezone.utc).isoformat()
+                    complete_iteration(status, current_stage.value, status="interrupted", completed_at=stage_completed)
+                    update_stage(status, current_stage.value, status="interrupted", completed_at=stage_completed)
+                    save_status(status, actual_status_path)
+                    if ctx:
+                        emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
+                            stage=current_stage.value, iteration=iter_num,
+                            elapsed_ms=int((time.time() - t0) * 1000),
+                        ))
+                    raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
                     status, current_stage.value,
@@ -2655,7 +2680,7 @@ def run_pipeline(
         status["pipeline_status"] = "interrupted"
         status["stop_reason"] = exc.stop_reason
         save_status(status, actual_status_path)
-        if ctx and _pending_signal_event is None:
+        if ctx and _pending_signal_event is None and not _signal_event_emitted:
             emit_event(ctx, RUN_INTERRUPTED, run_interrupted_payload(
                 interrupted_stage=status.get("stage", ""),
                 elapsed_ms=int((time.time() - pipeline_t0) * 1000),
@@ -2742,6 +2767,7 @@ def run_pipeline(
         _signal_project_status_path = None
         _signal_event_ctx = None
         _pending_signal_event = None
+        _signal_event_emitted = False
         try:
             atexit.unregister(_atexit_cleanup)
         except Exception:

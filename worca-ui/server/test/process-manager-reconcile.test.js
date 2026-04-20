@@ -111,7 +111,7 @@ describe('reconcileStatus', () => {
 
     expect(fixed).toBe(true);
     const status = readStatus(worcaDir, 'run-004');
-    expect(status.pipeline_status).toBe('failed');
+    expect(status.pipeline_status).toBe('interrupted');
     expect(status.stop_reason).toBe('signal');
   });
 
@@ -397,5 +397,64 @@ describe('reconcileStatus dispatchExternal integration', () => {
     const fixed = await reconcileStatus(worcaDir, settingsPath);
 
     expect(fixed).toBe(true);
+  });
+
+  it('calls dispatchExternal with pipeline.run.interrupted when stop_reason is signal', async () => {
+    writeStatus(worcaDir, 'run-dsig-1', {
+      pipeline_status: 'running',
+      run_id: 'run-dsig-1',
+      stop_reason: 'signal',
+      current_stage: 'implement',
+    });
+
+    await reconcileStatus(worcaDir, settingsPath);
+
+    expect(dispatchSpy).toHaveBeenCalledOnce();
+    const call = dispatchSpy.mock.calls[0][0];
+    expect(call.eventType).toBe('pipeline.run.interrupted');
+    expect(call.payload.source).toBe('stale');
+  });
+});
+
+describe('reconcileStatus signal stop_reason synthetic event type', () => {
+  let worcaDir;
+
+  beforeEach(() => {
+    worcaDir = makeTmpDir();
+  });
+  afterEach(() => rmSync(worcaDir, { recursive: true, force: true }));
+
+  it('writes pipeline.run.interrupted synthetic event when stop_reason is signal', async () => {
+    writeStatus(worcaDir, 'run-signal-1', {
+      pipeline_status: 'running',
+      run_id: 'run-signal-1',
+      stop_reason: 'signal',
+      current_stage: 'plan',
+    });
+
+    await reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-signal-1', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.event_type).toBe('pipeline.run.interrupted');
+    expect(evt.run_id).toBe('run-signal-1');
+  });
+
+  it('writes pipeline.run.failed synthetic event when no signal stop_reason', async () => {
+    writeStatus(worcaDir, 'run-stale-1', {
+      pipeline_status: 'running',
+      run_id: 'run-stale-1',
+      current_stage: 'plan',
+    });
+
+    await reconcileStatus(worcaDir);
+
+    const eventsPath = join(worcaDir, 'runs', 'run-stale-1', 'events.jsonl');
+    const evt = JSON.parse(
+      readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
+    );
+    expect(evt.event_type).toBe('pipeline.run.failed');
   });
 });

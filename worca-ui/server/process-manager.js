@@ -185,7 +185,8 @@ export class ProcessManager {
       if (!status.stop_reason) {
         status.stop_reason = 'stale';
       }
-      status.pipeline_status = 'failed';
+      status.pipeline_status =
+        status.stop_reason === 'signal' ? 'interrupted' : 'failed';
       try {
         writeFileSync(
           statusPath,
@@ -197,8 +198,8 @@ export class ProcessManager {
         /* ignore */
       }
 
-      // Append synthetic failed event if no terminal event exists yet.
-      // Status is "failed" (process crash), so the event type must match.
+      // Append synthetic terminal event if none exists yet.
+      // Use pipeline.run.interrupted for signal-killed runs, pipeline.run.failed otherwise.
       const eventsPath = join(this.worcaDir, 'runs', runId, 'events.jsonl');
       let hasTerminalEvent = false;
       if (existsSync(eventsPath)) {
@@ -219,6 +220,10 @@ export class ProcessManager {
         }
       }
       if (!hasTerminalEvent) {
+        const eventType =
+          status.stop_reason === 'signal'
+            ? 'pipeline.run.interrupted'
+            : 'pipeline.run.failed';
         const payload = {
           failed_stage: status.current_stage ?? 'unknown',
           elapsed_ms: elapsedMsSince(status.started_at),
@@ -230,7 +235,7 @@ export class ProcessManager {
             dispatchExternal({
               runDir: join(this.worcaDir, 'runs', runId),
               settingsPath: this.settingsPath,
-              eventType: 'pipeline.run.failed',
+              eventType,
               payload,
             }).catch(() => {}),
           );
@@ -239,7 +244,7 @@ export class ProcessManager {
             const evt = {
               schema_version: '1',
               event_id: randomUUID(),
-              event_type: 'pipeline.run.failed',
+              event_type: eventType,
               timestamp: new Date().toISOString(),
               run_id: status.run_id ?? runId,
               pipeline: {

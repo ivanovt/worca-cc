@@ -5,10 +5,22 @@ import os
 import signal
 from unittest.mock import patch
 
+import pytest
+
 import worca.orchestrator.runner as runner
 from worca.events.emitter import EventContext
 from worca.orchestrator.control import write_control, control_path
 from worca.state.status import save_status, load_status
+
+
+@pytest.fixture(autouse=True)
+def _reset_signal_event_flag():
+    """Reset the signal-event guard so each test starts clean."""
+    runner._signal_event_emitted = False
+    runner._pending_signal_event = None
+    yield
+    runner._signal_event_emitted = False
+    runner._pending_signal_event = None
 
 
 def _make_ctx(tmp_path, run_id="test-run-1"):

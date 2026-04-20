@@ -46,4 +46,21 @@ describe('run-update handler: beads refresh', () => {
     expect(updateActiveStagePos).toBeGreaterThan(-1);
     expect(fetchRunBeadsPos).toBeGreaterThan(updateActiveStagePos);
   });
+
+  it('fetchRunBeads is guarded by route.runId === payload.id condition', () => {
+    expect(handler).toContain('route.runId === payload.id');
+  });
+
+  it('fetchRunBeads is not called outside the matching-run block', () => {
+    const conditionPos = handler.indexOf('route.runId === payload.id');
+    const fetchPos = handler.indexOf('fetchRunBeads(payload.id)');
+    expect(conditionPos).toBeGreaterThan(-1);
+    expect(fetchPos).toBeGreaterThan(conditionPos);
+    const beforeCondition = handler.slice(0, conditionPos);
+    expect(beforeCondition).not.toContain('fetchRunBeads(');
+  });
+
+  it('outer guard uses optional chaining so null route.runId causes no error', () => {
+    expect(handler).toContain('payload?.id');
+  });
 });
