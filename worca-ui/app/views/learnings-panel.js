@@ -294,9 +294,13 @@ export function learningsSectionView(learnStage, options = {}) {
             <p class="learnings-error-title">Learning analysis appears to have stalled</p>
             ${timingStripView(startedAt, null)}
           </div>
-          <sl-button variant="warning" size="small" @click=${options.onRunLearn}>
+          ${
+            options.onRunLearn
+              ? html`<sl-button variant="warning" size="small" @click=${options.onRunLearn}>
             ${unsafeHTML(iconSvg(RefreshCw, 14))} Retry
-          </sl-button>
+          </sl-button>`
+              : nothing
+          }
         </div>
       `;
     } else {
@@ -323,9 +327,13 @@ export function learningsSectionView(learnStage, options = {}) {
           ${error ? html`<p class="learnings-error-detail">${error}</p>` : nothing}
           ${timingStripView(startedAt, completedAt)}
         </div>
-        <sl-button variant="warning" size="small" @click=${options.onRunLearn}>
+        ${
+          options.onRunLearn
+            ? html`<sl-button variant="warning" size="small" @click=${options.onRunLearn}>
           ${unsafeHTML(iconSvg(RefreshCw, 14))} Retry Learning Analysis
-        </sl-button>
+        </sl-button>`
+            : nothing
+        }
       </div>
     `;
   } else if (hasData) {
@@ -347,19 +355,27 @@ export function learningsSectionView(learnStage, options = {}) {
       ${observationsTableView(output.observations)}
       ${suggestionsTableView(output.suggestions || [])}
       ${recurringPatternsView(output.recurring_patterns)}
-      <div class="learnings-rerun">
+      ${
+        options.onRunLearn
+          ? html`<div class="learnings-rerun">
         <sl-button variant="text" size="small" @click=${options.onRunLearn}>
           ${unsafeHTML(iconSvg(RefreshCw, 12))} Re-run Analysis
         </sl-button>
-      </div>
+      </div>`
+          : nothing
+      }
     `;
   } else {
     innerContent = html`
       <div class="learnings-empty">
         <p>Learning analysis has not been run for this pipeline execution.</p>
-        <sl-button variant="primary" size="small" @click=${options.onRunLearn}>
+        ${
+          options.onRunLearn
+            ? html`<sl-button variant="primary" size="small" @click=${options.onRunLearn}>
           Run Learning Analysis
-        </sl-button>
+        </sl-button>`
+            : nothing
+        }
       </div>
     `;
   }

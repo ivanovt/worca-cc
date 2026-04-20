@@ -283,7 +283,7 @@ describe('runCardView - archive/unarchive buttons', () => {
   it('shows unarchive button when onUnarchive provided and run is archived', () => {
     const run = {
       id: '1',
-      pipeline_status: 'paused',
+      pipeline_status: 'completed',
       active: false,
       archived: true,
       started_at: '2026-01-01T00:00:00Z',
@@ -293,10 +293,22 @@ describe('runCardView - archive/unarchive buttons', () => {
     expect(output).toContain('Unarchive');
   });
 
-  it('does not show unarchive button when run is not archived', () => {
+  it('does not show unarchive button for paused run (not in unarchive allowed states)', () => {
     const run = {
       id: '1',
       pipeline_status: 'paused',
+      active: false,
+      archived: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onUnarchive: () => {} }));
+    expect(output).not.toContain('Unarchive');
+  });
+
+  it('does not show unarchive button when run is not archived', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'completed',
       active: false,
       started_at: '2026-01-01T00:00:00Z',
     };
@@ -307,7 +319,7 @@ describe('runCardView - archive/unarchive buttons', () => {
   it('does not show unarchive button when no onUnarchive callback', () => {
     const run = {
       id: '1',
-      pipeline_status: 'paused',
+      pipeline_status: 'completed',
       active: false,
       archived: true,
       started_at: '2026-01-01T00:00:00Z',

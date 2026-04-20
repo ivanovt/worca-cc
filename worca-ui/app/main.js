@@ -18,6 +18,7 @@ import {
   Trash2,
 } from './utils/icons.js';
 import { sortByStartDesc } from './utils/sort-runs.js';
+import { actionAllowed } from './utils/state-actions.js';
 import { statusIcon } from './utils/status-badge.js';
 import { applyTheme } from './utils/theme.js';
 import { formatTitle } from './utils/title.js';
@@ -1692,9 +1693,9 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Play, 14))}
             Resume
           </button>
-          <button class="action-btn action-btn--danger" @click=${handleStopPipeline}>
+          <button class="action-btn action-btn--danger" @click=${() => handleCancelRun(run.id)}>
             ${unsafeHTML(iconSvg(Square, 14))}
-            Stop
+            Cancel
           </button>`;
       } else if (ps === 'failed' || ps === 'interrupted') {
         actionButton = html`
@@ -1751,9 +1752,9 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Play, 14))}
             Resume
           </button>
-          <button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
+          <button class="action-btn action-btn--danger" @click=${() => handleCancelRun(route.runId)}>
             ${unsafeHTML(iconSvg(Square, 14))}
-            Stop
+            Cancel
           </button>`;
       } else if (hs === 'failed') {
         actionButton = html`
@@ -1948,7 +1949,9 @@ function mainContentView() {
           })}
           ${runBeadsSectionView(runBeads.get(route.runId))}
           ${learningsSectionView(run?.stages?.learn, {
-            onRunLearn: handleRunLearn,
+            onRunLearn: actionAllowed('learn', run?.pipeline_status)
+              ? handleRunLearn
+              : null,
           })}
         </div>
       </div>

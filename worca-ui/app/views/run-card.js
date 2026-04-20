@@ -165,7 +165,7 @@ export function runCardView(
       : nothing;
 
   const archiveBtn =
-    onArchive && !run.archived && !isActive
+    onArchive && !run.archived && actionAllowed('archive', overallStatus)
       ? html`
         <div class="run-card-actions">
           <button class="btn-quick-archive" @click=${(e) => {
@@ -179,7 +179,9 @@ export function runCardView(
       : nothing;
 
   const unarchiveBtn =
-    onUnarchive && run.archived === true
+    onUnarchive &&
+    run.archived === true &&
+    actionAllowed('unarchive', overallStatus)
       ? html`
         <div class="run-card-actions">
           <button class="btn-quick-archive" @click=${(e) => {

@@ -36,7 +36,7 @@ test.describe('control buttons — visibility by pipeline status', () => {
     }
   });
 
-  test('paused: resume and stop visible, pause absent', async ({ page }) => {
+  test('paused: resume and cancel visible, pause absent', async ({ page }) => {
     const ctx = await startServer();
     try {
       const runId = '20260101-ctrl-paused';
