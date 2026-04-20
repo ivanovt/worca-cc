@@ -113,7 +113,6 @@ export function runCardView(
   const pauseBtn =
     onPause && actionAllowed('pause', overallStatus)
       ? html`
-        <div class="run-card-actions">
           <sl-button size="small" variant="warning" outline class="btn-quick-pause" @click=${(
             e,
           ) => {
@@ -122,14 +121,12 @@ export function runCardView(
           }}>
             ${unsafeHTML(iconSvg(Pause, 12))} Pause
           </sl-button>
-        </div>
       `
       : nothing;
 
   const stopBtn =
     onStop && actionAllowed('stop', overallStatus)
       ? html`
-        <div class="run-card-actions">
           <sl-button size="small" variant="danger" outline class="btn-quick-stop" @click=${(
             e,
           ) => {
@@ -138,28 +135,24 @@ export function runCardView(
           }}>
             ${unsafeHTML(iconSvg(Square, 12))} Stop
           </sl-button>
-        </div>
       `
       : nothing;
 
   const resumeBtn =
     onResume && actionAllowed('resume', overallStatus)
       ? html`
-        <div class="run-card-actions">
           <button class="btn-quick-resume" @click=${(e) => {
             e.stopPropagation();
             onResume(run.id);
           }}>
             ${unsafeHTML(iconSvg(Play, 12))} Resume
           </button>
-        </div>
       `
       : nothing;
 
   const cancelBtn =
     onCancel && actionAllowed('cancel', overallStatus)
       ? html`
-        <div class="run-card-actions">
           <sl-button size="small" variant="danger" class="btn-quick-cancel" @click=${(
             e,
           ) => {
@@ -168,21 +161,18 @@ export function runCardView(
           }}>
             ${unsafeHTML(iconSvg(X, 12))} Cancel
           </sl-button>
-        </div>
       `
       : nothing;
 
   const archiveBtn =
     onArchive && !run.archived && actionAllowed('archive', overallStatus)
       ? html`
-        <div class="run-card-actions">
           <button class="btn-quick-archive" @click=${(e) => {
             e.stopPropagation();
             onArchive(run.id);
           }}>
             ${unsafeHTML(iconSvg(Archive, 12))} Archive
           </button>
-        </div>
       `
       : nothing;
 
@@ -191,14 +181,12 @@ export function runCardView(
     run.archived === true &&
     actionAllowed('unarchive', overallStatus)
       ? html`
-        <div class="run-card-actions">
           <button class="btn-quick-archive" @click=${(e) => {
             e.stopPropagation();
             onUnarchive(run.id);
           }}>
             ${unsafeHTML(iconSvg(RotateCcw, 12))} Unarchive
           </button>
-        </div>
       `
       : nothing;
 
@@ -247,12 +235,9 @@ export function runCardView(
       `
             : nothing
       }
-      ${pauseBtn}
-      ${stopBtn}
-      ${resumeBtn}
-      ${cancelBtn}
-      ${archiveBtn}
-      ${unarchiveBtn}
+      <div class="run-card-actions">
+        ${pauseBtn}${stopBtn}${resumeBtn}${cancelBtn}${archiveBtn}${unarchiveBtn}
+      </div>
     </div>
   `;
 }

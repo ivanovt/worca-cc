@@ -3889,7 +3889,12 @@ sl-details.learnings-panel::part(content) {
 .run-card-actions {
   display: flex;
   align-items: center;
-  margin-left: auto;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-left: 26px;
+}
+.run-card-actions:empty {
+  display: none;
 }
 .btn-quick-resume {
   display: inline-flex;
