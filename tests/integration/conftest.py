@@ -47,6 +47,7 @@ def pipeline_env(tmp_path):
         cwd=str(project), check=True, capture_output=True,
     )
 
+
     # 3. Override settings for fast test execution
     settings_path = project / ".claude" / "settings.json"
     settings = json.loads(settings_path.read_text())
@@ -75,6 +76,7 @@ def pipeline_env(tmp_path):
             "WORCA_CLAUDE_BIN": f"{sys.executable} {MOCK_CLAUDE_BIN}",
             "MOCK_CLAUDE_SCENARIO": str(scenario_path),
             "WORCA_AGENT": "",  # not in agent mode — hooks should not enforce agent guards
+            "WORCA_SKIP_BEADS": "1",  # bd binary may not work in CI
         }
 
     def run(scenario: dict, prompt: str = "test task",

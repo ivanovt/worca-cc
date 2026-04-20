@@ -379,6 +379,7 @@ def _emit_interrupted_event_signal_safe(ctx, status) -> None:
     global _pending_signal_event, _signal_event_emitted
     if _signal_event_emitted:
         return
+    _signal_event_emitted = True
     import json as _json
     import uuid as _uuid
     from datetime import datetime as _dt, timezone as _tz
@@ -401,13 +402,13 @@ def _emit_interrupted_event_signal_safe(ctx, status) -> None:
                 "source": "signal",
             },
         }
+        # Stash for deferred webhook dispatch before file I/O — ensures the event
+        # is available for the webhook path even if the file write fails.
+        _pending_signal_event = event
         line = _json.dumps(event, ensure_ascii=False)
         fh = open(ctx.events_path, "a", encoding="utf-8")
         fh.write(line + "\n")
         fh.flush()
-        _signal_event_emitted = True
-        # Stash for deferred dispatch — signal context cannot run network/thread I/O.
-        _pending_signal_event = event
     except Exception:
         pass
     finally:
@@ -1103,6 +1104,8 @@ def _claim_bead(bead_id: str) -> bool:
 def _ensure_beads_initialized() -> None:
     """Check if beads is initialized in the current project, init if not."""
     import subprocess
+    if os.environ.get("WORCA_SKIP_BEADS"):
+        return
     from worca.utils.env import get_env
     env = get_env()
     result = subprocess.run(

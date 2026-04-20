@@ -31,6 +31,17 @@ def _mock_beads_init():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_signal_event_flag():
+    """Reset the signal-event guard so each test starts clean."""
+    import worca.orchestrator.runner as runner_mod
+    runner_mod._signal_event_emitted = False
+    runner_mod._pending_signal_event = None
+    yield
+    runner_mod._signal_event_emitted = False
+    runner_mod._pending_signal_event = None
+
+
 def _import_run_pipeline():
     """Import worca.scripts.run_pipeline as a module."""
     from worca.scripts import run_pipeline as mod
