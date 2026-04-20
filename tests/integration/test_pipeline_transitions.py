@@ -165,26 +165,40 @@ def test_running_signal_int(pipeline_env):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL requires Unix")
 def test_running_signal_kill(pipeline_env):
-    """Running + SIGKILL → interrupted (no event — process cannot write before death)."""
+    """Running + SIGKILL → process killed without graceful shutdown.
+
+    SIGKILL cannot be caught — the process dies immediately with no signal handler,
+    no finally block, and no event emission. status.json remains in the last written
+    state (typically 'running'). The recovery path is external (stale PID detection
+    via the reconciler on next launch).
+    """
     result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, send_sigkill,
                          act_after_stage="implement")
-    # SIGKILL prevents graceful shutdown; status may be interrupted or absent
-    pipeline_status = result.status.get("pipeline_status", "interrupted")
-    assert pipeline_status in ("interrupted", "running")
+    # SIGKILL prevents graceful shutdown; status stays at last-written state
+    pipeline_status = result.status.get("pipeline_status", "running")
+    assert pipeline_status in ("interrupted", "running"), (
+        f"Expected 'interrupted' or 'running' (no graceful shutdown), got: {pipeline_status}"
+    )
+    # Process must have been killed by signal (negative returncode = -signal_number)
+    assert result.returncode != 0, "SIGKILL should produce a non-zero exit code"
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL requires Unix")
 def test_running_crash(pipeline_env):
-    """Running + agent crash (SIGKILL to process group) → process cannot write status.
+    """Running + agent crash (SIGKILL to process group) → process killed instantly.
 
     SIGKILL kills the entire process group instantly. Unlike SIGTERM, there is no
     signal handler and no finally block — status.json remains in the last written
-    state (typically 'running'). This is the expected behavior: the recovery path
-    is external (stale PID detection on next launch).
+    state (typically 'running'). The recovery path is external (stale PID detection
+    on next launch).
     """
     result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, _crash_action,
                          act_after_stage="implement")
-    assert result.status.get("pipeline_status") in ("failed", "interrupted", "running")
+    pipeline_status = result.status.get("pipeline_status", "running")
+    assert pipeline_status in ("interrupted", "running"), (
+        f"Expected 'interrupted' or 'running' (no graceful shutdown), got: {pipeline_status}"
+    )
+    assert result.returncode != 0, "SIGKILL crash should produce a non-zero exit code"
 
 
 # ---------------------------------------------------------------------------
@@ -419,88 +433,9 @@ def test_cancelled_crash(pipeline_env): ...
 
 
 # ---------------------------------------------------------------------------
-# Parametrized dispatcher — documents the full matrix in one place
+# Matrix coverage note
 # ---------------------------------------------------------------------------
-
-_TIER1_PARAMS = [
-    pytest.param(state, action, id=f"{state}-{action}")
-    for (state, action) in EXPECTED_TRANSITIONS
-]
-
-_NO_PROCESS_PARAMS = [
-    pytest.param(state, action, id=f"{state}-{action}",
-                 marks=pytest.mark.skip(reason="no process to signal after terminal state"))
-    for (state, action) in SKIPPED_NO_PROCESS
-]
-
-_W043_PARAMS = [
-    pytest.param(state, action, id=f"{state}-{action}",
-                 marks=pytest.mark.skip(reason="requires W-043"))
-    for (state, action) in SKIPPED_W043
-]
-
-
-@pytest.mark.parametrize("state,action", _TIER1_PARAMS + _NO_PROCESS_PARAMS + _W043_PARAMS)
-def test_state_transition(state, action, pipeline_env):
-    """Parametrized dispatcher: validates every cell in the transition matrix.
-
-    Tier-1 cells dispatch to the correct pattern based on EXPECTED_TRANSITIONS.
-    Tier-2 and no-process cells are skip-marked — they document the full matrix
-    without running. W-043 landing means removing skip markers and filling in
-    expected results.
-    """
-    if (state, action) not in EXPECTED_TRANSITIONS:
-        pytest.skip("not in tier-1 matrix")
-
-    expected_status, expected_events, _, pattern = EXPECTED_TRANSITIONS[(state, action)]
-
-    if sys.platform == "win32" and action in ("signal_term", "signal_int", "signal_kill", "crash"):
-        pytest.skip("signal tests require Unix")
-
-    if pattern == "A":
-        action_fn = _crash_action if action == "crash" else _ACTION_FNS[action]
-        result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, action_fn,
-                             act_after_stage="implement")
-
-    elif pattern == "B":
-        if state == "completed":
-            result = pipeline_env.run(_ALL_SUCCEED)
-        elif state == "failed":
-            result = pipeline_env.run(_PLANNER_FAILS)
-        elif state == "interrupted":
-            result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, send_sigterm,
-                                 act_after_stage="implement")
-        else:
-            pytest.fail(f"Unhandled Pattern B state: {state!r}")
-
-        assert result.status.get("pipeline_status") == expected_status
-
-        # Write control file to the exited run — status must not change
-        run_id = _active_run_id(pipeline_env.worca_dir)
-        control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
-        control.write_text(json.dumps({"action": action.replace("_", ""), "source": "test"}))
-
-        final_status = _find_latest_status(pipeline_env.worca_dir)
-        assert final_status.get("pipeline_status") == expected_status
-        return
-
-    elif pattern == "paused":
-        # Pause first, then resume and apply action
-        run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, write_control_pause,
-                    act_after_stage="implement")
-        action_fn = _ACTION_FNS.get(action, send_sigterm)
-        result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, action_fn,
-                             act_after_stage="implement")
-
-    else:
-        pytest.fail(f"Unknown pattern: {pattern!r}")
-
-    actual_status = result.status.get("pipeline_status")
-    assert actual_status == expected_status, (
-        f"Expected pipeline_status={expected_status!r}, got {actual_status!r}\n"
-        f"stderr: {result.stderr[:500]}"
-    )
-    for event_type in expected_events:
-        assert any(e.get("event_type") == event_type for e in result.events), (
-            f"Expected event {event_type!r} not found in {[e.get('event_type') for e in result.events]}"
-        )
+# Every cell in the tier-1 EXPECTED_TRANSITIONS matrix is covered by a named
+# test above (test_running_stop, test_completed_rejects_pause, etc.).
+# SKIPPED_NO_PROCESS and SKIPPED_W043 cells are documented as skip-marked stubs.
+# When W-043 lands, remove the skip markers and fill in the test bodies.

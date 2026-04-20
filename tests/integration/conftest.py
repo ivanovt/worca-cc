@@ -67,6 +67,7 @@ def pipeline_env(tmp_path):
     settings_path.write_text(json.dumps(settings, indent=2))
 
     worca_dir = project / ".worca"
+    _scenario_counter = [0]
 
     def _base_env(scenario_path: Path) -> dict:
         return {
@@ -78,7 +79,8 @@ def pipeline_env(tmp_path):
 
     def run(scenario: dict, prompt: str = "test task",
             timeout: int = 60, extra_args=None) -> PipelineResult:
-        scenario_path = tmp_path / "scenario.json"
+        _scenario_counter[0] += 1
+        scenario_path = tmp_path / f"scenario_{_scenario_counter[0]}.json"
         scenario_path.write_text(json.dumps(scenario))
 
         cmd = [sys.executable, "-m", "worca.scripts.run_pipeline",
@@ -104,7 +106,8 @@ def pipeline_env(tmp_path):
     def run_background(scenario: dict, prompt: str = "test task",
                        extra_args=None) -> subprocess.Popen:
         """Start the pipeline as a background Popen — caller controls lifecycle."""
-        scenario_path = tmp_path / "scenario.json"
+        _scenario_counter[0] += 1
+        scenario_path = tmp_path / f"scenario_{_scenario_counter[0]}.json"
         scenario_path.write_text(json.dumps(scenario))
 
         cmd = [sys.executable, "-m", "worca.scripts.run_pipeline",

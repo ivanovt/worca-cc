@@ -241,8 +241,11 @@ def pipeline_env(tmp_path):
             "WORCA_AGENT": "",  # Not in agent mode for hooks
         }
 
+    _scenario_counter = [0]
+
     def run(scenario, prompt="test task", timeout=30, extra_args=None):
-        scenario_path = tmp_path / "scenario.json"
+        _scenario_counter[0] += 1
+        scenario_path = tmp_path / f"scenario_{_scenario_counter[0]}.json"
         scenario_path.write_text(json.dumps(scenario))
 
         cmd = [sys.executable, "-m", "worca.scripts.run_pipeline",
@@ -265,7 +268,8 @@ def pipeline_env(tmp_path):
 
     def run_background(scenario, prompt="test task", extra_args=None):
         """Start pipeline as a background Popen — caller controls lifecycle."""
-        scenario_path = tmp_path / "scenario.json"
+        _scenario_counter[0] += 1
+        scenario_path = tmp_path / f"scenario_{_scenario_counter[0]}.json"
         scenario_path.write_text(json.dumps(scenario))
 
         cmd = [sys.executable, "-m", "worca.scripts.run_pipeline",
@@ -366,10 +370,9 @@ def _wait_for_stage(worca_dir, stage_name, timeout=10):
     deadline = time.time() + timeout
     while time.time() < deadline:
         status = _find_latest_status(worca_dir)
-        iterations = status.get("iterations", [])
-        for it in iterations:
-            if it.get("stage") == stage_name and it.get("status") == "in_progress":
-                return
+        stage_data = status.get("stages", {}).get(stage_name, {})
+        if stage_data.get("status") == "in_progress":
+            return
         time.sleep(0.1)
     raise TimeoutError(f"Stage {stage_name} did not start within {timeout}s")
 ```
@@ -377,34 +380,38 @@ def _wait_for_stage(worca_dir, stage_name, timeout=10):
 Action functions:
 
 ```python
+# Signals target the process group (os.killpg) because the pipeline spawns
+# child processes. run_background() uses start_new_session=True to isolate
+# the pipeline into its own process group, so no other processes are affected.
+
 def send_sigterm(proc, env):
-    os.kill(proc.pid, signal.SIGTERM)
+    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
 def send_sigint(proc, env):
-    os.kill(proc.pid, signal.SIGINT)
+    os.killpg(os.getpgid(proc.pid), signal.SIGINT)
 
 def write_control_stop(proc, env):
     """Write a stop control file — uses current control.py protocol."""
-    run_id = _active_run_id(env)
+    run_id = _active_run_id(env.worca_dir)
     control = env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({
         "action": "stop",
-        "requested_at": datetime.utcnow().isoformat() + "Z",
+        "requested_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "test",
     }))
 
 def write_control_pause(proc, env):
     """Write a pause control file — uses current control.py protocol."""
-    run_id = _active_run_id(env)
+    run_id = _active_run_id(env.worca_dir)
     control = env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({
         "action": "pause",
-        "requested_at": datetime.utcnow().isoformat() + "Z",
+        "requested_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "test",
     }))
 
 def send_sigkill(proc, env):
-    os.kill(proc.pid, signal.SIGKILL)
+    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
 ```
 
 ### 6. State × Action Matrix — Two-Tier Design
@@ -591,13 +598,13 @@ SKIPPED_W043 = [
 
 **Current state:** `claude_cli.py:83` hardcodes `"claude"` as the binary name.
 
-**Resolution:** Read from env var with fallback:
+**Resolution:** Read from env var at call-time inside `build_command()`, not at module level. This ensures `monkeypatch.setenv()` in tests takes effect without module-reload tricks:
 
 ```python
-# claude_cli.py:83
-CLAUDE_BIN = os.environ.get("WORCA_CLAUDE_BIN", "claude")
-
-cmd = shlex.split(CLAUDE_BIN) + [
+# claude_cli.py:84 — inside build_command()
+_claude_bin = shlex.split(os.environ.get("WORCA_CLAUDE_BIN", "claude"))
+cmd = [
+    *_claude_bin,
     "-p", cli_prompt,
     "--agent", agent,
     "--output-format", output_format,
@@ -681,7 +688,7 @@ def test_stop_dispatches_webhook(pipeline_env, webhook_server):
    - Write control file to finished run
    - Assert status.json unchanged
 6. Implement paused-state tests: pause via control file, pipeline exits, resume + act
-7. Write parametrized `test_state_transition` dispatching to correct pattern per cell
+7. Each tier-1 cell is covered by a named test function; skip-marked stubs document remaining cells
 
 ### Phase 4: Event & Webhook Dispatch Tests
 

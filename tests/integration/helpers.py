@@ -5,7 +5,7 @@ import signal
 import subprocess
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -142,17 +142,30 @@ def run_and_act(
 # ---------------------------------------------------------------------------
 
 def send_sigterm(proc, env: PipelineEnv) -> None:
-    """Send SIGTERM to the pipeline process group."""
+    """Send SIGTERM to the pipeline process group.
+
+    Targets the process group (not just the PID) because the pipeline spawns
+    child processes (mock claude) that must also receive the signal. This is
+    safe because run_background() uses start_new_session=True, isolating the
+    pipeline into its own process group — no other processes are affected.
+    """
     os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
 
 def send_sigint(proc, env: PipelineEnv) -> None:
-    """Send SIGINT to the pipeline process group."""
+    """Send SIGINT to the pipeline process group.
+
+    See send_sigterm() for rationale on targeting the process group.
+    """
     os.killpg(os.getpgid(proc.pid), signal.SIGINT)
 
 
 def send_sigkill(proc, env: PipelineEnv) -> None:
-    """Send SIGKILL to the pipeline process group."""
+    """Send SIGKILL to the pipeline process group.
+
+    See send_sigterm() for rationale on targeting the process group.
+    SIGKILL cannot be caught — the process dies immediately with no cleanup.
+    """
     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
 
 
@@ -162,7 +175,7 @@ def write_control_stop(proc, env: PipelineEnv) -> None:
     control = env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({
         "action": "stop",
-        "requested_at": datetime.utcnow().isoformat() + "Z",
+        "requested_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "test",
     }))
 
@@ -173,6 +186,6 @@ def write_control_pause(proc, env: PipelineEnv) -> None:
     control = env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({
         "action": "pause",
-        "requested_at": datetime.utcnow().isoformat() + "Z",
+        "requested_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "test",
     }))
