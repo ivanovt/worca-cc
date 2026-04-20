@@ -40,14 +40,14 @@ test.describe('WebSocket live updates — control button transitions', () => {
       seedRun(ctx.worcaDir, runId, { pipeline_status: 'running' });
       await openRunDetail(page, ctx.url, runId, 'running');
 
-      await expect(page.locator('.action-btn--amber')).toBeVisible();
-      await expect(page.locator('.action-btn--primary')).not.toBeAttached();
+      await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Resume' })).not.toBeAttached();
 
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'paused' });
 
-      await expect(page.locator('.action-btn--amber')).not.toBeAttached();
-      await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Pause' })).not.toBeAttached();
+      await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -61,14 +61,14 @@ test.describe('WebSocket live updates — control button transitions', () => {
       seedRun(ctx.worcaDir, runId, { pipeline_status: 'paused' });
       await openRunDetail(page, ctx.url, runId, 'paused');
 
-      await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--amber')).not.toBeAttached();
+      await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Pause' })).not.toBeAttached();
 
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'running' });
 
-      await expect(page.locator('.action-btn--primary')).not.toBeAttached();
-      await expect(page.locator('.action-btn--amber')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Resume' })).not.toBeAttached();
+      await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
     } finally {
       await ctx.close();
     }
@@ -103,14 +103,14 @@ test.describe('WebSocket live updates — control button transitions', () => {
       seedRun(ctx.worcaDir, runId, { pipeline_status: 'running' });
       await openRunDetail(page, ctx.url, runId, 'running');
 
-      await expect(page.locator('.action-btn--amber')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
 
       triggerStatusUpdate(ctx.worcaDir, runId, { pipeline_status: 'failed' });
 
-      await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
-      await expect(page.locator('.action-btn--amber')).not.toBeAttached();
+      await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Pause' })).not.toBeAttached();
     } finally {
       await ctx.close();
     }

@@ -39,9 +39,9 @@ test.describe('run lifecycle — pause then resume', () => {
       });
       await openRunDetail(page, ctx.url, runId, 'running');
 
-      // Verify running state: pause button (amber) visible, resume (primary) absent
-      await expect(page.locator('.action-btn--amber')).toBeVisible();
-      await expect(page.locator('.action-btn--primary')).not.toBeAttached();
+      // Verify running state: pause button visible, resume absent
+      await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Resume' })).not.toBeAttached();
 
       // Transition to paused
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -49,9 +49,9 @@ test.describe('run lifecycle — pause then resume', () => {
         work_request: { title: 'Lifecycle: pause then resume' },
       });
 
-      // Verify paused state: resume (primary) visible, pause (amber) absent
-      await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--amber')).not.toBeAttached();
+      // Verify paused state: resume visible, pause absent
+      await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Pause' })).not.toBeAttached();
 
       // Transition back to running
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -60,8 +60,8 @@ test.describe('run lifecycle — pause then resume', () => {
       });
 
       // Verify running state restored
-      await expect(page.locator('.action-btn--amber')).toBeVisible();
-      await expect(page.locator('.action-btn--primary')).not.toBeAttached();
+      await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Resume' })).not.toBeAttached();
     } finally {
       await ctx.close();
     }
@@ -83,8 +83,8 @@ test.describe('run lifecycle — stop then resume', () => {
       await openRunDetail(page, ctx.url, runId, 'running');
 
       // Verify running state
-      await expect(page.locator('.action-btn--amber')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
 
       // Transition to failed (simulates stop completing)
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -92,10 +92,10 @@ test.describe('run lifecycle — stop then resume', () => {
         work_request: { title: 'Lifecycle: stop then resume' },
       });
 
-      // Verify failed state: resume (primary) and cancel (danger) visible, pause (amber) absent
-      await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
-      await expect(page.locator('.action-btn--amber')).not.toBeAttached();
+      // Verify failed state: resume and cancel visible, pause absent
+      await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Cancel' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Pause' })).not.toBeAttached();
 
       // Transition back to running (resume)
       triggerStatusUpdate(ctx.worcaDir, runId, {
@@ -104,9 +104,9 @@ test.describe('run lifecycle — stop then resume', () => {
       });
 
       // Verify running state restored
-      await expect(page.locator('.action-btn--amber')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).toBeVisible();
-      await expect(page.locator('.action-btn--primary')).not.toBeAttached();
+      await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Stop' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Resume' })).not.toBeAttached();
     } finally {
       await ctx.close();
     }
