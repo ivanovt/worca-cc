@@ -167,10 +167,12 @@ def test_shell_hook_stdin_contains_all_envelope_fields(tmp_path, hooked_ctx):
     })
 
     deadline = time.time() + 3.0
-    while not out_file.exists() and time.time() < deadline:
+    while time.time() < deadline:
+        if out_file.exists() and out_file.stat().st_size > 0:
+            break
         time.sleep(0.05)
 
-    assert out_file.exists()
+    assert out_file.exists(), "Hook output file was never created"
     data = json.loads(out_file.read_text())
     for field in ("schema_version", "event_id", "event_type", "timestamp", "run_id", "payload"):
         assert field in data, f"Missing field in stdin JSON: {field!r}"

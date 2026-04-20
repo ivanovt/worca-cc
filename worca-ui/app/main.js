@@ -1693,11 +1693,12 @@ function contentHeaderView() {
               ${unsafeHTML(iconSvg(Play, 14))} Resume
             </button>`
           : nothing;
-        const cancelBtn = actionAllowed('cancel', ps)
-          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(run.id)}>
-              ${unsafeHTML(iconSvg(Square, 14))} Cancel
-            </button>`
-          : nothing;
+        const cancelBtn =
+          stopBtn === nothing && actionAllowed('cancel', ps)
+            ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(run.id)}>
+                ${unsafeHTML(iconSvg(Square, 14))} Cancel
+              </button>`
+            : nothing;
         const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
           (b) => b !== nothing,
         );
@@ -1751,11 +1752,12 @@ function contentHeaderView() {
               ${unsafeHTML(iconSvg(Play, 14))} Resume
             </button>`
           : nothing;
-        const cancelBtn = actionAllowed('cancel', hs)
-          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(route.runId)}>
-              ${unsafeHTML(iconSvg(Square, 14))} Cancel
-            </button>`
-          : nothing;
+        const cancelBtn =
+          stopBtn === nothing && actionAllowed('cancel', hs)
+            ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(route.runId)}>
+                ${unsafeHTML(iconSvg(Square, 14))} Cancel
+              </button>`
+            : nothing;
         const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
           (b) => b !== nothing,
         );
