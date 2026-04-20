@@ -111,7 +111,7 @@ describe('reconcileStatus', () => {
 
     expect(fixed).toBe(true);
     const status = readStatus(worcaDir, 'run-004');
-    expect(status.pipeline_status).toBe('failed');
+    expect(status.pipeline_status).toBe('interrupted');
     expect(status.stop_reason).toBe('signal');
   });
 

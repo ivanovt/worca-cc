@@ -379,7 +379,6 @@ def _emit_interrupted_event_signal_safe(ctx, status) -> None:
     global _pending_signal_event, _signal_event_emitted
     if _signal_event_emitted:
         return
-    _signal_event_emitted = True
     import json as _json
     import uuid as _uuid
     from datetime import datetime as _dt, timezone as _tz
@@ -406,6 +405,7 @@ def _emit_interrupted_event_signal_safe(ctx, status) -> None:
         fh = open(ctx.events_path, "a", encoding="utf-8")
         fh.write(line + "\n")
         fh.flush()
+        _signal_event_emitted = True
         # Stash for deferred dispatch — signal context cannot run network/thread I/O.
         _pending_signal_event = event
     except Exception:

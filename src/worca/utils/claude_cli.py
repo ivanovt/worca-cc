@@ -81,7 +81,7 @@ def build_command(
     else:
         cli_prompt = prompt
 
-    _claude_bin = shlex.split(os.environ.get("WORCA_CLAUDE_BIN", "claude"))
+    _claude_bin = shlex.split(os.environ.get("WORCA_CLAUDE_BIN") or "claude")
     cmd = [
         *_claude_bin,
         "-p",

@@ -185,7 +185,8 @@ export class ProcessManager {
       if (!status.stop_reason) {
         status.stop_reason = 'stale';
       }
-      status.pipeline_status = 'failed';
+      status.pipeline_status =
+        status.stop_reason === 'signal' ? 'interrupted' : 'failed';
       try {
         writeFileSync(
           statusPath,

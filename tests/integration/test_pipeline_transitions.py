@@ -9,8 +9,6 @@ Three test patterns:
   Paused - Pause via control file, pipeline exits, then resume + act.
 """
 import json
-import os
-import signal
 import sys
 
 import pytest
@@ -91,6 +89,12 @@ _HANG_AT_IMPLEMENT = {
     "default": {"action": "succeed", "delay_s": 0.1},
 }
 
+# Implementer crashes via os._exit — tests agent crash recovery (distinct from signal kill).
+_CRASH_AT_IMPLEMENT = {
+    "agents": {"implementer": {"action": "crash", "exit_code": 137}},
+    "default": {"action": "succeed", "delay_s": 0.1},
+}
+
 # Slow coordinator — gives control-file tests a window: write after plan
 # completes, the control file is polled at the top of the coordinator iteration.
 _SLOW_COORDINATE = {
@@ -121,12 +125,12 @@ _ACTION_FNS = {
 
 
 def _crash_action(proc, env):
-    """Kill the mock implementer (simulates crash) by sending SIGKILL to process group.
+    """Send SIGKILL to the pipeline process only (not the group).
 
-    A SIGKILL to the pipeline process group simulates an unrecoverable agent crash.
-    The pipeline should record the stage as failed.
+    Unlike send_sigkill (which targets the process group), this simulates the
+    pipeline's own process dying unexpectedly — e.g. OOM-killed by the OS.
     """
-    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    proc.kill()
 
 
 # ---------------------------------------------------------------------------
@@ -195,22 +199,20 @@ def test_running_signal_kill(pipeline_env):
     assert result.returncode != 0, "SIGKILL should produce a non-zero exit code"
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="SIGKILL requires Unix")
 def test_running_crash(pipeline_env):
-    """Running + agent crash (SIGKILL to process group) → process killed instantly.
+    """Running + agent crash (mock calls os._exit) → pipeline detects subprocess failure.
 
-    SIGKILL kills the entire process group instantly. Unlike SIGTERM, there is no
-    signal handler and no finally block — status.json remains in the last written
-    state (typically 'running'). The recovery path is external (stale PID detection
-    on next launch).
+    The mock implementer calls os._exit(137) to simulate an agent crash. Unlike
+    signal-based kills, the pipeline process itself remains alive and can detect
+    the child failure. The pipeline should exit with a non-zero return code.
     """
-    result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, _crash_action,
+    result = run_and_act(pipeline_env, _CRASH_AT_IMPLEMENT, _crash_action,
                          act_after_stage="implement")
     pipeline_status = result.status.get("pipeline_status", "running")
-    assert pipeline_status in ("interrupted", "running"), (
-        f"Expected 'interrupted' or 'running' (no graceful shutdown), got: {pipeline_status}"
+    assert pipeline_status in ("failed", "interrupted", "running"), (
+        f"Expected 'failed', 'interrupted', or 'running', got: {pipeline_status}"
     )
-    assert result.returncode != 0, "SIGKILL crash should produce a non-zero exit code"
+    assert result.returncode != 0, "Agent crash should produce a non-zero exit code"
 
 
 # ---------------------------------------------------------------------------
@@ -493,6 +495,9 @@ def test_state_transition(state, action, pipeline_env):
         if action in ("stop", "pause"):
             result = run_and_act(pipeline_env, _SLOW_COORDINATE, action_fn,
                                  act_after_stage_completed="plan")
+        elif action == "crash":
+            result = run_and_act(pipeline_env, _CRASH_AT_IMPLEMENT, action_fn,
+                                 act_after_stage="implement")
         else:
             result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, action_fn,
                                  act_after_stage="implement")

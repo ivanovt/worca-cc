@@ -130,10 +130,10 @@ def run_and_act(
             _wait_for_stage_completed(pipeline_env.worca_dir, act_after_stage_completed, timeout=30)
 
         action_fn(proc, pipeline_env)
-        proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except (subprocess.TimeoutExpired, TimeoutError):
         proc.kill()
-        proc.wait()
+        stdout, stderr = proc.communicate()
 
     status = _find_latest_status(pipeline_env.worca_dir)
     events = _read_events_jsonl(pipeline_env.worca_dir)
@@ -141,8 +141,8 @@ def run_and_act(
         returncode=proc.returncode,
         status=status,
         events=events,
-        stdout=proc.stdout.read() if proc.stdout else "",
-        stderr=proc.stderr.read() if proc.stderr else "",
+        stdout=stdout or "",
+        stderr=stderr or "",
     )
 
 

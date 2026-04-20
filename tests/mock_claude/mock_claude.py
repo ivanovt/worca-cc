@@ -93,14 +93,15 @@ def main():
         os._exit(directive.get("exit_code", 137))
 
     elif action == "slow":
-        time.sleep(directive.get("slow_s", 30))
+        slow_s = directive.get("slow_s", 30)
+        time.sleep(slow_s)
         print(json.dumps({
             "type": "result",
             "subtype": "success",
             "result": "Done after delay.",
             "num_turns": 1,
             "total_cost_usd": 0.01,
-            "duration_ms": int(delay * 1000),
+            "duration_ms": int((delay + slow_s) * 1000),
         }))
         sys.stdout.flush()
 
