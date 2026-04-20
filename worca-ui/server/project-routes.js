@@ -859,8 +859,9 @@ export function createProjectScopedRoutes({
     }
 
     const statusPath = findRunStatusPath(worcaDir, runId);
-    const { broadcast } = req.app.locals;
+    const { broadcast, scheduleRefresh } = req.app.locals;
     if (broadcast) broadcast('run-stopped', { runId });
+    if (scheduleRefresh) scheduleRefresh(req.project?.name);
     res.json({ ok: true, stopped: true, runId });
 
     // If Python exited cleanly (not forced), its finally/atexit already
@@ -952,8 +953,9 @@ export function createProjectScopedRoutes({
       st.completed_at = new Date().toISOString();
       writeFileSync(statusPath, `${JSON.stringify(st, null, 2)}\n`, 'utf8');
 
-      const { broadcast } = req.app.locals;
+      const { broadcast, scheduleRefresh } = req.app.locals;
       if (broadcast) broadcast('run-cancelled', { runId });
+      if (scheduleRefresh) scheduleRefresh(req.project?.name);
       res.json({ ok: true, cancelled: true, runId });
 
       if (!pythonEmittedTerminal) {
