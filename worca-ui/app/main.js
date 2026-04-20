@@ -621,10 +621,13 @@ function fetchAndUpdateRuns() {
 }
 
 ws.on('run-started', () => {
-  // Do not call fetchAndUpdateRuns() here. In multi-project mode it calls
-  // setRunsBulk() which replaces all runs without _project tags, causing
-  // the sidebar counters to drop to zero. The status watcher's runs-list
-  // push (which properly stamps _project) handles the update instead.
+  pipelineAction = null;
+  ws.send('list-runs')
+    .then((payload) => {
+      if (payload.settings) settings = payload.settings;
+      store.setRunsBulk(payload.runs || []);
+    })
+    .catch(() => {});
 });
 
 ws.on('run-archived', (payload) => {
@@ -664,6 +667,25 @@ ws.on('run-stopped', () => {
     .then((payload) => {
       if (payload.settings) settings = payload.settings;
       store.setRunsBulk(payload.runs || []);
+    })
+    .catch(() => {});
+});
+
+ws.on('run-cancelled', (payload) => {
+  if (payload?.runId) {
+    const run = store.getRunById(payload.runId);
+    if (run) {
+      store.setRun(payload.runId, {
+        ...run,
+        pipeline_status: 'cancelled',
+        active: false,
+      });
+    }
+  }
+  ws.send('list-runs')
+    .then((p) => {
+      if (p.settings) settings = p.settings;
+      store.setRunsBulk(p.runs || []);
     })
     .catch(() => {});
 });
@@ -1289,7 +1311,7 @@ function handleCancelRun(runId) {
     {
       label: 'Cancel Pipeline?',
       message:
-        'This will force the run into cancelled state. Any running process will be terminated.',
+        'This will permanently cancel the run. Any running process will be terminated and the pipeline cannot be resumed.',
       confirmLabel: 'Cancel Run',
       confirmVariant: 'danger',
       onConfirm: async () => {
