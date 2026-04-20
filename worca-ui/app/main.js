@@ -622,12 +622,7 @@ function fetchAndUpdateRuns() {
 
 ws.on('run-started', () => {
   pipelineAction = null;
-  ws.send('list-runs')
-    .then((payload) => {
-      if (payload.settings) settings = payload.settings;
-      store.setRunsBulk(payload.runs || []);
-    })
-    .catch(() => {});
+  rerender();
 });
 
 ws.on('run-archived', (payload) => {
@@ -663,12 +658,7 @@ ws.on('run-unarchived', (payload) => {
 
 ws.on('run-stopped', () => {
   pipelineAction = null;
-  ws.send('list-runs')
-    .then((payload) => {
-      if (payload.settings) settings = payload.settings;
-      store.setRunsBulk(payload.runs || []);
-    })
-    .catch(() => {});
+  rerender();
 });
 
 ws.on('run-cancelled', (payload) => {
@@ -682,21 +672,10 @@ ws.on('run-cancelled', (payload) => {
       });
     }
   }
-  ws.send('list-runs')
-    .then((p) => {
-      if (p.settings) settings = p.settings;
-      store.setRunsBulk(p.runs || []);
-    })
-    .catch(() => {});
 });
 
 ws.on('stage-restarted', () => {
-  ws.send('list-runs')
-    .then((payload) => {
-      if (payload.settings) settings = payload.settings;
-      store.setRunsBulk(payload.runs || []);
-    })
-    .catch(() => {});
+  // Status watcher's runs-list push handles the update
 });
 
 ws.on('learn-started', (payload) => {
