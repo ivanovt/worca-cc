@@ -112,12 +112,15 @@ export function createTelegramAdapter({
 
   async function pollLoop() {
     let cursor = await readCursor(cursorPath);
+    let firstPoll = true;
     while (running) {
       try {
+        const pollTimeout = firstPoll ? 0 : LONG_POLL_TIMEOUT_SEC;
         const url =
           `${TELEGRAM_API}/bot${token}/getUpdates` +
-          `?offset=${cursor}&timeout=${LONG_POLL_TIMEOUT_SEC}`;
+          `?offset=${cursor}&timeout=${pollTimeout}`;
         const res = await fetchFn(url);
+        firstPoll = false;
         if (res.status === 429) {
           const data = await res.json().catch(() => ({}));
           const ms = (data.parameters?.retry_after ?? 1) * 1000;
