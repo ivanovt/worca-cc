@@ -197,7 +197,8 @@ export class ProcessManager {
         /* ignore */
       }
 
-      // Append synthetic interrupted event if no terminal event exists yet
+      // Append synthetic failed event if no terminal event exists yet.
+      // Status is "failed" (process crash), so the event type must match.
       const eventsPath = join(this.worcaDir, 'runs', runId, 'events.jsonl');
       let hasTerminalEvent = false;
       if (existsSync(eventsPath)) {
@@ -219,28 +220,26 @@ export class ProcessManager {
       }
       if (!hasTerminalEvent) {
         const payload = {
-          interrupted_stage: status.current_stage ?? 'unknown',
+          failed_stage: status.current_stage ?? 'unknown',
           elapsed_ms: elapsedMsSince(status.started_at),
           source: 'stale',
         };
 
         if (this.settingsPath) {
-          // dispatchExternal writes to events.jsonl via Python's emit_event
           dispatches.push(
             dispatchExternal({
               runDir: join(this.worcaDir, 'runs', runId),
               settingsPath: this.settingsPath,
-              eventType: 'pipeline.run.interrupted',
+              eventType: 'pipeline.run.failed',
               payload,
             }).catch(() => {}),
           );
         } else {
-          // No settingsPath → can't dispatch; write a local synthetic event
           try {
             const evt = {
               schema_version: '1',
               event_id: randomUUID(),
-              event_type: 'pipeline.run.interrupted',
+              event_type: 'pipeline.run.failed',
               timestamp: new Date().toISOString(),
               run_id: status.run_id ?? runId,
               pipeline: {

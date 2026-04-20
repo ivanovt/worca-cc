@@ -887,7 +887,7 @@ export function createProjectScopedRoutes({
         try {
           await req.project.pm.stopPipelineSync(runId, { timeoutMs: 5000 });
         } catch {
-          /* already-dead is fine; continue to cancel state-write */
+          // Expected: process may already be dead (not_running). Cancel proceeds to write cancelled status regardless.
         }
         // Re-read: Python's signal/atexit handler may have updated status.json
         try {

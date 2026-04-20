@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 
 export function resolvePythonCmd() {
   if (process.env.WORCA_PYTHON) {

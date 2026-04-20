@@ -136,7 +136,7 @@ describe('reconcileStatus', () => {
     expect(lines).toHaveLength(1);
     const evt = JSON.parse(lines[0]);
     expect(evt.schema_version).toBe('1');
-    expect(evt.event_type).toBe('pipeline.run.interrupted');
+    expect(evt.event_type).toBe('pipeline.run.failed');
     expect(evt.event_id).toBeDefined();
     expect(evt.timestamp).toBeDefined();
     expect(evt.run_id).toBe('run-evt-1');
@@ -145,7 +145,7 @@ describe('reconcileStatus', () => {
       work_request: { title: 'Test reconcile' },
     });
     expect(evt.payload).toEqual({
-      interrupted_stage: 'plan',
+      failed_stage: 'plan',
       elapsed_ms: 0,
       source: 'reconcile',
     });
@@ -167,7 +167,7 @@ describe('reconcileStatus', () => {
       readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
     );
     expect(evt.pipeline).toEqual({ branch: null, work_request: null });
-    expect(evt.payload.interrupted_stage).toBe('unknown');
+    expect(evt.payload.failed_stage).toBe('unknown');
     expect(evt.payload.source).toBe('reconcile');
   });
 
@@ -306,9 +306,9 @@ describe('reconcileStatus dispatchExternal integration', () => {
     const call = dispatchSpy.mock.calls[0][0];
     expect(call.runDir).toBe(join(worcaDir, 'runs', 'run-d1'));
     expect(call.settingsPath).toBe(settingsPath);
-    expect(call.eventType).toBe('pipeline.run.interrupted');
+    expect(call.eventType).toBe('pipeline.run.failed');
     expect(call.payload).toEqual({
-      interrupted_stage: 'plan',
+      failed_stage: 'plan',
       elapsed_ms: expect.any(Number),
       source: 'stale',
     });
@@ -384,10 +384,7 @@ describe('reconcileStatus dispatchExternal integration', () => {
 
     expect(dispatchSpy).toHaveBeenCalledTimes(2);
     const eventTypes = dispatchSpy.mock.calls.map((c) => c[0].eventType);
-    expect(eventTypes).toEqual([
-      'pipeline.run.interrupted',
-      'pipeline.run.interrupted',
-    ]);
+    expect(eventTypes).toEqual(['pipeline.run.failed', 'pipeline.run.failed']);
   });
 
   it('does not reject when dispatchExternal fails', async () => {

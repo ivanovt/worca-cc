@@ -54,6 +54,9 @@ def main(argv=None):
     )
     try:
         payload = json.loads(args.payload_json)
+        if not isinstance(payload, dict):
+            print(f"[dispatch_external] payload must be a JSON object, got {type(payload).__name__}", file=sys.stderr)
+            sys.exit(1)
         event = emit_event(ctx, args.event_type, payload, sync=True)
     finally:
         ctx.close()

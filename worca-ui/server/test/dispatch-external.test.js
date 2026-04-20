@@ -196,7 +196,7 @@ describe('dispatchExternal', () => {
     expect(result).toEqual({ ok: false, reason: 'python_not_found' });
   });
 
-  it('uses default timeoutMs of 60000', async () => {
+  it('uses default timeoutMs of 30000', async () => {
     const child = makeChild();
     childFactory = () => child;
 
