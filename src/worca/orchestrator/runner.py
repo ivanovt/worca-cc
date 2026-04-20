@@ -120,6 +120,7 @@ _signal_status_path = None
 _signal_project_status_path = None  # project-level status.json for PID cleanup
 _signal_event_ctx = None  # set to EventContext when run starts; signal-safe event emission
 _pending_signal_event = None  # signal handler stashes interrupted-event dict here for deferred dispatch
+_signal_event_emitted = False  # guards against duplicate events.jsonl writes from repeated signals
 
 
 def _check_control_file(
@@ -375,7 +376,10 @@ def _emit_interrupted_event_signal_safe(ctx, status) -> None:
     delivering signals between bytecode operations rather than mid-instruction,
     which makes it safe in practice but not portable to other Python runtimes.
     """
-    global _pending_signal_event
+    global _pending_signal_event, _signal_event_emitted
+    if _signal_event_emitted:
+        return
+    _signal_event_emitted = True
     import json as _json
     import uuid as _uuid
     from datetime import datetime as _dt, timezone as _tz
@@ -1148,9 +1152,10 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx, _pending_signal_event
+    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx, _pending_signal_event, _signal_event_emitted
     _shutdown_requested = False
     _pending_signal_event = None
+    _signal_event_emitted = False
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
     run_dir = None
@@ -2650,7 +2655,7 @@ def run_pipeline(
         status["pipeline_status"] = "interrupted"
         status["stop_reason"] = exc.stop_reason
         save_status(status, actual_status_path)
-        if ctx and _pending_signal_event is None:
+        if ctx and _pending_signal_event is None and not _signal_event_emitted:
             emit_event(ctx, RUN_INTERRUPTED, run_interrupted_payload(
                 interrupted_stage=status.get("stage", ""),
                 elapsed_ms=int((time.time() - pipeline_t0) * 1000),
@@ -2737,6 +2742,7 @@ def run_pipeline(
         _signal_project_status_path = None
         _signal_event_ctx = None
         _pending_signal_event = None
+        _signal_event_emitted = False
         try:
             atexit.unregister(_atexit_cleanup)
         except Exception:

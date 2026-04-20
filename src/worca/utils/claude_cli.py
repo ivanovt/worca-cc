@@ -7,6 +7,7 @@ The final 'result' event contains the structured output (same as --output-format
 
 import json
 import os
+import shlex
 import signal
 import subprocess
 import sys
@@ -80,8 +81,9 @@ def build_command(
     else:
         cli_prompt = prompt
 
+    _claude_bin = shlex.split(os.environ.get("WORCA_CLAUDE_BIN", "claude"))
     cmd = [
-        "claude",
+        *_claude_bin,
         "-p",
         cli_prompt,
         "--agent",
