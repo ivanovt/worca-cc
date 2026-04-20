@@ -1453,10 +1453,11 @@ def run_pipeline(
             if resume_stage in stage_order:
                 stage_idx = stage_order.index(resume_stage)
             else:
-                raise PipelineError(
-                    f"Cannot resume: unknown stage {resume_stage!r}. "
-                    f"Valid stages: {[s.value for s in stage_order]}"
-                )
+                # resume_stage is disabled (e.g. PREFLIGHT) — start from the
+                # first enabled stage; the skip-completed logic below will
+                # advance past already-done stages to the actual resume point.
+                _log(f"Resume stage {resume_stage.value!r} is disabled — starting from first enabled stage")
+                stage_idx = 0
         elif plan_file:
             # Mark PLAN stage as completed with pre-loaded status
             update_stage(status, Stage.PLAN.value,
