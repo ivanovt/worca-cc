@@ -116,6 +116,7 @@ def main():
     if not ui_dir.is_dir():
         print(f"  warning: {ui_dir} not found, skipping UI build")
     else:
+        run(["npm", "install"], cwd=str(ui_dir))
         run(["npm", "run", "build"], cwd=str(ui_dir))
 
     # --- Step 5: Sync Python runtime ---
