@@ -44,9 +44,6 @@ describe('status-badge', () => {
   it('maps failed to status-failed', () => {
     expect(statusClass('failed')).toBe('status-failed');
   });
-  it('maps resuming to status-resuming', () => {
-    expect(statusClass('resuming')).toBe('status-resuming');
-  });
   it('statusIcon returns SVG for running', () => {
     expect(statusIcon('running')).toContain('<svg');
   });
@@ -59,13 +56,6 @@ describe('status-badge', () => {
   it('statusIcon returns SVG for failed', () => {
     expect(statusIcon('failed')).toContain('<svg');
   });
-  it('statusIcon returns SVG for resuming', () => {
-    expect(statusIcon('resuming')).toContain('<svg');
-  });
-  it('statusIcon adds icon-spin class for resuming', () => {
-    expect(statusIcon('resuming')).toContain('class="icon-spin"');
-  });
-
   // interrupted status
   it('maps interrupted to status-interrupted', () => {
     expect(statusClass('interrupted')).toBe('status-interrupted');

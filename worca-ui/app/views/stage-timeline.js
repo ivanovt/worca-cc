@@ -9,7 +9,6 @@ import {
   Loader,
   Pause,
   RefreshCw,
-  RotateCw,
 } from '../utils/icons.js';
 import { sortByStageOrder } from '../utils/stage-order.js';
 import { resolveStatus, statusClass } from '../utils/status-badge.js';
@@ -27,7 +26,6 @@ const STAGE_ICON = {
   error: CircleAlert,
   paused: Pause,
   interrupted: Pause,
-  resuming: RotateCw,
   skipped: CircleSlash,
 };
 
@@ -49,10 +47,7 @@ export function stageTimelineView(stages, stageUi = {}, isActive = true) {
         const status = resolveStatus(stage.status || 'pending', isActive);
         const iconData = STAGE_ICON[status] || Circle;
         const label = stageLabel(key, stageUi);
-        const isPulse =
-          status === 'in_progress' ||
-          status === 'running' ||
-          status === 'resuming';
+        const isPulse = status === 'in_progress' || status === 'running';
         const iteration = stage.iteration;
         const iconClass = isPulse ? 'icon-spin' : '';
 

@@ -32,11 +32,12 @@ def test_events_types_importable():
 # ---------------------------------------------------------------------------
 
 PIPELINE_CONSTANTS = [
-    # Pipeline lifecycle (5)
+    # Pipeline lifecycle (6)
     ("RUN_STARTED",       "pipeline.run.started"),
     ("RUN_COMPLETED",     "pipeline.run.completed"),
     ("RUN_FAILED",        "pipeline.run.failed"),
     ("RUN_INTERRUPTED",   "pipeline.run.interrupted"),
+    ("RUN_CANCELLED",     "pipeline.run.cancelled"),
     ("RUN_RESUMED",       "pipeline.run.resumed"),
     # Stage lifecycle (4)
     ("STAGE_STARTED",     "pipeline.stage.started"),
@@ -131,18 +132,18 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 51 pipeline.* outbound constants.
+    """There must be exactly 52 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
-    + 1 dispatch_allowed hook event = 51.
+    + 1 dispatch_allowed hook event + 1 RUN_CANCELLED = 52.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 51, (
-        f"Expected 51 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 52, (
+        f"Expected 52 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -168,6 +169,7 @@ EXPECTED_BUILDERS = [
     "run_completed_payload",
     "run_failed_payload",
     "run_interrupted_payload",
+    "run_cancelled_payload",
     "run_resumed_payload",
     # pipeline.stage.*
     "stage_started_payload",
@@ -285,6 +287,42 @@ def test_run_interrupted_payload_required_fields():
     assert p["source"] == "orchestrator"  # default
     p2 = run_interrupted_payload(interrupted_stage="PLAN", elapsed_ms=1, source="signal")
     assert p2["source"] == "signal"
+
+
+def test_run_cancelled_payload_required_fields():
+    from worca.events.types import run_cancelled_payload
+    p = run_cancelled_payload(
+        cancelled_stage="IMPLEMENT", elapsed_ms=15000, source="user_cancel",
+    )
+    assert p["cancelled_stage"] == "IMPLEMENT"
+    assert p["elapsed_ms"] == 15000
+    assert p["source"] == "user_cancel"
+
+
+def test_run_cancelled_payload_source_values():
+    from worca.events.types import run_cancelled_payload
+    for source in ("user_cancel", "force_cancel", "bulk_cancel"):
+        p = run_cancelled_payload(
+            cancelled_stage="TEST", elapsed_ms=1000, source=source,
+        )
+        assert p["source"] == source
+
+
+def test_run_cancelled_payload_optional_reason():
+    from worca.events.types import run_cancelled_payload
+    p = run_cancelled_payload(
+        cancelled_stage="PLAN", elapsed_ms=500, source="force_cancel",
+        reason="cost exceeded budget",
+    )
+    assert p["reason"] == "cost exceeded budget"
+
+
+def test_run_cancelled_payload_reason_omitted_by_default():
+    from worca.events.types import run_cancelled_payload
+    p = run_cancelled_payload(
+        cancelled_stage="PLAN", elapsed_ms=500, source="user_cancel",
+    )
+    assert "reason" not in p
 
 
 def test_run_resumed_payload_required_fields():
@@ -778,6 +816,9 @@ def test_all_builders_return_dicts():
             error="e", failed_stage="PLAN", error_type="PipelineError",
         ),
         "run_interrupted_payload": dict(interrupted_stage="PLAN", elapsed_ms=1),
+        "run_cancelled_payload": dict(
+            cancelled_stage="PLAN", elapsed_ms=1, source="user_cancel",
+        ),
         "run_resumed_payload": dict(
             resume_stage="TEST", previous_stages_completed=[],
         ),

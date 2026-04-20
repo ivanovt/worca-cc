@@ -13,12 +13,15 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  rmSync,
   unlinkSync,
   writeFileSync,
   writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+
+import { dispatchExternal } from './dispatch-external.js';
 
 /** Byte threshold — must match claude_cli.py _ARG_INLINE_LIMIT */
 const ARG_INLINE_LIMIT = 128 * 1024;
@@ -73,11 +76,12 @@ function cleanupPromptFile(filePath) {
  */
 export class ProcessManager {
   /**
-   * @param {{ worcaDir: string, projectRoot?: string }} options
+   * @param {{ worcaDir: string, projectRoot?: string, settingsPath?: string }} options
    */
-  constructor({ worcaDir, projectRoot }) {
+  constructor({ worcaDir, projectRoot, settingsPath }) {
     this.worcaDir = worcaDir;
     this.projectRoot = projectRoot || process.cwd();
+    this.settingsPath = settingsPath ?? null;
   }
 
   /**
@@ -128,8 +132,9 @@ export class ProcessManager {
    *
    * @returns {boolean} true if any status was fixed
    */
-  reconcileStatus() {
+  async reconcileStatus() {
     let fixed = false;
+    const dispatches = [];
 
     // Collect run IDs to check: scan runs/*/pipeline.pid + active_run fallback
     const runIds = new Set();
@@ -180,8 +185,7 @@ export class ProcessManager {
       if (!status.stop_reason) {
         status.stop_reason = 'stale';
       }
-      status.pipeline_status =
-        status.stop_reason === 'stale' ? 'interrupted' : 'failed';
+      status.pipeline_status = 'failed';
       try {
         writeFileSync(
           statusPath,
@@ -193,7 +197,8 @@ export class ProcessManager {
         /* ignore */
       }
 
-      // Append synthetic interrupted event if no terminal event exists yet
+      // Append synthetic failed event if no terminal event exists yet.
+      // Status is "failed" (process crash), so the event type must match.
       const eventsPath = join(this.worcaDir, 'runs', runId, 'events.jsonl');
       let hasTerminalEvent = false;
       if (existsSync(eventsPath)) {
@@ -214,30 +219,44 @@ export class ProcessManager {
         }
       }
       if (!hasTerminalEvent) {
-        try {
-          const evt = {
-            schema_version: '1',
-            event_id: randomUUID(),
-            event_type: 'pipeline.run.interrupted',
-            timestamp: new Date().toISOString(),
-            run_id: status.run_id ?? runId,
-            pipeline: {
-              branch: status.branch ?? null,
-              work_request: status.work_request ?? null,
-            },
-            payload: {
-              interrupted_stage: status.current_stage ?? 'unknown',
-              elapsed_ms: elapsedMsSince(status.started_at),
-              source: 'reconcile',
-            },
-          };
-          appendFileSync(eventsPath, `${JSON.stringify(evt)}\n`, 'utf8');
-        } catch {
-          /* ignore */
+        const payload = {
+          failed_stage: status.current_stage ?? 'unknown',
+          elapsed_ms: elapsedMsSince(status.started_at),
+          source: 'stale',
+        };
+
+        if (this.settingsPath) {
+          dispatches.push(
+            dispatchExternal({
+              runDir: join(this.worcaDir, 'runs', runId),
+              settingsPath: this.settingsPath,
+              eventType: 'pipeline.run.failed',
+              payload,
+            }).catch(() => {}),
+          );
+        } else {
+          try {
+            const evt = {
+              schema_version: '1',
+              event_id: randomUUID(),
+              event_type: 'pipeline.run.failed',
+              timestamp: new Date().toISOString(),
+              run_id: status.run_id ?? runId,
+              pipeline: {
+                branch: status.branch ?? null,
+                work_request: status.work_request ?? null,
+              },
+              payload: { ...payload, source: 'reconcile' },
+            };
+            appendFileSync(eventsPath, `${JSON.stringify(evt)}\n`, 'utf8');
+          } catch {
+            /* ignore */
+          }
         }
       }
     }
 
+    await Promise.all(dispatches);
     return fixed;
   }
 
@@ -443,17 +462,18 @@ export class ProcessManager {
       throw err;
     }
 
-    // Watchdog: SIGKILL after 10s if still alive, then reconcile status
+    // Watchdog: SIGKILL after 10s if still alive, then reconcile status.
+    // Fire-and-forget: reconcileStatus is async but we intentionally don't
+    // await it — this is a background cleanup path after the response is sent.
     const worcaDir = this.worcaDir;
+    const { settingsPath } = this;
     const watchdog = setTimeout(() => {
       try {
         process.kill(pid, 0); // check alive
         process.kill(pid, 'SIGKILL');
-        // Give the OS a moment to reap the process, then fix stale status
-        setTimeout(() => reconcileStatus(worcaDir), 500);
+        setTimeout(() => reconcileStatus(worcaDir, settingsPath), 500);
       } catch {
-        // Already dead — reconcile in case signal handler didn't save
-        reconcileStatus(worcaDir);
+        reconcileStatus(worcaDir, settingsPath);
       }
     }, 10000);
     watchdog.unref();
@@ -471,6 +491,80 @@ export class ProcessManager {
   }
 
   /**
+   * Synchronous-style stop: control.json + signal + poll for exit.
+   * @param {string} runId
+   * @param {{ timeoutMs?: number }} [opts]
+   * @returns {Promise<{ pid: number, exitCode: null, forced?: boolean }>}
+   */
+  async stopPipelineSync(runId, { timeoutMs } = {}) {
+    if (timeoutMs === undefined) {
+      timeoutMs = process.platform === 'win32' ? 30000 : 5000;
+    }
+
+    const running = this.getRunningPid(runId);
+    if (!running) {
+      const e = new Error('not running');
+      e.code = 'not_running';
+      throw e;
+    }
+    const { pid } = running;
+
+    const controlDir = join(this.worcaDir, 'runs', runId);
+    mkdirSync(controlDir, { recursive: true });
+    writeFileSync(
+      join(controlDir, 'control.json'),
+      `${JSON.stringify({ action: 'stop', requested_at: new Date().toISOString(), source: 'ui' }, null, 2)}\n`,
+      'utf8',
+    );
+
+    if (process.platform !== 'win32') {
+      try {
+        process.kill(pid, 'SIGTERM');
+      } catch {
+        /* already dead */
+      }
+    } else {
+      this._killAgentSubprocess(runId);
+    }
+
+    const pollMs = timeoutMs > 10000 ? 500 : 100;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return { pid, exitCode: null };
+      }
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
+
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch {
+      /* already dead */
+    }
+    return { pid, exitCode: null, forced: true };
+  }
+
+  /**
+   * Kill the agent subprocess (claude CLI) via agent.pid.
+   * Used on Windows where SIGTERM doesn't propagate to child processes.
+   * @param {string} runId
+   */
+  _killAgentSubprocess(runId) {
+    const pidPath = join(this.worcaDir, 'runs', runId, 'agent.pid');
+    if (!existsSync(pidPath)) return;
+    try {
+      const agentPid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+      if (!Number.isNaN(agentPid) && agentPid > 0) {
+        process.kill(agentPid, 'SIGTERM');
+      }
+    } catch {
+      /* agent already dead or pid file invalid */
+    }
+  }
+
+  /**
    * Read the active_run file to get the current run ID.
    * @returns {string|null}
    */
@@ -483,6 +577,51 @@ export class ProcessManager {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Delete a run directory and clean up references.
+   * Refuses if the pipeline is currently running.
+   * @param {string} runId
+   * @returns {{ deleted: boolean }}
+   */
+  deleteRun(runId) {
+    const running = this.getRunningPid(runId);
+    if (running) {
+      const err = new Error(
+        'Cannot delete a running pipeline — stop or cancel it first',
+      );
+      err.code = 'still_running';
+      throw err;
+    }
+
+    const runsParent = resolve(this.worcaDir, 'runs');
+    const runDir = resolve(runsParent, runId);
+    if (!runDir.startsWith(runsParent)) {
+      const err = new Error('Invalid runId');
+      err.code = 'invalid_id';
+      throw err;
+    }
+    if (!existsSync(runDir)) {
+      const err = new Error(`Run "${runId}" not found`);
+      err.code = 'not_found';
+      throw err;
+    }
+
+    rmSync(runDir, { recursive: true, force: true });
+
+    // Clear active_run pointer if it references this run
+    const activeRunPath = join(this.worcaDir, 'active_run');
+    if (existsSync(activeRunPath)) {
+      try {
+        const activeId = readFileSync(activeRunPath, 'utf8').trim();
+        if (activeId === runId) unlinkSync(activeRunPath);
+      } catch {
+        /* ignore */
+      }
+    }
+
+    return { deleted: true };
   }
 
   /**
@@ -640,9 +779,9 @@ export function getRunningPid(worcaDir, runId) {
   return new ProcessManager({ worcaDir }).getRunningPid(runId);
 }
 
-/** @param {string} worcaDir */
-export function reconcileStatus(worcaDir) {
-  return new ProcessManager({ worcaDir }).reconcileStatus();
+/** @param {string} worcaDir @param {string} [settingsPath] */
+export function reconcileStatus(worcaDir, settingsPath) {
+  return new ProcessManager({ worcaDir, settingsPath }).reconcileStatus();
 }
 
 /** @param {string} worcaDir @param {object} opts */

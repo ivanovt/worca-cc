@@ -35,6 +35,7 @@
     "app/vendor/",
     "app/protocol.js",
     "app/utils/stage-order.js",
+    "app/utils/state-actions.js",
     "scripts/build-frontend.js"
   ],
   "engines": {

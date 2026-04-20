@@ -201,14 +201,13 @@ def get_run_token_usage(status: dict) -> dict:
 _LEGACY_STATUS_MAP = {
     "in_progress": "running",
     "error": "failed",
-    "interrupted": "paused",
 }
 
 
 def resolve_status(status: str) -> str:
     """Normalize legacy status values to canonical pipeline_status values.
 
-    Mappings: in_progress→running, error→failed, interrupted→paused.
+    Mappings: in_progress→running, error→failed.
     All other values pass through unchanged.
     """
     return _LEGACY_STATUS_MAP.get(status, status)

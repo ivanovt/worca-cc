@@ -66,17 +66,6 @@ describe('runCardView - status class on card', () => {
     expect(output).toContain('status-failed');
   });
 
-  it('adds status-resuming class when pipeline_status is resuming', () => {
-    const run = {
-      id: '1',
-      pipeline_status: 'resuming',
-      active: true,
-      started_at: '2026-01-01T00:00:00Z',
-    };
-    const output = renderToString(runCardView(run));
-    expect(output).toContain('status-resuming');
-  });
-
   it('falls back to status-running for active run without pipeline_status', () => {
     const run = { id: '1', active: true, started_at: '2026-01-01T00:00:00Z' };
     const output = renderToString(runCardView(run));
@@ -364,6 +353,111 @@ describe('runCardView - duration for active run with completed stages', () => {
     const output = renderToString(runCardView(run));
     // Should contain "10m" not "2m" (duration from start to now, not from start to stage-end)
     expect(output).toContain('10m');
+  });
+});
+
+describe('runCardView - stop button via actionAllowed', () => {
+  it('shows stop button when running and onStop provided', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onStop: () => {} }));
+    expect(output).toContain('btn-quick-stop');
+    expect(output).toContain('Stop');
+  });
+
+  it('does not show stop button when paused (actionAllowed=false)', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onStop: () => {} }));
+    expect(output).not.toContain('btn-quick-stop');
+  });
+
+  it('does not show stop button when no onStop callback', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('btn-quick-stop');
+  });
+});
+
+describe('runCardView - cancel button via actionAllowed', () => {
+  it('shows cancel button when paused and onCancel provided', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onCancel: () => {} }));
+    expect(output).toContain('btn-quick-cancel');
+    expect(output).toContain('Cancel');
+  });
+
+  it('shows cancel button when running and onCancel provided', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onCancel: () => {} }));
+    expect(output).toContain('btn-quick-cancel');
+  });
+
+  it('shows cancel button when failed and onCancel provided', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'failed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onCancel: () => {} }));
+    expect(output).toContain('btn-quick-cancel');
+  });
+
+  it('does not show cancel button when completed (actionAllowed=false)', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'completed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onCancel: () => {} }));
+    expect(output).not.toContain('btn-quick-cancel');
+  });
+
+  it('does not show cancel button when cancelled (actionAllowed=false)', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'cancelled',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run, { onCancel: () => {} }));
+    expect(output).not.toContain('btn-quick-cancel');
+  });
+
+  it('does not show cancel button when no onCancel callback', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'paused',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('btn-quick-cancel');
   });
 });
 

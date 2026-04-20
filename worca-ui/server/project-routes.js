@@ -19,7 +19,9 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Router } from 'express';
+import { actionAllowed } from '../app/utils/state-actions.js';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
+import { dispatchExternal } from './dispatch-external.js';
 import { ensureWebhookForUi } from './ensure-webhook.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
@@ -130,7 +132,13 @@ export function projectResolver({ prefsDir, projectRoot }) {
       settingsPath:
         project.settingsPath || join(project.path, '.claude', 'settings.json'),
       projectRoot: projRoot,
-      pm: new ProcessManager({ worcaDir, projectRoot: projRoot }),
+      pm: new ProcessManager({
+        worcaDir,
+        projectRoot: projRoot,
+        settingsPath:
+          project.settingsPath ||
+          join(project.path, '.claude', 'settings.json'),
+      }),
     };
     next();
   };
@@ -738,21 +746,6 @@ export function createProjectScopedRoutes({
     }
   });
 
-  // DELETE /api/projects/:projectId/runs/:id — stop a running pipeline
-  router.delete('/runs/:id', requireWorcaDir, (req, res) => {
-    try {
-      const result = req.project.pm.stopPipeline(req.params.id);
-      const { broadcast } = req.app.locals;
-      if (broadcast) broadcast('run-stopped', { pid: result.pid });
-      res.json({ ok: true, stopped: true, pid: result.pid });
-    } catch (err) {
-      if (err.code === 'not_running') {
-        return res.status(404).json({ ok: false, error: err.message });
-      }
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
   // POST /api/projects/:projectId/runs/:id/pause
   router.post('/runs/:id/pause', requireWorcaDir, (req, res) => {
     const runId = req.params.id;
@@ -808,13 +801,13 @@ export function createProjectScopedRoutes({
     }
   });
 
-  // POST /api/projects/:projectId/runs/:id/stop — control.json + SIGTERM
-  router.post('/runs/:id/stop', requireWorcaDir, (req, res) => {
+  // POST /api/projects/:projectId/runs/:id/stop — control.json + SIGTERM + webhook
+  router.post('/runs/:id/stop', requireWorcaDir, async (req, res) => {
     const runId = req.params.id;
     if (!validateRunId(runId)) {
       return res.status(400).json({ ok: false, error: 'Invalid runId' });
     }
-    const { worcaDir } = req.project;
+    const { worcaDir, settingsPath } = req.project;
     try {
       const controlDir = join(worcaDir, 'runs', runId);
       mkdirSync(controlDir, { recursive: true });
@@ -834,14 +827,15 @@ export function createProjectScopedRoutes({
     } catch {
       /* non-fatal — SIGTERM follows */
     }
+    let forced = false;
     try {
-      const result = req.project.pm.stopPipeline(runId);
-      const { broadcast } = req.app.locals;
-      if (broadcast) broadcast('run-stopped', { runId, pid: result.pid });
-      res.json({ ok: true, stopped: true, runId, pid: result.pid });
+      const result = await req.project.pm.stopPipelineSync(runId, {
+        timeoutMs: 5000,
+      });
+      forced = !!result.forced;
     } catch (err) {
       if (err.code === 'not_running') {
-        const statusPath = findRunStatusPath(req.project.worcaDir, runId);
+        const statusPath = findRunStatusPath(worcaDir, runId);
         if (statusPath) {
           try {
             const st = JSON.parse(readFileSync(statusPath, 'utf8'));
@@ -849,17 +843,11 @@ export function createProjectScopedRoutes({
               st.pipeline_status === 'paused' ||
               st.pipeline_status === 'running'
             ) {
-              st.pipeline_status = 'cancelled';
-              st.stop_reason = 'force_cancelled';
-              st.completed_at = new Date().toISOString();
-              writeFileSync(
-                statusPath,
-                `${JSON.stringify(st, null, 2)}\n`,
-                'utf8',
-              );
-              const { broadcast } = req.app.locals;
-              if (broadcast) broadcast('run-stopped', { runId, pid: null });
-              return res.json({ ok: true, stopped: true, runId, pid: null });
+              return res.status(409).json({
+                ok: false,
+                code: 'no_running_process',
+                suggested_action: 'cancel',
+              });
             }
           } catch {
             /* fall through to 404 */
@@ -867,17 +855,61 @@ export function createProjectScopedRoutes({
         }
         return res.status(404).json({ ok: false, error: err.message });
       }
-      res.status(500).json({ ok: false, error: err.message });
+      // For other errors, continue — process may have exited
+    }
+
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    const { broadcast, scheduleRefresh } = req.app.locals;
+    if (broadcast) broadcast('run-stopped', { runId });
+    if (scheduleRefresh) scheduleRefresh(req.project?.name);
+    res.json({ ok: true, stopped: true, runId });
+
+    // If Python exited cleanly (not forced), its finally/atexit already
+    // dispatched the webhook. Only dispatch from Node when SIGKILL was needed.
+    if (forced && statusPath) {
+      let st;
+      try {
+        st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      } catch {
+        return;
+      }
+      const terminalStatus = st.pipeline_status;
+      if (terminalStatus === 'interrupted' || terminalStatus === 'failed') {
+        const eventType =
+          terminalStatus === 'interrupted'
+            ? 'pipeline.run.interrupted'
+            : 'pipeline.run.failed';
+        const startedAt = st.started_at;
+        const elapsedMs = startedAt
+          ? Date.now() - new Date(startedAt).getTime()
+          : 0;
+        dispatchExternal({
+          runDir: dirname(statusPath),
+          settingsPath,
+          eventType,
+          payload: {
+            interrupted_stage: st.stage || st.current_stage || 'unknown',
+            elapsed_ms: elapsedMs,
+            source: 'user_stop',
+          },
+        }).then((result) => {
+          if (!result.ok) {
+            console.error(
+              `[stop] dispatchExternal failed for run ${runId}: ${result.reason}${result.stderr ? ` — ${result.stderr}` : ''}`,
+            );
+          }
+        });
+      }
     }
   });
 
-  // POST /api/projects/:projectId/runs/:id/cancel — force-cancel a stale run
-  router.post('/runs/:id/cancel', requireWorcaDir, (req, res) => {
+  // POST /api/projects/:projectId/runs/:id/cancel — force-cancel a run
+  router.post('/runs/:id/cancel', requireWorcaDir, async (req, res) => {
     const runId = req.params.id;
     if (!validateRunId(runId)) {
       return res.status(400).json({ ok: false, error: 'Invalid runId' });
     }
-    const { worcaDir } = req.project;
+    const { worcaDir, settingsPath } = req.project;
     const statusPath = findRunStatusPath(worcaDir, runId);
     if (!statusPath) {
       return res
@@ -885,20 +917,69 @@ export function createProjectScopedRoutes({
         .json({ ok: false, error: `Run "${runId}" not found` });
     }
     try {
-      const st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      let st = JSON.parse(readFileSync(statusPath, 'utf8'));
       if (
         st.pipeline_status === 'completed' ||
         st.pipeline_status === 'cancelled'
       ) {
         return res.json({ ok: true, already: st.pipeline_status });
       }
+      if (!actionAllowed('cancel', st.pipeline_status)) {
+        return res.status(409).json({ ok: false, code: 'action_not_allowed' });
+      }
+
+      const wasRunning = st.pipeline_status === 'running';
+      if (wasRunning) {
+        try {
+          await req.project.pm.stopPipelineSync(runId, { timeoutMs: 5000 });
+        } catch {
+          // Expected: process may already be dead (not_running). Cancel proceeds to write cancelled status regardless.
+        }
+        // Re-read: Python's signal/atexit handler may have updated status.json
+        try {
+          st = JSON.parse(readFileSync(statusPath, 'utf8'));
+        } catch {
+          /* use pre-stop snapshot */
+        }
+      }
+
+      // Python's SIGTERM handler may have already emitted pipeline.run.interrupted.
+      // Only emit pipeline.run.cancelled if Python didn't already emit a terminal event.
+      const pythonEmittedTerminal =
+        wasRunning && st.pipeline_status === 'interrupted';
+
       st.pipeline_status = 'cancelled';
       st.stop_reason = 'force_cancelled';
       st.completed_at = new Date().toISOString();
       writeFileSync(statusPath, `${JSON.stringify(st, null, 2)}\n`, 'utf8');
-      const { broadcast } = req.app.locals;
-      if (broadcast) broadcast('run-stopped', { runId, pid: null });
+
+      const { broadcast, scheduleRefresh } = req.app.locals;
+      if (broadcast) broadcast('run-cancelled', { runId });
+      if (scheduleRefresh) scheduleRefresh(req.project?.name);
       res.json({ ok: true, cancelled: true, runId });
+
+      if (!pythonEmittedTerminal) {
+        const startedAt = st.started_at;
+        const elapsedMs = startedAt
+          ? Date.now() - new Date(startedAt).getTime()
+          : 0;
+        dispatchExternal({
+          runDir: dirname(statusPath),
+          settingsPath,
+          eventType: 'pipeline.run.cancelled',
+          payload: {
+            cancelled_stage: st.stage || st.current_stage || 'unknown',
+            elapsed_ms: elapsedMs,
+            source: 'user_cancel',
+          },
+        }).then((result) => {
+          if (!result.ok) {
+            console.error(
+              `[cancel] dispatchExternal failed for run ${runId}: ${result.reason}${result.stderr ? ` — ${result.stderr}` : ''}`,
+            );
+          }
+        });
+      }
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -999,6 +1080,49 @@ export function createProjectScopedRoutes({
         } catch {
           /* ignore cleanup failure */
         }
+      }
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/projects/:projectId/runs/:id/delete — permanently remove a run
+  router.post('/runs/:id/delete', requireWorcaDir, (req, res) => {
+    const runId = req.params.id;
+    if (!validateRunId(runId)) {
+      return res.status(400).json({ ok: false, error: 'Invalid runId' });
+    }
+    const { worcaDir } = req.project;
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      if (!actionAllowed('delete', st.pipeline_status)) {
+        return res.status(409).json({
+          ok: false,
+          code: 'action_not_allowed',
+          error: `Cannot delete a run with status "${st.pipeline_status}" — stop or cancel it first`,
+        });
+      }
+    } catch (err) {
+      return res
+        .status(500)
+        .json({ ok: false, error: `Failed to read status: ${err.message}` });
+    }
+    try {
+      req.project.pm.deleteRun(runId);
+      const { broadcast } = req.app.locals;
+      if (broadcast) broadcast('run-deleted', { runId });
+      res.json({ ok: true, deleted: true, runId });
+    } catch (err) {
+      if (err.code === 'still_running') {
+        return res.status(409).json({ ok: false, error: err.message });
+      }
+      if (err.code === 'not_found') {
+        return res.status(404).json({ ok: false, error: err.message });
       }
       res.status(500).json({ ok: false, error: err.message });
     }

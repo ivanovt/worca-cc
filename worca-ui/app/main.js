@@ -156,6 +156,7 @@ const DEFAULT_EVENTS = [
   'pipeline.run.failed',
   'pipeline.run.interrupted',
   'pipeline.run.paused',
+  'pipeline.run.cancelled',
   'pipeline.run.resumed',
   'pipeline.run.resumed_from_pause',
   'pipeline.git.pr_created',
@@ -620,10 +621,8 @@ function fetchAndUpdateRuns() {
 }
 
 ws.on('run-started', () => {
-  // Do not call fetchAndUpdateRuns() here. In multi-project mode it calls
-  // setRunsBulk() which replaces all runs without _project tags, causing
-  // the sidebar counters to drop to zero. The status watcher's runs-list
-  // push (which properly stamps _project) handles the update instead.
+  pipelineAction = null;
+  rerender();
 });
 
 ws.on('run-archived', (payload) => {
@@ -659,21 +658,24 @@ ws.on('run-unarchived', (payload) => {
 
 ws.on('run-stopped', () => {
   pipelineAction = null;
-  ws.send('list-runs')
-    .then((payload) => {
-      if (payload.settings) settings = payload.settings;
-      store.setRunsBulk(payload.runs || []);
-    })
-    .catch(() => {});
+  rerender();
+});
+
+ws.on('run-cancelled', (payload) => {
+  if (payload?.runId) {
+    const run = store.getRunById(payload.runId);
+    if (run) {
+      store.setRun(payload.runId, {
+        ...run,
+        pipeline_status: 'cancelled',
+        active: false,
+      });
+    }
+  }
 });
 
 ws.on('stage-restarted', () => {
-  ws.send('list-runs')
-    .then((payload) => {
-      if (payload.settings) settings = payload.settings;
-      store.setRunsBulk(payload.runs || []);
-    })
-    .catch(() => {});
+  // Status watcher's runs-list push handles the update
 });
 
 ws.on('learn-started', (payload) => {
@@ -1264,9 +1266,44 @@ function handleStopRun(runId) {
             method: 'POST',
           });
           const data = await res.json();
-          if (!data.ok) showActionError(data.error || 'Failed to stop run');
+          if (res.status === 409 && data.code === 'no_running_process') {
+            showActionError(
+              'Process is no longer running. Use Cancel to force the run into cancelled state.',
+            );
+          } else if (!data.ok) {
+            showActionError(data.error || 'Failed to stop run');
+          }
         } catch (err) {
           showActionError(err?.message || 'Failed to stop run');
+        } finally {
+          _controlPending = null;
+          rerender();
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+function handleCancelRun(runId) {
+  showConfirm(
+    {
+      label: 'Cancel Pipeline?',
+      message:
+        'This will permanently cancel the run. Any running process will be terminated and the pipeline cannot be resumed.',
+      confirmLabel: 'Cancel Run',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        _controlPending = { action: 'cancel', runId };
+        rerender();
+        try {
+          const res = await fetch(projectUrl(`/runs/${runId}/cancel`), {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) showActionError(data.error || 'Failed to cancel run');
+        } catch (err) {
+          showActionError(err?.message || 'Failed to cancel run');
         } finally {
           _controlPending = null;
           rerender();
@@ -1608,7 +1645,6 @@ function contentHeaderView() {
       const ps = run.pipeline_status || (run.active ? 'running' : 'completed');
       const variantMap = {
         running: 'primary',
-        resuming: 'primary',
         paused: 'warning',
         completed: 'success',
         failed: 'danger',
@@ -1660,7 +1696,7 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Square, 14))}
             Stop
           </button>`;
-      } else if (ps === 'failed') {
+      } else if (ps === 'failed' || ps === 'interrupted') {
         actionButton = html`
           <button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
             ${unsafeHTML(iconSvg(Play, 14))}
@@ -2024,6 +2060,8 @@ function mainContentView() {
     return runListView(runs, 'history', {
       onSelectRun: handleSelectRun,
       onResume: handleResumeRun,
+      onStop: handleStopRun,
+      onCancel: handleCancelRun,
       onArchive: archiveRun,
       onUnarchive: unarchiveRun,
       archivedRuns,
@@ -2050,6 +2088,8 @@ function mainContentView() {
                 onClick: handleSelectRun,
                 onPause: handlePauseRun,
                 onResume: handleResumeRun,
+                onStop: handleStopRun,
+                onCancel: handleCancelRun,
                 onArchive: archiveRun,
               }),
             )}
@@ -2079,6 +2119,8 @@ function mainContentView() {
       },
       onPause: handlePauseRun,
       onResume: handleResumeRun,
+      onStop: handleStopRun,
+      onCancel: handleCancelRun,
     })}
     ${multiPipelineDashboardView(state.pipelines, {
       onPause: handlePauseParallelPipeline,

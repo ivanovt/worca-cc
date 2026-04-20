@@ -6,7 +6,6 @@ import {
   iconSvg,
   Loader,
   Pause,
-  RotateCw,
 } from './icons.js';
 
 const CLASS_MAP = {
@@ -15,7 +14,6 @@ const CLASS_MAP = {
   paused: 'status-paused',
   completed: 'status-completed',
   failed: 'status-failed',
-  resuming: 'status-resuming',
   skipped: 'status-skipped',
   cancelled: 'status-cancelled',
   // legacy aliases
@@ -30,7 +28,6 @@ const ICON_DATA = {
   paused: Pause,
   completed: CircleCheck,
   failed: CircleAlert,
-  resuming: RotateCw,
   skipped: CircleSlash,
   cancelled: CircleSlash,
   // legacy aliases
@@ -55,8 +52,6 @@ export function statusIcon(status, size = 14) {
   const data = ICON_DATA[status];
   if (!data) return '?';
   const className =
-    status === 'in_progress' || status === 'running' || status === 'resuming'
-      ? 'icon-spin'
-      : '';
+    status === 'in_progress' || status === 'running' ? 'icon-spin' : '';
   return iconSvg(data, size, className);
 }

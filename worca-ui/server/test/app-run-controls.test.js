@@ -15,7 +15,7 @@ const mockPausePipeline = vi
   .fn()
   .mockReturnValue({ runId: 'run-123', paused: true });
 const mockStartPipeline = vi.fn().mockResolvedValue({ pid: 42000 });
-const mockStopPipeline = vi.fn().mockReturnValue({ pid: 42000, stopped: true });
+const mockStopPipelineSync = vi.fn().mockResolvedValue({ pid: 42000 });
 const mockGetRunningPid = vi.fn().mockReturnValue(null);
 const mockReconcileStatus = vi.fn().mockReturnValue(false);
 
@@ -31,8 +31,8 @@ vi.mock('../process-manager.js', () => {
     startPipeline(opts) {
       return mockStartPipeline(this.worcaDir, opts);
     }
-    stopPipeline(runId) {
-      return mockStopPipeline(this.worcaDir, runId);
+    stopPipelineSync(runId, opts) {
+      return mockStopPipelineSync(this.worcaDir, runId, opts);
     }
     getRunningPid() {
       return mockGetRunningPid(this.worcaDir);
@@ -48,7 +48,7 @@ vi.mock('../process-manager.js', () => {
     ProcessManager,
     pausePipeline: (...args) => mockPausePipeline(...args),
     startPipeline: (...args) => mockStartPipeline(...args),
-    stopPipeline: (...args) => mockStopPipeline(...args),
+    stopPipelineSync: (...args) => mockStopPipelineSync(...args),
     restartStage: vi.fn(),
     getRunningPid: (...args) => mockGetRunningPid(...args),
     reconcileStatus: (...args) => mockReconcileStatus(...args),
@@ -212,8 +212,8 @@ describe('POST /api/runs/:id/stop', () => {
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'run-controls-test-'));
-    mockStopPipeline.mockClear();
-    mockStopPipeline.mockReturnValue({ pid: 42000, stopped: true });
+    mockStopPipelineSync.mockClear();
+    mockStopPipelineSync.mockResolvedValue({ pid: 42000 });
     ({ server, base } = await startServer(tmpDir));
   });
 
@@ -245,12 +245,13 @@ describe('POST /api/runs/:id/stop', () => {
     expect(data.ok).toBe(true);
     expect(data.stopped).toBe(true);
     expect(data.runId).toBe('run-abc');
-    expect(data.pid).toBe(42000);
   });
 
-  it('calls stopPipeline with worcaDir and runId', async () => {
+  it('calls stopPipelineSync with worcaDir and runId', async () => {
     await fetch(`${base}/api/runs/run-abc/stop`, { method: 'POST' });
-    expect(mockStopPipeline).toHaveBeenCalledWith(tmpDir, 'run-abc');
+    expect(mockStopPipelineSync).toHaveBeenCalledWith(tmpDir, 'run-abc', {
+      timeoutMs: 5000,
+    });
   });
 
   it('writes control.json with action=stop for the specific run', async () => {
@@ -265,7 +266,7 @@ describe('POST /api/runs/:id/stop', () => {
   it('returns 404 when no running pipeline found', async () => {
     const err = new Error('No running pipeline found');
     err.code = 'not_running';
-    mockStopPipeline.mockImplementation(() => {
+    mockStopPipelineSync.mockImplementation(() => {
       throw err;
     });
     const res = await fetch(`${base}/api/runs/run-abc/stop`, {
@@ -276,14 +277,14 @@ describe('POST /api/runs/:id/stop', () => {
     expect(data.ok).toBe(false);
   });
 
-  it('returns 500 on other stopPipeline errors', async () => {
-    mockStopPipeline.mockImplementation(() => {
-      throw new Error('unexpected');
-    });
+  it('returns 200 even when stopPipelineSync throws non-fatal error', async () => {
+    mockStopPipelineSync.mockRejectedValue(new Error('unexpected'));
     const res = await fetch(`${base}/api/runs/run-abc/stop`, {
       method: 'POST',
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
   });
 });
 

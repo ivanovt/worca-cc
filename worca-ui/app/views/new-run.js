@@ -199,7 +199,7 @@ export async function submitNewRun({ rerender, onStarted, projectId }) {
 }
 
 /**
- * Check if any pipeline is currently active (running/resuming).
+ * Check if any pipeline is currently active (running).
  */
 export function hasActivePipeline(state) {
   const runs = state?.runs;

@@ -71,19 +71,6 @@ describe('dashboardView - active runs', () => {
     expect(output).toContain('active-group-paused');
   });
 
-  it('shows resuming run in Active Runs section', () => {
-    const resuming = {
-      id: 'res1',
-      pipeline_status: 'resuming',
-      active: true,
-      started_at: '2026-01-01T00:00:00Z',
-    };
-    const state = { runs: { res1: resuming } };
-    const output = renderToString(dashboardView(state));
-    expect(output).toContain('Active Runs');
-    expect(output).toContain('run-card');
-  });
-
   it('shows empty state when no active runs', () => {
     const completed = {
       id: 'c1',

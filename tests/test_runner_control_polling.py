@@ -92,7 +92,7 @@ def test_stop_sets_pipeline_status_failed(tmp_path):
     with patch("worca.orchestrator.runner.terminate_current"):
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
-    assert status["pipeline_status"] == "failed"
+    assert status["pipeline_status"] == "interrupted"
 
 
 def test_stop_sets_stop_reason(tmp_path):
@@ -102,7 +102,7 @@ def test_stop_sets_stop_reason(tmp_path):
     with patch("worca.orchestrator.runner.terminate_current"):
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
-    assert status.get("stop_reason") == "stopped"
+    assert status.get("stop_reason") == "control_file"
 
 
 def test_stop_raises_pipeline_interrupted(tmp_path):
@@ -123,8 +123,8 @@ def test_stop_saves_status(tmp_path):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
     with open(status_path) as f:
         saved = json.load(f)
-    assert saved["pipeline_status"] == "failed"
-    assert saved["stop_reason"] == "stopped"
+    assert saved["pipeline_status"] == "interrupted"
+    assert saved["stop_reason"] == "control_file"
 
 
 def test_stop_deletes_control_file(tmp_path):

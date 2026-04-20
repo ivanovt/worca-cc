@@ -1,8 +1,9 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
-import { iconSvg, Pause } from '../utils/icons.js';
+import { iconSvg, Pause, Square, X } from '../utils/icons.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
+import { actionAllowed } from '../utils/state-actions.js';
 import {
   resolveStatus,
   statusClass,
@@ -35,8 +36,7 @@ function _statusTooltip(run, status) {
   if (!ref) return null;
   const ms = elapsed(ref, null);
   const dur = formatDuration(ms);
-  if (status === 'running' || status === 'resuming')
-    return `Running for ${dur}`;
+  if (status === 'running') return `Running for ${dur}`;
   const label = status.charAt(0).toUpperCase() + status.slice(1);
   return `${label} ${dur} ago`;
 }
@@ -73,7 +73,16 @@ function _formatCost(usd) {
  */
 export function runCardView(
   run,
-  { onClick, beadsCount, onPause, onResume, onArchive, onUnarchive } = {},
+  {
+    onClick,
+    beadsCount,
+    onPause,
+    onResume,
+    onStop,
+    onCancel,
+    onArchive,
+    onUnarchive,
+  } = {},
 ) {
   const title = run.work_request?.title || 'Untitled';
   const isActive = run.active;
@@ -94,7 +103,7 @@ export function runCardView(
   const cost = _runCost(run);
 
   const pauseBtn =
-    onPause && (overallStatus === 'running' || overallStatus === 'resuming')
+    onPause && actionAllowed('pause', overallStatus)
       ? html`
         <div class="run-card-actions">
           <sl-button size="small" variant="warning" outline class="btn-quick-pause" @click=${(
@@ -109,8 +118,24 @@ export function runCardView(
       `
       : nothing;
 
+  const stopBtn =
+    onStop && actionAllowed('stop', overallStatus)
+      ? html`
+        <div class="run-card-actions">
+          <sl-button size="small" variant="danger" outline class="btn-quick-stop" @click=${(
+            e,
+          ) => {
+            e.stopPropagation();
+            onStop(run.id);
+          }}>
+            ${unsafeHTML(iconSvg(Square, 12))} Stop
+          </sl-button>
+        </div>
+      `
+      : nothing;
+
   const resumeBtn =
-    onResume && (overallStatus === 'paused' || overallStatus === 'failed')
+    onResume && actionAllowed('resume', overallStatus)
       ? html`
         <div class="run-card-actions">
           <button class="btn-quick-resume" @click=${(e) => {
@@ -119,6 +144,22 @@ export function runCardView(
           }}>
             Resume
           </button>
+        </div>
+      `
+      : nothing;
+
+  const cancelBtn =
+    onCancel && actionAllowed('cancel', overallStatus)
+      ? html`
+        <div class="run-card-actions">
+          <sl-button size="small" variant="danger" class="btn-quick-cancel" @click=${(
+            e,
+          ) => {
+            e.stopPropagation();
+            onCancel(run.id);
+          }}>
+            ${unsafeHTML(iconSvg(X, 12))} Cancel
+          </sl-button>
         </div>
       `
       : nothing;
@@ -197,7 +238,9 @@ export function runCardView(
             : nothing
       }
       ${pauseBtn}
+      ${stopBtn}
       ${resumeBtn}
+      ${cancelBtn}
       ${archiveBtn}
       ${unarchiveBtn}
     </div>

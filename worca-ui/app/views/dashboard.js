@@ -77,7 +77,15 @@ function _projectCards(projects, runs, onNavigate) {
 
 export function dashboardView(
   state,
-  { onSelectRun, onNavigate, onPause, onResume, onArchive } = {},
+  {
+    onSelectRun,
+    onNavigate,
+    onPause,
+    onResume,
+    onStop,
+    onCancel,
+    onArchive,
+  } = {},
 ) {
   const runs = Object.values(state.runs);
   const active = runs.filter((r) => r.active);
@@ -149,7 +157,7 @@ export function dashboardView(
           ? html`
         <div class="active-group">
           <div class="run-list">
-            ${activeGroup.map((run) => runCardView(run, { onClick: onSelectRun, onPause, onResume }))}
+            ${activeGroup.map((run) => runCardView(run, { onClick: onSelectRun, onPause, onResume, onStop, onCancel }))}
           </div>
         </div>
       `
@@ -165,7 +173,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-paused">
           <div class="run-list">
-            ${allPaused.map((run) => runCardView(run, { onClick: onSelectRun, onResume }))}
+            ${allPaused.map((run) => runCardView(run, { onClick: onSelectRun, onResume, onCancel }))}
           </div>
         </div>
       `
@@ -187,7 +195,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-failed">
           <div class="run-list">
-            ${failedPreview.map((run) => runCardView(run, { onClick: onSelectRun, onResume, onArchive }))}
+            ${failedPreview.map((run) => runCardView(run, { onClick: onSelectRun, onResume, onCancel, onArchive }))}
           </div>
         </div>
       `

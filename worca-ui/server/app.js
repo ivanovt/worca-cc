@@ -106,6 +106,7 @@ export function createApp(options = {}) {
           ? new ProcessManager({
               worcaDir,
               projectRoot: projectRoot || process.cwd(),
+              settingsPath,
             })
           : null,
       };
