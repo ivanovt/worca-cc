@@ -1,4 +1,4 @@
-import { html, render } from 'lit-html';
+import { html, nothing, render } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createNotificationManager } from './notifications.js';
 import { navigate, onHashChange, parseHash } from './router.js';
@@ -1687,22 +1687,20 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Square, 14))}
             Stop
           </button>`;
-      } else if (ps === 'paused') {
-        actionButton = html`
-          <button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
-            ${unsafeHTML(iconSvg(Play, 14))}
-            Resume
-          </button>
-          <button class="action-btn action-btn--danger" @click=${() => handleCancelRun(run.id)}>
-            ${unsafeHTML(iconSvg(Square, 14))}
-            Cancel
-          </button>`;
-      } else if (ps === 'failed' || ps === 'interrupted') {
-        actionButton = html`
-          <button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
-            ${unsafeHTML(iconSvg(Play, 14))}
-            Resume
-          </button>`;
+      } else {
+        const resumeBtn = actionAllowed('resume', ps)
+          ? html`<button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
+              ${unsafeHTML(iconSvg(Play, 14))} Resume
+            </button>`
+          : nothing;
+        const cancelBtn = actionAllowed('cancel', ps)
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(run.id)}>
+              ${unsafeHTML(iconSvg(Square, 14))} Cancel
+            </button>`
+          : nothing;
+        if (resumeBtn !== nothing || cancelBtn !== nothing) {
+          actionButton = html`${resumeBtn}${cancelBtn}`;
+        }
       }
     }
   } else if (route.section === 'active') {
@@ -1746,22 +1744,20 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Square, 14))}
             Stop
           </button>`;
-      } else if (hs === 'paused') {
-        actionButton = html`
-          <button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
-            ${unsafeHTML(iconSvg(Play, 14))}
-            Resume
-          </button>
-          <button class="action-btn action-btn--danger" @click=${() => handleCancelRun(route.runId)}>
-            ${unsafeHTML(iconSvg(Square, 14))}
-            Cancel
-          </button>`;
-      } else if (hs === 'failed') {
-        actionButton = html`
-          <button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
-            ${unsafeHTML(iconSvg(Play, 14))}
-            Resume
-          </button>`;
+      } else {
+        const resumeBtn = actionAllowed('resume', hs)
+          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
+              ${unsafeHTML(iconSvg(Play, 14))} Resume
+            </button>`
+          : nothing;
+        const cancelBtn = actionAllowed('cancel', hs)
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(route.runId)}>
+              ${unsafeHTML(iconSvg(Square, 14))} Cancel
+            </button>`
+          : nothing;
+        if (resumeBtn !== nothing || cancelBtn !== nothing) {
+          actionButton = html`${resumeBtn}${cancelBtn}`;
+        }
       }
     }
   } else if (route.section === 'new-run') {
