@@ -108,11 +108,14 @@ cd worca-ui && npm run lint:fix                   # Auto-fix UI lint issues
 ```bash
 pytest tests/                              # All Python tests
 pytest tests/test_<module>.py              # Single module
+pytest tests/integration/                  # Pipeline integration tests (uses mock claude)
 npx vitest run worca-ui/server/    # UI server tests
 cd worca-ui && npx playwright test --workers=1  # Browser e2e tests (must run serially)
 ```
 
 Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing failures in unrelated tests should be ignored — only verify tests relevant to your changes.
+
+**Integration tests** (`tests/integration/`) run the full pipeline with a mock Claude CLI (`tests/mock_claude/mock_claude.py`). They require `pip install -e ".[dev]"` and Unix (signal tests are skipped on Windows). Each test spins up a temp git repo + worca runtime, so they're slower (~30-60s for the full suite).
 
 **Playwright note:** Browser e2e tests must run with `--workers=1` (serial). Parallel workers cause flaky failures due to browser context contamination between isolated test servers.
 
