@@ -1453,7 +1453,10 @@ def run_pipeline(
             if resume_stage in stage_order:
                 stage_idx = stage_order.index(resume_stage)
             else:
-                stage_idx = 0
+                raise PipelineError(
+                    f"Cannot resume: unknown stage {resume_stage!r}. "
+                    f"Valid stages: {[s.value for s in stage_order]}"
+                )
         elif plan_file:
             # Mark PLAN stage as completed with pre-loaded status
             update_stage(status, Stage.PLAN.value,

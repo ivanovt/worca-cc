@@ -81,7 +81,10 @@ def build_command(
     else:
         cli_prompt = prompt
 
-    _claude_bin = shlex.split(os.environ.get("WORCA_CLAUDE_BIN") or "claude")
+    _claude_bin_override = os.environ.get("WORCA_CLAUDE_BIN")
+    _claude_bin = shlex.split(_claude_bin_override or "claude")
+    if _claude_bin_override:
+        print(f"[worca] WORCA_CLAUDE_BIN override active: {_claude_bin_override}", file=sys.stderr)
     cmd = [
         *_claude_bin,
         "-p",
