@@ -213,9 +213,9 @@ def main():
         _params = _parse_params(args.param or [])
 
         try:
-            with open(args.settings) as f:
-                _current_settings = json.load(f)
-        except (FileNotFoundError, json.JSONDecodeError):
+            from worca.utils.settings import load_settings as _load_settings
+            _current_settings = _load_settings(args.settings)
+        except Exception:
             _current_settings = {}
 
         _current_worca = _current_settings.get("worca", {})
