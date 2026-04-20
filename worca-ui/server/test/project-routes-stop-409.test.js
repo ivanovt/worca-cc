@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mockStopPipeline = vi.fn();
+const mockStopPipelineSync = vi.fn();
 
 vi.mock('../process-manager.js', () => {
   class ProcessManager {
@@ -18,8 +18,8 @@ vi.mock('../process-manager.js', () => {
     startPipeline() {
       return Promise.resolve({ pid: 1 });
     }
-    stopPipeline(runId) {
-      return mockStopPipeline(runId);
+    stopPipelineSync(runId, opts) {
+      return mockStopPipelineSync(runId, opts);
     }
     getRunningPid() {
       return null;
@@ -54,7 +54,7 @@ describe('POST /api/runs/:id/stop — dead PID returns 409', () => {
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'stop-409-'));
-    mockStopPipeline.mockReset();
+    mockStopPipelineSync.mockReset();
     ({ server, base } = await startServer(tmpDir));
   });
 
@@ -66,7 +66,7 @@ describe('POST /api/runs/:id/stop — dead PID returns 409', () => {
   it('returns 409 with no_running_process when PID is dead and status is running', async () => {
     const err = new Error('No running process');
     err.code = 'not_running';
-    mockStopPipeline.mockImplementation(() => {
+    mockStopPipelineSync.mockImplementation(() => {
       throw err;
     });
 
@@ -90,7 +90,7 @@ describe('POST /api/runs/:id/stop — dead PID returns 409', () => {
   it('returns 409 with no_running_process when PID is dead and status is paused', async () => {
     const err = new Error('No running process');
     err.code = 'not_running';
-    mockStopPipeline.mockImplementation(() => {
+    mockStopPipelineSync.mockImplementation(() => {
       throw err;
     });
 
@@ -114,7 +114,7 @@ describe('POST /api/runs/:id/stop — dead PID returns 409', () => {
   it('does not rewrite status.json when PID is dead', async () => {
     const err = new Error('No running process');
     err.code = 'not_running';
-    mockStopPipeline.mockImplementation(() => {
+    mockStopPipelineSync.mockImplementation(() => {
       throw err;
     });
 
@@ -136,7 +136,7 @@ describe('POST /api/runs/:id/stop — dead PID returns 409', () => {
   it('returns 404 when PID is dead and no status file exists', async () => {
     const err = new Error('No running process');
     err.code = 'not_running';
-    mockStopPipeline.mockImplementation(() => {
+    mockStopPipelineSync.mockImplementation(() => {
       throw err;
     });
 
@@ -149,7 +149,7 @@ describe('POST /api/runs/:id/stop — dead PID returns 409', () => {
   it('returns 404 when PID is dead and status is already terminal', async () => {
     const err = new Error('No running process');
     err.code = 'not_running';
-    mockStopPipeline.mockImplementation(() => {
+    mockStopPipelineSync.mockImplementation(() => {
       throw err;
     });
 
@@ -167,7 +167,7 @@ describe('POST /api/runs/:id/stop — dead PID returns 409', () => {
   });
 
   it('returns 200 when stopPipeline succeeds (live PID)', async () => {
-    mockStopPipeline.mockReturnValue({ pid: 12345, stopped: true });
+    mockStopPipelineSync.mockResolvedValue({ pid: 12345 });
 
     const res = await fetch(`${base}/api/runs/run-live/stop`, {
       method: 'POST',

@@ -801,13 +801,13 @@ export function createProjectScopedRoutes({
     }
   });
 
-  // POST /api/projects/:projectId/runs/:id/stop — control.json + SIGTERM
-  router.post('/runs/:id/stop', requireWorcaDir, (req, res) => {
+  // POST /api/projects/:projectId/runs/:id/stop — control.json + SIGTERM + webhook
+  router.post('/runs/:id/stop', requireWorcaDir, async (req, res) => {
     const runId = req.params.id;
     if (!validateRunId(runId)) {
       return res.status(400).json({ ok: false, error: 'Invalid runId' });
     }
-    const { worcaDir } = req.project;
+    const { worcaDir, settingsPath } = req.project;
     try {
       const controlDir = join(worcaDir, 'runs', runId);
       mkdirSync(controlDir, { recursive: true });
@@ -827,14 +827,15 @@ export function createProjectScopedRoutes({
     } catch {
       /* non-fatal — SIGTERM follows */
     }
+    let forced = false;
     try {
-      const result = req.project.pm.stopPipeline(runId);
-      const { broadcast } = req.app.locals;
-      if (broadcast) broadcast('run-stopped', { runId, pid: result.pid });
-      res.json({ ok: true, stopped: true, runId, pid: result.pid });
+      const result = await req.project.pm.stopPipelineSync(runId, {
+        timeoutMs: 5000,
+      });
+      forced = !!result.forced;
     } catch (err) {
       if (err.code === 'not_running') {
-        const statusPath = findRunStatusPath(req.project.worcaDir, runId);
+        const statusPath = findRunStatusPath(worcaDir, runId);
         if (statusPath) {
           try {
             const st = JSON.parse(readFileSync(statusPath, 'utf8'));
@@ -854,7 +855,50 @@ export function createProjectScopedRoutes({
         }
         return res.status(404).json({ ok: false, error: err.message });
       }
-      res.status(500).json({ ok: false, error: err.message });
+      // For other errors, continue — process may have exited
+    }
+
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    const { broadcast } = req.app.locals;
+    if (broadcast) broadcast('run-stopped', { runId });
+    res.json({ ok: true, stopped: true, runId });
+
+    // If Python exited cleanly (not forced), its finally/atexit already
+    // dispatched the webhook. Only dispatch from Node when SIGKILL was needed.
+    if (forced && statusPath) {
+      let st;
+      try {
+        st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      } catch {
+        return;
+      }
+      const terminalStatus = st.pipeline_status;
+      if (terminalStatus === 'interrupted' || terminalStatus === 'failed') {
+        const eventType =
+          terminalStatus === 'interrupted'
+            ? 'pipeline.run.interrupted'
+            : 'pipeline.run.failed';
+        const startedAt = st.started_at;
+        const elapsedMs = startedAt
+          ? Date.now() - new Date(startedAt).getTime()
+          : 0;
+        dispatchExternal({
+          runDir: dirname(statusPath),
+          settingsPath,
+          eventType,
+          payload: {
+            interrupted_stage: st.stage || st.current_stage || 'unknown',
+            elapsed_ms: elapsedMs,
+            source: 'user_stop',
+          },
+        }).then((result) => {
+          if (!result.ok) {
+            console.error(
+              `[stop] dispatchExternal failed for run ${runId}: ${result.reason}${result.stderr ? ` — ${result.stderr}` : ''}`,
+            );
+          }
+        });
+      }
     }
   });
 

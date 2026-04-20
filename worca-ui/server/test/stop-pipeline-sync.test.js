@@ -58,7 +58,7 @@ describe('stopPipelineSync', () => {
     const pid = process.pid;
     writePid(worcaDir, 'run-ctrl', pid);
 
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation((p, sig) => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((_p, sig) => {
       if (sig === 0) throw new Error('no such process');
     });
 
@@ -83,7 +83,7 @@ describe('stopPipelineSync', () => {
 
     // Mock: getRunningPid returns pid, then process.kill(pid, 0) says it's dead
     vi.spyOn(pm, 'getRunningPid').mockReturnValue({ pid });
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation((p, sig) => {
+    const killSpy = vi.spyOn(process, 'kill').mockImplementation((_p, sig) => {
       if (sig === 0) throw new Error('ESRCH');
       // SIGTERM — no-op
     });
