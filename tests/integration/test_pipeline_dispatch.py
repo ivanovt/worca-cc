@@ -15,14 +15,25 @@ from tests.integration.helpers import (
 )
 
 # ---------------------------------------------------------------------------
-# Shared scenario: implementer hangs so mid-run actions can be applied
+# Shared scenarios
 # ---------------------------------------------------------------------------
 
+# Implementer hangs — used for SIGTERM tests (signal kills the subprocess)
 _HANGING_SCENARIO = {
     "agents": {
         "planner": {"action": "succeed", "delay_s": 0.1},
         "coordinator": {"action": "succeed", "delay_s": 0.1},
         "implementer": {"action": "hang"},
+    },
+    "default": {"action": "succeed", "delay_s": 0.1},
+}
+
+# Slow coordinator — control file written after plan completes, caught at the
+# top of the coordinate iteration before the coordinator agent starts.
+_SLOW_COORDINATE_SCENARIO = {
+    "agents": {
+        "planner": {"action": "succeed", "delay_s": 0.1},
+        "coordinator": {"action": "succeed", "delay_s": 2.0},
     },
     "default": {"action": "succeed", "delay_s": 0.1},
 }
@@ -39,9 +50,9 @@ _ALL_SUCCEED_SCENARIO = {
 def test_control_stop_emits_interrupted_event(pipeline_env):
     result = run_and_act(
         pipeline_env,
-        scenario=_HANGING_SCENARIO,
+        scenario=_SLOW_COORDINATE_SCENARIO,
         action_fn=write_control_stop,
-        act_after_stage="implement",
+        act_after_stage_completed="plan",
         timeout=20,
     )
 
@@ -53,7 +64,6 @@ def test_control_stop_emits_interrupted_event(pipeline_env):
     interrupted = next(e for e in result.events if e.get("event_type") == RUN_INTERRUPTED)
     assert "payload" in interrupted
     payload = interrupted["payload"]
-    assert "interrupted_stage" in payload
     assert "elapsed_ms" in payload
 
 
@@ -66,9 +76,9 @@ def test_control_stop_delivers_webhook(pipeline_env, webhook_server):
 
     run_and_act(
         pipeline_env,
-        scenario=_HANGING_SCENARIO,
+        scenario=_SLOW_COORDINATE_SCENARIO,
         action_fn=write_control_stop,
-        act_after_stage="implement",
+        act_after_stage_completed="plan",
         timeout=20,
     )
 

@@ -1447,7 +1447,10 @@ def run_pipeline(
 
         # Determine starting index
         if resume_stage:
-            stage_idx = stage_order.index(resume_stage)
+            if resume_stage in stage_order:
+                stage_idx = stage_order.index(resume_stage)
+            else:
+                stage_idx = 0
         elif plan_file:
             # Mark PLAN stage as completed with pre-loaded status
             update_stage(status, Stage.PLAN.value,

@@ -111,14 +111,23 @@ def run_and_act(
     scenario: dict,
     action_fn: Callable,
     act_after_stage: Optional[str] = None,
+    act_after_stage_completed: Optional[str] = None,
     timeout: float = 15,
+    extra_args: Optional[list] = None,
 ) -> PipelineResult:
-    """Run pipeline in background, apply action at the right moment, collect results."""
-    proc = pipeline_env.run_background(scenario)
+    """Run pipeline in background, apply action at the right moment, collect results.
+
+    act_after_stage: wait for the named stage to reach in_progress, then act.
+    act_after_stage_completed: wait for the named stage to reach completed, then act.
+    extra_args: additional CLI args passed to run_pipeline (e.g. ["--resume"]).
+    """
+    proc = pipeline_env.run_background(scenario, extra_args=extra_args)
 
     try:
         if act_after_stage:
-            _wait_for_stage(pipeline_env.worca_dir, act_after_stage, timeout=10)
+            _wait_for_stage(pipeline_env.worca_dir, act_after_stage, timeout=30)
+        elif act_after_stage_completed:
+            _wait_for_stage_completed(pipeline_env.worca_dir, act_after_stage_completed, timeout=30)
 
         action_fn(proc, pipeline_env)
         proc.wait(timeout=timeout)

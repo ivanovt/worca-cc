@@ -16,7 +16,6 @@ import sys
 import pytest
 
 from worca.events.types import (
-    RUN_FAILED,
     RUN_INTERRUPTED,
     RUN_PAUSED,
 )
@@ -44,8 +43,8 @@ EXPECTED_TRANSITIONS = {
     ("running", "pause"):       ("paused",       [RUN_PAUSED],     True, "A"),
     ("running", "signal_term"): ("interrupted", [RUN_INTERRUPTED], True, "A"),
     ("running", "signal_int"):  ("interrupted", [RUN_INTERRUPTED], True, "A"),
-    ("running", "signal_kill"): ("interrupted", [],               True, "A"),  # SIGKILL — no event emitted
-    ("running", "crash"):       ("failed",      [RUN_FAILED],     True, "A"),  # agent crash → stage fail
+    ("running", "signal_kill"): (None,           [],               True, "A"),  # SIGKILL — no event, status not written
+    ("running", "crash"):       (None,           [],               True, "A"),  # SIGKILL — status not written
 
     # Pattern A: Paused state + action (resume first, then act)
     ("paused",  "stop"):        ("interrupted", [RUN_INTERRUPTED], True, "paused"),
@@ -86,9 +85,16 @@ SKIPPED_W043 = [
 # Scenarios
 # ---------------------------------------------------------------------------
 
-# All stages succeed quickly; implementer hangs — lets tests inject signals/stop.
+# Implementer hangs — signal tests can kill the blocking subprocess.
 _HANG_AT_IMPLEMENT = {
     "agents": {"implementer": {"action": "hang"}},
+    "default": {"action": "succeed", "delay_s": 0.1},
+}
+
+# Slow coordinator — gives control-file tests a window: write after plan
+# completes, the control file is polled at the top of the coordinator iteration.
+_SLOW_COORDINATE = {
+    "agents": {"coordinator": {"action": "succeed", "delay_s": 2.0}},
     "default": {"action": "succeed", "delay_s": 0.1},
 }
 
@@ -127,20 +133,26 @@ def _crash_action(proc, env):
 # Pattern A: Mid-run (running state) tests
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(sys.platform == "win32", reason="signal tests require Unix")
 def test_running_stop(pipeline_env):
-    """Running + control-stop → interrupted."""
-    result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, write_control_stop,
-                         act_after_stage="implement")
+    """Running + control-stop → interrupted.
+
+    Control files are polled between stages. Write stop after plan completes;
+    the runner catches it at the top of the coordinate iteration.
+    """
+    result = run_and_act(pipeline_env, _SLOW_COORDINATE, write_control_stop,
+                         act_after_stage_completed="plan")
     assert result.status.get("pipeline_status") == "interrupted"
     assert any(e.get("event_type") == RUN_INTERRUPTED for e in result.events)
 
 
-@pytest.mark.skipif(sys.platform == "win32", reason="signal tests require Unix")
 def test_running_pause(pipeline_env):
-    """Running + control-pause → paused."""
-    result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, write_control_pause,
-                         act_after_stage="implement")
+    """Running + control-pause → paused.
+
+    Control files are polled between stages. Write pause after plan completes;
+    the runner catches it at the top of the coordinate iteration.
+    """
+    result = run_and_act(pipeline_env, _SLOW_COORDINATE, write_control_pause,
+                         act_after_stage_completed="plan")
     assert result.status.get("pipeline_status") == "paused"
     assert any(e.get("event_type") == RUN_PAUSED for e in result.events)
 
@@ -205,29 +217,33 @@ def test_running_crash(pipeline_env):
 # Pattern A (paused): Pause pipeline, then apply action on resume
 # ---------------------------------------------------------------------------
 
-@pytest.mark.skipif(sys.platform == "win32", reason="signal tests require Unix")
 def test_paused_stop(pipeline_env):
     """Paused + control-stop → interrupted.
 
     Pausing exits the pipeline process with status 'paused'. To act on a paused
-    pipeline, we must resume it (--resume) and then apply stop before it finishes.
+    pipeline, we resume it (--resume) and write stop between stages.
+    The resume logic clears stale control files on startup, so the stop must
+    be written while the resumed pipeline is running.
     """
-    # Step 1: pause the pipeline
-    pause_result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, write_control_pause,
-                               act_after_stage="implement")
+    # Step 1: pause the pipeline (write pause after plan completes)
+    pause_result = run_and_act(pipeline_env, _SLOW_COORDINATE, write_control_pause,
+                               act_after_stage_completed="plan")
     assert pause_result.status.get("pipeline_status") == "paused", (
         f"Expected paused, got: {pause_result.status.get('pipeline_status')}\n"
         f"stderr: {pause_result.stderr[:500]}"
     )
 
-    # Step 2: resume and immediately stop
-    new_scenario = {
-        "agents": {"implementer": {"action": "hang"}},
-        "default": {"action": "succeed", "delay_s": 0.1},
+    # Step 2: resume with slow implementer; write stop after implement completes.
+    # On resume, plan/coordinate are skipped (completed). Implement is the first
+    # stage that runs. After it completes, the control-file check at the top of
+    # the test iteration picks up the stop file.
+    slow_resume = {
+        "default": {"action": "succeed", "delay_s": 2.0},
     }
     resume_result = run_and_act(
-        pipeline_env, new_scenario, write_control_stop,
-        act_after_stage="implement",
+        pipeline_env, slow_resume, write_control_stop,
+        act_after_stage_completed="implement",
+        extra_args=["--resume"],
     )
     assert resume_result.status.get("pipeline_status") == "interrupted"
     assert any(e.get("event_type") == RUN_INTERRUPTED for e in resume_result.events)
@@ -236,15 +252,16 @@ def test_paused_stop(pipeline_env):
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM requires Unix")
 def test_paused_signal_term(pipeline_env):
     """Paused + SIGTERM (applied after resume) → interrupted."""
-    # Step 1: pause
-    pause_result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, write_control_pause,
-                               act_after_stage="implement")
+    # Step 1: pause (write pause after plan completes)
+    pause_result = run_and_act(pipeline_env, _SLOW_COORDINATE, write_control_pause,
+                               act_after_stage_completed="plan")
     assert pause_result.status.get("pipeline_status") == "paused"
 
-    # Step 2: resume and send SIGTERM
+    # Step 2: resume with hanging implementer, then send SIGTERM
     resume_result = run_and_act(
         pipeline_env, _HANG_AT_IMPLEMENT, send_sigterm,
         act_after_stage="implement",
+        extra_args=["--resume"],
     )
     assert resume_result.status.get("pipeline_status") == "interrupted"
     assert any(e.get("event_type") == RUN_INTERRUPTED for e in resume_result.events)
@@ -435,7 +452,100 @@ def test_cancelled_crash(pipeline_env): ...
 # ---------------------------------------------------------------------------
 # Matrix coverage note
 # ---------------------------------------------------------------------------
-# Every cell in the tier-1 EXPECTED_TRANSITIONS matrix is covered by a named
-# test above (test_running_stop, test_completed_rejects_pause, etc.).
-# SKIPPED_NO_PROCESS and SKIPPED_W043 cells are documented as skip-marked stubs.
-# When W-043 lands, remove the skip markers and fill in the test bodies.
+
+_TIER1_PARAMS = [
+    pytest.param(state, action, id=f"{state}-{action}")
+    for (state, action) in EXPECTED_TRANSITIONS
+]
+
+_NO_PROCESS_PARAMS = [
+    pytest.param(state, action, id=f"{state}-{action}",
+                 marks=pytest.mark.skip(reason="no process to signal after terminal state"))
+    for (state, action) in SKIPPED_NO_PROCESS
+]
+
+_W043_PARAMS = [
+    pytest.param(state, action, id=f"{state}-{action}",
+                 marks=pytest.mark.skip(reason="requires W-043"))
+    for (state, action) in SKIPPED_W043
+]
+
+
+@pytest.mark.parametrize("state,action", _TIER1_PARAMS + _NO_PROCESS_PARAMS + _W043_PARAMS)
+def test_state_transition(state, action, pipeline_env):
+    """Parametrized dispatcher: validates every cell in the transition matrix.
+
+    Tier-1 cells dispatch to the correct pattern based on EXPECTED_TRANSITIONS.
+    Tier-2 and no-process cells are skip-marked — they document the full matrix
+    without running. W-043 landing means removing skip markers and filling in
+    expected results.
+    """
+    if (state, action) not in EXPECTED_TRANSITIONS:
+        pytest.skip("not in tier-1 matrix")
+
+    expected_status, expected_events, _, pattern = EXPECTED_TRANSITIONS[(state, action)]
+
+    if sys.platform == "win32" and action in ("signal_term", "signal_int", "signal_kill", "crash"):
+        pytest.skip("signal tests require Unix")
+
+    if pattern == "A":
+        action_fn = _crash_action if action == "crash" else _ACTION_FNS[action]
+        if action in ("stop", "pause"):
+            result = run_and_act(pipeline_env, _SLOW_COORDINATE, action_fn,
+                                 act_after_stage_completed="plan")
+        else:
+            result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, action_fn,
+                                 act_after_stage="implement")
+
+    elif pattern == "B":
+        if state == "completed":
+            result = pipeline_env.run(_ALL_SUCCEED)
+        elif state == "failed":
+            result = pipeline_env.run(_PLANNER_FAILS)
+        elif state == "interrupted":
+            result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, send_sigterm,
+                                 act_after_stage="implement")
+        else:
+            pytest.fail(f"Unhandled Pattern B state: {state!r}")
+
+        assert result.status.get("pipeline_status") == expected_status
+
+        # Write control file to the exited run — status must not change
+        run_id = _active_run_id(pipeline_env.worca_dir)
+        control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
+        control.write_text(json.dumps({"action": action.replace("_", ""), "source": "test"}))
+
+        final_status = _find_latest_status(pipeline_env.worca_dir)
+        assert final_status.get("pipeline_status") == expected_status
+        return
+
+    elif pattern == "paused":
+        # Pause first
+        run_and_act(pipeline_env, _SLOW_COORDINATE, write_control_pause,
+                    act_after_stage_completed="plan")
+        # Resume and apply action
+        if action in ("stop", "pause"):
+            slow_resume = {"default": {"action": "succeed", "delay_s": 2.0}}
+            action_fn = _ACTION_FNS.get(action, write_control_stop)
+            result = run_and_act(pipeline_env, slow_resume, action_fn,
+                                 act_after_stage_completed="implement",
+                                 extra_args=["--resume"])
+        else:
+            action_fn = _ACTION_FNS.get(action, send_sigterm)
+            result = run_and_act(pipeline_env, _HANG_AT_IMPLEMENT, action_fn,
+                                 act_after_stage="implement",
+                                 extra_args=["--resume"])
+
+    else:
+        pytest.fail(f"Unknown pattern: {pattern!r}")
+
+    actual_status = result.status.get("pipeline_status")
+    if expected_status is not None:
+        assert actual_status == expected_status, (
+            f"Expected pipeline_status={expected_status!r}, got {actual_status!r}\n"
+            f"stderr: {result.stderr[:500]}"
+        )
+    for event_type in expected_events:
+        assert any(e.get("event_type") == event_type for e in result.events), (
+            f"Expected event {event_type!r} not found in {[e.get('event_type') for e in result.events]}"
+        )

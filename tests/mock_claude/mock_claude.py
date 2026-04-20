@@ -12,6 +12,22 @@ import sys
 import time
 
 
+import re
+
+_RESOLVED_RE = re.compile(r"^[a-z_]+-([a-z_]+)-iter-\d+$")
+
+
+def _extract_agent_name(agent_path):
+    """Extract agent name from either a plain path or a resolved template path.
+
+    Plain:    .claude/worca/agents/core/planner.md → planner
+    Resolved: .worca/runs/.../resolved/plan-planner-iter-1.md → planner
+    """
+    stem = os.path.splitext(os.path.basename(agent_path))[0]
+    m = _RESOLVED_RE.match(stem)
+    return m.group(1) if m else stem
+
+
 def main():
     scenario_path = os.environ.get("MOCK_CLAUDE_SCENARIO")
     if not scenario_path:
@@ -26,9 +42,9 @@ def main():
             agent_raw = sys.argv[i + 1]
             break
 
-    agent = os.path.splitext(os.path.basename(agent_raw))[0] if agent_raw else None
+    agent = _extract_agent_name(agent_raw) if agent_raw else None
     agents_cfg = scenario.get("agents", {})
-    directive = agents_cfg.get(agent) or agents_cfg.get(agent_raw) or scenario.get("default", {})
+    directive = agents_cfg.get(agent) or scenario.get("default", {})
     action = directive.get("action", "succeed")
     delay = directive.get("delay_s", 0.5)
 
