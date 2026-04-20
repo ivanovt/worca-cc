@@ -1745,6 +1745,17 @@ def run_pipeline(
                     ))
                 raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
             except Exception as e:
+                if _shutdown_requested:
+                    stage_completed = datetime.now(timezone.utc).isoformat()
+                    complete_iteration(status, current_stage.value, status="interrupted", completed_at=stage_completed)
+                    update_stage(status, current_stage.value, status="interrupted", completed_at=stage_completed)
+                    save_status(status, actual_status_path)
+                    if ctx:
+                        emit_event(ctx, STAGE_INTERRUPTED, stage_interrupted_payload(
+                            stage=current_stage.value, iteration=iter_num,
+                            elapsed_ms=int((time.time() - t0) * 1000),
+                        ))
+                    raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
                     status, current_stage.value,

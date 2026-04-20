@@ -31,10 +31,17 @@ def _extract_agent_name(agent_path):
 def main():
     scenario_path = os.environ.get("MOCK_CLAUDE_SCENARIO")
     if not scenario_path:
-        sys.exit("MOCK_CLAUDE_SCENARIO env var not set")
+        print(json.dumps({"type": "error", "error": "MOCK_CLAUDE_SCENARIO env var not set"}),
+              file=sys.stderr)
+        sys.exit(1)
 
-    with open(scenario_path) as f:
-        scenario = json.load(f)
+    try:
+        with open(scenario_path) as f:
+            scenario = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(json.dumps({"type": "error", "error": f"Failed to read scenario: {exc}"}),
+              file=sys.stderr)
+        sys.exit(1)
 
     agent_raw = None
     for i, arg in enumerate(sys.argv):

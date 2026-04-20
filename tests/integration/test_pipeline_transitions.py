@@ -473,7 +473,6 @@ _W043_PARAMS = [
 ]
 
 
-@pytest.mark.skip(reason="redundant with standalone tests; causes CI flakiness due to resource contention")
 @pytest.mark.parametrize("state,action", _TIER1_PARAMS + _NO_PROCESS_PARAMS + _W043_PARAMS)
 def test_state_transition(state, action, pipeline_env):
     """Parametrized dispatcher: validates every cell in the transition matrix.
