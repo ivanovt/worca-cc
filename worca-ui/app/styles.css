@@ -3991,6 +3991,7 @@ sl-details.learnings-panel::part(content) {
 .pipeline-succeeded { border-left-color: var(--status-completed); }
 .pipeline-failed { border-left-color: var(--status-failed); }
 .pipeline-paused { border-left-color: var(--status-paused); }
+.pipeline-cancelled { border-left-color: var(--status-cancelled); }
 .pipeline-unknown { border-left-color: var(--muted); }
 
 .pipeline-card-header {

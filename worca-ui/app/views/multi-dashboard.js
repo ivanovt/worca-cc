@@ -39,12 +39,15 @@ function pipelineStatusClass(status) {
   switch (status) {
     case 'running':
       return 'pipeline-running';
-    case 'succeeded':
+    case 'completed':
       return 'pipeline-succeeded';
     case 'failed':
       return 'pipeline-failed';
     case 'paused':
       return 'pipeline-paused';
+    case 'interrupted':
+    case 'cancelled':
+      return 'pipeline-cancelled';
     default:
       return 'pipeline-unknown';
   }

@@ -156,6 +156,7 @@ const DEFAULT_EVENTS = [
   'pipeline.run.failed',
   'pipeline.run.interrupted',
   'pipeline.run.paused',
+  'pipeline.run.cancelled',
   'pipeline.run.resumed',
   'pipeline.run.resumed_from_pause',
   'pipeline.git.pr_created',
@@ -1694,7 +1695,7 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Square, 14))}
             Stop
           </button>`;
-      } else if (ps === 'failed') {
+      } else if (ps === 'failed' || ps === 'interrupted') {
         actionButton = html`
           <button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
             ${unsafeHTML(iconSvg(Play, 14))}

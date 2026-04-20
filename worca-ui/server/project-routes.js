@@ -883,7 +883,8 @@ export function createProjectScopedRoutes({
         return res.status(409).json({ ok: false, code: 'action_not_allowed' });
       }
 
-      if (st.pipeline_status === 'running') {
+      const wasRunning = st.pipeline_status === 'running';
+      if (wasRunning) {
         try {
           await req.project.pm.stopPipelineSync(runId, { timeoutMs: 5000 });
         } catch {
@@ -897,6 +898,11 @@ export function createProjectScopedRoutes({
         }
       }
 
+      // Python's SIGTERM handler may have already emitted pipeline.run.interrupted.
+      // Only emit pipeline.run.cancelled if Python didn't already emit a terminal event.
+      const pythonEmittedTerminal =
+        wasRunning && st.pipeline_status === 'interrupted';
+
       st.pipeline_status = 'cancelled';
       st.stop_reason = 'force_cancelled';
       st.completed_at = new Date().toISOString();
@@ -906,26 +912,28 @@ export function createProjectScopedRoutes({
       if (broadcast) broadcast('run-cancelled', { runId });
       res.json({ ok: true, cancelled: true, runId });
 
-      const startedAt = st.started_at;
-      const elapsedMs = startedAt
-        ? Date.now() - new Date(startedAt).getTime()
-        : 0;
-      dispatchExternal({
-        runDir: dirname(statusPath),
-        settingsPath,
-        eventType: 'pipeline.run.cancelled',
-        payload: {
-          cancelled_stage: st.stage || st.current_stage || 'unknown',
-          elapsed_ms: elapsedMs,
-          source: 'user_cancel',
-        },
-      }).then((result) => {
-        if (!result.ok) {
-          console.error(
-            `[cancel] dispatchExternal failed for run ${runId}: ${result.reason}${result.stderr ? ` — ${result.stderr}` : ''}`,
-          );
-        }
-      });
+      if (!pythonEmittedTerminal) {
+        const startedAt = st.started_at;
+        const elapsedMs = startedAt
+          ? Date.now() - new Date(startedAt).getTime()
+          : 0;
+        dispatchExternal({
+          runDir: dirname(statusPath),
+          settingsPath,
+          eventType: 'pipeline.run.cancelled',
+          payload: {
+            cancelled_stage: st.stage || st.current_stage || 'unknown',
+            elapsed_ms: elapsedMs,
+            source: 'user_cancel',
+          },
+        }).then((result) => {
+          if (!result.ok) {
+            console.error(
+              `[cancel] dispatchExternal failed for run ${runId}: ${result.reason}${result.stderr ? ` — ${result.stderr}` : ''}`,
+            );
+          }
+        });
+      }
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
