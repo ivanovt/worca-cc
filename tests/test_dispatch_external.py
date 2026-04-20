@@ -78,7 +78,7 @@ class TestExitCodes:
             ])
         assert exc_info.value.code == 2
 
-    def test_exit_1_on_invalid_event_type(self, run_dir, settings_path):
+    def test_exit_2_on_invalid_event_type(self, run_dir, settings_path):
         """Invalid --event-type exits with code 2 (argparse error)."""
         with pytest.raises(SystemExit) as exc_info:
             main([

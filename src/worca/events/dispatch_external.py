@@ -23,13 +23,14 @@ VALID_EVENT_TYPES = {RUN_INTERRUPTED, RUN_CANCELLED, RUN_FAILED}
 
 def _force_utf8():
     """Force UTF-8 on stdout/stderr — Windows defaults to cp1252."""
-    if hasattr(sys.stdout, "buffer"):
+    if hasattr(sys.stdout, "buffer") and getattr(sys.stdout, "encoding", "utf-8").lower().replace("-", "") != "utf8":
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", newline="\n")
-    if hasattr(sys.stderr, "buffer"):
+    if hasattr(sys.stderr, "buffer") and getattr(sys.stderr, "encoding", "utf-8").lower().replace("-", "") != "utf8":
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", newline="\n")
 
 
 def main(argv=None):
+    _force_utf8()
     p = argparse.ArgumentParser(prog="worca.events.dispatch_external")
     p.add_argument("--run-dir", required=True)
     p.add_argument("--settings", required=True)
@@ -68,5 +69,4 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    _force_utf8()
     main()

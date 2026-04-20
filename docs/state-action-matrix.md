@@ -19,9 +19,10 @@ A pipeline run's `pipeline_status` is always one of these seven values:
 ### Terminal vs non-terminal
 
 - **Terminal:** `completed`, `failed`, `cancelled` -- the run is done.
-- **Non-terminal:** `pending`, `running`, `paused`, `interrupted` -- the run can potentially resume or be cancelled.
+- **Resumable terminal:** `interrupted` -- the run ended (a terminal event is emitted), but `resume` is allowed because the user stopped intentionally.
+- **Non-terminal:** `pending`, `running`, `paused` -- the run is active or can continue without re-entry.
 
-Note: `interrupted` is non-terminal because `resume` is allowed on it. The user stopped the pipeline intentionally and can restart it.
+Note: `interrupted` emits a terminal event (`pipeline.run.interrupted` via `dispatch_external`) because the pipeline has exited. However, unlike `failed` or `cancelled`, the user can resume it. This makes it "terminal for event dispatch, resumable for lifecycle."
 
 ### `failed` vs `interrupted`
 
@@ -90,7 +91,7 @@ The canonical matrix lives in:
 worca-ui/app/utils/state-actions.js
 ```
 
-This single file exports `STATES`, `ACTION_MATRIX`, and the `actionAllowed(action, status)` function. Both the UI (button visibility) and the server (route validation) import from this file.
+This file exports `STATES` and the `actionAllowed(action, status)` function. Both the UI (button visibility) and the server (route validation) import `actionAllowed` from this file. The `ACTION_MATRIX` object is intentionally not exported — consumers use `actionAllowed()` for encapsulation.
 
 ### Consumers
 

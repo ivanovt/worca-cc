@@ -19,7 +19,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { dispatchExternal } from './dispatch-external.js';
 
@@ -462,7 +462,9 @@ export class ProcessManager {
       throw err;
     }
 
-    // Watchdog: SIGKILL after 10s if still alive, then reconcile status
+    // Watchdog: SIGKILL after 10s if still alive, then reconcile status.
+    // Fire-and-forget: reconcileStatus is async but we intentionally don't
+    // await it — this is a background cleanup path after the response is sent.
     const worcaDir = this.worcaDir;
     const { settingsPath } = this;
     const watchdog = setTimeout(() => {
@@ -525,6 +527,7 @@ export class ProcessManager {
       this._killAgentSubprocess(runId);
     }
 
+    const pollMs = timeoutMs > 10000 ? 500 : 100;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       try {
@@ -532,7 +535,7 @@ export class ProcessManager {
       } catch {
         return { pid, exitCode: null };
       }
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, pollMs));
     }
 
     try {
@@ -592,7 +595,13 @@ export class ProcessManager {
       throw err;
     }
 
-    const runDir = join(this.worcaDir, 'runs', runId);
+    const runsParent = resolve(this.worcaDir, 'runs');
+    const runDir = resolve(runsParent, runId);
+    if (!runDir.startsWith(runsParent)) {
+      const err = new Error('Invalid runId');
+      err.code = 'invalid_id';
+      throw err;
+    }
     if (!existsSync(runDir)) {
       const err = new Error(`Run "${runId}" not found`);
       err.code = 'not_found';
