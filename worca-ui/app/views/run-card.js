@@ -1,7 +1,15 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
-import { iconSvg, Pause, Square, X } from '../utils/icons.js';
+import {
+  Archive,
+  iconSvg,
+  Pause,
+  Play,
+  RotateCcw,
+  Square,
+  X,
+} from '../utils/icons.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
 import { actionAllowed } from '../utils/state-actions.js';
 import {
@@ -142,7 +150,7 @@ export function runCardView(
             e.stopPropagation();
             onResume(run.id);
           }}>
-            Resume
+            ${unsafeHTML(iconSvg(Play, 12))} Resume
           </button>
         </div>
       `
@@ -172,7 +180,7 @@ export function runCardView(
             e.stopPropagation();
             onArchive(run.id);
           }}>
-            Archive
+            ${unsafeHTML(iconSvg(Archive, 12))} Archive
           </button>
         </div>
       `
@@ -188,7 +196,7 @@ export function runCardView(
             e.stopPropagation();
             onUnarchive(run.id);
           }}>
-            Unarchive
+            ${unsafeHTML(iconSvg(RotateCcw, 12))} Unarchive
           </button>
         </div>
       `

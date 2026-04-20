@@ -1677,17 +1677,17 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
             Resuming\u2026
           </button>`;
-      } else if (ps === 'running') {
-        actionButton = html`
-          <button class="action-btn action-btn--amber" @click=${handlePausePipeline}>
-            ${unsafeHTML(iconSvg(Pause, 14))}
-            Pause
-          </button>
-          <button class="action-btn action-btn--danger" @click=${handleStopPipeline}>
-            ${unsafeHTML(iconSvg(Square, 14))}
-            Stop
-          </button>`;
       } else {
+        const pauseBtn = actionAllowed('pause', ps)
+          ? html`<button class="action-btn action-btn--amber" @click=${handlePausePipeline}>
+              ${unsafeHTML(iconSvg(Pause, 14))} Pause
+            </button>`
+          : nothing;
+        const stopBtn = actionAllowed('stop', ps)
+          ? html`<button class="action-btn action-btn--danger" @click=${handleStopPipeline}>
+              ${unsafeHTML(iconSvg(Square, 14))} Stop
+            </button>`
+          : nothing;
         const resumeBtn = actionAllowed('resume', ps)
           ? html`<button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
               ${unsafeHTML(iconSvg(Play, 14))} Resume
@@ -1698,9 +1698,10 @@ function contentHeaderView() {
               ${unsafeHTML(iconSvg(Square, 14))} Cancel
             </button>`
           : nothing;
-        if (resumeBtn !== nothing || cancelBtn !== nothing) {
-          actionButton = html`${resumeBtn}${cancelBtn}`;
-        }
+        const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
+          (b) => b !== nothing,
+        );
+        if (btns.length) actionButton = html`${btns}`;
       }
     }
   } else if (route.section === 'active') {
@@ -1734,17 +1735,17 @@ function contentHeaderView() {
             ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
             Resuming\u2026
           </button>`;
-      } else if (hs === 'running') {
-        actionButton = html`
-          <button class="action-btn action-btn--amber" @click=${() => handlePauseRun(route.runId)}>
-            ${unsafeHTML(iconSvg(Pause, 14))}
-            Pause
-          </button>
-          <button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
-            ${unsafeHTML(iconSvg(Square, 14))}
-            Stop
-          </button>`;
       } else {
+        const pauseBtn = actionAllowed('pause', hs)
+          ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseRun(route.runId)}>
+              ${unsafeHTML(iconSvg(Pause, 14))} Pause
+            </button>`
+          : nothing;
+        const stopBtn = actionAllowed('stop', hs)
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
+              ${unsafeHTML(iconSvg(Square, 14))} Stop
+            </button>`
+          : nothing;
         const resumeBtn = actionAllowed('resume', hs)
           ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
               ${unsafeHTML(iconSvg(Play, 14))} Resume
@@ -1755,9 +1756,10 @@ function contentHeaderView() {
               ${unsafeHTML(iconSvg(Square, 14))} Cancel
             </button>`
           : nothing;
-        if (resumeBtn !== nothing || cancelBtn !== nothing) {
-          actionButton = html`${resumeBtn}${cancelBtn}`;
-        }
+        const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
+          (b) => b !== nothing,
+        );
+        if (btns.length) actionButton = html`${btns}`;
       }
     }
   } else if (route.section === 'new-run') {

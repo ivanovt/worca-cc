@@ -92,9 +92,9 @@ test.describe('run lifecycle — stop then resume', () => {
         work_request: { title: 'Lifecycle: stop then resume' },
       });
 
-      // Verify failed state: resume (primary) visible, stop (danger) and pause (amber) absent
+      // Verify failed state: resume (primary) and cancel (danger) visible, pause (amber) absent
       await expect(page.locator('.action-btn--primary')).toBeVisible();
-      await expect(page.locator('.action-btn--danger')).not.toBeAttached();
+      await expect(page.locator('.action-btn--danger')).toBeVisible();
       await expect(page.locator('.action-btn--amber')).not.toBeAttached();
 
       // Transition back to running (resume)
