@@ -1730,6 +1730,14 @@ def run_pipeline(
                     result = run_preflight(context, settings_path, iteration=iter_num)
                     raw_envelope = {"type": "preflight", "checks": result.get("checks", [])}
                 else:
+                    # Re-check shutdown flag before spawning a subprocess.
+                    # The first check (above) runs before context building;
+                    # a signal arriving during that ~160-line gap would set the
+                    # flag but miss the earlier guard.  Without this second
+                    # check the new subprocess starts, hangs, and nothing
+                    # kills it (terminate_current already fired as a no-op).
+                    if _shutdown_requested:
+                        raise InterruptedError("Pipeline shutdown requested before stage execution")
                     result, raw_envelope = run_stage(
                         current_stage, context, settings_path,
                         msize=msize, iteration=iter_num,
