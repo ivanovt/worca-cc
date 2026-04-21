@@ -507,12 +507,15 @@ ws.on('run-snapshot', (payload) => {
     if (!isArchived) {
       notificationManager.handleRunUpdate(payload.id, payload, prevRun);
     }
-    // Invalidate prompt cache for stages whose iteration count changed
+    // Invalidate prompt cache for stages whose iteration count or prompt changed
     if (prevRun && promptCache[payload.id]) {
       for (const [key, stage] of Object.entries(payload.stages || {})) {
-        const prevCount = prevRun.stages?.[key]?.iterations?.length || 0;
+        const prevStage = prevRun.stages?.[key];
+        const prevCount = prevStage?.iterations?.length || 0;
         const newCount = stage.iterations?.length || 0;
         if (newCount > prevCount) {
+          delete promptCache[payload.id][key];
+        } else if (stage.prompt && stage.prompt !== prevStage?.prompt) {
           delete promptCache[payload.id][key];
         }
       }
