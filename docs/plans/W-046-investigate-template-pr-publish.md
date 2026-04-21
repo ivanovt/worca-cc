@@ -228,33 +228,46 @@ No schema changes needed. Consumers that need to distinguish can check:
 
 ## Implementation Plan
 
-### Phase 1: Template Config Changes
+### Current State
 
-**Files:** `.claude/worca/templates/investigate/template.json`
+The runtime copy (`.claude/worca/templates/investigate/`) is **already updated** with all template config changes, the guardian prompt override, and the PR block override. Specifically:
+
+- `.claude/worca/templates/investigate/template.json` — PR stage enabled, description and tags updated
+- `.claude/worca/templates/investigate/agents/guardian.md` — replace-mode guardian prompt (exists)
+- `.claude/worca/templates/investigate/agents/pr.block.md` — replace-mode user message (exists)
+
+The source package (`src/worca/templates/investigate/`) still has the old config: `pr: { enabled: false }`, old description/tags, and no `agents/guardian.md` or `agents/pr.block.md`.
+
+**Implementation therefore starts from Phase 1 (source package sync), not from template authoring.**
+
+### Phase 1: Source Package Sync
+
+**Files:** `src/worca/templates/investigate/template.json` (modify), `src/worca/templates/investigate/agents/guardian.md` (create), `src/worca/templates/investigate/agents/pr.block.md` (create)
 **Tasks:**
-1. Change `"pr": { "enabled": false }` to `"pr": { "enabled": true }` (line 14)
-2. Update `description` field (line 4)
-3. Update `tags` field (line 6)
+1. Update `src/worca/templates/investigate/template.json` to match the runtime copy: enable PR stage, update description, update tags
+2. Copy `guardian.md` from `.claude/worca/templates/investigate/agents/` to `src/worca/templates/investigate/agents/`
+3. Copy `pr.block.md` from `.claude/worca/templates/investigate/agents/` to `src/worca/templates/investigate/agents/`
+4. Verify content matches between runtime and source copies
+5. Verify `worca init --upgrade` round-trips correctly (source → runtime)
 
-### Phase 2: Guardian Prompt Override
+All tests in Phase 2 run against `src/worca/` (the editable install), so they validate the source package directly.
 
-**Files:** `.claude/worca/templates/investigate/agents/guardian.md` (new), `.claude/worca/templates/investigate/agents/pr.block.md` (new)
+### Phase 2: Fix Existing Tests
+
+**Files:** `tests/test_preset_templates.py` (modify), `tests/test_builtin_templates.py` (no change — see below)
 **Tasks:**
-1. Create `guardian.md` with replace-mode investigate prompt (see Design §2)
-2. Create `pr.block.md` with investigate-specific user message (see Design §4)
+1. Update `tests/test_preset_templates.py:18` — change `EXPECTED_OVERLAYS["investigate"]` from `{"planner.md"}` to `{"planner.md", "guardian.md", "pr.block.md"}`
+2. **Do NOT** add `("investigate", "guardian")` to `tests/test_builtin_templates.py:22-33` `TEMPLATE_OVERLAYS` — that list is specifically for **append-mode** overlays (the test at line 63 asserts `<!-- append -->` as the first line). The investigate guardian uses **replace mode** (no `<!-- append -->` tag), so including it would cause `test_template_overlay_uses_append_mode` to fail. The `pr.block.md` is also replace-mode and should not be added.
 
-### Phase 3: Source Package Update
+**Why test_builtin_templates.py is safe as-is:** The `TEMPLATE_OVERLAYS` list tests append-mode overlay behavior (governance preservation, content injection). Replace-mode overlays have different semantics — they fully substitute the base prompt. The new unit tests in Phase 3 validate replace-mode behavior separately.
 
-**Files:** `src/worca/agents/core/` (no change), `src/worca/templates/investigate/` (mirror of `.claude/worca/`)
-**Tasks:**
-1. Mirror the new files into the source package so `worca init` and `pip install` distribute them
-2. Verify `worca init --upgrade` copies the new files to `.claude/worca/`
-
-### Phase 4: Tests
+### Phase 3: New Tests
 
 See Test Plan below.
 
-### Phase 5: Documentation
+**Files:** `tests/test_investigate_template.py` (create), `tests/integration/test_investigate_pr.py` (create)
+
+### Phase 4: Documentation
 
 **Files:** `CLAUDE.md` (if needed)
 **Tasks:**
@@ -265,19 +278,17 @@ See Test Plan below.
 
 | File | Action | Description |
 |------|--------|-------------|
-| `.claude/worca/templates/investigate/template.json` | Modify | Enable PR stage, update description and tags |
-| `.claude/worca/templates/investigate/agents/guardian.md` | Create | Replace-mode guardian prompt for plan publishing |
-| `.claude/worca/templates/investigate/agents/pr.block.md` | Create | Replace-mode user message for investigate PR |
-| `src/worca/templates/investigate/template.json` | Modify | Mirror of .claude/worca/ change |
-| `src/worca/templates/investigate/agents/guardian.md` | Create | Mirror of .claude/worca/ change |
-| `src/worca/templates/investigate/agents/pr.block.md` | Create | Mirror of .claude/worca/ change |
+| `src/worca/templates/investigate/template.json` | Modify | Enable PR stage, update description and tags (mirror of runtime copy) |
+| `src/worca/templates/investigate/agents/guardian.md` | Create | Replace-mode guardian prompt for plan publishing (mirror of runtime copy) |
+| `src/worca/templates/investigate/agents/pr.block.md` | Create | Replace-mode user message for investigate PR (mirror of runtime copy) |
+| `tests/test_preset_templates.py` | Modify | Update EXPECTED_OVERLAYS for investigate to include guardian.md and pr.block.md |
 
 ## Considerations
 
 - **No Python code changes.** The entire feature is template config + agent prompt overrides. The pipeline runner, governance hooks, schemas, and stage machinery are untouched.
 - **No schema changes.** The investigate guardian returns the standard `pr.json` output (`pr_number`, `pr_url`, `review_status`). No new fields needed.
 - **No governance changes.** The agent role is still `guardian` (set via `WORCA_AGENT` from the stage-agent mapping in `stages.py:39`), so `guard.py:247` allows the commit.
-- **Plan_check hook is safe.** The hook (`plan_check.py:10-13`) only blocks source file extensions (`.py`, `.js`, `.ts`, etc.). Writing `.md` files to `docs/plans/` returns exit 0 (allow).
+- **Plan_check hook allows `.md` writes.** The hook (`plan_check.py:31-33`) checks file extensions — `.md` is not in `SOURCE_EXTENSIONS`, so writing to `docs/plans/` returns exit 0 (allow). Note that `plan_check.py` also allows source file writes (`.py`, `.js`, etc.) when a plan file exists (`plan_check.py:40-46`), which is always true by the PR stage. The investigate guardian is prompt-constrained (not governance-constrained) to only write `.md` files. A stage-aware restriction (e.g., limiting guardian to `.md` writes) could be added in a future plan.
 - **Guardian prompt divergence.** The investigate override fully replaces the base guardian prompt. If the base guardian receives significant updates (commit format, output schema, security rules), the investigate override must be manually synced. This is documented as a known coupling.
   - **Mitigation:** Keep the investigate guardian prompt minimal — only the objective and steps differ. The output schema reference and governance rules tag are identical to the base. When modifying the base guardian, `grep -r guardian.md .claude/worca/templates/` surfaces all overrides.
 - **Branch sequencing.** The investigate pipeline creates a plan-only PR on its own branch. The implementation pipeline (run later) creates a separate branch. The recommended workflow is: merge the plan PR first, then run the implementation pipeline with `--source gh:issue:N`. The implementation pipeline auto-discovers the plan via the issue body link (now present because the plan PR body includes the `## Plan` section with the file link).
@@ -335,8 +346,9 @@ These extend the existing integration test harness in `tests/integration/` which
 | Test | Setup | Expected Outcome |
 |------|-------|------------------|
 | `test_investigate_guardian_can_commit` | Investigate pipeline reaches PR stage. Guardian runs `git commit`. | `guard.py` allows the commit (agent role is `guardian`). No "Blocked" error. |
-| `test_investigate_guardian_cannot_write_source` | Guardian attempts to write a `.py` file during PR stage. | `plan_check.py` blocks the write. `.md` files are allowed. |
 | `test_investigate_guardian_md_write_allowed` | Guardian writes to `docs/plans/W-046-test.md`. | `plan_check.py` returns exit 0 (allow). |
+
+**Note — no `plan_check.py` guardrail for source file writes during PR stage:** `plan_check.py:40-46` only blocks source file writes when the plan file is missing (`os.path.exists(plan_file)` returns `False`). By the time the PR stage runs in an investigate pipeline, the planner has already created the plan file and `WORCA_PLAN_FILE` points to it, so `plan_check.py` returns exit 0 for all writes — including `.py` files. The investigate guardian is instructed via its prompt not to modify any files other than copying the plan to `docs/plans/`, but this is a prompt-level constraint, not a governance-enforced one. Adding a stage-aware check to `plan_check.py` (e.g., restricting the guardian role to `.md` writes only) is a potential future improvement but is out of scope for this plan.
 
 ### Integration Tests — Overlay Isolation
 
@@ -357,12 +369,13 @@ These extend the existing integration test harness in `tests/integration/` which
 
 ### Existing Tests to Update
 
-No existing tests should break — all changes are additive (new template files, enable a previously disabled stage). However:
+Two existing test files contain assertions that will break. These are **guaranteed breakages**, not hypotheticals:
 
-- **`test_template_loading`** (if it exists): May need a new assertion that investigate template now includes PR in its enabled stages list.
-- **`test_investigate_stages`** (if it exists): Currently asserts PR is disabled — must be updated to assert PR is enabled.
+1. **`tests/test_preset_templates.py:18`** — `EXPECTED_OVERLAYS["investigate"]` is currently `{"planner.md"}`. After adding `guardian.md` and `pr.block.md` to `src/worca/templates/investigate/agents/`, the `test_agent_overlays_exist` test (line 68) will find 3 files but expect 1. **Fix:** Change to `{"planner.md", "guardian.md", "pr.block.md"}`.
 
-Run `grep -r "investigate" tests/` to find all tests referencing the investigate template and verify they don't assert `pr.enabled == false`.
+2. **`tests/test_builtin_templates.py:22-33`** — `TEMPLATE_OVERLAYS` only lists `("investigate", "planner")`. This list does **NOT** need the new guardian overlay because the test suite validates **append-mode** overlays specifically (line 63 asserts `<!-- append -->`). The investigate guardian uses **replace mode**, so adding it here would cause `test_template_overlay_uses_append_mode` to fail. **No change needed.**
+
+3. **No other existing tests break.** The `TestInvestigateConfig` class in `test_preset_templates.py:137-151` tests `coordinate_disabled`, `implement_disabled`, `planner_opus`, and `planner_200_turns` — none of these assert `pr.enabled == false`, so they pass unchanged.
 
 ### Done Criteria
 
@@ -377,14 +390,14 @@ All of the following must pass before this plan is considered complete:
 
 | File | Action | Description |
 |------|--------|-------------|
-| `.claude/worca/templates/investigate/template.json` | Modify | Enable PR stage, update description and tags |
-| `.claude/worca/templates/investigate/agents/guardian.md` | Create | Replace-mode guardian prompt for plan publishing |
-| `.claude/worca/templates/investigate/agents/pr.block.md` | Create | Replace-mode user message for investigate PR |
-| `src/worca/templates/investigate/template.json` | Modify | Mirror of .claude/worca/ change |
-| `src/worca/templates/investigate/agents/guardian.md` | Create | Mirror of .claude/worca/ change |
-| `src/worca/templates/investigate/agents/pr.block.md` | Create | Mirror of .claude/worca/ change |
+| `src/worca/templates/investigate/template.json` | Modify | Enable PR stage, update description and tags (sync from runtime copy) |
+| `src/worca/templates/investigate/agents/guardian.md` | Create | Replace-mode guardian prompt for plan publishing (sync from runtime copy) |
+| `src/worca/templates/investigate/agents/pr.block.md` | Create | Replace-mode user message for investigate PR (sync from runtime copy) |
+| `tests/test_preset_templates.py` | Modify | Update `EXPECTED_OVERLAYS["investigate"]` to include `guardian.md` and `pr.block.md` |
 | `tests/test_investigate_template.py` | Create | Unit tests for template config and overlay resolution |
 | `tests/integration/test_investigate_pr.py` | Create | Integration tests for investigate→PR pipeline flow |
+
+Note: `.claude/worca/templates/investigate/` files (template.json, agents/guardian.md, agents/pr.block.md) are **already updated** in the runtime copy. They are not listed as changes because no further modification is needed.
 
 ## Out of Scope
 
@@ -395,3 +408,4 @@ All of the following must pass before this plan is considered complete:
 - **Post-run hooks or `post_run` config** — deferred to a future plan if multiple templates need post-completion actions.
 - **`{{block:}}` refactoring of the base guardian prompt** — the base guardian works fine as-is; block extraction is a separate refactor.
 - **GitHub issue body editing** — the PR body includes the plan link; the issue body is not modified. GitHub auto-links the PR to the issue via `Resolves #N`.
+- **Stage-aware `plan_check.py` restrictions** — currently `plan_check.py` allows all writes once a plan file exists. Adding role-based or stage-based restrictions (e.g., guardian can only write `.md` files) would provide governance-level enforcement beyond prompt instructions. Deferred as a potential future improvement.

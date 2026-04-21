@@ -15,7 +15,7 @@ EXPECTED_OVERLAYS = {
     "feature":     set(),
     "refactor":    {"planner.md", "reviewer.md"},
     "quick-fix":   {"planner.md", "coordinator.md"},
-    "investigate": {"planner.md"},
+    "investigate": {"planner.md", "guardian.md", "pr.block.md"},
     "test-only":   {"planner.md", "coordinator.md", "implementer.md"},
 }
 
