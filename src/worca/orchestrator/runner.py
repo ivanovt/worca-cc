@@ -1077,15 +1077,19 @@ def handle_pr_review(outcome: str, status: dict) -> tuple:
         return (None, status)
 
 
-def _query_ready_bead(allowed_ids: list[str] | None = None) -> dict | None:
+def _query_ready_bead(allowed_ids: list[str] | None = None, run_id: str | None = None) -> dict | None:
     """Query bd ready and return the first available bead, or None.
 
     Args:
         allowed_ids: If provided, only return beads whose ID is in this list.
                      This prevents picking up stale beads from prior runs.
+        run_id: If provided, pass --label run:{run_id} to bd ready so only
+                beads from this run are returned. Without this, the 10-item
+                display limit in bd ready can be filled by unrelated beads.
     """
     try:
-        items = bd_ready()
+        label = f"run:{run_id}" if run_id else None
+        items = bd_ready(label=label)
         if allowed_ids is not None:
             allowed_set = set(allowed_ids)
             items = [b for b in items if b["id"] in allowed_set]
@@ -1585,7 +1589,7 @@ def run_pipeline(
                 if impl_trigger in ("initial", "next_bead"):
                     # Phase 1: implement all beads sequentially
                     run_bead_ids = prompt_builder.get_context("beads_ids")
-                    bead = _query_ready_bead(allowed_ids=run_bead_ids)
+                    bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
                     if bead:
                         bead_id = bead["id"]
                         _claim_bead(bead_id)
@@ -2279,7 +2283,7 @@ def run_pipeline(
                     # NOTE: Do NOT mark IMPLEMENT "completed" yet — if the pipeline
                     # is stopped between bead iterations, resume must re-enter
                     # IMPLEMENT to process remaining beads.
-                    next_bead = _query_ready_bead(allowed_ids=run_bead_ids)
+                    next_bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
                     if next_bead and Stage.IMPLEMENT in stage_order:
                         if loop_counters["bead_iteration"] < max_beads:
                             # Keep stage in_progress between beads so resume works

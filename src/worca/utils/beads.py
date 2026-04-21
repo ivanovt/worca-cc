@@ -34,16 +34,22 @@ def bd_create(title: str, task_type: str = "task", priority: int = 2) -> str:
     return match.group(1)
 
 
-def bd_ready() -> list[dict]:
+def bd_ready(label: str | None = None) -> list[dict]:
     """List ready issues via bd ready.
 
     Parses numbered-list output like:
         📋 Ready work (1 issues with no blockers):
         1. [● P4] [task] worca-cc-a27: test parsing output
 
+    Args:
+        label: If provided, pass --label to scope results (e.g. "run:xxx").
+
     Returns list of dicts with id, title, priority, type.
     """
-    result = _run_bd("ready")
+    args = ["ready"]
+    if label:
+        args.extend(["--label", label])
+    result = _run_bd(*args)
     if not result.stdout.strip():
         return []
     items = []
