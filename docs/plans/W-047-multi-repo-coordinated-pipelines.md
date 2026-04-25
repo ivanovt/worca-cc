@@ -55,7 +55,8 @@ Add a **workspace coordinator** that extends fleet infrastructure with four capa
   "integration_test": {
     "command": "cd backend && npm run test:integration",
     "working_dir": "."
-  }
+  },
+  "umbrella_repo": "org/platform-meta"
 }
 ```
 
@@ -77,7 +78,7 @@ A `worca workspace init /path/to/parent` command scaffolds `workspace.json` by s
 - **Resolution:** Add a **master planner stage** that runs before child dispatch. It is a new Opus agent (template: `src/worca/agents/core/workspace_planner.md`) that:
 
   1. Reads `workspace.json` to understand the repo topology and dependency graph.
-  2. Reads `CLAUDE.md` from each repo for project-specific context.
+  2. Reads `CLAUDE.md` from each repo for project-specific context. Each `CLAUDE.md` is truncated to 4KB (extracting the top-level sections: Quick Start, Architecture, Testing, Development Approach) to bound total context size. For a 5-repo workspace this caps repo context at ~20KB. A warning is emitted if any `CLAUDE.md` exceeds the cap.
   3. Receives the user's prompt.
   4. Produces a **workspace plan** — a structured output containing:
      - A high-level summary of the cross-repo change.
@@ -85,7 +86,7 @@ A `worca workspace init /path/to/parent` command scaffolds `workspace.json` by s
      - Dependency annotations: which repo's changes are prerequisites for which (confirming or refining the static `depends_on` in `workspace.json`).
      - Integration test expectations: what the cross-repo test should validate.
 
-  The workspace plan is written to `{workspace_root}/.worca/workspace-runs/{run_id}/workspace-plan.md` and also as individual `{repo}-plan.md` files. Each child pipeline receives its repo-specific plan via `--plan`.
+  The master planner produces structured JSON output (validated against `workspace_plan.json` schema). The orchestrator (`run_workspace.py`) parses this output and writes the plan files to `{workspace_root}/.worca/workspace-runs/{run_id}/` — `workspace-plan.md` (human-readable, rendered from the JSON) and individual `{repo}-plan.md` files. The planner agent itself does not write files; the orchestrator does. This avoids needing to modify the guard hook's role-based file-write restrictions. Each child pipeline receives its repo-specific plan via `--plan`.
 
 **Workspace plan schema:**
 
@@ -160,8 +161,8 @@ Integration test phase       ← runs after all tiers complete
 - **Obstacle:** Even with DAG ordering, a tier-1 implementer needs to know what tier-0 produced. Relying on `git fetch` alone is fragile — the implementer must know which branch to fetch and what changed.
 - **Resolution:** Between tiers, `run_workspace.py` generates a **context artifact** for each dependency edge:
 
-  1. After `shared-lib` completes, extract: `git diff main..HEAD --stat` + `git diff main..HEAD` (full diff) from the worktree.
-  2. Summarize into a context block (truncated to 8KB per dependency to control token cost).
+  1. After `shared-lib` completes, extract from the worktree: `git diff main..HEAD --stat` (always included, ~200 bytes) + targeted file-level diffs prioritizing public API surfaces (exported types, route definitions, schema files) over internal implementation.
+  2. Assemble into a context block capped at 8KB per dependency edge. The prioritization strategy: (a) include `--stat` summary always, (b) include diffs for files matching `**/types/**`, `**/api/**`, `**/schemas/**`, `**/index.*` first, (c) fill remaining budget with other files in diff order. If the budget is exhausted mid-file, include the file header and a `[truncated — N lines remaining]` marker rather than cutting mid-hunk.
   3. Inject into the next tier's child via `--guide`:
 
 ```markdown
@@ -186,13 +187,16 @@ This gives the implementer concrete context without requiring it to `git fetch` 
 - **Resolution:** After all tiers complete successfully, `run_workspace.py` runs an optional integration test phase:
 
   1. Read `workspace.json` `integration_test.command` and `integration_test.working_dir`.
-  2. Set up the environment: for each child repo, ensure its worktree branch is checked out (or the changes are accessible via the branch).
-  3. Execute the command with `cwd = workspace_root / working_dir`.
+  2. **Set up the integration environment.** For each child repo, create a temporary git worktree at `{workspace_root}/.worca/integration-env/{repo_name}/` checked out to the child's branch. This gives the integration test a directory tree where every repo has its changes applied, without modifying any repo's main working tree. The environment variables `WORCA_INTEGRATION_ENV=1` and `WORCA_WORKSPACE_ROOT={workspace_root}` are set so the test command can locate repos.
+  3. Execute the command with `cwd = {workspace_root}/.worca/integration-env / working_dir`.
   4. Capture stdout/stderr into `{workspace_run_dir}/integration-test.log`.
-  5. If the test fails, mark the workspace run as `integration_failed` — child PRs are **not** pushed. The user can inspect logs and re-run.
-  6. If no `integration_test` is configured, skip this phase with a warning.
+  5. Clean up the integration environment worktrees after the test (pass or fail).
+  6. If the test fails, mark the workspace run as `integration_failed`. The user can inspect logs and `--resume` to re-run.
+  7. If no `integration_test` is configured, skip this phase with a warning.
 
   The integration test command is user-defined and opaque to worca — it could be `docker-compose up && pytest tests/integration/`, a Makefile target, or a script. Worca only runs it and checks the exit code.
+
+  **PR push timing.** Child guardians commit and push to their worktree branches as part of normal operation (required for inter-tier `git fetch`). However, PR *creation* (`gh pr create`) is deferred until after integration tests pass. To achieve this, workspace children run with `WORCA_DEFER_PR=1` in their environment. The guardian stage, when this var is set, commits and pushes the branch but skips `gh pr create`. After integration tests pass, `run_workspace.py` creates all PRs centrally via `gh pr create --repo <owner/repo> --head <branch>` for each child. On `integration_failed`, branches exist on remotes but no PRs are created — the user can inspect and clean up.
 
 ### 6. Linked PR Creation
 
@@ -200,31 +204,33 @@ This gives the implementer concrete context without requiring it to `git fetch` 
 - **Obstacle:** A reviewer looking at `backend#42` has no way to know that `shared-lib#15` must merge first, or that `frontend#43` depends on this PR.
 - **Resolution:** Extend the guardian stage with workspace-aware PR creation:
 
-  1. Each child's guardian creates its PR as normal.
+  1. After integration tests pass (or are skipped), `run_workspace.py` creates PRs for each child repo via `gh pr create --repo <owner/repo> --head <branch> --base <target>`. The `--repo` flag is required because `run_workspace.py`'s CWD is the workspace root (not inside any git repo). The repo owner/name is resolved from each child repo's `git remote get-url origin`.
   2. After all PRs are created, `run_workspace.py` post-processes them:
-     - For each PR, add a comment listing its dependencies and dependents:
+     - For each PR, add a comment via `gh pr comment <number> --repo <owner/repo>` listing its dependencies and dependents:
        ```
        ## Workspace: my-platform
        **Depends on:** org/shared-lib#15 (must merge first)
        **Blocks:** org/frontend#43
        **Workspace run:** `ws_20260426_abc123`
        ```
-     - Optionally create an **umbrella issue** that links all PRs:
+     - Optionally create an **umbrella issue** on the repo specified in `workspace.json` `umbrella_repo` field (e.g., `"umbrella_repo": "org/platform-meta"`). If `umbrella_repo` is not set, the umbrella issue is created on the first repo in the dependency chain (tier 0). The issue links all PRs:
        ```
        ## Workspace PR Set: Add user profiles
        - [ ] org/shared-lib#15 — Add UserProfile type
        - [ ] org/backend#42 — Add /api/profile endpoint
        - [ ] org/frontend#43 — Add profile page
        ```
-  3. PR numbers are captured from each child's guardian output (parsed from `gh pr create` stdout) and stored in the workspace manifest.
+  3. PR URLs are stored in the workspace manifest.
+
+  **Cross-org workspaces:** If repos span multiple GitHub orgs, `gh` must be authenticated for each org. `run_workspace.py` validates `gh auth status` per unique org before dispatch and fails fast with an actionable error if authentication is missing.
 
   Merge order is documented but **not enforced** — worca does not auto-merge. The checklist in the umbrella issue serves as a manual coordination tool.
 
 ### 7. Workspace State & Manifest
 
 - **Current state:** Fleet manifest at `~/.worca/fleet-runs/<fleet_id>.json` tracks fleet-level state. Per-child state in `pipelines.d/`.
-- **Obstacle:** Workspace runs need additional state: the workspace plan, DAG structure, tier execution progress, integration test results, and PR cross-references.
-- **Resolution:** Workspace runs use `{workspace_root}/.worca/workspace-runs/{run_id}/` as the run directory:
+- **Obstacle:** Workspace runs need additional state: the workspace plan, DAG structure, tier execution progress, integration test results, and PR cross-references. These artifacts are workspace-specific and should live near the workspace, not in the global `~/.worca/` directory.
+- **Resolution:** Workspace runs use `{workspace_root}/.worca/workspace-runs/{run_id}/` as the run directory. A lightweight pointer file at `~/.worca/workspace-runs/{run_id}.json` stores only `{ "workspace_root": "/abs/path", "workspace_id": "ws_..." }` so the UI can discover workspace runs globally and follow the pointer to the full manifest.
 
 ```
 .worca/workspace-runs/{run_id}/
@@ -299,7 +305,7 @@ Flags:
 - `--max-parallel`: max concurrent children within a tier (default 5).
 - `--dry-run`: produce the workspace plan and print the DAG without launching children.
 
-`run_workspace.py` internally reuses fleet primitives: `worca init --upgrade` per repo, `run_worktree.py` dispatch, `pipelines.d/` registration (with `workspace_id` in the `fleet_id` field), W-040's circuit breaker logic.
+`run_workspace.py` internally reuses fleet primitives: `worca init --upgrade` per repo, `run_worktree.py` dispatch, `pipelines.d/` registration, W-040's circuit breaker logic. Children are registered with both `fleet_id` (set to the `workspace_id` value for grouping compatibility) and a separate `group_type: "workspace"` field in the `pipelines.d/` entry. The UI uses `group_type` to distinguish workspace runs from fleet runs and render them differently (tier grouping vs flat list). Plain fleet runs have `group_type: "fleet"` (or absent, defaulting to `"fleet"`). This avoids fragile string-prefix inspection of the `fleet_id` value.
 
 ### 9. `worca workspace init`
 
@@ -332,7 +338,7 @@ Flags:
   - PR link table with merge-order annotations.
 
   **API:**
-  - `GET /api/workspace-runs` — list workspace manifests from `~/.worca/fleet-runs/` (workspace manifests have a `workspace_id` field distinguishing them from plain fleet manifests).
+  - `GET /api/workspace-runs` — list workspace runs by scanning pointer files in `~/.worca/workspace-runs/*.json`, following each pointer to `{workspace_root}/.worca/workspace-runs/{id}/workspace-manifest.json` for the full manifest.
   - `GET /api/workspace-runs/:id` — workspace manifest + enriched child status from `pipelines.d/`.
   - `POST /api/workspace-runs` — launch from UI.
   - `DELETE /api/workspace-runs/:id` — halt.
@@ -368,7 +374,7 @@ Flags:
 **Files:** `src/worca/workspace/dag_executor.py` (new), `src/worca/scripts/run_workspace.py`
 
 **Tasks:**
-1. Implement `DagExecutor` class — accepts tiers from phase 1, dispatches each tier via `ThreadPoolExecutor` calling `run_worktree.py` with `cwd=repo_dir` and `--fleet-id workspace_id`.
+1. Implement `DagExecutor` class — accepts tiers from phase 1, dispatches each tier via `ThreadPoolExecutor` calling `run_worktree.py` with `cwd=repo_dir`, `--fleet-id workspace_id`, and per-child env vars `WORCA_WORKSPACE_ID`, `WORCA_WORKSPACE_NAME`, `WORCA_DEFER_PR=1`. These env vars are set explicitly per-child (not inherited from the parent process) so they survive W-040's env scrub list.
 2. Between tiers: extract context artifacts (diff summary) from completed children, generate `--guide` content for next tier's children.
 3. Handle child failures: mark dependent children as `blocked`, continue non-dependent children in the same tier.
 4. Integrate W-040's circuit breaker — apply across all tiers.
@@ -402,8 +408,9 @@ Flags:
 1. `--resume <workspace_id>` reads manifest, determines which tiers/repos are incomplete.
 2. For partially completed tiers: re-run only failed/blocked children (skip completed ones).
 3. For unstarted tiers: re-run from that tier forward.
-4. Re-generate context artifacts from already-completed children before resuming.
+4. Re-generate context artifacts from already-completed children before resuming. This requires completed children's worktrees to still exist. **Worktree retention policy:** worktrees are NOT cleaned up until the entire workspace run reaches terminal status (`completed` or manually cancelled). This is critical for resume — a cleaned-up worktree means context artifacts and branch state are lost. Disk usage scales with `N repos x worktree size` for the full workspace run duration; the pre-flight check (see Considerations) warns about this.
 5. If integration test failed: `--resume` re-runs only the integration test (children are already complete).
+6. `worca workspace cleanup <workspace_id>` (manual command) removes all worktrees and the integration environment after the user is satisfied.
 
 ### Phase 7: UI integration
 
@@ -438,7 +445,8 @@ Flags:
 | `src/worca/cli/workspace.py` | **New** — `worca workspace init`, `worca workspace run` CLI |
 | `src/worca/scripts/run_workspace.py` | **New** — workspace run entry point |
 | `src/worca/agents/core/workspace_planner.md` | **New** — master planner agent template |
-| `src/worca/agents/core/guardian.md` | Workspace-aware PR description when `WORCA_WORKSPACE_ID` set |
+| `src/worca/agents/core/guardian.md` | Workspace-aware PR description when `WORCA_WORKSPACE_ID` set; defer PR creation when `WORCA_DEFER_PR=1` |
+| `src/worca/state/status_enum.py` | **New** — canonical status enums with level-specific extensions |
 | `.claude/worca/settings.json` | Add `worca.workspace.*` defaults |
 | `worca-ui/server/workspace-routes.js` | **New** — workspace REST endpoints |
 | `worca-ui/server/ws-modular.js` | Workspace manifest watcher |
@@ -458,9 +466,11 @@ Flags:
 - **Integration test is opaque.** Worca runs the user's command and checks the exit code. It does not parse test output, identify failing tests, or retry. The user is responsible for providing a working integration test command.
 - **PR merge order is advisory, not enforced.** The umbrella issue documents merge order. Worca does not auto-merge or block out-of-order merges. Enforcement would require GitHub branch protection rules or a merge bot, which is out of scope.
 - **Workspace root is not a git repo.** The parent directory does not need its own `.git/`. `workspace.json` and `.worca/` live there but are not version-controlled (unless the user chooses to create a meta-repo). This avoids forcing a monorepo structure.
-- **Breaking changes:** **None.** Workspace is a new entry point and new agents. Existing fleet and pipeline flows are unchanged. The `fleet_id` field in `pipelines.d/` entries serves double duty for workspace runs (using `workspace_id` as the value).
-- **Token cost.** The master planner adds one Opus call per workspace run. Context injection adds guide content proportional to diff size (capped at 8KB per dependency edge). For a 3-repo workspace with 2 tiers, overhead is ~1 planner call + ~16KB of guide content — modest.
-- **Governance.** Existing per-repo governance is preserved. Additionally, the master planner cannot write files (it only produces a plan). The workspace coordinator cannot commit (only the guardian in each child can). No new governance bypass paths are introduced.
+- **Breaking changes:** **None.** Workspace is a new entry point and new agents. Existing fleet and pipeline flows are unchanged. A new `group_type` field is added to `pipelines.d/` entries (optional, defaults to `"fleet"`) to distinguish workspace from fleet runs.
+- **Token cost.** The master planner adds one Opus call per workspace run (~20KB input from truncated `CLAUDE.md` files + workspace.json + prompt). Context injection adds guide content proportional to diff size (capped at 8KB per dependency edge, with smart prioritization of public API files). For a 3-repo workspace with 2 tiers, overhead is ~1 planner call + ~16KB of guide content — modest.
+- **Governance.** Existing per-repo governance is preserved. The master planner produces structured JSON output; the orchestrator writes plan files (no new file-write permissions needed in the guard hook). The workspace coordinator cannot commit (only the guardian in each child can). `WORCA_DEFER_PR=1` defers PR creation to after integration tests, adding a new governance control (PRs are only created when the full workspace passes). No governance bypass paths are introduced.
+- **Disk space.** Worktrees are retained for the entire workspace run (required for resume and context artifact regeneration). For a 5-repo workspace averaging 200MB per repo, this is ~1GB of worktree copies plus the integration environment. `run_workspace.py` runs a pre-flight disk space estimate and warns if available space is insufficient. `worca workspace cleanup` provides manual worktree removal after the run completes.
+- **Status vocabulary.** Workspace adds statuses `planning`, `integration_testing`, and `integration_failed` that have no analogs in fleet or pipeline status enums. The UI must handle these as workspace-specific extensions. A shared `status_enum.py` module should define canonical pipeline-level statuses and allow level-specific extensions for fleet and workspace.
 
 ## Test Plan
 
@@ -477,9 +487,13 @@ Flags:
 | Python | `tests/test_dag_executor.py::test_non_dependent_continues` | Failed child in tier 0 → non-dependent children in tier 1 still run |
 | Python | `tests/test_dag_executor.py::test_context_injection` | Tier 0 diff summary appears in tier 1 child's `--guide` |
 | Python | `tests/test_dag_executor.py::test_context_truncation` | Diff summary exceeding 8KB is truncated with marker |
-| Python | `tests/test_integration_test.py::test_pass` | Exit code 0 → workspace status `completed` |
-| Python | `tests/test_integration_test.py::test_fail` | Exit code 1 → workspace status `integration_failed`, PRs not pushed |
+| Python | `tests/test_integration_test.py::test_env_setup` | Integration environment worktrees created at `.worca/integration-env/{repo}/` with correct branches |
+| Python | `tests/test_integration_test.py::test_env_cleanup` | Integration environment worktrees removed after test (pass or fail) |
+| Python | `tests/test_integration_test.py::test_pass` | Exit code 0 → workspace status `completed`, PRs created |
+| Python | `tests/test_integration_test.py::test_fail` | Exit code 1 → workspace status `integration_failed`, no PRs created |
 | Python | `tests/test_integration_test.py::test_skip` | No `integration_test` in workspace.json → skipped with warning |
+| Python | `tests/test_deferred_pr.py::test_defer_pr_env` | `WORCA_DEFER_PR=1` causes guardian to commit+push but skip `gh pr create` |
+| Python | `tests/test_deferred_pr.py::test_central_pr_creation` | `run_workspace.py` creates PRs via `gh pr create --repo` after integration pass |
 | Python | `tests/test_pr_linker.py::test_dependency_comments` | Each PR gets a comment listing deps and dependents |
 | Python | `tests/test_pr_linker.py::test_umbrella_issue` | Umbrella issue created with checklist in merge order |
 | Python | `tests/test_workspace_resume.py::test_resume_partial_tier` | Only failed/blocked children in incomplete tier re-launched |
@@ -496,8 +510,8 @@ Flags:
 
 ### Existing Tests to Update
 
-- W-040's `run_fleet.py` tests — verify that `fleet_id` field in `pipelines.d/` also works when the value is a `workspace_id` (string format is compatible).
-- Guardian agent tests — verify workspace-aware PR description is emitted when `WORCA_WORKSPACE_ID` is set and standard description when it is not.
+- W-040's `run_fleet.py` tests — verify that `group_type` field in `pipelines.d/` entries is correctly set to `"workspace"` for workspace children and `"fleet"` (or absent) for fleet children.
+- Guardian agent tests — verify that when `WORCA_DEFER_PR=1` is set, the guardian commits and pushes but skips `gh pr create`. Verify workspace-aware PR description is emitted when `WORCA_WORKSPACE_ID` is set and standard description when it is not.
 
 ## Files to Create/Modify
 

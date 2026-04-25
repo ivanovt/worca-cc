@@ -24,7 +24,7 @@ Add a `run_fleet.py` entry point that accepts N target project paths, one prompt
 
 ```
 run_fleet.py (fleet orchestrator)
-  → ThreadPoolExecutor (--max-parallel children)
+  → manual dispatch loop (--max-parallel children, circuit breaker checked before each batch)
     → worca init --upgrade (per target, if needed)
     → run_worktree.py (cwd=project_dir)
       → git worktree add (isolates within target repo)
@@ -33,11 +33,15 @@ run_fleet.py (fleet orchestrator)
       → run_pipeline.py --worktree (inside the worktree)
 ```
 
+**Assumed `run_worktree.py` interface (from #82):** `run_worktree.py` must accept at minimum: `--prompt`/`--source`, `--plan <path>`, `--branch <name>`, `--fleet-id <id>`, `--guide <path>`. It must register in `pipelines.d/` via `register_pipeline(..., fleet_id=<id>)`, create a worktree, and exit immediately after spawning `run_pipeline.py` (fire-and-forget). If #82's implementation diverges from this interface, fleet dispatch code must adapt. This assumed interface should be validated during #82 implementation.
+
 ### 2. Target-Repo Runtime Provisioning
 
 - **Current state:** `src/worca/cli/init.py` creates `.claude/worca/` on demand; target repos in a fleet may never have had `worca init` run.
 - **Obstacle:** Without `.claude/worca/`, hooks, agent templates, and settings are missing and the pipeline cannot start. Manually running `worca init` N times is error-prone.
 - **Resolution:** `run_fleet.py` calls `worca init <project_dir> --upgrade` for every target before launching. The `--upgrade` path is already non-destructive (preserves user `settings.json`, updates only worca-owned files under `.claude/worca/`, idempotent). Failures are marked `setup_failed` in the manifest; the fleet continues with the rest.
+
+  **Version compatibility:** `worca init --upgrade` overwrites hooks and agent templates but preserves `settings.json`. If the target repo used an older worca version with a different settings schema, the new hooks may expect keys that don't exist. To mitigate: add a `schema_version` field to `.claude/worca/settings.json`; `init --upgrade` performs schema migration (adds missing keys with defaults, warns about removed keys). The fleet manifest records the worca version used for provisioning.
 
 ### 3. Shared Reference-Context Mechanism
 
@@ -65,6 +69,8 @@ description, and surface it rather than silently resolving it.
 
 Because `prompt_builder.py` already routes `wr.description` into every stage, no stage-level change is needed. The helper is wired into `run_pipeline.py`, `run_parallel.py`, `run_worktree.py`, and `run_fleet.py` so `--guide` is a universal flag.
 
+**Path resolution:** `run_fleet.py` resolves all `--guide` paths to absolute paths before dispatching children. Guide paths are relative to the fleet launcher's CWD, not the child's. This is critical because children run with `cwd=project_dir` — a relative path like `./migration-spec.md` would fail to resolve in the child's context.
+
 ### 4. Branch-Name Templating
 
 - **Current state:** `src/worca/scripts/run_parallel.py._slugify` derives branch names from the work-request title. A fleet shares one work-request, so all children would slug to the same branch.
@@ -75,7 +81,7 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 
 - **Current state:** `src/worca/orchestrator/stages/*.py` and `src/worca/claude_hooks/pre_tool_use.py` depend on `WORCA_AGENT` / `WORCA_STAGE` / `WORCA_RUN_ID` being set per-stage. Children spawn as `subprocess.Popen`.
 - **Obstacle:** Stale env vars from the parent (e.g., `WORCA_AGENT` from a launcher, or `CLAUDECODE=1` when launched from inside Claude Code) leak in and cause hooks to misclassify the child.
-- **Resolution:** `run_fleet.py` builds a per-child env from `os.environ.copy()` then `env.pop()` on an explicit scrub list: `WORCA_AGENT`, `WORCA_STAGE`, `WORCA_RUN_ID`, `CLAUDECODE`. Children set these themselves as stages fire.
+- **Resolution:** `run_fleet.py` builds a per-child env from `os.environ.copy()` then `env.pop()` on an explicit scrub list: `WORCA_AGENT`, `WORCA_STAGE`, `WORCA_RUN_ID`, `WORCA_PROJECT_ROOT`, `CLAUDECODE`. `WORCA_PROJECT_ROOT` must be scrubbed because the CWD-lock hook in `pre_tool_use.py:35` reads it to prefix all Bash commands with `cd $root &&` — if it inherits the fleet launcher's directory instead of the child's worktree path, every hook invocation in every child will misfire. Children set these vars themselves as stages fire.
 
 ### 6. Plan Stage Modes
 
@@ -83,7 +89,7 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 - **Obstacle:** N projects produce N different strategies (defeating the point of a fleet) and burn N× Planner tokens.
 - **Resolution:** Two flags:
   - `--plan <path>` (explicit): every child receives the same plan; Planner is skipped in every child. **Recommended for fleet work.**
-  - `--plan-first` (derived): the first project runs Planner; once its plan is written, the remaining N−1 children launch with that plan attached. If the reference Planner fails, the fleet halts before fan-out.
+  - `--plan-first [project-name]` (derived): a designated reference project runs Planner first; once its plan is written, the plan file is copied to a fleet-scoped temp directory (`~/.worca/fleet-runs/<fleet_id>/shared-plan.md`) and the remaining N−1 children launch with that plan attached via `--plan`. If no project name is given, the first in the `--projects` list is used. If the reference Planner fails, the fleet halts before fan-out.
   - Neither flag: warn and proceed with independent Planners.
 
 ### 7. Fleet-Level Circuit Breaker
@@ -92,11 +98,13 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 - **Obstacle:** A systematic issue (bad guide, bad plan, missing tool) that fails the first 5 children will still burn through the remaining 15.
 - **Resolution:** Add `fleet_failure_threshold` (default 30%) to fleet config. The `run_fleet.py` main loop tracks completed children; when `failed / completed >= threshold` and `completed >= min(3, total)`, unstarted children are cancelled and the fleet manifest is marked `halted`. In-flight children finish naturally — fleet-halt does not kill running subprocesses, avoiding half-written repo states.
 
+  **Dispatch strategy:** Do not submit all children to `ThreadPoolExecutor` at once — eagerly queued futures cannot be reliably cancelled. Instead, use a manual dispatch loop: maintain a set of in-flight futures (up to `--max-parallel`), check the circuit breaker before submitting each new child, and skip remaining children if the threshold is reached. This ensures the breaker can actually prevent unstarted children from launching.
+
 ### 8. Registry Integration via `pipelines.d/`
 
 - **Current state:** W-082 introduces `.worca/multi/pipelines.d/*.json` as the per-pipeline registry. Each entry tracks `run_id`, `worktree_path`, and status. `discoverRuns` in `watcher.js` fans out across these entries to discover all concurrent runs. The UI's `WatcherSet` watches `pipelines.d/` for changes and broadcasts run updates automatically.
 - **Obstacle:** The registry has no grouping concept — fleet children would appear as unrelated individual runs.
-- **Resolution:** Add an optional `fleet_id` field to `pipelines.d/` entries. `run_worktree.py` accepts `--fleet-id` and passes it through to `register_pipeline()`. Existing callers omit it (defaults to `null`). The UI groups runs by `fleet_id` when present:
+- **Resolution:** Add an optional `fleet_id` keyword-only argument to `register_pipeline()`: `register_pipeline(..., *, fleet_id=None)`. This writes `fleet_id` into the `pipelines.d/` entry JSON. All existing callers continue to work (they don't pass it). `run_worktree.py` accepts `--fleet-id` and passes it through. The UI groups runs by `fleet_id` when present:
   - `discoverRuns` includes `fleet_id` in each run's metadata (read from the registry entry).
   - `runs-list` WS event carries `fleet_id` per run — no new event type needed.
   - Dashboard groups runs sharing a `fleet_id` under a collapsible fleet header with aggregate progress.
@@ -110,7 +118,7 @@ This replaces the originally proposed `registry.py` extension — `pipelines.d/`
 - **Obstacle:** A 50KB guide × ~8 stages × up to `mloops` × fleet size becomes significant cost without visibility.
 - **Resolution:** Three mitigations:
   1. **Hard cap.** `worca.guide.max_bytes` (default 64KB). If combined guide content exceeds the cap, `attach_guide()` raises a clear error before any stage runs.
-  2. **Token estimate.** `run_fleet.py` prints `guide_bytes / 4 × stages × mloops × fleet_size` at launch. User confirms (or passes `--yes`) when the estimate exceeds a visible threshold.
+  2. **Token estimate.** `run_fleet.py` prints `guide_tokens × prompt_stages × fleet_size` at launch, where `guide_tokens ≈ guide_bytes / 4` and `prompt_stages` is the number of stages that inject the description into the prompt (typically 6–8, not multiplied by `mloops` since loop iterations don't re-inject the full guide). The estimate is labeled "guide input token overhead" to distinguish from output costs. User confirms (or passes `--yes`) when the estimate exceeds a visible threshold.
   3. **Sanitized UI payload.** Dashboard surfaces `hasGuide`, `guideBytes`, `guideFilenames` on the fleet header — not guide content. Full content is opt-in via `GET /api/fleet-runs/:id/guide`.
 
 ### 10. Fleet Manifest Storage
@@ -149,7 +157,7 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 
 - **Current state:** `src/worca/agents/core/guardian.md` creates PRs via `gh pr create`. Without guidance, every fleet PR has the same title.
 - **Obstacle:** Hard to distinguish PRs in GitHub's PR list.
-- **Resolution:** When `fleet_id` is present in the pipeline env, `guardian.md` instructs the agent to prepend `[fleet:<fleet_id_short>]` to the PR title and include a footer linking the fleet manifest path. `fleet_id_short` is the last 8 chars of the fleet ID — unique in practice, title-friendly.
+- **Resolution:** When `fleet_id` is present in the pipeline env, `guardian.md` instructs the agent to prepend `[fleet:<fleet_id_short>]` to the PR title and include a footer linking the fleet manifest path. `fleet_id_short` is the random suffix portion of the fleet ID (the hex chars after the last underscore in `f_<yyyymmddhhmm>_<rand>`), generated at fleet creation time and stored in the manifest as a dedicated field for consistent display.
 
 ### 12. Resumability
 
@@ -255,6 +263,7 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 - **Breaking changes:** **None.** `fleet_id` is an optional field in `pipelines.d/` entries. All existing callers continue to work (omit it or pass `None`). `runs-list` WS event gains `fleet_id` per run; older UI clients ignore it.
 - **Migration:** None required for existing pipelines. `worca init --upgrade` already handles the new `worca.guide.*` / `worca.fleet.*` settings additions non-destructively.
 - **Governance:** Fleet children inherit existing governance unchanged (only Guardian may commit, `WORCA_AGENT` enforcement intact, plan-check hook intact). The `fleet_id` env var is informational, not a new governance key.
+- **Disk space.** Each fleet child creates a git worktree — a full working copy of the target repo (git objects are shared via alternates, but the working tree is duplicated). For a fleet of 20 repos averaging 200MB, that's ~4GB of worktree copies. `run_fleet.py` should run a pre-flight disk space estimate (`git count-objects -vH` per repo) and warn if available space is insufficient.
 
 ## Test Plan
 
@@ -270,7 +279,8 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 | Python | `tests/test_branch_naming.py::test_auto_append_project` | Template without placeholders gets `/{project}` appended |
 | Python | `tests/test_branch_naming.py::test_collision_detection` | Duplicate post-substitution names fail fast with colliding pair reported |
 | Python | `tests/test_run_fleet.py::test_dry_run_manifest` | `--dry-run` writes a manifest with expected children, no subprocess spawn |
-| Python | `tests/test_fleet_env_isolation.py::test_scrub_list` | Child subprocess env has none of `WORCA_AGENT` / `WORCA_STAGE` / `WORCA_RUN_ID` / `CLAUDECODE` |
+| Python | `tests/test_fleet_env_isolation.py::test_scrub_list` | Child subprocess env has none of `WORCA_AGENT` / `WORCA_STAGE` / `WORCA_RUN_ID` / `WORCA_PROJECT_ROOT` / `CLAUDECODE` |
+| Python | `tests/test_attach_guide.py::test_path_resolution` | Relative `--guide` paths resolved to absolute before child dispatch |
 | Python | `tests/test_fleet_plan_modes.py::test_plan_explicit` | `--plan <path>` attaches same plan to every child; Planner skipped |
 | Python | `tests/test_fleet_plan_modes.py::test_plan_first` | Reference child's Planner output is reused by N−1 others; failure halts fan-out |
 | Python | `tests/test_fleet_circuit_breaker.py::test_halt_threshold` | ≥30% failures with ≥3 completed → unstarted children cancelled, in-flight survive |
