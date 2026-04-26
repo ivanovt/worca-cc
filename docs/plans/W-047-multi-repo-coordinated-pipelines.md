@@ -319,33 +319,185 @@ Flags:
   5. Run `worca init --upgrade` in each child repo.
   6. Print the workspace definition and prompt the user to edit `depends_on` relationships and add an integration test command.
 
-### 10. UI Integration
+### 10. UI Surface
 
-- **Current state:** W-040 adds fleet grouping to the dashboard — collapsible headers, aggregate progress. `discoverRuns` fans out across `pipelines.d/`.
-- **Resolution:** Workspace runs appear in the UI as an enhanced fleet group:
+W-047 introduces five UX surfaces that build on W-040's fleet UI: a **workspace creation flow** (parent-dir picker + DAG editor), a **workspace launcher** (extension of fleet launcher), a **dashboard tier rendering** that augments fleet grouping, a **workspace detail view** (DAG visualization + plan editor + integration log + PR table), and **conflict surfacing** in run cards. Each is grounded in W-040's existing fleet UI patterns and the project's badge color language.
 
-  **Dashboard:**
-  - Workspace header shows: workspace name, status, current tier, overall progress.
-  - Below the header, children are grouped by tier with tier labels. Within each tier, children render as standard run cards.
-  - Tier status indicators: completed (green), running (blue), blocked (gray), failed (red).
-  - Integration test status badge after the last tier.
+#### 10.1 Sidebar Navigation
 
-  **Workspace detail view** (new):
-  - DAG visualization: repos as nodes, `depends_on` as edges, colored by status.
-  - Workspace plan viewer (markdown).
-  - Per-repo context artifacts (the diff summaries injected between tiers).
-  - Integration test log viewer.
-  - PR link table with merge-order annotations.
+- **Extend W-040's sidebar entry:** Replace the bare "Fleet Runs" entry with a parent "Multi-Repo" group containing two children: "Fleets" and "Workspaces". Each is hidden when its respective list is empty (matching W-040's pattern), so single-fleet or single-workspace users see a clean nav.
+- **Active-state styling** matches existing patterns. The "Multi-Repo" group expands automatically when a child is active.
 
-  **API:**
-  - `GET /api/workspace-runs` — list workspace runs by scanning pointer files in `~/.worca/workspace-runs/*.json`, following each pointer to `{workspace_root}/.worca/workspace-runs/{id}/workspace-manifest.json` for the full manifest.
-  - `GET /api/workspace-runs/:id` — workspace manifest + enriched child status from `pipelines.d/`.
-  - `POST /api/workspace-runs` — launch from UI.
-  - `DELETE /api/workspace-runs/:id` — halt.
-  - `GET /api/workspace-runs/:id/plan` — workspace plan markdown.
-  - `GET /api/workspace-runs/:id/integration-log` — integration test output.
+#### 10.2 Workspace Creation Flow
 
-  **WS:** Workspace manifest changes emit `fleet-update` events (reuses W-040's mechanism). The client distinguishes workspace vs fleet by the presence of `workspace_id` in the payload.
+- **New file:** `worca-ui/app/views/workspace-create.js`. Routed via `#/workspaces/new`.
+- **Why a UI flow:** The CLI `worca workspace init <path>` works for power users, but defining a DAG in JSON by hand is friction. The UI provides discoverability for the workspace concept itself.
+- **Step 1 — Parent directory picker.** A `<sl-input>` for the absolute path with an "Auto-detect from registered projects" helper that suggests common parents from `~/.worca/projects.d/` entries (e.g., if all registered projects share `/code/platform/`, suggest that as the parent). The user can also type/paste any path. Below the input, a `<sl-button>` "Scan" triggers `POST /api/workspaces/scan` which runs the equivalent of `find <path> -maxdepth 2 -name .git` and returns discovered repos.
+- **Step 2 — Repo selection.** Discovered repos render as a checklist (`<sl-checkbox>` per repo). Each row shows repo name, path, and detected role hint (parsed from the repo's `CLAUDE.md` if present, e.g., "Architecture: backend service" → role suggestion `service`). User toggles which repos belong to the workspace.
+- **Step 3 — Dependency editor.** A simple two-column visual:
+  - **Left column:** list of selected repos.
+  - **Right column for each repo:** a `<sl-select multiple>` where the user picks which other repos this one depends on. Selecting `frontend → depends_on: [backend]` is one click.
+  - Below the visual, a **live DAG preview** (rendered with the same component as the detail view's DAG, see §10.5) updates as the user edits dependencies. Cycles are detected client-side (Tarjan's SCC) and shown as a red banner with the cycle path; submit is disabled until resolved.
+- **Step 4 — Integration test.** Optional `<sl-input>` for the test command and `<sl-input>` for the working directory (defaults to `.`). A `<sl-checkbox>` "Skip integration test" disables both.
+- **Step 5 — Umbrella repo (optional).** `<sl-input>` for `org/repo-name` for the umbrella issue.
+- **Submit** → `POST /api/workspaces` writes `workspace.json` to the parent dir + creates `{workspace_root}/.worca/`. Then offers a "Run worca init in each repo" action that invokes the per-repo `worca init --upgrade` (mirroring `run_workspace.py`'s setup phase).
+- **Workspace registration:** A pointer file at `~/.worca/workspaces.d/<workspace_name>.json` (mirroring `projects.d/`) so the UI can list workspaces in the sidebar without scanning the disk.
+
+#### 10.3 Workspace Launcher (Extension of Fleet Launcher)
+
+- **Reuses:** `worca-ui/app/views/fleet-launcher.js` from W-040 with a top-level mode toggle: "Fleet (same prompt to N repos)" vs "Workspace (one feature, coordinated across repos)".
+- **Workspace mode changes:**
+  - **Project multi-select** is replaced with a workspace `<sl-select>` populated from `GET /api/workspaces`. Selecting a workspace pins the project list to that workspace's repos (read-only).
+  - **Branch template default** changes to `workspace/{slug}/{repo}` instead of fleet's per-project default.
+  - **Plan mode toggle** becomes a 4-option radio group: "Master planner (default)", "Skip planning, use per-repo plans" (advanced), "Use existing workspace plan" (file picker for a previously-generated plan), "Independent plans".
+  - **New section — Pre-launch DAG preview.** Shows the workspace's tier structure with repo names and dependency arrows. User confirms tier layout before launch.
+  - **Token-overhead gate** also surfaces master planner cost (one Opus call) plus context-injection budget per dependency edge (capped at 8KB × edge count) in addition to the guide overhead.
+- **Submit** → `POST /api/workspace-runs` returns `{ workspace_id }`, navigate to detail view.
+
+#### 10.4 Dashboard Tier Rendering
+
+- **Extends:** W-040's fleet group renderer in `dashboard.js` and `multi-dashboard.js`.
+- **Trigger:** When a fleet group has `group_type === "workspace"` (read from `runs-list` payload, populated by W-048 from the `pipelines.d/` entry), render with tier sub-grouping.
+- **Layout:** The fleet header row is unchanged. Below it, children are grouped by `tier` field from the workspace manifest:
+  ```
+  [Workspace header — running · tier 2 of 3 · 4/5 children completed]
+    Tier 0
+      [shared-lib]  ✓ completed
+    Tier 1
+      [backend]     ✓ completed
+    Tier 2
+      [frontend]    ▶ running
+      [admin-app]   ⏸ blocked (depends on backend, which failed)
+    Integration test  ⏸ pending
+  ```
+- **Tier label** styled via a small `<span class="tier-label">` with subtle background. Tier number derived from manifest.
+- **Integration test row** appears as a final pseudo-tier when `integration_test` is configured. Shows status badge (`pending`/`passed`/`failed`/`skipped`).
+- **Blocked children** show a tooltip explaining which dependency failure blocked them (from the manifest's `dag.tiers[].repos` cross-reference).
+
+#### 10.5 Workspace Detail View
+
+- **New file:** `worca-ui/app/views/workspace-detail.js`. Routed via `#/workspaces/runs/:workspace_id`.
+- **Layout (top-down):**
+  1. **Header strip** — workspace name + status badge + tier progress + breadcrumb back to dashboard.
+  2. **DAG visualization panel** (see §10.6 below).
+  3. **Workspace plan panel** (`<sl-card>`) — markdown-rendered `workspace-plan.md`. Has an "Edit plan" `<sl-button>` (visible only when status is `halted` / `failed` / `integration_failed`). Clicking opens a `<sl-dialog>` with a Monaco-style textarea editor for `workspace-plan.json`. On save, writes back to the workspace run dir and offers a "Resume with edited plan" action that calls `POST /api/workspace-runs/:id/resume`.
+  4. **Per-repo context artifacts panel** (`<sl-tab-group>`) — one tab per dependency edge, rendering the markdown-formatted diff summary that was injected into the next tier. Helps the user understand what the master planner thought was important to surface across tiers.
+  5. **Integration test panel** (only when configured) — log viewer (reuses `live-output.js` component) + status badge + "Re-run integration test" button (visible when status is `integration_failed` or `completed`). Calls `POST /api/workspace-runs/:id/re-run-integration`.
+  6. **PR table** — one row per repo: PR number, PR URL, status (open/merged), dependency annotations from W-047 §6 (shown as `<sl-tag>` chips: "Depends on org/lib#15", "Blocks org/frontend#43"). Includes a "View umbrella issue" link when present.
+  7. **Actions row** — Halt / Resume / Cleanup buttons, same semantics as the fleet detail view but routed to workspace endpoints.
+
+#### 10.6 DAG Visualization
+
+- **Library choice:** Hand-rolled SVG using a tier-column layout. **No external graph library** — d3/cytoscape add ~100KB+ to the bundle and the worca DAG is small (typically 2-5 tiers, 3-15 repos). A bespoke SVG renderer is ~150 lines and matches the project's lean dependency posture.
+- **Layout algorithm:**
+  - Columns = tiers (computed from `dag.tiers` in the workspace manifest).
+  - Rows within a column = repos in that tier (vertical-center aligned).
+  - Edges = `depends_on` relationships, drawn as Bezier curves from the right edge of the source node to the left edge of the destination node.
+- **Node styling:** A `<rect>` with rounded corners, fill color = status mapping (see §10.7), stroke = darker variant. Repo name centered. Click → routes to that child's run detail view.
+- **Edge styling:** Stroke color = status of the source node (green if completed, blue if running, etc.) — visually shows where work is propagating.
+- **Interactivity:** Hover on a node highlights its incoming and outgoing edges. Click on an edge opens the context artifact for that dependency.
+- **Re-use in workspace-create flow:** The same SVG renderer is used in §10.2's live preview during dependency editing — reduces code duplication.
+- **File:** `worca-ui/app/views/dag-graph.js` (new shared component).
+
+#### 10.7 Status Badge Color Mapping
+
+Extends W-040's badge mapping for workspace-specific states. All map to existing variants — no new CSS variables needed.
+
+| Workspace status | Variant | Rationale |
+|------------------|---------|-----------|
+| `planning` | `primary` (blue) | Master planner active — equivalent to "running" semantically |
+| `running` | `primary` (blue) | Tier execution active |
+| `integration_testing` | `primary` (blue) | All children done, integration phase running |
+| `completed` | `success` (green) | All children + integration passed; PRs created |
+| `failed` | `danger` (red) | Tier failure unrecoverable |
+| `integration_failed` | `danger` (red) | Children done but integration test failed → no PRs |
+
+Per-tier status (in dashboard tier rendering and DAG nodes):
+
+| Tier status | Variant | Rationale |
+|-------------|---------|-----------|
+| `completed` | `success` | All repos in tier succeeded |
+| `running` | `primary` | One or more repos active |
+| `blocked` | `warning` | All repos blocked on a previous tier failure |
+| `failed` | `danger` | Tier had a fatal failure |
+| `pending` | `neutral` | Not yet reached |
+
+Per-child status adds one new value beyond W-040:
+
+| Child status | Variant | Rationale |
+|--------------|---------|-----------|
+| `blocked` | `warning` (orange) | Waiting on a failed dependency in an earlier tier — caution, may be skipped or resumed. |
+
+#### 10.8 Conflict Surfacing (Plan-vs-Guide Divergence)
+
+- **Why:** W-040 §3's authority precedence (guide > plan > description) tells agents to surface plan-vs-guide conflicts. Without UI surfacing, users won't see them.
+- **Where the conflict signal lives:** Agents emit a structured event when they flag a conflict (existing dispatch event mechanism in `events/types.py`). W-047 adds `events.GUIDE_CONFLICT` event type with payload `{ run_id, stage, message, source: "plan|description" }`.
+- **Run card surfacing:** In `worca-ui/app/views/run-card.js`, when a run has any `GUIDE_CONFLICT` events, show a `<sl-icon name="exclamation-triangle" style="color: var(--status-paused);">` next to the run title. Tooltip: "Guide conflicts flagged ({count}). View details."
+- **Run detail surfacing:** In `worca-ui/app/views/run-detail.js`, add a "Guide Conflicts" panel (collapsible, default-open when conflicts exist) listing each event with stage + message + source. Each row has a "View source" button that scrolls to the relevant stage tab.
+- **Workspace detail surfacing:** Aggregated count in the workspace detail view header — "3 guide conflicts across children". Click expands a list grouped by repo.
+
+#### 10.9 WebSocket Events
+
+- **Reuse W-040's `fleet-update` event** — workspace manifest changes emit it too. Client distinguishes workspace from fleet by `workspace_id` field presence.
+- **New event type:** `workspace-tier-update` — emitted when tier status changes (e.g., tier 0 → completed). Payload: `{ workspace_id, tier, status, repos: [...] }`. Used by the dashboard tier renderer to update without a full re-fetch.
+- **New event type:** `guide-conflict` — emitted when an agent flags a divergence. Payload: `{ run_id, workspace_id, fleet_id, stage, message }`. Drives the run-card warning icon in §10.8.
+- **Protocol allowlist:** Add `'workspace-tier-update'` and `'guide-conflict'` to `worca-ui/app/protocol.js`.
+
+#### 10.10 REST Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/workspaces/scan` | Body: `{ parent_path }`. Returns discovered repos with role hints. |
+| `POST` | `/api/workspaces` | Create workspace.json. Body: full workspace definition. |
+| `GET` | `/api/workspaces` | List workspaces from `~/.worca/workspaces.d/`. |
+| `GET` | `/api/workspaces/:name` | Workspace.json + per-repo metadata. |
+| `POST` | `/api/workspace-runs` | Launch. Body: `{ workspace_name, prompt|source, guide_files, plan_mode, ... }`. Returns `{ workspace_id }`. |
+| `GET` | `/api/workspace-runs` | List workspace runs from `~/.worca/workspace-runs/*.json` pointer files. |
+| `GET` | `/api/workspace-runs/:id` | Full manifest + enriched child status + DAG state. |
+| `DELETE` | `/api/workspace-runs/:id` | Halt unstarted children. |
+| `POST` | `/api/workspace-runs/:id/resume` | Resume failed/blocked children. Reuses cached plan. |
+| `POST` | `/api/workspace-runs/:id/re-run-integration` | Re-run integration test only. |
+| `GET` | `/api/workspace-runs/:id/plan` | Workspace plan markdown + JSON. |
+| `PUT` | `/api/workspace-runs/:id/plan` | Save edited workspace-plan.json (only when status is halted/failed). |
+| `GET` | `/api/workspace-runs/:id/integration-log` | Integration test output (text/plain). |
+| `GET` | `/api/workspace-runs/:id/context/:repo` | Context artifact for a dependency edge (markdown). |
+
+#### 10.11 UI Test Coverage
+
+| File | Coverage |
+|------|----------|
+| `worca-ui/app/views/workspace-create.test.js` (new) | Scan returns repos; checklist toggles; dependency editor updates DAG preview; cycle detection disables submit; integration test fields; submit POSTs correct payload. |
+| `worca-ui/app/views/workspace-detail.test.js` (new) | Renders DAG, plan panel, context artifacts, integration log, PR table; edit-plan dialog visible only when halted/failed; re-run integration button visible when integration_failed. |
+| `worca-ui/app/views/dag-graph.test.js` (new) | Layout: 3-tier linear chain renders correctly; diamond renders correctly; cycles render with red highlight; node click emits route event; edge hover highlights connected nodes. |
+| `worca-ui/app/views/dashboard.test.js` (extend) | Workspace tier sub-grouping renders for `group_type === "workspace"` runs; tier labels and integration test row present. |
+| `worca-ui/app/views/fleet-launcher.test.js` (extend) | Workspace mode toggle reveals workspace select + DAG preview + 4-option plan toggle. |
+| `worca-ui/app/views/run-card.test.js` (extend) | Guide-conflict warning icon renders when `GUIDE_CONFLICT` events present; hidden otherwise. |
+| `worca-ui/app/views/run-detail.test.js` (extend) | Guide Conflicts panel renders with grouped events; "View source" scrolls to stage tab. |
+| `worca-ui/server/workspace-routes.test.js` (new) | All endpoints from §10.10 — contract + error paths (404, 409 on edit-plan when running, 422 on cycle in submitted DAG). |
+| `worca-ui/app/views/sidebar.test.js` (extend) | "Multi-Repo > Workspaces" entry hidden when zero workspaces; "Multi-Repo" group expands when child active. |
+| `worca-ui/app/views/sidebar-status-badges.test.js` (extend) | New `planning`, `integration_testing`, `integration_failed`, `blocked` badge cases. |
+| `worca-ui/test/ws-integration.test.js` (extend) | `workspace-tier-update` and `guide-conflict` event subscription and rendering. |
+| `worca-ui/e2e/workspaces.spec.js` (new, Playwright `--workers=1`) | End-to-end: create workspace from UI, launch run, observe tier progression, halt mid-tier, edit plan, resume, see PR table. |
+
+#### 10.12 Files Added/Touched for §10
+
+| File | Change |
+|------|--------|
+| `worca-ui/app/views/sidebar.js` | "Multi-Repo > Workspaces" nav entry (extends W-040's nav) |
+| `worca-ui/app/views/dashboard.js` | Workspace tier sub-grouping inside fleet groups |
+| `worca-ui/app/views/multi-dashboard.js` | Workspace tier sub-grouping for global view |
+| `worca-ui/app/views/workspace-create.js` | **New** — workspace creation flow (§10.2) |
+| `worca-ui/app/views/workspace-detail.js` | **New** — DAG, plan, integration log, PR table (§10.5) |
+| `worca-ui/app/views/dag-graph.js` | **New** — shared SVG DAG renderer (§10.6) |
+| `worca-ui/app/views/fleet-launcher.js` | Extend with workspace mode toggle (§10.3) |
+| `worca-ui/app/views/run-card.js` | Guide-conflict warning icon (§10.8) |
+| `worca-ui/app/views/run-detail.js` | Guide Conflicts panel (§10.8) |
+| `worca-ui/app/protocol.js` | Add `'workspace-tier-update'`, `'guide-conflict'` to allowlist |
+| `worca-ui/server/workspace-routes.js` | **New** — REST endpoints from §10.10 |
+| `worca-ui/server/ws-modular.js` | Workspace manifest watcher; `workspace-tier-update` and `guide-conflict` emitters |
+| `worca-ui/app/styles.css` | Tier styling, DAG styling, conflict-icon color |
+| `src/worca/events/types.py` | Add `GUIDE_CONFLICT` event type |
+| Tests above | **New / extended** |
 
 ## Implementation Plan
 
@@ -412,16 +564,21 @@ Flags:
 5. If integration test failed: `--resume` re-runs only the integration test (children are already complete).
 6. `worca cleanup --workspace-id <workspace_id>` (extends W-048's pluggable cleanup-source model — see W-048 §12) removes all child worktrees, the workspace run directory under `{workspace_root}/.worca/workspace-runs/{run_id}/`, the integration-env worktrees under `{workspace_root}/.worca/integration-env/`, and the `pipelines.d/` entries for the workspace's children. Add `WorkspaceSource` to `CLEANUP_SOURCES` in `src/worca/cli/cleanup.py` rather than introducing a separate `worca workspace cleanup` subcommand — keeps a single user entry point for all cleanup.
 
-### Phase 7: UI integration
+### Phase 7: UI integration (see §10 for full surface)
 
-**Files:** `worca-ui/server/workspace-routes.js` (new), `worca-ui/app/views/workspace-detail.js` (new), `worca-ui/app/views/dashboard.js`, `worca-ui/server/ws-modular.js`
+**Files:** `worca-ui/server/workspace-routes.js` (new), `worca-ui/app/views/workspace-create.js` (new), `worca-ui/app/views/workspace-detail.js` (new), `worca-ui/app/views/dag-graph.js` (new), `worca-ui/app/views/dashboard.js`, `worca-ui/app/views/multi-dashboard.js`, `worca-ui/app/views/sidebar.js`, `worca-ui/app/views/fleet-launcher.js`, `worca-ui/app/views/run-card.js`, `worca-ui/app/views/run-detail.js`, `worca-ui/app/protocol.js`, `worca-ui/server/ws-modular.js`, `worca-ui/app/styles.css`, `src/worca/events/types.py`
 
 **Tasks:**
-1. Add workspace REST endpoints in `workspace-routes.js`.
-2. Extend dashboard fleet grouping to show tier structure for workspace runs.
-3. Build workspace detail view — DAG visualization, plan viewer, context artifacts, integration log, PR table.
-4. Add workspace manifest watcher in `ws-modular.js` (reuses fleet-update event).
-5. Add "Start workspace run" launcher variant to `fleet-launcher.js`.
+1. Implement REST endpoints from §10.10 in `workspace-routes.js` — scan, CRUD, run lifecycle, plan edit, integration re-run, context artifact fetch.
+2. Build the shared `dag-graph.js` SVG renderer per §10.6 (reused by both `workspace-create.js` and `workspace-detail.js`).
+3. Build `workspace-create.js` per §10.2 — parent picker, repo checklist, dependency editor with live DAG preview + cycle detection.
+4. Build `workspace-detail.js` per §10.5 — DAG, plan editor, context artifacts tabs, integration log, PR table, halt/resume/cleanup actions.
+5. Extend `fleet-launcher.js` per §10.3 — workspace mode toggle, workspace select, 4-option plan radio, pre-launch DAG preview.
+6. Extend `dashboard.js` and `multi-dashboard.js` per §10.4 — tier sub-grouping when `group_type === "workspace"`, tier labels, integration test pseudo-tier row, blocked-child tooltips.
+7. Extend `sidebar.js` per §10.1 — "Multi-Repo > Workspaces" nested nav entry.
+8. Add guide-conflict surfacing per §10.8 — `GUIDE_CONFLICT` event type in `events/types.py`, warning icon in `run-card.js`, Guide Conflicts panel in `run-detail.js`.
+9. Add `workspace-tier-update` and `guide-conflict` to `protocol.js` allowlist; emit from `ws-modular.js` workspace manifest watcher.
+10. Wire badge color mappings for `planning`, `integration_testing`, `integration_failed`, `blocked` per §10.7.
 
 ### Phase 8: Dogfooding and release
 
@@ -448,11 +605,20 @@ Flags:
 | `src/worca/agents/core/guardian.md` | Workspace-aware PR description when `WORCA_WORKSPACE_ID` set; defer PR creation when `WORCA_DEFER_PR=1` |
 | `src/worca/state/status.py` | Extend with canonical `PipelineStatus`, `FleetStatus`, `WorkspaceStatus` enums and helpers (extends the existing module, no new file) |
 | `.claude/worca/settings.json` | Add `worca.workspace.*` defaults |
-| `worca-ui/server/workspace-routes.js` | **New** — workspace REST endpoints |
-| `worca-ui/server/ws-modular.js` | Workspace manifest watcher |
-| `worca-ui/app/views/workspace-detail.js` | **New** — DAG view, plan viewer, integration log, PR table |
-| `worca-ui/app/views/dashboard.js` | Workspace tier grouping in fleet section |
-| `worca-ui/app/views/fleet-launcher.js` | Workspace launcher variant |
+| `worca-ui/server/workspace-routes.js` | **New** — workspace REST endpoints (§10.10) |
+| `worca-ui/server/ws-modular.js` | Workspace manifest watcher; emits `workspace-tier-update` and `guide-conflict` |
+| `worca-ui/app/views/workspace-create.js` | **New** — workspace creation flow with live DAG (§10.2) |
+| `worca-ui/app/views/workspace-detail.js` | **New** — DAG, plan editor, integration log, PR table (§10.5) |
+| `worca-ui/app/views/dag-graph.js` | **New** — shared SVG DAG renderer (§10.6) |
+| `worca-ui/app/views/dashboard.js` | Workspace tier sub-grouping inside fleet groups (§10.4) |
+| `worca-ui/app/views/multi-dashboard.js` | Workspace tier sub-grouping in global view |
+| `worca-ui/app/views/sidebar.js` | "Multi-Repo > Workspaces" nested nav entry (§10.1) |
+| `worca-ui/app/views/fleet-launcher.js` | Workspace mode toggle + DAG preview (§10.3) |
+| `worca-ui/app/views/run-card.js` | Guide-conflict warning icon (§10.8) |
+| `worca-ui/app/views/run-detail.js` | Guide Conflicts panel (§10.8) |
+| `worca-ui/app/protocol.js` | Add `'workspace-tier-update'`, `'guide-conflict'` to allowlist |
+| `src/worca/events/types.py` | Add `GUIDE_CONFLICT` event type |
+| `worca-ui/app/styles.css` | Tier styling, DAG styling, conflict-icon color |
 | `CLAUDE.md` | Workspace Runs section |
 | `MIGRATION.md` | Release note |
 | `docs/workspace-runs.md` | **New** — user-facing walkthrough |

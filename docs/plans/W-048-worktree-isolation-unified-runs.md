@@ -323,6 +323,71 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
   W-048 ships `WorktreeSource` only; the source-list pattern keeps the CLI surface stable as W-040/W-047 add their own sources without rewriting the command.
 
+### 13. UI Surface
+
+W-048 changes how runs are isolated and discovered. Most of that is invisible plumbing — but four user-facing UX questions surface from it: *how do I see that a run is in a worktree*, *why doesn't my working tree get dirty anymore*, *how do I set the PR base branch from the UI*, and *how do I clean up old worktrees without dropping to the CLI*. This section answers each.
+
+#### 13.1 Worktree Run Indicator
+
+- **Where it appears:** Run cards in `worca-ui/app/views/run-list.js` and `worca-ui/app/views/run-card.js`. Also in the `multi-dashboard.js` global runs list.
+- **Design:** A small inline icon — `<sl-icon name="folder-symlink">` — placed next to the run title when `is_worktree_run === true`. On hover (native `title` attribute), shows: "Isolated worktree at `<worktree_path>`". No badge, no extra row — keep the existing run-card density.
+- **Why an icon, not a badge:** Worktree-vs-root is a structural property, not a status. The badge color language (`docs/badge-color-language.md`) reserves badges for status semantics (active / done / caution / failed). Adding a sixth axis of meaning to badges would dilute the language.
+- **Detail view:** `app/views/run-detail.js` adds a row in the run metadata block: `Worktree: <path>` (only shown when `is_worktree_run`). Path is selectable text + a copy button (`<sl-copy-button>`).
+
+#### 13.2 "Start Run" Dialog — Worktree Awareness
+
+- **Current state:** The existing "Start run" dialog in `worca-ui/app/views/dashboard.js` (likely also reused in `multi-dashboard.js`) collects prompt + source + template options and calls `POST /api/runs` which now spawns `run_worktree.py` instead of `run_pipeline.py`.
+- **Change:** Add a one-line info banner inside the dialog explaining the new behavior:
+  > Runs now execute in an isolated git worktree. Your current working tree won't be modified. Use `worca cleanup` to remove old worktrees later.
+  Render via `<sl-alert variant="primary" open>`. The banner is dismissable per-user via `localStorage.setItem('worca.worktree-banner-dismissed', '1')` so power users see it once.
+- **New input — PR base branch:** Add a `<sl-input>` field labeled "PR base branch (optional)" with placeholder "main" and helper text "Branch the worktree forks from and the PR will target. Defaults to repo's default branch." The value submits as `branch` in the POST body, which `run_worktree.py` consumes via `--branch`.
+- **Validation:** Client-side regex `^[a-zA-Z0-9._/-]+$`; server-side check that the branch exists in `git branch --list` before launching (the existing process-manager dispatch should reject early with a clear error toast rather than letting the worktree creation fail in the spawned subprocess).
+
+#### 13.3 Worktree Manager View
+
+- **Why:** `worca cleanup` is CLI-only; UI users will accumulate worktrees indefinitely without ever knowing.
+- **New view file:** `worca-ui/app/views/worktrees.js`. Accessible via a sidebar entry "Worktrees" (only shown when `pipelines.d/` has at least one entry, otherwise hidden — avoids cluttering the nav for users who never use isolation).
+- **Layout:** Reuses the standard `dashboard.js` table pattern: rows = worktree entries from `GET /api/worktrees`, columns = [Run title, Status badge, Branch, Worktree path, Disk usage, Age, Actions].
+- **Status badge column** uses the existing pipeline status badge mapping (no new colors).
+- **Actions column:**
+  - "Open" (`<sl-button size="small">`) → opens the existing run detail view for that worktree's run.
+  - "Remove" (`<sl-button size="small" variant="danger" outline>`) → confirmation modal `<sl-dialog>` then calls `DELETE /api/worktrees/:run_id` which invokes the same `WorktreeSource.remove(entry)` helper used by `worca cleanup`. Disabled with tooltip "Cannot remove a running worktree" when the run is still active.
+- **Bulk actions:** Above the table, a `<sl-button>` "Remove all completed" (warns in a confirm dialog with the count and total disk to be freed) and a `<sl-input type="text">` filter (matches branch / title substring).
+- **Disk surface:** Header strip shows "Total worktree disk: 2.3 GB across 14 worktrees · 1.8 GB cleanable". Cleanable = sum of disk usage of completed/failed worktrees.
+- **REST endpoints (new in `worca-ui/server/worktrees-routes.js`):**
+  - `GET /api/worktrees` — returns `[{run_id, title, branch, worktree_path, disk_bytes, age_seconds, status, removable}]` by reading `pipelines.d/` and shelling out to `du -sb <path>` per entry (cached for 30s to avoid disk hammering).
+  - `DELETE /api/worktrees/:run_id` — wraps `WorktreeSource.remove`. Returns 409 if running.
+- **Empty state:** When `pipelines.d/` is empty, the view shows a centered illustration + caption "No worktrees yet. Start a run to create one." This is the only empty state W-048 introduces.
+
+#### 13.4 Status Vocabulary — No New Badge Colors
+
+W-048 introduces no new pipeline-level status values. The existing badge mapping (`success` / `primary` / `warning` / `danger` / `neutral`) covers everything. This is intentional: W-048 is plumbing, not new lifecycle states. New states (`halted`, `planning`, `integration_testing`, etc.) ship in W-040 / W-047.
+
+#### 13.5 UI Test Coverage
+
+| File | Coverage |
+|------|----------|
+| `worca-ui/app/views/run-card.test.js` (existing) | Add test: worktree indicator icon renders when `is_worktree_run === true`; hidden otherwise. |
+| `worca-ui/app/views/run-detail.test.js` (existing or new) | Add test: "Worktree" metadata row appears with path + copy button when worktree run. |
+| `worca-ui/app/views/dashboard.test.js` (existing) | Add test: "Start run" dialog includes PR base branch input; submits `branch` field in POST body; banner is dismissable and stays dismissed via localStorage. |
+| `worca-ui/app/views/worktrees.test.js` (new) | Render rows from `GET /api/worktrees`; remove button disabled when running; bulk remove confirmation; filter input narrows rows. |
+| `worca-ui/server/worktrees-routes.test.js` (new) | `GET` returns enriched entries; `DELETE` returns 409 for running run; calls `WorktreeSource.remove` for completed run. |
+| `worca-ui/app/views/sidebar.test.js` (existing) | Add test: "Worktrees" nav entry hidden when `pipelines.d/` empty, shown when non-empty. |
+| `worca-ui/app/views/multi-dashboard.test.js` (existing) | Verify worktree indicator icon renders in the global runs list. |
+
+#### 13.6 Files Added/Touched for §13
+
+| File | Change |
+|------|--------|
+| `worca-ui/app/views/worktrees.js` | **New** — worktree manager view |
+| `worca-ui/app/views/run-card.js` | Add worktree indicator icon |
+| `worca-ui/app/views/run-detail.js` | Add worktree metadata row |
+| `worca-ui/app/views/dashboard.js` | Start-run dialog: banner + PR base branch input |
+| `worca-ui/app/views/sidebar.js` | Conditional "Worktrees" nav entry |
+| `worca-ui/server/worktrees-routes.js` | **New** — REST endpoints for worktree management |
+| `worca-ui/app/styles.css` | New CSS for the worktrees view (table density, disk-usage strip) |
+| Tests above | **New / extended** |
+
 ## Implementation Plan
 
 ### Phase 1: Remove `active_run` — Python side
@@ -412,6 +477,19 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 1. Implement `worca cleanup` with `--all`, `--run-id`, `--dry-run`, `--older-than` flags.
 2. Wire into CLI entry point.
 3. Scan `pipelines.d/`, cross-reference status, call `remove_pipeline_worktree` + `deregister_pipeline`.
+
+### Phase 7.5: UI Surface (§13)
+
+**Files:** `worca-ui/app/views/worktrees.js` (new), `worca-ui/app/views/run-card.js`, `worca-ui/app/views/run-detail.js`, `worca-ui/app/views/dashboard.js`, `worca-ui/app/views/sidebar.js`, `worca-ui/server/worktrees-routes.js` (new), `worca-ui/app/styles.css`
+
+**Tasks:**
+1. Add `<sl-icon name="folder-symlink">` worktree indicator to `run-card.js` and `multi-dashboard.js` rendering paths; gated on `is_worktree_run`.
+2. Add "Worktree" metadata row in `run-detail.js` with path + `<sl-copy-button>`.
+3. Extend "Start run" dialog in `dashboard.js`: dismissable `<sl-alert>` banner + PR base branch `<sl-input>`. Submit `branch` field in POST body.
+4. Build `worktrees.js` view: table from `GET /api/worktrees`, filter input, bulk-remove button, disk-usage strip.
+5. Build `worktrees-routes.js`: `GET /api/worktrees` (with 30s `du -sb` cache), `DELETE /api/worktrees/:run_id` (409 when running).
+6. Conditional "Worktrees" entry in `sidebar.js` (visible only when `pipelines.d/` non-empty).
+7. Add tests listed in §13.5.
 
 ### Phase 8: Update tests
 

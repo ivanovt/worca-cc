@@ -170,13 +170,144 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 - **Obstacle:** Re-running the same command creates a new `fleet_id` and duplicate branches.
 - **Resolution:** `run_fleet.py --resume <fleet_id>` reads the manifest, resolves each child's current status from `pipelines.d/` and `status.json`, identifies children that are `pending`, `setup_failed`, or `failed`, and re-launches only those via `run_worktree.py`. Children that are `completed` or `running` are left alone.
 
-### 13. UI Integration
+### 13. UI Surface
 
-- **Current state:** W-048's unified `discoverRuns` fans out across `pipelines.d/` and makes all concurrent runs (including worktree runs) visible in the dashboard. `WatcherSet` watches `pipelines.d/` for changes. The `runs-list` WS event includes all discovered runs.
-- **Resolution:**
-  - **Server:** Fleet-specific REST endpoints for manifest CRUD and the launcher: `POST /api/fleet-runs` (launch), `GET /api/fleet-runs`, `GET /api/fleet-runs/:id`, `DELETE /api/fleet-runs/:id` (halts unstarted children, in-flight finish naturally), `GET /api/fleet-runs/:id/guide` (opt-in content). Per-child run status is **not** served via fleet endpoints — the existing `discoverRuns` and `runs-list` WS event handle it, with `fleet_id` as a grouping key.
-  - **Client:** Fleet-grouping renderer in the dashboard: header row per `fleet_id` (from `runs-list` data), aggregate progress bar, expand/collapse. "Start fleet run" launcher: registered-project multi-select, prompt/source input, guide upload, branch template, plan-mode toggle.
-  - **WS:** No new event types. `runs-list` event already carries all runs; the client groups by `fleet_id` field. Fleet manifest changes (status, circuit breaker halt) are pushed via a new `fleet-update` event from `run_fleet.py` writing to the manifest, watched by the server.
+W-040 introduces three first-class UX surfaces: a **fleet-aware dashboard** that groups runs by `fleet_id`, a **fleet detail view** that surfaces manifest + guide + token estimate + circuit-breaker state, and a **fleet launcher** that gates expensive launches behind a confirmation. Each is grounded in existing UI patterns (Shoelace components, the project's badge color language, and the `worca-ui/app/views/` view convention).
+
+#### 13.1 Sidebar Navigation
+
+- **New top-level entry:** "Fleet Runs" in `worca-ui/app/views/sidebar.js`, between "Runs" and "Settings". Hidden when no fleets exist (`GET /api/fleet-runs` returns `[]`); revealed automatically when the first fleet is created. Avoids navigation clutter for users who never use fleets.
+- **Active-state styling** matches existing sidebar entries (Shoelace's selected variant + accent border).
+- **No "Workspaces" entry yet** — that ships in W-047.
+
+#### 13.2 Dashboard Fleet Grouping
+
+- **File:** `worca-ui/app/views/dashboard.js` (extended) and `multi-dashboard.js` (extended for global view).
+- **Rendering rule:** When iterating `runs-list`, group entries by `fleet_id` (presence is the trigger). Standalone runs (`fleet_id == null`) render as today.
+- **Fleet group element structure:**
+  ```html
+  <div class="fleet-group" data-fleet-id="...">
+    <div class="fleet-header">
+      <sl-icon-button name="chevron-down" class="fleet-toggle"></sl-icon-button>
+      <strong class="fleet-title">{work_request.title}</strong>
+      <sl-badge variant="..." pill>{fleet_status}</sl-badge>
+      <span class="fleet-progress">3/5 completed · 1 failed</span>
+      <sl-progress-bar value="60" class="fleet-progress-bar"></sl-progress-bar>
+      <sl-button size="small" class="fleet-detail-btn">Details</sl-button>
+    </div>
+    <div class="fleet-children">{child run cards rendered here}</div>
+  </div>
+  ```
+- **Expand/collapse state** persists per-fleet in `localStorage` keyed by `fleet_id`. Default: expanded for `running`/`halted` fleets, collapsed for `completed`/`failed`.
+- **Aggregate progress** = `completed_children / total_children` from the fleet manifest.
+- **Status badge** on the fleet header maps the fleet's `status` field (see 13.7 for color mapping).
+- **No clicks bubble** — clicking inside the fleet header only toggles or routes to detail view; clicking a child run card opens the standard run detail.
+
+#### 13.3 Fleet Detail View
+
+- **New file:** `worca-ui/app/views/fleet-detail.js`. Routed via `#/fleet-runs/:fleet_id`.
+- **Layout (top-down):**
+  1. **Header strip** — fleet title + status badge + breadcrumb back to dashboard.
+  2. **Manifest panel** (`<sl-card>`) — readonly summary: branch template, plan mode, max parallel, circuit-breaker threshold, created-at timestamp.
+  3. **Work request panel** — title + description (collapsible if long).
+  4. **Guide panel** — shows `hasGuide`, `guideBytes`, `guideFilenames` from the runs-list payload (the sanitized fleet header data from §9). A "View guide content" button calls `GET /api/fleet-runs/:id/guide` and opens the content in a `<sl-dialog>` with markdown rendering. The fetch is opt-in to avoid pushing potentially-large guide content to every dashboard render.
+  5. **Children grid** — one row per child: project name, status badge, branch, run-detail link, PR link (when present).
+  6. **Circuit breaker strip** (visible only when fleet status is `halted`) — `<sl-alert variant="warning">` with the trip reason and a count of halted-but-unstarted children.
+  7. **Actions** — depending on fleet status:
+     - `running`: "Halt fleet" button → `DELETE /api/fleet-runs/:id` with a `<sl-dialog>` confirmation that explains in-flight children won't be killed.
+     - `halted` / `failed`: "Resume fleet" button → posts to `POST /api/fleet-runs/:id/resume`, which calls `run_fleet.py --resume <fleet_id>`.
+     - `completed`: "Open umbrella issue" link (if any), "Cleanup fleet" button → calls `worca cleanup --fleet-id <id>` via the cleanup endpoint added by W-048's pluggable cleanup-source design.
+- **PR aggregation:** When all children have published PRs, the children grid surfaces them as `<sl-tag>` chips in a "PRs" column. A "Copy all PR URLs" button copies them as a markdown list to clipboard (handy for posting to chat).
+
+#### 13.4 Fleet Launcher View
+
+- **New file:** `worca-ui/app/views/fleet-launcher.js`. Routed via `#/fleet-runs/new`.
+- **Form structure (top-down):**
+
+  1. **Project multi-select.** A `<sl-select multiple clearable>` populated from `GET /api/projects` (registered projects in `~/.worca/projects.d/` from W-032). Each option shows project name + path. Above the select, a "Select all registered projects" button (toggles all) and a search/filter input that narrows options client-side.
+
+  2. **Work request input.** Tab strip with two tabs: "Prompt" (a `<sl-textarea rows=6>`) and "Source" (an input for `gh:issue:N` etc.). Mirrors the existing single-run dialog's UX.
+
+  3. **Guide upload.** A drop zone (`<div>` with drag-drop event handlers) and a "Browse" `<sl-button>`. Multiple files allowed. Each uploaded file shows as an `<sl-tag removable>` with filename + size. A live "Total guide size: 12.4 KB / 64 KB" readout sits below; turns warning-orange when within 80% of the cap, and danger-red + disables submit when over the cap.
+
+  4. **Branch template input.** `<sl-input>` with placeholder `migration/v2/{project}` and helper text listing supported placeholders: `{project}`, `{fleet_id}`, `{slug}`, `{yyyymmdd}`, `{yyyymmddhhmm}`. Below the input, a **live preview panel** showing the resolved branch names for each currently-selected project. Updates as the user types. If two projects resolve to the same name, the colliding pair is highlighted in red and the submit button is disabled.
+
+  5. **Plan mode toggle.** A `<sl-radio-group>` with three options:
+     - **Use existing plan** (default off) → reveals a file path input. Maps to `--plan <path>`.
+     - **Plan-first reference project** → reveals a `<sl-select>` choosing one of the selected projects as the reference. Maps to `--plan-first <project-name>`.
+     - **Independent plans** → no input. Triggers a `<sl-alert variant="warning">` warning that each child runs its own Planner and the strategy may diverge.
+
+  6. **Advanced options** (`<sl-details>` collapsed by default) — max parallel (`<sl-input type="number" value=5>`), circuit-breaker threshold (`<sl-range min="0" max="1" step="0.05" value="0.30">`).
+
+  7. **Token-overhead gate.** Below the form, a **mandatory pre-launch panel** showing the estimated input-token overhead computed as `guide_tokens × prompt_stages × fleet_size` (matching the CLI estimate from §9). The launch button is labeled "Estimate cost" until the user clicks it. After clicking, the estimate appears and the button changes to "Launch fleet". When the estimate exceeds a configurable threshold (default 1M tokens of input overhead), a `<sl-checkbox>` "I understand the cost" must be checked before the button enables. Mirrors the CLI's `--yes` short-circuit semantics — provides a uniform gate across CLI and UI.
+
+  8. **Submit** → `POST /api/fleet-runs` with the full payload. On success, navigate to `#/fleet-runs/:fleet_id` (the detail view).
+
+#### 13.5 WebSocket Events
+
+- **New event type:** `fleet-update` — emitted by the server when `~/.worca/fleet-runs/<fleet_id>.json` changes (server adds a watcher in Phase 4). Payload: `{ fleet_id, status, completed_children, failed_children, children: [{run_id, project_path, status}] }`. The dashboard fleet header subscribes to this event and updates aggregate progress + status badge in place — without requiring a `runs-list` round-trip.
+- **`runs-list` event remains unchanged** — it carries `fleet_id` per run for grouping, but child status updates ride on `runs-list` as today. `fleet-update` only carries fleet-level state.
+- **Protocol allowlist:** Add `'fleet-update'` to `worca-ui/app/protocol.js` allowlist.
+
+#### 13.6 REST Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/api/fleet-runs` | Launch a new fleet. Body: `{ projects, prompt|source, guide_files, branch_template, plan_mode, max_parallel, fleet_failure_threshold }`. Multipart for guide upload. Returns `{ fleet_id, manifest_path }`. |
+| `GET` | `/api/fleet-runs` | List all fleet manifests. Returns `[{ fleet_id, work_request, status, children_count, ... }]`. |
+| `GET` | `/api/fleet-runs/:id` | Full manifest + enriched per-child status (joined from `pipelines.d/`). |
+| `DELETE` | `/api/fleet-runs/:id` | Halt unstarted children. In-flight children continue. Returns `{ halted_count }`. |
+| `POST` | `/api/fleet-runs/:id/resume` | Re-launch failed/pending children. Wraps `run_fleet.py --resume`. |
+| `GET` | `/api/fleet-runs/:id/guide` | Returns concatenated guide content (opt-in, not in default payload). Content-Type: text/markdown. |
+| `POST` | `/api/fleet-runs/estimate` | Pre-launch token estimate without launching. Body: subset of POST `/api/fleet-runs`. Returns `{ guide_bytes, guide_tokens_est, total_overhead_est }`. |
+
+#### 13.7 Status Badge Color Mapping
+
+Aligns new fleet states to the existing badge color language (`worca-ui/docs/badge-color-language.md`).
+
+| Fleet status | Variant | Rationale |
+|--------------|---------|-----------|
+| `running` | `primary` (blue) | Active |
+| `completed` | `success` (green) | All children succeeded |
+| `failed` | `danger` (red) | All children failed or unrecoverable |
+| `halted` | `warning` (orange) | Circuit breaker tripped — partial success, in-flight children may still be running. Caution, not failure. |
+
+Per-child status (in fleet detail view's children grid) uses the existing pipeline-status mapping. New child-level state added by W-040:
+
+| Child status | Variant | Rationale |
+|--------------|---------|-----------|
+| `setup_failed` | `danger` (red) | `worca init --upgrade` failed for this target — pipeline never started. |
+| `pending` | `neutral` (grey) | Queued but not yet launched (e.g., gated behind circuit breaker). |
+
+Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise the variants above already map to existing colors.
+
+#### 13.8 UI Test Coverage
+
+| File | Coverage |
+|------|----------|
+| `worca-ui/app/views/dashboard-fleet.test.js` (new) | Fleet group renders header + aggregate progress + expand/collapse; localStorage persistence of expand state; status badge color mapping. |
+| `worca-ui/app/views/fleet-detail.test.js` (new) | Renders manifest panel, guide opt-in fetch, children grid; halt button shows confirmation; resume button visible only on halted/failed; cleanup button visible only on completed. |
+| `worca-ui/app/views/fleet-launcher.test.js` (new) | Project multi-select; tab switching prompt/source; guide upload tags + size readout; branch-template live preview; collision detection disables submit; plan-mode radio reveals correct sub-inputs; token-overhead gate requires "I understand" check above threshold. |
+| `worca-ui/server/fleet-routes.test.js` (new) | All endpoints listed in 13.6 — contract + error paths (404, 409 on resume of running fleet, 400 on guide cap exceeded). |
+| `worca-ui/app/views/sidebar.test.js` (extend) | "Fleet Runs" entry hidden when zero fleets, visible when fleets exist; auto-reveals on first fleet creation via `runs-list` mutation. |
+| `worca-ui/app/views/sidebar-status-badges.test.js` (extend) | New `halted` and `setup_failed` badge color cases. |
+| `worca-ui/test/ws-integration.test.js` (extend) | `fleet-update` event subscription and dashboard re-render. |
+| `worca-ui/e2e/fleet-runs.spec.js` (new, Playwright `--workers=1`) | End-to-end: launch fleet, observe halted state, resume from UI, see PR aggregation. |
+
+#### 13.9 Files Added/Touched for §13
+
+| File | Change |
+|------|--------|
+| `worca-ui/app/views/sidebar.js` | "Fleet Runs" nav entry (conditional visibility) |
+| `worca-ui/app/views/dashboard.js` | Fleet grouping renderer with expand/collapse |
+| `worca-ui/app/views/multi-dashboard.js` | Fleet grouping for global multi-project view |
+| `worca-ui/app/views/fleet-detail.js` | **New** — manifest, guide, children, actions |
+| `worca-ui/app/views/fleet-launcher.js` | **New** — guided launch form with token gate |
+| `worca-ui/app/protocol.js` | Add `'fleet-update'` to allowlist |
+| `worca-ui/server/fleet-routes.js` | **New** — REST endpoints from 13.6 |
+| `worca-ui/server/ws-modular.js` | Fleet manifest watcher; emits `fleet-update` |
+| `worca-ui/app/styles.css` | Fleet group + launcher styles; halted/setup_failed CSS vars if needed |
+| Tests above | **New / extended** |
 
 ## Implementation Plan
 
@@ -213,15 +344,18 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 1. `--plan <path>` propagation to every child via `run_worktree.py --plan`.
 2. `--plan-first`: sequential Planner on reference project, then fan out.
 
-### Phase 4: UI integration
+### Phase 4: UI integration (see §13 for full surface)
 
-**Files:** `worca-ui/server/fleet-routes.js` (new), `worca-ui/server/ws-modular.js`, `worca-ui/app/views/dashboard.js`, `worca-ui/app/views/fleet-launcher.js` (new)
+**Files:** `worca-ui/server/fleet-routes.js` (new), `worca-ui/server/ws-modular.js`, `worca-ui/app/views/dashboard.js`, `worca-ui/app/views/multi-dashboard.js`, `worca-ui/app/views/sidebar.js`, `worca-ui/app/views/fleet-launcher.js` (new), `worca-ui/app/views/fleet-detail.js` (new), `worca-ui/app/protocol.js`, `worca-ui/app/styles.css`
 
 **Tasks:**
-1. Add fleet manifest file watcher to `ws-modular.js`; emit `fleet-update` events on manifest changes.
-2. `POST /api/fleet-runs`, `GET /api/fleet-runs`, `GET /api/fleet-runs/:id`, `DELETE /api/fleet-runs/:id`, `GET /api/fleet-runs/:id/guide`.
-3. Fleet-grouping renderer in `dashboard.js` — group `runs-list` entries by `fleet_id`, render collapsible header with aggregate progress.
-4. "Start fleet run" launcher view.
+1. Add fleet manifest file watcher to `ws-modular.js`; emit `fleet-update` events on manifest changes; add `'fleet-update'` to `app/protocol.js` allowlist.
+2. Implement REST endpoints from §13.6: `POST/GET/DELETE /api/fleet-runs`, `GET /api/fleet-runs/:id`, `POST /api/fleet-runs/:id/resume`, `GET /api/fleet-runs/:id/guide`, `POST /api/fleet-runs/estimate`.
+3. Fleet-grouping renderer in `dashboard.js` and `multi-dashboard.js` — group `runs-list` entries by `fleet_id`, render collapsible header with aggregate progress, persist expand state in localStorage.
+4. Build `fleet-launcher.js` per §13.4 — project multi-select, guide upload, branch-template live preview, plan-mode toggle, token-overhead gate.
+5. Build `fleet-detail.js` per §13.3 — manifest panel, guide opt-in viewer, children grid with PR aggregation, halt/resume/cleanup actions.
+6. Add conditional "Fleet Runs" entry in `sidebar.js` (visible when fleets exist).
+7. Wire badge color mapping for `halted`, `setup_failed`, `pending` (§13.7).
 
 ### Phase 5: Guardian PR grouping and resumability
 
@@ -253,10 +387,15 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 | `src/worca/agents/core/reviewer.md` | Add "Guide precedence" instruction; flag plan-vs-guide divergence |
 | `src/worca/agents/core/tester.md` | Add "Guide precedence" instruction; treat guide-conflicting description as a bug |
 | `.claude/worca/settings.json` | Add `worca.guide.max_bytes`, `worca.fleet.*` defaults |
-| `worca-ui/server/fleet-routes.js` | **New** — fleet REST endpoints |
+| `worca-ui/server/fleet-routes.js` | **New** — fleet REST endpoints (§13.6) |
 | `worca-ui/server/ws-modular.js` | Fleet manifest file watcher + `fleet-update` event |
 | `worca-ui/app/views/dashboard.js` | Fleet grouping renderer (collapsible header, aggregate progress) |
-| `worca-ui/app/views/fleet-launcher.js` | **New** — "Start fleet run" view |
+| `worca-ui/app/views/multi-dashboard.js` | Fleet grouping in global multi-project view |
+| `worca-ui/app/views/sidebar.js` | Conditional "Fleet Runs" nav entry |
+| `worca-ui/app/views/fleet-launcher.js` | **New** — guided launch form with token gate (§13.4) |
+| `worca-ui/app/views/fleet-detail.js` | **New** — manifest, guide, children grid, actions (§13.3) |
+| `worca-ui/app/protocol.js` | Add `'fleet-update'` to event allowlist |
+| `worca-ui/app/styles.css` | Fleet group + launcher styles; status color additions if needed |
 | `CLAUDE.md` | Fleet Runs section + guide precedence note |
 | `MIGRATION.md` | Release note |
 | `docs/fleet-runs.md` | **New** — user-facing walkthrough |
