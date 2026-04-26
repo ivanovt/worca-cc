@@ -104,9 +104,27 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
 - **Current state:** `run_pipeline.py:19-49` has flags for `--prompt`, `--source`, `--plan`, `--branch`, `--worktree`, etc. No `--guide` flag.
 - **Obstacle:** W-040's shared reference-context mechanism requires `--guide` to be accepted by `run_pipeline.py` so that `run_worktree.py` (and later `run_fleet.py`) can pass it through.
-- **Resolution:** Add `--guide` (repeatable) to `run_pipeline.py`'s argument parser. After `WorkRequest` normalization, call the `attach_guide()` helper (implemented in W-040 Phase 1, `work_request.py`). For now, if `attach_guide` is not yet available (W-048 ships before W-040), accept the flag and store it in status metadata without injection. W-040 wires the actual content injection.
+- **Resolution:** Add `--guide` (repeatable) to `run_pipeline.py`'s argument parser. After `WorkRequest` normalization, call the `attach_guide()` helper (implemented in W-040 Phase 1, `work_request.py`).
 
-  This ensures `run_worktree.py` can pass `--guide` through to `run_pipeline.py` from day one, even before W-040 implements the guide content injection logic.
+  **Behavior in the W-048-only window (before W-040 ships):**
+
+  Silent acceptance is forbidden — a user passing `--guide migration.md` would believe the guide is honored when it isn't. W-048 detects whether `attach_guide()` is importable from `worca.orchestrator.work_request` at startup:
+
+  - **If `attach_guide` is available** (W-040 has shipped): call it, inject content normally.
+  - **If `attach_guide` is NOT available** (W-048 standalone): emit `argparse.ArgumentError` with message:
+
+    ```
+    --guide requires worca-cc with attach_guide() (W-040 / #101). The flag was
+    accepted by W-048 plumbing but content injection is not yet implemented in
+    this version. Upgrade worca-cc to a version that ships W-040, or remove
+    --guide from your invocation.
+    ```
+
+    The error fires at argparse-parse time so dispatch never starts. This is non-negotiable: we do not want runs that silently ignore an authoritative guide.
+
+  - **Migration path off this gate:** Once W-040 ships, `attach_guide` is always importable and the error becomes unreachable. Delete the import-probe + error in W-040 Phase 1 task 3 (which also wires `--guide` into `run_pipeline.py`).
+
+  This ensures `run_worktree.py` can pass `--guide` through to `run_pipeline.py` from day one (so the CLI surface stabilizes), without ever silently dropping guide content.
 
 ### 5. Extend `pipelines.d/` Registry
 
@@ -128,6 +146,12 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
   All new fields are optional and omitted from the JSON when `None`. Existing callers (`run_multi.py` → `run_worktree.py`, `runner.py:1281-1285`) continue to work unchanged. `discoverRuns` includes these fields in run metadata when present.
 
+  **Mutual-exclusion enforcement at registration time:** `register_pipeline()` raises `ValueError("fleet_id and workspace_id are mutually exclusive")` when both are non-`None`. The check fires before any file write — so an invalid registration never lands on disk. This guard is added in W-048 (this plan), not deferred to W-040 or W-047, even though the W-048-only window has no callers that pass either ID. Adding the guard here:
+
+  - Locks the contract before downstream plans depend on it.
+  - Avoids three plans each thinking they should add it (W-040 Phase 2 task 5 and W-047 Phase 1 task 5 reference this guard — they only **verify** it, they do not introduce it).
+  - Avoids signature churn: all four kw-only fields are introduced once, no later plan needs to extend the signature again.
+
   **Authoritative rule for grouping fields (binding on W-040, W-047, and all UI consumers):**
 
   | Field | Set when | Mutually exclusive with | UI uses for |
@@ -138,7 +162,18 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
   Code that filters by membership uses the explicit ID field. Code that branches on rendering style uses `group_type`. **Never derive type from `fleet_id != null`** — that pattern is forbidden because it would silently include workspace runs once W-047 ships (an earlier iteration of these plans overloaded `fleet_id` for workspaces; this rule replaces that approach).
 
-  **Registry location:** `pipelines.d/` is always per-project at `<project>/.worca/multi/pipelines.d/`. For cross-project discovery (W-040 fleet, W-047 workspace), the higher-level orchestrator (`run_fleet.py`, `run_workspace.py`) maintains a manifest with child `project_path` + `run_id` pairs, and the UI's `discoverRuns` fans out by following those pointers. This plan does not introduce cross-project aggregation — that's W-040's responsibility. This plan makes the per-project registry ready for it.
+  **Registry location:** `pipelines.d/` is always per-project at `<project>/.worca/multi/pipelines.d/`. For cross-project discovery (W-040 fleet, W-047 workspace), the higher-level orchestrator (`run_fleet.py`, `run_workspace.py`) maintains a manifest with child `project_path` + `run_id` pairs.
+
+  **Cross-project run aggregation — explicit binding rule for the UI:**
+
+  Fleet/workspace **grouping in the UI requires global mode** (`worca-ui` started without `--project`). In global mode, `discoverRuns` is invoked once per registered project in `~/.worca/projects.d/` and the results are merged into a single `state.runs` map; group rendering (W-040 §13.2 fleet header, W-047 §10.4 tier sub-grouping) operates on that merged map.
+
+  - **Global mode (`pnpm worca:ui` with no `--project`):** All projects' `pipelines.d/` are scanned. A fleet whose children land in 5 different projects appears as one group with 5 child rows.
+  - **Single-project mode (`pnpm worca:ui --project /path`):** Only the targeted project's `pipelines.d/` is scanned. A fleet/workspace child whose `project_path` matches the targeted project appears as a standalone-looking run; siblings in other projects are invisible. The UI **detects this** and surfaces a small inline notice on the fleet/workspace dashboard view: *"This fleet has children in other projects. Switch to global mode to see all members."*
+  - **No cross-project pointer-following from inside `discoverRuns`.** The plan deliberately keeps `discoverRuns` per-project — adding cross-project I/O inside it (reading `~/.worca/fleet-runs/*.json` then chasing `project_path` to load each child's `status.json`) would couple per-project discovery to a global filesystem and complicate caching/invalidation. Instead, global mode loops over projects at the caller level (existing W-032 pattern) and the merge happens in the WS broadcaster's `runs-list` payload.
+  - **W-040 §13.2 and W-047 §10.4 must reference this rule** — fleet/workspace grouping is a global-mode-only feature; single-project users see partial groups with the explanatory notice.
+
+  This plan adds the per-project step 5 fan-out (§6) but does not introduce cross-project aggregation. W-040 wires fleet headers on top of the global-mode merge. W-047 wires workspace tiers on top of fleet headers.
 
 ### 6. Unified Run Aggregation — `discoverRuns` Fan-Out
 
@@ -211,7 +246,18 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
   **Server-side:**
   - Delete `worca-ui/server/multi-watcher.js` and `worca-ui/server/multi-watcher.test.js`.
   - Remove every `MultiWatcher` instantiation site (likely in `worca-ui/server/ws-modular.js` — verify with grep before removal).
-  - Remove `'pipeline-status-changed'` from `worca-ui/app/protocol.js:36` allowlist.
+  - **Remove all five `pipeline-*` message types from `worca-ui/app/protocol.js` `MESSAGE_TYPES` (lines 33-37)**, not just `pipeline-status-changed`. The full set:
+
+    | Removed | Direction | Replacement after W-048 |
+    |---------|-----------|-------------------------|
+    | `list-pipelines` | client → server request | `runs-list` (already filtered by `is_worktree_run` + `group_type` client-side via `selectParallelPipelines`) |
+    | `subscribe-pipeline` | client → server request | per-pipeline log subscription folds into existing `subscribe-log` keyed by `run_id` (worktree run is just a run with `is_worktree_run: true`) |
+    | `unsubscribe-pipeline` | client → server request | mirrors above — `unsubscribe-log` |
+    | `pipeline-status-changed` | server → client event | every `pipelines.d/` change triggers `runs-list` via `discoverRuns` step 5 (§6) |
+    | `pipelines-list` | server → client response/event | `runs-list` carries the merged set |
+
+  - **Remove all four request handlers from `worca-ui/server/ws-message-router.js`:** `list-pipelines` (line 855), `subscribe-pipeline` (line 864), `unsubscribe-pipeline` (line 887), and any `pipelines-list` emit sites. Audit with `grep -rn "list-pipelines\|subscribe-pipeline\|unsubscribe-pipeline\|pipelines-list\|pipeline-status-changed" worca-ui/` before removal — every hit must be in code being deleted in this phase, or it's a hidden client (e.g., a stale test) that needs separate handling.
+  - **Verify no `WatcherSet.promotePipeline` / `demotePipeline` references remain** — those existed only to support per-pipeline log subscription via `MultiWatcher`.
 
   **Client-side state migration:**
   - Delete the `ws.on('pipeline-status-changed', ...)` handler at `worca-ui/app/main.js:726`.
@@ -334,6 +380,37 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 - **Obstacle:** No actual bug — the existing logic is already correct.
 - **Resolution:** No change needed. Issue #82's original description listed this as step 1, but the code already handles it correctly. Verified at `watcher.js:127` and `watcher.js:139`.
 
+### 11.5 Reconcile Orphan Group Memberships
+
+- **Current state:** `registry.py:reconcile_stale()` (line 138) checks PID liveness for `running` pipelines and marks dead ones `failed`. There is no equivalent reconciler for the **grouping fields** added in §5.
+- **Obstacle:** Once W-040 / W-047 ship, two new failure modes appear:
+  1. A fleet manifest at `~/.worca/fleet-runs/<id>.json` is deleted (by `worca cleanup --fleet-id`, manual `rm`, or a crashed cleanup) while child `pipelines.d/` entries still carry that `fleet_id`. The children become "ghost members" of a fleet that no longer exists — UI groups them under a header with no manifest, lifecycle commands fail at the manifest read.
+  2. Same for `workspace_id` once W-047 ships and the workspace run directory under `{workspace_root}/.worca/workspace-runs/<run_id>/` is removed.
+- **Resolution:** Extend `registry.py` with `reconcile_orphan_groups(base=_DEFAULT_BASE)`. Behavior:
+
+  ```python
+  def reconcile_orphan_groups(base=_DEFAULT_BASE):
+      """Strip fleet_id/workspace_id from pipelines.d/ entries whose parent
+      manifest no longer exists. Returns list of (run_id, dropped_field) tuples.
+
+      A child whose fleet_id/workspace_id has no matching manifest is downgraded
+      to a standalone run rather than deregistered — the child pipeline itself
+      is still valid, only the grouping pointer is dead.
+      """
+      # For each entry with fleet_id: check ~/.worca/fleet-runs/<fleet_id>.json
+      # For each entry with workspace_id: check ~/.worca/workspace-runs/<wid>.json
+      # If manifest missing: rewrite entry without the dead ID, log "downgraded
+      # run X from fleet:Y to standalone (manifest missing)".
+  ```
+
+  **W-048 ships the function but only the no-op variant** — the function exists, signature is final, but only handles the empty case (no IDs to check, since W-048 doesn't write fleet/workspace IDs). W-040 / W-047 wire the actual lookups into their respective manifest paths via the same function. Adding the function shape now avoids a third-time signature churn later.
+
+  **Where it's called:** Once per UI server startup, and on each `pipelines.d/` directory-watcher refresh (debounced — same pathway as `reconcile_stale`). UI server logs each downgrade at INFO level so users see what's happening on cold-start after a manual cleanup.
+
+  **What it never does:** It does not deregister children. Removing a child pipeline's registry entry would lose the run from the History view. Only the dead group ID is stripped — `group_type` is also cleared in the same write.
+
+  **What it does NOT cover (deliberately):** A live manifest pointing at a `pipelines.d/` entry that doesn't exist. That direction is the manifest's responsibility to detect (W-040 / W-047 manifest readers can flag missing children) and is reported in the UI as part of the children-grid render, not via this reconciler.
+
 ### 12. Worktree Cleanup Command
 
 - **Current state:** `utils/git.py:84-116` has `remove_pipeline_worktree(worktree_path)` and `list_pipeline_worktrees()` (`utils/git.py:119-153`). `run_multi.py:357-375` has cleanup logic but it's tied to the batch orchestrator.
@@ -420,6 +497,18 @@ W-048 changes how runs are isolated and discovered. Most of that is invisible pl
 
 W-048 introduces no new pipeline-level status values. The existing badge mapping (`success` / `primary` / `warning` / `danger` / `neutral`) covers everything. This is intentional: W-048 is plumbing, not new lifecycle states. New states (`halted`, `planning`, `integration_testing`, etc.) ship in W-040 / W-047.
 
+**Binding contract for W-040 / W-047 — every new status value must extend three call sites:**
+
+Each plan that introduces new pipeline / fleet / workspace status values **must** extend all three of the following in the same phase that introduces the status, so the value flows correctly from server through state through render:
+
+1. **`worca-ui/app/utils/state-actions.js` — `STATES` array and `ACTION_MATRIX`.** Determines which lifecycle buttons (Stop/Pause/Resume/Cancel/Archive/Delete/Learn) are enabled for the new status. A status not in `STATES` is treated as unknown; an action not in `ACTION_MATRIX[<action>][<status>]` returns `false` from `actionAllowed()`, hiding the button. Every new status must explicitly pick which actions are allowed — defaulting to none silently disables features.
+
+2. **`worca-ui/app/views/multi-dashboard.js` — `pipelineStatusClass()` switch (line 38).** Maps the status to a CSS class for the run-card border-left. New statuses falling through to `pipeline-unknown` show no border accent — visually indistinguishable from an unstarted card.
+
+3. **`worca-ui/app/styles.css` — `.pipeline-<status>` class with `border-left-color`.** Define the actual color from existing CSS variables (`--status-running`, `--status-paused`, etc.) — do NOT introduce new color variables. Match the badge variant from W-040 §13.7 / W-047 §10.7 (e.g., `halted` → `warning` → `--status-paused`).
+
+W-040 and W-047 each include explicit phase tasks that touch all three files. A reviewer must reject any new-status PR that misses one of these three call sites — the symptom is "button doesn't appear" or "card looks unstarted" with no obvious cause.
+
 #### 13.5 UI Test Coverage
 
 | File | Coverage |
@@ -505,16 +594,18 @@ Per §6.5, `pipelineCardView` (`multi-dashboard.js:14-24`) renders stage-dot pro
 
 ### Phase 2.5: Retire `MultiWatcher` and migrate clients (ships with Phase 4)
 
-**Files:** `worca-ui/server/multi-watcher.js` (delete), `worca-ui/server/multi-watcher.test.js` (delete), `worca-ui/server/ws-modular.js`, `worca-ui/app/main.js`, `worca-ui/app/protocol.js`, `worca-ui/package.json`
+**Files:** `worca-ui/server/multi-watcher.js` (delete), `worca-ui/server/multi-watcher.test.js` (delete), `worca-ui/server/ws-modular.js`, `worca-ui/server/ws-message-router.js`, `worca-ui/app/main.js`, `worca-ui/app/protocol.js`, `worca-ui/package.json`
 
 **Tasks:**
-1. Verify with `grep -rn "MultiWatcher\|pipeline-status-changed" worca-ui/` that this list is exhaustive.
+1. Verify with `grep -rn "MultiWatcher\|pipeline-status-changed\|list-pipelines\|subscribe-pipeline\|unsubscribe-pipeline\|pipelines-list\|promotePipeline\|demotePipeline" worca-ui/` that this list is exhaustive (per §6.5 — all five protocol message types removed, not just `pipeline-status-changed`).
 2. Delete `worca-ui/server/multi-watcher.js` and `worca-ui/server/multi-watcher.test.js`.
 3. Remove all `MultiWatcher` instantiation sites in `worca-ui/server/ws-modular.js` (and any other server file the grep finds).
-4. Delete the `ws.on('pipeline-status-changed', ...)` handler in `worca-ui/app/main.js:726`. Re-derive any state it maintained from successive `runs-list` payloads.
-5. Remove `'pipeline-status-changed'` from `worca-ui/app/protocol.js:36`.
-6. Bump `worca-ui/package.json` micro version to bust the client bundle cache.
-7. Move any unique behavioral coverage from the deleted test (e.g., stale-entry reconciliation) into `watcher.test.js` against §6's step 5.
+4. **Remove all four other pipeline-* request handlers** from `worca-ui/server/ws-message-router.js`: `list-pipelines` (line 855), `subscribe-pipeline` (line 864), `unsubscribe-pipeline` (line 887), and any `pipelines-list` emit sites. Replacement paths are documented in §6.5 (clients consume `runs-list` filtered via `selectParallelPipelines`).
+5. Delete the `ws.on('pipeline-status-changed', ...)` handler in `worca-ui/app/main.js:726`. Re-derive any state it maintained from successive `runs-list` payloads.
+6. **Remove all five `pipeline-*` strings from `worca-ui/app/protocol.js` `MESSAGE_TYPES` (lines 33-37):** `list-pipelines`, `subscribe-pipeline`, `unsubscribe-pipeline`, `pipeline-status-changed`, `pipelines-list`. Update `protocol.test.js` accordingly.
+7. **Remove `WatcherSet.promotePipeline` and `demotePipeline`** if grep shows no remaining callers — these existed only to support per-pipeline log subscription via `MultiWatcher`.
+8. Bump `worca-ui/package.json` micro version to bust the client bundle cache.
+9. Move any unique behavioral coverage from the deleted test (e.g., stale-entry reconciliation) into `watcher.test.js` against §6's step 5.
 
 **Sequencing constraint:** This phase must ship in the same release as Phase 4 (the `discoverRuns` fan-out). Splitting them either drops status events (Phase 2.5 first) or duplicates them (Phase 4 first).
 
@@ -536,8 +627,19 @@ Per §6.5, `pipelineCardView` (`multi-dashboard.js:14-24`) renders stage-dot pro
 **Files:** `src/worca/orchestrator/registry.py`, `worca-ui/server/watcher.js`
 
 **Tasks:**
-1. Add `fleet_id`, `group_type`, `target_branch` keyword-only args to `register_pipeline()` at `registry.py:48`.
-2. Add step 5 to `discoverRuns` (sync and async): fan out across `pipelines.d/` entries with `worktree_path`, read worktree's `runs/*/status.json`, augment with `worktree_worca_dir`, `is_worktree_run`, `fleet_id`, `group_type`, `target_branch`.
+1. **Add all four kw-only fields to `register_pipeline()` at `registry.py:48` in a single edit:** `fleet_id`, `workspace_id`, `group_type`, `target_branch`. **`workspace_id` is added now even though no W-048 caller passes it** — see §5 for the rationale (avoid signature churn across W-040 / W-047). Add the mutual-exclusion guard:
+
+   ```python
+   if fleet_id is not None and workspace_id is not None:
+       raise ValueError(
+           "fleet_id and workspace_id are mutually exclusive — "
+           "see W-048 §5"
+       )
+   ```
+
+   The guard fires before any disk write. Test: `tests/test_registry.py::test_register_rejects_both_ids` passes `fleet_id="x", workspace_id="y"` → asserts ValueError, asserts no file is created.
+2. Add `reconcile_orphan_groups(base=_DEFAULT_BASE)` skeleton to `registry.py` per §11.5. W-048 ships the no-op variant (manifest paths checked are empty for now); W-040 / W-047 wire actual lookups into `~/.worca/fleet-runs/*.json` and `~/.worca/workspace-runs/*.json`. Test: `tests/test_registry.py::test_reconcile_orphan_groups_noop` registers an entry without group fields → asserts function returns `[]`.
+3. Add step 5 to `discoverRuns` (sync and async): fan out across `pipelines.d/` entries with `worktree_path`, read worktree's `runs/*/status.json`, augment with `worktree_worca_dir`, `is_worktree_run`, `fleet_id`, `workspace_id`, `group_type`, `target_branch`.
 
 ### Phase 5: Watchers and lifecycle routing
 
@@ -615,15 +717,18 @@ Per §6.5, `pipelineCardView` (`multi-dashboard.js:14-24`) renders stage-dot pro
 | `worca-ui/server/multi-watcher.js` | **Delete** — superseded by §6 `discoverRuns` fan-out; clients migrate to `runs-list` (see §6.5) |
 | `worca-ui/server/multi-watcher.test.js` | **Delete** — coverage moves to `watcher.test.js` for the new step 5 |
 | `worca-ui/server/ws-modular.js` | Remove `MultiWatcher` instantiation site(s) |
+| `worca-ui/server/ws-message-router.js` | Remove handlers for `list-pipelines` (line 855), `subscribe-pipeline` (line 864), `unsubscribe-pipeline` (line 887), and any `pipelines-list` emit sites — see §6.5 |
+| `worca-ui/server/watcher-set.js` | Remove `promotePipeline`/`demotePipeline` if no remaining callers (per Phase 2.5 task 7) |
 | `worca-ui/app/main.js` | Remove `pipeline-status-changed` handler at line 726; remove `state.pipelines` map; wire `selectParallelPipelines(state)` into `multiPipelineDashboardView` calls |
 | `worca-ui/app/select-parallel-pipelines.js` | **New** — derived selector replacing `state.pipelines` (see §6.5 field map) |
 | `worca-ui/app/views/multi-dashboard.js` | Caller switch only — `pipelineCardView` template unchanged |
 | `worca-ui/app/views/new-run.js` | Phase 6: remove "Pipeline already running" warning + form-disable; add worktree info banner; add PR base branch input |
 | `worca-ui/app/views/new-run-parallel-block.test.js` | Invert assertion: warning is NOT rendered post-W-048 |
-| `worca-ui/app/protocol.js` | Remove `'pipeline-status-changed'` from event allowlist (line 36) |
+| `worca-ui/app/protocol.js` | **Remove all five `pipeline-*` strings from `MESSAGE_TYPES` (lines 33-37)** — `list-pipelines`, `subscribe-pipeline`, `unsubscribe-pipeline`, `pipeline-status-changed`, `pipelines-list` (see §6.5) |
+| `worca-ui/app/protocol.test.js` | Update assertions to match the trimmed `MESSAGE_TYPES` set |
 | `worca-ui/package.json` | Micro version bump to bust client bundle cache after protocol allowlist trim |
-| `CLAUDE.md` | Update run_multi references to run_worktree, document `--guide` flag, add cleanup command |
-| `MIGRATION.md` | Document `active_run` removal, `run_multi.py` and `run_batch.py` removal, cleanup command, `MultiWatcher` removal + protocol allowlist change, "Pipeline already running" block removal |
+| `CLAUDE.md` | Update run_multi references to run_worktree, document `--guide` flag, add cleanup command, document fleet/workspace global-mode requirement (§5 cross-project rule) |
+| `MIGRATION.md` | Document `active_run` removal, `run_multi.py` and `run_batch.py` removal, cleanup command, `MultiWatcher` removal + **all five pipeline-* protocol message types removed** (§6.5), "Pipeline already running" block removal, third-party WS subscriber breakage warning |
 
 ## Considerations
 
@@ -632,7 +737,11 @@ Per §6.5, `pipelineCardView` (`multi-dashboard.js:14-24`) renders stage-dot pro
 - **`results/` backward compatibility.** Old completed runs in `results/` remain visible via `discoverRuns` step 4. Nothing new is written there (runs stay in `runs/`). Over time, users migrate by running `worca cleanup --older-than 30d` on the root project.
 - **Test impact.** 8 Python test files and 14 UI files reference `active_run`. All need updating — the test plan below catalogs each.
 - **macOS watcher limits.** Adding `fs.watch()` per active worktree uses kqueue file descriptors. macOS default soft limit is 256, hard limit ~unlimited. At >50 concurrent worktrees (exceeding realistic usage), fall back to polling.
-- **Breaking changes:** The `active_run` file is no longer written. Tools or scripts that read it directly (outside worca's own code) will need to switch to scanning `runs/*/status.json`. The `run_multi.py` entry point is removed — callers must use `run_worktree.py` (one pipeline at a time) or a shell loop. The `_readActiveRunId` JS method is removed — server-side code calling it must pass explicit `runId`.
+- **Breaking changes:**
+  - The `active_run` file is no longer written. Tools or scripts that read it directly (outside worca's own code) will need to switch to scanning `runs/*/status.json`.
+  - The `run_multi.py` and `run_batch.py` entry points are removed — callers must use `run_worktree.py` (one pipeline at a time) or a shell loop. W-040's `run_fleet.py` covers parallel cross-repo dispatch.
+  - The `_readActiveRunId` JS method is removed — server-side code calling it must pass explicit `runId`.
+  - **All five `pipeline-*` WS protocol message types are removed** (§6.5): `list-pipelines`, `subscribe-pipeline`, `unsubscribe-pipeline`, `pipeline-status-changed`, `pipelines-list`. Third-party WebSocket subscribers outside `worca-ui` that listen to any of these will silently stop receiving events. There is no formal protocol-version mechanism; MIGRATION.md must call out the change prominently. Built-in worca-ui clients are handled via the `package.json` micro bump (cache bust) and the §6.5 selector migration.
 - **Migration:** `worca init --upgrade` should delete the stale `active_run` file if present and log a message. The project-level `pipeline.pid` and `status.json` files are left in place as read-only legacy — they are not deleted automatically because they may be needed by an older worca-ui that hasn't been upgraded yet.
 - **Governance unchanged.** Only Guardian may commit (enforced by `pre_tool_use.py` checking `WORCA_AGENT`). Plan-check hook unchanged. Subagent dispatch unchanged. No new governance mechanisms introduced.
 - **Splitting consideration.** This plan is large (8 phases) but tightly coupled — `active_run` removal and `discoverRuns` fan-out must ship together, otherwise worktree runs become invisible (old discovery removed, new discovery not yet added). The recommended split point, if needed during implementation, is between Phase 2 and Phase 3: Phases 1-2 can ship as "remove `active_run`" and Phases 3-7 as "worktree launcher + fan-out." Phase 8 (tests) spans both.
@@ -661,8 +770,12 @@ Per §6.5, `pipelineCardView` (`multi-dashboard.js:14-24`) renders stage-dot pro
 | Python | `tests/test_run_worktree.py::test_spawns_detached` | Subprocess is detached and `run_worktree.py` exits immediately |
 | Python | `tests/test_registry.py::test_register_with_fleet_id` | `fleet_id` stored in entry JSON when provided |
 | Python | `tests/test_registry.py::test_register_without_fleet_id` | Entry JSON has no `fleet_id` key when omitted |
+| Python | `tests/test_registry.py::test_register_with_workspace_id` | `workspace_id` stored when provided (signature accepts it even though no W-048 caller passes it — see §5) |
 | Python | `tests/test_registry.py::test_register_with_group_type` | `group_type` stored when provided |
 | Python | `tests/test_registry.py::test_register_with_target_branch` | `target_branch` stored when provided |
+| Python | `tests/test_registry.py::test_register_rejects_both_ids` | `register_pipeline(fleet_id="x", workspace_id="y")` raises `ValueError`; **no file is created on disk** (guard fires before write) |
+| Python | `tests/test_registry.py::test_reconcile_orphan_groups_noop` | With no fleet/workspace IDs in any entry, returns `[]` (W-048 ships the function in skeleton form per §11.5) |
+| Python | `tests/test_run_pipeline.py::test_guide_flag_errors_without_attach_guide` | When `attach_guide` is not importable, `--guide foo.md` raises `ArgumentError` with the §4 message; dispatch never starts |
 | Python | `tests/test_cleanup.py::test_cleanup_completed_worktree` | Completed worktree removed, registry entry deregistered |
 | Python | `tests/test_cleanup.py::test_cleanup_skips_running` | Running worktree not removed even with `--all` |
 | Python | `tests/test_cleanup.py::test_cleanup_dry_run` | `--dry-run` lists but does not remove |

@@ -226,6 +226,74 @@ This gives the implementer concrete context without requiring it to `git fetch` 
 
   Merge order is documented but **not enforced** — worca does not auto-merge. The checklist in the umbrella issue serves as a manual coordination tool.
 
+### 6.5 Combined `guardian.md` State Machine
+
+W-048 §10, W-040 §11, and this plan's §6 each modify `guardian.md` independently. Without a single combined specification, the three changes risk merge conflicts at PR-merge time and contradictory instructions at agent-execution time. This section defines the canonical post-W-047 guardian decision flow, binding on all three plans.
+
+The guardian stage executes the following pseudocode for every commit/PR action — all worca-cc and worca-ui changes that touch `guardian.md` must preserve this control flow:
+
+```
+# 1. Commit gate — unchanged across all plans
+if not WORCA_AGENT == "guardian":
+    refuse  # pre_tool_use hook enforces this; included here for completeness
+
+git add <files>
+git commit -m "<message>"
+
+# 2. Push gate
+git push origin <head_branch>
+
+# 3. PR-creation gate — added by W-047 §5 (workspace defer)
+if env.get("WORCA_DEFER_PR") == "1":
+    log("PR creation deferred — workspace orchestrator will create centrally after integration tests")
+    exit  # do NOT call gh pr create
+    # run_workspace.py handles PR creation after integration tests pass
+
+# 4. PR title — modified by W-040 §11 + W-047 §6
+title = <derived from work_request.title>
+if env.get("WORCA_FLEET_ID"):
+    title = f"[fleet:{fleet_id_short}] {title}"
+elif env.get("WORCA_WORKSPACE_ID"):
+    title = f"[workspace:{workspace_short}] {title}"
+# else: no prefix (standalone run)
+
+# 5. PR base branch — added by W-048 §10
+base_branch = status.get("target_branch", default_base_branch_from_settings)
+
+# 6. PR description body
+body = <standard description>
+if env.get("WORCA_FLEET_ID"):
+    body += f"\n\n**Fleet:** {fleet_id} — {N} sibling PRs in this fleet."
+if env.get("WORCA_WORKSPACE_ID"):
+    body += f"\n\n**Workspace:** {workspace_name} ({workspace_id})."
+    body += f"\n**Repo role:** {repo_role}"
+    # Dependency annotations are added by run_workspace.py POST-PR-creation
+    # via `gh pr comment` — guardian does not include them in the initial body.
+
+# 7. Create PR
+gh pr create --base {base_branch} --head {head_branch} --title "{title}" --body "{body}"
+```
+
+**Precedence rules:**
+
+- **Step 3 (defer) trumps everything else.** `WORCA_DEFER_PR=1` short-circuits all subsequent steps — no title is built, no base branch is read, no `gh pr create` is called. The branch is committed and pushed; PR creation is the workspace orchestrator's responsibility.
+- **Step 4 (title prefix) is mutually exclusive between fleet and workspace.** `WORCA_FLEET_ID` and `WORCA_WORKSPACE_ID` cannot both be set on the same child — `register_pipeline` enforces mutual exclusion at registration (W-048 §5). Guardian relies on that invariant.
+- **Step 5 (base branch) is independent of fleet/workspace.** A standalone run, fleet child, or workspace child all read `status.target_branch` identically. Falling back to the default base branch is the same path in all three cases.
+- **Step 6 (body) is additive.** Fleet/workspace context is appended to the standard description, never replaces it.
+
+**File-write coordination across the three plans:**
+
+| Section in `guardian.md` | Owned by | Touched by |
+|--------------------------|----------|------------|
+| Commit message format | unchanged | none of the three plans |
+| Push-then-PR sequence | unchanged | none |
+| Defer-PR conditional (step 3) | W-047 §5 | W-047 only |
+| Title prefix logic (step 4) | W-040 §11 | W-040 introduces fleet branch; W-047 §6 adds workspace branch |
+| Base branch lookup (step 5) | W-048 §10 | W-048 only |
+| Body augmentation (step 6) | W-040 §11 + W-047 §6 | both add their own clauses |
+
+When implementing each plan's `guardian.md` edit, contributors must merge the new clause into the existing decision tree rather than replacing the section. The PR description for each guardian.md edit must explicitly cite this §6.5 and confirm "all six steps still produce the documented output."
+
 ### 7. Workspace State & Manifest
 
 - **Current state:** Fleet manifest at `~/.worca/fleet-runs/<fleet_id>.json` tracks fleet-level state. Per-child state in `pipelines.d/`.
@@ -253,7 +321,8 @@ This gives the implementer concrete context without requiring it to `git fetch` 
   "created_at": "<iso8601>",
   "work_request": { "title": "...", "description": "...", "source": "..." },
   "guide": { "paths": ["..."], "bytes": 12345, "filenames": ["..."] },
-  "status": "planning|running|integration_testing|completed|failed|integration_failed",
+  "status": "planning|running|integration_testing|completed|failed|integration_failed|halted",
+  "halt_reason": "user|circuit_breaker|null",
   "dag": {
     "tiers": [
       { "tier": 0, "repos": ["shared-lib"], "status": "completed" },
@@ -388,6 +457,7 @@ W-047 introduces five UX surfaces that build on W-040's fleet UI: a **workspace 
   - **New section — Pre-launch DAG preview.** Shows the workspace's tier structure with repo names and dependency arrows. User confirms tier layout before launch.
   - **Pre-launch `gh auth status` check (cross-org workspaces).** When the workspace's repos span multiple GitHub orgs (resolved from each repo's `git remote get-url origin`), the launcher calls `POST /api/workspace-runs/validate-gh-auth` which runs `gh auth status` for each unique org. Missing-auth orgs are listed inline as `<sl-alert variant="danger">` with the exact `gh auth login --hostname github.com --scopes repo` command for each. **Submit is disabled** until all orgs are authenticated (or the user explicitly checks "Skip auth check (PRs may fail)" — escape hatch for offline / dry-run scenarios). This pre-empts §6's "fail-fast at run time" — without this gate, dispatched children burn worktree disk + planner tokens before failing at PR creation.
   - **Token-overhead gate** also surfaces master planner cost (one Opus call) plus context-injection budget per dependency edge (capped at 8KB × edge count) in addition to the guide overhead.
+  - **Per-target init timeout + Cancel (mirrors W-040 §2 / §13.4).** The workspace launcher reuses the per-target progress strip + Cancel pattern from fleet launcher: each repo in the workspace gets a `<sl-progress-bar>` row showing init status (`queued` / `initializing` / `ready` / `setup_failed`). The default 60s init timeout is configurable via `worca.workspace.init_timeout_seconds` (defaulting to the fleet equivalent if unset). A "Cancel launch" button below the strip aborts in-flight init subprocesses; once any tier-0 child has actually started, Cancel switches to "Halt workspace" (per §10.5 actions), reflecting that the operation has crossed the dispatch boundary. Implementation reuses the same UI primitive from `launcher-shared.js` (W-040 §13.4 extracted module).
 - **Submit** → `POST /api/workspace-runs` returns `{ workspace_id }`, navigate to detail view.
 
 #### 10.4 Dashboard Tier Rendering
@@ -422,7 +492,7 @@ W-047 introduces five UX surfaces that build on W-040's fleet UI: a **workspace 
   6. **Integration test panel** (only when configured) — log viewer (reuses `live-output.js` component) + status badge + "Re-run integration test" button (visible when status is `integration_failed` or `completed`). Calls `POST /api/workspace-runs/:id/re-run-integration`.
   7. **PR table** — one row per repo: PR number, PR URL, status (open/merged), dependency annotations from W-047 §6 (shown as `<sl-tag>` chips: "Depends on org/lib#15", "Blocks org/frontend#43"). Includes a "View umbrella issue" link when present. **"Copy all PR URLs"** button (mirrors W-040 §13.3) copies as a markdown checklist to clipboard.
   8. **Actions row** — verbs aligned with W-048 §13.3 / W-040 §13.3 (single "Cleanup" verb across plans):
-     - **"Halt workspace"** (visible when status is `running`/`planning`/`integration_testing`) → `DELETE /api/workspace-runs/:id` with `<sl-dialog>` confirmation. In-flight tier children finish.
+     - **"Halt workspace"** (visible when status is `running`/`planning`/`integration_testing`) → `DELETE /api/workspace-runs/:id` with `<sl-dialog>` confirmation. In-flight tier children finish. The DELETE handler writes `halt_reason: "user"` to the manifest. Auto-halt by circuit breaker writes `halt_reason: "circuit_breaker"`. The header badge variant differs by reason (per §10.7).
      - **"Resume workspace"** (visible when status is `halted`/`failed`/`integration_failed`) → `POST /api/workspace-runs/:id/resume`. Returns 410 if any child's worktree was previously cleaned (resume impossible — see §6 worktree retention policy).
      - **"Cleanup workspace"** (visible when status is terminal — `completed`/`failed`/`integration_failed`/`halted`) → `DELETE /api/workspace-runs/:id?cleanup=1` invoking `worca cleanup --workspace-id <id>` (W-048 §12 pluggable cleanup via `WorkspaceSource`). Confirmation lists per-child worktree disk to free + the workspace run directory + integration-env worktrees + `~/.worca/workspace-runs/<id>/guides/` size. **For non-completed states**, includes the resume-loss warning + explicit `<sl-checkbox>` requirement (mirrors W-048 §13.3 / W-040 §13.3 pattern).
      - **"Re-run workspace"** (always visible when status is terminal) → opens `workspace-launcher.js` pre-filled from this run's parameters.
@@ -452,14 +522,17 @@ W-047 introduces five UX surfaces that build on W-040's fleet UI: a **workspace 
 
 Extends W-040's badge mapping for workspace-specific states. All map to existing variants — no new CSS variables needed.
 
-| Workspace status | Variant | Rationale |
-|------------------|---------|-----------|
-| `planning` | `primary` (blue) | Master planner active — equivalent to "running" semantically |
-| `running` | `primary` (blue) | Tier execution active |
-| `integration_testing` | `primary` (blue) | All children done, integration phase running |
-| `completed` | `success` (green) | All children + integration passed; PRs created |
-| `failed` | `danger` (red) | Tier failure unrecoverable |
-| `integration_failed` | `danger` (red) | Children done but integration test failed → no PRs |
+| Workspace status | `halt_reason` | Variant | Rationale |
+|------------------|---------------|---------|-----------|
+| `planning` | n/a | `primary` (blue) | Master planner active — equivalent to "running" semantically |
+| `running` | n/a | `primary` (blue) | Tier execution active |
+| `integration_testing` | n/a | `primary` (blue) | All children done, integration phase running |
+| `completed` | n/a | `success` (green) | All children + integration passed; PRs created |
+| `failed` | n/a | `danger` (red) | Tier failure unrecoverable |
+| `integration_failed` | n/a | `danger` (red) | Children done but integration test failed → no PRs |
+| `halted` | `circuit_breaker` | `warning` (orange) | Auto-halt — failure threshold crossed; needs attention |
+| `halted` | `user` | `neutral` (grey) | Operator halted intentionally — informational |
+| `halted` | `null` (legacy) | `warning` (orange) | Pre-W-047 manifest or unknown reason — default to caution |
 
 Per-tier status (in dashboard tier rendering and DAG nodes):
 
@@ -476,6 +549,18 @@ Per-child status adds one new value beyond W-040:
 | Child status | Variant | Rationale |
 |--------------|---------|-----------|
 | `blocked` | `warning` (orange) | Waiting on a failed dependency in an earlier tier — caution, may be skipped or resumed. |
+
+**Required call-site extensions per W-048 §13.4 binding contract.** Workspace-only statuses (`planning`, `integration_testing`, `integration_failed`, `blocked`) are **in addition to** W-040's `halted`/`setup_failed`/`pending`. Each must extend all three render call sites:
+
+1. `worca-ui/app/utils/state-actions.js` — `STATES` and `ACTION_MATRIX`:
+   - `planning`: allows `cancel`, `delete`. The master planner is running; user can abort but not pause/resume mid-plan.
+   - `integration_testing`: allows `cancel`, `delete`. Same shape as `planning` — long-running phase.
+   - `integration_failed`: allows `resume` (re-runs only the integration test), `cancel`, `archive`, `delete`, `learn`. **Does NOT allow `pause`/`stop`** (children already finished).
+   - `blocked` (child-level): allows `cancel`, `delete`. Resume is a workspace-level action that may unblock it; per-child resume is not meaningful.
+2. `worca-ui/app/views/multi-dashboard.js` — `pipelineStatusClass()`: add `case 'planning'`, `case 'integration_testing'`, `case 'integration_failed'`, `case 'blocked'`.
+3. `worca-ui/app/styles.css`: `.pipeline-planning`, `.pipeline-integration-testing` → `var(--status-running)`; `.pipeline-integration-failed` → `var(--status-failed)`; `.pipeline-blocked` → `var(--status-paused)`. **No new CSS variables.**
+
+A reviewer must reject any new-status PR that misses one of these three call sites — the failure mode is silent (button doesn't appear or card looks unstarted).
 
 #### 10.8 Conflict Surfacing (Plan-vs-Guide Divergence)
 
@@ -531,7 +616,9 @@ Per-child status adds one new value beyond W-040:
 | `worca-ui/server/workspace-routes.test.js` (new) | All endpoints from §10.10 — contract + error paths (404; 409 on edit-plan when running; 422 on cycle in submitted DAG; 412 on cleanup of halted/failed/integration_failed without `?force=1`; 410 on resume after worktree cleanup; `validate-gh-auth` returns missing-orgs list with login commands; `validate-base` returns missing-in list; PUT `/api/workspaces/:name` 409 with `?force=1` override). |
 | `worca-ui/server/workspace-routes-guide-upload.test.js` (new) | Multipart upload lands files under `{workspace_root}/.worca/workspace-runs/<run_id>/guides/` per W-040 §3.5 pattern; manifest `guide.uploaded === true` for UI uploads. |
 | `worca-ui/app/views/sidebar.test.js` (extend) | "Workspaces" entry hidden when zero workspaces, visible when workspaces exist (per W-048 §13.7 flat layout — NOT nested under a "Multi-Repo" group); count badge shows active workspace count; badge variant flips to warning when any workspace halted; "+ New Workspace" option appears in the New Pipeline dropdown and routes correctly based on whether workspace.json exists. |
-| `worca-ui/app/views/sidebar-status-badges.test.js` (extend) | New `planning`, `integration_testing`, `integration_failed`, `blocked` badge cases. |
+| `worca-ui/app/views/sidebar-status-badges.test.js` (extend) | New `planning`, `integration_testing`, `integration_failed`, `blocked` badge cases; `halted` + `halt_reason: "user"` renders neutral, `halted` + `halt_reason: "circuit_breaker"` renders warning (workspace mirrors W-040 fleet behavior). |
+| `worca-ui/app/utils/state-actions.test.js` (extend) | Per §10.7: `actionAllowed('cancel', 'planning') === true`; `actionAllowed('resume', 'integration_failed') === true`; `actionAllowed('pause', 'integration_failed') === false`; `blocked` (child) only allows cancel/delete. |
+| `worca-ui/app/views/multi-dashboard.test.js` (extend) | `pipelineStatusClass()` returns correct CSS class for each new workspace status; no fall-through to `pipeline-unknown`. |
 | `worca-ui/test/ws-integration.test.js` (extend) | `workspace-update`, `workspace-tier-update`, `guide-conflict` event subscription and rendering; **`workspace-update` is a separate event type from `fleet-update`** (negative test: a `fleet-update` payload never carries workspace data and vice versa); `guide-conflict` payload has at most one of `fleet_id`/`workspace_id` set (W-048 §5 enforcement). |
 | `worca-ui/e2e/workspaces.spec.js` (new, Playwright `--workers=1`) | End-to-end: create workspace from UI (verifying empty-state fallback when no projects registered), launch run with multipart guide upload, observe tier progression, halt mid-tier, edit plan with `<sl-textarea>`, resume, see PR table; also exercise edit-workspace.json flow (add repo, save, verify next launch picks up change). |
 
@@ -607,7 +694,7 @@ Per-child status adds one new value beyond W-040:
 1. After all children complete and integration tests pass, collect PR URLs from each child's guardian output.
 2. Post dependency comments on each PR via `gh pr comment`.
 3. Optionally create umbrella issue via `gh issue create` with checklist of all PRs in merge order.
-4. Update guardian.md with workspace-aware instructions: when `WORCA_WORKSPACE_ID` is set, include workspace name and repo role in PR description.
+4. **Update `guardian.md` per §6.5 (combined state machine).** The edit must preserve W-048's target_branch lookup (step 5) and W-040's title prefix (step 4 fleet branch), and add steps 3 (defer-PR), 4 (workspace title prefix branch), and 6 (workspace body augmentation: workspace name + repo role). The PR description for this guardian.md edit must explicitly walk through all six steps in §6.5 and confirm every prior plan's clauses still produce the documented output. `tests/test_guardian_state_machine.py` (added in this phase) covers the combined behavior end-to-end.
 
 ### Phase 6: Resume & error recovery
 
@@ -663,7 +750,7 @@ Per-child status adds one new value beyond W-040:
 | `src/worca/cli/workspace.py` | **New** — `worca workspace init`, `worca workspace run` CLI |
 | `src/worca/scripts/run_workspace.py` | **New** — workspace run entry point |
 | `src/worca/agents/core/workspace_planner.md` | **New** — master planner agent template |
-| `src/worca/agents/core/guardian.md` | Workspace-aware PR description when `WORCA_WORKSPACE_ID` set; defer PR creation when `WORCA_DEFER_PR=1` |
+| `src/worca/agents/core/guardian.md` | Workspace-aware PR description when `WORCA_WORKSPACE_ID` set; defer PR creation when `WORCA_DEFER_PR=1`. **Edits must preserve the combined state machine in §6.5** — defer gate (step 3), title prefix (step 4), target_branch base (step 5), body augmentation (step 6) — all must coexist with W-048's and W-040's prior modifications. PR description must cite §6.5. |
 | `src/worca/state/status.py` | Extend with canonical `PipelineStatus`, `FleetStatus`, `WorkspaceStatus` enums and helpers (extends the existing module, no new file) |
 | `.claude/worca/settings.json` | Add `worca.workspace.*` defaults |
 | `worca-ui/server/workspace-routes.js` | **New** — workspace REST endpoints (§10.10) including multipart guide upload, validate-gh-auth, validate-base, edit workspace.json, cleanup with resume gate, relaunch |
@@ -741,7 +828,16 @@ Per-child status adds one new value beyond W-040:
 | Python | `tests/test_workspace_edit.py::test_active_runs_use_snapshot` | Active workspace run continues using the workspace.json snapshot from launch time even after the file is edited; verifies snapshot semantics. |
 | Python | `tests/test_workspace_validate_gh_auth.py::test_returns_missing_orgs` | Mock `gh auth status` failure for one org; assert endpoint returns `{ ok: false, missing_orgs: [...] }` with login command. |
 | Python | `tests/test_registry_grouping.py::test_workspace_id_only_for_workspace` | A workspace child registry entry has `workspace_id` set, `fleet_id` is `None`, `group_type == "workspace"`. Inverse for fleet child. Enforces W-048 §5 mutual-exclusion rule end-to-end (mirrors W-040 test). |
-| Python | `tests/test_registry_grouping.py::test_register_pipeline_rejects_both_ids` | `register_pipeline(fleet_id="x", workspace_id="y")` raises ValueError. |
+| Python | `tests/test_registry_grouping.py::test_register_pipeline_rejects_both_ids` | `register_pipeline(fleet_id="x", workspace_id="y")` raises ValueError. (Verifies W-048 §5 guard from upstream — should already pass after W-048 ships.) |
+| Python | `tests/test_workspace_halt.py::test_halt_reason_user` | `DELETE /api/workspace-runs/:id` writes `halt_reason: "user"` |
+| Python | `tests/test_workspace_halt.py::test_halt_reason_circuit_breaker` | Auto-halt via fleet circuit breaker writes `halt_reason: "circuit_breaker"` |
+| Python | `tests/test_workspace_init_timeout.py::test_per_target_timeout` | Hung target → marked `setup_failed` after timeout; other repos dispatch normally |
+| Python | `tests/test_workspace_init_timeout.py::test_cancel_during_init` | Cancel signal kills outstanding `worca init` subprocesses; tier-0 children that already dispatched are unaffected |
+| Python | `tests/test_guardian_state_machine.py::test_defer_pr_short_circuits` | `WORCA_DEFER_PR=1` → guardian commits and pushes but does NOT call `gh pr create` (per §6.5 step 3) |
+| Python | `tests/test_guardian_state_machine.py::test_fleet_title_prefix` | `WORCA_FLEET_ID` set → PR title prepends `[fleet:<short>]` (W-040 §11 + §6.5 step 4) |
+| Python | `tests/test_guardian_state_machine.py::test_workspace_title_prefix` | `WORCA_WORKSPACE_ID` set → PR title prepends `[workspace:<short>]` (§6.5 step 4) |
+| Python | `tests/test_guardian_state_machine.py::test_target_branch_used_in_base` | `status.target_branch = "dev"` → `gh pr create --base dev` (W-048 §10 + §6.5 step 5) |
+| Python | `tests/test_guardian_state_machine.py::test_combined_workspace_run` | All five clauses fire together: defer-respect, workspace title, target_branch base, workspace body line, repo role line |
 | UI (vitest) | `worca-ui/server/workspace-routes.test.js` | REST endpoint contract (covered above in §10.11) |
 | UI (vitest) | `worca-ui/app/views/workspace-detail.test.js` | DAG render, tier status, integration badge (covered above in §10.11) |
 

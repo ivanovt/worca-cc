@@ -43,6 +43,10 @@ run_fleet.py (fleet orchestrator)
 - **Obstacle:** Without `.claude/worca/`, hooks, agent templates, and settings are missing and the pipeline cannot start. Manually running `worca init` N times is error-prone.
 - **Resolution:** `run_fleet.py` calls `worca init <project_dir> --upgrade` for every target before launching. The `--upgrade` path is already non-destructive (preserves user `settings.json`, updates only worca-owned files under `.claude/worca/`, idempotent). Failures are marked `setup_failed` in the manifest; the fleet continues with the rest.
 
+  **Per-target init timeout (default 60s):** A hung target (network slow, prompt waiting on user input that never comes, filesystem stuck) would block the entire fleet launch. Each `worca init --upgrade` invocation runs as a `subprocess` with `timeout=worca.fleet.init_timeout_seconds` (default 60). On timeout the child is marked `setup_failed` with a clear message ("init exceeded 60s — target may be unreachable") and the fleet continues with the rest. The timeout is configurable per fleet via `--init-timeout` and per-installation via `worca.fleet.init_timeout_seconds`.
+
+  **UI Cancel during init phase:** The launcher (§13.4) disables the "Launch fleet" button immediately on submit and displays a per-target progress strip (`<sl-progress-bar>` row per target with status text — "queued" / "initializing" / "ready" / "setup_failed: <reason>"). A **"Cancel launch"** button below the strip aborts the in-flight init phase by killing all outstanding `worca init` subprocesses; targets already past init proceed (their child pipelines are already detached). The cancel signal is sent via `DELETE /api/fleet-runs/:id?stage=initializing` which the server resolves to "kill init subprocesses but leave dispatched children alone" — same shape as the post-launch halt, different effect.
+
   **Version compatibility:** `worca init --upgrade` overwrites hooks and agent templates but preserves `settings.json`. If the target repo used an older worca version with a different settings schema, the new hooks may expect keys that don't exist. To mitigate: add a `schema_version` field to `.claude/worca/settings.json`; `init --upgrade` performs schema migration (adds missing keys with defaults, warns about removed keys). The fleet manifest records the worca version used for provisioning.
 
 ### 3. Shared Reference-Context Mechanism
@@ -117,7 +121,16 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
   | `--head-template <template>` | Per-child head branch name | `run_worktree.py` derived branch name (head) | `migration/{slug}/{project}` |
   | `--base <name>` | PR base branch (shared across fleet) | `run_worktree.py --branch <name>` (= W-048 `target_branch`) | Each repo's default branch (resolved per-child via `git symbolic-ref refs/remotes/origin/HEAD`) |
 
-  **Backward compatibility:** `--branch <template>` is preserved as a deprecated alias for `--head-template` to keep this plan's earlier examples working. A deprecation warning is emitted; remove the alias one minor release after merge.
+  **No `--branch` alias.** The flag string `--branch` is reserved by `run_worktree.py` (W-048 §10) where it means **base branch** — the same string used for `run_fleet.py` would have to mean **head template**. Carrying a deprecated alias for `--head-template` would create a flag-string collision that fails silently when scripts are copy-pasted between worktree and fleet contexts (a user typing `run_fleet.py --branch dev` thinking it sets the base would actually set the head template). Since W-040 is a new entry point with no existing users, the alias has no real backwards-compat benefit. `run_fleet.py` rejects `--branch` at argparse time with the message:
+
+  ```
+  --branch is not a valid flag for run_fleet.py. You probably want one of:
+    --base <name>             PR base branch (= run_worktree.py --branch)
+    --head-template <tmpl>    Per-child head branch name template
+  See W-040 §4 for the distinction.
+  ```
+
+  This forces every fleet invocation to be explicit and eliminates the cross-script flag-meaning collision flagged in the plan-set review.
 
   **Head-template placeholders** (unchanged from prior design): `{project}` (slugified basename), `{fleet_id}`, `{slug}`, `{yyyymmdd}`, `{yyyymmddhhmm}`. If no placeholder is present, `/{project}` is appended automatically. Slugification reuses `_slugify`, extracted into `src/worca/utils/branch_naming.py` for sharing. Post-substitution the full head-branch set is checked for uniqueness before any child launches; conflicts fail fast with the colliding pair reported.
 
@@ -144,9 +157,19 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 
 - **Current state:** Per-pipeline circuit breaker logic lives in `src/worca/orchestrator/error_classifier.py:182-239` (`get_circuit_breaker_state`, `should_halt`, `get_retry_delay`); the `CircuitBreakerError` exception is in `src/worca/orchestrator/batch.py:16` (note: W-048 deletes `batch.py` and may move this exception into `error_classifier.py`); `runner.py` raises its own `CircuitBreakerTripped` (`runner.py:101`) for in-pipeline halt. All of these are per-pipeline only — there is no fleet-level circuit breaker.
 - **Obstacle:** A systematic issue (bad guide, bad plan, missing tool) that fails the first 5 children will still burn through the remaining 15.
-- **Resolution:** Add `fleet_failure_threshold` (default 30%) to fleet config. The `run_fleet.py` main loop tracks completed children; when `failed / completed >= threshold` and `completed >= min(3, total)`, unstarted children are cancelled and the fleet manifest is marked `halted`. In-flight children finish naturally — fleet-halt does not kill running subprocesses, avoiding half-written repo states.
+- **Resolution:** Add `fleet_failure_threshold` (default 30%) to fleet config. The `run_fleet.py` main loop tracks completed children; when `failed / completed >= threshold` and `completed >= min(3, total)`, unstarted children are cancelled and the fleet manifest is marked `halted` with `halt_reason = "circuit_breaker"`. In-flight children finish naturally — fleet-halt does not kill running subprocesses, avoiding half-written repo states.
 
   **Dispatch strategy:** Do not submit all children to `ThreadPoolExecutor` at once — eagerly queued futures cannot be reliably cancelled. Instead, use a manual dispatch loop: maintain a set of in-flight futures (up to `--max-parallel`), check the circuit breaker before submitting each new child, and skip remaining children if the threshold is reached. This ensures the breaker can actually prevent unstarted children from launching.
+
+  **`halt_reason` discrimination — user halt vs circuit-breaker halt.** A `halted` fleet has two distinct origins that the UI must distinguish:
+
+  | `halt_reason` | Set when | Manifest origin | UI signal |
+  |---------------|----------|-----------------|-----------|
+  | `"user"` | Operator clicks "Halt fleet" in UI or runs `DELETE /api/fleet-runs/:id` from CLI | `DELETE` handler writes it | Header badge: `neutral` variant ("Halted by you") — no orange "needs attention" |
+  | `"circuit_breaker"` | Auto-triggered by failure threshold | `run_fleet.py` writes it on threshold trip | Header badge: `warning` variant ("Halted by circuit breaker — N failures across M children") — orange |
+  | `null` (legacy) | Pre-W-040 manifest or unknown origin | n/a | Defaults to `warning` for safety |
+
+  Both states use `status: "halted"` in the manifest — `halt_reason` is a sibling field that does not change lifecycle semantics (resume / cleanup behave identically). Only the UI render differs. The badge color differentiation is documented in §13.7 below.
 
 ### 8. Registry Integration via `pipelines.d/`
 
@@ -190,6 +213,7 @@ This replaces the originally proposed `registry.py` extension — `pipelines.d/`
   "max_parallel": 5,
   "fleet_failure_threshold": 0.30,
   "status": "running|halted|completed|failed",
+  "halt_reason": "user|circuit_breaker|null",
   "children": [
     {
       "project_path": "/abs/path",
@@ -207,6 +231,7 @@ Field notes:
 - `base_branch` (top-level) is the fleet-wide PR base. `null` means "each child resolves its own default branch" (§4 default).
 - `children[].base_branch` is the resolved per-child base (may differ from top-level when top-level is null and per-child defaults differ).
 - `guide.uploaded: true` indicates the guide files live under `~/.worca/fleet-runs/<fleet_id>/guides/` (§3.5); `false` means CLI-supplied absolute paths (which may not be readable by the UI server — see §13.3 fallback).
+- `halt_reason` is set when `status` transitions to `halted`. Values: `"user"` (operator-initiated halt), `"circuit_breaker"` (failure threshold trip per §7), or `null` (status is not `halted`, or legacy pre-W-040 manifest). The UI uses this to pick the badge variant (§13.7) — `circuit_breaker` is orange/warning, `user` is grey/neutral.
 - Per-child `status`, `started_at`, `completed_at`, and `returncode` are NOT in the manifest — they are read from `pipelines.d/` entries and `status.json` at query time. The `children` array is a lightweight index mapping `run_id` to `project_path` for fleet-scoped queries.
 
 ### 11. Guardian PR Grouping
@@ -280,6 +305,18 @@ W-040 introduces three first-class UX surfaces: a **fleet-aware dashboard** that
 #### 13.4 Fleet Launcher View
 
 - **New file:** `worca-ui/app/views/fleet-launcher.js`. Routed via `#/fleet-runs/new`.
+- **Shared subcomponent extraction (binding architectural decision).** The launcher's reusable subcomponents — multipart guide upload widget, head-template input with collision preview, plan-mode radio shell, token-overhead gate — are extracted into `worca-ui/app/views/launcher-shared.js` **as part of this plan, not deferred to W-047**. Even though `fleet-launcher.js` is the only consumer at W-040 ship time, the shared module establishes the API W-047's workspace-launcher mode (W-047 §10.3) extends. Doing the extraction here avoids a refactor of just-shipped W-040 code when W-047 lands. The exports:
+
+  ```javascript
+  // worca-ui/app/views/launcher-shared.js
+  export function guideUploadWidget(state, { onChange, maxBytes }) { ... }
+  export function headTemplateInput(state, { selectedProjects, onChange }) { ... }
+  export function planModeRadio(state, { options, onChange }) { ... }
+  export function tokenOverheadGate(state, { estimateFn, threshold }) { ... }
+  ```
+
+  `fleet-launcher.js` composes these. W-047 §10.3 reuses the same exports plus adds workspace-only widgets (DAG preview, master-planner option) on top.
+
 - **Form structure (top-down):**
 
   1. **Project multi-select.** A `<sl-select multiple clearable>` populated from `GET /api/projects` (registered projects in `~/.worca/projects.d/` from W-032). Each option shows project name + path. Above the select, a "Select all registered projects" button (toggles all) and a search/filter input that narrows options client-side.
@@ -328,21 +365,34 @@ W-040 introduces three first-class UX surfaces: a **fleet-aware dashboard** that
 
 Aligns new fleet states to the existing badge color language (`worca-ui/docs/badge-color-language.md`).
 
-| Fleet status | Variant | Rationale |
-|--------------|---------|-----------|
-| `running` | `primary` (blue) | Active |
-| `completed` | `success` (green) | All children succeeded |
-| `failed` | `danger` (red) | All children failed or unrecoverable |
-| `halted` | `warning` (orange) | Circuit breaker tripped — partial success, in-flight children may still be running. Caution, not failure. |
+| Fleet status | `halt_reason` | Variant | Rationale |
+|--------------|---------------|---------|-----------|
+| `running` | n/a | `primary` (blue) | Active |
+| `completed` | n/a | `success` (green) | All children succeeded |
+| `failed` | n/a | `danger` (red) | All children failed or unrecoverable |
+| `halted` | `circuit_breaker` | `warning` (orange) | Circuit breaker tripped — partial success, system needs attention. |
+| `halted` | `user` | `neutral` (grey) | Operator halted intentionally — informational, no action needed. |
+| `halted` | `null` (legacy) | `warning` (orange) | Pre-W-040 manifest or unknown reason — default to caution. |
 
-Per-child status (in fleet detail view's children grid) uses the existing pipeline-status mapping. New child-level state added by W-040:
+The badge label also changes by reason: `Halted` (user) vs `Halted (circuit breaker)` (auto). Tooltip on the header badge expands to "Halted by you on `<timestamp>`" or "Halted automatically: `<N>` of `<M>` children failed".
+
+Per-child status (in fleet detail view's children grid) uses the existing pipeline-status mapping. New child-level states added by W-040:
 
 | Child status | Variant | Rationale |
 |--------------|---------|-----------|
 | `setup_failed` | `danger` (red) | `worca init --upgrade` failed for this target — pipeline never started. |
 | `pending` | `neutral` (grey) | Queued but not yet launched (e.g., gated behind circuit breaker). |
 
-Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise the variants above already map to existing colors.
+**Required call-site extensions per W-048 §13.4 binding contract.** Each new status value (`halted`, `setup_failed`, `pending`) must be added to all three render call sites:
+
+1. `worca-ui/app/utils/state-actions.js` — extend `STATES` and `ACTION_MATRIX`:
+   - `halted`: allows `resume`, `cancel`, `archive`, `delete`, `learn`. Disallows `pause`, `stop` (already halted), `unarchive`.
+   - `setup_failed`: allows `cancel`, `archive`, `delete`. Disallows resume — `worca init` failed before the pipeline started, so there's nothing to resume; user must re-launch the fleet.
+   - `pending`: allows `cancel`, `delete`. Disallows everything else (no PID exists yet).
+2. `worca-ui/app/views/multi-dashboard.js` — extend `pipelineStatusClass()` switch (line 38) with `case 'halted': return 'pipeline-halted';` etc.
+3. `worca-ui/app/styles.css` — add `.pipeline-halted { border-left-color: var(--status-paused); }`, `.pipeline-setup-failed { border-left-color: var(--status-failed); }`, `.pipeline-pending { border-left-color: var(--status-paused); /* or unset */ }`. **No new CSS variables** — reuse existing color variables to match the badge variants above.
+
+The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 
 #### 13.8 UI Test Coverage
 
@@ -354,7 +404,10 @@ Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise 
 | `worca-ui/server/fleet-routes.test.js` (new) | All endpoints listed in 13.6 — contract + error paths (404, 409 on resume of running fleet, 400 on guide cap exceeded, 412 on cleanup of resumable fleet without `?force=1`, 410 on resume after worktree cleanup, `validate-base` returns missing-in list). |
 | `worca-ui/server/fleet-routes-guide-upload.test.js` (new) | Multipart upload lands files under `~/.worca/fleet-runs/<id>/guides/` per §3.5; filename sanitization (path separators stripped); collision dedup (`-1`, `-2`); size cap enforced before dispatch; manifest `guide.uploaded === true` for UI uploads, `false` for CLI paths. |
 | `worca-ui/app/views/sidebar.test.js` (extend) | "Fleets" entry hidden when zero fleets, visible when fleets exist (per W-048 §13.7 layout); count badge shows active count; badge variant flips to warning when any fleet halted; "+ New Fleet" option appears in the New Pipeline dropdown. |
-| `worca-ui/app/views/sidebar-status-badges.test.js` (extend) | New `halted` and `setup_failed` badge color cases. |
+| `worca-ui/app/views/sidebar-status-badges.test.js` (extend) | New `halted` and `setup_failed` badge color cases; `halted` + `halt_reason: "user"` renders neutral, `halted` + `halt_reason: "circuit_breaker"` renders warning. |
+| `worca-ui/app/utils/state-actions.test.js` (extend, new if absent) | `actionAllowed('resume', 'halted') === true`; `actionAllowed('pause', 'halted') === false`; `setup_failed` only allows `cancel`/`archive`/`delete`; `pending` only allows `cancel`/`delete`. Enforces W-048 §13.4 binding contract. |
+| `worca-ui/app/views/multi-dashboard.test.js` (extend) | `pipelineStatusClass('halted')` returns `pipeline-halted`; `pipelineStatusClass('setup_failed')` returns `pipeline-setup-failed`; new statuses no longer fall through to `pipeline-unknown`. |
+| `worca-ui/app/views/launcher-shared.test.js` (new) | Each extracted subcomponent (guide upload, head-template input, plan-mode radio shell, token-overhead gate) in isolation; verified the API surface W-047 will compose against. |
 | `worca-ui/test/ws-integration.test.js` (extend) | `fleet-update` event subscription and dashboard re-render; **`workspace-update` is a separate event type and never carries fleet payloads** (negative test ensuring multiplexing isn't reintroduced). |
 | `worca-ui/e2e/fleet-runs.spec.js` (new, Playwright `--workers=1`) | End-to-end: launch fleet (via UI multipart upload), observe halted state, resume from UI, see PR aggregation, see aggregate cost panel, "Re-run fleet" creates a new fleet with same definition. |
 
@@ -382,7 +435,7 @@ Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise 
 **Tasks:**
 1. Add `attach_guide(wr, guide_paths)` in `work_request.py` with the normative header.
 2. Add `worca.guide.max_bytes` default (64KB) to `settings.json`.
-3. Wire `--guide PATH` (repeatable) into `run_pipeline.py`, `run_parallel.py`, `run_worktree.py`; call after `normalize(...)`.
+3. Wire `--guide PATH` (repeatable) into `run_pipeline.py`, `run_parallel.py`, `run_worktree.py`; call after `normalize(...)`. **Remove the W-048 §4 `attach_guide`-availability probe and the `ArgumentError` it raised** — once this phase ships, `attach_guide` is always importable, so the gate is unreachable and dead.
 4. Document precedence **guide > plan > description** in `CLAUDE.md`. The guide is the highest-authority normative material (matching the "treat any conflict between the guide and the task description as a bug" wording in the normative header). The plan is derived from the guide and the description; if the plan diverges from the guide, the guide wins. The description is task scope, expanded by both. When all three are present, agents must surface plan-vs-guide conflicts rather than silently resolving them.
 5. Reinforce the precedence in the agent templates: add a "Guide precedence" instruction block to `planner.md`, `reviewer.md`, and `tester.md` that tells the agent (a) to conform to the guide, (b) to surface plan-vs-guide divergence rather than silently resolving it, (c) to treat description requests that conflict with the guide as bugs to flag.
 
@@ -391,7 +444,7 @@ Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise 
 **Files:** `src/worca/scripts/run_fleet.py` (new), `src/worca/utils/branch_naming.py` (new), `src/worca/scripts/run_worktree.py`, `src/worca/scripts/run_parallel.py`
 
 **Tasks:**
-1. Add `run_fleet.py` with arg parsing for `--projects` / `--projects-file`, `--head-template` (canonical), `--branch` (deprecated alias for `--head-template` — emit deprecation warning), `--base` (PR base branch — see §4), `--guide`, `--plan`, `--plan-first`, `--max-parallel`, `--fleet-failure-threshold`, `--resume`.
+1. Add `run_fleet.py` with arg parsing for `--projects` / `--projects-file`, `--head-template` (canonical), `--base` (PR base branch — see §4), `--guide`, `--plan`, `--plan-first`, `--max-parallel`, `--fleet-failure-threshold`, `--resume`. **`--branch` is explicitly rejected** with the §4 error message — no deprecation alias exists.
 2. Extract `_slugify` + `_resolve_branch_template` into `utils/branch_naming.py`; update `run_parallel.py` to import from there.
 3. Add collision detection on post-substitution **head** branch names. **Base branch pre-flight:** when `--base` is set, verify it exists in every selected project via `git -C <target> branch --list <base>`; abort with the missing-in list if any are absent.
 4. Invoke `worca init --upgrade` per target; capture failures as `setup_failed`.
@@ -444,7 +497,7 @@ Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise 
 | `src/worca/scripts/run_pipeline.py` | Wire `--guide` flag |
 | `src/worca/scripts/run_parallel.py` | Wire `--guide`; import slugifier from `utils/branch_naming` |
 | `src/worca/scripts/run_worktree.py` | Wire `--guide` flag; add `--fleet-id` flag passed to `register_pipeline()` |
-| `src/worca/scripts/run_fleet.py` | **New** — fleet entry point with `--head-template` (canonical), `--branch` (deprecated alias), `--base` (PR base branch), `--guide`, `--plan`, `--plan-first`, `--projects`, `--max-parallel`, `--fleet-failure-threshold` |
+| `src/worca/scripts/run_fleet.py` | **New** — fleet entry point with `--head-template` (canonical), `--base` (PR base branch), `--guide`, `--plan`, `--plan-first`, `--projects`, `--max-parallel`, `--fleet-failure-threshold`. `--branch` is explicitly rejected at argparse time per §4 to avoid flag-string collision with `run_worktree.py --branch` |
 | `src/worca/utils/branch_naming.py` | **New** — extracted `_slugify` + template resolver |
 | `src/worca/agents/core/guardian.md` | Fleet-aware PR title + footer |
 | `src/worca/agents/core/planner.md` | Add "Guide precedence" instruction (guide > plan > description) |
@@ -456,7 +509,8 @@ Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise 
 | `worca-ui/app/views/dashboard.js` | Fleet grouping renderer (collapsible header, aggregate progress, aggregate cost) |
 | `worca-ui/app/views/multi-dashboard.js` | Fleet grouping in compact pipeline-card view (uses `selectParallelPipelines` from W-048 §6.5; groups by `fleet_id` when `group_type === "fleet"`) |
 | `worca-ui/app/views/sidebar.js` | "Fleets" nav entry per W-048 §13.7 layout (flat sibling under Pipeline section); "+ New Fleet" option in the New Pipeline dropdown |
-| `worca-ui/app/views/fleet-launcher.js` | **New** — guided launch form with token gate, separate head-template + base-branch inputs, multipart guide upload (§13.4) |
+| `worca-ui/app/views/launcher-shared.js` | **New** — extracted subcomponents (guide upload, head-template input, plan-mode radio shell, token-overhead gate). Established here, **not in W-047**, to avoid refactoring just-shipped W-040 code when W-047 lands (§13.4 binding architectural decision) |
+| `worca-ui/app/views/fleet-launcher.js` | **New** — guided launch form composing `launcher-shared.js`; token gate, separate head-template + base-branch inputs, multipart guide upload, per-target init progress strip + Cancel button (§13.4) |
 | `worca-ui/app/views/fleet-detail.js` | **New** — manifest, guide (with not-retrievable fallback), children grid, aggregate cost panel, actions (§13.3) |
 | `worca-ui/app/protocol.js` | Add `'fleet-update'` to event allowlist |
 | `worca-ui/app/styles.css` | Fleet group + launcher styles; status color additions if needed |
@@ -501,12 +555,18 @@ Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise 
 | Python | `tests/test_fleet_plan_modes.py::test_plan_explicit` | `--plan <path>` attaches same plan to every child; Planner skipped |
 | Python | `tests/test_fleet_plan_modes.py::test_plan_first` | Reference child's Planner output is reused by N−1 others; failure halts fan-out |
 | Python | `tests/test_fleet_circuit_breaker.py::test_halt_threshold` | ≥30% failures with ≥3 completed → unstarted children cancelled, in-flight survive |
+| Python | `tests/test_fleet_circuit_breaker.py::test_halt_reason_circuit_breaker` | Auto-halt writes `halt_reason: "circuit_breaker"` in manifest |
+| Python | `tests/test_fleet_circuit_breaker.py::test_halt_reason_user` | `DELETE /api/fleet-runs/:id` (or CLI equivalent) writes `halt_reason: "user"` in manifest |
+| Python | `tests/test_fleet_init_timeout.py::test_per_target_timeout` | One target hangs >timeout → marked `setup_failed`, others dispatched normally |
+| Python | `tests/test_fleet_init_timeout.py::test_cancel_during_init` | `?stage=initializing` cancellation kills outstanding `worca init` subprocesses; dispatched children continue |
+| Python | `tests/test_fleet_resume.py::test_resume_skips_cleaned_children` | Worktree removed pre-resume → child marked `unrecoverable`, resume continues with the rest |
+| Python | `tests/test_registry.py::test_reconcile_orphan_groups_strips_dead_fleet` | W-040-extended `reconcile_orphan_groups` strips `fleet_id`/`group_type` when manifest missing (extends W-048 §11.5 skeleton) |
 | Python | `tests/test_fleet_resume.py::test_resume_selects_failed` | `--resume` re-launches only `pending`/`failed`/`setup_failed` children |
 | Python | `tests/test_fleet_resume.py::test_resume_reads_pipelines_d` | `--resume` resolves child status from `pipelines.d/` entries, not manifest |
 | Python | `tests/test_fleet_branch.py::test_base_branch_propagation` | `--base dev` is propagated to every child's `run_worktree.py --branch dev`; manifest `base_branch == "dev"`; child entries `base_branch == "dev"` |
 | Python | `tests/test_fleet_branch.py::test_base_branch_pre_flight` | `--base nonexistent` aborts with the list of repos lacking the branch; no children dispatched |
 | Python | `tests/test_fleet_branch.py::test_base_branch_default_resolution` | `--base` omitted → each child resolves its own default branch via `git symbolic-ref refs/remotes/origin/HEAD`; heterogeneous (main/master) handled |
-| Python | `tests/test_fleet_branch.py::test_head_template_alias` | `--branch <template>` (deprecated alias) works and emits deprecation warning; `--head-template` is canonical |
+| Python | `tests/test_fleet_branch.py::test_branch_flag_rejected` | `run_fleet.py --branch foo` raises `ArgumentError` with the §4 message pointing the user at `--base` and `--head-template`; no children dispatched |
 | Python | `tests/test_attach_guide.py::test_uploaded_path_resolution` | `attach_guide` reads files from `~/.worca/fleet-runs/<id>/guides/`; manifest `guide.uploaded === true` |
 | Python | `tests/test_registry_grouping.py::test_fleet_id_only_for_fleet` | A fleet child registry entry has `fleet_id` set, `workspace_id` is `None`, `group_type == "fleet"`. Inverse for workspace child (covered in W-047 tests). Enforces W-048 §5 authoritative rule. |
 | UI (vitest) | `worca-ui/server/fleet-routes.test.js` | `POST/GET/DELETE /api/fleet-runs` + guide endpoint contract + validate-base + relaunch + 412/410 paths |
@@ -515,9 +575,22 @@ Update `worca-ui/app/styles.css` if any new CSS variables are needed; otherwise 
 ### Integration / E2E Tests
 
 - **Synthetic 3-repo fleet (pytest fixture).** Scratch repos generated by the harness; fleet applies a trivial guide (`add HEALTH.md`); asserts 3 worktrees created (one per repo), 3 `pipelines.d/` entries with matching `fleet_id`, 3 branches, 3 PRs (mocked `gh`), fleet manifest status `completed`.
-- **Playwright (`--workers=1`).** Launch a fleet via the UI, observe grouped progress on the dashboard, stop the fleet, verify `DELETE /api/fleet-runs/:id` halts unstarted children.
+- **Full-stack W-048 + W-040 integration (pytest fixture, no W-047).** This is the W-040-only end-to-end check, mirroring W-047's full-stack test but stopping one layer down — closes the gap where a W-040 regression would otherwise wait for W-047 dogfooding to surface.
+  1. Launch via `python .claude/worca/scripts/run_fleet.py --projects /tmp/repo-a /tmp/repo-b /tmp/repo-c --prompt "..." --base main --head-template fleet/{slug}/{project}` against three scratch repos.
+  2. Assert `run_fleet.py` calls `run_worktree.py` per repo with `--fleet-id <id>` and `--branch main` (W-048 §10 = base branch).
+  3. Assert each child writes a `pipelines.d/` entry with `fleet_id == <id>`, `workspace_id IS NULL`, `group_type == "fleet"`, `target_branch == "main"`, `worktree_path` populated.
+  4. Assert `discoverRuns` (W-048's `watcher.js` step 5) in **global mode** (cross-project fan-out per W-048 §5) returns all 3 children in one `runs-list` payload, each enriched with `fleet_id` / `group_type`.
+  5. Assert no `pipeline-status-changed` events fire (MultiWatcher is gone — W-048 §6.5 contract).
+  6. Assert the UI dashboard groups all 3 runs under one fleet header (rendered by `dashboard.js` fleet-grouping per §13.2) with aggregate progress matching `completed_children / total_children`.
+  7. Halt mid-flight via `DELETE /api/fleet-runs/:id`. Assert: in-flight children continue, unstarted children are cancelled, fleet manifest `status: "halted"`, `halt_reason: "user"`, header badge variant flips to `neutral` (per §13.7).
+  8. Trigger circuit-breaker halt in a separate run by mocking child failures past threshold. Assert `halt_reason: "circuit_breaker"`, header badge variant `warning`.
+  9. Cleanup via `worca cleanup --fleet-id <id>`. Assert: worktrees removed, `~/.worca/fleet-runs/<id>/` removed (manifest + guides/ subdir), `pipelines.d/` entries deregistered. Run `reconcile_orphan_groups()` (W-048 §11.5) → returns empty list (no orphan IDs left).
+- **Playwright (`--workers=1`).** Launch a fleet via the UI, observe grouped progress on the dashboard, stop the fleet, verify `DELETE /api/fleet-runs/:id` halts unstarted children. Also exercise: per-target init progress strip during the launch phase, "Cancel launch" button kills outstanding `worca init` subprocesses (§2 init-timeout / cancel surface).
 - **`--plan-first` happy path + failure path.** Reference Planner succeeds → fan-out; reference Planner fails → fleet halted before fan-out, manifest status `failed`.
 - **Resume after partial failure.** Fleet of 3; mock one child to fail. `--resume` re-launches only the failed child; completed children untouched; `pipelines.d/` entries verified.
+- **Resume skips cleaned children (regression).** Fleet of 3 with one child's worktree manually `rm -rf`'d post-failure. `--resume` logs "skipping run X — worktree gone (cleaned up)", continues with remaining failed children. Manifest reflects the cleaned child as `unrecoverable`.
+- **Init-timeout regression.** Mock one of three target repos to hang `worca init --upgrade` indefinitely. `run_fleet.py --init-timeout 5` aborts that target after 5s, marks `setup_failed`, dispatches the other two normally. Total launch time < 10s.
+- **`reconcile_orphan_groups` end-to-end.** Register a child with `fleet_id="ghost_xyz"`, then assert no manifest exists at `~/.worca/fleet-runs/ghost_xyz.json`. Run `reconcile_orphan_groups()` → strips the dead `fleet_id` and `group_type` from the entry; child is now standalone. Verify `discoverRuns` returns it without group fields.
 
 ### Existing Tests to Update
 
