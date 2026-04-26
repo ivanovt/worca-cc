@@ -4,23 +4,23 @@
 **Priority:** P2
 **Area:** cc + ui
 **Date:** 2026-04-14 (revised 2026-04-25)
-**Depends on:** W-032 (global multi-project worca-ui — `~/.worca/projects.d/` semantics), W-039 (workspace batch add projects — prerequisite registration path for fleet launches from the UI), W-082 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `active_run` removal)
+**Depends on:** W-032 (global multi-project worca-ui — `~/.worca/projects.d/` semantics), W-039 (workspace batch add projects — prerequisite registration path for fleet launches from the UI), W-048 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `active_run` removal)
 
 ## Problem
 
-There is no first-class way to apply a single work-request to many independent project repositories in parallel. Existing parallel runners are intra-repo only: `src/worca/scripts/run_parallel.py` and `src/worca/utils/git.py:create_pipeline_worktree` are built on `git worktree add`, which cannot span distinct `.git/` directories. W-082's `run_worktree.py` (replacing `run_multi.py`) launches isolated pipelines within a single repo via git worktrees — it cannot target a different repo. Users who want to roll a migration, compliance change, or repo-hygiene task across 5–20 registered projects must launch pipelines N times by hand, with no shared guide, no branch-template, no grouped observability in the dashboard, and no aggregate circuit breaker. Shared normative context (a migration guide, RFC, or spec) also has no pinning mechanism today: `src/worca/orchestrator/work_request.py` only carries a single `description`, and `CLAUDE.md` is the wrong lifecycle for per-run authoritative material.
+There is no first-class way to apply a single work-request to many independent project repositories in parallel. Existing parallel runners are intra-repo only: `src/worca/scripts/run_parallel.py` and `src/worca/utils/git.py:create_pipeline_worktree` are built on `git worktree add`, which cannot span distinct `.git/` directories. W-048's `run_worktree.py` (replacing `run_multi.py`) launches isolated pipelines within a single repo via git worktrees — it cannot target a different repo. Users who want to roll a migration, compliance change, or repo-hygiene task across 5–20 registered projects must launch pipelines N times by hand, with no shared guide, no branch-template, no grouped observability in the dashboard, and no aggregate circuit breaker. Shared normative context (a migration guide, RFC, or spec) also has no pinning mechanism today: `src/worca/orchestrator/work_request.py` only carries a single `description`, and `CLAUDE.md` is the wrong lifecycle for per-run authoritative material.
 
 ## Proposal
 
-Add a `run_fleet.py` entry point that accepts N target project paths, one prompt (or `--source`), an optional repeatable `--guide`, an optional `--plan`, and a `--branch <template>`, then launches N isolated pipelines — one per target repo — under a shared `fleet_id`. Each fleet child is dispatched via W-082's `run_worktree.py`, giving it worktree isolation within its target repo (the user's working tree is not dirtied). Per-project pipelines stay independent (own `.claude/worca/`, own branch, own PR) but register under the common `fleet_id` in W-082's `pipelines.d/` registry so the UI, CLI, and cleanup scripts treat the fleet as a single unit. A new `attach_guide()` helper in `work_request.py` prepends guide content to `description` under a normative header and is wired into every entry script (not fleet-only). A lightweight fleet manifest at `~/.worca/fleet-runs/<fleet_id>.json` tracks fleet-level state (status, circuit breaker, plan mode) while per-child pipeline state is tracked by `pipelines.d/` and `discoverRuns` — no parallel tracking system.
+Add a `run_fleet.py` entry point that accepts N target project paths, one prompt (or `--source`), an optional repeatable `--guide`, an optional `--plan`, and a `--branch <template>`, then launches N isolated pipelines — one per target repo — under a shared `fleet_id`. Each fleet child is dispatched via W-048's `run_worktree.py`, giving it worktree isolation within its target repo (the user's working tree is not dirtied). Per-project pipelines stay independent (own `.claude/worca/`, own branch, own PR) but register under the common `fleet_id` in W-048's `pipelines.d/` registry so the UI, CLI, and cleanup scripts treat the fleet as a single unit. A new `attach_guide()` helper in `work_request.py` prepends guide content to `description` under a normative header and is wired into every entry script (not fleet-only). A lightweight fleet manifest at `~/.worca/fleet-runs/<fleet_id>.json` tracks fleet-level state (status, circuit breaker, plan mode) while per-child pipeline state is tracked by `pipelines.d/` and `discoverRuns` — no parallel tracking system.
 
 ## Design
 
 ### 1. Cross-Repository Runner
 
-- **Current state:** W-082 introduces `src/worca/scripts/run_worktree.py` as the default single-pipeline launcher. It creates a git worktree within the current repo, copies `.claude/worca/` into it, registers in `pipelines.d/`, and spawns `run_pipeline.py --worktree` inside the worktree. `src/worca/scripts/run_parallel.py` handles intra-repo parallelism. No entry point accepts N absolute project paths targeting distinct git repos.
+- **Current state:** W-048 introduces `src/worca/scripts/run_worktree.py` as the default single-pipeline launcher. It creates a git worktree within the current repo, copies `.claude/worca/` into it, registers in `pipelines.d/`, and spawns `run_pipeline.py --worktree` inside the worktree. `src/worca/scripts/run_parallel.py` handles intra-repo parallelism. No entry point accepts N absolute project paths targeting distinct git repos.
 - **Obstacle:** `run_worktree.py` creates worktrees via `git worktree add`, which is intrinsically intra-repository. It cannot target a different `.git/` directory.
-- **Resolution:** Add `src/worca/scripts/run_fleet.py`. For each target project, `run_fleet.py` invokes `run_worktree.py` with `cwd=project_dir`. This reuses W-082's full isolation flow: worktree creation, `.claude/worca/` copy, `pipelines.d/` registration, and detached `run_pipeline.py` spawn — all within the target repo. `run_fleet.py` itself only manages fleet-level concerns: target resolution, provisioning, branch templating, manifest, circuit breaker, and plan-mode dispatch.
+- **Resolution:** Add `src/worca/scripts/run_fleet.py`. For each target project, `run_fleet.py` invokes `run_worktree.py` with `cwd=project_dir`. This reuses W-048's full isolation flow: worktree creation, `.claude/worca/` copy, `pipelines.d/` registration, and detached `run_pipeline.py` spawn — all within the target repo. `run_fleet.py` itself only manages fleet-level concerns: target resolution, provisioning, branch templating, manifest, circuit breaker, and plan-mode dispatch.
 
 ```
 run_fleet.py (fleet orchestrator)
@@ -33,7 +33,7 @@ run_fleet.py (fleet orchestrator)
       → run_pipeline.py --worktree (inside the worktree)
 ```
 
-**Assumed `run_worktree.py` interface (from #82):** `run_worktree.py` must accept at minimum: `--prompt`/`--source`, `--plan <path>`, `--branch <name>`, `--fleet-id <id>`, `--guide <path>`. It must register in `pipelines.d/` via `register_pipeline(..., fleet_id=<id>)`, create a worktree, and exit immediately after spawning `run_pipeline.py` (fire-and-forget). If #82's implementation diverges from this interface, fleet dispatch code must adapt. This assumed interface should be validated during #82 implementation.
+**Assumed `run_worktree.py` interface (from W-048 / #82):** `run_worktree.py` must accept at minimum: `--prompt`/`--source`, `--plan <path>`, `--branch <name>`, `--fleet-id <id>`, `--guide <path>`. It must register in `pipelines.d/` via `register_pipeline(..., fleet_id=<id>)`, create a worktree, and exit immediately after spawning `run_pipeline.py` (fire-and-forget). W-048 §3 defines this interface — if its implementation diverges, fleet dispatch code must adapt.
 
 ### 2. Target-Repo Runtime Provisioning
 
@@ -102,7 +102,7 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 
 ### 8. Registry Integration via `pipelines.d/`
 
-- **Current state:** W-082 introduces `.worca/multi/pipelines.d/*.json` as the per-pipeline registry. Each entry tracks `run_id`, `worktree_path`, and status. `discoverRuns` in `watcher.js` fans out across these entries to discover all concurrent runs. The UI's `WatcherSet` watches `pipelines.d/` for changes and broadcasts run updates automatically.
+- **Current state:** W-048 introduces `.worca/multi/pipelines.d/*.json` as the per-pipeline registry. Each entry tracks `run_id`, `worktree_path`, and status. `discoverRuns` in `watcher.js` fans out across these entries to discover all concurrent runs. The UI's `WatcherSet` watches `pipelines.d/` for changes and broadcasts run updates automatically.
 - **Obstacle:** The registry has no grouping concept — fleet children would appear as unrelated individual runs.
 - **Resolution:** Add an optional `fleet_id` keyword-only argument to `register_pipeline()`: `register_pipeline(..., *, fleet_id=None)`. This writes `fleet_id` into the `pipelines.d/` entry JSON. All existing callers continue to work (they don't pass it). `run_worktree.py` accepts `--fleet-id` and passes it through. The UI groups runs by `fleet_id` when present:
   - `discoverRuns` includes `fleet_id` in each run's metadata (read from the registry entry).
@@ -167,7 +167,7 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 
 ### 13. UI Integration
 
-- **Current state:** W-082's unified `discoverRuns` fans out across `pipelines.d/` and makes all concurrent runs (including worktree runs) visible in the dashboard. `WatcherSet` watches `pipelines.d/` for changes. The `runs-list` WS event includes all discovered runs.
+- **Current state:** W-048's unified `discoverRuns` fans out across `pipelines.d/` and makes all concurrent runs (including worktree runs) visible in the dashboard. `WatcherSet` watches `pipelines.d/` for changes. The `runs-list` WS event includes all discovered runs.
 - **Resolution:**
   - **Server:** Fleet-specific REST endpoints for manifest CRUD and the launcher: `POST /api/fleet-runs` (launch), `GET /api/fleet-runs`, `GET /api/fleet-runs/:id`, `DELETE /api/fleet-runs/:id` (halts unstarted children, in-flight finish naturally), `GET /api/fleet-runs/:id/guide` (opt-in content). Per-child run status is **not** served via fleet endpoints — the existing `discoverRuns` and `runs-list` WS event handle it, with `fleet_id` as a grouping key.
   - **Client:** Fleet-grouping renderer in the dashboard: header row per `fleet_id` (from `runs-list` data), aggregate progress bar, expand/collapse. "Start fleet run" launcher: registered-project multi-select, prompt/source input, guide upload, branch template, plan-mode toggle.
@@ -299,7 +299,7 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 ### Existing Tests to Update
 
 - `tests/test_run_parallel.py` — import of `_slugify` moves from `run_parallel` to `utils.branch_naming`.
-- W-082's `run_worktree.py` tests — add coverage for the new `--fleet-id` flag being written to `pipelines.d/` entries.
+- W-048's `run_worktree.py` tests — add coverage for the new `--fleet-id` flag being written to `pipelines.d/` entries.
 
 ## Files to Create/Modify
 
