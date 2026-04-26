@@ -71,6 +71,11 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 
 **Path resolution:** `run_fleet.py` resolves all `--guide` paths to absolute paths before dispatching children. Guide paths are relative to the fleet launcher's CWD, not the child's. This is critical because children run with `cwd=project_dir` — a relative path like `./migration-spec.md` would fail to resolve in the child's context.
 
+**Authority precedence — guide > plan > description.** When all three sources of intent are present, agents must treat the guide as authoritative, the plan as derived, and the description as task scope. The normative header in `attach_guide()` already encodes this for the guide-vs-description conflict ("treat any conflict between the guide and the task description as a bug in the task description"). Extend the same rule to plan-vs-guide: if a per-repo plan (from `--plan` or `--plan-first`) diverges from the guide on any normative point, the guide wins and the agent must surface the divergence rather than silently resolving it. Concretely:
+- Planner stage: when both `--guide` and the task description are present, the Planner produces a plan that conforms to the guide. If the description requests something the guide forbids, the Planner reports the conflict.
+- Implementer / Reviewer / Tester stages: if the plan tells them to do something the guide forbids, they must flag it via the standard review/tester channels rather than executing the plan.
+- This precedence is documented in `CLAUDE.md` (Phase 1 task 4) and reinforced in `agents/core/planner.md`, `agents/core/reviewer.md`, and `agents/core/tester.md` instruction sections — wire those updates as part of Phase 1 alongside `attach_guide()`.
+
 ### 4. Branch-Name Templating
 
 - **Current state:** `src/worca/scripts/run_parallel.py._slugify` derives branch names from the work-request title. A fleet shares one work-request, so all children would slug to the same branch.
@@ -79,13 +84,13 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 
 ### 5. Environment Isolation for Fleet Children
 
-- **Current state:** `src/worca/orchestrator/stages/*.py` and `src/worca/claude_hooks/pre_tool_use.py` depend on `WORCA_AGENT` / `WORCA_STAGE` / `WORCA_RUN_ID` being set per-stage. Children spawn as `subprocess.Popen`.
+- **Current state:** Stage execution in `src/worca/orchestrator/runner.py` and the agent templates in `src/worca/agents/core/*.md` (planner.md, coordinator.md, implementer.md, tester.md, reviewer.md, guardian.md, learner.md, plan_reviewer.md) depend on `WORCA_AGENT` / `WORCA_STAGE` / `WORCA_RUN_ID` being set per-stage. The hook side enforces this in `src/worca/claude_hooks/pre_tool_use.py:65`. Children spawn as `subprocess.Popen`.
 - **Obstacle:** Stale env vars from the parent (e.g., `WORCA_AGENT` from a launcher, or `CLAUDECODE=1` when launched from inside Claude Code) leak in and cause hooks to misclassify the child.
 - **Resolution:** `run_fleet.py` builds a per-child env from `os.environ.copy()` then `env.pop()` on an explicit scrub list: `WORCA_AGENT`, `WORCA_STAGE`, `WORCA_RUN_ID`, `WORCA_PROJECT_ROOT`, `CLAUDECODE`. `WORCA_PROJECT_ROOT` must be scrubbed because the CWD-lock hook in `pre_tool_use.py:35` reads it to prefix all Bash commands with `cd $root &&` — if it inherits the fleet launcher's directory instead of the child's worktree path, every hook invocation in every child will misfire. Children set these vars themselves as stages fire.
 
 ### 6. Plan Stage Modes
 
-- **Current state:** `src/worca/orchestrator/stages/plan.py` runs Planner per pipeline. In a fleet without explicit plan handling, every child runs its own Planner.
+- **Current state:** The Planner stage is dispatched by `src/worca/orchestrator/runner.py` using the prompt template at `src/worca/agents/core/planner.md`. The stage list itself lives in `src/worca/orchestrator/stages.py` (the `Stage` enum and `can_transition` helpers — there is no `stages/` package, just a single file). In a fleet without explicit plan handling, every child runs its own Planner.
 - **Obstacle:** N projects produce N different strategies (defeating the point of a fleet) and burn N× Planner tokens.
 - **Resolution:** Two flags:
   - `--plan <path>` (explicit): every child receives the same plan; Planner is skipped in every child. **Recommended for fleet work.**
@@ -94,7 +99,7 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 
 ### 7. Fleet-Level Circuit Breaker
 
-- **Current state:** `src/worca/orchestrator/circuit_breaker.py` and `src/worca/orchestrator/batch.py:CircuitBreakerError` are per-pipeline only.
+- **Current state:** Per-pipeline circuit breaker logic lives in `src/worca/orchestrator/error_classifier.py:182-239` (`get_circuit_breaker_state`, `should_halt`, `get_retry_delay`); the `CircuitBreakerError` exception is in `src/worca/orchestrator/batch.py:16` (note: W-048 deletes `batch.py` and may move this exception into `error_classifier.py`); `runner.py` raises its own `CircuitBreakerTripped` (`runner.py:101`) for in-pipeline halt. All of these are per-pipeline only — there is no fleet-level circuit breaker.
 - **Obstacle:** A systematic issue (bad guide, bad plan, missing tool) that fails the first 5 children will still burn through the remaining 15.
 - **Resolution:** Add `fleet_failure_threshold` (default 30%) to fleet config. The `run_fleet.py` main loop tracks completed children; when `failed / completed >= threshold` and `completed >= min(3, total)`, unstarted children are cancelled and the fleet manifest is marked `halted`. In-flight children finish naturally — fleet-halt does not kill running subprocesses, avoiding half-written repo states.
 
@@ -177,13 +182,14 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 
 ### Phase 1: Shared guide injection (foundation)
 
-**Files:** `src/worca/orchestrator/work_request.py`, `src/worca/scripts/run_pipeline.py`, `src/worca/scripts/run_parallel.py`, `src/worca/scripts/run_worktree.py`, `.claude/worca/settings.json`, `CLAUDE.md`
+**Files:** `src/worca/orchestrator/work_request.py`, `src/worca/scripts/run_pipeline.py`, `src/worca/scripts/run_parallel.py`, `src/worca/scripts/run_worktree.py`, `src/worca/agents/core/planner.md`, `src/worca/agents/core/reviewer.md`, `src/worca/agents/core/tester.md`, `.claude/worca/settings.json`, `CLAUDE.md`
 
 **Tasks:**
 1. Add `attach_guide(wr, guide_paths)` in `work_request.py` with the normative header.
 2. Add `worca.guide.max_bytes` default (64KB) to `settings.json`.
 3. Wire `--guide PATH` (repeatable) into `run_pipeline.py`, `run_parallel.py`, `run_worktree.py`; call after `normalize(...)`.
-4. Document precedence **plan > guide > description** in `CLAUDE.md`.
+4. Document precedence **guide > plan > description** in `CLAUDE.md`. The guide is the highest-authority normative material (matching the "treat any conflict between the guide and the task description as a bug" wording in the normative header). The plan is derived from the guide and the description; if the plan diverges from the guide, the guide wins. The description is task scope, expanded by both. When all three are present, agents must surface plan-vs-guide conflicts rather than silently resolving them.
+5. Reinforce the precedence in the agent templates: add a "Guide precedence" instruction block to `planner.md`, `reviewer.md`, and `tester.md` that tells the agent (a) to conform to the guide, (b) to surface plan-vs-guide divergence rather than silently resolving it, (c) to treat description requests that conflict with the guide as bugs to flag.
 
 ### Phase 2: Fleet runner (core)
 
@@ -243,6 +249,9 @@ Note: per-child `status`, `started_at`, `completed_at`, and `returncode` are no 
 | `src/worca/scripts/run_fleet.py` | **New** — fleet entry point |
 | `src/worca/utils/branch_naming.py` | **New** — extracted `_slugify` + template resolver |
 | `src/worca/agents/core/guardian.md` | Fleet-aware PR title + footer |
+| `src/worca/agents/core/planner.md` | Add "Guide precedence" instruction (guide > plan > description) |
+| `src/worca/agents/core/reviewer.md` | Add "Guide precedence" instruction; flag plan-vs-guide divergence |
+| `src/worca/agents/core/tester.md` | Add "Guide precedence" instruction; treat guide-conflicting description as a bug |
 | `.claude/worca/settings.json` | Add `worca.guide.max_bytes`, `worca.fleet.*` defaults |
 | `worca-ui/server/fleet-routes.js` | **New** — fleet REST endpoints |
 | `worca-ui/server/ws-modular.js` | Fleet manifest file watcher + `fleet-update` event |

@@ -12,7 +12,7 @@ Fleet runs (W-040) fan out a single work-request to N independent repos — ever
 
 1. **Decompose** one prompt into repo-specific sub-prompts. Fleet sends the same prompt everywhere (`src/worca/scripts/run_fleet.py` — from W-040 design §1); a multi-repo feature needs different work in each repo.
 2. **Order** child pipelines by dependency. Fleet uses `ThreadPoolExecutor` for all-at-once parallel dispatch (`run_fleet.py` — W-040 design §1); cross-repo features need `shared-lib` to finish before `backend`, and `backend` before `frontend`.
-3. **Test across repo boundaries.** Each child's tester stage (`src/worca/orchestrator/stages/test.py`) runs tests within one repo. There is no post-completion phase that validates the combined changes work together.
+3. **Test across repo boundaries.** Each child's tester stage — dispatched by `src/worca/orchestrator/runner.py` using the prompt template at `src/worca/agents/core/tester.md` (there is no `stages/test.py`; stage execution lives in `runner.py` and the stage list is in `src/worca/orchestrator/stages.py`) — runs tests within one repo. There is no post-completion phase that validates the combined changes work together.
 4. **Link PRs with dependency metadata.** Fleet's guardian prepends `[fleet:<id>]` to PR titles (W-040 design §11) but creates no cross-references. Reviewers must manually discover that `backend#42` must merge before `frontend#43`.
 
 All repos are assumed to be siblings in a shared parent directory (e.g., `/code/platform/{backend,frontend,shared-lib}/`).
@@ -410,7 +410,7 @@ Flags:
 3. For unstarted tiers: re-run from that tier forward.
 4. Re-generate context artifacts from already-completed children before resuming. This requires completed children's worktrees to still exist. **Worktree retention policy:** worktrees are NOT cleaned up until the entire workspace run reaches terminal status (`completed` or manually cancelled). This is critical for resume — a cleaned-up worktree means context artifacts and branch state are lost. Disk usage scales with `N repos x worktree size` for the full workspace run duration; the pre-flight check (see Considerations) warns about this.
 5. If integration test failed: `--resume` re-runs only the integration test (children are already complete).
-6. `worca workspace cleanup <workspace_id>` (manual command) removes all worktrees and the integration environment after the user is satisfied.
+6. `worca cleanup --workspace-id <workspace_id>` (extends W-048's pluggable cleanup-source model — see W-048 §12) removes all child worktrees, the workspace run directory under `{workspace_root}/.worca/workspace-runs/{run_id}/`, the integration-env worktrees under `{workspace_root}/.worca/integration-env/`, and the `pipelines.d/` entries for the workspace's children. Add `WorkspaceSource` to `CLEANUP_SOURCES` in `src/worca/cli/cleanup.py` rather than introducing a separate `worca workspace cleanup` subcommand — keeps a single user entry point for all cleanup.
 
 ### Phase 7: UI integration
 
@@ -446,7 +446,7 @@ Flags:
 | `src/worca/scripts/run_workspace.py` | **New** — workspace run entry point |
 | `src/worca/agents/core/workspace_planner.md` | **New** — master planner agent template |
 | `src/worca/agents/core/guardian.md` | Workspace-aware PR description when `WORCA_WORKSPACE_ID` set; defer PR creation when `WORCA_DEFER_PR=1` |
-| `src/worca/state/status_enum.py` | **New** — canonical status enums with level-specific extensions |
+| `src/worca/state/status.py` | Extend with canonical `PipelineStatus`, `FleetStatus`, `WorkspaceStatus` enums and helpers (extends the existing module, no new file) |
 | `.claude/worca/settings.json` | Add `worca.workspace.*` defaults |
 | `worca-ui/server/workspace-routes.js` | **New** — workspace REST endpoints |
 | `worca-ui/server/ws-modular.js` | Workspace manifest watcher |
@@ -463,14 +463,15 @@ Flags:
 - **Child pipelines are standard.** Each repo's pipeline runs the full stage sequence with all existing governance. No hooks, agents, or stage machinery are modified (except guardian gaining workspace-aware PR descriptions).
 - **DAG ordering is tier-based, not fine-grained.** Repos in the same tier run in parallel. This is simpler than a full DAG scheduler and sufficient for typical multi-repo topologies (which are usually shallow: 2–3 tiers).
 - **Context injection is one-way.** Tier N's output is injected as read-only context into tier N+1. There is no back-channel — if tier 1 discovers that tier 0's API is wrong, the workspace run must be restarted. This is a deliberate simplification; iterative cross-tier negotiation would require fundamentally different agent architecture.
+- **`--resume` reuses the original master plan.** The workspace plan is generated once during the initial `run_workspace.py` invocation and cached at `{workspace_root}/.worca/workspace-runs/{run_id}/workspace-plan.json`. `--resume <workspace_id>` re-uses this cached plan as-is and only re-launches failed/blocked children. If the master planner's original assumptions turn out to be wrong (e.g., it underestimated the dependency between `frontend` and `shared-lib`), `--resume` will keep dispatching against the stale plan. Mitigation paths: (a) restart the workspace run with a new `workspace_id` to force re-planning; (b) edit `workspace-plan.json` by hand before resuming. A `--re-plan` flag that re-invokes the master planner before resume is **out of scope for this plan** but explicitly listed in Future Work.
 - **Integration test is opaque.** Worca runs the user's command and checks the exit code. It does not parse test output, identify failing tests, or retry. The user is responsible for providing a working integration test command.
 - **PR merge order is advisory, not enforced.** The umbrella issue documents merge order. Worca does not auto-merge or block out-of-order merges. Enforcement would require GitHub branch protection rules or a merge bot, which is out of scope.
 - **Workspace root is not a git repo.** The parent directory does not need its own `.git/`. `workspace.json` and `.worca/` live there but are not version-controlled (unless the user chooses to create a meta-repo). This avoids forcing a monorepo structure.
 - **Breaking changes:** **None.** Workspace is a new entry point and new agents. Existing fleet and pipeline flows are unchanged. A new `group_type` field is added to `pipelines.d/` entries (optional, defaults to `"fleet"`) to distinguish workspace from fleet runs.
 - **Token cost.** The master planner adds one Opus call per workspace run (~20KB input from truncated `CLAUDE.md` files + workspace.json + prompt). Context injection adds guide content proportional to diff size (capped at 8KB per dependency edge, with smart prioritization of public API files). For a 3-repo workspace with 2 tiers, overhead is ~1 planner call + ~16KB of guide content — modest.
 - **Governance.** Existing per-repo governance is preserved. The master planner produces structured JSON output; the orchestrator writes plan files (no new file-write permissions needed in the guard hook). The workspace coordinator cannot commit (only the guardian in each child can). `WORCA_DEFER_PR=1` defers PR creation to after integration tests, adding a new governance control (PRs are only created when the full workspace passes). No governance bypass paths are introduced.
-- **Disk space.** Worktrees are retained for the entire workspace run (required for resume and context artifact regeneration). For a 5-repo workspace averaging 200MB per repo, this is ~1GB of worktree copies plus the integration environment. `run_workspace.py` runs a pre-flight disk space estimate and warns if available space is insufficient. `worca workspace cleanup` provides manual worktree removal after the run completes.
-- **Status vocabulary.** Workspace adds statuses `planning`, `integration_testing`, and `integration_failed` that have no analogs in fleet or pipeline status enums. The UI must handle these as workspace-specific extensions. A shared `status_enum.py` module should define canonical pipeline-level statuses and allow level-specific extensions for fleet and workspace.
+- **Disk space.** Worktrees are retained for the entire workspace run (required for resume and context artifact regeneration). For a 5-repo workspace averaging 200MB per repo, this is ~1GB of worktree copies plus another ~1GB during the integration-env phase (a 2× factor — the integration test creates a parallel set of worktrees so total peak usage is ~2GB for the example above). `run_workspace.py` runs a pre-flight disk space estimate that accounts for this 2× peak and warns if available space is insufficient. `worca cleanup --workspace-id <id>` (W-048's pluggable cleanup, extended in this plan) provides manual removal after the run completes.
+- **Status vocabulary.** Workspace adds statuses `planning`, `integration_testing`, and `integration_failed` that have no analogs in fleet or pipeline status enums. The UI must handle these as workspace-specific extensions. The existing `src/worca/state/status.py` module is the canonical home for status helpers (`load_status`, `save_status`, `PIPELINE_STAGES`); extend it in this plan with three explicit enum classes — `PipelineStatus`, `FleetStatus`, `WorkspaceStatus` — that share the common terminal vocabulary (`completed`, `failed`, `cancelled`) and add level-specific values (workspace adds `planning`, `integration_testing`, `integration_failed`; fleet adds `halted`). Do not create a separate `status_enum.py` — keeping enums and I/O in the same module avoids the two-file drift seen in earlier worca refactors.
 
 ## Test Plan
 
@@ -507,6 +508,14 @@ Flags:
 - **Diamond dependency (pytest fixture).** `lib → [svc-a, svc-b] → gateway`. Asserts: tier 0 = lib, tier 1 = [svc-a, svc-b] (parallel), tier 2 = gateway (after both complete).
 - **Failure propagation.** Mock `backend` to fail. Assert: `frontend` marked `blocked`, `shared-lib` completed, workspace status `failed`, `--resume` re-runs only `backend` + `frontend`.
 - **Playwright (`--workers=1`).** Launch workspace via UI, observe tier-grouped progress, inspect workspace detail view (DAG, plan, integration log).
+- **Full-stack integration (W-048 + W-040 + W-047).** This is the only test that catches inter-plan integration breakage and must live in this plan because it's the top of the dependency stack. Build a synthetic 3-repo workspace fixture and run the entire stack end-to-end with mock `claude`:
+  1. Launch via `worca workspace run /path/to/synthetic-parent --prompt "..."`.
+  2. Assert `run_workspace.py` calls `run_fleet.py` (W-040), which calls `run_worktree.py` per repo (W-048's launcher).
+  3. Assert each child writes a `pipelines.d/` entry with: `fleet_id == workspace_id`, `group_type == "workspace"`, `target_branch` set, `worktree_path` populated.
+  4. Assert `discoverRuns` (W-048's `watcher.js` step 5) returns all 3 child runs in a single `runs-list` payload, each enriched with `fleet_id`, `group_type`, and `target_branch`.
+  5. Assert no duplicate broadcasts — the deleted `MultiWatcher` (W-048 §6.5) is not firing `pipeline-status-changed`.
+  6. Assert the UI dashboard groups runs first by `group_type == "workspace"` (W-047 tier rendering), within that by tier from the workspace manifest.
+  7. Assert the cleanup command (`worca cleanup --workspace-id ws_...`) removes worktrees, the workspace run directory, and the `pipelines.d/` entries together — exercising W-048's pluggable cleanup-source design.
 
 ### Existing Tests to Update
 
@@ -529,6 +538,7 @@ See **Files Changed Summary** table in Implementation Plan above.
 
 ## Future Work
 
+- **`--re-plan` flag for `--resume`.** Optional flag that re-invokes the master planner against the current state of all children's worktrees (with their accumulated diffs as context) before re-launching failed/blocked children. Useful when the original plan's dependency assumptions turned out to be wrong. Requires care: a re-plan may invalidate already-completed children, so the implementation must either (a) re-launch all children if the dependency graph changes, or (b) detect which completed children are still consistent with the new plan and leave them alone.
 - **Iterative planning.** If a child pipeline's reviewer rejects changes with cross-repo implications, feed the rejection back to the master planner for re-decomposition.
 - **Workspace templates.** Pre-defined workspace.json templates for common topologies (microservices, monorepo-split, library + consumers).
 - **Cross-repo code navigation.** Inject workspace-level `CLAUDE.md` that maps the full architecture so agents can reason about cross-repo structure even within single-repo pipelines.

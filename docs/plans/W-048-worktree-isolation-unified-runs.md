@@ -92,6 +92,14 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
   **Batch mode recovery:** The batch capability of `run_multi.py` (multiple `--requests`) is dropped. A shell loop (`for req in ...; do run_worktree.py --prompt "$req"; done`) or W-040's `run_fleet.py` replaces it.
 
+  **`run_batch.py` is also deleted.** The codebase currently has two batch-style entry points: `run_multi.py` (parallel worktrees, intra-repo) and `run_batch.py` (sequential queue with per-pipeline circuit breaker, in-place — uses `worca.orchestrator.batch.run_batch`). Both serve the "process multiple work requests" need that `run_worktree.py` (one-at-a-time, called in a loop) and W-040's `run_fleet.py` (parallel across repos) cover better. Delete:
+  - `src/worca/scripts/run_batch.py`
+  - `src/worca/orchestrator/batch.py` — but only after confirming `CircuitBreakerError` is no longer imported elsewhere; if it is, move the exception class to `error_classifier.py` first.
+  - Any settings keys exclusive to `run_batch.py` (e.g., `worca.batch.max_failures` if present).
+  - Tests under `tests/test_batch*.py` if they exist.
+
+  Pre-deletion check (run during Phase 3): `grep -rn "from worca.orchestrator.batch\|run_batch" src/ tests/ worca-ui/` — every hit must be in code that's also being deleted, or the deletion is blocked.
+
 ### 4. `run_pipeline.py` — Wire `--guide` Flag
 
 - **Current state:** `run_pipeline.py:19-49` has flags for `--prompt`, `--source`, `--plan`, `--branch`, `--worktree`, etc. No `--guide` flag.
@@ -165,6 +173,28 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
   The `worktree_worca_dir` and `is_worktree_run` fields let the UI and `ProcessManager` resolve the correct `.worca/` directory for lifecycle operations (stop/pause/resume) on worktree runs.
 
+### 6.5 Retire `MultiWatcher` and Migrate Clients
+
+- **Current state:** `worca-ui/server/multi-watcher.js` watches `.worca/multi/pipelines.d/` independently of `discoverRuns` and broadcasts `pipeline-status-changed` events to clients (`worca-ui/app/main.js:726`, registered in `worca-ui/app/protocol.js:36`). With §6's `discoverRuns` fan-out, every change to `pipelines.d/` is already reflected in the next `runs-list` broadcast. Keeping both produces dual broadcasts on every status change — the very dual-source-of-truth problem this plan exists to fix.
+- **Obstacle:** A naive removal orphans the frontend `pipeline-status-changed` listener and any tests that subscribe to it. A naive keep duplicates broadcasts and recreates the bug.
+- **Resolution:** Delete `MultiWatcher` and migrate clients to consume `runs-list` exclusively.
+
+  **Server-side:**
+  - Delete `worca-ui/server/multi-watcher.js` and `worca-ui/server/multi-watcher.test.js`.
+  - Remove every `MultiWatcher` instantiation site (likely in `worca-ui/server/ws-modular.js` — verify with grep before removal).
+  - Remove `'pipeline-status-changed'` from `worca-ui/app/protocol.js:36` allowlist.
+
+  **Client-side:**
+  - Delete the `ws.on('pipeline-status-changed', ...)` handler at `worca-ui/app/main.js:726`. Whatever per-pipeline state it maintained must instead be derived from the next `runs-list` event (which now contains the same data via §6's fan-out, with `fleet_id` / `group_type` / `target_branch` enrichment).
+  - If a stale view ever depended on `pipeline-status-changed` for finer-grained diff signals than `runs-list` provides, batch-rebuild the same diff in the client by comparing successive `runs-list` payloads (cheap; the list is already small).
+
+  **Test cleanup:**
+  - Remove `multi-watcher.test.js`. Move any unique behavioral coverage (e.g., reconciliation of stale entries) to `watcher.test.js` against the new step 5 of `discoverRuns`.
+
+  **Migration safety:**
+  - Ship server-side delete and client migration in the **same release** as §6 (the `discoverRuns` fan-out). A split release would either drop status updates (delete first) or duplicate them (keep first). The §6 fan-out, the watcher deletion, and the protocol allowlist trim are atomic with respect to release.
+  - Add a one-time browser-cache-busting bump to the UI bundle version (`worca-ui/package.json` micro bump) so cached clients reload and pick up the new protocol allowlist; otherwise stale clients will log a "received unknown event" warning until they refresh.
+
 ### 7. Status Watcher — Watch `pipelines.d/` for Worktree Changes
 
 - **Current state:** `ws-status-watcher.js:223-239` watches `.worca/runs/` recursively. No watcher on `pipelines.d/`.
@@ -236,6 +266,17 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
   - `runner.py` stores `target_branch` in `status.json` at initialization (from `--branch` flag or `WORCA_TARGET_BRANCH` env var).
   - Guardian agent (`agents/core/guardian.md`) reads `status.get("target_branch")` and uses it for `gh pr create --base {target}`. Falls back to the default base branch if unset.
 
+- **Naming clarification (important for W-040 compatibility):** In this plan, `target_branch` is the **base branch** — the branch the worktree is forked FROM and the branch the PR targets via `gh pr create --base`. Both meanings collapse into one field because a worktree run forked from `dev` should, by default, create a PR back into `dev`.
+
+  W-040 introduces a separate `--branch <template>` concept that controls the **head branch name** (the per-child branch that gets pushed and referenced in `gh pr create --head`). These are two different concepts with confusingly similar names:
+
+  | Concept | W-048 field | W-040 field | gh pr create flag |
+  |---------|-------------|-------------|-------------------|
+  | Where the worktree forks from | `target_branch` (= base) | inherited from W-048 | `--base` |
+  | New branch the agent commits to | derived from slug | `--branch <template>` | `--head` |
+
+  W-040 must explicitly distinguish "fleet base" (passed as `--base` to `run_worktree.py`, becomes `target_branch`) from "head branch template" (becomes the new branch name in each child worktree). This plan does not rename `target_branch` to avoid churn, but W-040 should refer to it as "the PR base branch" rather than "the target branch" in user-facing docs to avoid confusion with the `--branch` template flag.
+
 ### 11. `discoverRuns` — Fix `results/` Active Flag
 
 - **Current state:** `watcher.js:112-149` scans `results/` and derives `active` from `pipeline_status`. The logic at line 127/139 is: `!isTerminal(status) && status.pipeline_status === 'running'`. This is correct — `results/` entries will almost always be terminal. But if a run was moved to `results/` while still running (a bug in older versions), the flag correctly reflects that.
@@ -264,6 +305,24 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
   Running worktrees are never cleaned up. The `--all` flag skips the interactive prompt but still excludes running pipelines.
 
+  **Extensibility for W-040 / W-047 cleanup.** `worca cleanup` is the single user entry point for all worca-managed artifact removal. W-040 will add `~/.worca/fleet-runs/<fleet_id>.json` manifests and W-047 will add `{workspace_root}/.worca/workspace-runs/{run_id}/` directories — both need cleanup paths. Design the cleanup command from the start to support a pluggable artifact-source model:
+
+  ```python
+  # src/worca/cli/cleanup.py
+  CLEANUP_SOURCES = [
+      WorktreeSource(),     # W-048 — pipelines.d/ + git worktree
+      # FleetSource(),      # W-040 — adds ~/.worca/fleet-runs/
+      # WorkspaceSource(),  # W-047 — adds {ws_root}/.worca/workspace-runs/
+  ]
+  ```
+
+  Each source implements `list_eligible(filters)` and `remove(entry)`. New flags added by future plans:
+  - `worca cleanup --fleet-id <id>` — W-040 hooks in to remove a fleet manifest plus all its child worktrees (when they are completed).
+  - `worca cleanup --workspace-id <id>` — W-047 hooks in to remove a workspace run directory plus integration-env worktrees.
+  - `worca cleanup --older-than 7d` — already in W-048; future sources reuse the same age filter.
+
+  W-048 ships `WorktreeSource` only; the source-list pattern keeps the CLI surface stable as W-040/W-047 add their own sources without rewriting the command.
+
 ## Implementation Plan
 
 ### Phase 1: Remove `active_run` — Python side
@@ -290,15 +349,33 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 6. Remove `active_run` cleanup block from `deleteRun` at `process-manager.js:618-627`.
 7. Update `restartStage` at `process-manager.js:680-688` to accept `runId` parameter and look up directly.
 
-### Phase 3: Rename and rewrite `run_worktree.py`
+### Phase 2.5: Retire `MultiWatcher` and migrate clients (ships with Phase 4)
 
-**Files:** `src/worca/scripts/run_worktree.py` (new, replaces `run_multi.py`), `src/worca/scripts/run_multi.py` (delete)
+**Files:** `worca-ui/server/multi-watcher.js` (delete), `worca-ui/server/multi-watcher.test.js` (delete), `worca-ui/server/ws-modular.js`, `worca-ui/app/main.js`, `worca-ui/app/protocol.js`, `worca-ui/package.json`
+
+**Tasks:**
+1. Verify with `grep -rn "MultiWatcher\|pipeline-status-changed" worca-ui/` that this list is exhaustive.
+2. Delete `worca-ui/server/multi-watcher.js` and `worca-ui/server/multi-watcher.test.js`.
+3. Remove all `MultiWatcher` instantiation sites in `worca-ui/server/ws-modular.js` (and any other server file the grep finds).
+4. Delete the `ws.on('pipeline-status-changed', ...)` handler in `worca-ui/app/main.js:726`. Re-derive any state it maintained from successive `runs-list` payloads.
+5. Remove `'pipeline-status-changed'` from `worca-ui/app/protocol.js:36`.
+6. Bump `worca-ui/package.json` micro version to bust the client bundle cache.
+7. Move any unique behavioral coverage from the deleted test (e.g., stale-entry reconciliation) into `watcher.test.js` against §6's step 5.
+
+**Sequencing constraint:** This phase must ship in the same release as Phase 4 (the `discoverRuns` fan-out). Splitting them either drops status events (Phase 2.5 first) or duplicates them (Phase 4 first).
+
+### Phase 3: Rename and rewrite `run_worktree.py`; delete legacy batch entry points
+
+**Files:** `src/worca/scripts/run_worktree.py` (new, replaces `run_multi.py`), `src/worca/scripts/run_multi.py` (delete), `src/worca/scripts/run_batch.py` (delete), `src/worca/orchestrator/batch.py` (delete or relocate `CircuitBreakerError`)
 
 **Tasks:**
 1. Create `run_worktree.py` with the CLI interface defined in §3: `--prompt`, `--source`, `--branch`, `--plan`, `--guide`, `--fleet-id`, `--msize`, `--mloops`, `--template`, `--param`, `--skip-preflight`.
 2. Implement: generate run_id, create worktree, copy `.claude/worca/`, init beads, register in `pipelines.d/`, spawn `run_pipeline.py --worktree`, exit.
 3. Wire `--guide` flag into `run_pipeline.py` argument parser (accept and store in status; content injection deferred to W-040).
 4. Delete `run_multi.py`.
+5. Run `grep -rn "from worca.orchestrator.batch\|run_batch" src/ tests/ worca-ui/` and confirm every hit is in code being deleted in this phase.
+6. Delete `run_batch.py`. If `CircuitBreakerError` is imported by code that's *not* being deleted (e.g., `runner.py` uses its own `CircuitBreakerTripped`), simply delete `batch.py`. Otherwise move `CircuitBreakerError` into `error_classifier.py` first, update imports, then delete `batch.py`.
+7. Remove any settings keys exclusive to the deleted scripts (`worca.batch.*`).
 
 ### Phase 4: Extend `pipelines.d/` and `discoverRuns` fan-out
 
@@ -355,6 +432,8 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 | `src/worca/scripts/run_pipeline.py` | Replace `active_run` read (lines 154-162) with `runs/` scan, add `--guide` flag |
 | `src/worca/scripts/run_worktree.py` | **New** — single-pipeline worktree launcher replacing `run_multi.py` |
 | `src/worca/scripts/run_multi.py` | **Delete** |
+| `src/worca/scripts/run_batch.py` | **Delete** — superseded by `run_worktree.py` (one-at-a-time) and W-040's `run_fleet.py` (parallel across repos) |
+| `src/worca/orchestrator/batch.py` | **Delete** — relocate `CircuitBreakerError` into `error_classifier.py` if any non-deleted code still imports it |
 | `src/worca/orchestrator/registry.py` | Add `fleet_id`, `group_type`, `target_branch` kwargs to `register_pipeline()` |
 | `src/worca/agents/core/guardian.md` | Read `status.target_branch` for `gh pr create --base` |
 | `src/worca/cli/cleanup.py` | **New** — `worca cleanup` command |
@@ -362,8 +441,14 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 | `worca-ui/server/watcher.js` | Remove step 1 (`active_run`), add step 5 (`pipelines.d/` fan-out) |
 | `worca-ui/server/ws-status-watcher.js` | Rewrite `resolveActiveRunDir` → `resolveLatestRunDir`, remove `active_run` watcher, add `pipelines.d/` watcher, add per-worktree watchers |
 | `worca-ui/server/process-manager.js` | Remove `_readActiveRunId`, remove `active_run` from `reconcileStatus`/`deleteRun`/`restartStage`, add `resolveRunContext`, switch `startPipeline` to `run_worktree.py` |
+| `worca-ui/server/multi-watcher.js` | **Delete** — superseded by §6 `discoverRuns` fan-out; clients migrate to `runs-list` (see §6.5) |
+| `worca-ui/server/multi-watcher.test.js` | **Delete** — coverage moves to `watcher.test.js` for the new step 5 |
+| `worca-ui/server/ws-modular.js` | Remove `MultiWatcher` instantiation site(s) |
+| `worca-ui/app/main.js` | Remove `pipeline-status-changed` handler at line 726; update derived state to come from `runs-list` |
+| `worca-ui/app/protocol.js` | Remove `'pipeline-status-changed'` from event allowlist (line 36) |
+| `worca-ui/package.json` | Micro version bump to bust client bundle cache after protocol allowlist trim |
 | `CLAUDE.md` | Update run_multi references to run_worktree, document `--guide` flag, add cleanup command |
-| `MIGRATION.md` | Document `active_run` removal, `run_multi.py` rename, cleanup command |
+| `MIGRATION.md` | Document `active_run` removal, `run_multi.py` and `run_batch.py` removal, cleanup command, `MultiWatcher` removal + protocol allowlist change |
 
 ## Considerations
 
