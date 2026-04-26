@@ -111,7 +111,7 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 ### 5. Extend `pipelines.d/` Registry
 
 - **Current state:** `registry.py:48-66` registers pipelines with `run_id`, `worktree_path`, `title`, `pid`, `status`, timestamps. No fields for fleet grouping, target branch, or group type.
-- **Obstacle:** W-040 needs `fleet_id`, W-047 needs `group_type`, and both need `target_branch`. These must be optional to maintain backward compatibility.
+- **Obstacle:** W-040 needs `fleet_id`, W-047 needs `workspace_id` + `group_type`, and both need `target_branch`. These must be optional to maintain backward compatibility, AND the fleet/workspace identifiers must be **distinct fields** so consumers don't have to inspect a sibling field to disambiguate.
 - **Resolution:** Extend `register_pipeline()` with keyword-only arguments:
 
   ```python
@@ -119,13 +119,24 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
       run_id, worktree_path, title, pid,
       base=_DEFAULT_BASE,
       *,
-      fleet_id=None,        # W-040: fleet grouping
-      group_type=None,      # W-047: "fleet" | "workspace" | None
-      target_branch=None,   # PR target branch
+      fleet_id=None,        # W-040: fleet grouping (mutually exclusive with workspace_id)
+      workspace_id=None,    # W-047: workspace grouping (mutually exclusive with fleet_id)
+      group_type=None,      # W-040/W-047: "fleet" | "workspace" | None — discriminator for UI rendering
+      target_branch=None,   # PR base branch (gh pr create --base)
   ):
   ```
 
   All new fields are optional and omitted from the JSON when `None`. Existing callers (`run_multi.py` → `run_worktree.py`, `runner.py:1281-1285`) continue to work unchanged. `discoverRuns` includes these fields in run metadata when present.
+
+  **Authoritative rule for grouping fields (binding on W-040, W-047, and all UI consumers):**
+
+  | Field | Set when | Mutually exclusive with | UI uses for |
+  |-------|----------|-------------------------|-------------|
+  | `fleet_id` | Child of a fleet (W-040 `run_fleet.py`) | `workspace_id` | Fleet header grouping (W-040 §13.2) |
+  | `workspace_id` | Child of a workspace (W-047 `run_workspace.py`) | `fleet_id` | Workspace header + tier grouping (W-047 §10.4) |
+  | `group_type` | Always set when either ID is set; values: `"fleet"` or `"workspace"` | n/a | Pure discriminator — never inspect the IDs to determine type |
+
+  Code that filters by membership uses the explicit ID field. Code that branches on rendering style uses `group_type`. **Never derive type from `fleet_id != null`** — that pattern is forbidden because it would silently include workspace runs once W-047 ships (an earlier iteration of these plans overloaded `fleet_id` for workspaces; this rule replaces that approach).
 
   **Registry location:** `pipelines.d/` is always per-project at `<project>/.worca/multi/pipelines.d/`. For cross-project discovery (W-040 fleet, W-047 workspace), the higher-level orchestrator (`run_fleet.py`, `run_workspace.py`) maintains a manifest with child `project_path` + `run_id` pairs, and the UI's `discoverRuns` fans out by following those pointers. This plan does not introduce cross-project aggregation — that's W-040's responsibility. This plan makes the per-project registry ready for it.
 
@@ -161,6 +172,7 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
               worktree_worca_dir: join(reg.worktree_path, '.worca'),
               is_worktree_run: true,
               fleet_id: reg.fleet_id || null,
+              workspace_id: reg.workspace_id || null,
               group_type: reg.group_type || null,
               target_branch: reg.target_branch || null,
             });
@@ -173,26 +185,65 @@ Replace the `active_run` single-pointer model with `runs/` directory scanning. R
 
   The `worktree_worca_dir` and `is_worktree_run` fields let the UI and `ProcessManager` resolve the correct `.worca/` directory for lifecycle operations (stop/pause/resume) on worktree runs.
 
-### 6.5 Retire `MultiWatcher` and Migrate Clients
+### 6.5 Retire `MultiWatcher`, Decide `multi-dashboard.js` Fate, Migrate Clients
 
-- **Current state:** `worca-ui/server/multi-watcher.js` watches `.worca/multi/pipelines.d/` independently of `discoverRuns` and broadcasts `pipeline-status-changed` events to clients (`worca-ui/app/main.js:726`, registered in `worca-ui/app/protocol.js:36`). With §6's `discoverRuns` fan-out, every change to `pipelines.d/` is already reflected in the next `runs-list` broadcast. Keeping both produces dual broadcasts on every status change — the very dual-source-of-truth problem this plan exists to fix.
-- **Obstacle:** A naive removal orphans the frontend `pipeline-status-changed` listener and any tests that subscribe to it. A naive keep duplicates broadcasts and recreates the bug.
-- **Resolution:** Delete `MultiWatcher` and migrate clients to consume `runs-list` exclusively.
+- **Current state:** `worca-ui/server/multi-watcher.js` (237 lines) watches `.worca/multi/pipelines.d/` independently of `discoverRuns` and broadcasts `pipeline-status-changed` events with payload `{ project, runId, status, stage, title, worktree_path, started_at, pid }`. Frontend handler at `worca-ui/app/main.js:726` writes these into `state.pipelines`, which `multiPipelineDashboardView` (`worca-ui/app/views/multi-dashboard.js:150-190`) renders as a grid of compact `pipelineCardView` cards (stage-dot progress, elapsed time, quick actions). With §6's `discoverRuns` fan-out, every change to `pipelines.d/` is already reflected in the next `runs-list` broadcast. Keeping both produces dual broadcasts on every status change — the very dual-source-of-truth problem this plan exists to fix.
+- **Obstacle:** A naive removal orphans the frontend `pipeline-status-changed` listener, the `state.pipelines` map, the entire `multi-dashboard.js` view, and any tests that subscribe to those. A naive keep duplicates broadcasts and recreates the bug.
+- **Resolution:** Delete `MultiWatcher`, derive `state.pipelines` from `state.runs`, repurpose `multi-dashboard.js` as a thin compact-mode renderer.
+
+  **Data-flow before vs after:**
+
+  ```
+  BEFORE (dual sources):
+    pipelines.d/*.json --[MultiWatcher]--> pipeline-status-changed --[main.js:726]--> state.pipelines --> multiPipelineDashboardView
+    runs/*/status.json --[ws-status-watcher]--> runs-list ----------> state.runs ------> dashboardView (run-card.js)
+
+  AFTER (single source):
+    pipelines.d/*.json + runs/*/status.json --[discoverRuns step 5]--> runs-list --> state.runs
+                                                                                         |
+                                                            +----------------------------+
+                                                            |                            |
+                                                            v                            v
+                                                  dashboardView                    multiPipelineDashboardView
+                                                  (full run cards)                 (compact, when is_worktree_run=true)
+  ```
 
   **Server-side:**
   - Delete `worca-ui/server/multi-watcher.js` and `worca-ui/server/multi-watcher.test.js`.
   - Remove every `MultiWatcher` instantiation site (likely in `worca-ui/server/ws-modular.js` — verify with grep before removal).
   - Remove `'pipeline-status-changed'` from `worca-ui/app/protocol.js:36` allowlist.
 
-  **Client-side:**
-  - Delete the `ws.on('pipeline-status-changed', ...)` handler at `worca-ui/app/main.js:726`. Whatever per-pipeline state it maintained must instead be derived from the next `runs-list` event (which now contains the same data via §6's fan-out, with `fleet_id` / `group_type` / `target_branch` enrichment).
-  - If a stale view ever depended on `pipeline-status-changed` for finer-grained diff signals than `runs-list` provides, batch-rebuild the same diff in the client by comparing successive `runs-list` payloads (cheap; the list is already small).
+  **Client-side state migration:**
+  - Delete the `ws.on('pipeline-status-changed', ...)` handler at `worca-ui/app/main.js:726`.
+  - Delete the `state.pipelines` map. Add a derived selector `selectParallelPipelines(state)` that filters `Object.values(state.runs)` for entries where `is_worktree_run === true` and shapes them to the `pipelineCardView` contract (see field map below). Selector is memoized on `state.runs` reference.
+  - Field map for the compact card (preserved exactly to avoid `multiPipelineDashboardView` template churn):
+
+    | `pipelineCardView` field | Source in `state.runs[id]` (post-W-048) |
+    |---|---|
+    | `run_id` | `id` |
+    | `title` | `work_request?.title` |
+    | `status` | `pipeline_status` (already present) |
+    | `stage` | `stage` (already present in `status.json`; verified in `runner.py`) |
+    | `started_at` | `started_at` |
+    | `worktree_path` | `worktree_worca_dir` (parent of `.worca/`) — derived |
+    | `pid` | `pid` (already present) |
+
+  **`multi-dashboard.js` fate — KEEP, repurpose as compact-mode renderer:**
+  - The view file survives; `multiPipelineDashboardView` is still useful for at-a-glance multi-run dashboards (active worktree fleets, parallel runs).
+  - Caller (`worca-ui/app/main.js`) switches from `multiPipelineDashboardView(state.pipelines)` to `multiPipelineDashboardView(selectParallelPipelines(state))`.
+  - W-040 §13.2 fleet grouping renders fleet headers + child cards using this same compact `pipelineCardView`.
+  - W-047 §10.4 tier rendering also uses `pipelineCardView` for child rows.
+  - **No template change to `pipelineCardView`** required for this plan — only the upstream selector changes.
+
+  **Stage-dot data preservation:** `pipelineCardView` (`multi-dashboard.js:14-24`) shows stage progress via `STAGES.indexOf(currentStage)`. The `stage` field is already written to `runs/{id}/status.json` by `runner.py` and surfaced through `discoverRuns`. Verified by reading `state.runs[id].stage` in existing dashboard rendering paths. Add a vitest covering this exactly: `selectParallelPipelines` against a fixture run-list where one run has `is_worktree_run: true, stage: "implement"` → asserts `pipelineCardView` renders `implement` dot as active.
 
   **Test cleanup:**
-  - Remove `multi-watcher.test.js`. Move any unique behavioral coverage (e.g., reconciliation of stale entries) to `watcher.test.js` against the new step 5 of `discoverRuns`.
+  - Remove `multi-watcher.test.js`. Move stale-entry reconciliation coverage into `watcher.test.js` against the new step 5 of `discoverRuns`.
+  - Add `worca-ui/app/views/multi-dashboard.test.js` extension: render with selector output instead of mock `state.pipelines`. Coverage matrix: zero worktree runs (renders nothing), one running, mixed running/paused/completed (paused appears next to running, completed in `<sl-details>`), stage progression visible via stage-dot active state.
+  - Add `worca-ui/app/select-parallel-pipelines.test.js` (new): pure unit test for the selector — filter logic, field mapping, memoization stability.
 
   **Migration safety:**
-  - Ship server-side delete and client migration in the **same release** as §6 (the `discoverRuns` fan-out). A split release would either drop status updates (delete first) or duplicate them (keep first). The §6 fan-out, the watcher deletion, and the protocol allowlist trim are atomic with respect to release.
+  - Ship server-side delete, selector introduction, `multi-dashboard.js` caller switch, and §6 fan-out in the **same release**. A split release would either drop status updates (delete first) or duplicate them (keep first).
   - Add a one-time browser-cache-busting bump to the UI bundle version (`worca-ui/package.json` micro bump) so cached clients reload and pick up the new protocol allowlist; otherwise stale clients will log a "received unknown event" warning until they refresh.
 
 ### 7. Status Watcher — Watch `pipelines.d/` for Worktree Changes
@@ -334,29 +385,35 @@ W-048 changes how runs are isolated and discovered. Most of that is invisible pl
 - **Why an icon, not a badge:** Worktree-vs-root is a structural property, not a status. The badge color language (`docs/badge-color-language.md`) reserves badges for status semantics (active / done / caution / failed). Adding a sixth axis of meaning to badges would dilute the language.
 - **Detail view:** `app/views/run-detail.js` adds a row in the run metadata block: `Worktree: <path>` (only shown when `is_worktree_run`). Path is selectable text + a copy button (`<sl-copy-button>`).
 
-#### 13.2 "Start Run" Dialog — Worktree Awareness
+#### 13.2 "Start Run" Page — Worktree Awareness and Pipeline Block Removal
 
-- **Current state:** The existing "Start run" dialog in `worca-ui/app/views/dashboard.js` (likely also reused in `multi-dashboard.js`) collects prompt + source + template options and calls `POST /api/runs` which now spawns `run_worktree.py` instead of `run_pipeline.py`.
-- **Change:** Add a one-line info banner inside the dialog explaining the new behavior:
-  > Runs now execute in an isolated git worktree. Your current working tree won't be modified. Use `worca cleanup` to remove old worktrees later.
-  Render via `<sl-alert variant="primary" open>`. The banner is dismissable per-user via `localStorage.setItem('worca.worktree-banner-dismissed', '1')` so power users see it once.
-- **New input — PR base branch:** Add a `<sl-input>` field labeled "PR base branch (optional)" with placeholder "main" and helper text "Branch the worktree forks from and the PR will target. Defaults to repo's default branch." The value submits as `branch` in the POST body, which `run_worktree.py` consumes via `--branch`.
+- **Current state:** New runs are launched from the inline `worca-ui/app/views/new-run.js` page (485 lines, not a dialog). The page collects prompt + source + plan + template + branch + msize + mloops and calls `POST /api/(projects/:id/)runs` which now spawns `run_worktree.py` instead of `run_pipeline.py`. The page currently blocks new submissions when any pipeline is active via `hasActivePipeline()` (`new-run.js:204-208`) and shows a `new-run-info` warning panel ("Pipeline already running. Parallel pipelines on the same project are not fully supported yet.") at lines 293-300.
+- **Change 1 — Remove the "Pipeline already running" block:** With worktree isolation (this plan), concurrent pipelines no longer collide on the working tree, git index, or branch. The block is wrong post-W-048. Delete the `pipelineRunning` warning panel (`new-run.js:293-300`) and the form-disable class (`new-run-form-disabled` at line 304). Keep `hasActivePipeline` for any other callers but remove its use in this view. Update `new-run-parallel-block.test.js` to assert the warning is **not** rendered when an active pipeline exists. **This change ships in Phase 6 alongside the `startPipeline` switch to `run_worktree.py`** — the two must land together to avoid leaving the warning visible after isolation works.
+- **Change 2 — Worktree info banner:** Add a one-line info banner at the top of the form:
+  > Runs execute in an isolated git worktree. Your current working tree isn't modified. Manage existing worktrees in the **Worktrees** view.
+  Render via `<sl-alert variant="primary" open closable>`. Dismissable per-user via `localStorage.setItem('worca.worktree-banner-dismissed', '1')` so power users see it once. The banner replaces the deleted "Pipeline already running" panel — the existing visual real estate at the top of the page is reused.
+- **New input — PR base branch:** Add a `<sl-input>` field labeled "PR base branch (optional)" with placeholder "main" and helper text "Branch the worktree forks from and the PR will target. Defaults to repo's default branch." The value submits as `branch` in the POST body, which `run_worktree.py` consumes via `--branch` (= W-048 `target_branch`, see §10 naming clarification). Existing "Branch" input under Advanced Options retains its meaning (use existing branch instead of creating a new one) — the new field controls fork-from / PR-target, while the existing field controls head-branch behavior. Render the new field at the top of Advanced Options for visibility; both have non-overlapping semantics.
 - **Validation:** Client-side regex `^[a-zA-Z0-9._/-]+$`; server-side check that the branch exists in `git branch --list` before launching (the existing process-manager dispatch should reject early with a clear error toast rather than letting the worktree creation fail in the spawned subprocess).
 
 #### 13.3 Worktree Manager View
 
 - **Why:** `worca cleanup` is CLI-only; UI users will accumulate worktrees indefinitely without ever knowing.
-- **New view file:** `worca-ui/app/views/worktrees.js`. Accessible via a sidebar entry "Worktrees" (only shown when `pipelines.d/` has at least one entry, otherwise hidden — avoids cluttering the nav for users who never use isolation).
-- **Layout:** Reuses the standard `dashboard.js` table pattern: rows = worktree entries from `GET /api/worktrees`, columns = [Run title, Status badge, Branch, Worktree path, Disk usage, Age, Actions].
+- **New view file:** `worca-ui/app/views/worktrees.js`. Accessible via a sidebar entry "Worktrees" (see §13.7 sidebar layout).
+- **Sidebar entry:** Conditional on `pipelines.d/` non-empty. **Includes a count badge** (`<sl-badge variant="neutral" pill>` with the worktree count) — matches the existing convention of badging Pipeline > Running, History, and Beads entries (see `sidebar.js:163-191`). When the count exceeds disk-pressure threshold (default: total > 2 GB across worktrees), the badge variant flips to `warning` to nudge cleanup. Threshold configurable via `worca.ui.worktree_disk_warning_bytes`.
+- **Layout:** Reuses the standard `dashboard.js` table pattern: rows = worktree entries from `GET /api/worktrees`, columns = [Run title, Status badge, Branch, Worktree path, Disk usage, Age, Group (standalone / fleet:&lt;short&gt; / workspace:&lt;short&gt;), Actions].
 - **Status badge column** uses the existing pipeline status badge mapping (no new colors).
+- **Group column** displays the worktree's parent: `—` for standalone runs, `fleet:f_xxxx` (linked to fleet detail) when `fleet_id` is set, `workspace:ws_xxxx` (linked to workspace detail) when `workspace_id` is set. Reads from the augmented `discoverRuns` payload (§5 + §6). Helps users understand cleanup impact ("removing this kills the fleet's resume path").
 - **Actions column:**
   - "Open" (`<sl-button size="small">`) → opens the existing run detail view for that worktree's run.
-  - "Remove" (`<sl-button size="small" variant="danger" outline>`) → confirmation modal `<sl-dialog>` then calls `DELETE /api/worktrees/:run_id` which invokes the same `WorktreeSource.remove(entry)` helper used by `worca cleanup`. Disabled with tooltip "Cannot remove a running worktree" when the run is still active.
-- **Bulk actions:** Above the table, a `<sl-button>` "Remove all completed" (warns in a confirm dialog with the count and total disk to be freed) and a `<sl-input type="text">` filter (matches branch / title substring).
-- **Disk surface:** Header strip shows "Total worktree disk: 2.3 GB across 14 worktrees · 1.8 GB cleanable". Cleanable = sum of disk usage of completed/failed worktrees.
+  - "Cleanup" (`<sl-button size="small" variant="danger" outline>`) — verb is **"Cleanup"** to match `worca cleanup` CLI and to align with W-040 §13.3 / W-047 §10.5 (single verb across all artifact removal surfaces). Opens a confirmation `<sl-dialog>` then calls `DELETE /api/worktrees/:run_id` which invokes the same `WorktreeSource.remove(entry)` helper used by `worca cleanup`.
+  - **Disabled with tooltip** when the run is still active: "Cannot cleanup a running worktree".
+  - **Resume-aware warning:** Even for completed/failed runs, if the run is in a non-terminal-but-resumable state (`pipeline_status` in `failed`, `paused`, `cancelled`), the confirmation dialog includes the warning: "Removing this worktree prevents resuming the run. The run row stays in History but cannot continue." Confirmation requires checking an explicit "I understand resume will be unavailable" `<sl-checkbox>` for resumable runs. For `completed` runs, the standard one-step confirmation applies.
+  - **Group warning:** When the worktree is part of a halted/incomplete fleet (`group_type == "fleet"` and fleet manifest status is `halted` or `failed`) or workspace (`group_type == "workspace"` and workspace status is `halted`, `failed`, `integration_failed`, or any non-terminal tier in progress), the confirmation dialog adds: "This worktree belongs to **&lt;group&gt;** — removing it will block the group's `--resume` for this child." Same explicit checkbox required.
+- **Bulk actions:** Above the table, a `<sl-button>` "Cleanup all completed" (warns in a confirm dialog with the count and total disk to be freed; **explicitly groups affected worktrees by parent**: "5 standalone, 3 from fleet f_xxxx, 2 from workspace ws_yyyy" with each group's resume impact spelled out) and a `<sl-input type="text">` filter (matches branch / title / group substring).
+- **Disk surface:** Header strip shows "Total worktree disk: 2.3 GB across 14 worktrees · 1.8 GB cleanable". Cleanable = sum of disk usage of `completed` worktrees only (not `failed`/`paused`/`cancelled`, since those are resumable). A second sub-line shows "Resumable: 0.5 GB across 4 worktrees (cleanup blocks resume)" when applicable.
 - **REST endpoints (new in `worca-ui/server/worktrees-routes.js`):**
-  - `GET /api/worktrees` — returns `[{run_id, title, branch, worktree_path, disk_bytes, age_seconds, status, removable}]` by reading `pipelines.d/` and shelling out to `du -sb <path>` per entry (cached for 30s to avoid disk hammering).
-  - `DELETE /api/worktrees/:run_id` — wraps `WorktreeSource.remove`. Returns 409 if running.
+  - `GET /api/worktrees` — returns `[{run_id, title, branch, worktree_path, disk_bytes, age_seconds, status, removable, fleet_id, workspace_id, group_type, group_status, resumable}]` by reading `pipelines.d/`, joining against fleet/workspace manifests (when `fleet_id`/`workspace_id` present), and shelling out to `du -sb <path>` per entry (cached for 30s to avoid disk hammering). `resumable` is `true` for non-terminal-but-recoverable statuses (`failed`, `paused`, `cancelled`) and `false` for `completed` and `running`.
+  - `DELETE /api/worktrees/:run_id` — wraps `WorktreeSource.remove`. Returns 409 if running. Accepts `?force=1` query param to skip server-side group-impact warnings (UI sets this only after the user confirmed the warning).
 - **Empty state:** When `pipelines.d/` is empty, the view shows a centered illustration + caption "No worktrees yet. Start a run to create one." This is the only empty state W-048 introduces.
 
 #### 13.4 Status Vocabulary — No New Badge Colors
@@ -367,26 +424,58 @@ W-048 introduces no new pipeline-level status values. The existing badge mapping
 
 | File | Coverage |
 |------|----------|
-| `worca-ui/app/views/run-card.test.js` (existing) | Add test: worktree indicator icon renders when `is_worktree_run === true`; hidden otherwise. |
-| `worca-ui/app/views/run-detail.test.js` (existing or new) | Add test: "Worktree" metadata row appears with path + copy button when worktree run. |
-| `worca-ui/app/views/dashboard.test.js` (existing) | Add test: "Start run" dialog includes PR base branch input; submits `branch` field in POST body; banner is dismissable and stays dismissed via localStorage. |
-| `worca-ui/app/views/worktrees.test.js` (new) | Render rows from `GET /api/worktrees`; remove button disabled when running; bulk remove confirmation; filter input narrows rows. |
-| `worca-ui/server/worktrees-routes.test.js` (new) | `GET` returns enriched entries; `DELETE` returns 409 for running run; calls `WorktreeSource.remove` for completed run. |
-| `worca-ui/app/views/sidebar.test.js` (existing) | Add test: "Worktrees" nav entry hidden when `pipelines.d/` empty, shown when non-empty. |
-| `worca-ui/app/views/multi-dashboard.test.js` (existing) | Verify worktree indicator icon renders in the global runs list. |
+| `worca-ui/app/views/run-card.test.js` (existing) | Worktree indicator icon renders when `is_worktree_run === true`; hidden otherwise. |
+| `worca-ui/app/views/run-detail.test.js` (existing or new) | "Worktree" metadata row appears with path + copy button when worktree run. |
+| `worca-ui/app/views/new-run.test.js` (existing) | (a) "Pipeline already running" warning panel is **not** rendered after the W-048 isolation switch (replaces the pre-W-048 assertion in `new-run-parallel-block.test.js`); (b) form is **not** disabled when `state.runs` has active runs; (c) PR base branch input present; submits `branch` field in POST body; (d) worktree info banner renders, is dismissable, stays dismissed via localStorage. |
+| `worca-ui/app/views/new-run-parallel-block.test.js` (existing) | Replace pre-W-048 assertion (warning shown when active pipeline) with post-W-048 assertion (warning never shown — concurrent runs are safe). Keep the file so the regression is documented; do not delete. |
+| `worca-ui/app/views/worktrees.test.js` (new) | Render rows from `GET /api/worktrees`; cleanup button disabled when running; bulk cleanup confirmation lists per-group impact; filter input narrows rows; resume-aware confirmation requires explicit checkbox for resumable runs; group column links to fleet/workspace detail when set. |
+| `worca-ui/server/worktrees-routes.test.js` (new) | `GET` returns enriched entries with `fleet_id`/`workspace_id`/`group_type`/`group_status`/`resumable`; `DELETE` returns 409 for running run; `DELETE` returns 412 (Precondition Failed) without `?force=1` for resumable runs or fleet/workspace members; calls `WorktreeSource.remove` for completed run. |
+| `worca-ui/app/views/sidebar.test.js` (existing) | "Worktrees" nav entry hidden when `pipelines.d/` empty, shown when non-empty; count badge variant flips to `warning` past disk threshold. |
+| `worca-ui/app/views/multi-dashboard.test.js` (existing) | Worktree indicator icon renders in compact pipeline cards; data sourced from `selectParallelPipelines(state)` (post-MultiWatcher migration); stage-dot active state derives from `run.stage`; mixed running/paused/completed split renders correctly. |
+| `worca-ui/app/select-parallel-pipelines.test.js` (new) | Pure unit test for the selector: filters on `is_worktree_run === true`; field map correct; memoization stable across same-reference state.runs; returns `{}` when no worktree runs. |
+| `worca-ui/server/watcher.test.js` (existing or new) | (Inherits from §6.5) Stale-entry reconciliation moved here; concurrent `runs/` + `pipelines.d/` discovery; dedup via `seenIds`; `workspace_id`/`fleet_id`/`group_type` propagation. |
 
 #### 13.6 Files Added/Touched for §13
 
 | File | Change |
 |------|--------|
-| `worca-ui/app/views/worktrees.js` | **New** — worktree manager view |
+| `worca-ui/app/views/worktrees.js` | **New** — worktree manager view (resume-aware Cleanup, group column, bulk cleanup with grouped impact) |
 | `worca-ui/app/views/run-card.js` | Add worktree indicator icon |
 | `worca-ui/app/views/run-detail.js` | Add worktree metadata row |
-| `worca-ui/app/views/dashboard.js` | Start-run dialog: banner + PR base branch input |
-| `worca-ui/app/views/sidebar.js` | Conditional "Worktrees" nav entry |
-| `worca-ui/server/worktrees-routes.js` | **New** — REST endpoints for worktree management |
-| `worca-ui/app/styles.css` | New CSS for the worktrees view (table density, disk-usage strip) |
+| `worca-ui/app/views/new-run.js` | Remove "Pipeline already running" warning + form-disable; add worktree info banner; add PR base branch input |
+| `worca-ui/app/views/sidebar.js` | Conditional "Worktrees" nav entry **with count badge** (variant flips on disk-pressure threshold); §13.7 sets the broader sidebar layout that W-040 / W-047 extend |
+| `worca-ui/app/views/multi-dashboard.js` | Caller switch: `state.pipelines` → `selectParallelPipelines(state)` (data source migration only; `pipelineCardView` template unchanged) |
+| `worca-ui/app/select-parallel-pipelines.js` | **New** — derived selector replacing the deleted `state.pipelines` map |
+| `worca-ui/app/main.js` | Remove `state.pipelines` map; remove `pipeline-status-changed` handler at line 726; wire selector into `multiPipelineDashboardView` call sites |
+| `worca-ui/server/worktrees-routes.js` | **New** — REST endpoints for worktree management (joins fleet/workspace manifests for group context) |
+| `worca-ui/app/styles.css` | New CSS for the worktrees view (table density, disk-usage strip, group column tag styles) |
 | Tests above | **New / extended** |
+
+#### 13.7 Sidebar Layout — Foundation for Multi-Repo Entries
+
+W-048 sets the convention W-040 and W-047 must follow. The existing sidebar (`sidebar.js:161-211`) has flat sections only; introducing nested nav for two siblings (Fleets + Workspaces) would break the convention. Establish the layout once here so subsequent plans extend it without re-deciding:
+
+- **Pipeline section** — flat siblings, conditionally visible:
+  - `Running` (badge: active count) — existing
+  - `History` (badge: total count) — existing
+  - `Worktrees` (badge: worktree count, see §13.3) — added by this plan, hidden when `pipelines.d/` empty
+  - `Fleets` (badge: active fleet count) — added by W-040, hidden when no fleets
+  - `Workspaces` (badge: active workspace count) — added by W-047, hidden when no workspaces
+
+- **No nesting.** Even with all five entries visible, flat siblings preserve the existing visual rhythm. W-047's earlier "Multi-Repo > Workspaces" nesting proposal is **superseded** by this layout.
+
+- **"+ New Pipeline" CTA evolution:** Currently a single button at sidebar top (`sidebar.js:153-158`). When W-040 ships, convert into a `<sl-dropdown>` button with options:
+  - "+ New Pipeline" (default, existing flow → `new-run.js`)
+  - "+ New Fleet" (W-040 → `fleet-launcher.js`)
+  - "+ New Workspace" (W-047 → `workspace-launcher.js`)
+  Each option conditionally shown based on whether the feature is enabled (e.g., workspace option visible only when at least one workspace.json exists, or always visible with onboarding to creation flow). W-048 ships only the dropdown scaffold + the existing single option; W-040 and W-047 each add their option.
+
+#### 13.8 Stage-Dot Data Path Verification (post-MultiWatcher)
+
+Per §6.5, `pipelineCardView` (`multi-dashboard.js:14-24`) renders stage-dot progress from `pipeline.stage`. After the MultiWatcher migration, this field comes from `state.runs[id].stage` (already written by `runner.py` to `runs/{id}/status.json` and surfaced via `discoverRuns`). Add explicit verification:
+- During Phase 6, log a one-line confirmation in the Phase 6 PR description: "Verified `state.runs[id].stage` populated for worktree runs in fixture XYZ".
+- The `select-parallel-pipelines.test.js` test asserts the field-mapping contract.
+- The `multi-dashboard.test.js` test asserts the rendered stage-dot active state matches the input `stage`.
 
 ## Implementation Plan
 
@@ -460,14 +549,18 @@ W-048 introduces no new pipeline-level status values. The existing badge mapping
 3. Add `resolveRunContext(runId)` to `ProcessManager` (§8).
 4. Update `stopPipeline`, `pausePipeline`, `resumePipeline`, `restartStage`, `deleteRun` to call `resolveRunContext` first.
 
-### Phase 6: `startPipeline` switch and `target_branch`
+### Phase 6: `startPipeline` switch, `target_branch`, and new-run.js block removal
 
-**Files:** `worca-ui/server/process-manager.js`, `src/worca/orchestrator/runner.py`, `src/worca/agents/core/guardian.md`
+**Files:** `worca-ui/server/process-manager.js`, `src/worca/orchestrator/runner.py`, `src/worca/agents/core/guardian.md`, `worca-ui/app/views/new-run.js`, `worca-ui/app/views/new-run-parallel-block.test.js`
 
 **Tasks:**
 1. Update `startPipeline` at `process-manager.js:273` to spawn `run_worktree.py` for new runs, `run_pipeline.py` for resume. Add fallback detection for older worca versions.
 2. Store `target_branch` in `status.json` at `runner.py` initialization (from `--branch` flag).
 3. Update `guardian.md` to read `status.target_branch` for `gh pr create --base`. Fall back to default branch if unset.
+4. **Remove the "Pipeline already running" warning panel** in `new-run.js:293-300` and the `new-run-form-disabled` class application (line 304). Keep the `hasActivePipeline` helper for other callers but stop calling it from `newRunView`. Add the worktree info banner (§13.2) and PR base branch input in the same change.
+5. **Update `new-run-parallel-block.test.js`** to assert the warning is **not** rendered (post-W-048 isolation makes parallel runs safe). Document the inversion in the test description.
+
+**Sequencing constraint:** Tasks 1, 4, and 5 must ship together. Switching dispatch (task 1) without removing the warning (task 4) leaves users with a misleading block; removing the warning (task 4) without isolation (task 1) re-introduces the working-tree collision bug.
 
 ### Phase 7: Worktree cleanup command
 
@@ -480,16 +573,16 @@ W-048 introduces no new pipeline-level status values. The existing badge mapping
 
 ### Phase 7.5: UI Surface (§13)
 
-**Files:** `worca-ui/app/views/worktrees.js` (new), `worca-ui/app/views/run-card.js`, `worca-ui/app/views/run-detail.js`, `worca-ui/app/views/dashboard.js`, `worca-ui/app/views/sidebar.js`, `worca-ui/server/worktrees-routes.js` (new), `worca-ui/app/styles.css`
+**Files:** `worca-ui/app/views/worktrees.js` (new), `worca-ui/app/views/run-card.js`, `worca-ui/app/views/run-detail.js`, `worca-ui/app/views/sidebar.js`, `worca-ui/server/worktrees-routes.js` (new), `worca-ui/app/select-parallel-pipelines.js` (new), `worca-ui/app/main.js`, `worca-ui/app/views/multi-dashboard.js`, `worca-ui/app/styles.css`
 
 **Tasks:**
 1. Add `<sl-icon name="folder-symlink">` worktree indicator to `run-card.js` and `multi-dashboard.js` rendering paths; gated on `is_worktree_run`.
 2. Add "Worktree" metadata row in `run-detail.js` with path + `<sl-copy-button>`.
-3. Extend "Start run" dialog in `dashboard.js`: dismissable `<sl-alert>` banner + PR base branch `<sl-input>`. Submit `branch` field in POST body.
-4. Build `worktrees.js` view: table from `GET /api/worktrees`, filter input, bulk-remove button, disk-usage strip.
-5. Build `worktrees-routes.js`: `GET /api/worktrees` (with 30s `du -sb` cache), `DELETE /api/worktrees/:run_id` (409 when running).
-6. Conditional "Worktrees" entry in `sidebar.js` (visible only when `pipelines.d/` non-empty).
-7. Add tests listed in §13.5.
+3. Build `worktrees.js` view per §13.3: table from `GET /api/worktrees`, group column, filter input, resume-aware Cleanup button + bulk Cleanup, disk-usage strip with resumable sub-line.
+4. Build `worktrees-routes.js`: `GET /api/worktrees` (with 30s `du -sb` cache; joins fleet/workspace manifests for group context), `DELETE /api/worktrees/:run_id` (409 when running, 412 when resumable/grouped without `?force=1`).
+5. Conditional "Worktrees" entry in `sidebar.js` with count badge per §13.3 (variant flips on disk-pressure threshold). Apply §13.7 sidebar layout (flat siblings under Pipeline; "+ New Pipeline" CTA scaffolded as `<sl-dropdown>` for W-040/W-047 to extend).
+6. Build `select-parallel-pipelines.js` selector and migrate `multi-dashboard.js` caller per §6.5. Remove `state.pipelines` map and `pipeline-status-changed` handler in `main.js` (this is also covered by Phase 2.5; both reference the same code change to avoid duplication).
+7. Add tests listed in §13.5 (including the `multi-dashboard.test.js` and `select-parallel-pipelines.test.js` extensions).
 
 ### Phase 8: Update tests
 
@@ -512,7 +605,7 @@ W-048 introduces no new pipeline-level status values. The existing badge mapping
 | `src/worca/scripts/run_multi.py` | **Delete** |
 | `src/worca/scripts/run_batch.py` | **Delete** — superseded by `run_worktree.py` (one-at-a-time) and W-040's `run_fleet.py` (parallel across repos) |
 | `src/worca/orchestrator/batch.py` | **Delete** — relocate `CircuitBreakerError` into `error_classifier.py` if any non-deleted code still imports it |
-| `src/worca/orchestrator/registry.py` | Add `fleet_id`, `group_type`, `target_branch` kwargs to `register_pipeline()` |
+| `src/worca/orchestrator/registry.py` | Add `fleet_id`, `workspace_id`, `group_type`, `target_branch` kwargs to `register_pipeline()` (see §5 authoritative rule on field disambiguation) |
 | `src/worca/agents/core/guardian.md` | Read `status.target_branch` for `gh pr create --base` |
 | `src/worca/cli/cleanup.py` | **New** — `worca cleanup` command |
 | `src/worca/cli/__init__.py` | Register cleanup subcommand |
@@ -522,11 +615,15 @@ W-048 introduces no new pipeline-level status values. The existing badge mapping
 | `worca-ui/server/multi-watcher.js` | **Delete** — superseded by §6 `discoverRuns` fan-out; clients migrate to `runs-list` (see §6.5) |
 | `worca-ui/server/multi-watcher.test.js` | **Delete** — coverage moves to `watcher.test.js` for the new step 5 |
 | `worca-ui/server/ws-modular.js` | Remove `MultiWatcher` instantiation site(s) |
-| `worca-ui/app/main.js` | Remove `pipeline-status-changed` handler at line 726; update derived state to come from `runs-list` |
+| `worca-ui/app/main.js` | Remove `pipeline-status-changed` handler at line 726; remove `state.pipelines` map; wire `selectParallelPipelines(state)` into `multiPipelineDashboardView` calls |
+| `worca-ui/app/select-parallel-pipelines.js` | **New** — derived selector replacing `state.pipelines` (see §6.5 field map) |
+| `worca-ui/app/views/multi-dashboard.js` | Caller switch only — `pipelineCardView` template unchanged |
+| `worca-ui/app/views/new-run.js` | Phase 6: remove "Pipeline already running" warning + form-disable; add worktree info banner; add PR base branch input |
+| `worca-ui/app/views/new-run-parallel-block.test.js` | Invert assertion: warning is NOT rendered post-W-048 |
 | `worca-ui/app/protocol.js` | Remove `'pipeline-status-changed'` from event allowlist (line 36) |
 | `worca-ui/package.json` | Micro version bump to bust client bundle cache after protocol allowlist trim |
 | `CLAUDE.md` | Update run_multi references to run_worktree, document `--guide` flag, add cleanup command |
-| `MIGRATION.md` | Document `active_run` removal, `run_multi.py` and `run_batch.py` removal, cleanup command, `MultiWatcher` removal + protocol allowlist change |
+| `MIGRATION.md` | Document `active_run` removal, `run_multi.py` and `run_batch.py` removal, cleanup command, `MultiWatcher` removal + protocol allowlist change, "Pipeline already running" block removal |
 
 ## Considerations
 
@@ -583,9 +680,12 @@ W-048 introduces no new pipeline-level status values. The existing badge mapping
 
 - **Single worktree pipeline (pytest fixture).** Spawn `run_worktree.py --prompt "test"` in a scratch repo with mock claude. Assert: worktree created, `pipelines.d/` entry exists, `run_pipeline.py --worktree` spawned inside worktree, `discoverRuns` finds the run.
 - **Concurrent root + worktree runs.** Start a root pipeline and a worktree pipeline. Assert: both visible in `discoverRuns`, no collision, both have separate PID files, `hooks/prompt.py` resolves correct status for each PID.
+- **Concurrent fleet + workspace + standalone in one project's `discoverRuns`.** Manually create three `pipelines.d/` entries — one with `fleet_id` only, one with `workspace_id` only, one with neither (standalone). Assert: `discoverRuns` returns all three, `group_type` discriminator correctly populated, no IDs cross-leak (a `fleet_id`-bearing entry never has `workspace_id` non-null and vice versa).
+- **MultiWatcher → `runs-list` regression test.** Start a worktree pipeline. Assert: `selectParallelPipelines(state)` returns one entry; `pipelineCardView` renders with stage-dot active state matching `state.runs[id].stage`; `multiPipelineDashboardView` output stable across successive `runs-list` payloads when nothing changed (memoization works).
 - **Lifecycle routing.** Start a worktree pipeline, stop it via `ProcessManager.stopPipeline(runId)`. Assert: correct PID killed (worktree's, not root's), status updated in worktree's `status.json`.
 - **Cleanup.** Create 3 worktree pipelines (2 completed, 1 running). Run `worca cleanup --all`. Assert: 2 worktrees removed, 1 (running) preserved, 2 `pipelines.d/` entries deregistered.
-- **Playwright (`--workers=1`).** Start a pipeline from the UI dashboard, verify it appears in the runs list as a worktree run, stop it, verify status transition.
+- **Resume-aware cleanup (UI).** Create 1 `failed` worktree pipeline. Call `DELETE /api/worktrees/:run_id` without `?force=1`. Assert: returns 412 with body explaining "resumable, force=1 required". Call again with `?force=1`. Assert: succeeds, worktree removed.
+- **Playwright (`--workers=1`).** Start a pipeline from the UI dashboard, verify it appears in the runs list as a worktree run, stop it, verify status transition. Also verify the "Pipeline already running" warning is gone — start a second pipeline while the first is still active and confirm both appear in the dashboard.
 
 ### Existing Tests to Update
 
