@@ -17,6 +17,10 @@ import { discoverRunsAsync } from './watcher.js';
 const REFRESH_DEBOUNCE_MS = 75;
 const WORKTREE_WATCHER_THRESHOLD = 50;
 const WORKTREE_POLL_MS = 30_000;
+// Display-layer: broadest set — any status that means "stop watching this run".
+// Differs from runner/resume (which exclude 'failed' to keep it resumable) and
+// cleanup ({completed, failed}). Here we add 'error' so the UI also stops polling
+// pipelines that crashed before reaching a clean terminal state.
 const TERMINAL_STATUSES = new Set([
   'completed',
   'failed',

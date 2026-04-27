@@ -690,6 +690,12 @@ export class ProcessManager {
 
   /**
    * Restart a failed stage by resetting it and spawning with --resume.
+   *
+   * Internal API — only called from worca-ui (project-routes.js). The signature
+   * changed in W-048 from (stageKey, opts) to (runId, stageKey, opts) because
+   * runs are now per-worktree and the manager can no longer infer "the active
+   * run". Callers must pass an explicit runId.
+   *
    * @param {string} runId - Run identifier to restart
    * @param {string} stageKey - The stage key to restart
    * @param {{ projectRoot?: string }} opts

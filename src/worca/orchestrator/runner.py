@@ -1217,6 +1217,16 @@ def run_pipeline(
         if existing:
             actual_status_path = candidate
             run_dir = os.path.join(worca_dir, "runs", run_id_candidate)
+    elif len(active_runs) > 1:
+        # Worktree-isolated runs should always see ≤1 active run per .worca/.
+        # >1 means a legacy in-place project has multiple non-terminal runs;
+        # we can't pick deterministically, so fall through to fresh-start.
+        _log(
+            f"WARNING: found {len(active_runs)} non-terminal runs in {worca_dir}/runs/ "
+            f"({', '.join(rid for rid, _ in active_runs)}); "
+            "starting fresh instead of resuming. Use --run-id to target a specific run.",
+            "warn",
+        )
     if existing is None:
         existing = load_status(status_path)
 

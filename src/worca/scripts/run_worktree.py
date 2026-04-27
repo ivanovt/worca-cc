@@ -46,6 +46,52 @@ def _slugify(title: str) -> str:
     return name.strip("-")[:30]
 
 
+def _build_pipeline_cmd(args: argparse.Namespace) -> list:
+    """Build the run_pipeline.py argv to spawn inside the worktree.
+
+    Pure function over parsed args — no filesystem or env side effects — so
+    tests can assert the exact argv shape without mocking Popen.
+    """
+    cmd = [
+        sys.executable,
+        os.path.join(".claude", "worca", "scripts", "run_pipeline.py"),
+        "--worktree",
+    ]
+
+    if args.source:
+        cmd.extend(["--source", args.source])
+    else:
+        cmd.extend(["--prompt", args.prompt])
+
+    if args.plan:
+        cmd.extend(["--plan", args.plan])
+
+    if args.guide:
+        for guide_path in args.guide:
+            cmd.extend(["--guide", os.path.abspath(guide_path)])
+
+    if args.branch:
+        cmd.extend(["--branch", args.branch])
+
+    if args.msize != 1:
+        cmd.extend(["--msize", str(args.msize)])
+
+    if args.mloops != 1:
+        cmd.extend(["--mloops", str(args.mloops)])
+
+    if args.template:
+        cmd.extend(["--template", args.template])
+
+    if args.param:
+        for p in args.param:
+            cmd.extend(["--param", p])
+
+    if args.skip_preflight:
+        cmd.append("--skip-preflight")
+
+    return cmd
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Build the argument parser for run_worktree."""
     parser = argparse.ArgumentParser(
@@ -118,6 +164,17 @@ def main(argv=None) -> int:
     else:
         wr = normalize("prompt", args.prompt)
 
+    # Validate the worca runtime exists before any side effects (worktree create,
+    # registry write, Popen). Without it the spawned run_pipeline.py crashes
+    # under stdout=DEVNULL — UI shows "started" then nothing.
+    src_worca = os.path.join(".claude", "worca")
+    if not os.path.isdir(src_worca):
+        print(
+            f"error: worca runtime not found at {src_worca}/ — run `worca init .` first",
+            file=sys.stderr,
+        )
+        return 1
+
     # Steps 1-2: generate run_id and derive slug
     run_id = _generate_run_id()
     slug = _slugify(wr.title)
@@ -130,10 +187,8 @@ def main(argv=None) -> int:
         return 1
 
     # Step 4: copy .claude/worca/ runtime into worktree (gitignored, won't exist otherwise)
-    src_worca = os.path.join(".claude", "worca")
-    if os.path.isdir(src_worca):
-        dst_worca = os.path.join(worktree_path, ".claude", "worca")
-        shutil.copytree(src_worca, dst_worca)
+    dst_worca = os.path.join(worktree_path, ".claude", "worca")
+    shutil.copytree(src_worca, dst_worca)
 
     # Step 5: init beads in worktree
     init_worktree_beads(worktree_path)
@@ -149,42 +204,7 @@ def main(argv=None) -> int:
     )
 
     # Step 7: build and spawn run_pipeline.py --worktree (detached, fire-and-forget)
-    cmd = [
-        sys.executable,
-        os.path.join(".claude", "worca", "scripts", "run_pipeline.py"),
-        "--worktree",
-    ]
-
-    if args.source:
-        cmd.extend(["--source", args.source])
-    else:
-        cmd.extend(["--prompt", args.prompt])
-
-    if args.plan:
-        cmd.extend(["--plan", args.plan])
-
-    if args.guide:
-        for guide_path in args.guide:
-            cmd.extend(["--guide", os.path.abspath(guide_path)])
-
-    if args.branch:
-        cmd.extend(["--branch", args.branch])
-
-    if args.msize != 1:
-        cmd.extend(["--msize", str(args.msize)])
-
-    if args.mloops != 1:
-        cmd.extend(["--mloops", str(args.mloops)])
-
-    if args.template:
-        cmd.extend(["--template", args.template])
-
-    if args.param:
-        for p in args.param:
-            cmd.extend(["--param", p])
-
-    if args.skip_preflight:
-        cmd.append("--skip-preflight")
+    cmd = _build_pipeline_cmd(args)
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)

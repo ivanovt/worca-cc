@@ -10,6 +10,7 @@
 import { execFileSync } from 'node:child_process';
 import {
   existsSync,
+  lstatSync,
   readdirSync,
   readFileSync,
   rmSync,
@@ -157,8 +158,20 @@ function _removeWorktree(worcaDir, runId) {
         timeout: 30_000,
       });
     } catch {
-      // Path is not a registered git worktree — brute-force remove
-      rmSync(worktreePath, { recursive: true, force: true });
+      // Path is not a registered git worktree — brute-force remove.
+      // Refuse to follow symlinks: rmSync on a symlink to a real directory
+      // would delete the link itself (good), but we don't want to risk a
+      // user-symlinked path here being mistaken for a worktree we own.
+      let isRealDir = false;
+      try {
+        const st = lstatSync(worktreePath);
+        isRealDir = st.isDirectory() && !st.isSymbolicLink();
+      } catch {
+        /* ignore */
+      }
+      if (isRealDir) {
+        rmSync(worktreePath, { recursive: true, force: true });
+      }
     }
   }
 

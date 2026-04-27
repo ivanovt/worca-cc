@@ -127,7 +127,7 @@ export function discoverRuns(worcaDir) {
     }
   }
 
-  // 5. Fan out across pipelines.d/ registry entries (worktree runs)
+  // 4. Fan out across pipelines.d/ registry entries (worktree runs)
   const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
   if (existsSync(pipelinesDir)) {
     for (const entry of readdirSync(pipelinesDir)) {
@@ -260,7 +260,7 @@ export async function discoverRunsAsync(worcaDir) {
     /* ignore */
   }
 
-  // 5. Fan out across pipelines.d/ registry entries (worktree runs)
+  // 4. Fan out across pipelines.d/ registry entries (worktree runs)
   const pipelinesDirAsync = join(worcaDir, 'multi', 'pipelines.d');
   try {
     const regEntries = await readdir(pipelinesDirAsync);

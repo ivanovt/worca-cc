@@ -25,6 +25,8 @@ from worca.orchestrator.registry import deregister_pipeline, list_pipelines
 from worca.utils.git import remove_pipeline_worktree
 
 
+# Cleanup-specific: 'failed' is terminal here so failed runs can be reaped.
+# Differs from runner/resume, which exclude 'failed' so failed runs stay resumable.
 _TERMINAL_STATUSES = {"completed", "failed"}
 
 
@@ -55,7 +57,23 @@ def _format_bytes(n: int) -> str:
 
 
 def _dir_size(path: str) -> int:
-    """Return total size of all files under path in bytes."""
+    """Return total size of all files under path in bytes.
+
+    Tries `du -sb` first (matches worca-ui/server/worktrees-routes.js so both
+    surfaces report the same number for the same worktree); falls back to a
+    Python walk on Windows or when du is unavailable.
+    """
+    try:
+        import subprocess
+        out = subprocess.check_output(
+            ["du", "-sb", path],
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return int(out.split(b"\t", 1)[0])
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+
     total = 0
     for dirpath, _, filenames in os.walk(path):
         for fname in filenames:

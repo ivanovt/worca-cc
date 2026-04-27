@@ -40,8 +40,8 @@ vi.mock('../process-manager.js', () => {
     reconcileStatus() {
       return mockReconcileStatus(this.worcaDir);
     }
-    restartStage(stage, opts) {
-      return vi.fn()(this.worcaDir, stage, opts);
+    restartStage(runId, stageKey, opts) {
+      return vi.fn()(this.worcaDir, runId, stageKey, opts);
     }
   }
   return {
