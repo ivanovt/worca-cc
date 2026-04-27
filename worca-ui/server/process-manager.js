@@ -85,6 +85,43 @@ export class ProcessManager {
   }
 
   /**
+   * Resolve the worcaDir and runDir for a given run ID.
+   * Checks root runs/ first, then pipelines.d/ registry for worktree_path.
+   * @param {string} runId
+   * @returns {{ worcaDir: string, runDir: string } | null}
+   */
+  resolveRunContext(runId) {
+    const rootPath = join(this.worcaDir, 'runs', runId, 'status.json');
+    if (existsSync(rootPath)) {
+      return {
+        worcaDir: this.worcaDir,
+        runDir: join(this.worcaDir, 'runs', runId),
+      };
+    }
+    const regPath = join(
+      this.worcaDir,
+      'multi',
+      'pipelines.d',
+      `${runId}.json`,
+    );
+    if (existsSync(regPath)) {
+      try {
+        const reg = JSON.parse(readFileSync(regPath, 'utf8'));
+        if (reg.worktree_path) {
+          const wtWorcaDir = join(reg.worktree_path, '.worca');
+          return {
+            worcaDir: wtWorcaDir,
+            runDir: join(wtWorcaDir, 'runs', runId),
+          };
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    return null;
+  }
+
+  /**
    * Check if a pipeline is currently running.
    * @param {string} [runId] - If provided, check per-run PID first
    * @returns {{ pid: number } | null}
@@ -125,7 +162,7 @@ export class ProcessManager {
 
   /**
    * Reconcile stale "running" status when the pipeline process is dead.
-   * Scans all runs with per-run PID files + the active_run pointer.
+   * Scans all runs with per-run PID files.
    * If pipeline_status is "running" but no process is alive, transitions
    * to "failed" with stop_reason="stale".
    * Preserves any existing stop_reason (e.g. "signal" set by Layer 1).
@@ -136,7 +173,7 @@ export class ProcessManager {
     let fixed = false;
     const dispatches = [];
 
-    // Collect run IDs to check: scan runs/*/pipeline.pid + active_run fallback
+    // Collect run IDs to check: scan runs/*/pipeline.pid
     const runIds = new Set();
     const runsDir = join(this.worcaDir, 'runs');
     if (existsSync(runsDir)) {
@@ -149,17 +186,6 @@ export class ProcessManager {
             runIds.add(entry.name);
           }
         }
-      } catch {
-        /* ignore */
-      }
-    }
-
-    // Backward compat: also check active_run pointer
-    const activeRunPath = join(this.worcaDir, 'active_run');
-    if (existsSync(activeRunPath)) {
-      try {
-        const activeId = readFileSync(activeRunPath, 'utf8').trim();
-        if (activeId) runIds.add(activeId);
       } catch {
         /* ignore */
       }
@@ -272,20 +298,47 @@ export class ProcessManager {
    */
   async startPipeline(opts = {}) {
     const cwd = opts.projectRoot || this.projectRoot;
-    const scriptPath = join(cwd, '.claude/worca/scripts/run_pipeline.py');
-    if (!existsSync(scriptPath)) {
-      const err = new Error(`Pipeline script not found at ${scriptPath}`);
-      err.code = 'script_not_found';
-      throw err;
+    const pipelineScriptRel = '.claude/worca/scripts/run_pipeline.py';
+    const worktreeScriptRel = '.claude/worca/scripts/run_worktree.py';
+
+    let scriptRel;
+    if (opts.resume) {
+      const pipelinePath = join(cwd, pipelineScriptRel);
+      if (!existsSync(pipelinePath)) {
+        const err = new Error(`Pipeline script not found at ${pipelinePath}`);
+        err.code = 'script_not_found';
+        throw err;
+      }
+      scriptRel = pipelineScriptRel;
+    } else {
+      const worktreePath = join(cwd, worktreeScriptRel);
+      if (existsSync(worktreePath)) {
+        scriptRel = worktreeScriptRel;
+      } else {
+        const pipelinePath = join(cwd, pipelineScriptRel);
+        if (!existsSync(pipelinePath)) {
+          const err = new Error(`Pipeline script not found at ${pipelinePath}`);
+          err.code = 'script_not_found';
+          throw err;
+        }
+        console.warn(
+          '[worca] run_worktree.py not found, falling back to run_pipeline.py',
+        );
+        scriptRel = pipelineScriptRel;
+      }
     }
 
-    const args = ['.claude/worca/scripts/run_pipeline.py'];
+    const args = [scriptRel];
     let promptFilePath = null; // track for cleanup on spawn failure
 
     if (opts.resume) {
       args.push('--resume');
       if (opts.runId) {
-        args.push('--status-dir', join(this.worcaDir, 'runs', opts.runId));
+        const ctx = this.resolveRunContext(opts.runId);
+        const statusDir = ctx
+          ? ctx.runDir
+          : join(this.worcaDir, 'runs', opts.runId);
+        args.push('--status-dir', statusDir);
       }
     } else if (opts.sourceType !== undefined) {
       // New format: separate source and prompt args
@@ -400,10 +453,13 @@ export class ProcessManager {
     let pid = null;
     let foundPidPath = null;
 
+    const ctx = runId ? this.resolveRunContext(runId) : null;
+    const effectiveWorcaDir = ctx ? ctx.worcaDir : this.worcaDir;
+
     // Check per-run PID file first, then project-level fallback
     const candidates = [];
     if (runId) {
-      candidates.push(join(this.worcaDir, 'runs', runId, 'pipeline.pid'));
+      candidates.push(join(effectiveWorcaDir, 'runs', runId, 'pipeline.pid'));
     }
     candidates.push(join(this.worcaDir, 'pipeline.pid'));
 
@@ -431,10 +487,10 @@ export class ProcessManager {
     }
 
     // Belt-and-suspenders: write control.json so the orchestrator gets a clean signal
-    const effectiveRunId = runId || this._readActiveRunId();
+    const effectiveRunId = runId;
     if (effectiveRunId) {
       try {
-        const controlDir = join(this.worcaDir, 'runs', effectiveRunId);
+        const controlDir = join(effectiveWorcaDir, 'runs', effectiveRunId);
         mkdirSync(controlDir, { recursive: true });
         writeFileSync(
           join(controlDir, 'control.json'),
@@ -514,7 +570,9 @@ export class ProcessManager {
     }
     const { pid } = running;
 
-    const controlDir = join(this.worcaDir, 'runs', runId);
+    const ctx = this.resolveRunContext(runId);
+    const effectiveWorcaDir = ctx ? ctx.worcaDir : this.worcaDir;
+    const controlDir = join(effectiveWorcaDir, 'runs', runId);
     mkdirSync(controlDir, { recursive: true });
     writeFileSync(
       join(controlDir, 'control.json'),
@@ -570,21 +628,6 @@ export class ProcessManager {
   }
 
   /**
-   * Read the active_run file to get the current run ID.
-   * @returns {string|null}
-   */
-  _readActiveRunId() {
-    const activeRunPath = join(this.worcaDir, 'active_run');
-    if (!existsSync(activeRunPath)) return null;
-    try {
-      const id = readFileSync(activeRunPath, 'utf8').trim();
-      return id || null;
-    } catch {
-      return null;
-    }
-  }
-
-  /**
    * Delete a run directory and clean up references.
    * Refuses if the pipeline is currently running.
    * @param {string} runId
@@ -600,8 +643,10 @@ export class ProcessManager {
       throw err;
     }
 
-    const runsParent = resolve(this.worcaDir, 'runs');
-    const runDir = resolve(runsParent, runId);
+    const ctx = this.resolveRunContext(runId);
+    const effectiveWorcaDir = ctx ? ctx.worcaDir : this.worcaDir;
+    const runsParent = resolve(effectiveWorcaDir, 'runs');
+    const runDir = ctx ? resolve(ctx.runDir) : resolve(runsParent, runId);
     if (!runDir.startsWith(runsParent)) {
       const err = new Error('Invalid runId');
       err.code = 'invalid_id';
@@ -615,17 +660,6 @@ export class ProcessManager {
 
     rmSync(runDir, { recursive: true, force: true });
 
-    // Clear active_run pointer if it references this run
-    const activeRunPath = join(this.worcaDir, 'active_run');
-    if (existsSync(activeRunPath)) {
-      try {
-        const activeId = readFileSync(activeRunPath, 'utf8').trim();
-        if (activeId === runId) unlinkSync(activeRunPath);
-      } catch {
-        /* ignore */
-      }
-    }
-
     return { deleted: true };
   }
 
@@ -635,7 +669,8 @@ export class ProcessManager {
    * @returns {{ runId: string, paused: boolean }}
    */
   pausePipeline(runId) {
-    const controlDir = join(this.worcaDir, 'runs', runId);
+    const ctx = this.resolveRunContext(runId);
+    const controlDir = ctx ? ctx.runDir : join(this.worcaDir, 'runs', runId);
     mkdirSync(controlDir, { recursive: true });
     writeFileSync(
       join(controlDir, 'control.json'),
@@ -655,19 +690,28 @@ export class ProcessManager {
 
   /**
    * Restart a failed stage by resetting it and spawning with --resume.
+   * @param {string} runId - Run identifier to restart
    * @param {string} stageKey - The stage key to restart
    * @param {{ projectRoot?: string }} opts
    * @returns {Promise<{ pid: number, stage: string }>}
    */
-  async restartStage(stageKey, opts = {}) {
-    const running = this.getRunningPid();
+  async restartStage(runId, stageKey, opts = {}) {
+    const running = this.getRunningPid(runId);
     if (running) {
       const err = new Error(`Pipeline already running (PID ${running.pid})`);
       err.code = 'already_running';
       throw err;
     }
 
-    const cwd = opts.projectRoot || this.projectRoot;
+    const ctx = this.resolveRunContext(runId);
+    const runDir = ctx ? ctx.runDir : join(this.worcaDir, 'runs', runId);
+    // For worktree runs derive projectRoot from worcaDir parent (.worca/..)
+    const cwd =
+      opts.projectRoot ||
+      (ctx && ctx.worcaDir !== this.worcaDir
+        ? join(ctx.worcaDir, '..')
+        : this.projectRoot);
+
     const scriptPath = join(cwd, '.claude/worca/scripts/run_pipeline.py');
     if (!existsSync(scriptPath)) {
       const err = new Error(`Pipeline script not found at ${scriptPath}`);
@@ -675,24 +719,8 @@ export class ProcessManager {
       throw err;
     }
 
-    // Find status.json — check active_run first, then legacy
-    let statusPath = null;
-    const activeRunPath = join(this.worcaDir, 'active_run');
-    if (existsSync(activeRunPath)) {
-      try {
-        const runId = readFileSync(activeRunPath, 'utf8').trim();
-        const candidate = join(this.worcaDir, 'runs', runId, 'status.json');
-        if (existsSync(candidate)) statusPath = candidate;
-      } catch {
-        /* ignore */
-      }
-    }
-    if (!statusPath) {
-      const legacy = join(this.worcaDir, 'status.json');
-      if (existsSync(legacy)) statusPath = legacy;
-    }
-
-    if (!statusPath) {
+    const statusPath = join(runDir, 'status.json');
+    if (!existsSync(statusPath)) {
       const err = new Error('No status.json found');
       err.code = 'no_status';
       throw err;
@@ -720,14 +748,19 @@ export class ProcessManager {
     delete status.stages[stageKey].completed_at;
     writeFileSync(statusPath, `${JSON.stringify(status, null, 2)}\n`, 'utf8');
 
-    // Spawn with --resume
+    // Spawn with --resume --status-dir so the pipeline finds the right run
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
     return new Promise((resolve, reject) => {
       const child = spawn(
         'python3',
-        ['.claude/worca/scripts/run_pipeline.py', '--resume'],
+        [
+          '.claude/worca/scripts/run_pipeline.py',
+          '--resume',
+          '--status-dir',
+          runDir,
+        ],
         {
           detached: true,
           stdio: 'ignore',
@@ -807,10 +840,10 @@ export function pausePipeline(worcaDir, runId) {
   return new ProcessManager({ worcaDir }).pausePipeline(runId);
 }
 
-/** @param {string} worcaDir @param {string} stageKey @param {object} opts */
-export async function restartStage(worcaDir, stageKey, opts = {}) {
+/** @param {string} worcaDir @param {string} runId @param {string} stageKey @param {object} opts */
+export async function restartStage(worcaDir, runId, stageKey, opts = {}) {
   return new ProcessManager({
     worcaDir,
     projectRoot: opts.projectRoot,
-  }).restartStage(stageKey, opts);
+  }).restartStage(runId, stageKey, opts);
 }

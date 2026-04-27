@@ -17,14 +17,14 @@ import {
 /**
  * @param {{
  *   broadcaster: { broadcastToLogSubscribers: Function },
- *   resolveActiveRunDir: Function,
+ *   resolveLatestRunDir: Function,
  *   worcaDir: string,
  *   currentActiveRunId: Function
  * }} deps
  */
 export function createLogWatcher({
   broadcaster,
-  resolveActiveRunDir,
+  resolveLatestRunDir,
   worcaDir,
   currentActiveRunId,
 }) {
@@ -35,7 +35,7 @@ export function createLogWatcher({
   const logByteOffsets = new Map();
 
   function resolveLogsBaseDir() {
-    const runDir = resolveActiveRunDir();
+    const runDir = resolveLatestRunDir();
     return runDir === worcaDir ? worcaDir : runDir;
   }
 

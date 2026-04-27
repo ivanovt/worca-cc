@@ -2,4 +2,4 @@
  * WebSocket server entry point.
  */
 
-export { attachWsServer, resolveActiveRunDir } from './ws-modular.js';
+export { attachWsServer, resolveLatestRunDir } from './ws-modular.js';

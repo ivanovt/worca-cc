@@ -149,7 +149,7 @@ describe('stopPipeline writes control.json', () => {
     expect(existsSync(controlPath)).toBe(true);
   });
 
-  it('does not throw and skips control.json when no runId and no active_run', async () => {
+  it('does not throw and skips control.json when no runId provided', async () => {
     const child = await spawnLongProcess();
     writeFileSync(join(worcaDir, 'pipeline.pid'), String(child.pid), 'utf8');
 

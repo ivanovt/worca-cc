@@ -8,23 +8,48 @@ import json
 import sys
 import os
 
+# Cache: pid → status_path. Avoids rescanning on every tool call (hot path).
+_pid_cache: dict = {}
+
+
+def _find_status_by_pid(worca_dir: str = ".worca") -> str | None:
+    """Return the status.json path whose pipeline.pid matches the current PID.
+
+    Results are cached by PID so repeated calls within the same process skip
+    the directory scan entirely.
+    """
+    pid = os.getpid()
+    if pid in _pid_cache:
+        return _pid_cache[pid]
+    runs_dir = os.path.join(worca_dir, "runs")
+    if not os.path.isdir(runs_dir):
+        return None
+    for run_id in os.listdir(runs_dir):
+        pid_file = os.path.join(runs_dir, run_id, "pipeline.pid")
+        try:
+            with open(pid_file) as f:
+                stored_pid = int(f.read().strip())
+            if stored_pid == pid:
+                status_path = os.path.join(runs_dir, run_id, "status.json")
+                _pid_cache[pid] = status_path
+                return status_path
+        except (OSError, ValueError):
+            continue
+    return None
+
 
 def load_status() -> dict | None:
     """Load pipeline status from the status file.
 
-    Checks active_run pointer first for per-run status, then falls back
-    to WORCA_STATUS_FILE env var or .worca/status.json.
+    Tries PID matching against runs/*/pipeline.pid first (cached), then falls
+    back to WORCA_STATUS_FILE env var or .worca/status.json.
     Returns the parsed status dict, or None if the file doesn't exist.
     """
-    # Try active_run pointer first
-    active_run_path = ".worca/active_run"
-    if os.path.exists(active_run_path):
+    status_path = _find_status_by_pid()
+    if status_path and os.path.exists(status_path):
         try:
-            run_id = open(active_run_path).read().strip()
-            candidate = os.path.join(".worca", "runs", run_id, "status.json")
-            if os.path.exists(candidate):
-                with open(candidate) as f:
-                    return json.load(f)
+            with open(status_path) as f:
+                return json.load(f)
         except (OSError, json.JSONDecodeError):
             pass
 

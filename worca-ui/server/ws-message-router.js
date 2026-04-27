@@ -852,56 +852,6 @@ export function createMessageRouter({
       return;
     }
 
-    // list-pipelines — return parallel pipeline entries for a project
-    if (req.type === 'list-pipelines') {
-      const proj = resolveProject(ws, req.payload);
-      const multiWatcher = proj.wset.getMultiWatcher?.();
-      const pipelines = multiWatcher ? multiWatcher.listPipelines() : [];
-      ws.send(JSON.stringify(makeOk(req, { pipelines })));
-      return;
-    }
-
-    // subscribe-pipeline — subscribe to a specific parallel pipeline's events
-    if (req.type === 'subscribe-pipeline') {
-      const { runId } = req.payload || {};
-      if (typeof runId !== 'string') {
-        ws.send(
-          JSON.stringify(
-            makeError(req, 'bad_request', 'payload.runId required'),
-          ),
-        );
-        return;
-      }
-      const proj = resolveProject(ws, req.payload);
-      const multiWatcher = proj.wset.getMultiWatcher?.();
-      if (multiWatcher) {
-        multiWatcher.promotePipeline(runId);
-      }
-      const s = clientManager.ensureSubs(ws);
-      s.pipelineRunId = runId;
-      s.pipelineProjectId = proj.wset.projectId;
-      ws.send(JSON.stringify(makeOk(req, { subscribed: true })));
-      return;
-    }
-
-    // unsubscribe-pipeline — clear pipeline subscription and demote watcher
-    if (req.type === 'unsubscribe-pipeline') {
-      const s = clientManager.ensureSubs(ws);
-      const prevRunId = s.pipelineRunId;
-      const prevProjectId = s.pipelineProjectId;
-      s.pipelineRunId = null;
-      s.pipelineProjectId = null;
-      if (prevRunId && prevProjectId) {
-        const wset = watcherSets.get(prevProjectId) || getDefaultWs();
-        const multiWatcher = wset?.getMultiWatcher?.();
-        if (multiWatcher) {
-          multiWatcher.demotePipeline(prevRunId);
-        }
-      }
-      ws.send(JSON.stringify(makeOk(req, { unsubscribed: true })));
-      return;
-    }
-
     // Unknown type
     ws.send(
       JSON.stringify(

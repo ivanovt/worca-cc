@@ -48,6 +48,7 @@ import {
   readProjectWorcaVersion,
   runWorcaSetup,
 } from './worca-setup.js';
+import { createWorktreesRouter } from './worktrees-routes.js';
 
 /** Validate a runId — must not contain path traversal characters */
 const RUN_ID_RE = /^[a-zA-Z0-9_-]+$/;
@@ -1135,7 +1136,7 @@ export function createProjectScopedRoutes({
     async (req, res) => {
       const { stage } = req.params;
       try {
-        const result = await req.project.pm.restartStage(stage);
+        const result = await req.project.pm.restartStage(req.params.id, stage);
         const { broadcast } = req.app.locals;
         if (broadcast) broadcast('stage-restarted', { stage, pid: result.pid });
         res.json({ ok: true, restarted: true, stage, pid: result.pid });
@@ -1249,94 +1250,7 @@ export function createProjectScopedRoutes({
     res.json({ ok: true, runId, pid: child.pid });
   });
 
-  // POST /api/projects/:projectId/multi-pipeline — launch parallel pipelines
-  router.post('/multi-pipeline', requireWorcaDir, (req, res) => {
-    const { projectRoot } = req.project;
-    const body = req.body || {};
-    const { requests, baseBranch, maxParallel, cleanupPolicy, msize, mloops } =
-      body;
-
-    if (!Array.isArray(requests) || requests.length < 1) {
-      return res.status(400).json({
-        ok: false,
-        error: 'requests array required (at least 1 item)',
-      });
-    }
-    if (requests.length > 20) {
-      return res
-        .status(400)
-        .json({ ok: false, error: 'Too many requests (max 20)' });
-    }
-    for (const r of requests) {
-      if (typeof r !== 'string' || r.trim().length === 0) {
-        return res.status(400).json({
-          ok: false,
-          error: 'Each request must be a non-empty string',
-        });
-      }
-      if (r.length > 50000) {
-        return res.status(400).json({
-          ok: false,
-          error: 'Each request must be 50,000 characters or less',
-        });
-      }
-    }
-    if (baseBranch !== undefined) {
-      if (
-        typeof baseBranch !== 'string' ||
-        baseBranch.length > 200 ||
-        !/^[\w.\-/]+$/.test(baseBranch)
-      ) {
-        return res
-          .status(400)
-          .json({ ok: false, error: 'Invalid baseBranch value' });
-      }
-    }
-
-    const maxP = Math.max(1, Math.min(5, Math.round(Number(maxParallel) || 3)));
-    const msizeVal = Math.max(1, Math.min(10, Math.round(Number(msize) || 1)));
-    const mloopsVal = Math.max(
-      1,
-      Math.min(10, Math.round(Number(mloops) || 1)),
-    );
-    const cleanup = ['on-success', 'always', 'never'].includes(cleanupPolicy)
-      ? cleanupPolicy
-      : 'on-success';
-
-    const args = ['.claude/worca/scripts/run_multi.py'];
-    args.push('--max-parallel', String(maxP));
-    args.push('--cleanup', cleanup);
-    args.push('--msize', String(msizeVal));
-    args.push('--mloops', String(mloopsVal));
-    if (baseBranch) args.push('--base-branch', baseBranch);
-    args.push('--requests', ...requests.map((r) => r.trim()));
-
-    const env = { ...process.env };
-    delete env.CLAUDECODE;
-
-    try {
-      const child = spawn('python3', args, {
-        detached: true,
-        stdio: 'ignore',
-        cwd: projectRoot,
-        env,
-      });
-      child.unref();
-
-      const { broadcast } = req.app.locals;
-      if (broadcast)
-        broadcast('multi-pipeline-started', {
-          pid: child.pid,
-          count: requests.length,
-        });
-
-      res.json({ ok: true, pid: child.pid, count: requests.length });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  // POST /api/projects/:projectId/pipelines/:runId/stop — stop a parallel pipeline
+  // POST /api/projects/:projectId/pipelines/:runId/stop — stop a worktree pipeline
   router.post('/pipelines/:runId/stop', requireWorcaDir, (req, res) => {
     const runId = req.params.runId;
     if (!validateRunId(runId)) {
@@ -1385,7 +1299,7 @@ export function createProjectScopedRoutes({
     }
   });
 
-  // POST /api/projects/:projectId/pipelines/:runId/pause — pause a parallel pipeline
+  // POST /api/projects/:projectId/pipelines/:runId/pause — pause a worktree pipeline
   router.post('/pipelines/:runId/pause', requireWorcaDir, (req, res) => {
     const runId = req.params.runId;
     if (!validateRunId(runId)) {
@@ -1641,6 +1555,8 @@ export function createProjectScopedRoutes({
       res.status(status).json({ ok: false, error: err.message });
     }
   });
+
+  router.use('/worktrees', requireWorcaDir, createWorktreesRouter());
 
   return router;
 }

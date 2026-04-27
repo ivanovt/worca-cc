@@ -47,7 +47,7 @@ def test_resolve_run_id_explicit():
 
 
 def test_resolve_run_id_from_active_run(tmp_path):
-    make_active_run(tmp_path, "20260321-212836")
+    make_status(tmp_path, "20260321-212836")
     result = worca_cli.resolve_run_id(None, base=str(tmp_path))
     assert result == "20260321-212836"
 
@@ -73,7 +73,6 @@ def test_pause_writes_control_file(tmp_path):
 
 
 def test_pause_uses_active_run_when_no_run_id(tmp_path):
-    make_active_run(tmp_path, "run-x")
     make_status(tmp_path, "run-x")
     worca_cli.cmd_pause(None, base=str(tmp_path))
     control = tmp_path / "runs" / "run-x" / "control.json"
@@ -101,7 +100,7 @@ def test_stop_writes_control_file(tmp_path):
 
 def test_stop_sends_sigterm_when_pid_file_exists(tmp_path):
     make_status(tmp_path, "run-2")
-    pid_file = tmp_path / "runs" / "run-2" / "pid"
+    pid_file = tmp_path / "runs" / "run-2" / "pipeline.pid"
     pid_file.write_text("99999\n")
 
     with patch("os.kill") as mock_kill:
@@ -117,7 +116,7 @@ def test_stop_no_error_when_pid_file_missing(tmp_path):
 
 def test_stop_no_error_when_process_already_dead(tmp_path):
     make_status(tmp_path, "run-4")
-    pid_file = tmp_path / "runs" / "run-4" / "pid"
+    pid_file = tmp_path / "runs" / "run-4" / "pipeline.pid"
     pid_file.write_text("99999\n")
 
     with patch("os.kill", side_effect=ProcessLookupError):
@@ -126,7 +125,6 @@ def test_stop_no_error_when_process_already_dead(tmp_path):
 
 
 def test_stop_uses_active_run_when_no_run_id(tmp_path):
-    make_active_run(tmp_path, "run-y")
     make_status(tmp_path, "run-y")
     worca_cli.cmd_stop(None, base=str(tmp_path))
     control = tmp_path / "runs" / "run-y" / "control.json"
@@ -165,7 +163,6 @@ def test_resume_passes_run_id_via_status_dir(tmp_path):
 
 
 def test_resume_uses_active_run_when_no_run_id(tmp_path):
-    make_active_run(tmp_path, "run-z")
     make_status(tmp_path, "run-z", pipeline_status="paused")
 
     with patch("subprocess.Popen") as mock_popen:
@@ -205,10 +202,9 @@ def test_status_missing_run_raises(tmp_path):
 
 
 def test_status_uses_active_run_when_no_run_id(tmp_path):
-    make_active_run(tmp_path, "run-8")
-    make_status(tmp_path, "run-8", pipeline_status="completed")
+    make_status(tmp_path, "run-8", pipeline_status="running")
     result = worca_cli.cmd_status(None, base=str(tmp_path))
-    assert result["pipeline_status"] == "completed"
+    assert result["pipeline_status"] == "running"
 
 
 def test_status_includes_iteration(tmp_path):
@@ -360,7 +356,7 @@ class TestStopWorktreePipeline:
     def test_stop_falls_back_to_pid_file_when_not_registered(self, tmp_path):
         base = str(tmp_path)
         make_status(tmp_path, "local-run")
-        pid_file = tmp_path / "runs" / "local-run" / "pid"
+        pid_file = tmp_path / "runs" / "local-run" / "pipeline.pid"
         pid_file.write_text("77777\n")
 
         with patch("os.kill") as mock_kill:

@@ -18,7 +18,7 @@ import pytest
 
 from worca.events.types import RUN_INTERRUPTED
 from tests.integration.helpers import (
-    _active_run_id,
+    _find_latest_run_id,
     _find_latest_status,
     _read_events_jsonl,
     _wait_for_stage,
@@ -177,7 +177,7 @@ def test_control_stop_while_paused_preserves_paused(pipeline_env):
     )
 
     # Step 2: write a stop control file to the now-dead paused run
-    run_id = _active_run_id(pipeline_env.worca_dir)
+    run_id = _find_latest_run_id(pipeline_env.worca_dir)
     control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({"action": "stop", "source": "test"}))
 

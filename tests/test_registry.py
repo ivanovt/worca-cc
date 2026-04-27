@@ -14,6 +14,7 @@ from worca.orchestrator.registry import (
     list_pipelines,
     get_pipeline,
     reconcile_stale,
+    reconcile_orphan_groups,
 )
 
 
@@ -417,3 +418,80 @@ def test_reconcile_stale_skips_eperm(tmp_path):
     data = get_pipeline("run-eperm", base=base)
     assert data["status"] == "running"
     assert "note" not in data
+
+
+# --- register_pipeline grouping + target_branch fields ---
+
+
+def test_register_with_fleet_id(tmp_path):
+    base = str(tmp_path / ".worca")
+    path = register_pipeline("run-f1", "/tmp/wt", "Fleet Run", 1, base=base, fleet_id="fleet-abc")
+    with open(path) as f:
+        data = json.load(f)
+    assert data["fleet_id"] == "fleet-abc"
+
+
+def test_register_without_fleet_id(tmp_path):
+    """fleet_id omitted from JSON when not provided."""
+    base = str(tmp_path / ".worca")
+    path = register_pipeline("run-nof", "/tmp/wt", "No Fleet", 1, base=base)
+    with open(path) as f:
+        data = json.load(f)
+    assert "fleet_id" not in data
+
+
+def test_register_with_workspace_id(tmp_path):
+    base = str(tmp_path / ".worca")
+    path = register_pipeline("run-w1", "/tmp/wt", "WS Run", 1, base=base, workspace_id="ws-xyz")
+    with open(path) as f:
+        data = json.load(f)
+    assert data["workspace_id"] == "ws-xyz"
+
+
+def test_register_with_group_type(tmp_path):
+    base = str(tmp_path / ".worca")
+    path = register_pipeline("run-gt", "/tmp/wt", "Group Run", 1, base=base, group_type="fleet")
+    with open(path) as f:
+        data = json.load(f)
+    assert data["group_type"] == "fleet"
+
+
+def test_register_with_target_branch(tmp_path):
+    base = str(tmp_path / ".worca")
+    path = register_pipeline(
+        "run-tb", "/tmp/wt", "Branch Run", 1, base=base, target_branch="feature/foo"
+    )
+    with open(path) as f:
+        data = json.load(f)
+    assert data["target_branch"] == "feature/foo"
+
+
+def test_register_rejects_both_ids(tmp_path):
+    """ValueError raised (before disk write) when both fleet_id and workspace_id are set."""
+    base = str(tmp_path / ".worca")
+    import pytest
+
+    with pytest.raises(ValueError, match="fleet_id.*workspace_id|workspace_id.*fleet_id"):
+        register_pipeline(
+            "run-both",
+            "/tmp/wt",
+            "Both IDs",
+            1,
+            base=base,
+            fleet_id="f1",
+            workspace_id="w1",
+        )
+    # No file should have been written
+    d = os.path.join(base, "multi", "pipelines.d")
+    if os.path.isdir(d):
+        assert not any(f.endswith("run-both.json") for f in os.listdir(d))
+
+
+# --- reconcile_orphan_groups ---
+
+
+def test_reconcile_orphan_groups_noop(tmp_path):
+    """reconcile_orphan_groups is a no-op stub that always returns []."""
+    base = str(tmp_path / ".worca")
+    result = reconcile_orphan_groups(base=base)
+    assert result == []

@@ -1,5 +1,7 @@
 """Tests for prompt.py - Milestone approval gates for UserPromptSubmit."""
 import json
+import os
+from unittest.mock import patch
 from worca.hooks.prompt import check_milestone
 
 
@@ -112,7 +114,7 @@ class TestNoGate:
 
 class TestMainStatusFile:
     def test_reads_from_status_file(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)  # isolate from real .worca/active_run
+        monkeypatch.chdir(tmp_path)  # isolate from real .worca/runs/
         status_file = tmp_path / "status.json"
         status_file.write_text(json.dumps({
             "stage": "plan",
@@ -126,7 +128,7 @@ class TestMainStatusFile:
         assert status["stage"] == "plan"
 
     def test_returns_none_when_file_missing(self, tmp_path, monkeypatch):
-        monkeypatch.chdir(tmp_path)  # isolate from real .worca/active_run
+        monkeypatch.chdir(tmp_path)  # isolate from real .worca/runs/
         monkeypatch.setenv("WORCA_STATUS_FILE", str(tmp_path / "nonexistent.json"))
 
         from worca.hooks.prompt import load_status
@@ -140,3 +142,51 @@ class TestMainStatusFile:
         from worca.hooks.prompt import load_status
         status = load_status()
         assert status is None
+
+
+class TestPidMatchStatusLoad:
+    def setup_method(self):
+        import worca.hooks.prompt as prompt_mod
+        prompt_mod._pid_cache.clear()
+
+    def test_pid_match_status_load(self, tmp_path, monkeypatch):
+        """load_status finds status.json by matching PID against pipeline.pid files."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("WORCA_STATUS_FILE", raising=False)
+
+        run_dir = tmp_path / ".worca" / "runs" / "20260426-120000-000-abcd"
+        run_dir.mkdir(parents=True)
+        (run_dir / "pipeline.pid").write_text(str(os.getpid()))
+        (run_dir / "status.json").write_text(json.dumps({"stage": "plan", "milestones": {}}))
+
+        import worca.hooks.prompt as prompt_mod
+        status = prompt_mod.load_status()
+        assert status is not None
+        assert status["stage"] == "plan"
+
+    def test_pid_match_caching(self, tmp_path, monkeypatch):
+        """Second call to _find_status_by_pid uses cached path without re-scanning."""
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.delenv("WORCA_STATUS_FILE", raising=False)
+
+        run_dir = tmp_path / ".worca" / "runs" / "20260426-120000-000-abcd"
+        run_dir.mkdir(parents=True)
+        (run_dir / "pipeline.pid").write_text(str(os.getpid()))
+        (run_dir / "status.json").write_text(json.dumps({"stage": "test", "milestones": {}}))
+
+        import worca.hooks.prompt as prompt_mod
+
+        listdir_calls = []
+        real_listdir = os.listdir
+
+        def tracking_listdir(path):
+            listdir_calls.append(path)
+            return real_listdir(path)
+
+        with patch("os.listdir", side_effect=tracking_listdir):
+            prompt_mod._find_status_by_pid()
+            count_after_first = len(listdir_calls)
+            assert count_after_first > 0
+
+            prompt_mod._find_status_by_pid()
+            assert len(listdir_calls) == count_after_first  # no new scans

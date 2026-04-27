@@ -201,7 +201,6 @@ describe('WebSocket integration', () => {
     }));
     writeFileSync(join(dir, 'worca', 'runs', runId, 'agents', 'implementer.md'),
       '# Implementer Agent\n\nYou are the Implementer.');
-    writeFileSync(join(dir, 'worca', 'active_run'), runId);
 
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     await waitForOpen(ws);

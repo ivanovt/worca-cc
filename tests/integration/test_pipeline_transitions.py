@@ -18,7 +18,7 @@ from worca.events.types import (
     RUN_PAUSED,
 )
 from tests.integration.helpers import (
-    _active_run_id,
+    _find_latest_run_id,
     _find_latest_status,
     run_and_act,
     send_sigint,
@@ -278,7 +278,7 @@ def test_completed_rejects_stop(pipeline_env):
     result = pipeline_env.run(_ALL_SUCCEED)
     assert result.status.get("pipeline_status") == "completed"
 
-    run_id = _active_run_id(pipeline_env.worca_dir)
+    run_id = _find_latest_run_id(pipeline_env.worca_dir)
     control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({"action": "stop", "source": "test"}))
 
@@ -291,7 +291,7 @@ def test_completed_rejects_pause(pipeline_env):
     result = pipeline_env.run(_ALL_SUCCEED)
     assert result.status.get("pipeline_status") == "completed"
 
-    run_id = _active_run_id(pipeline_env.worca_dir)
+    run_id = _find_latest_run_id(pipeline_env.worca_dir)
     control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({"action": "pause", "source": "test"}))
 
@@ -304,7 +304,7 @@ def test_failed_rejects_stop(pipeline_env):
     result = pipeline_env.run(_PLANNER_FAILS)
     assert result.status.get("pipeline_status") == "failed"
 
-    run_id = _active_run_id(pipeline_env.worca_dir)
+    run_id = _find_latest_run_id(pipeline_env.worca_dir)
     control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({"action": "stop", "source": "test"}))
 
@@ -312,12 +312,13 @@ def test_failed_rejects_stop(pipeline_env):
     assert status.get("pipeline_status") == "failed"
 
 
+@pytest.mark.timeout(60)
 def test_failed_rejects_pause(pipeline_env):
     """Failed pipeline: writing control-pause leaves status unchanged."""
     result = pipeline_env.run(_PLANNER_FAILS)
     assert result.status.get("pipeline_status") == "failed"
 
-    run_id = _active_run_id(pipeline_env.worca_dir)
+    run_id = _find_latest_run_id(pipeline_env.worca_dir)
     control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({"action": "pause", "source": "test"}))
 
@@ -332,7 +333,7 @@ def test_interrupted_rejects_stop(pipeline_env):
                          act_after_stage="implement")
     assert result.status.get("pipeline_status") == "interrupted"
 
-    run_id = _active_run_id(pipeline_env.worca_dir)
+    run_id = _find_latest_run_id(pipeline_env.worca_dir)
     control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({"action": "stop", "source": "test"}))
 
@@ -347,7 +348,7 @@ def test_interrupted_rejects_pause(pipeline_env):
                          act_after_stage="implement")
     assert result.status.get("pipeline_status") == "interrupted"
 
-    run_id = _active_run_id(pipeline_env.worca_dir)
+    run_id = _find_latest_run_id(pipeline_env.worca_dir)
     control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({"action": "pause", "source": "test"}))
 
@@ -516,7 +517,7 @@ def test_state_transition(state, action, pipeline_env):
         assert result.status.get("pipeline_status") == expected_status
 
         # Write control file to the exited run — status must not change
-        run_id = _active_run_id(pipeline_env.worca_dir)
+        run_id = _find_latest_run_id(pipeline_env.worca_dir)
         control = pipeline_env.worca_dir / "runs" / run_id / "control.json"
         control.write_text(json.dumps({"action": action.replace("_", ""), "source": "test"}))
 

@@ -465,11 +465,6 @@ def test_plan_file_stores_path_in_status(tmp_path, monkeypatch):
     assert (run_dir / "agents").is_dir()
     assert (run_dir / "logs").is_dir()
 
-    # Active run pointer written
-    active_run = worca_dir / "active_run"
-    assert active_run.exists()
-    assert active_run.read_text() == result["run_id"]
-
 
 def test_run_pipeline_no_plan_resolves_from_template(tmp_path, monkeypatch):
     """Without --plan, plan_file is resolved from template in settings."""
@@ -664,12 +659,10 @@ def test_resume_restores_max_beads_from_prompt_context(tmp_path):
             },
         },
     }
-    # Write status to the run directory
+    # Write status to the run directory; _find_active_runs will discover it via runs/ scan
     with open(str(run_dir / "status.json"), "w") as f:
         json.dump(status, f)
-    # Point active_run to this run so the runner finds it
     worca_dir = tmp_path / ".worca"
-    (worca_dir / "active_run").write_text("test-resume-run")
     status_path = str(worca_dir / "status.json")
 
     wr = WorkRequest(source_type="prompt", title="Test resume beads")
@@ -1501,14 +1494,8 @@ def test_run_pipeline_stage_completed_payload_fields(tmp_path):
 
 
 def _find_events_path(worca_dir):
-    """Find events.jsonl from active_run pointer or glob."""
+    """Find events.jsonl by scanning runs/ for the latest run."""
     import glob
-    active_run_path = worca_dir / "active_run"
-    if active_run_path.exists():
-        run_id = active_run_path.read_text().strip()
-        p = worca_dir / "runs" / run_id / "events.jsonl"
-        if p.exists():
-            return p
     candidates = sorted(glob.glob(str(worca_dir / "runs" / "*" / "events.jsonl")))
     assert candidates, "No events.jsonl found"
     return candidates[-1]
@@ -4178,3 +4165,115 @@ def test_atexit_dispatches_pending_signal_event_when_status_already_interrupted(
         runner_mod._pending_signal_event = None
 
     assert delivered == [sample], "atexit must dispatch the stashed signal event when finally didn't"
+
+
+# --- target_branch in status.json ---
+
+def _make_target_branch_settings(tmp_path):
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }))
+    return settings
+
+
+def test_target_branch_in_status(tmp_path, monkeypatch):
+    """target_branch is stored in status.json when --branch is provided."""
+    from worca.orchestrator.work_request import WorkRequest
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _make_target_branch_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WORCA_TARGET_BRANCH", raising=False)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        result = run_pipeline(
+            WorkRequest(source_type="prompt", title="Test target branch"),
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+            branch="feature/auth",
+        )
+
+    assert result["target_branch"] == "feature/auth"
+
+
+def test_target_branch_from_env(tmp_path, monkeypatch):
+    """target_branch is stored from WORCA_TARGET_BRANCH env var when set."""
+    from worca.orchestrator.work_request import WorkRequest
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _make_target_branch_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("WORCA_TARGET_BRANCH", "main")
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        result = run_pipeline(
+            WorkRequest(source_type="prompt", title="Test env target branch"),
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+        )
+
+    assert result["target_branch"] == "main"
+
+
+def test_target_branch_none_when_absent(tmp_path, monkeypatch):
+    """target_branch is None in status.json when neither --branch nor env var is set."""
+    from worca.orchestrator.work_request import WorkRequest
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _make_target_branch_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("WORCA_TARGET_BRANCH", raising=False)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        result = run_pipeline(
+            WorkRequest(source_type="prompt", title="Test no target branch"),
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+        )
+
+    assert result["target_branch"] is None

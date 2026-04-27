@@ -113,14 +113,14 @@ export function writeControlFile(worcaDir, runId, action) {
 }
 
 /**
- * Write pipeline.pid + active_run for a run.
+ * Write pipeline.pid for a run.
  * Writes PID to both per-run directory and project-level (backward compat).
  *
  * Note: active status is determined by `pipeline_status` in each run's
  * status.json (set by seedRun), not by PID liveness.
  *
  * @param {string} worcaDir
- * @param {string} [activeRunId] - run ID to write to active_run
+ * @param {string} [activeRunId] - run ID for the per-run PID file
  */
 export function writePipelinePid(worcaDir, activeRunId) {
   // Project-level PID (backward compat)
@@ -130,7 +130,6 @@ export function writePipelinePid(worcaDir, activeRunId) {
     const runDir = join(worcaDir, 'runs', activeRunId);
     mkdirSync(runDir, { recursive: true });
     writeFileSync(join(runDir, 'pipeline.pid'), String(process.pid), 'utf8');
-    writeFileSync(join(worcaDir, 'active_run'), activeRunId, 'utf8');
   }
 }
 

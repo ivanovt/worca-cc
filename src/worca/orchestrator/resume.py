@@ -163,25 +163,33 @@ def check_git_divergence(status: dict, current_head: str = None) -> dict:
     return {"diverged": diverged, "stored": stored, "current": current_head}
 
 
-def can_resume(status_path: str = ".worca/status.json") -> bool:
-    """Check if a pipeline can be resumed from a status file.
+# 'failed' excluded: failed runs are resumable (scanned by can_resume without run_id).
+_TERMINAL_STATUSES = {"completed", "interrupted"}
 
-    Checks active_run pointer first for per-run status, then falls back
-    to the given status_path.
-    Returns True if status file exists and has at least one completed stage.
-    Returns False if no status file or all stages are pending.
+
+def can_resume(status_path: str = ".worca/status.json", run_id: str | None = None) -> bool:
+    """Check if a pipeline can be resumed.
+
+    If run_id is given, checks that specific run directly.
+    Otherwise scans runs/ for a non-terminal run, then falls back to status_path.
+    Returns True if a status file with at least one completed stage is found.
     """
-    # Try active_run pointer first
     worca_dir = os.path.dirname(status_path)
-    active_run_path = os.path.join(worca_dir, "active_run")
     status = None
-    if os.path.exists(active_run_path):
-        try:
-            run_id = open(active_run_path).read().strip()
-            candidate = os.path.join(worca_dir, "runs", run_id, "status.json")
-            status = load_status(candidate)
-        except OSError:
-            pass
+
+    if run_id is not None:
+        candidate = os.path.join(worca_dir, "runs", run_id, "status.json")
+        status = load_status(candidate)
+    else:
+        runs_dir = os.path.join(worca_dir, "runs")
+        if os.path.isdir(runs_dir):
+            for entry in sorted(os.listdir(runs_dir)):
+                candidate = os.path.join(runs_dir, entry, "status.json")
+                s = load_status(candidate)
+                if s and s.get("pipeline_status") not in _TERMINAL_STATUSES:
+                    status = s
+                    break
+
     if not status:
         status = load_status(status_path)
     if not status:

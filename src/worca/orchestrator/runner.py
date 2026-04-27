@@ -323,6 +323,35 @@ def _is_same_work_request(existing_wr: dict, new_wr: WorkRequest) -> bool:
     return existing_wr.get("title", "") == new_wr.title
 
 
+# 'failed' intentionally excluded: failed runs remain resumable via _find_active_runs.
+# Fresh-start correctly handles a single failed run (reassigns run_dir/status_path).
+_TERMINAL_STATUSES = {"completed", "interrupted"}
+
+
+def _find_active_runs(worca_dir: str) -> list:
+    """Scan runs/*/status.json for non-terminal runs.
+
+    Returns list of (run_id, status_path) tuples, sorted by run_id.
+    Terminal statuses (completed, interrupted) are excluded.
+    """
+    runs_dir = os.path.join(worca_dir, "runs")
+    result = []
+    if not os.path.isdir(runs_dir):
+        return result
+    for run_id in sorted(os.listdir(runs_dir)):
+        status_path = os.path.join(runs_dir, run_id, "status.json")
+        if not os.path.isfile(status_path):
+            continue
+        try:
+            with open(status_path) as f:
+                data = json.load(f)
+            if data.get("pipeline_status") not in _TERMINAL_STATUSES:
+                result.append((run_id, status_path))
+        except (json.JSONDecodeError, OSError):
+            continue
+    return result
+
+
 def _pid_path(status_path: str) -> str:
     """Return the path to the PID file for this pipeline."""
     return os.path.join(os.path.dirname(status_path), "pipeline.pid")
@@ -1179,17 +1208,15 @@ def run_pipeline(
     # Signal handlers (PID file written after run_id is known)
     _install_signal_handlers()
 
-    # Check for resume via active_run pointer first, then flat status.json
-    active_run_path = os.path.join(worca_dir, "active_run")
+    # Scan runs/ for a non-terminal run; fall back to legacy flat status.json
+    active_runs = _find_active_runs(worca_dir)
     existing = None
-    if os.path.exists(active_run_path):
-        active_id = open(active_run_path).read().strip()
-        candidate = os.path.join(worca_dir, "runs", active_id, "status.json")
-        if os.path.exists(candidate):
-            existing = load_status(candidate)
-            if existing:
-                actual_status_path = candidate
-                run_dir = os.path.join(worca_dir, "runs", active_id)
+    if len(active_runs) == 1:
+        run_id_candidate, candidate = active_runs[0]
+        existing = load_status(candidate)
+        if existing:
+            actual_status_path = candidate
+            run_dir = os.path.join(worca_dir, "runs", run_id_candidate)
     if existing is None:
         existing = load_status(status_path)
 
@@ -1259,6 +1286,11 @@ def run_pipeline(
         if worktree:
             status["worktree"] = True
 
+        # target_branch is the PR base branch (what the PR merges into).
+        # Sourced from WORCA_TARGET_BRANCH env var (highest priority) or the
+        # --branch flag, which in worktree mode names the base branch.
+        status["target_branch"] = os.environ.get("WORCA_TARGET_BRANCH") or branch or None
+
         # Create per-run directory
         run_id = _generate_run_id(status["started_at"])
         status["run_id"] = run_id
@@ -1267,19 +1299,13 @@ def run_pipeline(
         os.makedirs(os.path.join(run_dir, "logs"), exist_ok=True)
         actual_status_path = os.path.join(run_dir, "status.json")
 
-        # Write active_run pointer
-        os.makedirs(worca_dir, exist_ok=True)
-        with open(active_run_path, "w") as f:
-            f.write(run_id)
-
-        # Write PID to per-run directory (+ project-level for backward compat)
+        # Write PID to per-run directory
         _write_pid(actual_status_path)
-        _write_pid(status_path)
 
         save_status(status, actual_status_path)
 
         # Update multi-pipeline registry with the subprocess PID when in worktree mode.
-        # Registration is done by run_multi.py; here we just update the PID so that
+        # Registration is done by run_worktree.py; here we just update the PID so that
         # per-pipeline stop commands target the correct process.
         if worktree:
             update_pipeline(run_id, stage="starting", base=worca_dir)

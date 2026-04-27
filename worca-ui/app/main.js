@@ -2,6 +2,7 @@ import { html, nothing, render } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createNotificationManager } from './notifications.js';
 import { navigate, onHashChange, parseHash } from './router.js';
+import { selectParallelPipelines } from './select-parallel-pipelines.js';
 import { createStore, isArchivedRunExpired } from './state.js';
 import { createArchiveActions } from './utils/archive-actions.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
@@ -721,29 +722,6 @@ ws.on('webhook-inbox-cleared', () => {
   webhookSelectedId = null;
 });
 
-// --- Parallel pipeline events ---
-
-ws.on('pipeline-status-changed', (payload) => {
-  const currentProject = store.getState().currentProjectId;
-  if (payload.project && currentProject && payload.project !== currentProject)
-    return;
-  const pipelines = { ...store.getState().pipelines };
-  if (payload.status === 'removed') {
-    delete pipelines[payload.runId];
-  } else {
-    pipelines[payload.runId] = {
-      run_id: payload.runId,
-      status: payload.status,
-      stage: payload.stage,
-      title: payload.title,
-      worktree_path: payload.worktree_path,
-      started_at: payload.started_at,
-      pid: payload.pid,
-    };
-  }
-  store.setState({ pipelines });
-});
-
 // --- Protocol negotiation ---
 
 function handleHello(_payload) {
@@ -862,14 +840,6 @@ function fetchProjectScopedData() {
     })
     .catch(() => {});
 
-  ws.send('list-pipelines')
-    .then((payload) => {
-      const pipelines = {};
-      for (const p of payload.pipelines || []) pipelines[p.run_id] = p;
-      store.setState({ pipelines });
-    })
-    .catch(() => {});
-
   fetchBeadsCounts();
   fetchProjectInfo();
 
@@ -904,7 +874,6 @@ function handleProjectSwitch(newProjectId) {
   ws.send('unsubscribe-run').catch(() => {});
   ws.send('unsubscribe-log').catch(() => {});
   ws.send('unsubscribe-events').catch(() => {});
-  ws.send('unsubscribe-pipeline').catch(() => {});
   store.clearLog();
 
   store.setState({
@@ -913,7 +882,6 @@ function handleProjectSwitch(newProjectId) {
     archivedRuns: {},
     logLines: [],
     activeRunId: null,
-    pipelines: {},
   });
 
   resetProjectState();
@@ -2128,7 +2096,7 @@ function mainContentView() {
       onStop: handleStopRun,
       onCancel: handleCancelRun,
     })}
-    ${multiPipelineDashboardView(state.pipelines, {
+    ${multiPipelineDashboardView(selectParallelPipelines(state), {
       onPause: handlePauseParallelPipeline,
       onStop: handleStopParallelPipeline,
       onResume: handleResumeParallelPipeline,

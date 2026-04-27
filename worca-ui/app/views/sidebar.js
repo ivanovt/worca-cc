@@ -4,6 +4,7 @@ import {
   Activity,
   Archive,
   Coins,
+  GitBranch,
   iconSvg,
   List,
   Plus,
@@ -71,7 +72,14 @@ export function sidebarView(
   connectionState,
   { onNavigate, onProjectChange, onAddProject },
 ) {
-  const { runs, preferences, projects, currentProjectId } = state;
+  const {
+    runs,
+    preferences,
+    projects,
+    currentProjectId,
+    worktrees = [],
+    settings = {},
+  } = state;
   const allRunList = Object.values(runs);
   // Filter to selected project for counters (sidebar dots use allRunList via projectStatus)
   const runList =
@@ -91,6 +99,15 @@ export function sidebarView(
   const beadsReady = beadsIssues.filter(
     (i) => i.status === 'ready' && (i.blocked_by?.length ?? 0) === 0,
   ).length;
+
+  const worktreeCount = worktrees.length;
+  const diskWarningThreshold =
+    settings['worca.ui.worktree_disk_warning_bytes'] ?? 2_000_000_000;
+  const totalWorktreeDisk = worktrees.reduce(
+    (s, w) => s + (w.disk_bytes || 0),
+    0,
+  );
+  const worktreeDiskWarning = totalWorktreeDisk > diskWarningThreshold;
 
   const connClass =
     connectionState === 'open'
@@ -152,10 +169,15 @@ export function sidebarView(
         currentProjectId || (projects || []).length <= 1
           ? html`
       <div class="sidebar-new-run">
-        <button class="sidebar-new-run-btn" @click=${() => onNavigate('new-run')}>
-          ${unsafeHTML(iconSvg(Plus, 16))}
-          <span>New Pipeline</span>
-        </button>
+        <sl-dropdown class="sidebar-new-run-dropdown">
+          <sl-button slot="trigger" size="small" caret class="sidebar-new-run-btn">
+            ${unsafeHTML(iconSvg(Plus, 14))}
+            New Pipeline
+          </sl-button>
+          <sl-menu>
+            <sl-menu-item @click=${() => onNavigate('new-run')}>New Pipeline</sl-menu-item>
+          </sl-menu>
+        </sl-dropdown>
       </div>
 
       <div class="sidebar-section">
@@ -176,6 +198,19 @@ export function sidebarView(
           </span>
           ${historyCount > 0 ? html`<sl-badge variant="neutral" pill>${historyCount}</sl-badge>` : ''}
         </div>
+        ${
+          worktreeCount > 0
+            ? html`
+        <div class="sidebar-item ${route.section === 'worktrees' ? 'active' : ''}"
+             @click=${() => onNavigate('worktrees')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(GitBranch, 16))}
+            <span>Worktrees</span>
+          </span>
+          <sl-badge variant="${worktreeDiskWarning ? 'warning' : 'neutral'}" pill class="worktrees-count-badge">${worktreeCount}</sl-badge>
+        </div>`
+            : ''
+        }
       </div>
 
       <div class="sidebar-section">

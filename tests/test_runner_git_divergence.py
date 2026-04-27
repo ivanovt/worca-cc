@@ -35,7 +35,7 @@ def _make_settings(tmp_path):
 
 
 def _make_resumable_status(tmp_path, git_head, run_id="20260101-120000"):
-    """Create a .worca run directory with status.json and active_run pointer."""
+    """Create a .worca run directory with status.json for resume tests."""
     worca_dir = tmp_path / ".worca"
     run_dir = worca_dir / "runs" / run_id
     (run_dir / "agents").mkdir(parents=True)
@@ -70,9 +70,6 @@ def _make_resumable_status(tmp_path, git_head, run_id="20260101-120000"):
     }
     status_path = str(run_dir / "status.json")
     save_status(status, status_path)
-
-    with open(str(worca_dir / "active_run"), "w") as f:
-        f.write(run_id)
 
     return str(worca_dir / "status.json"), status
 

@@ -682,3 +682,83 @@ class TestPipelineTemplateFormatting:
 
         call_kwargs = mock_run_pipeline.call_args[1]
         assert call_kwargs.get("pipeline_template") is None
+
+
+class TestResumeAmbiguousError:
+    def test_resume_ambiguous_error(self, tmp_path, capsys):
+        """--resume with multiple non-terminal runs exits 2 with an explanatory message."""
+        from worca.scripts.run_pipeline import main
+
+        worca_dir = tmp_path / ".worca"
+        for run_id in ["20260426-100000-000-aaaa", "20260426-110000-000-bbbb"]:
+            run_dir = worca_dir / "runs" / run_id
+            run_dir.mkdir(parents=True)
+            (run_dir / "status.json").write_text(json.dumps({
+                "pipeline_status": "running",
+                "run_id": run_id,
+            }))
+
+        with patch("sys.argv", [
+            "run_pipeline.py",
+            "--resume",
+            "--status-dir", str(worca_dir),
+        ]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert "multiple" in captured.err.lower() or "specify" in captured.err.lower()
+
+
+class TestGuideFlag:
+    """Tests for --guide flag: parser registration and error when attach_guide unavailable."""
+
+    def test_guide_arg_parsed(self):
+        parser = create_parser()
+        args = parser.parse_args(["--prompt", "Fix", "--guide", "spec.md"])
+        assert args.guide == ["spec.md"]
+
+    def test_guide_repeatable(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "--prompt", "Fix", "--guide", "a.md", "--guide", "b.md",
+        ])
+        assert args.guide == ["a.md", "b.md"]
+
+    def test_guide_absent_by_default(self):
+        parser = create_parser()
+        args = parser.parse_args(["--prompt", "Fix"])
+        assert args.guide is None
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_guide_flag_errors_without_attach_guide(self, mock_run_pipeline, tmp_path):
+        """When attach_guide not importable, --guide raises ArgumentError; dispatch never starts."""
+        import argparse as _argparse
+        import sys
+        from worca.scripts.run_pipeline import main
+
+        settings_path = tmp_path / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True)
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        # Simulate attach_guide missing: patch sys.modules with a stub that
+        # raises AttributeError on attach_guide access (→ ImportError at from-import).
+        fake_wr = MagicMock(spec=["normalize", "WorkRequest"])
+        from worca.orchestrator.work_request import WorkRequest
+        fake_wr.WorkRequest = WorkRequest
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--guide", "spec.md",
+            "--settings", str(settings_path),
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                with patch.dict(sys.modules, {"worca.orchestrator.work_request": fake_wr}):
+                    with pytest.raises(_argparse.ArgumentError) as exc_info:
+                        main()
+
+        mock_run_pipeline.assert_not_called()
+        assert "attach_guide" in str(exc_info.value)

@@ -49,28 +49,7 @@ export function discoverRuns(worcaDir) {
   const runs = [];
   const seenIds = new Set();
 
-  // 1. Check active_run pointer for the current run
-  const activeRunPath = join(worcaDir, 'active_run');
-  if (existsSync(activeRunPath)) {
-    try {
-      const activeId = readFileSync(activeRunPath, 'utf8').trim();
-      const runDir = join(worcaDir, 'runs', activeId);
-      const candidate = join(runDir, 'status.json');
-      if (existsSync(candidate)) {
-        let status = JSON.parse(readFileSync(candidate, 'utf8'));
-        status = enrichWithDispatchEvents(status, runDir);
-        const active =
-          !isTerminal(status) && status.pipeline_status === 'running';
-        const id = createRunId(status);
-        runs.push({ id, active, ...status });
-        seenIds.add(id);
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  // 2. Scan .worca/runs/ for other runs
+  // 1. Scan .worca/runs/ for runs
   const runsDir = join(worcaDir, 'runs');
   if (existsSync(runsDir)) {
     for (const entry of readdirSync(runsDir)) {
@@ -92,7 +71,7 @@ export function discoverRuns(worcaDir) {
     }
   }
 
-  // 3. Legacy: flat .worca/status.json
+  // 2. Legacy: flat .worca/status.json
   const statusPath = join(worcaDir, 'status.json');
   if (existsSync(statusPath)) {
     try {
@@ -109,7 +88,7 @@ export function discoverRuns(worcaDir) {
     }
   }
 
-  // 4. Results: handle both dir format (results/{id}/status.json) and file format (results/{id}.json)
+  // 3. Results: handle both dir format (results/{id}/status.json) and file format (results/{id}.json)
   const resultsDir = join(worcaDir, 'results');
   if (existsSync(resultsDir)) {
     for (const entry of readdirSync(resultsDir, { withFileTypes: true })) {
@@ -148,6 +127,51 @@ export function discoverRuns(worcaDir) {
     }
   }
 
+  // 5. Fan out across pipelines.d/ registry entries (worktree runs)
+  const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
+  if (existsSync(pipelinesDir)) {
+    for (const entry of readdirSync(pipelinesDir)) {
+      if (!entry.endsWith('.json')) continue;
+      try {
+        const reg = JSON.parse(readFileSync(join(pipelinesDir, entry), 'utf8'));
+        if (!reg.worktree_path) continue;
+        const wtRunsDir = join(reg.worktree_path, '.worca', 'runs');
+        if (!existsSync(wtRunsDir)) continue;
+        for (const runEntry of readdirSync(wtRunsDir)) {
+          const sp = join(wtRunsDir, runEntry, 'status.json');
+          if (!existsSync(sp)) continue;
+          try {
+            let status = JSON.parse(readFileSync(sp, 'utf8'));
+            status = enrichWithDispatchEvents(
+              status,
+              join(wtRunsDir, runEntry),
+            );
+            const id = createRunId(status);
+            if (seenIds.has(id)) continue;
+            seenIds.add(id);
+            const active =
+              !isTerminal(status) && status.pipeline_status === 'running';
+            runs.push({
+              id,
+              active,
+              ...status,
+              worktree_worca_dir: join(reg.worktree_path, '.worca'),
+              is_worktree_run: true,
+              fleet_id: reg.fleet_id || null,
+              workspace_id: reg.workspace_id || null,
+              group_type: reg.group_type || null,
+              target_branch: reg.target_branch || null,
+            });
+          } catch {
+            /* ignore malformed status */
+          }
+        }
+      } catch {
+        /* ignore malformed registry entry */
+      }
+    }
+  }
+
   return runs;
 }
 
@@ -159,23 +183,7 @@ export async function discoverRunsAsync(worcaDir) {
   const runs = [];
   const seenIds = new Set();
 
-  // 1. Active run
-  const activeRunPath = join(worcaDir, 'active_run');
-  try {
-    const activeId = (await readFile(activeRunPath, 'utf8')).trim();
-    const runDir = join(worcaDir, 'runs', activeId);
-    const candidate = join(runDir, 'status.json');
-    let status = JSON.parse(await readFile(candidate, 'utf8'));
-    status = enrichWithDispatchEvents(status, runDir);
-    const active = !isTerminal(status) && status.pipeline_status === 'running';
-    const id = createRunId(status);
-    runs.push({ id, active, ...status });
-    seenIds.add(id);
-  } catch {
-    /* ignore */
-  }
-
-  // 2. Scan .worca/runs/
+  // 1. Scan .worca/runs/
   const runsDir = join(worcaDir, 'runs');
   try {
     const entries = await readdir(runsDir);
@@ -203,7 +211,7 @@ export async function discoverRunsAsync(worcaDir) {
     /* ignore */
   }
 
-  // 3. Legacy flat status.json
+  // 2. Legacy flat status.json
   try {
     const status = JSON.parse(
       await readFile(join(worcaDir, 'status.json'), 'utf8'),
@@ -219,7 +227,7 @@ export async function discoverRunsAsync(worcaDir) {
     /* ignore */
   }
 
-  // 4. Results
+  // 3. Results
   const resultsDir = join(worcaDir, 'results');
   try {
     const entries = await readdir(resultsDir, { withFileTypes: true });
@@ -247,6 +255,67 @@ export async function discoverRunsAsync(worcaDir) {
         const active = !isTerminal(data) && data.pipeline_status === 'running';
         runs.push({ id, active, ...data });
       }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  // 5. Fan out across pipelines.d/ registry entries (worktree runs)
+  const pipelinesDirAsync = join(worcaDir, 'multi', 'pipelines.d');
+  try {
+    const regEntries = await readdir(pipelinesDirAsync);
+    const wtReadPromises = regEntries
+      .filter((e) => e.endsWith('.json'))
+      .map(async (e) => {
+        try {
+          const reg = JSON.parse(
+            await readFile(join(pipelinesDirAsync, e), 'utf8'),
+          );
+          if (!reg.worktree_path) return [];
+          const wtRunsDir = join(reg.worktree_path, '.worca', 'runs');
+          let runEntries;
+          try {
+            runEntries = await readdir(wtRunsDir);
+          } catch {
+            return [];
+          }
+          const results = [];
+          for (const runEntry of runEntries) {
+            try {
+              const sp = join(wtRunsDir, runEntry, 'status.json');
+              let status = JSON.parse(await readFile(sp, 'utf8'));
+              status = enrichWithDispatchEvents(
+                status,
+                join(wtRunsDir, runEntry),
+              );
+              results.push({ status, reg });
+            } catch {
+              /* ignore */
+            }
+          }
+          return results;
+        } catch {
+          return [];
+        }
+      });
+    const wtResults = (await Promise.all(wtReadPromises)).flat();
+    for (const { status, reg } of wtResults) {
+      const id = createRunId(status);
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+      const active =
+        !isTerminal(status) && status.pipeline_status === 'running';
+      runs.push({
+        id,
+        active,
+        ...status,
+        worktree_worca_dir: join(reg.worktree_path, '.worca'),
+        is_worktree_run: true,
+        fleet_id: reg.fleet_id || null,
+        workspace_id: reg.workspace_id || null,
+        group_type: reg.group_type || null,
+        target_branch: reg.target_branch || null,
+      });
     }
   } catch {
     /* ignore */

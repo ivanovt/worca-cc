@@ -37,7 +37,7 @@ You receive the review outcome and proof status from the Reviewer. You have acce
    ```
    git push -u origin <branch-name>
    ```
-7. Open the PR using the hosting CLI documented in CLAUDE.md (usually `gh pr create` or `glab mr create`). Capture the PR URL and include it in your structured output.
+7. Open the PR using the hosting CLI documented in CLAUDE.md (usually `gh pr create` or `glab mr create`). Read `target_branch` from the run's `status.json`; if set, pass it as `--base {target_branch}` so the PR targets the correct branch. If `target_branch` is absent or null, omit `--base` and let the hosting platform use its default. Capture the PR URL and include it in your structured output.
 8. Record the commit SHA (`git rev-parse HEAD`) and the PR URL. Both go into your `pr.json` structured output.
 9. Mark the PR as ready for human review (this is done by `gh pr create` unless `--draft` is passed).
 10. Wait for PRE-PR APPROVAL milestone gate (orchestrator handles this after your structured output is parsed).

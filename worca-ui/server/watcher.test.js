@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createRunId, discoverRuns } from './watcher.js';
+import { createRunId, discoverRuns, discoverRunsAsync } from './watcher.js';
 
 describe('watcher', () => {
   let dir;
@@ -176,6 +176,25 @@ describe('watcher', () => {
     expect(blocked.reason).toBe('Blocked: denylist');
   });
 
+  it('discoverRuns_no_active_run: finds runs in runs/ without active_run file present', () => {
+    const runId = 'run-no-active-run';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    const status = {
+      run_id: runId,
+      started_at: '2026-04-26T10:00:00Z',
+      pipeline_status: 'running',
+      work_request: { title: 'no active_run test' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(runDir, 'status.json'), JSON.stringify(status));
+    // Deliberately no active_run file
+    const runs = discoverRuns(dir);
+    const run = runs.find((r) => r.run_id === runId);
+    expect(run).toBeDefined();
+    expect(run.active).toBe(true);
+  });
+
   it('does not add dispatch_events when events.jsonl is missing', () => {
     const runId = 'run-disp-2';
     const runDir = join(dir, 'runs', runId);
@@ -196,5 +215,146 @@ describe('watcher', () => {
     const runs = discoverRuns(dir);
     const run = runs.find((r) => r.id === runId);
     expect(run.stages.implement.iterations[0].dispatch_events).toBeUndefined();
+  });
+
+  it('discoverRuns_pipelines_d_fanout: reads worktree runs from pipelines.d/ entries', () => {
+    const wtDir = join(dir, 'worktrees', 'wt-abc');
+    const wtRunId = 'run-wt-001';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+
+    const wtStatus = {
+      run_id: wtRunId,
+      started_at: '2026-04-26T10:00:00Z',
+      pipeline_status: 'running',
+      work_request: { title: 'worktree task' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(wtRunDir, 'status.json'), JSON.stringify(wtStatus));
+
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    const reg = {
+      run_id: wtRunId,
+      worktree_path: wtDir,
+      title: 'worktree task',
+      pid: 99999,
+      status: 'running',
+    };
+    writeFileSync(join(pipelinesDir, `${wtRunId}.json`), JSON.stringify(reg));
+
+    const runs = discoverRuns(dir);
+    const run = runs.find((r) => r.run_id === wtRunId);
+    expect(run).toBeDefined();
+    expect(run.is_worktree_run).toBe(true);
+    expect(run.worktree_worca_dir).toBe(join(wtDir, '.worca'));
+    expect(run.active).toBe(true);
+  });
+
+  it('discoverRuns_dedup_across_sources: run in both root runs/ and worktree appears once', () => {
+    const sharedRunId = 'run-shared-001';
+
+    // Root runs/ entry
+    const rootRunDir = join(dir, 'runs', sharedRunId);
+    mkdirSync(rootRunDir, { recursive: true });
+    const rootStatus = {
+      run_id: sharedRunId,
+      started_at: '2026-04-26T11:00:00Z',
+      pipeline_status: 'running',
+      work_request: { title: 'shared run' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(rootRunDir, 'status.json'), JSON.stringify(rootStatus));
+
+    // Same run also in a worktree (same run_id)
+    const wtDir = join(dir, 'worktrees', 'wt-shared');
+    const wtRunDir = join(wtDir, '.worca', 'runs', sharedRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(join(wtRunDir, 'status.json'), JSON.stringify(rootStatus));
+
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${sharedRunId}.json`),
+      JSON.stringify({
+        run_id: sharedRunId,
+        worktree_path: wtDir,
+        title: 'shared run',
+        pid: 99998,
+        status: 'running',
+      }),
+    );
+
+    const runs = discoverRuns(dir);
+    const matching = runs.filter((r) => r.run_id === sharedRunId);
+    expect(matching).toHaveLength(1);
+  });
+
+  it('discoverRuns_stale_entry: gracefully skips pipelines.d entry whose worktree no longer exists', () => {
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, 'run-gone.json'),
+      JSON.stringify({
+        run_id: 'run-gone',
+        worktree_path: join(dir, 'worktrees', 'does-not-exist'),
+        title: 'vanished task',
+        pid: 99990,
+        status: 'running',
+      }),
+    );
+
+    // Should not throw; stale entry is silently skipped
+    const runs = discoverRuns(dir);
+    expect(runs.find((r) => r.run_id === 'run-gone')).toBeUndefined();
+  });
+
+  it('discoverRuns_fleet_id_propagation: fleet_id from registry entry propagates to run', async () => {
+    const wtDir = join(dir, 'worktrees', 'wt-fleet');
+    const wtRunId = 'run-fleet-001';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+
+    const wtStatus = {
+      run_id: wtRunId,
+      started_at: '2026-04-26T12:00:00Z',
+      pipeline_status: 'running',
+      work_request: { title: 'fleet task' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(wtRunDir, 'status.json'), JSON.stringify(wtStatus));
+
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({
+        run_id: wtRunId,
+        worktree_path: wtDir,
+        title: 'fleet task',
+        pid: 99997,
+        status: 'running',
+        fleet_id: 'fleet-abc-123',
+        group_type: 'fleet',
+        target_branch: 'main',
+      }),
+    );
+
+    // Test sync variant
+    const syncRuns = discoverRuns(dir);
+    const syncRun = syncRuns.find((r) => r.run_id === wtRunId);
+    expect(syncRun).toBeDefined();
+    expect(syncRun.fleet_id).toBe('fleet-abc-123');
+    expect(syncRun.group_type).toBe('fleet');
+    expect(syncRun.target_branch).toBe('main');
+    expect(syncRun.workspace_id).toBeNull();
+
+    // Test async variant
+    const asyncRuns = await discoverRunsAsync(dir);
+    const asyncRun = asyncRuns.find((r) => r.run_id === wtRunId);
+    expect(asyncRun).toBeDefined();
+    expect(asyncRun.fleet_id).toBe('fleet-abc-123');
+    expect(asyncRun.group_type).toBe('fleet');
+    expect(asyncRun.is_worktree_run).toBe(true);
   });
 });

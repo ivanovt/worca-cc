@@ -205,6 +205,7 @@ export function runCardView(
             : html`<span class="run-card-status">${unsafeHTML(statusIcon(overallStatus, 16))}</span>`
         }
         <span class="run-card-title">${title}</span>
+        ${run.is_worktree_run ? html`<sl-icon name="folder-symlink" class="run-card-worktree-icon" title=${`Isolated worktree at ${run.worktree_path || ''}`}></sl-icon>` : nothing}
       </div>
       ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> <span class="meta-value">${branch}</span></span></div>` : nothing}
       ${pipelineTemplate ? html`<div class="run-card-template"><span class="meta-label">Pipeline:</span> <span class="meta-value">${pipelineTemplate}</span></div>` : nothing}

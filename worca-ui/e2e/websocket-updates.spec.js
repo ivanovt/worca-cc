@@ -1,20 +1,16 @@
 import { test, expect } from '@playwright/test';
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { startServer, seedRun, writePipelinePid } from './fixtures.js';
 
 const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 
 /**
- * Update a run's status.json and trigger a WebSocket broadcast by writing
- * worcaDir/active_run. The activeRunWatcher (in ws.js) fires on any write to
- * that file, which calls scheduleRefresh() → reads the updated status.json →
- * broadcasts run-snapshot (to subscribers) + runs-list (to all clients).
+ * Update a run's status.json to trigger a WebSocket broadcast.
+ * The runsDirWatcher (in ws-status-watcher.js) fires when status.json is
+ * written under runs/, which calls scheduleRefresh() → reads the updated
+ * status.json → broadcasts run-snapshot (to subscribers) + runs-list (to all).
  */
 function triggerStatusUpdate(worcaDir, runId, statusOverrides) {
   seedRun(worcaDir, runId, statusOverrides);
-  // activeRunWatcher watches worcaDir; any write here fires scheduleRefresh
-  writeFileSync(join(worcaDir, 'active_run'), runId + '\n', 'utf8');
 }
 
 /**

@@ -409,7 +409,6 @@ describe('project switch clears archivedRuns', () => {
       archivedRuns: {},
       logLines: [],
       activeRunId: null,
-      pipelines: {},
     });
     const s = store.getState();
     expect(s.runs).toEqual({});

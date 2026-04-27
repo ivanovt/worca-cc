@@ -7,10 +7,13 @@ Commands:
   status       [run_id]  Print pipeline state/stage/iteration
   multi-status           Print status of all parallel pipelines
 
-When run_id is omitted, the active run is read from .worca/active_run.
+When run_id is omitted, runs/*/status.json is scanned for the single
+non-terminal run. Errors if none or multiple are found.
 """
 
 import argparse
+import glob
+import json
 import os
 import signal
 import subprocess
@@ -35,21 +38,42 @@ _DEFAULT_BASE = ".worca"
 # ---------------------------------------------------------------------------
 
 
-def resolve_run_id(run_id: str | None, base: str = _DEFAULT_BASE) -> str:
-    """Return run_id, reading .worca/active_run when run_id is None.
+_TERMINAL_STATUSES = {"completed", "interrupted"}
 
-    Raises SystemExit(1) if run_id is None and active_run is missing.
+
+def resolve_run_id(run_id: str | None, base: str = _DEFAULT_BASE) -> str:
+    """Return run_id, scanning runs/*/status.json when run_id is None.
+
+    Raises SystemExit(1) if run_id is None and no single non-terminal run
+    is found (none found, or multiple found — specify run_id explicitly).
     """
     if run_id:
         return run_id
-    active_run_file = Path(base) / "active_run"
-    if not active_run_file.exists():
+
+    runs_dir = Path(base) / "runs"
+    candidates = []
+    for status_path in glob.glob(str(runs_dir / "*" / "status.json")):
+        try:
+            with open(status_path) as f:
+                data = json.load(f)
+            if data.get("pipeline_status") not in _TERMINAL_STATUSES:
+                candidates.append(data.get("run_id", Path(status_path).parent.name))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
         print(
-            f"error: no run_id given and {active_run_file} does not exist",
+            f"error: no run_id given and no active run found in {runs_dir}",
             file=sys.stderr,
         )
-        raise SystemExit(1)
-    return active_run_file.read_text().strip()
+    else:
+        print(
+            f"error: multiple active runs found — specify a run_id: {', '.join(candidates)}",
+            file=sys.stderr,
+        )
+    raise SystemExit(1)
 
 
 def _status_path(run_id: str, base: str) -> str:
@@ -57,7 +81,7 @@ def _status_path(run_id: str, base: str) -> str:
 
 
 def _pid_path(run_id: str, base: str) -> str:
-    return str(Path(base) / "runs" / run_id / "pid")
+    return str(Path(base) / "runs" / run_id / "pipeline.pid")
 
 
 def _resolve_worktree_base(run_id: str | None, base: str) -> tuple[str, dict | None]:

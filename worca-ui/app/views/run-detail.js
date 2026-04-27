@@ -617,6 +617,17 @@ export function runDetailView(run, settings = {}, options = {}) {
         `
             : nothing
         }
+        ${
+          run.is_worktree_run && run.worktree_path
+            ? html`
+          <div class="run-worktree">
+            <span class="meta-label">Worktree:</span>
+            <span class="meta-value run-worktree-path">${run.worktree_path}</span>
+            <sl-copy-button value=${run.worktree_path}></sl-copy-button>
+          </div>
+        `
+            : nothing
+        }
         ${timingStripView(run.started_at, endTime)}
         ${(() => {
           const allIters = Object.values(stages).flatMap(

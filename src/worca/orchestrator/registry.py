@@ -45,12 +45,28 @@ def _atomic_write(path, data):
         raise
 
 
-def register_pipeline(run_id, worktree_path, title, pid, base=_DEFAULT_BASE):
+def register_pipeline(
+    run_id,
+    worktree_path,
+    title,
+    pid,
+    base=_DEFAULT_BASE,
+    *,
+    fleet_id=None,
+    workspace_id=None,
+    group_type=None,
+    target_branch=None,
+):
     """Register a new pipeline. Returns the path to the registry file.
 
     Creates .worca/multi/pipelines.d/{run_id}.json with pipeline metadata.
     Uses atomic writes (temp file + os.replace).
+
+    fleet_id and workspace_id are mutually exclusive; pass at most one.
     """
+    if fleet_id is not None and workspace_id is not None:
+        raise ValueError("fleet_id and workspace_id are mutually exclusive; pass at most one")
+
     now = datetime.now(timezone.utc).isoformat()
     data = {
         "run_id": run_id,
@@ -61,6 +77,15 @@ def register_pipeline(run_id, worktree_path, title, pid, base=_DEFAULT_BASE):
         "started_at": now,
         "updated_at": now,
     }
+    if fleet_id is not None:
+        data["fleet_id"] = fleet_id
+    if workspace_id is not None:
+        data["workspace_id"] = workspace_id
+    if group_type is not None:
+        data["group_type"] = group_type
+    if target_branch is not None:
+        data["target_branch"] = target_branch
+
     path = _pipeline_path(run_id, base=base)
     _atomic_write(path, data)
     return path
@@ -175,3 +200,12 @@ def reconcile_stale(base=_DEFAULT_BASE):
         _atomic_write(path, entry)
         stale_ids.append(run_id)
     return stale_ids
+
+
+def reconcile_orphan_groups(base=_DEFAULT_BASE):
+    """Stub: find pipeline registry entries whose group (fleet/workspace) no longer exists.
+
+    Returns a list of run_ids whose group context is orphaned. W-040/W-047 wire
+    actual group lookups; this no-op skeleton always returns [] for W-048.
+    """
+    return []
