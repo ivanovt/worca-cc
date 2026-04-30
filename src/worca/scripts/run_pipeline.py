@@ -48,6 +48,10 @@ def create_parser():
                         help="Template parameter override (repeatable)")
     parser.add_argument("--guide", action="append", metavar="PATH",
                         help="Path to a reference guide (repeatable); passed from run_worktree.py")
+    parser.add_argument("--registry-base",
+                        help="Absolute path to the parent project's .worca/ directory; "
+                             "required in --worktree mode so pipelines.d/ updates land "
+                             "in the parent project, not inside the worktree.")
     return parser
 
 
@@ -279,6 +283,7 @@ def main():
             skip_preflight=args.skip_preflight,
             worktree=args.worktree,
             pipeline_template=_pipeline_template,
+            registry_base=args.registry_base,
         )
 
         # Snapshot template to run dir and write merged settings for traceability

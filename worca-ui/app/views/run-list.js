@@ -26,6 +26,7 @@ export function runListView(
     statusFilter,
     onStatusFilter,
     archivedRuns = [],
+    runsLoaded = true,
   } = {},
 ) {
   const baseFiltered =
@@ -62,6 +63,9 @@ export function runListView(
     baseFiltered.length === 0 &&
     !(statusFilter === 'archived' && archivedRuns.length > 0)
   ) {
+    if (!runsLoaded) {
+      return html`<div class="empty-state">Loading runs…</div>`;
+    }
     return html`<div class="empty-state">
       ${filter === 'active' ? 'No running pipelines' : 'No completed runs yet'}
     </div>`;

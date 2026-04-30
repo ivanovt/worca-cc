@@ -1165,6 +1165,7 @@ def run_pipeline(
     on_git_divergence=None,
     worktree: bool = False,
     pipeline_template: Optional[str] = None,
+    registry_base: Optional[str] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -1194,6 +1195,9 @@ def run_pipeline(
     _signal_event_emitted = False
 
     worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
+    # In worktree mode the registry lives in the parent project's .worca/, not
+    # the worktree's. Caller passes its absolute path; in-place runs use worca_dir.
+    registry_dir = registry_base or worca_dir
     run_dir = None
     actual_status_path = status_path  # may be redirected to per-run dir
 
@@ -1318,7 +1322,7 @@ def run_pipeline(
         # Registration is done by run_worktree.py; here we just update the PID so that
         # per-pipeline stop commands target the correct process.
         if worktree:
-            update_pipeline(run_id, stage="starting", base=worca_dir)
+            update_pipeline(run_id, stage="starting", base=registry_dir)
 
         # Notify GitHub issue that pipeline has started (no-op for non-GH sources)
         gh_issue_start(status)
@@ -2684,7 +2688,7 @@ def run_pipeline(
 
         # Update multi-pipeline registry on completion (worktree mode)
         if status.get("worktree") and status.get("run_id"):
-            update_pipeline(status["run_id"], status="completed", base=worca_dir)
+            update_pipeline(status["run_id"], status="completed", base=registry_dir)
 
         # Update GitHub issue (post summary, remove label, close)
         gh_issue_complete(status)
@@ -2806,7 +2810,7 @@ def run_pipeline(
         try:
             if (status and status.get("worktree") and status.get("run_id")
                     and status.get("pipeline_status") == "failed"):
-                update_pipeline(status["run_id"], status="failed", base=worca_dir)
+                update_pipeline(status["run_id"], status="failed", base=registry_dir)
         except Exception:
             pass
         _restore_signal_handlers()

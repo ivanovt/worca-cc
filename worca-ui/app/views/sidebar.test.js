@@ -156,23 +156,25 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
   });
 });
 
-describe('sidebar - New Pipeline CTA as sl-dropdown', () => {
-  it('renders sl-dropdown for New Pipeline CTA', async () => {
+describe('sidebar - New Pipeline CTA', () => {
+  it('renders a single-action button for New Pipeline CTA', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).toContain('sl-dropdown');
+    expect(output).toContain('sidebar-new-run-btn');
+    // No dropdown wrapper, no menu item — just a plain button.
+    expect(output).not.toContain('sl-dropdown');
+    expect(output).not.toContain('sl-menu-item');
   });
 
-  it('dropdown contains New Pipeline menu item', async () => {
+  it('button label contains "New Pipeline"', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('New Pipeline');
-    expect(output).toContain('sl-menu-item');
   });
 });

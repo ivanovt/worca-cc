@@ -42,6 +42,7 @@ export function createStore(initial = {}) {
     },
     runsLoaded: initial.runsLoaded ?? false,
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
+    worktrees: initial.worktrees ?? [],
   };
 
   const subs = new Set();
@@ -81,7 +82,9 @@ export function createStore(initial = {}) {
         next.preferences.notifications === state.preferences.notifications &&
         next.beads === state.beads &&
         next.webhookInbox === state.webhookInbox &&
-        next.addProjectDialogOpen === state.addProjectDialogOpen
+        next.addProjectDialogOpen === state.addProjectDialogOpen &&
+        next.worktrees === state.worktrees &&
+        next.runsLoaded === state.runsLoaded
       )
         return;
       state = next;

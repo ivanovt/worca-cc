@@ -134,12 +134,18 @@ function _listWorktrees(worcaDir) {
 /**
  * Remove a worktree and its registry entry.
  * Mirrors WorktreeSource.remove from src/worca/cli/cleanup.py:
- *   1. Attempt `git worktree remove --force <path>`
+ *   1. Attempt `git worktree remove --force <path>` from the project root
  *   2. On failure (e.g. non-worktree temp dir in tests), fall back to rmSync
- *   3. Delete the registry file
+ *   3. Run `git worktree prune` so git's metadata (`.git/worktrees/<id>/`)
+ *      drops the entry even when the directory was removed manually
+ *   4. Delete the registry file
  */
 function _removeWorktree(worcaDir, runId) {
   const regFile = join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`);
+  // worcaDir is `<projectRoot>/.worca` — git commands must run inside the
+  // project repo, not the server's cwd, or `git worktree remove` errors out
+  // and the .git/worktrees/<id>/ metadata is left as `prunable`.
+  const projectRoot = join(worcaDir, '..');
   let worktreePath = null;
 
   if (existsSync(regFile)) {
@@ -154,6 +160,7 @@ function _removeWorktree(worcaDir, runId) {
   if (worktreePath && existsSync(worktreePath)) {
     try {
       execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
+        cwd: projectRoot,
         stdio: 'pipe',
         timeout: 30_000,
       });
@@ -173,6 +180,19 @@ function _removeWorktree(worcaDir, runId) {
         rmSync(worktreePath, { recursive: true, force: true });
       }
     }
+  }
+
+  // Always prune — covers (a) successful remove leaving residual metadata,
+  // (b) brute-force rmSync path, and (c) entries already left prunable by
+  // earlier failures. Errors are non-fatal (e.g. project not a git repo).
+  try {
+    execFileSync('git', ['worktree', 'prune'], {
+      cwd: projectRoot,
+      stdio: 'pipe',
+      timeout: 30_000,
+    });
+  } catch {
+    /* non-fatal */
   }
 
   if (existsSync(regFile)) {

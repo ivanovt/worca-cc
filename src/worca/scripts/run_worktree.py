@@ -56,6 +56,8 @@ def _build_pipeline_cmd(args: argparse.Namespace) -> list:
         sys.executable,
         os.path.join(".claude", "worca", "scripts", "run_pipeline.py"),
         "--worktree",
+        "--registry-base",
+        os.path.abspath(".worca"),
     ]
 
     if args.source:

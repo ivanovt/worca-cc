@@ -65,6 +65,7 @@ import {
 import { sidebarView } from './views/sidebar.js';
 import { tokenCostsView } from './views/token-costs.js';
 import { webhookInboxView } from './views/webhook-inbox.js';
+import { worktreesView } from './views/worktrees.js';
 import { createWsClient } from './ws.js';
 
 // Register Shoelace components (tree-shaken — only imports what we use)
@@ -118,6 +119,12 @@ let pipelineAction = null; // null | 'stopping' | 'resuming' | 'pausing'
 let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
 let restartStageKey = null;
+
+// -- Worktrees view --
+let worktreesFilter = '';
+let worktreesDialogItem = null; // null | worktree (single-row cleanup)
+let worktreesDialogBulk = false; // true when "Cleanup all completed" dialog open
+let worktreesDialogCheckbox = false; // resumable/grouped confirmation checkbox
 
 // -- Log viewer --
 let logFilter = '*';
@@ -492,11 +499,22 @@ ws.on('runs-list', (payload, msg) => {
       }
     }
     if (payload.settings) settings = payload.settings;
-    store.setState({ runs: existing, archivedRuns: archivedUpdates });
+    store.setState({
+      runs: existing,
+      archivedRuns: archivedUpdates,
+      runsLoaded: true,
+    });
     return;
   }
   if (payload.settings) settings = payload.settings;
   store.setRunsBulk(payload.runs || []);
+});
+
+// Pipeline lifecycle changes (start/finish) move worktrees in/out of the
+// active set. Refresh worktrees on each runs-list bulk push so the sidebar
+// count badge and worktrees view stay in sync without a manual reload.
+ws.on('runs-list', () => {
+  fetchWorktrees();
 });
 
 ws.on('run-snapshot', (payload) => {
@@ -801,6 +819,37 @@ function fetchAllProjectRuns() {
   });
 }
 
+/** Fetch worktrees for the current project (or all projects when none selected). */
+function fetchWorktrees() {
+  const projects = store.getState().projects || [];
+  const currentProjectId = store.getState().currentProjectId;
+  // Worktrees are exposed only via /api/projects/<id>/worktrees. In single-
+  // project mode without a registered project, leave worktrees empty.
+  const targets = currentProjectId
+    ? [currentProjectId]
+    : projects.length > 1
+      ? projects.map((p) => p.name)
+      : [];
+
+  if (targets.length === 0) {
+    store.setState({ worktrees: [] });
+    return;
+  }
+
+  const requests = targets.map((name) =>
+    fetch(`/api/projects/${name}/worktrees`)
+      .then((r) => r.json())
+      .then((data) =>
+        (data.worktrees || []).map((w) => ({ ...w, project: name })),
+      )
+      .catch(() => []),
+  );
+
+  Promise.all(requests).then((lists) => {
+    store.setState({ worktrees: lists.flat() });
+  });
+}
+
 /** Fetch all project-scoped data after hello-ack sets the project context. */
 function fetchProjectScopedData() {
   // Multi-project mode: always fetch runs from every project so the sidebar
@@ -842,6 +891,7 @@ function fetchProjectScopedData() {
 
   fetchBeadsCounts();
   fetchProjectInfo();
+  fetchWorktrees();
 
   // Subscribe to active run if selected
   if (route.runId) {
@@ -882,7 +932,13 @@ function handleProjectSwitch(newProjectId) {
     archivedRuns: {},
     logLines: [],
     activeRunId: null,
+    runsLoaded: false,
+    worktrees: [],
   });
+  worktreesFilter = '';
+  worktreesDialogItem = null;
+  worktreesDialogBulk = false;
+  worktreesDialogCheckbox = false;
 
   resetProjectState();
 
@@ -938,6 +994,7 @@ function handleProjectSwitch(newProjectId) {
 
   fetchBeadsCounts();
   fetchProjectInfo();
+  fetchWorktrees();
 }
 
 // --- Connection handling ---
@@ -1330,6 +1387,79 @@ async function handleResumeParallelPipeline(runId) {
   }
 }
 
+// --- Worktrees: cleanup actions ---
+
+function openWorktreeCleanupDialog(wt) {
+  worktreesDialogItem = wt;
+  worktreesDialogBulk = false;
+  worktreesDialogCheckbox = false;
+  rerender();
+}
+
+function openWorktreeBulkCleanupDialog() {
+  worktreesDialogItem = null;
+  worktreesDialogBulk = true;
+  worktreesDialogCheckbox = false;
+  rerender();
+}
+
+function closeWorktreeCleanupDialog() {
+  worktreesDialogItem = null;
+  worktreesDialogBulk = false;
+  worktreesDialogCheckbox = false;
+  rerender();
+}
+
+async function deleteWorktree(runId, force) {
+  const url = projectUrl(
+    `/worktrees/${encodeURIComponent(runId)}${force ? '?force=1' : ''}`,
+  );
+  const res = await fetch(url, { method: 'DELETE' });
+  let data = null;
+  try {
+    data = await res.json();
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok || !data?.ok) {
+    throw new Error(data?.error || `Cleanup failed (HTTP ${res.status})`);
+  }
+}
+
+async function confirmWorktreeCleanup(runId, force) {
+  // Bulk path: runId is null, delete every completed worktree.
+  if (runId === null) {
+    const completed = (store.getState().worktrees || []).filter(
+      (w) => w.status === 'completed',
+    );
+    closeWorktreeCleanupDialog();
+    const failures = [];
+    for (const wt of completed) {
+      try {
+        await deleteWorktree(wt.run_id, false);
+      } catch (err) {
+        failures.push(`${wt.title || wt.run_id}: ${err.message}`);
+      }
+    }
+    fetchWorktrees();
+    if (failures.length > 0) {
+      showActionError(
+        `Cleanup completed with ${failures.length} failure(s):\n${failures.join('\n')}`,
+      );
+    }
+    return;
+  }
+
+  // Single-row path
+  closeWorktreeCleanupDialog();
+  try {
+    await deleteWorktree(runId, !!force);
+    fetchWorktrees();
+  } catch (err) {
+    showActionError(err?.message || 'Cleanup failed');
+  }
+}
+
 function handleRestartStage(stageKey) {
   restartStageKey = stageKey;
   showConfirm(
@@ -1678,6 +1808,9 @@ function contentHeaderView() {
     }
   } else if (route.section === 'active') {
     title = 'Running Pipelines';
+    showBack = true;
+  } else if (route.section === 'worktrees') {
+    title = 'Worktrees';
     showBack = true;
   } else if (route.section === 'history') {
     title = 'History';
@@ -2040,8 +2173,31 @@ function mainContentView() {
       onUnarchive: unarchiveRun,
       archivedRuns,
       statusFilter: historyStatusFilter,
+      runsLoaded: store.getState().runsLoaded,
       onStatusFilter: (s) => {
         historyStatusFilter = s;
+        rerender();
+      },
+    });
+  }
+
+  if (route.section === 'worktrees') {
+    return worktreesView(state.worktrees || [], {
+      filter: worktreesFilter,
+      onFilter: (value) => {
+        worktreesFilter = value;
+        rerender();
+      },
+      onSelectRun: handleSelectRun,
+      onCleanup: openWorktreeCleanupDialog,
+      onBulkCleanup: openWorktreeBulkCleanupDialog,
+      dialogItem: worktreesDialogItem,
+      dialogBulk: worktreesDialogBulk,
+      dialogCheckbox: worktreesDialogCheckbox,
+      onDialogClose: closeWorktreeCleanupDialog,
+      onDialogConfirm: confirmWorktreeCleanup,
+      onDialogCheckboxChange: (checked) => {
+        worktreesDialogCheckbox = checked;
         rerender();
       },
     });

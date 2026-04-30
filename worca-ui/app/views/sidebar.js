@@ -169,15 +169,14 @@ export function sidebarView(
         currentProjectId || (projects || []).length <= 1
           ? html`
       <div class="sidebar-new-run">
-        <sl-dropdown class="sidebar-new-run-dropdown">
-          <sl-button slot="trigger" size="small" caret class="sidebar-new-run-btn">
-            ${unsafeHTML(iconSvg(Plus, 14))}
-            New Pipeline
-          </sl-button>
-          <sl-menu>
-            <sl-menu-item @click=${() => onNavigate('new-run')}>New Pipeline</sl-menu-item>
-          </sl-menu>
-        </sl-dropdown>
+        <button
+          type="button"
+          class="sidebar-new-run-btn"
+          @click=${() => onNavigate('new-run')}
+        >
+          ${unsafeHTML(iconSvg(Plus, 14))}
+          <span>New Pipeline</span>
+        </button>
       </div>
 
       <div class="sidebar-section">

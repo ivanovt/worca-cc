@@ -102,6 +102,16 @@ class TestBuildPipelineCmd:
         assert ["--msize", "3"] == cmd2[cmd2.index("--msize"):cmd2.index("--msize") + 2]
         assert ["--mloops", "2"] == cmd2[cmd2.index("--mloops"):cmd2.index("--mloops") + 2]
 
+    def test_passes_registry_base_to_run_pipeline(self):
+        """run_worktree must pass --registry-base so run_pipeline updates the
+        parent project's pipelines.d/ instead of the worktree's empty one."""
+        import os
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x"]))
+        idx = cmd.index("--registry-base")
+        assert cmd[idx + 1] == os.path.abspath(".worca")
+        assert os.path.isabs(cmd[idx + 1])
+
 
 class TestHelpers:
     def test_generate_run_id_format(self):
