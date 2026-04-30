@@ -174,7 +174,9 @@ class TestCreatesWorktree:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
-        mock_create.assert_called_once_with(_RUN_ID, "add-auth", "HEAD")
+        mock_create.assert_called_once_with(
+            _RUN_ID, "add-auth", "HEAD", ".worktrees"
+        )
 
     def test_creates_worktree_with_base_branch(self):
         from worca.scripts.run_worktree import main
@@ -184,7 +186,30 @@ class TestCreatesWorktree:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth", "--branch", "feature/auth"])
         assert rc == 0
-        mock_create.assert_called_once_with(_RUN_ID, "add-auth", "feature/auth")
+        mock_create.assert_called_once_with(
+            _RUN_ID, "add-auth", "feature/auth", ".worktrees"
+        )
+
+    def test_passes_configured_worktree_base_dir(self, tmp_path):
+        """When worca.parallel.worktree_base_dir is set, run_worktree forwards
+        the value to create_pipeline_worktree instead of hardcoding .worktrees."""
+        import json
+        from unittest.mock import patch as _patch
+        from worca.scripts.run_worktree import main
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(
+            json.dumps({"worca": {"parallel": {"worktree_base_dir": "~/wt-foo"}}})
+        )
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
+             plist[3], plist[4], plist[5], plist[6], plist[7], \
+             _patch("worca.utils.settings.load_settings",
+                    return_value={"worca": {"parallel": {"worktree_base_dir": "~/wt-foo"}}}):
+            mock_norm.return_value = _wr("Add auth")
+            rc = main(["--prompt", "Add auth", "--settings", str(settings_file)])
+        assert rc == 0
+        mock_create.assert_called_once_with(_RUN_ID, "add-auth", "HEAD", "~/wt-foo")
 
     def test_returns_error_when_worktree_creation_fails(self, capsys):
         from worca.scripts.run_worktree import main

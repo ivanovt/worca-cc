@@ -182,8 +182,17 @@ def main(argv=None) -> int:
     slug = _slugify(wr.title)
     base_branch = args.branch or "HEAD"
 
-    # Step 3: create git worktree
-    worktree_path = create_pipeline_worktree(run_id, slug, base_branch)
+    # Step 3: create git worktree at the configured base dir
+    # (worca.parallel.worktree_base_dir, default .worktrees relative to
+    # the project root; absolute and ~-prefixed paths are honored).
+    from worca.utils.settings import load_settings
+    _settings = load_settings(args.settings)
+    _wt_base = (
+        _settings.get("worca", {})
+        .get("parallel", {})
+        .get("worktree_base_dir", ".worktrees")
+    )
+    worktree_path = create_pipeline_worktree(run_id, slug, base_branch, _wt_base)
     if not worktree_path:
         print(f"error: failed to create worktree for run {run_id}", file=sys.stderr)
         return 1
