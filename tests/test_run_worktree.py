@@ -161,7 +161,7 @@ def _patches(worktree_path=_WORKTREE_PATH):
         patch("worca.scripts.run_worktree.register_pipeline"),
         patch("worca.scripts.run_worktree.os.path.isdir", return_value=True),
         patch("worca.scripts.run_worktree.subprocess.Popen"),
-        patch("worca.scripts.run_worktree.shutil.copytree"),
+        patch("worca.scripts.run_worktree._copy_claude_config"),
     ]
 
 
@@ -374,6 +374,100 @@ class TestNoPromptNoSource:
         rc = main([])
         assert rc == 2
         assert capsys.readouterr().err != ""
+
+
+class TestCopyClaudeConfig:
+    """_copy_claude_config: project's .claude/ → worktree, no-clobber."""
+
+    def test_copies_settings_and_subdirs(self, tmp_path):
+        from worca.scripts.run_worktree import _copy_claude_config
+
+        src = tmp_path / "project" / ".claude"
+        dst = tmp_path / "worktree" / ".claude"
+        (src / "agents").mkdir(parents=True)
+        (src / "hooks").mkdir()
+        (src / "settings.json").write_text('{"a": 1}')
+        (src / "agents" / "planner.md").write_text("plan")
+        (src / "hooks" / "pre.py").write_text("h")
+
+        _copy_claude_config(str(src), str(dst))
+
+        assert (dst / "settings.json").read_text() == '{"a": 1}'
+        assert (dst / "agents" / "planner.md").read_text() == "plan"
+        assert (dst / "hooks" / "pre.py").read_text() == "h"
+
+    def test_skips_settings_local_json(self, tmp_path):
+        from worca.scripts.run_worktree import _copy_claude_config
+
+        src = tmp_path / "project" / ".claude"
+        dst = tmp_path / "worktree" / ".claude"
+        src.mkdir(parents=True)
+        (src / "settings.json").write_text("{}")
+        (src / "settings.local.json").write_text('{"machine": "local"}')
+
+        _copy_claude_config(str(src), str(dst))
+
+        assert (dst / "settings.json").exists()
+        assert not (dst / "settings.local.json").exists()
+
+    def test_no_clobber_preserves_tracked_files(self, tmp_path):
+        """When git already populated the worktree (committed .claude/),
+        the copy must not overwrite those files."""
+        from worca.scripts.run_worktree import _copy_claude_config
+
+        src = tmp_path / "project" / ".claude"
+        dst = tmp_path / "worktree" / ".claude"
+        src.mkdir(parents=True)
+        dst.mkdir(parents=True)
+        # File git already placed in the worktree (older committed version)
+        (dst / "settings.json").write_text('{"version": "tracked"}')
+        # Project's untracked-on-master version (newer)
+        (src / "settings.json").write_text('{"version": "uncommitted"}')
+
+        _copy_claude_config(str(src), str(dst))
+
+        # Tracked file wins
+        assert (dst / "settings.json").read_text() == '{"version": "tracked"}'
+
+    def test_no_clobber_within_subdirs(self, tmp_path):
+        from worca.scripts.run_worktree import _copy_claude_config
+
+        src = tmp_path / "project" / ".claude"
+        dst = tmp_path / "worktree" / ".claude"
+        (src / "agents").mkdir(parents=True)
+        (dst / "agents").mkdir(parents=True)
+        (dst / "agents" / "planner.md").write_text("tracked")
+        (src / "agents" / "planner.md").write_text("uncommitted")
+        (src / "agents" / "tester.md").write_text("new")
+
+        _copy_claude_config(str(src), str(dst))
+
+        assert (dst / "agents" / "planner.md").read_text() == "tracked"
+        # Files only in src still get copied through
+        assert (dst / "agents" / "tester.md").read_text() == "new"
+
+    def test_no_op_when_src_missing(self, tmp_path):
+        """If the project has no .claude/ at all (edge case), don't crash."""
+        from worca.scripts.run_worktree import _copy_claude_config
+
+        src = tmp_path / "project" / ".claude"  # never created
+        dst = tmp_path / "worktree" / ".claude"
+
+        _copy_claude_config(str(src), str(dst))  # must not raise
+        assert not dst.exists()
+
+    def test_includes_worca_runtime(self, tmp_path):
+        """worca/ subdir must come along — that's the whole runtime."""
+        from worca.scripts.run_worktree import _copy_claude_config
+
+        src = tmp_path / "project" / ".claude"
+        dst = tmp_path / "worktree" / ".claude"
+        (src / "worca" / "scripts").mkdir(parents=True)
+        (src / "worca" / "scripts" / "run_pipeline.py").write_text("py")
+
+        _copy_claude_config(str(src), str(dst))
+
+        assert (dst / "worca" / "scripts" / "run_pipeline.py").read_text() == "py"
 
 
 class TestMissingWorcaRuntime:

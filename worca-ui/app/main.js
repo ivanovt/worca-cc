@@ -2,7 +2,6 @@ import { html, nothing, render } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { createNotificationManager } from './notifications.js';
 import { navigate, onHashChange, parseHash } from './router.js';
-import { selectParallelPipelines } from './select-parallel-pipelines.js';
 import { createStore, isArchivedRunExpired } from './state.js';
 import { createArchiveActions } from './utils/archive-actions.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
@@ -48,7 +47,6 @@ import {
   searchTerminal,
   writeLogLine,
 } from './views/log-viewer.js';
-import { multiPipelineDashboardView } from './views/multi-dashboard.js';
 import {
   getNewRunSubmitState,
   newRunView,
@@ -1353,40 +1351,6 @@ const { archiveRun, unarchiveRun } = createArchiveActions({
   rerender,
 });
 
-// --- Parallel pipeline control ---
-
-async function handlePauseParallelPipeline(runId) {
-  try {
-    const res = await fetch(projectUrl(`/pipelines/${runId}/pause`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) showActionError(data.error || 'Failed to pause pipeline');
-  } catch (err) {
-    showActionError(err?.message || 'Failed to pause pipeline');
-  }
-}
-
-async function handleStopParallelPipeline(runId) {
-  try {
-    const res = await fetch(projectUrl(`/pipelines/${runId}/stop`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) showActionError(data.error || 'Failed to stop pipeline');
-  } catch (err) {
-    showActionError(err?.message || 'Failed to stop pipeline');
-  }
-}
-
-async function handleResumeParallelPipeline(runId) {
-  try {
-    await ws.send('resume-run', { runId });
-  } catch (err) {
-    showActionError(err?.message || 'Failed to resume pipeline');
-  }
-}
-
 // --- Worktrees: cleanup actions ---
 
 function openWorktreeCleanupDialog(wt) {
@@ -2251,12 +2215,6 @@ function mainContentView() {
       onResume: handleResumeRun,
       onStop: handleStopRun,
       onCancel: handleCancelRun,
-    })}
-    ${multiPipelineDashboardView(selectParallelPipelines(state), {
-      onPause: handlePauseParallelPipeline,
-      onStop: handleStopParallelPipeline,
-      onResume: handleResumeParallelPipeline,
-      onClick: (runId) => navigate('active', runId, route.projectId),
     })}
   `;
 }

@@ -46,6 +46,33 @@ def _slugify(title: str) -> str:
     return name.strip("-")[:30]
 
 
+def _copy_claude_config(src_dir: str, dst_dir: str) -> None:
+    """Copy .claude/ contents into the worktree.
+
+    Most projects gitignore .claude/ (or just don't commit it), so a fresh
+    worktree starts with no .claude/ at all — preflight then fails on the
+    missing settings.json. Copy everything from the project's .claude/ into
+    the worktree, with two rules:
+
+    - Skip settings.local.json (machine-specific; never propagate).
+    - Never clobber files git has already placed in the worktree (i.e. the
+      project does commit parts of .claude/). Tracked files win.
+    """
+    skip_top_level = {"settings.local.json"}
+    if not os.path.isdir(src_dir):
+        return
+    for root, _dirs, files in os.walk(src_dir):
+        rel = os.path.relpath(root, src_dir)
+        if rel == ".":
+            files = [f for f in files if f not in skip_top_level]
+        for f in files:
+            dst_file = os.path.join(dst_dir, rel, f)
+            if os.path.exists(dst_file):
+                continue  # tracked-files-win
+            os.makedirs(os.path.dirname(dst_file), exist_ok=True)
+            shutil.copy2(os.path.join(root, f), dst_file)
+
+
 def _build_pipeline_cmd(args: argparse.Namespace) -> list:
     """Build the run_pipeline.py argv to spawn inside the worktree.
 
@@ -197,9 +224,12 @@ def main(argv=None) -> int:
         print(f"error: failed to create worktree for run {run_id}", file=sys.stderr)
         return 1
 
-    # Step 4: copy .claude/worca/ runtime into worktree (gitignored, won't exist otherwise)
-    dst_worca = os.path.join(worktree_path, ".claude", "worca")
-    shutil.copytree(src_worca, dst_worca)
+    # Step 4: copy .claude/ into the worktree (settings.json, agents/, hooks/,
+    # scripts/, skills/, templates/, worca/, etc.). Most projects gitignore
+    # .claude/, so the worktree starts empty; without this copy preflight
+    # fails on missing settings.json. Files git already placed in the
+    # worktree are preserved.
+    _copy_claude_config(".claude", os.path.join(worktree_path, ".claude"))
 
     # Step 5: init beads in worktree
     init_worktree_beads(worktree_path)
