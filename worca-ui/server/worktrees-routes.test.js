@@ -131,6 +131,9 @@ describe('GET /api/worktrees', () => {
       expect(wt.disk_bytes).toBeGreaterThanOrEqual(0);
       expect(typeof wt.age_seconds).toBe('number');
       expect(wt.age_seconds).toBeGreaterThan(0);
+      // started_at is needed by the client to sort newest-first.
+      expect(typeof wt.started_at).toBe('string');
+      expect(wt.started_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     } finally {
       rmSync(worktreePath, { recursive: true, force: true });
     }

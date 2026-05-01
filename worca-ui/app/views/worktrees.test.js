@@ -100,6 +100,61 @@ const workspaceWorktree = {
   resumable: false,
 };
 
+describe('worktreesView - sort order', () => {
+  it('renders newest worktrees first based on started_at', () => {
+    // Three worktrees with explicit timestamps, given to the view in oldest-
+    // first order (server's readdirSync default). The view must reorder so
+    // the newest one appears first in the rendered output.
+    const oldest = {
+      ...completedWorktree,
+      run_id: 'r-old',
+      title: 'OLDEST CARD',
+      started_at: '2026-04-30T10:00:00.000Z',
+    };
+    const middle = {
+      ...completedWorktree,
+      run_id: 'r-mid',
+      title: 'MIDDLE CARD',
+      started_at: '2026-04-30T11:00:00.000Z',
+    };
+    const newest = {
+      ...completedWorktree,
+      run_id: 'r-new',
+      title: 'NEWEST CARD',
+      started_at: '2026-04-30T12:00:00.000Z',
+    };
+
+    const output = renderToString(worktreesView([oldest, middle, newest]));
+    const newIdx = output.indexOf('NEWEST CARD');
+    const midIdx = output.indexOf('MIDDLE CARD');
+    const oldIdx = output.indexOf('OLDEST CARD');
+    expect(newIdx).toBeGreaterThan(-1);
+    expect(midIdx).toBeGreaterThan(-1);
+    expect(oldIdx).toBeGreaterThan(-1);
+    expect(newIdx).toBeLessThan(midIdx);
+    expect(midIdx).toBeLessThan(oldIdx);
+  });
+
+  it('sorting tolerates missing started_at (entries fall to the end)', () => {
+    const dated = {
+      ...completedWorktree,
+      run_id: 'r-dated',
+      title: 'WITH TIMESTAMP',
+      started_at: '2026-04-30T12:00:00.000Z',
+    };
+    const undated = {
+      ...completedWorktree,
+      run_id: 'r-undated',
+      title: 'NO TIMESTAMP',
+      started_at: null,
+    };
+    const output = renderToString(worktreesView([undated, dated]));
+    const datedIdx = output.indexOf('WITH TIMESTAMP');
+    const undatedIdx = output.indexOf('NO TIMESTAMP');
+    expect(datedIdx).toBeLessThan(undatedIdx);
+  });
+});
+
 describe('worktreesView - empty state', () => {
   it('shows empty state message when no worktrees', () => {
     const output = renderToString(worktreesView([]));

@@ -119,6 +119,9 @@ function _listWorktrees(worcaDir) {
       worktree_path: worktreePath,
       disk_bytes: worktreeExists ? _getDiskBytes(worktreePath) : 0,
       age_seconds: ageSeconds,
+      // started_at lets the client sort with the same sortByStartDesc helper
+      // used by run-list, keeping ordering consistent across views.
+      started_at: reg.started_at || null,
       status,
       removable: status !== 'running',
       fleet_id: reg.fleet_id || null,

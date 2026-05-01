@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { formatDuration } from '../utils/duration.js';
 import { FolderOpen, iconSvg, Trash2 } from '../utils/icons.js';
+import { sortByStartDesc } from '../utils/sort-runs.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 
 function _formatBytes(bytes) {
@@ -327,9 +328,11 @@ export function worktreesView(
     `;
   }
 
-  const filtered = filter
-    ? worktrees.filter((wt) => _matchesFilter(wt, filter))
-    : worktrees;
+  // Sort newest first to match run-list.js. sortByStartDesc keys on
+  // started_at and tolerates missing values.
+  const filtered = sortByStartDesc(
+    filter ? worktrees.filter((wt) => _matchesFilter(wt, filter)) : worktrees,
+  );
   const completedCount = worktrees.filter(
     (w) => w.status === 'completed',
   ).length;
