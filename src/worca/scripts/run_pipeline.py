@@ -52,6 +52,10 @@ def create_parser():
                         help="Absolute path to the parent project's .worca/ directory; "
                              "required in --worktree mode so pipelines.d/ updates land "
                              "in the parent project, not inside the worktree.")
+    parser.add_argument("--run-id",
+                        help="Pre-assigned run ID (set by run_worktree.py so the runner "
+                             "and the multi-pipeline registry agree on the key). When "
+                             "omitted, the runner generates its own.")
     return parser
 
 
@@ -284,6 +288,7 @@ def main():
             worktree=args.worktree,
             pipeline_template=_pipeline_template,
             registry_base=args.registry_base,
+            run_id=args.run_id,
         )
 
         # Snapshot template to run dir and write merged settings for traceability

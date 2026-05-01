@@ -112,6 +112,24 @@ class TestBuildPipelineCmd:
         assert cmd[idx + 1] == os.path.abspath(".worca")
         assert os.path.isabs(cmd[idx + 1])
 
+    def test_passes_run_id_to_run_pipeline(self):
+        """When run_worktree assigns a run_id, it must forward it as --run-id
+        so the runner's status.json key matches the registry entry."""
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(
+            self._parse(["--prompt", "x"]),
+            run_id="20260501-000000-000-abcd",
+        )
+        idx = cmd.index("--run-id")
+        assert cmd[idx + 1] == "20260501-000000-000-abcd"
+
+    def test_omits_run_id_when_unset(self):
+        """Legacy callers may omit run_id; --run-id is then absent so the
+        runner falls back to generating one."""
+        from worca.scripts.run_worktree import _build_pipeline_cmd
+        cmd = _build_pipeline_cmd(self._parse(["--prompt", "x"]))
+        assert "--run-id" not in cmd
+
 
 class TestHelpers:
     def test_generate_run_id_format(self):

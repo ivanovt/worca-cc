@@ -73,11 +73,16 @@ def _copy_claude_config(src_dir: str, dst_dir: str) -> None:
             shutil.copy2(os.path.join(root, f), dst_file)
 
 
-def _build_pipeline_cmd(args: argparse.Namespace) -> list:
+def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
     """Build the run_pipeline.py argv to spawn inside the worktree.
 
     Pure function over parsed args — no filesystem or env side effects — so
     tests can assert the exact argv shape without mocking Popen.
+
+    When run_id is given (called from main()), it is forwarded as --run-id
+    so the runner uses the same key as the multi-pipeline registry entry
+    written by register_pipeline(). When empty, --run-id is omitted and the
+    runner falls back to generating one (legacy in-place callers).
     """
     cmd = [
         sys.executable,
@@ -86,6 +91,8 @@ def _build_pipeline_cmd(args: argparse.Namespace) -> list:
         "--registry-base",
         os.path.abspath(".worca"),
     ]
+    if run_id:
+        cmd.extend(["--run-id", run_id])
 
     if args.source:
         cmd.extend(["--source", args.source])
@@ -245,7 +252,7 @@ def main(argv=None) -> int:
     )
 
     # Step 7: build and spawn run_pipeline.py --worktree (detached, fire-and-forget)
-    cmd = _build_pipeline_cmd(args)
+    cmd = _build_pipeline_cmd(args, run_id=run_id)
 
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)

@@ -1166,6 +1166,7 @@ def run_pipeline(
     worktree: bool = False,
     pipeline_template: Optional[str] = None,
     registry_base: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -1305,8 +1306,12 @@ def run_pipeline(
         # --branch flag, which in worktree mode names the base branch.
         status["target_branch"] = os.environ.get("WORCA_TARGET_BRANCH") or branch or None
 
-        # Create per-run directory
-        run_id = _generate_run_id(status["started_at"])
+        # Create per-run directory. In worktree mode the caller (run_worktree.py)
+        # passes the run_id it already used to register the pipeline, so the
+        # registry key and the runner's run_id stay in lockstep — otherwise
+        # update_pipeline() silently can't find the entry on completion.
+        if not run_id:
+            run_id = _generate_run_id(status["started_at"])
         status["run_id"] = run_id
         run_dir = os.path.join(worca_dir, "runs", run_id)
         os.makedirs(os.path.join(run_dir, "agents"), exist_ok=True)
