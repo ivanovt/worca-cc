@@ -241,12 +241,16 @@ def main(argv=None) -> int:
     # Step 5: init beads in worktree
     init_worktree_beads(worktree_path)
 
-    # Step 6: register in pipelines.d/
+    # Step 6: register in pipelines.d/. The branch is the worktree's own
+    # branch (worca/<slug>-<run_id>, written by create_pipeline_worktree);
+    # storing it lets the Worktrees view show it without reaching into the
+    # worktree's status.json.
     register_pipeline(
         run_id=run_id,
         worktree_path=worktree_path,
         title=wr.title,
         pid=os.getpid(),
+        branch=f"worca/{slug}-{run_id}",
         fleet_id=args.fleet_id,
         target_branch=args.branch,
     )

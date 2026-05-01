@@ -63,6 +63,29 @@ def test_register_correct_fields(tmp_path):
     datetime.fromisoformat(data["updated_at"])
 
 
+def test_register_persists_branch(tmp_path):
+    """branch (the worktree's own branch) lands in the registry so the
+    Worktrees UI can show it without reading the worktree's status.json."""
+    base = str(tmp_path / ".worca")
+    path = register_pipeline(
+        "run-br", "/tmp/wt", "With Branch", 1, base=base,
+        branch="worca/feat-run-br",
+    )
+    with open(path) as f:
+        data = json.load(f)
+    assert data["branch"] == "worca/feat-run-br"
+
+
+def test_register_omits_branch_when_unset(tmp_path):
+    """Without the branch kwarg the field is absent (matches existing
+    optional-field behaviour for fleet_id, workspace_id, etc.)."""
+    base = str(tmp_path / ".worca")
+    path = register_pipeline("run-nb", "/tmp/wt", "No Branch", 1, base=base)
+    with open(path) as f:
+        data = json.load(f)
+    assert "branch" not in data
+
+
 def test_register_atomic_write(tmp_path):
     """Verify register uses temp file + os.replace for atomicity."""
     base = str(tmp_path / ".worca")

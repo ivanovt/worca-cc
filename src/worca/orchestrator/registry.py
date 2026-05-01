@@ -52,6 +52,7 @@ def register_pipeline(
     pid,
     base=_DEFAULT_BASE,
     *,
+    branch=None,
     fleet_id=None,
     workspace_id=None,
     group_type=None,
@@ -61,6 +62,10 @@ def register_pipeline(
 
     Creates .worca/multi/pipelines.d/{run_id}.json with pipeline metadata.
     Uses atomic writes (temp file + os.replace).
+
+    branch: the worktree's own branch name (e.g. "worca/<slug>-<run_id>") —
+    stored so the Worktrees UI can show it without reading the worktree's
+    status.json. Distinct from target_branch (the PR base branch).
 
     fleet_id and workspace_id are mutually exclusive; pass at most one.
     """
@@ -77,6 +82,8 @@ def register_pipeline(
         "started_at": now,
         "updated_at": now,
     }
+    if branch is not None:
+        data["branch"] = branch
     if fleet_id is not None:
         data["fleet_id"] = fleet_id
     if workspace_id is not None:
