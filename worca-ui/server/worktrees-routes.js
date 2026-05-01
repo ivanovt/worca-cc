@@ -14,6 +14,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   unlinkSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -25,6 +26,48 @@ const RESUMABLE_STATUSES = new Set(['failed', 'paused', 'cancelled']);
 const _diskCache = new Map();
 const DISK_CACHE_TTL_MS = 30_000;
 
+/**
+ * Sum file sizes under a directory tree. Cross-platform: prior `du -sb`
+ * relied on GNU coreutils and silently returned 0 on macOS / BSD du,
+ * which is why the Worktrees view always showed "0 B".
+ *
+ * Skips symlinks (don't follow into other trees) and is bounded by
+ * MAX_WALK_FILES so a runaway directory can't hang the request.
+ * Errors on individual entries are swallowed so a transiently-locked
+ * file doesn't poison the whole sum.
+ */
+const MAX_WALK_FILES = 100_000;
+function _walkDirSize(rootPath) {
+  let total = 0;
+  let count = 0;
+  const stack = [rootPath];
+  while (stack.length > 0 && count < MAX_WALK_FILES) {
+    const cur = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(cur, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      count++;
+      if (count >= MAX_WALK_FILES) break;
+      const child = join(cur, e.name);
+      if (e.isSymbolicLink()) continue;
+      if (e.isDirectory()) {
+        stack.push(child);
+      } else if (e.isFile()) {
+        try {
+          total += statSync(child).size;
+        } catch {
+          /* ignore — file vanished mid-walk */
+        }
+      }
+    }
+  }
+  return total;
+}
+
 function _getDiskBytes(worktreePath) {
   const now = Date.now();
   const hit = _diskCache.get(worktreePath);
@@ -32,12 +75,7 @@ function _getDiskBytes(worktreePath) {
 
   let bytes = 0;
   try {
-    const out = execFileSync('du', ['-sb', worktreePath], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 5_000,
-    });
-    bytes = parseInt(out.split('\t')[0], 10) || 0;
+    bytes = _walkDirSize(worktreePath);
   } catch {
     bytes = 0;
   }

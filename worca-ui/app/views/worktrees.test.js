@@ -206,9 +206,11 @@ describe('worktreesView - renders rows from worktrees data', () => {
     expect(output).toContain('status-badge-running');
   });
 
-  it('renders Open and Cleanup action buttons', () => {
+  it('renders the Cleanup action button (card itself is the click target)', () => {
     const output = renderToString(worktreesView([completedWorktree]));
-    expect(output).toContain('btn-open-run');
+    // No standalone "Open" button — clicking the card body navigates,
+    // matching run-card behaviour.
+    expect(output).not.toContain('btn-open-run');
     expect(output).toContain('btn-cleanup');
   });
 });

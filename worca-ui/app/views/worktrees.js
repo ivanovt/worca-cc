@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { formatDuration } from '../utils/duration.js';
-import { FolderOpen, iconSvg, Trash2 } from '../utils/icons.js';
+import { iconSvg, Trash2 } from '../utils/icons.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 
@@ -95,9 +95,15 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
   const isRunning = wt.status === 'running';
   const groupLabel = _groupLabel(wt);
   const status = wt.status || 'unknown';
+  // Whole card is the click target — matches run-card behaviour. The
+  // Cleanup button stops propagation so it doesn't trigger navigation.
+  const cardClick = onSelectRun ? () => onSelectRun(wt.run_id) : null;
 
   return html`
-    <div class="run-card worktree-card ${statusClass(status)}">
+    <div
+      class="run-card worktree-card ${statusClass(status)}"
+      @click=${cardClick}
+    >
       <div class="run-card-top">
         <span class="run-card-status">
           ${unsafeHTML(statusIcon(status, 16))}
@@ -142,20 +148,15 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
       <div class="run-card-actions">
         <sl-button
           size="small"
-          variant="default"
-          class="btn-open-run"
-          @click=${onSelectRun ? () => onSelectRun(wt.run_id) : null}
-        >
-          ${unsafeHTML(iconSvg(FolderOpen, 12))} Open
-        </sl-button>
-        <sl-button
-          size="small"
           variant="danger"
           outline
           class="btn-cleanup${isRunning ? ' btn-cleanup-disabled' : ''}"
           ?disabled=${isRunning}
           title=${isRunning ? 'Cannot cleanup a running worktree' : nothing}
-          @click=${!isRunning && onCleanup ? () => onCleanup(wt) : null}
+          @click=${(e) => {
+            e.stopPropagation();
+            if (!isRunning && onCleanup) onCleanup(wt);
+          }}
         >
           ${unsafeHTML(iconSvg(Trash2, 12))} Cleanup
         </sl-button>
