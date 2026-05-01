@@ -10,7 +10,7 @@ function _mockWatcherFactory(name) {
     name,
     destroy: vi.fn(),
     scheduleRefresh: vi.fn(),
-    resolveActiveRunDir: vi.fn(() => '/mock'),
+    resolveLatestRunDir: vi.fn(() => '/mock'),
     currentActiveRunId: vi.fn(() => null),
     getBeadsDbPath: vi.fn(() => '/mock/beads.db'),
     readEventsFromFile: vi.fn(() => []),

@@ -15,6 +15,17 @@ let branches = null; // null = not fetched, [] = fetched but empty
 let selectedBranch = ''; // empty = new branch
 let templates = null; // null = not fetched
 let selectedTemplate = 'default'; // 'default' = built-in worca pipeline
+let prBaseBranch = '';
+let prBaseBranchError = '';
+
+// Dismissable worktree info banner — persisted via localStorage
+let bannerDismissed = (() => {
+  try {
+    return localStorage.getItem('worca.worktree-banner-dismissed') === '1';
+  } catch {
+    return false;
+  }
+})();
 
 /**
  * Reset module state for testing or re-initialization.
@@ -26,7 +37,11 @@ export function resetNewRunState(overrides = {}) {
   selectedPlan = overrides.selectedPlan ?? '';
   planFilter = overrides.selectedPlan ?? '';
   selectedBranch = '';
+  prBaseBranch = overrides.prBaseBranch ?? '';
+  prBaseBranchError = overrides.prBaseBranchError ?? '';
   selectedTemplate = overrides.selectedTemplate ?? 'default';
+  if ('bannerDismissed' in overrides)
+    bannerDismissed = overrides.bannerDismissed;
 }
 
 function sourceLabel(type) {
@@ -155,6 +170,14 @@ export async function submitNewRun({ rerender, onStarted, projectId }) {
   const msize = msizeEl ? parseInt(msizeEl.value, 10) || 1 : 1;
   const mloops = mloopsEl ? parseInt(mloopsEl.value, 10) || 1 : 1;
 
+  const PR_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
+  if (prBaseBranch && !PR_BRANCH_RE.test(prBaseBranch)) {
+    submitStatus = 'error';
+    submitError = 'PR base branch contains invalid characters.';
+    rerender();
+    return;
+  }
+
   submitStatus = 'submitting';
   submitError = '';
   rerender();
@@ -168,7 +191,8 @@ export async function submitNewRun({ rerender, onStarted, projectId }) {
     if (hasSource) body.sourceValue = sourceValue;
     if (hasPrompt) body.prompt = promptValue;
     if (hasPlan) body.planFile = selectedPlan;
-    if (selectedBranch) body.branch = selectedBranch;
+    if (prBaseBranch) body.branch = prBaseBranch;
+    else if (selectedBranch) body.branch = selectedBranch;
     if (selectedTemplate && selectedTemplate !== 'default')
       body.template = selectedTemplate;
 
@@ -209,7 +233,6 @@ export function hasActivePipeline(state) {
 
 export function newRunView(_state, { rerender }) {
   const projectId = _state.currentProjectId || null;
-  const pipelineRunning = hasActivePipeline(_state);
 
   function handleSourceTypeChange(e) {
     sourceType = e.target.value;
@@ -276,6 +299,24 @@ export function newRunView(_state, { rerender }) {
     rerender();
   }
 
+  function handleBannerDismiss() {
+    bannerDismissed = true;
+    try {
+      localStorage.setItem('worca.worktree-banner-dismissed', '1');
+    } catch {}
+    rerender();
+  }
+
+  const PR_BRANCH_RE = /^[a-zA-Z0-9._/-]+$/;
+  function handlePrBaseBranchInput(e) {
+    prBaseBranch = e.target.value;
+    prBaseBranchError =
+      prBaseBranch && !PR_BRANCH_RE.test(prBaseBranch)
+        ? 'Invalid characters. Use letters, numbers, dots, hyphens, underscores, or slashes.'
+        : '';
+    rerender();
+  }
+
   const filtered = filteredPlanFiles();
   const grouped = groupedPlanFiles(filtered);
 
@@ -289,19 +330,17 @@ export function newRunView(_state, { rerender }) {
   return html`
     <div class="new-run-page">
       ${
-        pipelineRunning
-          ? html`
-        <div class="new-run-info">
-          <strong>Pipeline already running</strong>
-          <p>Parallel pipelines on the same project are not fully supported yet.
-          Please wait for the current pipeline to finish, or stop it before starting a new one.</p>
-        </div>
+        bannerDismissed
+          ? nothing
+          : html`
+        <sl-alert variant="primary" open closable @sl-after-hide=${handleBannerDismiss}>
+          Each pipeline now runs in its own git worktree — parallel runs no longer collide on the working tree.
+        </sl-alert>
       `
-          : nothing
       }
       ${submitStatus === 'error' ? html`<div class="new-run-error">${submitError}</div>` : nothing}
 
-      <div class="new-run-form ${pipelineRunning ? 'new-run-form-disabled' : ''}"
+      <div class="new-run-form">
         <!-- Section 1: Work Source -->
         <div class="new-run-section">
           <h3 class="new-run-section-title">Work Source</h3>
@@ -451,6 +490,18 @@ export function newRunView(_state, { rerender }) {
         <div class="new-run-section">
           <h3 class="new-run-section-title">Advanced Options</h3>
           <div class="new-run-advanced">
+            <div class="settings-field">
+              <label class="settings-label">PR base branch (optional)</label>
+              <sl-input
+                id="new-run-pr-base-branch"
+                placeholder="main"
+                .value=${prBaseBranch}
+                @sl-input=${handlePrBaseBranchInput}
+              ></sl-input>
+              <span class="settings-field-hint">Branch the worktree forks from and the PR will target. Defaults to repo's default branch.</span>
+              ${prBaseBranchError ? html`<span class="settings-field-error">${prBaseBranchError}</span>` : nothing}
+            </div>
+
             <div class="new-run-grid">
               <div class="settings-field">
                 <label class="settings-label">Size Multiplier (msize)</label>

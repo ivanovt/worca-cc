@@ -69,9 +69,16 @@ def _read_events_jsonl(worca_dir: Path) -> list:
     return []
 
 
-def _active_run_id(worca_dir: Path) -> str:
-    """Read the active run ID from .worca/active_run."""
-    return (worca_dir / "active_run").read_text().strip()
+def _find_latest_run_id(worca_dir: Path) -> str:
+    """Return the run_id of the most recently created run in runs/."""
+    runs_dir = worca_dir / "runs"
+    if not runs_dir.exists():
+        raise RuntimeError(f"No runs/ directory found in {worca_dir}")
+    run_dirs = sorted(runs_dir.iterdir(), key=lambda p: p.name, reverse=True)
+    for run_dir in run_dirs:
+        if (run_dir / "status.json").exists():
+            return run_dir.name
+    raise RuntimeError(f"No run found in {worca_dir}/runs/")
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +187,7 @@ def send_sigkill(proc, env: PipelineEnv) -> None:
 
 def write_control_stop(proc, env: PipelineEnv) -> None:
     """Write a stop control file using the current control.py protocol."""
-    run_id = _active_run_id(env.worca_dir)
+    run_id = _find_latest_run_id(env.worca_dir)
     control = env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({
         "action": "stop",
@@ -191,7 +198,7 @@ def write_control_stop(proc, env: PipelineEnv) -> None:
 
 def write_control_pause(proc, env: PipelineEnv) -> None:
     """Write a pause control file using the current control.py protocol."""
-    run_id = _active_run_id(env.worca_dir)
+    run_id = _find_latest_run_id(env.worca_dir)
     control = env.worca_dir / "runs" / run_id / "control.json"
     control.write_text(json.dumps({
         "action": "pause",

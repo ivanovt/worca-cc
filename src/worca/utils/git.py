@@ -64,17 +64,28 @@ def get_current_git_head() -> str:
     return result.stdout.strip()
 
 
-def create_pipeline_worktree(run_id: str, slug: str, base_branch: str = "HEAD") -> str:
+def create_pipeline_worktree(
+    run_id: str,
+    slug: str,
+    base_branch: str = "HEAD",
+    base_dir: str = ".worktrees",
+) -> str:
     """Create a worktree for a pipeline run.
 
-    Creates worktree at .worktrees/pipeline-{run_id} with branch
+    Creates worktree at {base_dir}/pipeline-{run_id} with branch
     worca/{slug}-{run_id}, based on the given base_branch.
 
-    Runs: git worktree add -b worca/{slug}-{run_id} .worktrees/pipeline-{run_id} {base_branch}
+    base_dir defaults to ".worktrees" (in-repo). Absolute paths and
+    paths starting with "~" are accepted; relative paths resolve from
+    the current working directory (the project root).
+
     Returns the absolute worktree path on success, empty string on failure.
     """
     branch = f"worca/{slug}-{run_id}"
-    path = os.path.join(".worktrees", f"pipeline-{run_id}")
+    base = os.path.expanduser(base_dir)
+    path = os.path.join(base, f"pipeline-{run_id}")
+    if os.path.isabs(base):
+        os.makedirs(base, exist_ok=True)
     result = _run_git("worktree", "add", "-b", branch, path, base_branch)
     if result.returncode != 0:
         return ""
@@ -116,11 +127,27 @@ def remove_pipeline_worktree(worktree_path: str) -> bool:
     return True
 
 
+def _is_pipeline_worktree(entry: dict) -> bool:
+    """True when a `git worktree list` entry was created by run_worktree.py.
+
+    Identified by `pipeline-` basename or `worca/` branch prefix — covers
+    both the default `.worktrees/` location and any user-configured
+    worktree base dir.
+    """
+    path = entry.get("path", "")
+    if os.path.basename(path).startswith("pipeline-"):
+        return True
+    branch = entry.get("branch", "")
+    return branch.startswith("worca/")
+
+
 def list_pipeline_worktrees() -> list[dict]:
     """List pipeline worktrees from git worktree list --porcelain.
 
     Returns a list of dicts with keys: path, branch, commit.
-    Only includes worktrees whose path contains '.worktrees/pipeline-'.
+    Includes any worktree created by run_worktree.py regardless of the
+    configured worktree base dir (matches `pipeline-<runid>` basename
+    or `worca/...` branch).
     """
     result = _run_git("worktree", "list", "--porcelain")
     if result.returncode != 0:
@@ -140,15 +167,12 @@ def list_pipeline_worktrees() -> list[dict]:
                 ref = ref[len("refs/heads/"):]
             current["branch"] = ref
         elif line == "":
-            if current and "path" in current:
-                # Filter to pipeline worktrees only
-                if f".worktrees{os.sep}pipeline-" in current["path"] or ".worktrees/pipeline-" in current["path"]:
-                    worktrees.append(current)
+            if current and "path" in current and _is_pipeline_worktree(current):
+                worktrees.append(current)
             current = {}
     # Handle trailing entry without final blank line
-    if current and "path" in current:
-        if f".worktrees{os.sep}pipeline-" in current["path"] or ".worktrees/pipeline-" in current["path"]:
-            worktrees.append(current)
+    if current and "path" in current and _is_pipeline_worktree(current):
+        worktrees.append(current)
 
     return worktrees
 

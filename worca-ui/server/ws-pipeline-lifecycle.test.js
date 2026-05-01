@@ -158,8 +158,8 @@ describe('pause-run WS message', () => {
 describe('pipeline-paused and pipeline-resumed broadcasts', () => {
   let worcaDir, httpServer, port, runId;
 
-  // Each test gets its own server with active_run pre-created so the initial
-  // setupStatusWatcher() call watches the correct run directory.
+  // Each test gets its own server with status.json pre-created so the
+  // runsDirWatcher detects the existing run on startup.
   async function setupServer(initialStatus) {
     worcaDir = join(
       tmpdir(),
@@ -169,14 +169,13 @@ describe('pipeline-paused and pipeline-resumed broadcasts', () => {
     const runDir = join(worcaDir, 'runs', runId);
     mkdirSync(runDir, { recursive: true });
 
-    // Write status.json and active_run BEFORE creating the server so
-    // setupStatusWatcher() watches the correct run dir from the start.
+    // Write status.json BEFORE creating the server so the runsDirWatcher
+    // detects the existing run and schedules an initial refresh.
     writeFileSync(
       join(runDir, 'status.json'),
       JSON.stringify({ run_id: runId, ...initialStatus, stages: {} }, null, 2),
       'utf8',
     );
-    writeFileSync(join(worcaDir, 'active_run'), runId);
 
     httpServer = createServer();
     attachWsServer(httpServer, {

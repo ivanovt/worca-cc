@@ -132,3 +132,59 @@ describe('runDetailView - endTime for active runs', () => {
     expect(out).toContain('Finished:');
   });
 });
+
+describe('runDetailView - worktree metadata row', () => {
+  function render(template) {
+    return renderToString(template?.overview ?? template);
+  }
+
+  it('shows Worktree row with path when is_worktree_run is true', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      completed_at: '2026-04-10T11:00:00Z',
+      is_worktree_run: true,
+      worktree_path: '/tmp/worktrees/run-xyz',
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Worktree:');
+    expect(out).toContain('/tmp/worktrees/run-xyz');
+  });
+
+  it('shows sl-copy-button in Worktree row', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      is_worktree_run: true,
+      worktree_path: '/tmp/worktrees/run-xyz',
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('sl-copy-button');
+  });
+
+  it('does not show Worktree row when is_worktree_run is false', () => {
+    const run = {
+      id: 'r2',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      completed_at: '2026-04-10T11:00:00Z',
+      is_worktree_run: false,
+      worktree_path: '/tmp/worktrees/run-xyz',
+    };
+    const out = render(runDetailView(run));
+    expect(out).not.toContain('Worktree:');
+  });
+
+  it('does not show Worktree row when is_worktree_run is absent', () => {
+    const run = {
+      id: 'r3',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      completed_at: '2026-04-10T11:00:00Z',
+    };
+    const out = render(runDetailView(run));
+    expect(out).not.toContain('Worktree:');
+  });
+});

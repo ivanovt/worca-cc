@@ -15,9 +15,9 @@ import { readProjectWorcaVersion } from './worca-setup.js';
 import { createBroadcaster } from './ws-broadcaster.js';
 import { createClientManager } from './ws-client-manager.js';
 import { createMessageRouter } from './ws-message-router.js';
-import { resolveActiveRunDir } from './ws-status-watcher.js';
+import { resolveLatestRunDir } from './ws-status-watcher.js';
 
-export { resolveActiveRunDir };
+export { resolveLatestRunDir };
 
 /**
  * Attach a WebSocket server to an existing HTTP server.
@@ -298,6 +298,15 @@ export function attachWsServer(httpServer, config) {
       const runsPath = join(wset.worcaDir, 'runs', runId);
       const resultsPath = join(wset.worcaDir, 'results', runId);
       if (existsSync(runsPath) || existsSync(resultsPath)) {
+        return projectId;
+      }
+      const registryPath = join(
+        wset.worcaDir,
+        'multi',
+        'pipelines.d',
+        `${runId}.json`,
+      );
+      if (existsSync(registryPath)) {
         return projectId;
       }
     }

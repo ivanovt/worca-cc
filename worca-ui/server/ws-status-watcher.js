@@ -1,32 +1,64 @@
 /**
- * Status file watcher — monitors status.json and active_run for changes.
- * Owns refresh scheduling, lastPipelineStatus tracking, and the status/activeRun FSWatchers.
+ * Status file watcher — monitors status.json and runs/ directory for changes.
+ * Owns refresh scheduling, lastPipelineStatus tracking, and the status/runsDirWatcher FSWatchers.
  */
 
-import { existsSync, readFileSync, watch } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  watch,
+} from 'node:fs';
 import { join } from 'node:path';
 import { readSettings } from './settings-reader.js';
 import { discoverRunsAsync } from './watcher.js';
 
 const REFRESH_DEBOUNCE_MS = 75;
+const WORKTREE_WATCHER_THRESHOLD = 50;
+const WORKTREE_POLL_MS = 30_000;
+// Display-layer: broadest set — any status that means "stop watching this run".
+// Differs from runner/resume (which exclude 'failed' to keep it resumable) and
+// cleanup ({completed, failed}). Here we add 'error' so the UI also stops polling
+// pipelines that crashed before reaching a clean terminal state.
+const TERMINAL_STATUSES = new Set([
+  'completed',
+  'failed',
+  'error',
+  'interrupted',
+]);
 
 /**
- * Resolve the active run directory for a given worca base dir.
- * Returns `<worcaDir>/runs/<runId>` as long as runId is non-empty,
- * without gating on the existence of status.json.
+ * Resolve the latest active run directory for a given worca base dir.
+ * Scans runs/<runId>/pipeline.pid for live processes via process.kill(pid, 0).
+ * Returns the run dir of the latest live run (by run ID), or worcaDir as fallback.
  *
  * @param {string} worcaDir
  * @returns {string}
  */
-export function resolveActiveRunDir(worcaDir) {
-  const activeRunPath = join(worcaDir, 'active_run');
-  if (existsSync(activeRunPath)) {
+export function resolveLatestRunDir(worcaDir) {
+  const runsDir = join(worcaDir, 'runs');
+  if (existsSync(runsDir)) {
+    let latest = null;
     try {
-      const runId = readFileSync(activeRunPath, 'utf8').trim();
-      if (runId) return join(worcaDir, 'runs', runId);
+      for (const entry of readdirSync(runsDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const pidPath = join(runsDir, entry.name, 'pipeline.pid');
+        if (!existsSync(pidPath)) continue;
+        try {
+          const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+          if (!Number.isNaN(pid) && pid > 0) {
+            process.kill(pid, 0); // throws if dead
+            if (!latest || entry.name > latest) latest = entry.name;
+          }
+        } catch {
+          /* dead process or invalid PID */
+        }
+      }
     } catch {
       /* ignore */
     }
+    if (latest) return join(runsDir, latest);
   }
   return worcaDir; // legacy fallback
 }
@@ -57,14 +89,118 @@ export function createStatusWatcher({
   let watchedRunDir = null;
   let activeRunWatcher = null;
   let runsDirWatcher = null;
+  let pipelinesDirWatcher = null;
+  const worktreeRunWatchers = new Map(); // Map<run_id, FSWatcher>
+  let worktreePollingInterval = null;
 
   function currentActiveRunId() {
     if (!watchedRunDir) return null;
     return watchedRunDir.split('/').pop() || null;
   }
 
-  function _resolveActiveRunDir() {
-    return resolveActiveRunDir(worcaDir);
+  function _resolveLatestRunDir() {
+    return resolveLatestRunDir(worcaDir);
+  }
+
+  function reconcileWorktreeWatchers() {
+    const pipelinesDirPath = join(worcaDir, 'multi', 'pipelines.d');
+    if (!existsSync(pipelinesDirPath)) {
+      for (const w of worktreeRunWatchers.values()) {
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      worktreeRunWatchers.clear();
+      if (worktreePollingInterval) {
+        clearInterval(worktreePollingInterval);
+        worktreePollingInterval = null;
+      }
+      return;
+    }
+
+    // Read all non-terminal entries from pipelines.d/
+    const activeEntries = new Map(); // run_id -> reg
+    try {
+      for (const entry of readdirSync(pipelinesDirPath)) {
+        if (!entry.endsWith('.json')) continue;
+        try {
+          const reg = JSON.parse(
+            readFileSync(join(pipelinesDirPath, entry), 'utf8'),
+          );
+          if (
+            reg.run_id &&
+            reg.worktree_path &&
+            !TERMINAL_STATUSES.has(reg.status)
+          ) {
+            activeEntries.set(reg.run_id, reg);
+          }
+        } catch {
+          /* ignore malformed */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    // >50 concurrent worktrees: fall back to periodic polling
+    if (activeEntries.size > WORKTREE_WATCHER_THRESHOLD) {
+      for (const w of worktreeRunWatchers.values()) {
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+      }
+      worktreeRunWatchers.clear();
+      if (!worktreePollingInterval) {
+        worktreePollingInterval = setInterval(
+          () => scheduleRefresh(),
+          WORKTREE_POLL_MS,
+        );
+      }
+      return;
+    }
+
+    // Below threshold: stop polling if it was running
+    if (worktreePollingInterval) {
+      clearInterval(worktreePollingInterval);
+      worktreePollingInterval = null;
+    }
+
+    // Remove watchers for entries no longer active
+    for (const [runId, w] of worktreeRunWatchers) {
+      if (!activeEntries.has(runId)) {
+        try {
+          w.close();
+        } catch {
+          /* ignore */
+        }
+        worktreeRunWatchers.delete(runId);
+      }
+    }
+
+    // Add watchers for new active entries
+    for (const [runId, reg] of activeEntries) {
+      if (worktreeRunWatchers.has(runId)) continue;
+      const wtRunsDir = join(reg.worktree_path, '.worca', 'runs');
+      if (!existsSync(wtRunsDir)) continue;
+      try {
+        const w = watch(
+          wtRunsDir,
+          { recursive: true },
+          (_eventType, filename) => {
+            if (!filename || filename.endsWith('status.json')) {
+              scheduleRefresh();
+            }
+          },
+        );
+        worktreeRunWatchers.set(runId, w);
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   function scheduleRefresh() {
@@ -79,6 +215,7 @@ export function createStatusWatcher({
       }
       try {
         const runs = await discoverRunsAsync(worcaDir);
+        reconcileWorktreeWatchers();
         const subscribedIds = new Set();
         for (const ws of wss.clients) {
           const s = getSubs(ws);
@@ -128,7 +265,7 @@ export function createStatusWatcher({
       statusWatcher.close();
       statusWatcher = null;
     }
-    const runDir = _resolveActiveRunDir();
+    const runDir = _resolveLatestRunDir();
     if (watchedRunDir !== null && runDir !== watchedRunDir) {
       if (onActiveRunChange) onActiveRunChange();
     }
@@ -181,7 +318,7 @@ export function createStatusWatcher({
           );
         } else {
           setTimeout(() => {
-            if (_resolveActiveRunDir() === runDir) tryWatch();
+            if (_resolveLatestRunDir() === runDir) tryWatch();
           }, 500);
         }
       } catch {
@@ -195,19 +332,15 @@ export function createStatusWatcher({
   // Initialize status watcher
   setupStatusWatcher();
 
-  // Watch worcaDir for active_run pointer changes
+  // Watch worcaDir for legacy status.json changes
   try {
     if (existsSync(worcaDir)) {
       activeRunWatcher = watch(
         worcaDir,
         { recursive: false },
         (_eventType, filename) => {
-          if (
-            !filename ||
-            filename === 'active_run' ||
-            filename === 'status.json'
-          ) {
-            const newRunDir = _resolveActiveRunDir();
+          if (!filename || filename === 'status.json') {
+            const newRunDir = _resolveLatestRunDir();
             if (newRunDir !== watchedRunDir) {
               setupStatusWatcher();
             }
@@ -238,6 +371,24 @@ export function createStatusWatcher({
     /* ignore */
   }
 
+  // Watch .worca/multi/pipelines.d/ for pipeline additions/removals.
+  // Create the directory eagerly so the watcher fires even on first worktree run.
+  const pipelinesDirPath = join(worcaDir, 'multi', 'pipelines.d');
+  try {
+    mkdirSync(pipelinesDirPath, { recursive: true });
+    pipelinesDirWatcher = watch(
+      pipelinesDirPath,
+      { recursive: false },
+      (_eventType, filename) => {
+        if (!filename || filename.endsWith('.json')) {
+          scheduleRefresh();
+        }
+      },
+    );
+  } catch {
+    /* ignore */
+  }
+
   function getWatchedRunDir() {
     return watchedRunDir;
   }
@@ -246,12 +397,25 @@ export function createStatusWatcher({
     if (statusWatcher) statusWatcher.close();
     if (activeRunWatcher) activeRunWatcher.close();
     if (runsDirWatcher) runsDirWatcher.close();
+    if (pipelinesDirWatcher) pipelinesDirWatcher.close();
+    for (const w of worktreeRunWatchers.values()) {
+      try {
+        w.close();
+      } catch {
+        /* ignore */
+      }
+    }
+    worktreeRunWatchers.clear();
+    if (worktreePollingInterval) {
+      clearInterval(worktreePollingInterval);
+      worktreePollingInterval = null;
+    }
   }
 
   return {
     scheduleRefresh,
     currentActiveRunId,
-    resolveActiveRunDir: _resolveActiveRunDir,
+    resolveLatestRunDir: _resolveLatestRunDir,
     getWatchedRunDir,
     lastPipelineStatus,
     destroy,

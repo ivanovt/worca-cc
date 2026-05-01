@@ -22,7 +22,8 @@ function writeStatus(worcaDir, runId, status) {
     `${JSON.stringify(status, null, 2)}\n`,
     'utf8',
   );
-  writeFileSync(join(worcaDir, 'active_run'), runId, 'utf8');
+  // Write a dead PID so reconcile discovers this run via runs/*/pipeline.pid scan
+  writeFileSync(join(runDir, 'pipeline.pid'), '999999999', 'utf8');
 }
 
 function readStatus(worcaDir, runId) {
@@ -115,7 +116,7 @@ describe('reconcileStatus', () => {
     expect(status.stop_reason).toBe('signal');
   });
 
-  it('returns false when no active_run file exists and no per-run PIDs', async () => {
+  it('returns false when no per-run PIDs exist', async () => {
     const fixed = await reconcileStatus(worcaDir);
     expect(fixed).toBe(false);
   });
@@ -261,8 +262,6 @@ describe('reconcileStatus', () => {
       '999999998',
       'utf8',
     );
-
-    writeFileSync(join(worcaDir, 'active_run'), 'run-multi-2', 'utf8');
 
     const fixed = await reconcileStatus(worcaDir);
 

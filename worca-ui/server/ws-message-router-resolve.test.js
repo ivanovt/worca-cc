@@ -19,7 +19,7 @@ function mockWatcherSet(projectId, worcaDir = `/mock/${projectId}/.worca`) {
     statusWatcher: {
       scheduleRefresh: vi.fn(),
       lastPipelineStatus: new Map(),
-      resolveActiveRunDir: vi.fn(() => worcaDir),
+      resolveLatestRunDir: vi.fn(() => worcaDir),
       currentActiveRunId: vi.fn(() => null),
     },
     logWatcher: {

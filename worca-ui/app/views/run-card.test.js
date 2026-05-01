@@ -473,6 +473,58 @@ describe('runCardView - cancel button via actionAllowed', () => {
   });
 });
 
+describe('runCardView - worktree indicator icon', () => {
+  it('renders folder-symlink icon when is_worktree_run is true', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      is_worktree_run: true,
+      worktree_path: '/tmp/worktrees/run-abc',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('folder-symlink');
+  });
+
+  it('includes worktree path in title attribute on icon', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'completed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+      completed_at: '2026-01-01T01:00:00Z',
+      is_worktree_run: true,
+      worktree_path: '/tmp/worktrees/run-abc',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('Isolated worktree at /tmp/worktrees/run-abc');
+  });
+
+  it('does not render folder-symlink icon when is_worktree_run is false', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      is_worktree_run: false,
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('folder-symlink');
+  });
+
+  it('does not render folder-symlink icon when is_worktree_run is absent', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('folder-symlink');
+  });
+});
+
 describe('runCardView - Finished timestamp visibility', () => {
   it('shows elapsed time from started_at to now for active run without completed_at', () => {
     const run = {

@@ -1,7 +1,14 @@
 """UserPromptSubmit hook: Milestone approval gates.
 
 Checks pipeline status to determine if approval is needed before proceeding.
-Reads status from WORCA_STATUS_FILE env var (default: .worca/status.json).
+
+Status discovery order:
+  1. $WORCA_RUN_DIR/status.json — set by run_pipeline.py for the current run
+     (the production path; this is the runner→hook contract since W-048).
+  2. $WORCA_STATUS_FILE — explicit override path (used by tests and unusual
+     deployments where the runner can't set WORCA_RUN_DIR).
+
+If neither is set or readable, the hook returns no status and no gate fires.
 Exit code 0 = pass through. Prints approval prompt to stdout when gate is active.
 """
 import json
@@ -10,33 +17,29 @@ import os
 
 
 def load_status() -> dict | None:
-    """Load pipeline status from the status file.
+    """Load pipeline status for the run that this hook process belongs to.
 
-    Checks active_run pointer first for per-run status, then falls back
-    to WORCA_STATUS_FILE env var or .worca/status.json.
-    Returns the parsed status dict, or None if the file doesn't exist.
+    Returns the parsed status dict, or None if no readable status file is found.
     """
-    # Try active_run pointer first
-    active_run_path = ".worca/active_run"
-    if os.path.exists(active_run_path):
-        try:
-            run_id = open(active_run_path).read().strip()
-            candidate = os.path.join(".worca", "runs", run_id, "status.json")
-            if os.path.exists(candidate):
-                with open(candidate) as f:
+    run_dir = os.environ.get("WORCA_RUN_DIR")
+    if run_dir:
+        path = os.path.join(run_dir, "status.json")
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
                     return json.load(f)
-        except (OSError, json.JSONDecodeError):
-            pass
+            except (OSError, json.JSONDecodeError):
+                pass
 
-    # Fall back to env var or default
-    status_file = os.environ.get("WORCA_STATUS_FILE", ".worca/status.json")
-    if not os.path.exists(status_file):
-        return None
-    try:
-        with open(status_file, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return None
+    override = os.environ.get("WORCA_STATUS_FILE")
+    if override and os.path.exists(override):
+        try:
+            with open(override) as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    return None
 
 
 def check_milestone(status: dict | None) -> tuple:

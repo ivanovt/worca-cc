@@ -217,6 +217,46 @@ W-043: Unified pipeline state model and universal event dispatch.
 
 **No automatic migrations required** — these are runtime behavior changes. Update any external integrations or scripts that depend on the old behavior.
 
+### 0.17.x → 0.18.0
+
+W-048: Worktree-based pipeline isolation and unified run aggregation.
+
+**Breaking changes:**
+
+1. **`active_run` pointer file removed** — `.worca/active_run` is no longer written by any code path. External tools or scripts that read this file will get no data. Replace with scanning `.worca/runs/*/status.json` for non-terminal runs (`pipeline_status` not in `completed`, `failed`, `interrupted`). The stale file is deleted on the next `worca init --upgrade`.
+
+2. **`run_multi.py` and `run_batch.py` removed** — Both batch entry points are gone. Use `run_worktree.py` (one call per pipeline) or a shell loop as a replacement:
+   ```bash
+   # Old (run_multi.py accepted --requests)
+   python .claude/worca/scripts/run_multi.py --requests req1.json req2.json
+   # New
+   for req in req1.json req2.json; do
+     python .claude/worca/scripts/run_worktree.py --source "$req" &
+   done
+   ```
+
+3. **WebSocket protocol: 5 pipeline-* message types removed** — The `MultiWatcher`-based pipeline subscription protocol has been retired. The following message types are no longer emitted or accepted by the server:
+   - `list-pipelines`
+   - `subscribe-pipeline`
+   - `unsubscribe-pipeline`
+   - `pipeline-status-changed`
+   - `pipelines-list`
+
+   **Third-party WebSocket subscribers using any of these types will break.** Migrate to the unified run subscription protocol: subscribe via `subscribe-run` (or receive `runs-list` broadcasts) which now includes worktree runs alongside root runs. The `state.pipelines` client-side map is derived from `state.runs` — no separate pipeline subscription needed.
+
+4. **`MultiWatcher` server module removed** — `worca-ui/server/multi-watcher.js` is deleted. If any custom server code references `MultiWatcher`, `WatcherSet#getMultiWatcher`, or `WatcherSet#_createMultiWatcher`, remove those references.
+
+5. **'Pipeline already running' block removed from new-run UI** — Starting a new run no longer fails when a pipeline is already running. Each run spawns in its own isolated git worktree, so multiple concurrent pipelines are supported. External integrations that relied on the `422 Pipeline already running` error from `POST /runs` (or the equivalent WS rejection) must remove that error-handling branch.
+
+**New features / commands:**
+
+- **`run_worktree.py`** — single-pipeline worktree launcher. Creates a git worktree, registers in `pipelines.d/`, and spawns `run_pipeline.py` inside the worktree. Accepts `--prompt`, `--source`, `--plan`, `--branch`, `--guide`, `--fleet-id`.
+- **`--guide` flag on `run_pipeline.py`** — Pass a reference guide (repeatable) into the pipeline. Requires W-040 (`attach_guide()`) to be installed; emits a fatal error otherwise rather than silently dropping the content.
+- **`worca cleanup`** — Remove completed/failed pipeline worktrees from disk and from the `pipelines.d/` registry. Running worktrees are never eligible. Options: `--all`, `--run-id`, `--dry-run`, `--older-than`.
+- **`pipelines.d/` fan-out in `discoverRuns`** — Worktree runs are now visible in the unified runs list alongside root project runs. No UI changes required.
+
+**No automatic migrations required** — these are runtime behavior and protocol changes. Run `worca init --upgrade` once to remove the stale `active_run` file from `.worca/`. Update any external integrations or scripts that depend on the removed batch scripts, WebSocket protocol types, or `active_run` file.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

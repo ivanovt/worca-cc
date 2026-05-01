@@ -25,7 +25,7 @@ function makeTmpDir() {
 function setupWorcaDir(tmpDir, runId) {
   const runDir = join(tmpDir, 'runs', runId);
   mkdirSync(join(runDir, 'logs'), { recursive: true });
-  writeFileSync(join(tmpDir, 'active_run'), runId, 'utf8');
+  writeFileSync(join(runDir, 'pipeline.pid'), String(process.pid), 'utf8');
   writeFileSync(
     join(runDir, 'status.json'),
     `${JSON.stringify(

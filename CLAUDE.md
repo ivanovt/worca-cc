@@ -16,8 +16,13 @@ cd my-project/worca-ui && npm install && npm run build && cd -
 # Interactive mode
 cd my-project && claude
 
-# Autonomous mode
+# Autonomous mode (in-place)
 python .claude/scripts/run_pipeline.py --prompt "Add user auth"
+
+# Autonomous mode in an isolated git worktree (parallel-safe)
+python .claude/scripts/run_worktree.py --prompt "Add user auth" [--branch main] [--guide spec.md]
+# --branch: base branch for the new worktree (default: current HEAD)
+# --guide: path to a reference guide injected into the plan prompt (repeatable, requires W-040)
 ```
 
 ## Architecture
@@ -34,7 +39,7 @@ All governance enforced via Python hooks in `src/worca/claude_hooks/`.
 src/worca/               # Python package (pip-installable)
   orchestrator/          # Pipeline state machine, stages, prompt builder
   claude_hooks/          # Claude Code hook scripts (pre/post tool use, etc.)
-  scripts/               # Pipeline entry points (run_pipeline.py, run_multi.py)
+  scripts/               # Pipeline entry points (run_pipeline.py, run_worktree.py)
   agents/core/           # Agent .md templates (planner, coordinator, etc.)
   schemas/               # JSON schemas for structured agent output
   state/                 # Status JSON read/write, iteration tracking
@@ -172,6 +177,22 @@ pnpm worca:ui -- --version           # Print version
 The `--port` flag takes precedence over the `PORT` env var. `HOST` / `--host` works the same way (default `127.0.0.1`).
 
 Global mode (the default) starts the UI without a fixed project root, serving all projects registered in `~/.worca/projects.d/`. Use `--project` to scope to a single project.
+
+**Fleet and workspace grouping requires global mode.** Fleet (`--fleet-id`) and workspace (`--workspace-id`) grouping headers only appear when all member runs are visible across all registered projects. In single-project mode, cross-project siblings are invisible and the UI surfaces an inline notice prompting the user to switch to global mode.
+
+### Worktree cleanup
+
+Each `run_worktree.py` invocation creates a git worktree on disk. Worktrees persist until explicitly removed:
+
+```bash
+worca cleanup                    # Interactive: list completed worktrees, prompt to remove
+worca cleanup --all              # Remove all completed/failed worktrees without prompting
+worca cleanup --run-id <id>      # Remove a specific worktree by run ID
+worca cleanup --dry-run          # Preview what would be removed
+worca cleanup --older-than 7d   # Remove worktrees started more than 7 days ago
+```
+
+Running worktrees are never eligible for cleanup. Use `git worktree list` to see all worktrees.
 
 ## Migrating
 

@@ -219,8 +219,8 @@ def test_reconstruct_context_picks_latest_iteration(tmp_path):
     assert ctx["implement"] == {"files_changed": 1}
 
 
-def test_can_resume_via_active_run_pointer(tmp_path):
-    """can_resume finds status via active_run pointer."""
+def test_can_resume_finds_status_via_runs_scan(tmp_path):
+    """can_resume finds status via runs/ directory scan (no active_run pointer needed)."""
     worca_dir = tmp_path / ".worca"
     run_id = "20260309-171545"
     run_dir = worca_dir / "runs" / run_id
@@ -236,13 +236,9 @@ def test_can_resume_via_active_run_pointer(tmp_path):
     with open(str(run_dir / "status.json"), "w") as f:
         json.dump(status, f)
 
-    # Write active_run pointer
-    with open(str(worca_dir / "active_run"), "w") as f:
-        f.write(run_id)
-
-    # The flat status.json doesn't exist
+    # No active_run pointer and no flat status.json — can_resume scans runs/
+    assert not (worca_dir / "active_run").exists()
     assert not (worca_dir / "status.json").exists()
-    # But can_resume should find it via active_run
     assert can_resume(str(worca_dir / "status.json")) is True
 
 
@@ -525,6 +521,48 @@ def test_plan_review_loop_counter_persists_across_crash():
     }
     counters = restore_loop_counters(status)
     assert counters["plan_review"] == 1
+
+
+def test_can_resume_no_active_run(tmp_path):
+    """can_resume finds status via runs/ scan without any active_run pointer."""
+    worca_dir = tmp_path / ".worca"
+    run_id = "20260426-120000-000-abcd"
+    run_dir = worca_dir / "runs" / run_id
+    run_dir.mkdir(parents=True)
+
+    status = {
+        "run_id": run_id,
+        "pipeline_status": "running",
+        "stages": {
+            "plan": {"status": "completed"},
+            "coordinate": {"status": "pending"},
+        },
+    }
+    (run_dir / "status.json").write_text(json.dumps(status))
+
+    assert not (worca_dir / "active_run").exists()
+    assert not (worca_dir / "status.json").exists()
+
+    assert can_resume(str(worca_dir / "status.json")) is True
+
+
+def test_can_resume_with_run_id(tmp_path):
+    """can_resume(run_id=...) does a direct per-run lookup."""
+    worca_dir = tmp_path / ".worca"
+    run_id = "20260426-120000-000-abcd"
+    run_dir = worca_dir / "runs" / run_id
+    run_dir.mkdir(parents=True)
+
+    status = {
+        "run_id": run_id,
+        "stages": {
+            "plan": {"status": "completed"},
+            "coordinate": {"status": "pending"},
+        },
+    }
+    (run_dir / "status.json").write_text(json.dumps(status))
+
+    assert can_resume(str(worca_dir / "status.json"), run_id=run_id) is True
 
 
 def test_reconstruct_context_plan_review_completed_plan_pending(tmp_path):

@@ -11,7 +11,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.work_request import normalize, WorkRequest
-from worca.orchestrator.runner import run_pipeline, LoopExhaustedError, PipelineError
+from worca.orchestrator.runner import run_pipeline, LoopExhaustedError, PipelineError, _find_active_runs
 from worca.state.status import load_status
 from worca.utils.gh_issues import gh_issue_fail
 
@@ -46,6 +46,16 @@ def create_parser():
     parser.add_argument("--template", help="Template ID to apply before running")
     parser.add_argument("--param", action="append", metavar="KEY=VALUE",
                         help="Template parameter override (repeatable)")
+    parser.add_argument("--guide", action="append", metavar="PATH",
+                        help="Path to a reference guide (repeatable); passed from run_worktree.py")
+    parser.add_argument("--registry-base",
+                        help="Absolute path to the parent project's .worca/ directory; "
+                             "required in --worktree mode so pipelines.d/ updates land "
+                             "in the parent project, not inside the worktree.")
+    parser.add_argument("--run-id",
+                        help="Pre-assigned run ID (set by run_worktree.py so the runner "
+                             "and the multi-pipeline registry agree on the key). When "
+                             "omitted, the runner generates its own.")
     return parser
 
 
@@ -150,14 +160,17 @@ def main():
 
     if args.resume:
         # Resume: load work_request from existing status.json instead of building from args
-        # Check active_run pointer first, then fall back to flat status.json
-        active_run_path = os.path.join(args.status_dir, "active_run")
-        if os.path.exists(active_run_path):
-            active_id = Path(active_run_path).read_text().strip()
-            if os.sep in active_id or '/' in active_id or '..' in active_id:
-                print(f"error: invalid active_run ID: {active_id}", file=sys.stderr)
-                raise SystemExit(2)
-            status_file = os.path.join(args.status_dir, "runs", active_id, "status.json")
+        # Scan runs/ for non-terminal runs; error if multiple are found.
+        active_runs = _find_active_runs(args.status_dir)
+        if len(active_runs) > 1:
+            print(
+                f"error: multiple active runs found in {args.status_dir} — "
+                "specify --status-dir to select one",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
+        elif len(active_runs) == 1:
+            _, status_file = active_runs[0]
         else:
             status_file = os.path.join(args.status_dir, "status.json")
         if os.path.exists(status_file):
@@ -178,6 +191,19 @@ def main():
         print(f"Resuming pipeline: {work_request.title}")
     else:
         work_request = build_work_request(args)
+
+        if args.guide:
+            try:
+                from worca.orchestrator.work_request import attach_guide
+            except ImportError:
+                raise argparse.ArgumentError(
+                    None,
+                    "--guide requires worca-cc with attach_guide() (W-040 / #101). "
+                    "The flag was accepted by W-048 plumbing but content injection is "
+                    "not yet implemented in this version. Upgrade worca-cc to a version "
+                    "that ships W-040, or remove --guide from your invocation.",
+                )
+            work_request = attach_guide(work_request, args.guide)
 
         # Resolve plan: explicit --plan wins, then auto-detected from issue body
         plan_file = args.plan or work_request.plan_path
@@ -248,12 +274,7 @@ def main():
     effective_settings_path = _temp_settings_path if _template_id else args.settings
 
     try:
-        # For resume, always use default .worca/status.json so runner derives
-        # worca_dir correctly and finds the run via active_run pointer.
-        if args.resume:
-            effective_status_path = ".worca/status.json"
-        else:
-            effective_status_path = os.path.join(args.status_dir, "status.json")
+        effective_status_path = os.path.join(args.status_dir, "status.json")
         status = run_pipeline(
             work_request,
             plan_file=plan_file,
@@ -266,6 +287,8 @@ def main():
             skip_preflight=args.skip_preflight,
             worktree=args.worktree,
             pipeline_template=_pipeline_template,
+            registry_base=args.registry_base,
+            run_id=args.run_id,
         )
 
         # Snapshot template to run dir and write merged settings for traceability

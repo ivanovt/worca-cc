@@ -95,6 +95,46 @@ class TestCreatePipelineWorktree:
         result = create_pipeline_worktree("dup", "slug2")
         assert result == ""
 
+    def test_honors_custom_base_dir_relative(self, git_repo):
+        """A relative base_dir resolves from the project root."""
+        from worca.utils.git import create_pipeline_worktree
+
+        wt_path = create_pipeline_worktree(
+            "rel1", "feat", base_dir="custom-wt"
+        )
+        assert os.path.isdir(wt_path)
+        assert wt_path.endswith(os.path.join("custom-wt", "pipeline-rel1"))
+        # Should NOT live under the default .worktrees/ dir
+        assert os.sep + ".worktrees" + os.sep not in wt_path
+
+    def test_honors_custom_base_dir_absolute(self, git_repo, tmp_path):
+        """An absolute base_dir places the worktree outside the project."""
+        from worca.utils.git import create_pipeline_worktree
+
+        external = tmp_path / "external-wt"
+        wt_path = create_pipeline_worktree(
+            "abs1", "feat", base_dir=str(external)
+        )
+        assert os.path.isdir(wt_path)
+        # Resolve symlinks since /tmp may differ from /private/tmp on macOS
+        assert os.path.realpath(wt_path) == os.path.realpath(
+            str(external / "pipeline-abs1")
+        )
+
+    def test_honors_custom_base_dir_tilde(self, git_repo, tmp_path, monkeypatch):
+        """A ~-prefixed base_dir is expanded to the user's home directory."""
+        from worca.utils.git import create_pipeline_worktree
+
+        # Redirect $HOME so the test doesn't write into the real home dir
+        monkeypatch.setenv("HOME", str(tmp_path))
+        wt_path = create_pipeline_worktree(
+            "tilde1", "feat", base_dir="~/wt-home"
+        )
+        assert os.path.isdir(wt_path)
+        assert os.path.realpath(wt_path) == os.path.realpath(
+            str(tmp_path / "wt-home" / "pipeline-tilde1")
+        )
+
 
 # ---------------------------------------------------------------------------
 # remove_pipeline_worktree

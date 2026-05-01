@@ -29,7 +29,6 @@ export function createStore(initial = {}) {
     projects: initial.projects ?? [],
     runs: initial.runs ?? {},
     archivedRuns: initial.archivedRuns ?? {},
-    pipelines: initial.pipelines ?? {},
     logLines: initial.logLines ?? [],
     preferences: {
       theme: initial.preferences?.theme ?? 'light',
@@ -43,6 +42,7 @@ export function createStore(initial = {}) {
     },
     runsLoaded: initial.runsLoaded ?? false,
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
+    worktrees: initial.worktrees ?? [],
   };
 
   const subs = new Set();
@@ -75,7 +75,6 @@ export function createStore(initial = {}) {
         next.projects === state.projects &&
         next.runs === state.runs &&
         next.archivedRuns === state.archivedRuns &&
-        next.pipelines === state.pipelines &&
         next.logLines === state.logLines &&
         next.preferences.theme === state.preferences.theme &&
         next.preferences.sidebarCollapsed ===
@@ -83,7 +82,9 @@ export function createStore(initial = {}) {
         next.preferences.notifications === state.preferences.notifications &&
         next.beads === state.beads &&
         next.webhookInbox === state.webhookInbox &&
-        next.addProjectDialogOpen === state.addProjectDialogOpen
+        next.addProjectDialogOpen === state.addProjectDialogOpen &&
+        next.worktrees === state.worktrees &&
+        next.runsLoaded === state.runsLoaded
       )
         return;
       state = next;

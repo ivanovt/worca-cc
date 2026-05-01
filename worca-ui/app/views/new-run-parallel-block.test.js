@@ -50,15 +50,15 @@ describe('hasActivePipeline', () => {
 describe('newRunView parallel block', () => {
   const rerender = () => {};
 
-  it('renders info banner when a pipeline is running', () => {
+  // W-048: worktree isolation makes parallel runs safe — warning must NOT appear
+  it('does not render "Pipeline already running" warning when a pipeline is running', () => {
     resetNewRunState();
     const state = {
       runs: { 'run-1': { active: true, pipeline_status: 'running' } },
     };
     const out = renderToString(newRunView(state, { rerender }));
-    expect(out).toContain('new-run-info');
-    expect(out).toContain('Pipeline already running');
-    expect(out).toContain('new-run-form-disabled');
+    expect(out).not.toContain('Pipeline already running');
+    expect(out).not.toContain('new-run-form-disabled');
   });
 
   it('does not render info banner when no pipeline is running', () => {
@@ -70,5 +70,39 @@ describe('newRunView parallel block', () => {
     expect(out).not.toContain('new-run-info');
     expect(out).not.toContain('Pipeline already running');
     expect(out).not.toContain('new-run-form-disabled');
+  });
+});
+
+describe('newRunView worktree info banner', () => {
+  const rerender = () => {};
+
+  it('renders worktree info banner when not dismissed', () => {
+    resetNewRunState({ bannerDismissed: false });
+    const out = renderToString(newRunView({}, { rerender }));
+    expect(out).toContain('worktree');
+    expect(out).toContain('sl-alert');
+  });
+
+  it('does not render worktree banner when dismissed', () => {
+    resetNewRunState({ bannerDismissed: true });
+    const out = renderToString(newRunView({}, { rerender }));
+    expect(out).not.toContain('parallel runs no longer collide');
+  });
+});
+
+describe('newRunView PR base branch', () => {
+  const rerender = () => {};
+
+  it('renders PR base branch input in Advanced Options', () => {
+    resetNewRunState();
+    const out = renderToString(newRunView({}, { rerender }));
+    expect(out).toContain('PR base branch');
+    expect(out).toContain('new-run-pr-base-branch');
+  });
+
+  it('renders PR base branch validation error when set', () => {
+    resetNewRunState({ prBaseBranchError: 'invalid branch' });
+    const out = renderToString(newRunView({}, { rerender }));
+    expect(out).toContain('invalid branch');
   });
 });

@@ -207,6 +207,10 @@ def create_parser() -> argparse.ArgumentParser:
     from worca.cli.templates import register_subcommand as register_templates
     register_templates(sub)
 
+    # cleanup
+    from worca.cli.cleanup import register_subcommand as register_cleanup
+    register_cleanup(sub)
+
     return parser
 
 
@@ -244,6 +248,9 @@ def main(argv=None):
     elif args.command == "templates":
         from worca.cli.templates import cmd_templates
         cmd_templates(args)
+    elif args.command == "cleanup":
+        from worca.cli.cleanup import cmd_cleanup
+        cmd_cleanup(args)
     else:
         print(f"error: unknown command {args.command!r}", file=sys.stderr)
         raise SystemExit(1)

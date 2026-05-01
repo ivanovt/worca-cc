@@ -4525,3 +4525,61 @@ sl-tooltip.bead-tooltip::part(body) {
   padding: 2rem;
 }
 
+
+/* --- Worktrees view --- */
+.worktrees-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.worktrees-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  align-items: baseline;
+  padding: 6px 0 2px;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.worktrees-summary .meta-sep {
+  color: var(--border-subtle);
+  margin: 0 2px;
+}
+.worktrees-disk-alert {
+  margin-bottom: 4px;
+}
+.worktrees-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.worktrees-toolbar .worktrees-filter {
+  flex: 1;
+  min-width: 240px;
+}
+.worktree-card-path {
+  align-items: baseline;
+}
+.worktree-path-mono {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--muted);
+  word-break: break-all;
+}
+.worktrees-bulk-groups {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.worktrees-bulk-groups li {
+  margin-bottom: 2px;
+}
+.dialog-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  width: 100%;
+}

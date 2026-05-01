@@ -10,7 +10,6 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { MultiWatcher } from './multi-watcher.js';
 import { createBeadsWatcher } from './ws-beads-watcher.js';
 import { createEventWatcher } from './ws-event-watcher.js';
 import { createLogWatcher } from './ws-log-watcher.js';
@@ -32,14 +31,12 @@ export class WatcherSet {
     this._deps = deps;
     this._closed = false;
     this._tier = TIER_POLLING;
-    this._skipMultiWatcher = !!factoryOverrides._skipMultiWatcher;
-    const { _skipMultiWatcher, ...factories } = factoryOverrides;
     this._factories = {
       createStatusWatcher,
       createLogWatcher,
       createBeadsWatcher,
       createEventWatcher,
-      ...factories,
+      ...factoryOverrides,
     };
 
     /** @type {ReturnType<typeof createStatusWatcher> | null} */
@@ -50,8 +47,6 @@ export class WatcherSet {
     this.beadsWatcher = null;
     /** @type {ReturnType<typeof createEventWatcher> | null} */
     this.eventWatcher = null;
-    /** @type {MultiWatcher | null} */
-    this.multiWatcher = null;
   }
 
   get worcaDir() {
@@ -93,28 +88,6 @@ export class WatcherSet {
     if (this._tier === TIER_FULL) {
       this._createSecondaryWatchers();
     }
-    // Start multi-pipeline watcher (skip for pipeline-level WatcherSets to avoid recursion)
-    if (!this._skipMultiWatcher) {
-      this._createMultiWatcher();
-    }
-  }
-
-  /** Create multi-pipeline watcher for this project's .worca/multi/pipelines.d/. */
-  _createMultiWatcher() {
-    try {
-      this.multiWatcher = new MultiWatcher(
-        this.projectId,
-        this._worcaDir,
-        this._deps,
-      );
-      this.multiWatcher.start();
-    } catch (err) {
-      console.error(
-        `[WatcherSet:${this.projectId}] multiWatcher failed:`,
-        err.message,
-      );
-      this.multiWatcher = null;
-    }
   }
 
   /** Create status watcher (always needed). */
@@ -153,8 +126,8 @@ export class WatcherSet {
       try {
         this.logWatcher = this._factories.createLogWatcher({
           broadcaster,
-          resolveActiveRunDir: this.statusWatcher
-            ? this.statusWatcher.resolveActiveRunDir
+          resolveLatestRunDir: this.statusWatcher
+            ? this.statusWatcher.resolveLatestRunDir
             : () => worcaDir,
           worcaDir,
           currentActiveRunId: this.statusWatcher
@@ -236,15 +209,6 @@ export class WatcherSet {
     if (this._closed) return;
     this._closed = true;
 
-    if (this.multiWatcher) {
-      try {
-        this.multiWatcher.destroy();
-      } catch {
-        // ignore cleanup errors
-      }
-      this.multiWatcher = null;
-    }
-
     for (const w of [
       this.statusWatcher,
       this.logWatcher,
@@ -272,11 +236,6 @@ export class WatcherSet {
     if (this.beadsWatcher) count++;
     if (this.eventWatcher) count++;
     return count;
-  }
-
-  /** Get multi-pipeline watcher (may be null for pipeline-level WatcherSets). */
-  getMultiWatcher() {
-    return this.multiWatcher;
   }
 
   /** Delegate to status watcher's scheduleRefresh. */

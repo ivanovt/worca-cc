@@ -43,7 +43,7 @@ describe('log-line events include server-side timestamp', () => {
     const runDir = join(worcaDir, 'runs', runId);
     const logsDir = join(runDir, 'logs');
     mkdirSync(logsDir, { recursive: true });
-    writeFileSync(join(worcaDir, 'active_run'), runId);
+    writeFileSync(join(runDir, 'pipeline.pid'), String(process.pid));
     writeFileSync(
       join(runDir, 'status.json'),
       JSON.stringify({ run_id: runId, stages: {} }),
