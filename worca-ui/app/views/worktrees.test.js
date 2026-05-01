@@ -158,33 +158,46 @@ describe('worktreesView - renders rows from worktrees data', () => {
   });
 });
 
-describe('worktreesView - disk header', () => {
+describe('worktreesView - disk summary', () => {
   it('shows total disk usage across all worktrees', () => {
     // 1.2 GB + 0.5 GB = 1.7 GB
     const output = renderToString(
       worktreesView([completedWorktree, runningWorktree]),
     );
     expect(output).toContain('1.7 GB');
-    expect(output).toContain('across 2 worktrees');
+    expect(output).toContain('Total disk');
   });
 
   it('shows cleanable disk for completed worktrees only', () => {
     const output = renderToString(
       worktreesView([completedWorktree, runningWorktree]),
     );
-    expect(output).toContain('1.2 GB cleanable');
+    expect(output).toContain('Cleanable');
+    expect(output).toContain('1.2 GB');
   });
 
   it('shows resumable line when resumable worktrees exist', () => {
     const output = renderToString(
       worktreesView([completedWorktree, failedWorktree]),
     );
-    expect(output).toContain('cleanup blocks resume');
+    expect(output).toContain('Held by resumable');
   });
 
   it('does not show resumable line when no resumable worktrees', () => {
     const output = renderToString(worktreesView([completedWorktree]));
-    expect(output).not.toContain('cleanup blocks resume');
+    expect(output).not.toContain('Held by resumable');
+  });
+
+  it('renders a warning alert when total exceeds 2 GB', () => {
+    // Two 1.2 GB worktrees → 2.4 GB total
+    const big = {
+      ...completedWorktree,
+      run_id: 'r2',
+      disk_bytes: 1_200_000_000,
+    };
+    const output = renderToString(worktreesView([completedWorktree, big]));
+    expect(output).toContain('worktrees-disk-alert');
+    expect(output).toContain('disk usage is high');
   });
 });
 
@@ -250,20 +263,23 @@ describe('worktreesView - filter input narrows rows', () => {
   });
 });
 
-describe('worktreesView - group column', () => {
-  it('shows — for standalone worktrees', () => {
+describe('worktreesView - group label', () => {
+  it('omits the group meta item for standalone worktrees', () => {
+    // The card no longer renders a "Group: —" line for standalone worktrees;
+    // the meta item is just left out.
     const output = renderToString(worktreesView([completedWorktree]));
-    expect(output).toContain('worktree-group');
-    expect(output).toContain('—');
+    expect(output).not.toContain('Group:');
   });
 
-  it('shows fleet ID in group column for fleet worktrees', () => {
+  it('shows fleet ID in the group meta item for fleet worktrees', () => {
     const output = renderToString(worktreesView([fleetWorktree]));
+    expect(output).toContain('Group:');
     expect(output).toContain('fleet:f_abc123');
   });
 
-  it('shows workspace ID in group column for workspace worktrees', () => {
+  it('shows workspace ID in the group meta item for workspace worktrees', () => {
     const output = renderToString(worktreesView([workspaceWorktree]));
+    expect(output).toContain('Group:');
     expect(output).toContain('workspace:ws_xyz789');
   });
 });

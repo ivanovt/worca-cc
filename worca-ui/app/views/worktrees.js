@@ -1,5 +1,8 @@
 import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { formatDuration } from '../utils/duration.js';
+import { FolderOpen, iconSvg, Trash2 } from '../utils/icons.js';
+import { statusClass, statusIcon } from '../utils/status-badge.js';
 
 function _formatBytes(bytes) {
   if (!bytes || bytes < 0) return '0 B';
@@ -17,7 +20,7 @@ function _groupLabel(wt) {
   if (wt.group_type === 'fleet' && wt.fleet_id) return `fleet:${wt.fleet_id}`;
   if (wt.group_type === 'workspace' && wt.workspace_id)
     return `workspace:${wt.workspace_id}`;
-  return '—';
+  return null;
 }
 
 function _matchesFilter(wt, filter) {
@@ -25,7 +28,8 @@ function _matchesFilter(wt, filter) {
   return (
     (wt.title || '').toLowerCase().includes(q) ||
     (wt.branch || '').toLowerCase().includes(q) ||
-    _groupLabel(wt).toLowerCase().includes(q)
+    (_groupLabel(wt) || '').toLowerCase().includes(q) ||
+    (wt.worktree_path || '').toLowerCase().includes(q)
   );
 }
 
@@ -41,7 +45,7 @@ function _statusBadgeVariant(status) {
   return STATUS_BADGE_VARIANT[status] || 'neutral';
 }
 
-function _diskHeaderView(worktrees) {
+function _diskSummaryView(worktrees) {
   const total = worktrees.reduce((s, w) => s + (w.disk_bytes || 0), 0);
   const cleanable = worktrees
     .filter((w) => w.status === 'completed')
@@ -50,44 +54,98 @@ function _diskHeaderView(worktrees) {
   const resumableBytes = resumable.reduce((s, w) => s + (w.disk_bytes || 0), 0);
   const over2gb = total > 2_000_000_000;
 
+  // Warning banner only when over the threshold; otherwise a quiet meta line.
+  if (over2gb) {
+    return html`
+      <sl-alert variant="warning" open class="worktrees-disk-alert">
+        <strong>Worktree disk usage is high:</strong>
+        ${_formatBytes(total)} across ${worktrees.length} worktrees
+        (${_formatBytes(cleanable)} cleanable
+        ${
+          resumable.length > 0
+            ? html` · ${_formatBytes(resumableBytes)} held by resumable runs`
+            : nothing
+        }).
+      </sl-alert>
+    `;
+  }
+
   return html`
-    <div class="worktrees-disk-header${over2gb ? ' disk-warning' : ''}">
-      <span class="worktrees-disk-total">
-        Total worktree disk: ${_formatBytes(total)} across ${worktrees.length} worktrees · ${_formatBytes(cleanable)} cleanable
-      </span>
+    <div class="worktrees-summary">
+      <span class="meta-label">Total disk:</span>
+      <span class="meta-value">${_formatBytes(total)}</span>
+      <span class="meta-sep">·</span>
+      <span class="meta-label">Cleanable:</span>
+      <span class="meta-value">${_formatBytes(cleanable)}</span>
       ${
         resumable.length > 0
-          ? html`<span class="worktrees-disk-resumable">Resumable: ${_formatBytes(resumableBytes)} across ${resumable.length} worktrees (cleanup blocks resume)</span>`
+          ? html`
+              <span class="meta-sep">·</span>
+              <span class="meta-label">Held by resumable:</span>
+              <span class="meta-value">${_formatBytes(resumableBytes)}</span>
+            `
           : nothing
       }
     </div>
   `;
 }
 
-function _rowView(wt, { onSelectRun, onCleanup } = {}) {
+function _cardView(wt, { onSelectRun, onCleanup } = {}) {
   const isRunning = wt.status === 'running';
   const groupLabel = _groupLabel(wt);
+  const status = wt.status || 'unknown';
 
   return html`
-    <tr class="worktree-row worktree-row-${wt.status}">
-      <td class="worktree-title">${wt.title || wt.run_id}</td>
-      <td class="worktree-status">
-        <sl-badge variant="${_statusBadgeVariant(wt.status)}" pill class="status-badge-${wt.status}">
-          ${wt.status}
+    <div class="run-card worktree-card ${statusClass(status)}">
+      <div class="run-card-top">
+        <span class="run-card-status">
+          ${unsafeHTML(statusIcon(status, 16))}
+        </span>
+        <span class="run-card-title">${wt.title || wt.run_id}</span>
+        <sl-badge
+          variant="${_statusBadgeVariant(status)}"
+          pill
+          class="status-badge-${status}"
+        >
+          ${status}
         </sl-badge>
-      </td>
-      <td class="worktree-branch">${wt.branch || '—'}</td>
-      <td class="worktree-path">${wt.worktree_path}</td>
-      <td class="worktree-disk">${_formatBytes(wt.disk_bytes)}</td>
-      <td class="worktree-age">${_formatAge(wt.age_seconds)}</td>
-      <td class="worktree-group">${groupLabel}</td>
-      <td class="worktree-actions">
+      </div>
+      <div class="run-card-meta">
+        <span class="run-card-meta-item">
+          <span class="meta-label">Branch:</span>
+          <span class="meta-value">${wt.branch || '—'}</span>
+        </span>
+        <span class="run-card-meta-item">
+          <span class="meta-label">Disk:</span>
+          <span class="meta-value">${_formatBytes(wt.disk_bytes)}</span>
+        </span>
+        <span class="run-card-meta-item">
+          <span class="meta-label">Age:</span>
+          <span class="meta-value">${_formatAge(wt.age_seconds)}</span>
+        </span>
+        ${
+          groupLabel
+            ? html`
+                <span class="run-card-meta-item">
+                  <span class="meta-label">Group:</span>
+                  <span class="meta-value">${groupLabel}</span>
+                </span>
+              `
+            : nothing
+        }
+      </div>
+      <div class="run-card-meta worktree-card-path">
+        <span class="meta-label">Path:</span>
+        <code class="worktree-path-mono">${wt.worktree_path}</code>
+      </div>
+      <div class="run-card-actions">
         <sl-button
           size="small"
           variant="default"
           class="btn-open-run"
-          @click=${onSelectRun ? () => onSelectRun(wt.run_id) : null}>
-          Open
+          @click=${onSelectRun ? () => onSelectRun(wt.run_id) : null}
+        >
+          ${unsafeHTML(iconSvg(FolderOpen, 12))} Open
         </sl-button>
         <sl-button
           size="small"
@@ -96,11 +154,12 @@ function _rowView(wt, { onSelectRun, onCleanup } = {}) {
           class="btn-cleanup${isRunning ? ' btn-cleanup-disabled' : ''}"
           ?disabled=${isRunning}
           title=${isRunning ? 'Cannot cleanup a running worktree' : nothing}
-          @click=${!isRunning && onCleanup ? () => onCleanup(wt) : null}>
-          Cleanup
+          @click=${!isRunning && onCleanup ? () => onCleanup(wt) : null}
+        >
+          ${unsafeHTML(iconSvg(Trash2, 12))} Cleanup
         </sl-button>
-      </td>
-    </tr>
+      </div>
+    </div>
   `;
 }
 
@@ -116,43 +175,73 @@ function _cleanupDialogView(
   const confirmDisabled = needsCheckbox && !dialogCheckbox;
 
   return html`
-    <div class="worktrees-dialog-cleanup">
-      <p>Remove worktree for <strong>${dialogItem.title}</strong>?</p>
+    <sl-dialog
+      label="Cleanup worktree"
+      class="worktrees-dialog-cleanup"
+      open
+      @sl-request-close=${onDialogClose}
+    >
+      <p>
+        Remove worktree for
+        <strong>${dialogItem.title || dialogItem.run_id}</strong>?
+      </p>
       ${
         isGrouped
-          ? html`<p class="group-warning">This worktree belongs to <strong>${_groupLabel(dialogItem)}</strong> — removing it will block the group's <code>--resume</code> for this child.</p>`
+          ? html`
+              <sl-alert variant="warning" open class="group-warning">
+                This worktree belongs to
+                <strong>${_groupLabel(dialogItem)}</strong> — removing it will
+                block the group's <code>--resume</code> for this child.
+              </sl-alert>
+            `
           : nothing
       }
       ${
         needsCheckbox
           ? html`
-            <label class="cleanup-confirm-label">
-              <input
-                type="checkbox"
+              <sl-checkbox
                 class="cleanup-resume-checkbox"
                 ?checked=${dialogCheckbox}
-                @change=${onDialogCheckboxChange ? (e) => onDialogCheckboxChange(e.target.checked) : null}>
-              I understand resume will be unavailable
-            </label>
-          `
+                @sl-change=${
+                  onDialogCheckboxChange
+                    ? (e) => onDialogCheckboxChange(e.target.checked)
+                    : null
+                }
+              >
+                I understand resume will be unavailable
+              </sl-checkbox>
+            `
           : nothing
       }
-      <div class="dialog-actions">
+      <div slot="footer" class="dialog-actions">
         <sl-button variant="default" @click=${onDialogClose}>Cancel</sl-button>
         <sl-button
           variant="danger"
           class="btn-cleanup-confirm${confirmDisabled ? ' btn-cleanup-confirm-disabled' : ''}"
           ?disabled=${confirmDisabled}
-          @click=${!confirmDisabled && onDialogConfirm ? () => onDialogConfirm(dialogItem.run_id, needsCheckbox) : null}>
-          Cleanup
+          @click=${
+            !confirmDisabled && onDialogConfirm && dialogItem
+              ? () => onDialogConfirm(dialogItem.run_id, needsCheckbox)
+              : null
+          }
+        >
+          ${unsafeHTML(iconSvg(Trash2, 12))} Cleanup
         </sl-button>
       </div>
-    </div>
+    </sl-dialog>
   `;
 }
 
-function _bulkDialogView(worktrees, { onDialogClose, onDialogConfirm } = {}) {
+function _bulkDialogView(
+  worktrees,
+  open,
+  { onDialogClose, onDialogConfirm } = {},
+) {
   const completed = worktrees.filter((w) => w.status === 'completed');
+  // No completed → no bulk dialog markup at all (so the toolbar's
+  // "Cleanup all completed" button class doesn't leak into the page
+  // via the dialog footer).
+  if (completed.length === 0) return nothing;
   const totalBytes = completed.reduce((s, w) => s + (w.disk_bytes || 0), 0);
 
   const standalone = completed.filter((w) => !w.group_type);
@@ -179,21 +268,36 @@ function _bulkDialogView(worktrees, { onDialogClose, onDialogConfirm } = {}) {
   ].filter(Boolean);
 
   return html`
-    <div class="worktrees-dialog-bulk">
-      <p>Clean up ${completed.length} completed worktrees (${_formatBytes(totalBytes)} freed)?</p>
-      <ul class="worktrees-bulk-groups">
-        ${groupLines.map((line) => html`<li>${line}</li>`)}
-      </ul>
-      <div class="dialog-actions">
+    <sl-dialog
+      label="Cleanup all completed worktrees"
+      class="worktrees-dialog-bulk"
+      ?open=${open}
+      @sl-request-close=${onDialogClose}
+    >
+      <p>
+        Clean up ${completed.length} completed worktrees
+        (${_formatBytes(totalBytes)} freed)?
+      </p>
+      ${
+        groupLines.length > 0
+          ? html`
+              <ul class="worktrees-bulk-groups">
+                ${groupLines.map((line) => html`<li>${line}</li>`)}
+              </ul>
+            `
+          : nothing
+      }
+      <div slot="footer" class="dialog-actions">
         <sl-button variant="default" @click=${onDialogClose}>Cancel</sl-button>
         <sl-button
           variant="danger"
           class="btn-bulk-cleanup-confirm"
-          @click=${onDialogConfirm ? () => onDialogConfirm(null, true) : null}>
-          Cleanup All
+          @click=${onDialogConfirm ? () => onDialogConfirm(null, true) : null}
+        >
+          ${unsafeHTML(iconSvg(Trash2, 12))} Cleanup All
         </sl-button>
       </div>
-    </div>
+    </sl-dialog>
   `;
 }
 
@@ -216,8 +320,8 @@ export function worktreesView(
   if (!worktrees || worktrees.length === 0) {
     return html`
       <div class="worktrees-view">
-        <div class="worktrees-empty">
-          <p>No worktrees yet. Start a run to create one.</p>
+        <div class="empty-state">
+          No worktrees yet. Start a run to create one.
         </div>
       </div>
     `;
@@ -232,45 +336,45 @@ export function worktreesView(
 
   return html`
     <div class="worktrees-view">
-      ${_diskHeaderView(worktrees)}
+      ${_diskSummaryView(worktrees)}
       <div class="worktrees-toolbar">
         <sl-input
+          size="small"
           class="worktrees-filter"
           type="text"
-          placeholder="Filter by title, branch, or group…"
+          placeholder="Filter by title, branch, path, or group…"
           value="${filter || ''}"
-          @sl-input=${onFilter ? (e) => onFilter(e.target.value) : null}>
-        </sl-input>
+          @sl-input=${onFilter ? (e) => onFilter(e.target.value) : null}
+        ></sl-input>
         ${
           completedCount > 0
-            ? html`<sl-button
-                variant="danger"
-                outline
-                class="btn-bulk-cleanup"
-                @click=${onBulkCleanup}>
-                Cleanup all completed (${completedCount})
-              </sl-button>`
+            ? html`
+                <sl-button
+                  size="small"
+                  variant="danger"
+                  outline
+                  class="btn-bulk-cleanup"
+                  @click=${onBulkCleanup}
+                >
+                  ${unsafeHTML(iconSvg(Trash2, 12))} Cleanup all completed
+                  (${completedCount})
+                </sl-button>
+              `
             : nothing
         }
       </div>
-      <table class="worktrees-table">
-        <thead>
-          <tr>
-            <th>Run title</th>
-            <th>Status</th>
-            <th>Branch</th>
-            <th>Worktree path</th>
-            <th>Disk usage</th>
-            <th>Age</th>
-            <th>Group</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${filtered.map((wt) => _rowView(wt, { onSelectRun, onCleanup }))}
-        </tbody>
-      </table>
-      ${dialogBulk ? _bulkDialogView(worktrees, { onDialogClose, onDialogConfirm }) : nothing}
+      ${
+        filtered.length === 0
+          ? html`<div class="empty-state">No worktrees match the filter.</div>`
+          : html`
+              <div class="run-list worktrees-list">
+                ${filtered.map((wt) =>
+                  _cardView(wt, { onSelectRun, onCleanup }),
+                )}
+              </div>
+            `
+      }
+      ${_bulkDialogView(worktrees, dialogBulk, { onDialogClose, onDialogConfirm })}
       ${_cleanupDialogView(dialogItem, dialogCheckbox, {
         onDialogClose,
         onDialogConfirm,
