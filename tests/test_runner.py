@@ -4277,3 +4277,52 @@ def test_target_branch_none_when_absent(tmp_path, monkeypatch):
         )
 
     assert result["target_branch"] is None
+
+
+# ---- _resolve_project_root_for_registration ----
+
+def test_resolve_project_root_in_place_mode():
+    """Without registry_base, derive from <project>/.claude/settings.json."""
+    from worca.orchestrator.runner import _resolve_project_root_for_registration
+
+    result = _resolve_project_root_for_registration(
+        settings_path="/repo/myproj/.claude/settings.json",
+        registry_base=None,
+    )
+    assert result == "/repo/myproj"
+
+
+def test_resolve_project_root_worktree_mode_uses_registry_base():
+    """In worktree mode, the parent project's .worca is the authoritative
+    anchor — registering settings_path's dir would name the worktree as a
+    project (pipeline-<runid>)."""
+    from worca.orchestrator.runner import _resolve_project_root_for_registration
+
+    settings_path = (
+        "/repo/myproj/.worktrees/pipeline-20260501-000000-000-abcd"
+        "/.claude/settings.json"
+    )
+    registry_base = "/repo/myproj/.worca"
+
+    result = _resolve_project_root_for_registration(
+        settings_path=settings_path,
+        registry_base=registry_base,
+    )
+    assert result == "/repo/myproj"
+    # Specifically: not the worktree path
+    assert "pipeline-" not in result
+    assert ".worktrees" not in result
+
+
+def test_resolve_project_root_worktree_mode_relative_registry_base():
+    """A relative registry_base resolves against cwd via abspath — still
+    yields the parent project, never the worktree."""
+    import os
+    from worca.orchestrator.runner import _resolve_project_root_for_registration
+
+    cwd = os.getcwd()
+    result = _resolve_project_root_for_registration(
+        settings_path="/some/worktree/.claude/settings.json",
+        registry_base=".worca",
+    )
+    assert result == cwd

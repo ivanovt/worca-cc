@@ -214,6 +214,25 @@ def _sanitize_branch_name(title: str) -> str:
     return f"worca/{name[:40]}-{suffix}"
 
 
+def _resolve_project_root_for_registration(
+    settings_path: str, registry_base: Optional[str]
+) -> str:
+    """Pick the path that should be registered in ~/.worca/projects.d/.
+
+    In worktree mode (registry_base is set) the worktree's settings_path
+    points inside the worktree, so deriving project_root from it would
+    register the worktree itself as a separate "project" named
+    pipeline-<runid>. The parent project's .worca/ is the authoritative
+    anchor; its parent directory is the real project root.
+
+    In in-place mode, settings_path is <project>/.claude/settings.json,
+    and dirname-twice gives the project root.
+    """
+    if registry_base:
+        return os.path.dirname(os.path.abspath(registry_base))
+    return os.path.dirname(os.path.dirname(os.path.abspath(settings_path)))
+
+
 def _generate_run_id(started_at_iso: str) -> str:
     """Generate a unique run ID from an ISO timestamp.
 
@@ -1202,10 +1221,14 @@ def run_pipeline(
     run_dir = None
     actual_status_path = status_path  # may be redirected to per-run dir
 
-    # Auto-register project for global worca-ui discovery (non-fatal)
+    # Auto-register project for global worca-ui discovery (non-fatal).
+    # See _resolve_project_root_for_registration for why worktree mode needs
+    # the parent project's path, not the worktree's.
     try:
         from worca.utils.project_registry import auto_register_project
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(settings_path)))
+        project_root = _resolve_project_root_for_registration(
+            settings_path, registry_base
+        )
         auto_register_project(project_root)
     except Exception:
         pass
