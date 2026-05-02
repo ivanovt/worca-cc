@@ -494,6 +494,20 @@ export function createProjectScopedRoutes({
         // this; writing to base requires us to merge at write time.
         if (!base.worca || typeof base.worca !== 'object') base.worca = {};
         base.worca = deepMerge(base.worca, body.worca);
+
+        // Migration: when the client writes the new governance.subagent_dispatch
+        // shape, drop the legacy governance.dispatch key. Deep-merge alone
+        // would leave both side-by-side because they have different names.
+        if (
+          body.worca.governance &&
+          typeof body.worca.governance === 'object' &&
+          body.worca.governance.subagent_dispatch !== undefined &&
+          base.worca.governance &&
+          typeof base.worca.governance === 'object' &&
+          'dispatch' in base.worca.governance
+        ) {
+          delete base.worca.governance.dispatch;
+        }
         baseChanged = true;
       }
 

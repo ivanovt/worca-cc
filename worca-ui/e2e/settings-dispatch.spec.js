@@ -278,10 +278,11 @@ test('legacy key shows migration warning and migrates to subagent_dispatch on sa
 
     await saveGovernanceTab(page);
 
-    // The save goes to settings.local.json
-    const localPath = join(ctx.dir, 'settings.local.json');
-    expect(existsSync(localPath)).toBe(true);
-    const saved = JSON.parse(readFileSync(localPath, 'utf8'));
+    // worca-namespace keys persist to settings.json (committed, propagated
+    // to worktrees); only permissions/hooks land in settings.local.json.
+    const basePath = join(ctx.dir, 'settings.json');
+    expect(existsSync(basePath)).toBe(true);
+    const saved = JSON.parse(readFileSync(basePath, 'utf8'));
 
     // New key should be present, old key absent
     expect(saved.worca?.governance?.subagent_dispatch).toBeDefined();
