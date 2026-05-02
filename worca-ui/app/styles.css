@@ -1039,9 +1039,17 @@ sl-details.log-history-panel::part(content) {
   min-width: 140px;
 }
 
-.log-controls sl-input [slot="prefix"] {
+/* Prefix-slot icon centering. Inline SVGs default to baseline alignment,
+   which sits them at the top of an sl-input. Flex-center the slot wrapper
+   so any iconSvg(...) we drop into a prefix lines up with the placeholder
+   / value text. Generic rule covers every sl-input; .log-controls keeps
+   the extra left padding it always had. */
+sl-input [slot="prefix"] {
   display: flex;
   align-items: center;
+}
+
+.log-controls sl-input [slot="prefix"] {
   padding-left: 4px;
 }
 
