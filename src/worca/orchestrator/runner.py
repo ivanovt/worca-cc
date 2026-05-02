@@ -1346,11 +1346,13 @@ def run_pipeline(
 
         save_status(status, actual_status_path)
 
-        # Update multi-pipeline registry with the subprocess PID when in worktree mode.
-        # Registration is done by run_worktree.py; here we just update the PID so that
-        # per-pipeline stop commands target the correct process.
-        if worktree:
-            update_pipeline(run_id, stage="starting", base=registry_dir)
+        # The pipelines.d/ entry is a pointer (run_id, worktree_path, pid),
+        # not a state mirror. Stage transitions are recorded in status.json
+        # inside the worktree's run dir; the registry is only touched again
+        # for terminal status updates (completed/failed). Avoiding mid-run
+        # writes keeps the registry stable and removes a class of bugs where
+        # the registry's "stage" goes stale because the runner forgets to
+        # update it (the W-049 follow-up bug surfaced exactly this).
 
         # Notify GitHub issue that pipeline has started (no-op for non-GH sources)
         gh_issue_start(status)

@@ -142,13 +142,13 @@ describe('POST /api/settings', () => {
     });
   }
 
-  it('merges worca.agents correctly -- writes to local, returns merged view', async () => {
+  it('merges worca.agents correctly -- writes to base, returns merged view', async () => {
     const res = await post({
       worca: { agents: { planner: { model: 'haiku', max_turns: 50 } } },
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    // Merged view: local override for planner + base's implementer
+    // Response: planner overridden, implementer untouched
     expect(data.worca.agents.planner).toEqual({
       model: 'haiku',
       max_turns: 50,
@@ -156,17 +156,25 @@ describe('POST /api/settings', () => {
     expect(data.worca.agents.implementer).toEqual(
       SAMPLE_SETTINGS.worca.agents.implementer,
     );
-    // Other worca keys preserved from base
     expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
-    // Local file has only the override
-    const localPath = localPathFor(settingsPath);
-    const local = JSON.parse(readFileSync(localPath, 'utf8'));
-    expect(local.worca.agents).toEqual({
-      planner: { model: 'haiku', max_turns: 50 },
-    });
-    // Base file is unchanged
+    // worca-namespace keys now live in the base settings file so they
+    // propagate to worktrees and to git. The local file should not have
+    // received the worca payload.
     const base_ = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    expect(base_.worca.agents).toEqual(SAMPLE_SETTINGS.worca.agents);
+    expect(base_.worca.agents.planner).toEqual({
+      model: 'haiku',
+      max_turns: 50,
+    });
+    expect(base_.worca.agents.implementer).toEqual(
+      SAMPLE_SETTINGS.worca.agents.implementer,
+    );
+    let local = {};
+    try {
+      local = JSON.parse(readFileSync(localPathFor(settingsPath), 'utf8'));
+    } catch {
+      /* fine — local file may not exist when only worca was POSTed */
+    }
+    expect(local.worca?.agents).toBeUndefined();
   });
 
   it('merges worca.loops correctly', async () => {
@@ -220,12 +228,17 @@ describe('POST /api/settings', () => {
       },
     });
     expect(res.status).toBe(200);
-    // Base file still has original hooks, untouched
+    // Base file still has original hooks, untouched. The hooks key in the
+    // payload is rejected by validateSettingsPayload before write.
     const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(raw.hooks).toEqual(SAMPLE_SETTINGS.hooks);
-    // Local file should not have hooks
-    const localPath = localPathFor(settingsPath);
-    const local = JSON.parse(readFileSync(localPath, 'utf8'));
+    // Worca keys are written to base; local file may not exist at all.
+    let local = {};
+    try {
+      local = JSON.parse(readFileSync(localPathFor(settingsPath), 'utf8'));
+    } catch {
+      /* fine — local file is not created for worca-namespace writes */
+    }
     expect(local.hooks).toBeUndefined();
   });
 
@@ -301,22 +314,21 @@ describe('POST /api/settings', () => {
     expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
   });
 
-  it('written local file is valid JSON with 2-space indent and trailing newline', async () => {
+  it('writes worca updates to base settings.json with 2-space indent and trailing newline', async () => {
     await post({
       worca: {
         loops: { implement_test: 1, pr_changes: 1, restart_planning: 1 },
       },
     });
-    const localPath = localPathFor(settingsPath);
-    const content = readFileSync(localPath, 'utf8');
+    const content = readFileSync(settingsPath, 'utf8');
     expect(content.endsWith('\n')).toBe(true);
-    // Verify 2-space indent
     const parsed = JSON.parse(content);
     expect(`${JSON.stringify(parsed, null, 2)}\n`).toBe(content);
-    // Base file should be unchanged
-    const baseContent = readFileSync(settingsPath, 'utf8');
-    const baseParsed = JSON.parse(baseContent);
-    expect(baseParsed.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
+    expect(parsed.worca.loops).toEqual({
+      implement_test: 1,
+      pr_changes: 1,
+      restart_planning: 1,
+    });
   });
 });
 

@@ -231,13 +231,19 @@ class TestWorktreeStatusFlag:
 
 
 # ---------------------------------------------------------------------------
-# Worktree mode: update_pipeline called at start with stage="starting"
+# Worktree mode: registry is a pointer, not a state mirror.
+# update_pipeline is only called for terminal status (completed/failed) —
+# never for stage transitions. The worktree's status.json is the single
+# source of truth for live state.
 # ---------------------------------------------------------------------------
 
 class TestWorktreeRegistryUpdateAtStart:
 
-    def test_update_pipeline_starting_called_when_worktree_true(self, tmp_path):
-        """When worktree=True, update_pipeline(stage='starting') must be called."""
+    def test_update_pipeline_not_called_at_start_when_worktree_true(self, tmp_path):
+        """The registry entry is a pointer (run_id → worktree_path + pid)
+        written by run_worktree.py at registration; the runner does not
+        touch it on startup. Stage transitions are recorded in the
+        worktree's status.json, not the registry."""
         from worca.orchestrator.runner import run_pipeline
         from worca.orchestrator.work_request import WorkRequest
 
@@ -254,11 +260,16 @@ class TestWorktreeRegistryUpdateAtStart:
                 worktree=True,
             )
 
-        # First call should be stage="starting"
-        mocks["update_pipeline"].assert_any_call(
-            "20260101-000000", stage="starting",
-            base=str(Path(tmp_path / "status.json").parent),
-        )
+        # No update_pipeline call should fire at startup. Terminal status
+        # writes (completed/failed) happen in the success/error branches that
+        # never execute in this mocked-out happy-path test, so the call
+        # count must be zero overall.
+        for call in mocks["update_pipeline"].call_args_list:
+            kwargs = call.kwargs
+            assert "stage" not in kwargs, (
+                "update_pipeline must not accept a stage kwarg — "
+                "registry is a pointer, status.json holds stage state"
+            )
 
     def test_update_pipeline_not_called_when_worktree_false(self, tmp_path):
         """When worktree=False, update_pipeline() must NOT be called."""

@@ -54,16 +54,21 @@ export function createLogWatcher({
     logByteOffsets.clear();
   }
 
-  function watchSingleLogFile(stage, filePath, iteration) {
-    const key =
-      iteration != null
-        ? `${stage}__iter${iteration}`
-        : stage || '__orchestrator__';
+  function _watcherKey(runId, stage, iteration, suffix = '') {
+    const stagePart = stage || '__orchestrator__';
+    const iterPart = iteration != null ? `__iter${iteration}` : '';
+    const runPart = runId ? `${runId}__` : '';
+    return `${runPart}${stagePart}${iterPart}${suffix}`;
+  }
+
+  function watchSingleLogFile(stage, filePath, iteration, options = {}) {
+    const explicitRunId = options.runId || null;
+    const key = _watcherKey(explicitRunId, stage, iteration);
     if (logWatchers.has(key)) return;
     try {
       if (!existsSync(filePath)) return;
       logByteOffsets.set(key, fileByteLength(filePath));
-      const watcherRunId = currentActiveRunId();
+      const watcherRunId = explicitRunId || currentActiveRunId();
       const watcher = watch(filePath, (eventType) => {
         if (eventType === 'change') {
           try {
@@ -99,62 +104,66 @@ export function createLogWatcher({
     }
   }
 
-  function watchStageDir(stage, stageDir) {
-    const dirKey = `${stage}__dir`;
+  function watchStageDir(stage, stageDir, options = {}) {
+    const explicitRunId = options.runId || null;
+    const dirKey = _watcherKey(explicitRunId, stage, null, '__dir');
     if (logWatchers.has(dirKey)) return;
     try {
       const dirWatcher = watch(stageDir, (_eventType, filename) => {
         if (filename && /^iter-\d+\.log$/.test(filename)) {
           const iterNum = parseInt(filename.match(/\d+/)[0], 10);
           const iterPath = join(stageDir, filename);
-          watchSingleLogFile(stage, iterPath, iterNum);
+          watchSingleLogFile(stage, iterPath, iterNum, options);
         }
       });
       logWatchers.set(dirKey, dirWatcher);
-      const logsBase = resolveLogsBaseDir();
+      const logsBase = options.runDir || resolveLogsBaseDir();
       const backfill = listIterationFiles(logsBase, stage);
       for (const { iteration, path } of backfill) {
-        watchSingleLogFile(stage, path, iteration);
+        watchSingleLogFile(stage, path, iteration, options);
       }
     } catch {
       /* ignore */
     }
   }
 
-  function watchLogFile(stage) {
-    const logsBase = resolveLogsBaseDir();
+  function watchLogFile(stage, options = {}) {
+    const logsBase = options.runDir || resolveLogsBaseDir();
     if (!stage) {
       const logPath = resolveLogPath(logsBase, null);
-      watchSingleLogFile(null, logPath, null);
+      watchSingleLogFile(null, logPath, null, options);
       return;
     }
     const stageDir = resolveLogPath(logsBase, stage);
     if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
       const iters = listIterationFiles(logsBase, stage);
       for (const { iteration, path } of iters) {
-        watchSingleLogFile(stage, path, iteration);
+        watchSingleLogFile(stage, path, iteration, options);
       }
-      watchStageDir(stage, stageDir);
+      watchStageDir(stage, stageDir, options);
     } else {
       const logPath = join(logsBase, 'logs', `${stage}.log`);
       if (existsSync(logPath)) {
-        watchSingleLogFile(stage, logPath, null);
+        watchSingleLogFile(stage, logPath, null, options);
       }
     }
   }
 
-  function watchAllLogFiles() {
-    const logsBase = resolveLogsBaseDir();
+  function watchAllLogFiles(options = {}) {
+    const logsBase = options.runDir || resolveLogsBaseDir();
     const logFiles = listLogFiles(logsBase);
     const watchedStages = new Set();
     for (const { stage } of logFiles) {
       if (watchedStages.has(stage)) continue;
       watchedStages.add(stage);
       const actualStage = stage === 'orchestrator' ? null : stage;
-      watchLogFile(actualStage);
+      watchLogFile(actualStage, options);
     }
     const logsDir = join(logsBase, 'logs');
-    const dirKey = '__logs_dir__';
+    const explicitRunId = options.runId || null;
+    const dirKey = explicitRunId
+      ? `${explicitRunId}__logs_dir__`
+      : '__logs_dir__';
     if (logWatchers.has(dirKey)) return;
     if (!existsSync(logsDir)) return;
     try {
@@ -163,16 +172,16 @@ export function createLogWatcher({
         if (filename.endsWith('.log')) {
           const stage = filename.replace('.log', '');
           const actualStage = stage === 'orchestrator' ? null : stage;
-          watchLogFile(actualStage);
+          watchLogFile(actualStage, options);
         } else {
           const stagePath = join(logsDir, filename);
           try {
             if (existsSync(stagePath) && statSync(stagePath).isDirectory()) {
               const iters = listIterationFiles(logsBase, filename);
               for (const { iteration, path } of iters) {
-                watchSingleLogFile(filename, path, iteration);
+                watchSingleLogFile(filename, path, iteration, options);
               }
-              watchStageDir(filename, stagePath);
+              watchStageDir(filename, stagePath, options);
             }
           } catch {
             /* ignore */

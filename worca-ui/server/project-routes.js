@@ -35,6 +35,7 @@ import {
   writeProject,
 } from './project-registry.js';
 import {
+  deepMerge,
   localPathFor,
   readLocalSettings,
   readMergedSettings,
@@ -61,22 +62,11 @@ function validateRunId(runId) {
   );
 }
 
-/**
- * Find the status.json path for a given run ID.
- * Searches: runs/{id}/status.json → results/{id}/status.json → results/{id}.json
- * Returns the first existing path, or null if none found.
- */
-export function findRunStatusPath(worcaDir, runId) {
-  const candidates = [
-    join(worcaDir, 'runs', runId, 'status.json'),
-    join(worcaDir, 'results', runId, 'status.json'),
-    join(worcaDir, 'results', `${runId}.json`),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
-  }
-  return null;
-}
+// Re-exported from run-dir-resolver so callers (including older tests) can
+// continue importing from project-routes. The implementation now overlays
+// worktree runs registered in <worcaDir>/multi/pipelines.d/.
+import { findRunStatusPath } from './run-dir-resolver.js';
+export { findRunStatusPath };
 
 /** Validate a branch name — alphanumeric, dots, hyphens, underscores, slashes */
 const BRANCH_RE = /^[\w.\-/]+$/;
@@ -481,20 +471,49 @@ export function createProjectScopedRoutes({
     }
 
     try {
-      const lp = localPathFor(settingsPath);
-      const local = readLocalSettings(settingsPath);
+      // Split persistence target: project-shared keys (the worca namespace)
+      // go to settings.json so they propagate to worktree pipelines and to
+      // teammates via git. Per-machine keys (permissions, hooks, mcpServers)
+      // stay in settings.local.json which is gitignored and intentionally
+      // skipped when populating worktrees (see _copy_claude_config in
+      // src/worca/scripts/run_worktree.py).
+      let baseChanged = false;
+      let base = {};
+      try {
+        if (existsSync(settingsPath)) {
+          base = JSON.parse(readFileSync(settingsPath, 'utf8'));
+        }
+      } catch {
+        base = {};
+      }
 
       if (body.worca && typeof body.worca === 'object') {
-        if (!local.worca) local.worca = {};
-        for (const key of Object.keys(body.worca)) {
-          local.worca[key] = body.worca[key];
-        }
-      }
-      if (body.permissions !== undefined) {
-        local.permissions = body.permissions;
+        // Deep-merge sub-keys so a partial update (e.g. agents.implementer)
+        // doesn't clobber sibling subtrees (agents.planner, governance, etc.).
+        // The previous local-only model relied on read-time deep-merge for
+        // this; writing to base requires us to merge at write time.
+        if (!base.worca || typeof base.worca !== 'object') base.worca = {};
+        base.worca = deepMerge(base.worca, body.worca);
+        baseChanged = true;
       }
 
-      writeFileSync(lp, `${JSON.stringify(local, null, 2)}\n`, 'utf8');
+      if (baseChanged) {
+        mkdirSync(dirname(settingsPath), { recursive: true });
+        writeFileSync(
+          settingsPath,
+          `${JSON.stringify(base, null, 2)}\n`,
+          'utf8',
+        );
+      }
+
+      // permissions remains in settings.local.json (machine-specific).
+      if (body.permissions !== undefined) {
+        const lp = localPathFor(settingsPath);
+        const local = readLocalSettings(settingsPath);
+        local.permissions = body.permissions;
+        mkdirSync(dirname(lp), { recursive: true });
+        writeFileSync(lp, `${JSON.stringify(local, null, 2)}\n`, 'utf8');
+      }
 
       const merged = readMergedSettings(settingsPath);
       res.json({
@@ -540,15 +559,50 @@ export function createProjectScopedRoutes({
     }
 
     try {
+      // Mirror the persistence split used in POST: worca-namespace keys live
+      // in settings.json; top-level keys (permissions) live in
+      // settings.local.json. Reset removes from both as needed and also
+      // clears any legacy worca-namespace overrides that may still exist in
+      // settings.local.json from before the split.
       const lp = localPathFor(settingsPath);
       const local = readLocalSettings(settingsPath);
+      let baseChanged = false;
+      let base = {};
+      try {
+        if (existsSync(settingsPath)) {
+          base = JSON.parse(readFileSync(settingsPath, 'utf8'));
+        }
+      } catch {
+        base = {};
+      }
 
-      if (mapping.worca && local.worca) {
-        for (const key of mapping.worca) delete local.worca[key];
-        if (Object.keys(local.worca).length === 0) delete local.worca;
+      if (mapping.worca) {
+        if (base.worca) {
+          for (const key of mapping.worca) {
+            if (key in base.worca) {
+              delete base.worca[key];
+              baseChanged = true;
+            }
+          }
+          if (Object.keys(base.worca).length === 0) delete base.worca;
+        }
+        // Strip any legacy local override at the same paths.
+        if (local.worca) {
+          for (const key of mapping.worca) delete local.worca[key];
+          if (Object.keys(local.worca).length === 0) delete local.worca;
+        }
       }
       if (mapping.top) {
         for (const key of mapping.top) delete local[key];
+      }
+
+      if (baseChanged) {
+        mkdirSync(dirname(settingsPath), { recursive: true });
+        writeFileSync(
+          settingsPath,
+          `${JSON.stringify(base, null, 2)}\n`,
+          'utf8',
+        );
       }
 
       if (Object.keys(local).length === 0) {
@@ -1250,100 +1304,10 @@ export function createProjectScopedRoutes({
     res.json({ ok: true, runId, pid: child.pid });
   });
 
-  // POST /api/projects/:projectId/pipelines/:runId/stop — stop a worktree pipeline
-  router.post('/pipelines/:runId/stop', requireWorcaDir, (req, res) => {
-    const runId = req.params.runId;
-    if (!validateRunId(runId)) {
-      return res.status(400).json({ ok: false, error: 'Invalid runId' });
-    }
-    const { worcaDir } = req.project;
-
-    const pipelineFile = join(
-      worcaDir,
-      'multi',
-      'pipelines.d',
-      `${runId}.json`,
-    );
-    if (!existsSync(pipelineFile)) {
-      return res
-        .status(404)
-        .json({ ok: false, error: `Pipeline ${runId} not found` });
-    }
-
-    let pipeline;
-    try {
-      pipeline = JSON.parse(readFileSync(pipelineFile, 'utf8'));
-    } catch {
-      return res
-        .status(500)
-        .json({ ok: false, error: 'Failed to read pipeline registry' });
-    }
-
-    if (!pipeline.worktree_path) {
-      return res
-        .status(400)
-        .json({ ok: false, error: 'Pipeline has no worktree path' });
-    }
-
-    const worktreePm = new ProcessManager({
-      worcaDir: join(pipeline.worktree_path, '.worca'),
-    });
-    try {
-      const result = worktreePm.stopPipeline(runId);
-      res.json({ ok: true, stopped: true, runId, pid: result.pid });
-    } catch (err) {
-      if (err.code === 'not_running') {
-        return res.status(404).json({ ok: false, error: err.message });
-      }
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
-
-  // POST /api/projects/:projectId/pipelines/:runId/pause — pause a worktree pipeline
-  router.post('/pipelines/:runId/pause', requireWorcaDir, (req, res) => {
-    const runId = req.params.runId;
-    if (!validateRunId(runId)) {
-      return res.status(400).json({ ok: false, error: 'Invalid runId' });
-    }
-    const { worcaDir } = req.project;
-
-    const pipelineFile = join(
-      worcaDir,
-      'multi',
-      'pipelines.d',
-      `${runId}.json`,
-    );
-    if (!existsSync(pipelineFile)) {
-      return res
-        .status(404)
-        .json({ ok: false, error: `Pipeline ${runId} not found` });
-    }
-
-    let pipeline;
-    try {
-      pipeline = JSON.parse(readFileSync(pipelineFile, 'utf8'));
-    } catch {
-      return res
-        .status(500)
-        .json({ ok: false, error: 'Failed to read pipeline registry' });
-    }
-
-    if (!pipeline.worktree_path) {
-      return res
-        .status(400)
-        .json({ ok: false, error: 'Pipeline has no worktree path' });
-    }
-
-    const worktreePm = new ProcessManager({
-      worcaDir: join(pipeline.worktree_path, '.worca'),
-    });
-    try {
-      const result = worktreePm.pausePipeline(runId);
-      res.json({ ok: true, ...result });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
-  });
+  // NOTE: The /pipelines/:runId/{stop,pause} routes were removed in favor of
+  // unifying on /runs/:id/{stop,pause,cancel,resume}. The ProcessManager now
+  // overlays worktree pipelines via pipelines.d/, so the same /runs/:id/*
+  // family handles both local and worktree-hosted runs.
 
   // GET /api/projects/:projectId/templates — list available pipeline templates
   router.get('/templates', (req, res) => {

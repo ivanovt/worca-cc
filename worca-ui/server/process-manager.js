@@ -127,10 +127,17 @@ export class ProcessManager {
    * @returns {{ pid: number } | null}
    */
   getRunningPid(runId) {
-    // Build candidate PID paths: per-run first, then project-level fallback
+    // Build candidate PID paths: per-run first (with worktree overlay),
+    // then project-level fallback. Worktree runs live under
+    // <worktree_path>/.worca/runs/<id>/ and are routed via pipelines.d/.
     const candidates = [];
     if (runId) {
-      candidates.push(join(this.worcaDir, 'runs', runId, 'pipeline.pid'));
+      const ctx = this.resolveRunContext(runId);
+      if (ctx) {
+        candidates.push(join(ctx.runDir, 'pipeline.pid'));
+      } else {
+        candidates.push(join(this.worcaDir, 'runs', runId, 'pipeline.pid'));
+      }
     }
     candidates.push(join(this.worcaDir, 'pipeline.pid'));
 

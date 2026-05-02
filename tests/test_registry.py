@@ -120,22 +120,14 @@ def test_update_pipeline_modifies_status(tmp_path):
     assert data["status"] == "completed"
 
 
-def test_update_pipeline_modifies_stage(tmp_path):
+def test_update_pipeline_does_not_accept_stage_kwarg(tmp_path):
+    """Registry is a pointer, not a state mirror. Stage transitions live in
+    the worktree's status.json — update_pipeline only accepts terminal status."""
     base = str(tmp_path / ".worca")
     register_pipeline("run-u2", "/tmp/wt", "Stage Test", 1, base=base)
-    result = update_pipeline("run-u2", stage="implement", base=base)
-    assert result is True
-    data = get_pipeline("run-u2", base=base)
-    assert data["stage"] == "implement"
-
-
-def test_update_pipeline_modifies_both(tmp_path):
-    base = str(tmp_path / ".worca")
-    register_pipeline("run-u3", "/tmp/wt", "Both Test", 1, base=base)
-    update_pipeline("run-u3", status="paused", stage="test", base=base)
-    data = get_pipeline("run-u3", base=base)
-    assert data["status"] == "paused"
-    assert data["stage"] == "test"
+    import pytest
+    with pytest.raises(TypeError):
+        update_pipeline("run-u2", stage="implement", base=base)
 
 
 def test_update_pipeline_updates_timestamp(tmp_path):

@@ -98,10 +98,15 @@ def register_pipeline(
     return path
 
 
-def update_pipeline(run_id, status=None, stage=None, base=_DEFAULT_BASE):
-    """Update fields on an existing pipeline entry. Returns True on success.
+def update_pipeline(run_id, status=None, base=_DEFAULT_BASE):
+    """Update terminal status on an existing pipeline entry. Returns True on success.
 
     Returns False if the pipeline registry file does not exist.
+
+    The registry is a pointer (run_id → worktree_path + pid), not a state
+    mirror. Per-stage transitions live in the worktree's status.json; the
+    registry is only updated for terminal lifecycle changes (completed,
+    failed). Mid-run state must be read from the worktree's status.json.
 
     Note: The read-modify-write cycle is not atomic across concurrent callers.
     This is safe because each pipeline has its own run_id file, and the
@@ -117,8 +122,6 @@ def update_pipeline(run_id, status=None, stage=None, base=_DEFAULT_BASE):
 
     if status is not None:
         data["status"] = status
-    if stage is not None:
-        data["stage"] = stage
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     _atomic_write(path, data)

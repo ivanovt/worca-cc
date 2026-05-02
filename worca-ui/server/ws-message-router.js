@@ -32,6 +32,7 @@ import {
   stopPipeline as pmStopPipeline,
   reconcileStatus,
 } from './process-manager.js';
+import { resolveRunDir } from './run-dir-resolver.js';
 import { readSettings } from './settings-reader.js';
 import { discoverRuns } from './watcher.js';
 
@@ -342,26 +343,63 @@ export function createMessageRouter({
 
       if (!proj.wset.logWatcher) return;
 
-      const archivedRunDir = runId
-        ? join(proj.worcaDir, 'results', runId)
-        : null;
-      const archivedLogDir = archivedRunDir
-        ? join(archivedRunDir, 'logs')
-        : null;
-      const isArchived = archivedLogDir && existsSync(archivedLogDir);
-
-      if (isArchived) {
-        proj.wset.logWatcher.sendArchivedLogs(
-          ws,
-          archivedLogDir,
-          stage,
-          iteration,
-        );
+      // Resolve runId → on-disk run dir. Handles local active (runs/<id>),
+      // archived (results/<id>), and worktree overlay (pipelines.d/<id>.json
+      // → worktree_path/.worca/runs/<id>). Falls back to the project's
+      // latest-active-run base when no runId is given.
+      let logsBase;
+      let watchOptions;
+      if (runId) {
+        const runDir = resolveRunDir(proj.worcaDir, runId);
+        if (runDir) {
+          logsBase = runDir;
+          // Tail only when the run is still alive (pipeline.pid present);
+          // archived dirs get backfill but no live watcher.
+          watchOptions = existsSync(join(runDir, 'pipeline.pid'))
+            ? { runDir, runId }
+            : null;
+        } else {
+          // Run not found anywhere; nothing to send or watch.
+          return;
+        }
       } else {
-        const logsBase = proj.wset.logWatcher.resolveLogsBaseDir();
-        if (stage) {
-          if (iteration != null) {
-            const logPath = resolveIterationLogPath(logsBase, stage, iteration);
+        logsBase = proj.wset.logWatcher.resolveLogsBaseDir();
+        watchOptions = {};
+      }
+
+      if (stage) {
+        if (iteration != null) {
+          const logPath = resolveIterationLogPath(logsBase, stage, iteration);
+          const lines = readLastLines(logPath, 200);
+          if (lines.length > 0) {
+            ws.send(
+              JSON.stringify({
+                id: `evt-${Date.now()}`,
+                ok: true,
+                type: 'log-bulk',
+                payload: { stage, iteration, lines },
+              }),
+            );
+          }
+        } else {
+          const stageDir = resolveLogPath(logsBase, stage);
+          if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
+            const iters = listIterationFiles(logsBase, stage);
+            for (const { iteration: iterNum, path } of iters) {
+              const lines = readLastLines(path, 200);
+              if (lines.length > 0) {
+                ws.send(
+                  JSON.stringify({
+                    id: `evt-${Date.now()}-iter${iterNum}`,
+                    ok: true,
+                    type: 'log-bulk',
+                    payload: { stage, iteration: iterNum, lines },
+                  }),
+                );
+              }
+            }
+          } else {
+            const logPath = join(logsBase, 'logs', `${stage}.log`);
             const lines = readLastLines(logPath, 200);
             if (lines.length > 0) {
               ws.send(
@@ -369,63 +407,36 @@ export function createMessageRouter({
                   id: `evt-${Date.now()}`,
                   ok: true,
                   type: 'log-bulk',
-                  payload: { stage, iteration, lines },
-                }),
-              );
-            }
-          } else {
-            const stageDir = resolveLogPath(logsBase, stage);
-            if (existsSync(stageDir) && statSync(stageDir).isDirectory()) {
-              const iters = listIterationFiles(logsBase, stage);
-              for (const { iteration: iterNum, path } of iters) {
-                const lines = readLastLines(path, 200);
-                if (lines.length > 0) {
-                  ws.send(
-                    JSON.stringify({
-                      id: `evt-${Date.now()}-iter${iterNum}`,
-                      ok: true,
-                      type: 'log-bulk',
-                      payload: { stage, iteration: iterNum, lines },
-                    }),
-                  );
-                }
-              }
-            } else {
-              const logPath = join(logsBase, 'logs', `${stage}.log`);
-              const lines = readLastLines(logPath, 200);
-              if (lines.length > 0) {
-                ws.send(
-                  JSON.stringify({
-                    id: `evt-${Date.now()}`,
-                    ok: true,
-                    type: 'log-bulk',
-                    payload: { stage, lines },
-                  }),
-                );
-              }
-            }
-          }
-          proj.wset.logWatcher.watchLogFile(stage);
-        } else {
-          const logFiles = listLogFiles(logsBase);
-          for (const { stage: s2, iteration: iterNum, path } of logFiles) {
-            const lines = readLastLines(path, 200);
-            if (lines.length > 0) {
-              ws.send(
-                JSON.stringify({
-                  id: `evt-${Date.now()}-${s2}-${iterNum || 0}`,
-                  ok: true,
-                  type: 'log-bulk',
-                  payload: {
-                    stage: s2,
-                    iteration: iterNum ?? undefined,
-                    lines,
-                  },
+                  payload: { stage, lines },
                 }),
               );
             }
           }
-          proj.wset.logWatcher.watchAllLogFiles();
+        }
+        if (watchOptions) {
+          proj.wset.logWatcher.watchLogFile(stage, watchOptions);
+        }
+      } else {
+        const logFiles = listLogFiles(logsBase);
+        for (const { stage: s2, iteration: iterNum, path } of logFiles) {
+          const lines = readLastLines(path, 200);
+          if (lines.length > 0) {
+            ws.send(
+              JSON.stringify({
+                id: `evt-${Date.now()}-${s2}-${iterNum || 0}`,
+                ok: true,
+                type: 'log-bulk',
+                payload: {
+                  stage: s2,
+                  iteration: iterNum ?? undefined,
+                  lines,
+                },
+              }),
+            );
+          }
+        }
+        if (watchOptions) {
+          proj.wset.logWatcher.watchAllLogFiles(watchOptions);
         }
       }
       return;
