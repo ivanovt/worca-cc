@@ -10,6 +10,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { resolveRunDir } from './run-dir-resolver.js';
 import { createBeadsWatcher } from './ws-beads-watcher.js';
 import { createEventWatcher } from './ws-event-watcher.js';
 import { createLogWatcher } from './ws-log-watcher.js';
@@ -163,16 +164,13 @@ export class WatcherSet {
     // Event watcher
     if (!this.eventWatcher) {
       try {
-        const resolveRunDirById = (runId) => {
-          const candidates = [
-            join(worcaDir, 'runs', runId),
-            join(worcaDir, 'results', runId),
-          ];
-          for (const c of candidates) {
-            if (existsSync(c)) return c;
-          }
-          return join(worcaDir, 'runs', runId);
-        };
+        // Use the shared overlay resolver so worktree-hosted runs (registered
+        // in <worcaDir>/multi/pipelines.d/<runId>.json) resolve to their
+        // <worktree_path>/.worca/runs/<runId>/ directory. Falls back to the
+        // legacy local path for non-existent runs so the existing `watch()`
+        // call keeps working when the file is created later.
+        const resolveRunDirById = (runId) =>
+          resolveRunDir(worcaDir, runId) || join(worcaDir, 'runs', runId);
 
         this.eventWatcher = this._factories.createEventWatcher({
           broadcaster,
