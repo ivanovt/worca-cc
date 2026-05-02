@@ -279,6 +279,32 @@ describe('state store', () => {
     });
   });
 
+  it('initializes with global-derived scalars', () => {
+    const store = createStore();
+    const s = store.getState();
+    expect(s.worktreeDiskWarningBytes).toBe(2_000_000_000);
+    expect(s.classifierModel).toBe('haiku');
+    expect(s.cleanupPolicy).toBe('never');
+    expect(s.maxConcurrentPipelines).toBe(10);
+    expect(s.totalRunning).toBe(0);
+  });
+
+  it('accepts global-derived scalar overrides', () => {
+    const store = createStore({
+      worktreeDiskWarningBytes: 5_000_000_000,
+      classifierModel: 'sonnet',
+      cleanupPolicy: 'on-success',
+      maxConcurrentPipelines: 3,
+      totalRunning: 5,
+    });
+    const s = store.getState();
+    expect(s.worktreeDiskWarningBytes).toBe(5_000_000_000);
+    expect(s.classifierModel).toBe('sonnet');
+    expect(s.cleanupPolicy).toBe('on-success');
+    expect(s.maxConcurrentPipelines).toBe(3);
+    expect(s.totalRunning).toBe(5);
+  });
+
   it('initializes with currentProjectId=null and projects=[]', () => {
     const store = createStore();
     const s = store.getState();

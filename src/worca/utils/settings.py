@@ -6,9 +6,18 @@ directly. This merges the base settings.json with a sibling settings.local.json
 out of version control.
 """
 
+import importlib.resources
 import json
 import os
 import sys
+
+_schema = json.loads(
+    importlib.resources.files("worca.schemas").joinpath("keys.json").read_text()
+)
+GLOBAL_ONLY_KEYS = [tuple(k) for k in _schema["global_only_keys"]]
+NORMALIZE_SKIP_KEYS = [tuple(k) for k in _schema["normalize_skip_keys"]]
+GLOBAL_DEFAULTS = _schema["defaults"]["global"]
+PROJECT_DEFAULTS = _schema["defaults"]["project"]
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -63,3 +72,39 @@ def load_settings(settings_path: str) -> dict:
         return base
 
     return deep_merge(base, local)
+
+
+def _default_global_path() -> str:
+    return os.path.expanduser("~/.worca/settings.json")
+
+
+def load_settings_with_global_fallback(
+    settings_path: str,
+    *,
+    global_path: str | None = None,
+) -> dict:
+    """Load project settings deep-merged over global (~/.worca/settings.json).
+
+    Global values form the base; project values win on overlap.
+    Missing or malformed global file is silently tolerated (warning on bad JSON).
+    """
+    if global_path is None:
+        global_path = _default_global_path()
+
+    try:
+        with open(global_path) as f:
+            global_blob = json.load(f)
+    except FileNotFoundError:
+        global_blob = {}
+    except json.JSONDecodeError:
+        print(
+            f"[settings] Warning: {global_path} contains invalid JSON, ignoring global preferences",
+            file=sys.stderr,
+        )
+        global_blob = {}
+
+    project = load_settings(settings_path)
+    if not global_blob:
+        return project
+
+    return deep_merge(global_blob, project)

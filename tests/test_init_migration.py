@@ -1,9 +1,37 @@
 """Tests for settings migration logic in src/worca/cli/init.py.
 
-Focused on governance.dispatch → governance.subagent_dispatch migration (§5.4).
+Covers:
+- governance.dispatch → governance.subagent_dispatch migration (§5.4)
+- Global key extraction to ~/.worca/settings.json (§11b step 1)
+- Inert milestone key stripping (§11b step 2)
 """
 
-from worca.cli.init import _migrate_settings_paths
+import copy
+import json
+import os
+from pathlib import Path
+
+import pytest
+
+from worca.cli.init import (
+    _migrate_global_keys_to_preferences,
+    _migrate_settings_paths,
+    _strip_inert_milestone_keys,
+)
+
+_FIXTURE_PATH = Path(__file__).parent / "fixtures" / "migration_strip_io.json"
+
+
+def _load_fixture_cases():
+    with open(_FIXTURE_PATH) as f:
+        return json.load(f)["cases"]
+
+
+def _find_case(name):
+    for case in _load_fixture_cases():
+        if case["name"] == name:
+            return case
+    raise ValueError(f"fixture case not found: {name}")
 
 
 _NEW_DEFAULTS = {
@@ -222,3 +250,212 @@ def test_migrate_normalization_preserves_other_values():
         "feature-dev:code-reviewer",
         "custom",
     ]
+
+
+# ── §11b: _migrate_global_keys_to_preferences ──────────────────────
+
+
+class TestMigrateGlobalKeysToPreferences:
+    def test_extracts_global_keys_to_preferences(self, tmp_path):
+        case = _find_case("global_keys_extracted_to_preferences")
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps(case["input"]))
+
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        global_path = str(global_dir / "settings.json")
+
+        extracted = _migrate_global_keys_to_preferences(
+            str(project_file), global_path=global_path
+        )
+
+        assert extracted == case["expected_global_extracted"]
+
+        with open(project_file) as f:
+            project_after = json.load(f)
+        assert project_after == case["expected_project"]
+
+        with open(global_path) as f:
+            global_after = json.load(f)
+        for section, kvs in case["expected_global_extracted"].items():
+            for key, val in kvs.items():
+                assert global_after["worca"][section][key] == val
+
+    def test_idempotent_on_second_run(self, tmp_path):
+        case = _find_case("global_keys_already_stripped")
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps(case["input"]))
+
+        global_path = str(tmp_path / "global" / "settings.json")
+
+        extracted = _migrate_global_keys_to_preferences(
+            str(project_file), global_path=global_path
+        )
+
+        assert extracted == {}
+        with open(project_file) as f:
+            assert json.load(f) == case["expected_project"]
+
+    def test_empty_section_cleaned_up(self, tmp_path):
+        case = _find_case("empty_section_cleaned_up")
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps(case["input"]))
+
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        global_path = str(global_dir / "settings.json")
+
+        extracted = _migrate_global_keys_to_preferences(
+            str(project_file), global_path=global_path
+        )
+
+        assert extracted == case["expected_global_extracted"]
+        with open(project_file) as f:
+            project_after = json.load(f)
+        assert project_after == case["expected_project"]
+
+    def test_merges_into_existing_global_file(self, tmp_path):
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps({
+            "worca": {
+                "parallel": {"cleanup_policy": "on-success"},
+            }
+        }))
+
+        global_dir = tmp_path / "global"
+        global_dir.mkdir()
+        global_path = str(global_dir / "settings.json")
+        with open(global_path, "w") as f:
+            json.dump({"worca": {"ui": {"theme": "dark"}}}, f)
+
+        _migrate_global_keys_to_preferences(
+            str(project_file), global_path=global_path
+        )
+
+        with open(global_path) as f:
+            global_after = json.load(f)
+        assert global_after["worca"]["ui"]["theme"] == "dark"
+        assert global_after["worca"]["parallel"]["cleanup_policy"] == "on-success"
+
+    def test_creates_global_dir_if_missing(self, tmp_path):
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps({
+            "worca": {
+                "ui": {"worktree_disk_warning_bytes": 1000},
+            }
+        }))
+
+        global_path = str(tmp_path / "nonexistent" / "settings.json")
+        extracted = _migrate_global_keys_to_preferences(
+            str(project_file), global_path=global_path
+        )
+
+        assert extracted == {"ui": {"worktree_disk_warning_bytes": 1000}}
+        assert os.path.exists(global_path)
+
+    def test_missing_project_file_returns_empty(self, tmp_path):
+        result = _migrate_global_keys_to_preferences(
+            str(tmp_path / "nonexistent.json")
+        )
+        assert result == {}
+
+    def test_reads_global_keys_from_schema(self):
+        """GLOBAL_ONLY_KEYS are read from keys.json, not hardcoded."""
+        from worca.utils.settings import GLOBAL_ONLY_KEYS
+        expected_keys = [
+            ("parallel", "cleanup_policy"),
+            ("parallel", "max_concurrent_pipelines"),
+            ("ui", "worktree_disk_warning_bytes"),
+            ("circuit_breaker", "classifier_model"),
+        ]
+        assert set(GLOBAL_ONLY_KEYS) == set(expected_keys)
+
+
+# ── §11b: _strip_inert_milestone_keys ──────────────────────────────
+
+
+class TestStripInertMilestoneKeys:
+    def test_strips_true_pr_and_deploy_approval(self, tmp_path):
+        case = _find_case("milestone_strip_pr_approval_true")
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps(case["input"]))
+
+        removed = _strip_inert_milestone_keys(str(project_file))
+
+        assert removed == case["expected_removed_keys"]
+        with open(project_file) as f:
+            assert json.load(f) == case["expected_project_after_milestone_strip"]
+
+    def test_preserves_false_pr_approval(self, tmp_path):
+        case = _find_case("milestone_strip_pr_approval_false_kept")
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps(case["input"]))
+
+        removed = _strip_inert_milestone_keys(str(project_file))
+
+        assert removed == case["expected_removed_keys"]
+        with open(project_file) as f:
+            assert json.load(f) == case["expected_project_after_milestone_strip"]
+
+    def test_cleans_empty_milestones(self, tmp_path):
+        case = _find_case("milestone_strip_empty_milestones_cleaned")
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps(case["input"]))
+
+        removed = _strip_inert_milestone_keys(str(project_file))
+
+        assert removed == case["expected_removed_keys"]
+        with open(project_file) as f:
+            assert json.load(f) == case["expected_project_after_milestone_strip"]
+
+    def test_no_op_when_no_milestones(self, tmp_path):
+        case = _find_case("milestone_strip_no_milestones")
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps(case["input"]))
+
+        removed = _strip_inert_milestone_keys(str(project_file))
+
+        assert removed == case["expected_removed_keys"]
+        with open(project_file) as f:
+            assert json.load(f) == case["expected_project_after_milestone_strip"]
+
+    def test_idempotent_on_second_run(self, tmp_path):
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps({
+            "worca": {
+                "milestones": {
+                    "plan_approval": True,
+                    "pr_approval": True,
+                }
+            }
+        }))
+
+        removed1 = _strip_inert_milestone_keys(str(project_file))
+        assert removed1 == ["pr_approval"]
+
+        removed2 = _strip_inert_milestone_keys(str(project_file))
+        assert removed2 == []
+
+    def test_missing_project_file_returns_empty(self, tmp_path):
+        result = _strip_inert_milestone_keys(str(tmp_path / "nonexistent.json"))
+        assert result == []
+
+    def test_non_boolean_values_preserved(self, tmp_path):
+        project_file = tmp_path / "settings.json"
+        project_file.write_text(json.dumps({
+            "worca": {
+                "milestones": {
+                    "plan_approval": True,
+                    "pr_approval": "always",
+                    "deploy_approval": 1,
+                }
+            }
+        }))
+
+        removed = _strip_inert_milestone_keys(str(project_file))
+
+        assert removed == []
+        with open(project_file) as f:
+            ms = json.load(f)["worca"]["milestones"]
+        assert ms["pr_approval"] == "always"
+        assert ms["deploy_approval"] == 1

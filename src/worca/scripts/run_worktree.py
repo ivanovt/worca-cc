@@ -27,7 +27,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.registry import register_pipeline
 from worca.orchestrator.work_request import normalize
+from worca.state.status import write_status_field
 from worca.utils.git import create_pipeline_worktree, init_worktree_beads
+from worca.utils.settings import load_settings
 
 
 def _generate_run_id() -> str:
@@ -214,22 +216,24 @@ def main(argv=None) -> int:
     # Steps 1-2: generate run_id and derive slug
     run_id = _generate_run_id()
     slug = _slugify(wr.title)
-    base_branch = args.branch or "HEAD"
 
     # Step 3: create git worktree at the configured base dir
-    # (worca.parallel.worktree_base_dir, default .worktrees relative to
-    # the project root; absolute and ~-prefixed paths are honored).
-    from worca.utils.settings import load_settings
     _settings = load_settings(args.settings)
-    _wt_base = (
-        _settings.get("worca", {})
-        .get("parallel", {})
-        .get("worktree_base_dir", ".worktrees")
-    )
+    _parallel = _settings.get("worca", {}).get("parallel", {})
+    _default_branch = _parallel.get("default_base_branch", "main")
+    base_branch = args.branch or _default_branch
+    _wt_base = _parallel.get("worktree_base_dir", ".worktrees")
     worktree_path = create_pipeline_worktree(run_id, slug, base_branch, _wt_base)
     if not worktree_path:
         print(f"error: failed to create worktree for run {run_id}", file=sys.stderr)
         return 1
+
+    # Step 3b: persist worktree_path to status.json so the cleanup hook
+    # can read it without taking a registry dependency.
+    _status_path = os.path.join(
+        worktree_path, ".worca", "runs", run_id, "status.json"
+    )
+    write_status_field(_status_path, "worktree_path", worktree_path)
 
     # Step 4: copy .claude/ into the worktree (settings.json, agents/, hooks/,
     # scripts/, skills/, templates/, worca/, etc.). Most projects gitignore

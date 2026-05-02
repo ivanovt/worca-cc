@@ -506,6 +506,30 @@ function _graphWithTooltips(beads) {
   `;
 }
 
+export function prApprovalPanelView(run, options = {}) {
+  if (
+    !(
+      run?.milestones?.pr_approved === false &&
+      run?.pipeline_status === 'paused'
+    )
+  ) {
+    return nothing;
+  }
+  const { onApprove, onReject } = options;
+  return html`
+    <sl-card class="approval-panel" data-testid="pr-approval-panel">
+      <div slot="header">
+        <strong>PR creation paused — approval required</strong>
+      </div>
+      <p>The pipeline is ready to create a pull request for this run. Approve to proceed, or reject to stop the pipeline.</p>
+      <div class="approval-actions">
+        <sl-button variant="success" id="pr-approve-btn" @click=${() => onApprove?.(run.id)}>Approve &amp; create PR</sl-button>
+        <sl-button variant="danger" outline id="pr-reject-btn" @click=${() => onReject?.(run.id)}>Reject</sl-button>
+      </div>
+    </sl-card>
+  `;
+}
+
 export function runBeadsSectionView(beads) {
   if (!beads) return nothing;
   if (beads.length === 0) {

@@ -43,6 +43,11 @@ export function createStore(initial = {}) {
     runsLoaded: initial.runsLoaded ?? false,
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
     worktrees: initial.worktrees ?? [],
+    worktreeDiskWarningBytes: initial.worktreeDiskWarningBytes ?? 2_000_000_000,
+    classifierModel: initial.classifierModel ?? 'haiku',
+    cleanupPolicy: initial.cleanupPolicy ?? 'never',
+    maxConcurrentPipelines: initial.maxConcurrentPipelines ?? 10,
+    totalRunning: initial.totalRunning ?? 0,
   };
 
   const subs = new Set();
@@ -84,7 +89,12 @@ export function createStore(initial = {}) {
         next.webhookInbox === state.webhookInbox &&
         next.addProjectDialogOpen === state.addProjectDialogOpen &&
         next.worktrees === state.worktrees &&
-        next.runsLoaded === state.runsLoaded
+        next.runsLoaded === state.runsLoaded &&
+        next.worktreeDiskWarningBytes === state.worktreeDiskWarningBytes &&
+        next.classifierModel === state.classifierModel &&
+        next.cleanupPolicy === state.cleanupPolicy &&
+        next.maxConcurrentPipelines === state.maxConcurrentPipelines &&
+        next.totalRunning === state.totalRunning
       )
         return;
       state = next;

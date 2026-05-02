@@ -7,18 +7,10 @@
  * Expects req.project.worcaDir to be set by projectResolver middleware.
  */
 
-import { execFileSync } from 'node:child_process';
-import {
-  existsSync,
-  lstatSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  unlinkSync,
-} from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { Router } from 'express';
+import { removeWorktree } from './worktree-ops.js';
 
 const RESUMABLE_STATUSES = new Set(['failed', 'paused', 'cancelled']);
 
@@ -172,75 +164,6 @@ function _listWorktrees(worcaDir) {
   return entries;
 }
 
-/**
- * Remove a worktree and its registry entry.
- * Mirrors WorktreeSource.remove from src/worca/cli/cleanup.py:
- *   1. Attempt `git worktree remove --force <path>` from the project root
- *   2. On failure (e.g. non-worktree temp dir in tests), fall back to rmSync
- *   3. Run `git worktree prune` so git's metadata (`.git/worktrees/<id>/`)
- *      drops the entry even when the directory was removed manually
- *   4. Delete the registry file
- */
-function _removeWorktree(worcaDir, runId) {
-  const regFile = join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`);
-  // worcaDir is `<projectRoot>/.worca` — git commands must run inside the
-  // project repo, not the server's cwd, or `git worktree remove` errors out
-  // and the .git/worktrees/<id>/ metadata is left as `prunable`.
-  const projectRoot = join(worcaDir, '..');
-  let worktreePath = null;
-
-  if (existsSync(regFile)) {
-    try {
-      const reg = JSON.parse(readFileSync(regFile, 'utf8'));
-      worktreePath = reg.worktree_path || null;
-    } catch {
-      /* ignore */
-    }
-  }
-
-  if (worktreePath && existsSync(worktreePath)) {
-    try {
-      execFileSync('git', ['worktree', 'remove', '--force', worktreePath], {
-        cwd: projectRoot,
-        stdio: 'pipe',
-        timeout: 30_000,
-      });
-    } catch {
-      // Path is not a registered git worktree — brute-force remove.
-      // Refuse to follow symlinks: rmSync on a symlink to a real directory
-      // would delete the link itself (good), but we don't want to risk a
-      // user-symlinked path here being mistaken for a worktree we own.
-      let isRealDir = false;
-      try {
-        const st = lstatSync(worktreePath);
-        isRealDir = st.isDirectory() && !st.isSymbolicLink();
-      } catch {
-        /* ignore */
-      }
-      if (isRealDir) {
-        rmSync(worktreePath, { recursive: true, force: true });
-      }
-    }
-  }
-
-  // Always prune — covers (a) successful remove leaving residual metadata,
-  // (b) brute-force rmSync path, and (c) entries already left prunable by
-  // earlier failures. Errors are non-fatal (e.g. project not a git repo).
-  try {
-    execFileSync('git', ['worktree', 'prune'], {
-      cwd: projectRoot,
-      stdio: 'pipe',
-      timeout: 30_000,
-    });
-  } catch {
-    /* non-fatal */
-  }
-
-  if (existsSync(regFile)) {
-    unlinkSync(regFile);
-  }
-}
-
 const RUN_ID_RE = /^[a-zA-Z0-9_-]+$/;
 function _validateRunId(runId) {
   return (
@@ -338,7 +261,7 @@ export function createWorktreesRouter() {
         });
       }
 
-      _removeWorktree(worcaDir, run_id);
+      removeWorktree(worcaDir, run_id);
       res.json({ ok: true, run_id });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });

@@ -8,12 +8,18 @@ Source resolution order:
   3. Installed pip package (default)
 """
 
+import importlib.resources
 import json
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+_schema = json.loads(
+    importlib.resources.files("worca.schemas").joinpath("keys.json").read_text()
+)
+_GLOBAL_ONLY_KEYS = [tuple(k) for k in _schema["global_only_keys"]]
 
 
 def _find_git_root() -> Path:
@@ -260,6 +266,86 @@ def _migrate_agent_overrides(git_root: Path) -> list[str]:
         pass  # Directory not empty, leave it
 
     return changes
+
+
+def _migrate_global_keys_to_preferences(
+    project_settings_path: str,
+    global_path: str | None = None,
+) -> dict:
+    """One-shot: extract to-be-global keys from .claude/settings.json,
+    write them into ~/.worca/settings.json, then strip from the project file.
+    Idempotent: returns {} on second run."""
+    if not os.path.exists(project_settings_path):
+        return {}
+    with open(project_settings_path) as f:
+        project = json.load(f)
+
+    extracted: dict = {}
+    worca = project.get("worca", {})
+    for section, key in _GLOBAL_ONLY_KEYS:
+        val = worca.get(section, {}).get(key)
+        if val is not None:
+            extracted.setdefault(section, {})[key] = val
+            del worca[section][key]
+            if not worca[section]:
+                del worca[section]
+
+    if not extracted:
+        return {}
+
+    if global_path is None:
+        global_path = os.path.expanduser("~/.worca/settings.json")
+    os.makedirs(os.path.dirname(global_path), exist_ok=True)
+    try:
+        with open(global_path) as f:
+            global_blob = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        global_blob = {}
+    global_blob.setdefault("worca", {})
+    for section, kvs in extracted.items():
+        global_blob["worca"].setdefault(section, {}).update(kvs)
+    with open(global_path, "w") as f:
+        json.dump(global_blob, f, indent=2)
+        f.write("\n")
+
+    with open(project_settings_path, "w") as f:
+        json.dump(project, f, indent=2)
+        f.write("\n")
+
+    return extracted
+
+
+def _strip_inert_milestone_keys(project_settings_path: str) -> list[str]:
+    """One-shot: remove pr_approval and deploy_approval from .claude/settings.json
+    if they were template-default values (true).
+
+    Only strips when value is exactly True. False, strings, ints etc. are
+    treated as intentional user overrides and left alone.
+
+    Returns the list of removed keys. Idempotent: returns [] on second run."""
+    if not os.path.exists(project_settings_path):
+        return []
+    with open(project_settings_path) as f:
+        project = json.load(f)
+
+    milestones = project.get("worca", {}).get("milestones", {})
+    removed = []
+    for key in ("pr_approval", "deploy_approval"):
+        if milestones.get(key) is True:
+            del milestones[key]
+            removed.append(key)
+
+    if not removed:
+        return []
+
+    if "worca" in project and "milestones" in project["worca"] and not project["worca"]["milestones"]:
+        del project["worca"]["milestones"]
+
+    with open(project_settings_path, "w") as f:
+        json.dump(project, f, indent=2)
+        f.write("\n")
+
+    return removed
 
 
 def _remove_files_from_dir(directory: Path, filenames: list[str], changes: list[str]) -> None:
@@ -619,6 +705,21 @@ def run_init(
         if source_settings.exists():
             shutil.copy2(str(source_settings), str(settings_path))
             print("Settings: created from template")
+
+    # --- Global key migration (only on --upgrade, after settings merge) ---
+    if upgrade and settings_path.exists():
+        extracted = _migrate_global_keys_to_preferences(str(settings_path))
+        if extracted:
+            n = sum(len(v) for v in extracted.values())
+            print(f"Migrated {n} key(s) to ~/.worca/settings.json")
+
+        stripped = _strip_inert_milestone_keys(str(settings_path))
+        if stripped:
+            keys_str = ", ".join(stripped)
+            print(
+                f"Reset {len(stripped)} template-default milestone key(s) "
+                f"({keys_str}) — gate now opt-in via Pipeline tab"
+            )
 
     # --- .gitignore ---
     gitignore_changes = _ensure_gitignore(git_root)

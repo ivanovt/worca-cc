@@ -33,7 +33,7 @@ function makeState(overrides = {}) {
     beads: { issues: [], dbExists: false },
     webhookInbox: { events: [] },
     worktrees: [],
-    settings: {},
+    worktreeDiskWarningBytes: 2_000_000_000,
     ...overrides,
   };
 }
@@ -131,7 +131,7 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
       worktrees: [
         { run_id: 'r1', disk_bytes: 500_000_000, status: 'completed' },
       ],
-      settings: { 'worca.ui.worktree_disk_warning_bytes': 400_000_000 },
+      worktreeDiskWarningBytes: 400_000_000,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -146,13 +146,65 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
       worktrees: [
         { run_id: 'r1', disk_bytes: 300_000_000, status: 'completed' },
       ],
-      settings: { 'worca.ui.worktree_disk_warning_bytes': 400_000_000 },
+      worktreeDiskWarningBytes: 400_000_000,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('>Worktrees<');
     expect(output).not.toContain('variant="warning"');
+  });
+});
+
+describe('sidebar - Running N/cap badge', () => {
+  it('shows totalRunning/cap badge when totalRunning > 0', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      totalRunning: 3,
+      maxConcurrentPipelines: 10,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('running-cap-badge');
+    expect(output).toContain('3/10');
+  });
+
+  it('does not show running-cap-badge when totalRunning is 0', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      totalRunning: 0,
+      maxConcurrentPipelines: 10,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).not.toContain('running-cap-badge');
+  });
+
+  it('badge variant is warning when at capacity', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      totalRunning: 5,
+      maxConcurrentPipelines: 5,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('running-cap-badge');
+    expect(output).toContain('5/5');
+  });
+
+  it('disables New Pipeline button when at capacity', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      totalRunning: 10,
+      maxConcurrentPipelines: 10,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('disabled');
   });
 });
 

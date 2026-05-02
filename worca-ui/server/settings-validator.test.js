@@ -1,5 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { validateSettingsPayload } from './settings-validator.js';
+import {
+  VALID_MODELS,
+  validateGlobalSettings,
+  validateSettingsPayload,
+} from './settings-validator.js';
 
 describe('validateSettingsPayload — plan_path_template', () => {
   it('accepts a valid plan_path_template string', () => {
@@ -653,5 +660,440 @@ describe('validateSettingsPayload — worca.webhooks', () => {
       worca: { webhooks: [{ url: 'https://example.com', rate_limit_ms: 0 }] },
     });
     expect(result.valid).toBe(true);
+  });
+});
+
+describe('validateSettingsPayload — worca.parallel', () => {
+  it('accepts valid parallel with worktree_base_dir and default_base_branch', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        parallel: {
+          worktree_base_dir: '.worktrees',
+          default_base_branch: 'main',
+        },
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects non-object parallel', () => {
+    const result = validateSettingsPayload({ worca: { parallel: 'bad' } });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('worca.parallel must be an object'),
+    );
+  });
+
+  it('rejects array parallel', () => {
+    const result = validateSettingsPayload({ worca: { parallel: [] } });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('worca.parallel must be an object'),
+    );
+  });
+
+  it('rejects non-string worktree_base_dir', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { worktree_base_dir: 123 } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'parallel.worktree_base_dir must be a non-empty string',
+      ),
+    );
+  });
+
+  it('rejects empty string worktree_base_dir', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { worktree_base_dir: '' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'parallel.worktree_base_dir must be a non-empty string',
+      ),
+    );
+  });
+
+  it('rejects non-string default_base_branch', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { default_base_branch: false } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'parallel.default_base_branch must be a non-empty string',
+      ),
+    );
+  });
+
+  it('rejects empty string default_base_branch', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { default_base_branch: '' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'parallel.default_base_branch must be a non-empty string',
+      ),
+    );
+  });
+
+  it('accepts parallel with only worktree_base_dir', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { worktree_base_dir: '/tmp/trees' } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('accepts parallel with only default_base_branch', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { default_base_branch: 'develop' } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects misplaced global key cleanup_policy in project settings', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { cleanup_policy: 'never' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'worca.parallel.cleanup_policy is a global preference',
+      ),
+    );
+  });
+
+  it('rejects misplaced global key max_concurrent_pipelines in project settings', () => {
+    const result = validateSettingsPayload({
+      worca: { parallel: { max_concurrent_pipelines: 5 } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'worca.parallel.max_concurrent_pipelines is a global preference',
+      ),
+    );
+  });
+});
+
+describe('validateSettingsPayload — worca.circuit_breaker', () => {
+  it('accepts valid circuit_breaker with enabled and max_consecutive_failures', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        circuit_breaker: { enabled: true, max_consecutive_failures: 3 },
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects non-object circuit_breaker', () => {
+    const result = validateSettingsPayload({
+      worca: { circuit_breaker: 'bad' },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('worca.circuit_breaker must be an object'),
+    );
+  });
+
+  it('rejects array circuit_breaker', () => {
+    const result = validateSettingsPayload({
+      worca: { circuit_breaker: [] },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('worca.circuit_breaker must be an object'),
+    );
+  });
+
+  it('rejects non-boolean enabled', () => {
+    const result = validateSettingsPayload({
+      worca: { circuit_breaker: { enabled: 'yes' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('circuit_breaker.enabled must be a boolean'),
+    );
+  });
+
+  it('rejects non-integer max_consecutive_failures', () => {
+    const result = validateSettingsPayload({
+      worca: { circuit_breaker: { max_consecutive_failures: 2.5 } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'circuit_breaker.max_consecutive_failures must be an integer between 1 and 10',
+      ),
+    );
+  });
+
+  it('rejects max_consecutive_failures below 1', () => {
+    const result = validateSettingsPayload({
+      worca: { circuit_breaker: { max_consecutive_failures: 0 } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'circuit_breaker.max_consecutive_failures must be an integer between 1 and 10',
+      ),
+    );
+  });
+
+  it('rejects max_consecutive_failures above 10', () => {
+    const result = validateSettingsPayload({
+      worca: { circuit_breaker: { max_consecutive_failures: 11 } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'circuit_breaker.max_consecutive_failures must be an integer between 1 and 10',
+      ),
+    );
+  });
+
+  it('accepts max_consecutive_failures at boundaries (1 and 10)', () => {
+    expect(
+      validateSettingsPayload({
+        worca: { circuit_breaker: { max_consecutive_failures: 1 } },
+      }).valid,
+    ).toBe(true);
+    expect(
+      validateSettingsPayload({
+        worca: { circuit_breaker: { max_consecutive_failures: 10 } },
+      }).valid,
+    ).toBe(true);
+  });
+
+  it('rejects misplaced global key classifier_model in project settings', () => {
+    const result = validateSettingsPayload({
+      worca: { circuit_breaker: { classifier_model: 'haiku' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'worca.circuit_breaker.classifier_model is a global preference',
+      ),
+    );
+  });
+});
+
+describe('validateSettingsPayload — reject misplaced global keys', () => {
+  it('rejects ui.worktree_disk_warning_bytes in project settings', () => {
+    const result = validateSettingsPayload({
+      worca: { ui: { worktree_disk_warning_bytes: 2000000000 } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'worca.ui.worktree_disk_warning_bytes is a global preference',
+      ),
+    );
+  });
+
+  it('accepts project payload with no misplaced global keys', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        parallel: { worktree_base_dir: '.wt' },
+        circuit_breaker: { enabled: false },
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+});
+
+describe('validateGlobalSettings', () => {
+  it('returns ok for empty worca object', () => {
+    const result = validateGlobalSettings({ worca: {} });
+    expect(result.ok).toBe(true);
+  });
+
+  it('returns ok when worca is absent', () => {
+    const result = validateGlobalSettings({});
+    expect(result.ok).toBe(true);
+  });
+
+  it('accepts valid worktree_disk_warning_bytes', () => {
+    const result = validateGlobalSettings({
+      worca: { ui: { worktree_disk_warning_bytes: 2000000000 } },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects worktree_disk_warning_bytes below 500 MB', () => {
+    const result = validateGlobalSettings({
+      worca: { ui: { worktree_disk_warning_bytes: 499999999 } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('worktree_disk_warning_bytes'),
+    );
+  });
+
+  it('rejects worktree_disk_warning_bytes above 50 GB', () => {
+    const result = validateGlobalSettings({
+      worca: { ui: { worktree_disk_warning_bytes: 50000000001 } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('worktree_disk_warning_bytes'),
+    );
+  });
+
+  it('rejects non-integer worktree_disk_warning_bytes', () => {
+    const result = validateGlobalSettings({
+      worca: { ui: { worktree_disk_warning_bytes: 1500000000.5 } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('worktree_disk_warning_bytes'),
+    );
+  });
+
+  it('accepts boundary values for worktree_disk_warning_bytes (500 MB and 50 GB)', () => {
+    expect(
+      validateGlobalSettings({
+        worca: { ui: { worktree_disk_warning_bytes: 500000000 } },
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateGlobalSettings({
+        worca: { ui: { worktree_disk_warning_bytes: 50000000000 } },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('accepts valid classifier_model', () => {
+    const result = validateGlobalSettings({
+      worca: { circuit_breaker: { classifier_model: 'haiku' } },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects invalid classifier_model', () => {
+    const result = validateGlobalSettings({
+      worca: { circuit_breaker: { classifier_model: 'gpt-4' } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('classifier_model must be one of'),
+    );
+  });
+
+  it('accepts valid cleanup_policy', () => {
+    for (const policy of ['never', 'on-success', 'manual-only']) {
+      const result = validateGlobalSettings({
+        worca: { parallel: { cleanup_policy: policy } },
+      });
+      expect(result.ok).toBe(true);
+    }
+  });
+
+  it('rejects invalid cleanup_policy', () => {
+    const result = validateGlobalSettings({
+      worca: { parallel: { cleanup_policy: 'always' } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('cleanup_policy must be one of'),
+    );
+  });
+
+  it('accepts valid max_concurrent_pipelines', () => {
+    const result = validateGlobalSettings({
+      worca: { parallel: { max_concurrent_pipelines: 10 } },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects max_concurrent_pipelines below 1', () => {
+    const result = validateGlobalSettings({
+      worca: { parallel: { max_concurrent_pipelines: 0 } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'max_concurrent_pipelines must be an integer between 1 and 20',
+      ),
+    );
+  });
+
+  it('rejects max_concurrent_pipelines above 20', () => {
+    const result = validateGlobalSettings({
+      worca: { parallel: { max_concurrent_pipelines: 21 } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'max_concurrent_pipelines must be an integer between 1 and 20',
+      ),
+    );
+  });
+
+  it('rejects non-integer max_concurrent_pipelines', () => {
+    const result = validateGlobalSettings({
+      worca: { parallel: { max_concurrent_pipelines: 5.5 } },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining(
+        'max_concurrent_pipelines must be an integer between 1 and 20',
+      ),
+    );
+  });
+
+  it('accepts max_concurrent_pipelines at boundaries (1 and 20)', () => {
+    expect(
+      validateGlobalSettings({
+        worca: { parallel: { max_concurrent_pipelines: 1 } },
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateGlobalSettings({
+        worca: { parallel: { max_concurrent_pipelines: 20 } },
+      }).ok,
+    ).toBe(true);
+  });
+
+  it('validates all global fields together', () => {
+    const result = validateGlobalSettings({
+      worca: {
+        ui: { worktree_disk_warning_bytes: 2000000000 },
+        circuit_breaker: { classifier_model: 'sonnet' },
+        parallel: { cleanup_policy: 'on-success', max_concurrent_pipelines: 5 },
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('collects multiple errors', () => {
+    const result = validateGlobalSettings({
+      worca: {
+        ui: { worktree_disk_warning_bytes: -1 },
+        circuit_breaker: { classifier_model: 'invalid' },
+        parallel: { cleanup_policy: 'bad', max_concurrent_pipelines: 100 },
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details.length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+describe('VALID_MODELS superset assertion', () => {
+  it('includes every alias from the shipped settings.json template', () => {
+    const __dirname = dirname(fileURLToPath(import.meta.url));
+    const template = JSON.parse(
+      readFileSync(
+        resolve(__dirname, '../../src/worca/settings.json'),
+        'utf-8',
+      ),
+    );
+    const aliases = Object.keys(template.worca.models);
+    for (const alias of aliases) {
+      expect(VALID_MODELS).toContain(alias);
+    }
   });
 });

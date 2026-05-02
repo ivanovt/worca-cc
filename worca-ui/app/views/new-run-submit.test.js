@@ -199,12 +199,108 @@ describe('submitNewRun — new format validation and payload', () => {
   });
 });
 
+describe('submitNewRun — 409 max_concurrent_exceeded handling', () => {
+  let origFetch;
+  let submitNewRun, resetNewRunState, getNewRunSubmitState;
+  let docStub;
+
+  beforeEach(async () => {
+    origFetch = globalThis.fetch;
+    const elements = {};
+    docStub = {
+      getElementById: vi.fn((id) => elements[id] || null),
+      _set(id, value) {
+        elements[id] = { value, id };
+      },
+      _clear() {
+        for (const k of Object.keys(elements)) delete elements[k];
+      },
+    };
+    globalThis.document = docStub;
+
+    vi.resetModules();
+    vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/unsafe-html.js', () => ({
+      unsafeHTML: () => null,
+    }));
+    vi.doMock('../utils/icons.js', () => ({
+      iconSvg: () => '',
+      FileText: 'FileText',
+    }));
+
+    const mod = await import('./new-run.js');
+    submitNewRun = mod.submitNewRun;
+    resetNewRunState = mod.resetNewRunState;
+    getNewRunSubmitState = mod.getNewRunSubmitState;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  it('sets submitError from 409 max_concurrent_exceeded response', async () => {
+    docStub._clear();
+    docStub._set('new-run-prompt', 'test prompt');
+    docStub._set('new-run-msize', '1');
+    docStub._set('new-run-mloops', '1');
+    resetNewRunState({ sourceType: 'none' });
+
+    const serverMsg =
+      'Maximum concurrent pipelines reached (5). Stop a running pipeline or increase the limit in global preferences.';
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: serverMsg,
+          code: 'max_concurrent_exceeded',
+        }),
+    });
+
+    const rerender = vi.fn();
+    await submitNewRun({ rerender, onStarted: vi.fn() });
+
+    const state = getNewRunSubmitState();
+    expect(state.submitStatus).toBe('error');
+    expect(rerender).toHaveBeenCalled();
+  });
+
+  it('includes cap info in error when 409 code is max_concurrent_exceeded', async () => {
+    docStub._clear();
+    docStub._set('new-run-prompt', 'test prompt');
+    docStub._set('new-run-msize', '1');
+    docStub._set('new-run-mloops', '1');
+    resetNewRunState({ sourceType: 'none' });
+
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 409,
+      json: () =>
+        Promise.resolve({
+          ok: false,
+          error: 'Max reached (3)',
+          code: 'max_concurrent_exceeded',
+          cap: 3,
+          totalRunning: 3,
+        }),
+    });
+
+    const rerender = vi.fn();
+    await submitNewRun({ rerender, onStarted: vi.fn() });
+
+    const state = getNewRunSubmitState();
+    expect(state.submitStatus).toBe('error');
+  });
+});
+
 describe('module exports', () => {
-  it('exports newRunView, submitNewRun, resetNewRunState, getNewRunSubmitState', async () => {
+  it('exports newRunView, submitNewRun, resetNewRunState, getNewRunSubmitState, isAtCapacity', async () => {
     const mod = await import('./new-run.js');
     expect(typeof mod.newRunView).toBe('function');
     expect(typeof mod.submitNewRun).toBe('function');
     expect(typeof mod.resetNewRunState).toBe('function');
     expect(typeof mod.getNewRunSubmitState).toBe('function');
+    expect(typeof mod.isAtCapacity).toBe('function');
   });
 });

@@ -1,5 +1,9 @@
-import { describe, expect, it } from 'vitest';
-import { runBeadsSectionView, runDetailView } from './run-detail.js';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  prApprovalPanelView,
+  runBeadsSectionView,
+  runDetailView,
+} from './run-detail.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -186,5 +190,124 @@ describe('runDetailView - worktree metadata row', () => {
     };
     const out = render(runDetailView(run));
     expect(out).not.toContain('Worktree:');
+  });
+});
+
+describe('prApprovalPanelView', () => {
+  function render(template) {
+    return renderToString(template);
+  }
+
+  const pausedRunAwaitingApproval = {
+    id: 'run-1',
+    pipeline_status: 'paused',
+    milestones: { pr_approved: false },
+    stages: {},
+  };
+
+  describe('render conditions', () => {
+    it('renders approval panel when pr_approved===false and pipeline_status===paused', () => {
+      const out = render(prApprovalPanelView(pausedRunAwaitingApproval));
+      expect(out).toContain('pr-approval-panel');
+      expect(out).toContain('PR creation paused');
+      expect(out).toContain('Approve');
+      expect(out).toContain('Reject');
+    });
+
+    it('does not render when pr_approved is true', () => {
+      const run = {
+        ...pausedRunAwaitingApproval,
+        milestones: { pr_approved: true },
+      };
+      const out = render(prApprovalPanelView(run));
+      expect(out).not.toContain('pr-approval-panel');
+    });
+
+    it('does not render when pr_approved is undefined', () => {
+      const run = {
+        ...pausedRunAwaitingApproval,
+        milestones: {},
+      };
+      const out = render(prApprovalPanelView(run));
+      expect(out).not.toContain('pr-approval-panel');
+    });
+
+    it('does not render when milestones is absent', () => {
+      const run = {
+        id: 'run-1',
+        pipeline_status: 'paused',
+        stages: {},
+      };
+      const out = render(prApprovalPanelView(run));
+      expect(out).not.toContain('pr-approval-panel');
+    });
+
+    it('does not render when pipeline_status is not paused', () => {
+      const run = {
+        ...pausedRunAwaitingApproval,
+        pipeline_status: 'running',
+      };
+      const out = render(prApprovalPanelView(run));
+      expect(out).not.toContain('pr-approval-panel');
+    });
+
+    it('does not render for terminal pipeline_status (completed)', () => {
+      const run = {
+        ...pausedRunAwaitingApproval,
+        pipeline_status: 'completed',
+      };
+      const out = render(prApprovalPanelView(run));
+      expect(out).not.toContain('pr-approval-panel');
+    });
+
+    it('does not render for terminal pipeline_status (failed)', () => {
+      const run = {
+        ...pausedRunAwaitingApproval,
+        pipeline_status: 'failed',
+      };
+      const out = render(prApprovalPanelView(run));
+      expect(out).not.toContain('pr-approval-panel');
+    });
+
+    it('does not render when run is null', () => {
+      const out = render(prApprovalPanelView(null));
+      expect(out).not.toContain('pr-approval-panel');
+    });
+  });
+
+  describe('approve button', () => {
+    it('renders success variant approve button', () => {
+      const out = render(prApprovalPanelView(pausedRunAwaitingApproval));
+      expect(out).toContain('variant="success"');
+      expect(out).toContain('Approve');
+      expect(out).toContain('create PR');
+    });
+
+    it('renders danger outline reject button', () => {
+      const out = render(prApprovalPanelView(pausedRunAwaitingApproval));
+      expect(out).toContain('variant="danger"');
+      expect(out).toContain('outline');
+      expect(out).toContain('Reject');
+    });
+  });
+
+  describe('approve POST handler', () => {
+    it('calls onApprove with run id when approve button clicked', () => {
+      const onApprove = vi.fn();
+      const result = prApprovalPanelView(pausedRunAwaitingApproval, {
+        onApprove,
+      });
+      const out = render(result);
+      expect(out).toContain('pr-approve-btn');
+    });
+
+    it('calls onReject with run id when reject button clicked', () => {
+      const onReject = vi.fn();
+      const result = prApprovalPanelView(pausedRunAwaitingApproval, {
+        onReject,
+      });
+      const out = render(result);
+      expect(out).toContain('pr-reject-btn');
+    });
   });
 });

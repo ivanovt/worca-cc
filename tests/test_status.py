@@ -379,3 +379,48 @@ def test_resolve_status_passthrough_known_values():
 
 def test_resolve_status_passthrough_unknown():
     assert resolve_status("unknown_val") == "unknown_val"
+
+
+# --- init_status worktree_path ---
+
+def test_init_status_has_worktree_path_none_by_default():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert "worktree_path" in result
+    assert result["worktree_path"] is None
+
+
+# --- write_status_field ---
+
+def test_write_status_field_creates_file_and_sets_field(tmp_path):
+    from worca.state.status import write_status_field
+    path = str(tmp_path / "status.json")
+    write_status_field(path, "worktree_path", "/tmp/wt/pipeline-abc")
+    import json
+    with open(path) as f:
+        data = json.load(f)
+    assert data["worktree_path"] == "/tmp/wt/pipeline-abc"
+
+
+def test_write_status_field_preserves_existing_fields(tmp_path):
+    from worca.state.status import write_status_field
+    import json
+    path = str(tmp_path / "status.json")
+    with open(path, "w") as f:
+        json.dump({"pipeline_status": "pending", "run_id": "abc"}, f)
+    write_status_field(path, "worktree_path", "/tmp/wt")
+    with open(path) as f:
+        data = json.load(f)
+    assert data["pipeline_status"] == "pending"
+    assert data["run_id"] == "abc"
+    assert data["worktree_path"] == "/tmp/wt"
+
+
+def test_write_status_field_creates_parent_dirs(tmp_path):
+    from worca.state.status import write_status_field
+    import json
+    path = str(tmp_path / "deep" / "nested" / "status.json")
+    write_status_field(path, "worktree_path", "/tmp/wt")
+    with open(path) as f:
+        data = json.load(f)
+    assert data["worktree_path"] == "/tmp/wt"

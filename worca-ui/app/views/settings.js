@@ -57,6 +57,42 @@ export const AGENT_NAMES = [
 ];
 const MODEL_OPTIONS = ['opus', 'sonnet', 'haiku'];
 
+const GLOBAL_ONLY_KEY_PATHS = [
+  ['parallel', 'cleanup_policy'],
+  ['parallel', 'max_concurrent_pipelines'],
+  ['ui', 'worktree_disk_warning_bytes'],
+  ['circuit_breaker', 'classifier_model'],
+];
+const INERT_MILESTONE_KEYS_CLIENT = ['pr_approval', 'deploy_approval'];
+
+export function detectMigrationNeeded(worca) {
+  if (!worca) return false;
+  for (const [section, key] of GLOBAL_ONLY_KEY_PATHS) {
+    if (worca[section]?.[key] !== undefined) return true;
+  }
+  const m = worca.milestones;
+  if (m) {
+    for (const key of INERT_MILESTONE_KEYS_CLIENT) {
+      if (m[key] === true) return true;
+    }
+  }
+  return false;
+}
+
+export function countMigrated(autoMigrated) {
+  if (!autoMigrated) return 0;
+  let count = 0;
+  if (autoMigrated.globalExtracted) {
+    for (const section of Object.values(autoMigrated.globalExtracted)) {
+      count += Object.keys(section).length;
+    }
+  }
+  if (autoMigrated.removedMilestones) {
+    count += autoMigrated.removedMilestones.length;
+  }
+  return count;
+}
+
 const DEFAULT_STAGES = {
   plan: { agent: 'planner', enabled: true },
   plan_review: { agent: 'plan_reviewer', enabled: false },
@@ -128,6 +164,8 @@ let settingsData = null;
 let saveStatus = null; // null | 'saving' | 'success' | 'error'
 let saveMessage = '';
 let _settingsProjectId = null; // track which project settings are loaded for
+let _migrationNeeded = false;
+let _migrationDismissed = false;
 
 // --- Dispatch tag state ---
 let _dispatchTagState = {}; // agent -> { tags, input, showSuggestions, activeIndex }
@@ -233,6 +271,32 @@ export async function loadSettings(projectId) {
         _legacy_dispatch: hasLegacy,
       };
     }
+    // Project defaults from keys.json (§10a). Keys in NORMALIZE_SKIP_KEYS
+    // (pr_approval) are omitted so a load→save round-trip on a clean project
+    // doesn't inject default-false values back into the file.
+    if (!settingsData.worca.milestones) {
+      settingsData.worca.milestones = { plan_approval: true };
+    } else {
+      settingsData.worca.milestones.plan_approval ??= true;
+    }
+    if (!settingsData.worca.circuit_breaker) {
+      settingsData.worca.circuit_breaker = {
+        enabled: true,
+        max_consecutive_failures: 3,
+      };
+    } else {
+      settingsData.worca.circuit_breaker.enabled ??= true;
+      settingsData.worca.circuit_breaker.max_consecutive_failures ??= 3;
+    }
+    if (!settingsData.worca.parallel) {
+      settingsData.worca.parallel = {
+        worktree_base_dir: '.worktrees',
+        default_base_branch: 'main',
+      };
+    } else {
+      settingsData.worca.parallel.worktree_base_dir ??= '.worktrees';
+      settingsData.worca.parallel.default_base_branch ??= 'main';
+    }
     if (!settingsData.worca.events) {
       settingsData.worca.events = {
         enabled: true,
@@ -247,6 +311,8 @@ export async function loadSettings(projectId) {
     if (!settingsData.worca.webhooks) {
       settingsData.worca.webhooks = [];
     }
+    _migrationNeeded = detectMigrationNeeded(settingsData.worca);
+    _migrationDismissed = false;
     _resetDispatchTagState();
     // Fetch the discovered subagents list for the dispatch editor. Best-effort:
     // on failure we keep _discoveredKnownTypes = null and the editor uses the
@@ -282,8 +348,16 @@ async function saveSettings(data, rerender, projectId) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
     settingsData = { worca: result.worca, permissions: result.permissions };
+    const n = countMigrated(result.autoMigrated);
+    if (n > 0) {
+      _migrationNeeded = false;
+      _migrationDismissed = true;
+    }
     saveStatus = 'success';
-    saveMessage = 'Settings saved successfully';
+    saveMessage =
+      n > 0
+        ? `${n} project setting${n === 1 ? ' was' : 's were'} moved to global Preferences`
+        : 'Settings saved successfully';
   } catch (err) {
     saveStatus = 'error';
     saveMessage = `Failed to save: ${err.message}`;
@@ -362,7 +436,7 @@ function readAgentsFromDom() {
   return agents;
 }
 
-function readPipelineFromDom() {
+export function readPipelineFromDom() {
   const loops = {};
   for (const key of ['implement_test', 'pr_changes', 'restart_planning']) {
     const el = document.getElementById(`loop-${key}`);
@@ -376,7 +450,40 @@ function readPipelineFromDom() {
     msize: parseInt(msizeEl?.value, 10) || 1,
     mloops: parseInt(mloopsEl?.value, 10) || 1,
   };
-  return { loops, plan_path_template, defaults };
+
+  const milestones = {
+    plan_approval:
+      document.getElementById('milestone-plan-approval')?.checked ?? true,
+  };
+  const prApprovalToggled =
+    document.getElementById('milestone-pr-approval')?.checked === true;
+  if (prApprovalToggled) {
+    milestones.pr_approval = true;
+  }
+
+  const circuit_breaker = {
+    enabled: document.getElementById('cb-enabled')?.checked ?? true,
+    max_consecutive_failures:
+      parseInt(document.getElementById('cb-max-failures')?.value, 10) || 3,
+  };
+
+  const parallel = {
+    worktree_base_dir:
+      document.getElementById('parallel-worktree-base-dir')?.value?.trim() ||
+      '.worktrees',
+    default_base_branch:
+      document.getElementById('parallel-default-base-branch')?.value?.trim() ||
+      'main',
+  };
+
+  return {
+    loops,
+    plan_path_template,
+    defaults,
+    milestones,
+    circuit_breaker,
+    parallel,
+  };
 }
 
 function readStagesFromDom() {
@@ -425,6 +532,84 @@ function readGovernanceFromDom() {
   }
 
   return { guards, test_gate_strikes, subagent_dispatch };
+}
+
+export function formatDiskThreshold(bytes) {
+  if (bytes >= 1_000_000_000) {
+    return { value: bytes / 1_000_000_000, unit: 'GB' };
+  }
+  return { value: bytes / 1_000_000, unit: 'MB' };
+}
+
+function readDiskThresholdFromDom() {
+  const valueEl = document.getElementById('global-disk-threshold-value');
+  const unitEl = document.getElementById('global-disk-threshold-unit');
+  const value = parseFloat(valueEl?.value) || 2;
+  const unit = unitEl?.value || 'GB';
+  const multiplier = unit === 'GB' ? 1_000_000_000 : 1_000_000;
+  return value * multiplier;
+}
+
+export function readGlobalsFromDom() {
+  const diskBytes = readDiskThresholdFromDom();
+  const cleanupEl = document.getElementById('global-cleanup-policy');
+  const modelEl = document.getElementById('global-classifier-model');
+  const maxConcurrentEl = document.getElementById('global-max-concurrent');
+
+  return {
+    worca: {
+      ui: {
+        worktree_disk_warning_bytes: diskBytes,
+      },
+      parallel: {
+        cleanup_policy: cleanupEl?.value || 'never',
+        max_concurrent_pipelines: parseInt(maxConcurrentEl?.value, 10) || 10,
+      },
+      circuit_breaker: {
+        classifier_model: modelEl?.value || 'haiku',
+      },
+    },
+  };
+}
+
+async function savePreferences(data, rerender, onStoreUpdate) {
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch('/api/preferences', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = await res.json();
+    if (result.ok && onStoreUpdate) {
+      const p = result.preferences?.worca ?? {};
+      onStoreUpdate({
+        worktreeDiskWarningBytes:
+          p.ui?.worktree_disk_warning_bytes ?? 2_000_000_000,
+        classifierModel: p.circuit_breaker?.classifier_model ?? 'haiku',
+        cleanupPolicy: p.parallel?.cleanup_policy ?? 'never',
+        maxConcurrentPipelines: p.parallel?.max_concurrent_pipelines ?? 10,
+      });
+    }
+    saveStatus = 'success';
+    saveMessage = 'Preferences saved successfully';
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to save: ${err.message}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
 }
 
 export function readPermissionsFromDom() {
@@ -514,6 +699,9 @@ function agentsTab(worca, rerender) {
 function pipelineTab(worca, rerender) {
   const loops = worca.loops || {};
   const stages = worca.stages || DEFAULT_STAGES;
+  const milestones = worca.milestones || {};
+  const cb = worca.circuit_breaker || {};
+  const parallel = worca.parallel || {};
 
   const preflight = stages.preflight || {
     enabled: true,
@@ -621,13 +809,69 @@ function pipelineTab(worca, rerender) {
         </div>
       </div>
 
+      <h3 class="settings-section-title">Approval Gates</h3>
+      <div class="settings-switches">
+        <div class="settings-switch-row">
+          <sl-switch id="milestone-plan-approval" ?checked=${milestones.plan_approval !== false} size="small">Plan approval required</sl-switch>
+          <span class="settings-switch-desc">Pipeline pauses after Plan stage; pause-control event lets you approve or reject before Coordinate.</span>
+        </div>
+        <div class="settings-switch-row">
+          <sl-switch id="milestone-pr-approval" ?checked=${milestones.pr_approval === true} size="small">PR approval required</sl-switch>
+          <span class="settings-switch-desc">When enabled, pipeline pauses before guardian creates the PR; approve/reject from the run detail view. Off by default to avoid hanging unattended runs.</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Circuit Breaker</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <div class="settings-switch-row">
+            <sl-switch id="cb-enabled" ?checked=${cb.enabled !== false} size="small">Enabled</sl-switch>
+            <span class="settings-switch-desc">Halt the pipeline after consecutive errors of the same kind</span>
+          </div>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Max Consecutive Failures</label>
+          <sl-input id="cb-max-failures" type="number" value="${cb.max_consecutive_failures ?? 3}" size="small" min="1" max="10"></sl-input>
+          <span class="settings-field-hint">Stop after N consecutive errors of the same kind.</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Execution & Parallelism</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Worktree Base Directory</label>
+          <sl-input id="parallel-worktree-base-dir" value="${parallel.worktree_base_dir || '.worktrees'}" size="small" placeholder=".worktrees"></sl-input>
+          <span class="settings-field-hint">Relative paths resolve from project root. Absolute and ~/-prefixed paths supported.</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Default PR Base Branch</label>
+          <sl-input id="parallel-default-base-branch" value="${parallel.default_base_branch || 'main'}" size="small" placeholder="main"></sl-input>
+          <span class="settings-field-hint">Used as the default when launching a new worktree-based run if --branch is not specified.</span>
+        </div>
+      </div>
+
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
-          const { loops, plan_path_template, defaults } = readPipelineFromDom();
+          const {
+            loops,
+            plan_path_template,
+            defaults,
+            milestones,
+            circuit_breaker,
+            parallel,
+          } = readPipelineFromDom();
           const stages = readStagesFromDom();
           stages.preflight = readPreflightFromDom();
           const payload = {
-            worca: { loops, stages, plan_path_template, defaults },
+            worca: {
+              loops,
+              stages,
+              plan_path_template,
+              defaults,
+              milestones,
+              circuit_breaker,
+              parallel,
+            },
           };
           saveSettings(payload, rerender);
         }}>
@@ -1076,10 +1320,17 @@ function versionsSection(rerender) {
 
 function preferencesTab(
   preferences,
-  { onThemeToggle, onSaveSourceRepo, rerender },
+  { onThemeToggle, onSaveSourceRepo, onSaveGlobals, rerender, globals },
 ) {
   const theme = preferences?.theme || 'light';
   const sourceRepo = preferences?.source_repo || '';
+  const g = globals || {};
+  const diskThreshold = formatDiskThreshold(
+    g.worktreeDiskWarningBytes ?? 2_000_000_000,
+  );
+  const cleanupPolicy = g.cleanupPolicy || 'never';
+  const classifierModel = g.classifierModel || 'haiku';
+  const maxConcurrent = g.maxConcurrentPipelines ?? 10;
 
   return html`
     <div class="settings-tab-content">
@@ -1107,6 +1358,56 @@ function preferencesTab(
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save
+        </sl-button>
+      </div>
+
+      <h3 class="settings-section-title">Worktrees</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Disk Warning Threshold</label>
+          <div style="display: flex; gap: 8px; align-items: center;">
+            <sl-input id="global-disk-threshold-value" type="number" value="${diskThreshold.value}" size="small" min="0.5" max="50" step="0.5" style="flex: 1;"></sl-input>
+            <sl-select id="global-disk-threshold-unit" .value="${diskThreshold.unit}" size="small" style="width: 90px;" hoist>
+              <sl-option value="MB">MB</sl-option>
+              <sl-option value="GB">GB</sl-option>
+            </sl-select>
+          </div>
+          <span class="settings-field-hint">Show a warning badge when worktree disk usage exceeds this value (0.5–50 GB)</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Cleanup Policy</label>
+          <sl-select id="global-cleanup-policy" .value="${cleanupPolicy}" size="small" hoist>
+            <sl-option value="never">Never</sl-option>
+            <sl-option value="on-success">On Success</sl-option>
+            <sl-option value="manual-only">Manual Only</sl-option>
+          </sl-select>
+          <span class="settings-field-hint">When to automatically remove completed worktrees</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Pipeline Execution</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Error Classifier Model</label>
+          <sl-select id="global-classifier-model" .value="${classifierModel}" size="small" hoist>
+            ${MODEL_OPTIONS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+          </sl-select>
+          <span class="settings-field-hint">Model used by the circuit breaker to classify errors</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Max Concurrent Pipelines</label>
+          <sl-input id="global-max-concurrent" type="number" value="${maxConcurrent}" size="small" min="1" max="20"></sl-input>
+          <span class="settings-field-hint">Maximum number of pipelines that can run simultaneously (1–20)</span>
+        </div>
+      </div>
+
+      <div class="settings-tab-actions">
+        <sl-button variant="primary" size="small" @click=${() => {
+          const payload = readGlobalsFromDom();
+          savePreferences(payload, rerender, onSaveGlobals);
+        }}>
+          ${unsafeHTML(iconSvg(Save, 14))}
+          Save Global Settings
         </sl-button>
       </div>
 
@@ -1610,6 +1911,62 @@ function webhooksTab(worca, rerender) {
   `;
 }
 
+// --- Migration banner ---
+
+async function triggerMigration(rerender) {
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch(settingsUrl(_settingsProjectId), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ worca: {} }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = await res.json();
+    settingsData = { worca: result.worca, permissions: result.permissions };
+    _migrationNeeded = false;
+    _migrationDismissed = true;
+    const n = countMigrated(result.autoMigrated);
+    saveStatus = 'success';
+    saveMessage =
+      n > 0
+        ? `${n} project setting${n === 1 ? ' was' : 's were'} moved to global Preferences`
+        : 'Settings saved successfully';
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Migration failed: ${err.message}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
+function migrationBanner(rerender) {
+  if (!_migrationNeeded || _migrationDismissed) return nothing;
+  return html`
+    <sl-alert variant="warning" open class="migration-banner">
+      <strong>Legacy project settings detected.</strong>
+      Some settings in this project belong in global Preferences.
+      <sl-button
+        size="small"
+        variant="warning"
+        outline
+        style="margin-left: 8px;"
+        @click=${() => triggerMigration(rerender)}
+      >Migrate now</sl-button>
+    </sl-alert>
+  `;
+}
+
 // --- Feedback alert ---
 
 function feedbackAlert(rerender) {
@@ -1754,6 +2111,8 @@ export function settingsView(
     onSaveSourceRepo,
     onSaveNotifications,
     onRequestPermission,
+    globals,
+    onSaveGlobals,
     projects,
     onProjectAdd,
     onProjectRemove,
@@ -1798,7 +2157,7 @@ export function settingsView(
 
         <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender })}</sl-tab-panel>
         <sl-tab-panel name="notifications">${notificationsTab(preferences, { rerender, onSaveNotifications, onRequestPermission })}</sl-tab-panel>
-        <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo, rerender })}</sl-tab-panel>
+        <sl-tab-panel name="preferences">${preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo, onSaveGlobals, rerender, globals })}</sl-tab-panel>
         <sl-tab-panel name="integrations">${integrationsTab(integrations || {}, { onStartEdit: onIgStartEdit, onCancelEdit: onIgCancelEdit, onFieldChange: onIgFieldChange, onEventToggle: onIgEventToggle, onSave: onIgSave, onRemove: onIgRemove, onDetect: onIgDetect, onToggleEnabled: onIgToggleEnabled })}</sl-tab-panel>
       </sl-tab-group>
     </div>
@@ -1828,6 +2187,7 @@ export function projectSettingsView(
 
   return html`
     ${feedbackAlert(rerender)}
+    ${migrationBanner(rerender)}
     ${confirmDialogTemplate()}
     <div class="settings-page">
       <sl-tab-group>
@@ -1865,3 +2225,6 @@ export function projectSettingsView(
 // Test-only exports
 export { preferencesTab as _preferencesTab };
 export { projectsTab as _projectsTab };
+export function _getMigrationNeeded() {
+  return _migrationNeeded;
+}

@@ -72,14 +72,18 @@ export function sidebarView(
   connectionState,
   { onNavigate, onProjectChange, onAddProject },
 ) {
+  // Settings use nested shape only — read pre-resolved scalars from state, never flat-dot bracket keys.
   const {
     runs,
     preferences,
     projects,
     currentProjectId,
     worktrees = [],
-    settings = {},
+    worktreeDiskWarningBytes = 2_000_000_000,
+    totalRunning = 0,
+    maxConcurrentPipelines = 10,
   } = state;
+  const atCapacity = totalRunning >= maxConcurrentPipelines;
   const allRunList = Object.values(runs);
   // Filter to selected project for counters (sidebar dots use allRunList via projectStatus)
   const runList =
@@ -101,8 +105,7 @@ export function sidebarView(
   ).length;
 
   const worktreeCount = worktrees.length;
-  const diskWarningThreshold =
-    settings['worca.ui.worktree_disk_warning_bytes'] ?? 2_000_000_000;
+  const diskWarningThreshold = worktreeDiskWarningBytes;
   const totalWorktreeDisk = worktrees.reduce(
     (s, w) => s + (w.disk_bytes || 0),
     0,
@@ -172,6 +175,7 @@ export function sidebarView(
         <button
           type="button"
           class="sidebar-new-run-btn"
+          ?disabled=${atCapacity}
           @click=${() => onNavigate('new-run')}
         >
           ${unsafeHTML(iconSvg(Plus, 14))}
@@ -188,6 +192,7 @@ export function sidebarView(
             <span>Running</span>
           </span>
           ${activeCount > 0 ? html`<sl-badge variant="primary" pill>${activeCount}</sl-badge>` : ''}
+          ${totalRunning > 0 ? html`<sl-badge variant="${atCapacity ? 'warning' : 'neutral'}" pill class="running-cap-badge">${totalRunning}/${maxConcurrentPipelines}</sl-badge>` : ''}
         </div>
         <div class="sidebar-item ${route.section === 'history' ? 'active' : ''}"
              @click=${() => onNavigate('history')}>

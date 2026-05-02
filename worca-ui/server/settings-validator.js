@@ -1,5 +1,6 @@
 // server/settings-validator.js
 import { STAGE_ORDER } from '../app/utils/stage-order.js';
+import { GLOBAL_ONLY_KEYS } from './keys-schema.js';
 
 const VALID_AGENTS = [
   'planner',
@@ -12,7 +13,7 @@ const VALID_AGENTS = [
   'learner',
 ];
 const VALID_STAGES = STAGE_ORDER;
-const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
+export const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
 const VALID_LOOPS = [
   'implement_test',
   'pr_changes',
@@ -262,6 +263,70 @@ export function validateSettingsPayload(body) {
             details.push(`Milestone "${key}" must be a boolean`);
           }
         }
+      }
+    }
+
+    // parallel
+    if (w.parallel !== undefined) {
+      if (
+        typeof w.parallel !== 'object' ||
+        w.parallel === null ||
+        Array.isArray(w.parallel)
+      ) {
+        details.push('worca.parallel must be an object');
+      } else {
+        const p = w.parallel;
+        if (
+          p.worktree_base_dir !== undefined &&
+          (typeof p.worktree_base_dir !== 'string' ||
+            p.worktree_base_dir.length === 0)
+        ) {
+          details.push('parallel.worktree_base_dir must be a non-empty string');
+        }
+        if (
+          p.default_base_branch !== undefined &&
+          (typeof p.default_base_branch !== 'string' ||
+            p.default_base_branch.length === 0)
+        ) {
+          details.push(
+            'parallel.default_base_branch must be a non-empty string',
+          );
+        }
+      }
+    }
+
+    // circuit_breaker
+    if (w.circuit_breaker !== undefined) {
+      if (
+        typeof w.circuit_breaker !== 'object' ||
+        w.circuit_breaker === null ||
+        Array.isArray(w.circuit_breaker)
+      ) {
+        details.push('worca.circuit_breaker must be an object');
+      } else {
+        const cb = w.circuit_breaker;
+        if (cb.enabled !== undefined && typeof cb.enabled !== 'boolean') {
+          details.push('circuit_breaker.enabled must be a boolean');
+        }
+        if (
+          cb.max_consecutive_failures !== undefined &&
+          (!Number.isInteger(cb.max_consecutive_failures) ||
+            cb.max_consecutive_failures < 1 ||
+            cb.max_consecutive_failures > 10)
+        ) {
+          details.push(
+            'circuit_breaker.max_consecutive_failures must be an integer between 1 and 10',
+          );
+        }
+      }
+    }
+
+    // reject misplaced global keys in project settings
+    for (const [section, key] of GLOBAL_ONLY_KEYS) {
+      if (w?.[section]?.[key] !== undefined) {
+        details.push(
+          `worca.${section}.${key} is a global preference (~/.worca/settings.json), not a project setting. Configure it in the global Preferences tab.`,
+        );
       }
     }
 
@@ -781,4 +846,50 @@ export function validateIntegrationsConfig(cfg) {
   }
 
   return details.length ? { valid: false, details } : { valid: true };
+}
+
+const VALID_CLEANUP_POLICIES = ['never', 'on-success', 'manual-only'];
+
+export function validateGlobalSettings(prefs) {
+  const details = [];
+  const w = prefs?.worca;
+  if (!w) return { ok: true };
+
+  if (w.ui?.worktree_disk_warning_bytes !== undefined) {
+    const v = w.ui.worktree_disk_warning_bytes;
+    if (!Number.isInteger(v) || v < 500_000_000 || v > 50_000_000_000) {
+      details.push(
+        'ui.worktree_disk_warning_bytes must be an integer between 500_000_000 (500 MB) and 50_000_000_000 (50 GB)',
+      );
+    }
+  }
+
+  if (
+    w.circuit_breaker?.classifier_model !== undefined &&
+    !VALID_MODELS.includes(w.circuit_breaker.classifier_model)
+  ) {
+    details.push(
+      `circuit_breaker.classifier_model must be one of: ${VALID_MODELS.join(', ')}`,
+    );
+  }
+
+  if (
+    w.parallel?.cleanup_policy !== undefined &&
+    !VALID_CLEANUP_POLICIES.includes(w.parallel.cleanup_policy)
+  ) {
+    details.push(
+      `parallel.cleanup_policy must be one of: ${VALID_CLEANUP_POLICIES.join(', ')}`,
+    );
+  }
+
+  if (w.parallel?.max_concurrent_pipelines !== undefined) {
+    const n = w.parallel.max_concurrent_pipelines;
+    if (!Number.isInteger(n) || n < 1 || n > 20) {
+      details.push(
+        'parallel.max_concurrent_pipelines must be an integer between 1 and 20',
+      );
+    }
+  }
+
+  return details.length === 0 ? { ok: true } : { ok: false, details };
 }

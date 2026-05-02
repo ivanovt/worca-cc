@@ -11,6 +11,7 @@ import express from 'express';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { RAW_BODY } from './integrations/index.js';
 import { verify } from './integrations/verify.js';
+import { createPreferencesRouter } from './preferences-routes.js';
 import { ProcessManager } from './process-manager.js';
 import { scanDirectory } from './project-registry.js';
 import {
@@ -19,6 +20,7 @@ import {
   projectResolver,
 } from './project-routes.js';
 import { validateIntegrationsConfig } from './settings-validator.js';
+import { createStatusRouter } from './status-routes.js';
 import { discoverSubagents } from './subagents-discovery.js';
 import { checkWorcaVersion } from './version-check.js';
 import { getVersionInfo } from './versions.js';
@@ -519,6 +521,8 @@ export function createApp(options = {}) {
 
   // ─── Multi-project routes ──────────────────────────────────────────────
   if (prefsDir) {
+    app.use('/api/preferences', createPreferencesRouter({ prefsDir }));
+    app.use('/api/status', createStatusRouter({ prefsDir }));
     app.use(
       '/api/projects',
       createProjectRoutes({ prefsDir, projectRoot, serverHost, serverPort }),
