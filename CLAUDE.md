@@ -255,10 +255,15 @@ Issues must follow this structure so the pipeline can auto-detect plan files whe
 - [docs/plans/W-NNN-short-description.md](https://github.com/SinishaDjukic/worca-cc/blob/master/docs/plans/W-NNN-short-description.md)
 ```
 
+**When to use the `W-NNN:` prefix:**
+- **Use it** for major features and refactoring — anything that warrants a plan file in `docs/plans/`. The `W-NNN` ties the issue, the plan file, and any branches/PRs together.
+- **Do NOT use it for bugs.** Bug issues use a plain descriptive title (e.g. `GH-issue plan auto-detect hardcodes docs/plans/`) and do not get a `W-NNN` allocation. They also typically skip the `## Plan` section unless the fix is large enough to warrant one — in which case it's no longer a bug and should be filed as a `W-NNN` refactor/feature instead.
+
 **Key rules:**
-- Title format: `W-NNN: Short Description`
-- Labels: one of `area:cc` / `area:ui` + one of `P0`-`P4`
-- The `## Plan` section must contain a markdown link to `docs/plans/*.md` using an absolute blob URL (e.g. `https://github.com/SinishaDjukic/worca-cc/blob/main/docs/plans/W-NNN.md`) — the pipeline parses this link and skips the PLAN stage when the file exists
+- Title format for features/refactors: `W-NNN: Short Description`
+- Title format for bugs: plain descriptive sentence, no prefix
+- Labels: one of `area:cc` / `area:ui` + one of `P0`-`P4`. Bugs additionally get the `bug` label.
+- The `## Plan` section (when present) must contain a markdown link to `docs/plans/*.md` using an absolute blob URL (e.g. `https://github.com/SinishaDjukic/worca-cc/blob/main/docs/plans/W-NNN.md`) — the pipeline parses this link and skips the PLAN stage when the file exists
 - If no plan link is present, the pipeline runs the Planner to generate one
 - Plan files use the naming convention `W-NNN-short-description.md` in `docs/plans/`
 - When asked to write a new plan, follow the structure and conventions in [`docs/plans/_TEMPLATE.md`](./docs/plans/_TEMPLATE.md)
