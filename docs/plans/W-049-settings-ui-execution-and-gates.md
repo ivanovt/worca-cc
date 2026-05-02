@@ -79,7 +79,7 @@ Both blobs deep-merge client-side, project taking precedence on overlap.
 | Package release skew (UI saves global, old runtime reads project) | **Eliminated** by single-delivery |
 | Template ships to-be-global keys at project scope → validation failures on upgrade | **Mitigated** by §11 (template strip + `worca init --upgrade` migration) |
 | Auto-cleanup default deletes worktrees on success | **Mitigated** by default flip to `never` |
-| `pr_approval` default-true hangs autonomous flows | **Mitigated** by default flip to `false` + design-time timeout backstop |
+| `pr_approval` default-true hangs autonomous flows | **Mitigated** by (1) default flip to `false`, (2) template strip of `pr_approval` so upgraded projects don't carry `true` from the previous template, (3) `_strip_inert_milestone_keys` migration that removes template-default `true` from existing project files, (4) timeout backstop in the gate code itself |
 | Global cap of 3 immediately blocks multi-project users | **Mitigated** by default raise to `10` |
 | Malformed `~/.worca/settings.json` crashes endpoint | **Mitigated** by try/catch in `readGlobalSettings` (§4) |
 | `VALID_MODELS` validator/UI select drift | **Mitigated** by superset assertion test (§9) |
@@ -619,9 +619,11 @@ Already shown in §4 — all four defaults applied at read time.
 
 This is the only block that must ship before users hit the new validator on next save. Two pieces:
 
-#### 11a. Strip global keys from `src/worca/settings.json`
+#### 11a. Strip global + inert keys from `src/worca/settings.json`
 
-The template currently ships at `src/worca/settings.json:285-290`:
+Two strip surgeries on the template, both of which must ship in this PR or the runtime defaults won't take effect for upgraded users.
+
+**Strip 1 — global keys.** The template currently ships at `src/worca/settings.json:285-290`:
 
 ```json
 "parallel": {
@@ -641,15 +643,39 @@ After this PR:
 },
 ```
 
-Same surgery applied to `worca.circuit_breaker` (remove `classifier_model`) and `worca.ui` (remove `worktree_disk_warning_bytes` if present). The default values now live exclusively in `readGlobalSettings()`.
+Same surgery on `worca.circuit_breaker` (remove `classifier_model`) and `worca.ui` (remove `worktree_disk_warning_bytes` if present). The default values now live exclusively in `readGlobalSettings()`.
+
+**Strip 2 — inert milestone keys.** The template currently ships at `src/worca/settings.json:201-204`:
+
+```json
+"milestones": {
+  "plan_approval": true,
+  "pr_approval": true,
+  "deploy_approval": true
+},
+```
+
+After this PR:
+
+```json
+"milestones": {
+  "plan_approval": true
+},
+```
+
+Rationale: `pr_approval` and `deploy_approval` are inert today. After this PR `pr_approval` becomes consumed by the new gate (§6c) and `deploy_approval` stays inert (no `Stage.DEPLOY` exists). The runner gates only when `pr_approval is True`; missing or `False` skips the gate. Leaving the template's `pr_approval: true` in place would activate the gate on every upgraded project and hang autonomous flows — exactly the regression the default flip is meant to prevent.
+
+`plan_approval` stays in the template at `true` because that key is already consumed (`runner.py:2089-2118`) and `true` is the existing production behavior — no regression to migrate.
 
 #### 11b. `worca init --upgrade` migration
 
-`src/worca/cli/init.py` (or wherever `--upgrade` lives) gains a one-shot migration step that runs once per project:
+`src/worca/cli/init.py` (or wherever `--upgrade` lives) gains two one-shot migration steps that run once per project. Both are idempotent on second run.
+
+**Step 1 — extract to-be-global keys to `~/.worca/settings.json`:**
 
 ```python
 def _migrate_global_keys_to_preferences(project_settings_path: str) -> dict:
-    """One-shot: extract any to-be-global keys from .claude/settings.json,
+    """One-shot: extract to-be-global keys from .claude/settings.json,
     write them into ~/.worca/settings.json, then strip from the project file.
     Idempotent: returns {} on second run."""
     if not os.path.exists(project_settings_path):
@@ -697,11 +723,64 @@ def _migrate_global_keys_to_preferences(project_settings_path: str) -> dict:
     return extracted
 ```
 
-Returns the migrated dict so the calling CLI command can print a one-liner: `Migrated 3 keys from .claude/settings.json to ~/.worca/settings.json`.
+**Step 2 — strip inert milestone keys from the project file:**
+
+```python
+def _strip_inert_milestone_keys(project_settings_path: str) -> list:
+    """One-shot: remove pr_approval and deploy_approval from .claude/settings.json
+    if they were template-default values (true).
+
+    Why: until this PR these keys were inert; the runner ignored them. The
+    template has shipped them as `true` since W-048. After this PR, the runner
+    gates on `pr_approval is True`, so leaving the template-default value in
+    place would activate the gate on every upgraded project — hanging
+    autonomous flows that don't have a UI listener attached.
+
+    Stripping the template default lets the runner's missing-key default
+    (`false` for pr_approval; ignored for deploy_approval) take effect.
+
+    Skipped if the user has explicitly set the key to `false` (already safe)
+    or to anything non-boolean (treated as user intent — leave alone).
+
+    Returns the list of removed keys for the CLI to report.
+    Idempotent: returns [] on second run."""
+    if not os.path.exists(project_settings_path):
+        return []
+    with open(project_settings_path) as f:
+        project = json.load(f)
+
+    milestones = project.get("worca", {}).get("milestones", {})
+    removed = []
+    # Only strip when value is exactly the previous template default of `True`.
+    # This preserves any explicit user override (`False`, integers, strings...).
+    for key in ("pr_approval", "deploy_approval"):
+        if milestones.get(key) is True:
+            del milestones[key]
+            removed.append(key)
+
+    if not removed:
+        return []
+
+    # Clean up empty milestones object if it becomes empty
+    if "worca" in project and "milestones" in project["worca"] and not project["worca"]["milestones"]:
+        del project["worca"]["milestones"]
+
+    with open(project_settings_path, "w") as f:
+        json.dump(project, f, indent=2)
+
+    return removed
+```
+
+`worca init --upgrade` calls both helpers and prints a one-liner per migration: `Migrated N keys to ~/.worca/settings.json` and `Reset M template-default milestone keys (pr_approval, deploy_approval) — gate now opt-in via Pipeline tab`.
 
 #### 11c. UI banner on detection (defense-in-depth)
 
-When the UI loads a project's settings and the response contains any of the four global-only keys (because the user is on an un-migrated project), show a one-time banner: "This project's settings contain keys that have moved to global Preferences. Click here to migrate." Button calls a new endpoint `POST /api/projects/:id/migrate-global-keys` which runs the same logic as the CLI helper.
+When the UI loads a project's settings and detects either condition, show a one-time banner with a "Migrate now" button:
+
+- **Misplaced global keys present** → "This project's settings contain keys that have moved to global Preferences. Click to migrate."
+- **`worca.milestones.pr_approval === true` or `deploy_approval === true`** → "This project carries template-default approval gate values that would activate the new PR-creation gate. Click to reset to opt-in."
+
+The button POSTs to `POST /api/projects/:id/migrate-global-keys`, which runs *both* migration helpers (`_migrate_global_keys_to_preferences` and `_strip_inert_milestone_keys`) and returns the combined report.
 
 This catches users who upgrade `@worca/ui` but never run `worca init --upgrade`.
 
@@ -709,7 +788,7 @@ This catches users who upgrade `@worca/ui` but never run `worca init --upgrade`.
 
 Single PR. Recommended ordering — ship migration & template strip *first* in the diff so reviewers see the breaking change is contained, then build outward:
 
-1. **Template + migration** (§11). Strip global keys from `src/worca/settings.json`. Add `_migrate_global_keys_to_preferences` helper + wire into `worca init --upgrade`. Add migration banner endpoint stub.
+1. **Template + migration** (§11). Strip global keys *and* template-default `pr_approval`/`deploy_approval` from `src/worca/settings.json`. Add both migration helpers (`_migrate_global_keys_to_preferences`, `_strip_inert_milestone_keys`) + wire into `worca init --upgrade`. Add migration banner endpoint stub.
 2. **Server: global preferences endpoint** (§4). New `preferences-routes.js`, `readGlobalSettings`/`writeGlobalSettings`, `validateGlobalSettings`. Mount router.
 3. **Server: validator additions** (§9). Project validator extensions + reject-misplaced-keys helper + `VALID_MODELS` superset test.
 4. **Server: enforcement** (§5). `max_concurrent_pipelines` 409 cap + `cleanup_policy` post-completion hook.
@@ -761,9 +840,14 @@ Single PR. Recommended ordering — ship migration & template strip *first* in t
   - `pr_approval=true` + `ctx` but no listener → timeout fires after 1h → auto-approve (mock the timer).
 - `tests/test_init_migration.py`:
   - `_migrate_global_keys_to_preferences` extracts the four keys, writes to global, removes from project.
-  - Idempotent on second run (returns `{}`).
-  - Handles missing global file (creates it).
-  - Handles missing project file (no-op).
+  - `_migrate_global_keys_to_preferences` idempotent on second run (returns `{}`).
+  - `_migrate_global_keys_to_preferences` handles missing global file (creates it).
+  - `_migrate_global_keys_to_preferences` handles missing project file (no-op).
+  - `_strip_inert_milestone_keys` removes `pr_approval: true` and `deploy_approval: true` from a project carrying template defaults.
+  - `_strip_inert_milestone_keys` preserves `pr_approval: false` (user already opted out).
+  - `_strip_inert_milestone_keys` preserves non-boolean values (treats as user intent).
+  - `_strip_inert_milestone_keys` idempotent on second run (returns `[]`).
+  - `_strip_inert_milestone_keys` cleans up empty `worca.milestones` object after stripping.
 - `tests/integration/test_cleanup_policy.py`:
   - Full pipeline with `cleanup_policy='on-success'` leaves no worktree.
   - Full pipeline with `cleanup_policy='never'` leaves the worktree intact.
@@ -814,8 +898,8 @@ Single PR. Recommended ordering — ship migration & template strip *first* in t
 
 | Path | Status | Notes |
 |------|--------|---|
-| `src/worca/settings.json` | modify | Strip 4 global keys from template (§11a) |
-| `src/worca/cli/init.py` | modify | Add `_migrate_global_keys_to_preferences` + wire into `--upgrade` (§11b) |
+| `src/worca/settings.json` | modify | Strip 4 global keys + template-default `pr_approval`/`deploy_approval` (§11a) |
+| `src/worca/cli/init.py` | modify | Add `_migrate_global_keys_to_preferences` + `_strip_inert_milestone_keys`; wire both into `--upgrade` (§11b) |
 | `tests/test_init_migration.py` | create | Migration helper tests |
 | `worca-ui/server/preferences-routes.js` | create | GET/PUT /api/preferences (§4) |
 | `worca-ui/server/preferences-routes.test.js` | create | Endpoint tests |
