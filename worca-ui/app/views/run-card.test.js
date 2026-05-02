@@ -572,3 +572,49 @@ describe('runCardView - Finished timestamp visibility', () => {
     expect(finishedMatch[1].trim()).toContain('2026');
   });
 });
+
+describe('runCardView - beads badge', () => {
+  const baseRun = {
+    id: '1',
+    pipeline_status: 'completed',
+    active: false,
+    started_at: '2026-01-01T00:00:00Z',
+  };
+
+  it('omits badge when beadsCount is 0 / undefined', () => {
+    const output = renderToString(runCardView(baseRun));
+    expect(output).not.toContain('Beads</sl-badge>');
+    expect(output).not.toContain('beads</sl-badge>');
+  });
+
+  it('renders "<done>/<total> Beads" for the {total, done} object shape', () => {
+    const output = renderToString(
+      runCardView(baseRun, { beadsCount: { total: 5, done: 2 } }),
+    );
+    expect(output).toContain('2/5 Beads');
+  });
+
+  it('uses primary variant when work is in progress (done < total)', () => {
+    const output = renderToString(
+      runCardView(baseRun, { beadsCount: { total: 5, done: 2 } }),
+    );
+    // The badge for stages is the only place "primary" appears in this card —
+    // but to be specific, look at the beads badge surrounding text.
+    expect(output).toMatch(/variant="primary"[^>]*>2\/5 Beads/);
+  });
+
+  it('uses success variant when all beads are done (done === total)', () => {
+    const output = renderToString(
+      runCardView(baseRun, { beadsCount: { total: 4, done: 4 } }),
+    );
+    expect(output).toMatch(/variant="success"[^>]*>4\/4 Beads/);
+  });
+
+  it('legacy number shape renders as "0/<n> Beads" with primary variant', () => {
+    // Backwards-compat: a plain number means "we know the total, not the
+    // done count" — render it as 0/N in primary so the user sees the total
+    // and knows it's still in progress.
+    const output = renderToString(runCardView(baseRun, { beadsCount: 3 }));
+    expect(output).toMatch(/variant="primary"[^>]*>0\/3 Beads/);
+  });
+});

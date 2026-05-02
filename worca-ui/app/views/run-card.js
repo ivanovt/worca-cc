@@ -76,6 +76,28 @@ function _formatCost(usd) {
 }
 
 /**
+ * Render the beads progress badge for a run card.
+ *
+ * Accepts either a plain number (legacy) or an object {total, done} from the
+ * countIssuesByRunLabel server endpoint. Renders "<done>/<total> Beads".
+ * Variant matches run-detail's beads header: success (green) when done ===
+ * total, primary (blue) while in progress.
+ */
+function beadsBadge(beadsCount) {
+  let total = 0;
+  let done = 0;
+  if (typeof beadsCount === 'number') {
+    total = beadsCount;
+  } else if (beadsCount && typeof beadsCount === 'object') {
+    total = beadsCount.total || 0;
+    done = beadsCount.done || 0;
+  }
+  if (total <= 0) return nothing;
+  const variant = done >= total ? 'success' : 'primary';
+  return html`<sl-badge variant="${variant}" pill class="run-card-stage-badge">${done}/${total} Beads</sl-badge>`;
+}
+
+/**
  * Shared run card component used in both run-list and dashboard active list.
  * Shows title, overall status icon, duration, and stage badges.
  */
@@ -225,13 +247,13 @@ export function runCardView(
             const label = key.replace(/_/g, ' ').toUpperCase();
             return html`<sl-badge variant="${variant}" pill class="run-card-stage-badge">${label}</sl-badge>`;
           })}
-          ${beadsCount > 0 ? html`<sl-badge variant="primary" pill class="run-card-stage-badge">${beadsCount} bead${beadsCount !== 1 ? 's' : ''}</sl-badge>` : nothing}
+          ${beadsBadge(beadsCount)}
         </div>
       `
-          : beadsCount > 0
+          : beadsBadge(beadsCount) !== nothing
             ? html`
         <div class="run-card-stages">
-          <sl-badge variant="primary" pill class="run-card-stage-badge">${beadsCount} bead${beadsCount !== 1 ? 's' : ''}</sl-badge>
+          ${beadsBadge(beadsCount)}
         </div>
       `
             : nothing

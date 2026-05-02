@@ -89,15 +89,40 @@ export async function listUnlinkedIssues(beadsDb) {
   }
 }
 
+/**
+ * Returns { runId: { total, done } } for every run:<id> label in the beads db.
+ *
+ * `total` comes from the cheap `bd label list-all` count. `done` requires
+ * looking at issue status, so we query `bd list --label-any run:<id>` per
+ * run and count statuses === "closed". N+1 queries, but N is bounded by
+ * the number of pipeline runs and this endpoint is called on app load /
+ * project switch only, not on every render.
+ */
 export async function countIssuesByRunLabel(beadsDb) {
   try {
     const rows = await runBd(['label', 'list-all'], beadsDb);
     const counts = {};
-    for (const row of rows) {
-      if (row.label.startsWith('run:')) {
-        counts[row.label.replace('run:', '')] = row.count;
-      }
+    const runLabels = rows.filter((r) => r.label.startsWith('run:'));
+    for (const row of runLabels) {
+      counts[row.label.replace('run:', '')] = { total: row.count, done: 0 };
     }
+    // Count closed issues per label in parallel.
+    await Promise.all(
+      runLabels.map(async (row) => {
+        const runId = row.label.replace('run:', '');
+        try {
+          const issues = await runBd(
+            ['list', '--label-any', row.label, '--all', '--limit', '0'],
+            beadsDb,
+          );
+          counts[runId].done = issues.filter(
+            (i) => i.status === 'closed',
+          ).length;
+        } catch {
+          /* leave done at 0 on per-run failure */
+        }
+      }),
+    );
     return counts;
   } catch {
     return {};
