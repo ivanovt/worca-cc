@@ -77,13 +77,16 @@ Both blobs deep-merge client-side, project taking precedence on overlap.
 | Prior risk | Status |
 |---|---|
 | Package release skew (UI saves global, old runtime reads project) | **Eliminated** by single-delivery |
-| Template ships to-be-global keys at project scope → validation failures on upgrade | **Mitigated** by §11 (template strip + `worca init --upgrade` migration) |
+| Template ships to-be-global keys at project scope → validation failures on upgrade | **Mitigated** by §11 (template strip + `worca init --upgrade` migration) + §9a-bis (server-side strip-on-save self-heals on every save) |
 | Auto-cleanup default deletes worktrees on success | **Mitigated** by default flip to `never` |
-| `pr_approval` default-true hangs autonomous flows | **Mitigated** by (1) default flip to `false`, (2) template strip of `pr_approval` so upgraded projects don't carry `true` from the previous template, (3) `_strip_inert_milestone_keys` migration that removes template-default `true` from existing project files, (4) timeout backstop in the gate code itself |
+| `pr_approval` default-true hangs autonomous flows | **Mitigated** by (1) default flip to `false`, (2) template strip of `pr_approval`, (3) `_strip_inert_milestone_keys` migration, (4) timeout backstop in the gate code with explicit fallback design |
 | Global cap of 3 immediately blocks multi-project users | **Mitigated** by default raise to `10` |
 | Malformed `~/.worca/settings.json` crashes endpoint | **Mitigated** by try/catch in `readGlobalSettings` (§4) |
 | `VALID_MODELS` validator/UI select drift | **Mitigated** by superset assertion test (§9) |
 | Existing test fixtures fail new project validator | **Mitigated** in same PR (test fixtures updated alongside code) |
+| User dismisses migration banner, hits Save → 400 from validator | **Mitigated** by §9a-bis server-side strip-on-save (auto-migrates on every save; validator becomes pure safety net) |
+| `countRunningPipelinesAcrossProjects` inflated by stale PIDs from crashed runs | **Mitigated** by §5a `process.kill(pid, 0)` liveness check; stale PIDs pruned on every cap check |
+| `_check_control_response` may not support `timeout_seconds` today | **Mitigated** by §6c explicit fallback design (local deadline-aware loop in the gate code itself if the helper can't be cleanly extended) |
 
 ## Design
 
@@ -264,7 +267,38 @@ router.post('/runs', requireWorcaDir, async (req, res) => {
 });
 ```
 
-`countRunningPipelinesAcrossProjects` is a new helper in `worca-ui/server/process-registry.js` that walks `~/.worca/projects.d/`, calls `pm.getRunningPid()` per project, returns the count.
+`countRunningPipelinesAcrossProjects` is a new helper in `worca-ui/server/process-registry.js` that walks `~/.worca/projects.d/`, calls `pm.getRunningPid()` per project, **liveness-checks each PID with `process.kill(pid, 0)`** (no signal sent — just throws ESRCH if the process is gone), and returns the count of *actually-live* PIDs:
+
+```js
+function countRunningPipelinesAcrossProjects() {
+  const projects = listRegisteredProjects(); // walk ~/.worca/projects.d/
+  let alive = 0;
+  for (const proj of projects) {
+    const pid = proj.pm?.getRunningPid();
+    if (!pid) continue;
+    try {
+      process.kill(pid, 0); // throws if process doesn't exist
+      alive += 1;
+    } catch (err) {
+      if (err.code === 'ESRCH') {
+        // Stale PID — process died without cleaning up its registry entry.
+        // Prune it so the cap doesn't get permanently inflated by zombie state.
+        proj.pm?.clearStalePid?.(pid);
+      } else if (err.code !== 'EPERM') {
+        // EPERM means the process exists but we can't signal it — count as alive.
+        // Anything else is unexpected; log and conservatively count as alive.
+        console.warn(`PID liveness check for ${pid} failed: ${err.message}`);
+        alive += 1;
+      } else {
+        alive += 1;
+      }
+    }
+  }
+  return alive;
+}
+```
+
+Without the liveness check, a crashed run that didn't clean up its PID file would inflate the count and could permanently block new launches under the cap. With it, stale state self-heals on every cap check.
 
 #### 5b. `cleanup_policy` post-completion hook
 
@@ -364,7 +398,25 @@ elif current_stage == Stage.PR:
 
 **Two design choices baked into this block, each mitigating risk #4:**
 - **Default `false`:** the gate fires only when explicitly enabled (`is not True` rather than `is not False`). Preserves existing autonomous-run behavior.
-- **Timeout backstop:** `_check_control_response` accepts an optional `timeout_seconds` (default 3600 = 1 hour) and `timeout_default="approve"`. If no approval arrives within the window, the gate auto-approves and emits a log line. Verify during implementation that `_check_control_response` supports timeouts; if not, extend it (small change). The `pr_approval_timeout_seconds` setting is internal — not editable from UI in this PR; configurable by hand-edit only.
+- **Timeout backstop:** `_check_control_response` accepts an optional `timeout_seconds` (default 3600 = 1 hour) and `timeout_default="approve"`. If no approval arrives within the window, the gate auto-approves and emits a log line. The `pr_approval_timeout_seconds` setting is internal — not editable from UI in this PR; configurable by hand-edit only.
+
+**Implementation pre-condition + fallback for the timeout backstop:** verify whether `_check_control_response` already supports `timeout_seconds` / `timeout_default` parameters. If yes, pass them through. If no, the implementer has two options:
+1. **Extend `_check_control_response`** to accept the new params (preferred — keeps the timeout logic in one place, benefits any future gate that needs it).
+2. **Local fallback in the gate code** — wrap the call in a deadline-aware loop:
+   ```python
+   import time
+   deadline = time.monotonic() + _ms_cfg.get("pr_approval_timeout_seconds", 3600)
+   _action = None
+   while time.monotonic() < deadline:
+       _action = _check_control_response(ctx, _ms_event)
+       if _action is not None:
+           break
+       time.sleep(_check_control_response_poll_interval())
+   if _action is None:
+       _action = "approve"  # timeout backstop default
+       log.warning("pr_approval gate auto-approved on timeout")
+   ```
+   This keeps the timeout behavior local to the PR gate without changing shared infrastructure. Pick option 2 if extending the helper risks expanding the PR scope.
 
 **Schema additions:**
 - `set_milestone(status, "pr_approved", ...)` — extend recognized milestones in `src/worca/state/status.py`.
@@ -533,6 +585,39 @@ for (const [section, key] of GLOBAL_ONLY_KEYS) {
   }
 }
 ```
+
+#### 9a-bis. Server-side strip-on-save (defense in depth)
+
+The validator above is a hard rejection. If a user opens project settings on an un-migrated project, hits Save without modifying anything, the round-trip would fail because the existing misplaced keys are still present in the on-disk file (the validator runs on the merged result of incoming partial + existing file).
+
+To prevent that hard-stop UX, the project save endpoint at `worca-ui/server/project-routes.js` runs a **strip-and-migrate pass** before validation on every save:
+
+```js
+router.put('/settings', async (req, res) => {
+  const incoming = req.body;
+  const existing = readMergedSettings(settingsPath);
+  const merged = deepMerge(existing, incoming);
+
+  // Auto-extract any misplaced global keys to ~/.worca/settings.json,
+  // then strip them from the project blob. Idempotent: no-op when clean.
+  const extracted = extractAndStripGlobalKeys(merged);
+  if (Object.keys(extracted).length > 0) {
+    mergeIntoGlobalSettings(extracted);
+    console.info(`Auto-migrated ${Object.keys(extracted).length} misplaced keys from project to global on save`);
+  }
+
+  const validation = validateProjectSettings(merged);
+  if (!validation.ok) return res.status(400).json(validation);
+  writeProjectSettings(settingsPath, merged);
+  res.json({ ok: true, autoMigrated: extracted });
+});
+```
+
+`extractAndStripGlobalKeys` is a JS port of `_migrate_global_keys_to_preferences` (§11b). The existing `_migrate_global_keys_to_preferences` Python helper and this JS twin must agree on the key list — extract `GLOBAL_ONLY_KEYS` to a shared constants module to prevent drift.
+
+After this, the validator's "reject misplaced keys" rule becomes a pure safety net: it only fires if `extractAndStripGlobalKeys` somehow missed a key (a bug). The user-facing path always self-heals on save, so a user who never runs `worca init --upgrade` and dismisses the §11c banner still ends up with clean settings the moment they touch the editor.
+
+Response body's `autoMigrated` field lets the UI surface a one-time toast: "N project settings were moved to global Preferences."
 
 #### 9b. Global validator (`validateGlobalSettings`)
 
@@ -823,6 +908,14 @@ Single PR. Recommended ordering — ship migration & template strip *first* in t
   - 409 with `code: 'max_concurrent_exceeded'` when over global cap.
   - 200 when under cap.
   - Per-project 409 still fires under global cap.
+  - PUT /settings auto-extracts misplaced global keys, writes them to global, returns `autoMigrated` field listing what moved.
+  - PUT /settings on a clean payload returns `autoMigrated: {}` (no-op).
+  - PUT /settings still 400s if validation fails after the strip-and-migrate pass (safety-net path).
+- `process-registry.test.js`:
+  - `countRunningPipelinesAcrossProjects` skips PIDs that fail `process.kill(pid, 0)` with ESRCH.
+  - Counts PIDs that throw EPERM (we can't signal but they exist).
+  - Calls `clearStalePid` on each pruned entry.
+  - Returns 0 when registry is empty.
 
 ### Python (pytest)
 
@@ -837,7 +930,8 @@ Single PR. Recommended ordering — ship migration & template strip *first* in t
   - `pr_approval=true` + control approve → PR runs.
   - `pr_approval=true` + control reject → `PipelineInterrupted("pr_rejected")`.
   - `pr_approval=true` + no `ctx` → auto-approve.
-  - `pr_approval=true` + `ctx` but no listener → timeout fires after 1h → auto-approve (mock the timer).
+  - `pr_approval=true` + `ctx` but no listener → timeout fires after 1h → auto-approve (mock the timer); log line emitted.
+  - **If the timeout fallback path is implemented locally** (option 2 from §6c, no helper extension): explicit test that the deadline-aware loop in the gate code returns `"approve"` after the deadline regardless of `_check_control_response`'s native capabilities.
 - `tests/test_init_migration.py`:
   - `_migrate_global_keys_to_preferences` extracts the four keys, writes to global, removes from project.
   - `_migrate_global_keys_to_preferences` idempotent on second run (returns `{}`).
@@ -909,7 +1003,9 @@ Single PR. Recommended ordering — ship migration & template strip *first* in t
 | `worca-ui/server/app.js` | modify | Mount preferences router |
 | `worca-ui/server/process-manager.js` | modify | Post-exit cleanup hook reading global prefs (§5b) |
 | `worca-ui/server/process-manager.test.js` | extend | Cleanup policy branches |
-| `worca-ui/server/process-registry.js` | modify | `countRunningPipelinesAcrossProjects` (§5a) |
+| `worca-ui/server/process-registry.js` | modify | `countRunningPipelinesAcrossProjects` with PID liveness check (§5a) |
+| `worca-ui/server/process-registry.test.js` | create | Liveness-check + stale-prune tests |
+| `worca-ui/server/global-keys.js` | create | Shared `GLOBAL_ONLY_KEYS` constant + `extractAndStripGlobalKeys` JS port (§9a-bis) |
 | `worca-ui/server/project-routes.js` | modify | 409 cap check (§5a) + banner-migration endpoint (§11c) |
 | `worca-ui/server/project-routes.test.js` | extend | Cap enforcement |
 | `src/worca/utils/settings.py` | modify | `load_settings_with_global_fallback` (§6a) |
