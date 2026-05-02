@@ -1,6 +1,6 @@
 # W-049: Settings UI + Runtime Consumers for Execution, Approval Gates, Circuit Breaker, and Worktree Disk Threshold
 
-**Status:** Draft (revised — scope expanded to include consumer implementation; project/global split committed to option B)
+**Status:** Draft (revised — single-delivery; project/global split committed; risk mitigations folded in)
 **Priority:** P2
 **Area:** ui + cc
 **Date:** 2026-05-02
@@ -36,49 +36,60 @@ User-facing impact: power features are invisible; the W-048 worktree mechanics i
 2. **Bug B — hardcoded threshold.** `worca-ui/app/views/worktrees.js:56` literal `over2gb = total > 2_000_000_000`; never reads the setting.
 3. **Bug C — no data flow to the views.** `worca-ui/app/main.js:805` assigns `projSettings` to a module-local variable. It is **never** pushed into the store via `store.setState`. `sidebarView` destructures `settings = {}` from `state` (`sidebar.js:81`) — so the lookup always falls back to 2 GB regardless of what the JSON contains. `worktreesView(state.worktrees || [], { ... })` (`main.js:2149`) doesn't receive settings at all.
 
-Bug C is the headline: even after Bug A's fix, the sidebar would see an empty object and the threshold would still be inert. All three must be fixed in the same wave that ships the editor, or the editor saves a value nothing reads.
+Bug C is the headline: even after Bug A's fix, the sidebar would see an empty object and the threshold would still be inert. All three must be fixed in the same PR that ships the editor, or the editor saves a value nothing reads.
 
 ## Proposal
 
-Five phased waves. Each lands as its own PR. The first ships the global preferences endpoint plus editors for the 6 already-consumed keys — bigger than originally drafted (Wave 1 ~300 LOC) because committing to the project/global split up front avoids a later migration. Waves 2–5 implement runtime consumers for the inert keys, then expose them via editors that go straight into the correct tab.
+**Single delivery — one PR, one release** for both `worca-cc` and `@worca/ui` (coordinated tag push). Approximate size: ~870 LOC implementation + ~1000 LOC tests. Five logical work-streams (project tab editors, global tab editors + endpoint, runtime consumers, server enforcement, plumbing fixes + template migration), all merging together to eliminate the package-version-skew risk that a phased rollout would create.
 
-| Wave | Scope | Risk | Approx LOC |
-|------|-------|------|---|
-| 1 | Global preferences endpoint + threshold plumbing fix (Bugs A/B/C) + editors for the 6 already-consumed keys (4 project, 2 global) | medium | ~300 + tests |
-| 2 | Implement `default_base_branch` consumer + project editor + New Pipeline form placeholder | low | ~50 + tests |
-| 3 | Implement `cleanup_policy` consumer (post-completion hook in process-manager, reading from global) + global editor | medium | ~100 + tests |
-| 4 | Implement `max_concurrent_pipelines` server enforcement (cross-project cap) + UI gating + global editor | medium | ~120 + tests |
-| 5 | Implement `pr_approval` consumer (mirror `plan_approval` state-machine pattern) + UI approve/reject affordance + project editor | medium-high | ~200 + tests |
+### Architectural decisions (committed, no later migration)
 
-**Architectural decisions (committed):**
-- **Global preferences endpoint** (`GET`/`PUT /api/preferences` reading/writing `~/.worca/settings.json`) ships in Wave 1. Hosts all four naturally-global keys from day one — no later migration.
+- **Global preferences endpoint** (`GET`/`PUT /api/preferences` reading/writing `~/.worca/settings.json`) hosts all naturally-global keys from day one.
 - **Disk-threshold data flow:** explicit prop threading through `main.js → sidebarView` and `main.js → worktreesView`, sourced from a `state.worktreeDiskWarningBytes` scalar. The scalar is populated from the global preferences fetch on bootstrap, not from per-project settings.
-- **Project / global split** (final, no later migration):
+- **Project / global split:**
 
 | Tab | Keys | Justification |
 |---|---|---|
 | **Project Pipeline** (`.claude/settings.json`) | `worktree_base_dir`, `default_base_branch`, `plan_approval`, `pr_approval`, `cb.enabled`, `cb.max_consecutive_failures` | Varies per repo / pipeline shape |
 | **Global Preferences** (`~/.worca/settings.json`) | `cleanup_policy`, `worktree_disk_warning_bytes`, `cb.classifier_model`, `max_concurrent_pipelines` | Per-user / per-machine concern (habit, disk, wallet, host capacity) |
 
-Both blobs deep-merge client-side, project taking precedence — same pattern as `worca.models`. (Today no overlap exists in practice; the merge is forward-compatible.)
+Both blobs deep-merge client-side, project taking precedence on overlap.
+
+### Defaults (revised from earlier drafts to mitigate identified risks)
+
+| Key | Earlier draft | Final | Reason for change |
+|---|---|---|---|
+| `parallel.cleanup_policy` | `on-success` | **`never`** | Auto-deletion of worktrees on success would silently break workflows that depend on post-run worktree inspection. Make `on-success` an explicit opt-in. |
+| `milestones.pr_approval` | `true` | **`false`** | Default-true would hang every autonomous flow at the PR gate waiting for an approval event no one sends. Ship the gate infrastructure but keep the gate off by default. |
+| `parallel.max_concurrent_pipelines` | `3` | **`10`** | Cap of 3 immediately bites users with 4+ projects on day-one upgrade. 10 is permissive enough that real workflows aren't blocked but still enforces a global ceiling. |
+| `milestones.plan_approval` | `true` | `true` (unchanged) | Already in production today with this default; matches existing behavior. |
+| `cb.enabled` | `true` | `true` (unchanged) | Matches current `settings.json` template default. |
 
 ### Out of scope
 
-- **`worca.milestones.deploy_approval`** — no `Stage.DEPLOY` exists; gating something that doesn't run is meaningless. Defer to whenever a deploy stage ships (file as a follow-up, do not expose an editor here).
-- **`worca.circuit_breaker.transient_retry_count`** — redundant with `len(transient_retry_backoff_seconds)`. Document as deprecated in `settings.json` comments; do not expose.
-- **`worca.circuit_breaker.transient_retry_backoff_seconds`** — consumed but internal-mechanic; tweaking it without context produces surprising retry storms.
-- `worca.models.*` — set-once-per-codebase; the Agents tab already lets users pick between aliases.
-- `worca.events.*` — already exposed in Notifications/Webhooks tab.
-- Per-run worktree on/off toggle (decided during W-048).
-- `.claude/` skip-patterns key (not shipped in `settings.json` yet).
+- **`worca.milestones.deploy_approval`** — no `Stage.DEPLOY` exists; gating something that doesn't run is meaningless. Defer to whenever a deploy stage ships.
+- **`worca.circuit_breaker.transient_retry_count`** — redundant with `len(transient_retry_backoff_seconds)`. Document as deprecated; do not expose.
+- **`worca.circuit_breaker.transient_retry_backoff_seconds`** — consumed but internal-mechanic.
+- `worca.models.*`, `worca.events.*`, per-run worktree on/off toggle, `.claude/` skip patterns — see prior plan revisions for rationale.
+
+### Risk profile after bundling + mitigations
+
+| Prior risk | Status |
+|---|---|
+| Package release skew (UI saves global, old runtime reads project) | **Eliminated** by single-delivery |
+| Template ships to-be-global keys at project scope → validation failures on upgrade | **Mitigated** by §11 (template strip + `worca init --upgrade` migration) |
+| Auto-cleanup default deletes worktrees on success | **Mitigated** by default flip to `never` |
+| `pr_approval` default-true hangs autonomous flows | **Mitigated** by default flip to `false` + design-time timeout backstop |
+| Global cap of 3 immediately blocks multi-project users | **Mitigated** by default raise to `10` |
+| Malformed `~/.worca/settings.json` crashes endpoint | **Mitigated** by try/catch in `readGlobalSettings` (§4) |
+| `VALID_MODELS` validator/UI select drift | **Mitigated** by superset assertion test (§9) |
+| Existing test fixtures fail new project validator | **Mitigated** in same PR (test fixtures updated alongside code) |
 
 ## Design
 
 ### 1. Tab section ordering
 
-#### Project Pipeline tab
-
-`worca-ui/app/views/settings.js:514-643` renders the project-scoped `pipelineTab(worca, rerender)`. Today's order:
+#### Project Pipeline tab (`worca-ui/app/views/settings.js:514-643`)
 
 ```
 Preflight
@@ -86,178 +97,59 @@ Stage Configuration
 Loop Limits
 Plan Path Template
 Run Defaults
+Approval Gates*           (plan_approval + pr_approval)
+Circuit Breaker*          (enabled + max_consecutive_failures only)
+Execution & Parallelism*  (worktree_base_dir + default_base_branch)
 [Save / Reset]
 ```
 
-Target ordering after all waves (new sections marked `*`, with the wave that adds each):
-
-```
-Preflight
-Stage Configuration
-Loop Limits
-Plan Path Template
-Run Defaults
-Approval Gates*           (Wave 1 plan_approval, Wave 5 pr_approval)
-Circuit Breaker*          (Wave 1 — enabled + max_consecutive_failures only; classifier_model goes global)
-Execution & Parallelism*  (Wave 1 worktree_base_dir; Wave 2 default_base_branch)
-[Save / Reset]
-```
-
-#### Global Preferences tab
-
-`worca-ui/app/views/settings.js:1077-1115` renders the global `preferencesTab(preferences, { onThemeToggle, onSaveSourceRepo, rerender })`. Today's content is theme + source repo. Target ordering after all waves:
+#### Global Preferences tab (`worca-ui/app/views/settings.js:1077-1115`)
 
 ```
 Theme                                (existing)
 Development (source repo)            (existing)
-Worktrees*                           (Wave 1 — disk threshold; Wave 3 — cleanup_policy)
-Pipeline Execution*                  (Wave 1 — cb.classifier_model; Wave 4 — max_concurrent_pipelines)
+Worktrees*                           (disk threshold + cleanup_policy)
+Pipeline Execution*                  (cb.classifier_model + max_concurrent_pipelines)
 Version block                        (existing)
 ```
 
-### 2. Wave 1 — Global preferences endpoint + plumbing fix + already-consumed editors
+### 2. Project Pipeline tab editors
 
-#### 2a. Global preferences endpoint (new infrastructure)
+All in `.claude/settings.json` via the existing `POST /api/projects/:id/settings`. Render shape mirrors existing `settings-grid` / `settings-field` rows.
 
-`worca-ui/server/preferences-routes.js` (new file):
-
-```js
-// GET /api/preferences — returns the merged ~/.worca/settings.json with defaults applied
-router.get('/', (req, res) => {
-  const prefs = readGlobalSettings();
-  res.json({ ok: true, preferences: prefs });
-});
-
-// PUT /api/preferences — partial deep-merge update of ~/.worca/settings.json
-router.put('/', (req, res) => {
-  const validation = validateGlobalSettings(req.body);
-  if (!validation.ok) return res.status(400).json(validation);
-  writeGlobalSettings(req.body);
-  res.json({ ok: true });
-});
-```
-
-`readGlobalSettings` / `writeGlobalSettings` mirror the existing `readMergedSettings` / `writeProjectSettings` helpers in `worca-ui/server/settings-reader.js` but target `~/.worca/settings.json`. Add to the same file:
-
-```js
-const GLOBAL_SETTINGS_PATH = path.join(os.homedir(), '.worca', 'settings.json');
-
-function readGlobalSettings() {
-  let raw = {};
-  try {
-    raw = JSON.parse(readFileSync(GLOBAL_SETTINGS_PATH, 'utf-8'));
-  } catch (err) {
-    if (err.code !== 'ENOENT') throw err;
-  }
-  raw.worca ??= {};
-  raw.worca.parallel ??= {};
-  raw.worca.parallel.cleanup_policy ??= 'on-success';
-  raw.worca.parallel.max_concurrent_pipelines ??= 3;
-  raw.worca.ui ??= {};
-  raw.worca.ui.worktree_disk_warning_bytes ??= 2_000_000_000;
-  raw.worca.circuit_breaker ??= {};
-  raw.worca.circuit_breaker.classifier_model ??= 'haiku';
-  return raw;
-}
-
-function writeGlobalSettings(partial) {
-  // Deep-merge partial into existing global blob, then atomic write
-  const existing = readGlobalSettings();
-  const merged = deepMerge(existing, partial);
-  ensureDirSync(path.dirname(GLOBAL_SETTINGS_PATH));
-  writeFileSyncAtomic(GLOBAL_SETTINGS_PATH, JSON.stringify(merged, null, 2));
-}
-```
-
-`validateGlobalSettings` is a focused validator covering only the four global keys (Section 8).
-
-Mount the router in `worca-ui/server/app.js` alongside the existing project routes.
-
-**Consumer-side change:** the runner / Python side reads project `settings.json` today via `worca.utils.settings.load_settings`. After Wave 1, `cleanup_policy` and `max_concurrent_pipelines` are not consumed by Python (the consumers are added in Waves 3 / 4 and live in the UI server, which reads `~/.worca/settings.json` directly). `cb.classifier_model` IS consumed by Python (`error_classifier.py:102`); it must continue to read from per-project settings, but with a global fallback. Add a small helper `worca.utils.settings.load_settings_with_global_fallback(project_path)` that deep-merges `~/.worca/settings.json` under the project blob (project wins). Update `error_classifier.py:102` to use it.
-
-That's the only Python-side change in Wave 1 — three lines plus a helper.
-
-#### 2b. Disk-threshold plumbing fix (Bugs A/B/C)
-
-The threshold now sources from global preferences. `bootstrap()` in `main.js` fetches `/api/preferences` once at startup; the `worktreeDiskWarningBytes` scalar lives in store state.
-
-```js
-// main.js — in bootstrap, after initial project list fetch
-const prefsRes = await fetch('/api/preferences');
-const { preferences } = await prefsRes.json();
-const bytes = preferences?.worca?.ui?.worktree_disk_warning_bytes ?? 2_000_000_000;
-store.setState({
-  worktreeDiskWarningBytes: bytes,
-  classifierModel: preferences?.worca?.circuit_breaker?.classifier_model ?? 'haiku',
-  cleanupPolicy: preferences?.worca?.parallel?.cleanup_policy ?? 'on-success',
-  maxConcurrentPipelines: preferences?.worca?.parallel?.max_consecutive_pipelines ?? 3,
-});
-```
-
-(Last three populated together so later waves don't need to re-touch this block.)
-
-Then in `sidebarView`:
-
-```js
-// sidebar.js — replace lines 104-105
-const diskWarningThreshold =
-  state.worktreeDiskWarningBytes ?? 2_000_000_000;
-```
-
-And in `worktreesView`:
-
-```js
-// worktrees.js — replace line 56
-const overThreshold = total > (options.diskWarningBytes ?? 2_000_000_000);
-```
-
-`main.js:2149` call site:
-
-```js
-return worktreesView(state.worktrees || [], {
-  ...existingOptions,
-  diskWarningBytes: state.worktreeDiskWarningBytes ?? 2_000_000_000,
-});
-```
-
-`store.js` initial state adds `worktreeDiskWarningBytes: 2_000_000_000` (and the three other globals so first render before bootstrap doesn't NPE).
-
-**Why prop threading vs `state.settings`:** the views never destructure a `settings` blob; they consume single scalars from state. Sidebar reads from state directly because it already destructures from state for everything else; worktrees view takes a prop because it already takes a fat options bag. Pattern stays consistent with each view's existing shape.
-
-#### 2c. Project Pipeline tab editors (Wave 1 subset)
-
-All in project-scoped `.claude/settings.json` via the existing `POST /api/projects/:id/settings`. Render shape mirrors existing `settings-grid` / `settings-field` rows.
-
-**Approval Gates section** (Wave 1 ships only `plan_approval`; Wave 5 adds `pr_approval`):
+**Approval Gates section:**
 
 | Field | Key | Default | Control |
 |---|---|---|---|
 | Plan approval required | `worca.milestones.plan_approval` | `true` | `<sl-switch id="milestone-plan-approval">`. Hint: "Pipeline pauses after Plan stage; pause-control event lets you approve or reject before Coordinate." |
+| PR approval required | `worca.milestones.pr_approval` | `false` | `<sl-switch id="milestone-pr-approval">`. Hint: "When enabled, pipeline pauses before guardian creates the PR; approve/reject from the run detail view. Off by default to avoid hanging unattended runs — see global Preferences for default approval timeout." |
 
-**Circuit Breaker section** (Wave 1 — `classifier_model` ships in the Global tab, Section 2d):
+**Circuit Breaker section** (`classifier_model` lives in Global tab):
 
 | Field | Key | Default | Control |
 |---|---|---|---|
 | Enabled | `worca.circuit_breaker.enabled` | `true` | `<sl-switch id="cb-enabled">` |
 | Max consecutive failures | `worca.circuit_breaker.max_consecutive_failures` | `3` | `<sl-input type="number" min="1" max="10" id="cb-max-failures">`. Hint: "Stop after N consecutive errors of the same kind." |
 
-**Execution & Parallelism section** (Wave 1 subset):
+**Execution & Parallelism section:**
 
 | Field | Key | Default | Control |
 |---|---|---|---|
 | Worktree base directory | `worca.parallel.worktree_base_dir` | `.worktrees` | `<sl-input id="parallel-worktree-base-dir">`. Hint: "Relative paths resolve from project root. Absolute and `~/`-prefixed paths supported." |
+| Default PR base branch | `worca.parallel.default_base_branch` | `main` | `<sl-input id="parallel-default-base-branch">`. Hint: "Used as the default when launching a new worktree-based run if `--branch` is not specified." |
 
-#### 2d. Global Preferences tab editors (Wave 1 subset)
+### 3. Global Preferences tab editors
 
-All in `~/.worca/settings.json` via `PUT /api/preferences`. New `preferencesTab` Save handler PUTs the partial blob.
+All in `~/.worca/settings.json` via `PUT /api/preferences`.
 
 **Worktrees group:**
 
 | Field | Key | Default | Control |
 |---|---|---|---|
 | Disk warning threshold | `worca.ui.worktree_disk_warning_bytes` | `2_000_000_000` (2 GB) | Number input + unit `<sl-select>` (MB/GB), range 0.5–50 GB; persists raw bytes. |
+| Auto-cleanup policy | `worca.parallel.cleanup_policy` | `never` | `<sl-select id="pref-cleanup-policy">` with options `never`, `on-success`, `manual-only`. Hint: "When `on-success`, the worktree is auto-removed after a clean pipeline exit. `never` (default) and `manual-only` both leave it in place — use `manual-only` to flag it for the Worktrees view's cleanup hint." |
 
-Two-control layout:
+Two-control layout for the threshold (formatter / reader):
 
 ```js
 function formatDiskThreshold(bytes) {
@@ -279,109 +171,85 @@ function readDiskThresholdFromDom() {
 | Field | Key | Default | Control |
 |---|---|---|---|
 | Error classifier model | `worca.circuit_breaker.classifier_model` | `haiku` | `<sl-select id="pref-classifier-model">` populated from `Object.keys(worca.models)`. Hint: "Model used to classify pipeline errors. Cost is billed to your API key." |
+| Max concurrent pipelines | `worca.parallel.max_concurrent_pipelines` | `10` | `<sl-input type="number" min="1" max="20" id="pref-max-concurrent">`. Hint: "Hard cap across all projects. Server returns 409 when exceeded." |
 
-The classifier-model `<sl-select>` reads from `worca.models` aliases on the client (so it tracks future alias additions). The validator (`VALID_MODELS` at `worca-ui/server/settings-validator.js:15`, currently `['opus', 'sonnet', 'haiku']`) must be updated in lockstep when new aliases are added — call this out as a known coupling in code comments at both sites.
+The classifier-model `<sl-select>` reads from `worca.models` aliases on the client (so it tracks future alias additions). The validator (`VALID_MODELS` at `worca-ui/server/settings-validator.js:15`) is hardcoded — see §9 for the superset assertion test that prevents drift.
 
-**Save handler in `preferencesTab`:**
+### 4. Server: global preferences endpoint
+
+`worca-ui/server/preferences-routes.js` (new file):
 
 ```js
-async function savePreferences() {
-  const partial = {
-    worca: {
-      ui: { worktree_disk_warning_bytes: readDiskThresholdFromDom() },
-      circuit_breaker: { classifier_model: document.getElementById('pref-classifier-model')?.value || 'haiku' },
-      // cleanup_policy added in Wave 3, max_concurrent_pipelines added in Wave 4
-    },
-  };
-  const res = await fetch('/api/preferences', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(partial),
-  });
-  // ... handle 400 validation errors, refresh state ...
+router.get('/', (req, res) => {
+  try {
+    const prefs = readGlobalSettings();
+    res.json({ ok: true, preferences: prefs });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to read global preferences',
+      detail: err.message,
+    });
+  }
+});
+
+router.put('/', (req, res) => {
+  const validation = validateGlobalSettings(req.body);
+  if (!validation.ok) return res.status(400).json(validation);
+  writeGlobalSettings(req.body);
+  res.json({ ok: true });
+});
+```
+
+`worca-ui/server/settings-reader.js` additions (with try/catch for malformed JSON — risk #7 mitigation):
+
+```js
+const GLOBAL_SETTINGS_PATH = path.join(os.homedir(), '.worca', 'settings.json');
+
+function readGlobalSettings() {
+  let raw = {};
+  try {
+    raw = JSON.parse(readFileSync(GLOBAL_SETTINGS_PATH, 'utf-8'));
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      // First-run: file doesn't exist yet — return defaults
+    } else if (err instanceof SyntaxError) {
+      console.error(`Invalid JSON in ${GLOBAL_SETTINGS_PATH}: ${err.message}; falling back to defaults`);
+    } else {
+      throw err;
+    }
+  }
+  raw.worca ??= {};
+  raw.worca.parallel ??= {};
+  raw.worca.parallel.cleanup_policy ??= 'never';
+  raw.worca.parallel.max_concurrent_pipelines ??= 10;
+  raw.worca.ui ??= {};
+  raw.worca.ui.worktree_disk_warning_bytes ??= 2_000_000_000;
+  raw.worca.circuit_breaker ??= {};
+  raw.worca.circuit_breaker.classifier_model ??= 'haiku';
+  return raw;
+}
+
+function writeGlobalSettings(partial) {
+  const existing = readGlobalSettings();
+  const merged = deepMerge(existing, partial);
+  ensureDirSync(path.dirname(GLOBAL_SETTINGS_PATH));
+  writeFileSyncAtomic(GLOBAL_SETTINGS_PATH, JSON.stringify(merged, null, 2));
 }
 ```
 
-### 3. Wave 2 — `default_base_branch` (project consumer + project editor)
+Mount the router in `worca-ui/server/app.js`.
 
-**Backend consumer:** `src/worca/scripts/run_worktree.py:217` currently does `base_branch = args.branch or "HEAD"`. Replace with:
+### 5. Server: enforcement
 
-```python
-_settings = load_settings(args.settings)
-_parallel = _settings.get("worca", {}).get("parallel", {})
-_default_branch = _parallel.get("default_base_branch", "main")
-base_branch = args.branch or _default_branch
-```
+#### 5a. `max_concurrent_pipelines` cap on `POST /runs`
 
-(Move the `load_settings` call above its current spot at line 222 since it's now needed for both `worktree_base_dir` and `default_base_branch`. Single read, both reads off the same dict.)
-
-**UI consumer:** New Pipeline form (find via `grep -n "branch" worca-ui/app/views/new-pipeline.js` — verify path during implementation) uses the configured value as placeholder for the base-branch text input. If the form already takes a `defaultBranch` prop, pass `state.projectSettings?.worca?.parallel?.default_base_branch ?? 'main'` from `main.js`. If not, add the prop.
-
-**Project Pipeline tab editor (Execution & Parallelism section):**
-
-| Field | Key | Default | Control |
-|---|---|---|---|
-| Default PR base branch | `worca.parallel.default_base_branch` | `main` | `<sl-input id="parallel-default-base-branch">`. Hint: "Used as the default when launching a new worktree-based run if `--branch` is not specified." |
-
-**Tests:**
-- `tests/test_run_worktree.py` — `--branch` omitted + `default_base_branch` set → `create_pipeline_worktree` called with that branch.
-- `tests/test_run_worktree.py` — `--branch` provided → `default_base_branch` ignored.
-- Render test for the editor in Pipeline tab.
-
-### 4. Wave 3 — `cleanup_policy` (consumer + global editor)
-
-**Where the consumer lives:** `run_worktree.py` uses fire-and-forget `subprocess.Popen` (line 264-272) to spawn the pipeline. Cleanup must happen *after* the subprocess exits and from a process *outside* the worktree (you cannot `git worktree remove` from inside it). The cleanest place is the UI server's process-manager, which already tracks running PIDs and polls for status — and which already has `readGlobalSettings()` available from Wave 1.
-
-**Backend:**
-
-`worca-ui/server/process-manager.js` — add a completion-watcher behavior. When `getRunningPid()` transitions from a valid PID to `null` (process exit detected on the next status poll), read the cleanup policy from **global preferences** and the run's exit status:
-
-```js
-// After process exit detected:
-const globalPrefs = readGlobalSettings();
-const policy = globalPrefs?.worca?.parallel?.cleanup_policy ?? 'on-success';
-const status = readRunStatus(runId); // status.json
-const exitOk = status?.outcome === 'completed' || status?.exit_code === 0;
-const worktreePath = status?.worktree_path;
-
-if (worktreePath && policy === 'on-success' && exitOk) {
-  await removeWorktree(worktreePath); // wraps `git worktree remove --force`
-  emitEvent('worktree.auto_cleanup', { runId, path: worktreePath, reason: 'on-success' });
-}
-// 'never' and 'manual-only' both no-op — semantic difference is documentation only
-```
-
-`removeWorktree` mirrors `_cleanup_worktree` at `src/worca/scripts/run_parallel.py:117-122` (one-line `git worktree remove` shell-out).
-
-**Pre-conditions to verify during implementation:**
-- That `status.json` contains `worktree_path` after W-048. If not, plumb it through `register_pipeline()`.
-- That process-manager has a hook for "process exit detected" — there is already polling for `getRunningPid()`; this just adds a state-transition handler. ~30 LOC.
-
-**Global Preferences tab editor (Worktrees group):**
-
-| Field | Key | Default | Control |
-|---|---|---|---|
-| Auto-cleanup policy | `worca.parallel.cleanup_policy` | `on-success` | `<sl-select id="pref-cleanup-policy">` with options `never`, `on-success`, `manual-only`. Hint: "Auto-removes the worktree after pipeline completion. `on-success` only removes on clean exit; `manual-only` and `never` both leave the worktree in place — use `manual-only` to signal intent for the Worktrees view to surface a cleanup hint." |
-
-Extend `preferencesTab` Save handler to include `cleanup_policy` in the PUT payload.
-
-**Tests:**
-- `worca-ui/server/process-manager.test.js` — three cases: `on-success` + clean exit → cleanup called; `on-success` + failed exit → no cleanup; `never` → no cleanup.
-- Integration test in `tests/integration/` — full pipeline with `cleanup_policy=on-success` leaves no worktree behind.
-- Render test for the global editor.
-
-### 5. Wave 4 — `max_concurrent_pipelines` enforcement + UI gating + global editor
-
-The global preferences endpoint already exists from Wave 1. This wave only adds the enforcement, UI gating, and editor.
-
-#### 5a. Server enforcement on POST /runs
-
-`worca-ui/server/project-routes.js:617-627` already 409s on per-project parallelism. Add a sibling check for the global cap **before** the per-project check, since it's strictly broader:
+`worca-ui/server/project-routes.js:617-627` already 409s on per-project parallelism. Add a sibling check for the global cap **before** the per-project check:
 
 ```js
 router.post('/runs', requireWorcaDir, async (req, res) => {
   const globalPrefs = readGlobalSettings();
-  const cap = globalPrefs?.worca?.parallel?.max_concurrent_pipelines ?? 3;
+  const cap = globalPrefs?.worca?.parallel?.max_concurrent_pipelines ?? 10;
   const totalRunning = countRunningPipelinesAcrossProjects();
   if (totalRunning >= cap) {
     return res.status(409).json({
@@ -392,58 +260,76 @@ router.post('/runs', requireWorcaDir, async (req, res) => {
       running: totalRunning,
     });
   }
-
   // ... existing per-project check ...
 });
 ```
 
 `countRunningPipelinesAcrossProjects` is a new helper in `worca-ui/server/process-registry.js` that walks `~/.worca/projects.d/`, calls `pm.getRunningPid()` per project, returns the count.
 
-#### 5b. UI gating + feedback
+#### 5b. `cleanup_policy` post-completion hook
 
-- New Pipeline launch button: when `state.totalRunning >= state.maxConcurrentPipelines`, disable + tooltip "At max concurrent (N). Stop a running pipeline first."
-- On launch attempt that returns 409 with `code: 'max_concurrent_exceeded'`, show a banner with the response message.
-- Sidebar / Dashboard: when at cap, surface a small badge "N/N pipelines" (orange) so the cap is visible.
+`worca-ui/server/process-manager.js` — when `getRunningPid()` transitions from a valid PID to `null` (process exit detected on the next status poll), read the cleanup policy from global preferences:
 
-`state.totalRunning` derives from `Object.values(state.runs).filter(r => r.pipeline_status === 'running').length` — already in state.
-`state.maxConcurrentPipelines` is already populated by the Wave 1 bootstrap fetch (Section 2b).
+```js
+const globalPrefs = readGlobalSettings();
+const policy = globalPrefs?.worca?.parallel?.cleanup_policy ?? 'never';
+const status = readRunStatus(runId);
+const exitOk = status?.outcome === 'completed' || status?.exit_code === 0;
+const worktreePath = status?.worktree_path;
 
-#### 5c. Global Preferences tab editor (Pipeline Execution group)
-
-| Field | Key | Default | Control |
-|---|---|---|---|
-| Max concurrent pipelines | `worca.parallel.max_concurrent_pipelines` | `3` | `<sl-input type="number" min="1" max="20" id="pref-max-concurrent">`. Hint: "Hard cap across all projects. Server returns 409 when exceeded." |
-
-Extend `preferencesTab` Save handler to include `max_concurrent_pipelines` in the PUT payload.
-
-**Tests:**
-- Server: 409 when `totalRunning >= cap`; 200 when below cap.
-- Server: validator rejects `< 1` and `> 20`.
-- UI: launch button disabled when at cap; 409 banner shown on launch failure.
-- E2E: launch N runs across two projects, attempt N+1, expect 409 + UI banner.
-
-### 6. Wave 5 — `pr_approval` (state-machine consumer + UI approve/reject + project editor)
-
-#### 6a. Backend — mirror `plan_approval` pattern
-
-The existing `plan_approval` gate (`runner.py:2089-2118`) runs after PLAN completes:
-
-```python
-elif current_stage == Stage.PLAN:
-    _ms_cfg = load_settings(settings_path).get("worca", {}).get("milestones", {})
-    if _ms_cfg.get("plan_approval") is False:
-        approved = True
-    else:
-        approved = result.get("approved", True)
-    # ... emit MILESTONE_SET, await control webhook for approve/reject/pause/abort ...
+if (worktreePath && policy === 'on-success' && exitOk) {
+  await removeWorktree(worktreePath);
+  emitEvent('worktree.auto_cleanup', { runId, path: worktreePath, reason: 'on-success' });
+}
+// 'never' (default) and 'manual-only' both no-op
 ```
 
-Add an analogous gate **at the start of PR-stage handling, before guardian creates the PR**:
+`removeWorktree` mirrors `_cleanup_worktree` at `src/worca/scripts/run_parallel.py:117-122`. Pre-condition: `worktree_path` must be present in `status.json` — verify during implementation; W-048 may already write it via `register_pipeline()`.
+
+### 6. Runtime (Python) consumer changes
+
+#### 6a. `cb.classifier_model` — global fallback
+
+`src/worca/utils/settings.py` adds:
+
+```python
+def load_settings_with_global_fallback(project_path: str) -> dict:
+    """Deep-merge ~/.worca/settings.json under the project blob; project wins on overlap."""
+    project = load_settings(project_path)
+    global_path = os.path.expanduser("~/.worca/settings.json")
+    try:
+        with open(global_path, "r", encoding="utf-8") as f:
+            global_blob = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return project
+    return deep_merge(global_blob, project)  # project overrides global
+```
+
+`src/worca/orchestrator/error_classifier.py:102` switches from `load_settings` to the new helper. No other Python consumers change for the global keys (cleanup_policy and max_concurrent are server-side; disk threshold is UI-side).
+
+#### 6b. `default_base_branch` consumer
+
+`src/worca/scripts/run_worktree.py:217` becomes:
+
+```python
+_settings = load_settings(args.settings)
+_parallel = _settings.get("worca", {}).get("parallel", {})
+_default_branch = _parallel.get("default_base_branch", "main")
+base_branch = args.branch or _default_branch
+_wt_base = _parallel.get("worktree_base_dir", ".worktrees")
+worktree_path = create_pipeline_worktree(run_id, slug, base_branch, _wt_base)
+```
+
+(Single `load_settings` call covers both keys; lines 222-228 collapse into the block above.)
+
+#### 6c. `pr_approval` gate
+
+Mirror the existing `plan_approval` pattern (`runner.py:2089-2118`). Insert at the start of PR-stage handling:
 
 ```python
 elif current_stage == Stage.PR:
     _ms_cfg = load_settings(settings_path).get("worca", {}).get("milestones", {})
-    if _ms_cfg.get("pr_approval") is False:
+    if _ms_cfg.get("pr_approval") is not True:  # default-false: only gate when explicitly enabled
         pr_approved = True
     else:
         set_milestone(status, "pr_approved", False)
@@ -453,128 +339,109 @@ elif current_stage == Stage.PR:
                 milestone="pr_approved", value=False, stage=Stage.PR.value,
             ))
             if _ms_event:
-                _action = _check_control_response(ctx, _ms_event)
+                _action = _check_control_response(
+                    ctx, _ms_event,
+                    timeout_seconds=_ms_cfg.get("pr_approval_timeout_seconds", 3600),
+                    timeout_default="approve",
+                )
                 if _action == "approve":
                     pr_approved = True
                     set_milestone(status, "pr_approved", True)
                 elif _action == "reject":
-                    raise PipelineInterrupted(
-                        "PR creation rejected by user",
-                        stop_reason="pr_rejected",
-                    )
+                    raise PipelineInterrupted("PR creation rejected by user", stop_reason="pr_rejected")
                 elif _action == "pause":
                     _handle_pause(ctx, "pr_approved milestone")
                 elif _action == "abort":
-                    raise PipelineInterrupted(
-                        "Aborted via control webhook",
-                        stop_reason="control_webhook",
-                    )
+                    raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
         else:
-            # No webhook context — default to approve to preserve existing behavior
-            pr_approved = True
+            pr_approved = True  # No webhook context — preserve unattended-run behavior
             set_milestone(status, "pr_approved", True)
 
     if not pr_approved:
-        # No approval received and no rejection — defer; pipeline pauses
         save_status(status, actual_status_path)
         return
 ```
 
+**Two design choices baked into this block, each mitigating risk #4:**
+- **Default `false`:** the gate fires only when explicitly enabled (`is not True` rather than `is not False`). Preserves existing autonomous-run behavior.
+- **Timeout backstop:** `_check_control_response` accepts an optional `timeout_seconds` (default 3600 = 1 hour) and `timeout_default="approve"`. If no approval arrives within the window, the gate auto-approves and emits a log line. Verify during implementation that `_check_control_response` supports timeouts; if not, extend it (small change). The `pr_approval_timeout_seconds` setting is internal — not editable from UI in this PR; configurable by hand-edit only.
+
 **Schema additions:**
-- `set_milestone(status, "pr_approved", ...)` — add `pr_approved` to the milestone keys recognized by `src/worca/state/status.py` (or wherever milestones are typed).
-- `stop_reason="pr_rejected"` — add to the `STOP_REASONS` enum if one exists; otherwise document inline.
+- `set_milestone(status, "pr_approved", ...)` — extend recognized milestones in `src/worca/state/status.py`.
+- `stop_reason="pr_rejected"` — add to `STOP_REASONS` if enumerated.
 
-#### 6b. UI — approve/reject affordance
+### 7. Plumbing: disk-threshold data flow + Bug A/B/C fixes
 
-`run-detail.js` already has a pause/resume control panel. Add a parallel "approval pending" affordance that appears when `run.milestones?.pr_approved === false` and the run is paused at the PR gate.
+Threshold sources from global preferences, threaded as a single state scalar:
 
 ```js
-// run-detail.js — new approval panel rendered above the pause/resume controls
-${
-  run.milestones?.pr_approved === false && run.pipeline_status === 'paused'
-    ? approvalPanelView({
-        title: 'PR creation requires approval',
-        onApprove: () => sendControl(run.id, { milestone: 'pr_approved', action: 'approve' }),
-        onReject: () => sendControl(run.id, { milestone: 'pr_approved', action: 'reject' }),
-      })
-    : nothing
-}
+// main.js bootstrap
+const prefsRes = await fetch('/api/preferences');
+const { preferences } = await prefsRes.json();
+store.setState({
+  worktreeDiskWarningBytes: preferences?.worca?.ui?.worktree_disk_warning_bytes ?? 2_000_000_000,
+  classifierModel: preferences?.worca?.circuit_breaker?.classifier_model ?? 'haiku',
+  cleanupPolicy: preferences?.worca?.parallel?.cleanup_policy ?? 'never',
+  maxConcurrentPipelines: preferences?.worca?.parallel?.max_concurrent_pipelines ?? 10,
+});
 ```
 
-`sendControl` posts to `POST /api/projects/:projectId/runs/:id/control` (confirm endpoint exists; if not, the pause/resume buttons already do something analogous — reuse).
+```js
+// sidebar.js — replace lines 104-105 (Bug A + Bug C)
+const diskWarningThreshold = state.worktreeDiskWarningBytes ?? 2_000_000_000;
+```
 
-#### 6c. Editor
+```js
+// worktrees.js — replace line 56 (Bug B)
+const overThreshold = total > (options.diskWarningBytes ?? 2_000_000_000);
+```
 
-Add `pr_approval` to the existing Project Pipeline > Approval Gates section (created in Wave 1):
+```js
+// main.js:2149 call site
+return worktreesView(state.worktrees || [], {
+  ...existingOptions,
+  diskWarningBytes: state.worktreeDiskWarningBytes ?? 2_000_000_000,
+});
+```
 
-| Field | Key | Default | Control |
-|---|---|---|---|
-| PR approval required | `worca.milestones.pr_approval` | `true` | `<sl-switch id="milestone-pr-approval">`. Hint: "Pipeline pauses before guardian creates the PR. Approve/reject from the run detail view." |
+`store.js` initial state adds the four global-derived scalars so first render before bootstrap doesn't NPE.
 
-**Tests:**
-- `tests/test_runner_pr_approval.py` — `pr_approval=true` + control approve → PR runs; `pr_approval=true` + control reject → `PipelineInterrupted("pr_rejected")`; `pr_approval=false` → PR runs without gate.
-- `tests/integration/test_pr_approval_flow.py` — full pipeline with the gate, mock-controlled approve.
-- UI render test for the approval panel; UI test for the editor.
+### 8. Read / save plumbing
 
-### 7. Read / save plumbing (cumulative across waves)
-
-#### 7a. Project tab — `readPipelineFromDom`
-
-`worca-ui/app/views/settings.js:365-379`. Cumulative shape after all waves:
+#### 8a. Project tab — `readPipelineFromDom` (`settings.js:365-379`)
 
 ```js
 function readPipelineFromDom() {
   // ...existing loops/plan_path_template/defaults reads...
-
-  // Wave 1
   const milestones = {
     plan_approval: document.getElementById('milestone-plan-approval')?.checked ?? true,
-    // pr_approval added in Wave 5 below
+    pr_approval: document.getElementById('milestone-pr-approval')?.checked ?? false,
   };
   const circuit_breaker = {
     enabled: document.getElementById('cb-enabled')?.checked ?? true,
     max_consecutive_failures: parseInt(document.getElementById('cb-max-failures')?.value, 10) || 3,
-    // classifier_model lives in global preferences (Wave 1) — not here
   };
   const parallel = {
     worktree_base_dir: document.getElementById('parallel-worktree-base-dir')?.value?.trim() || '.worktrees',
-    // default_base_branch added in Wave 2 below
-    // cleanup_policy + max_concurrent_pipelines live in global preferences — not here
+    default_base_branch: document.getElementById('parallel-default-base-branch')?.value?.trim() || 'main',
   };
-
-  // Wave 2
-  parallel.default_base_branch = document.getElementById('parallel-default-base-branch')?.value?.trim() || 'main';
-  // Wave 5
-  milestones.pr_approval = document.getElementById('milestone-pr-approval')?.checked ?? true;
-
   return { loops, plan_path_template, defaults, parallel, milestones, circuit_breaker };
 }
 ```
 
-Save handler payload (`settings.js:625-636`):
+Save handler (`settings.js:625-636`) shape unchanged.
 
-```js
-saveSettings({
-  worca: { loops, stages, plan_path_template, defaults, parallel, milestones, circuit_breaker }
-}, rerender);
-```
-
-#### 7b. Global tab — `readPreferencesFromDom` + `savePreferences`
-
-New helper in `preferencesTab`:
+#### 8b. Global tab — `readGlobalsFromDom` + `savePreferences`
 
 ```js
 function readGlobalsFromDom() {
   return {
     worca: {
-      // Wave 1
       ui: { worktree_disk_warning_bytes: readDiskThresholdFromDom() },
       circuit_breaker: { classifier_model: document.getElementById('pref-classifier-model')?.value || 'haiku' },
       parallel: {
-        // Wave 3
-        cleanup_policy: document.getElementById('pref-cleanup-policy')?.value || 'on-success',
-        // Wave 4
-        max_concurrent_pipelines: parseInt(document.getElementById('pref-max-concurrent')?.value, 10) || 3,
+        cleanup_policy: document.getElementById('pref-cleanup-policy')?.value || 'never',
+        max_concurrent_pipelines: parseInt(document.getElementById('pref-max-concurrent')?.value, 10) || 10,
       },
     },
   };
@@ -591,25 +458,24 @@ async function savePreferences() {
     notify('error', body.error || 'Save failed', body.details);
     return;
   }
-  // refresh in-memory state from server
   const fresh = await (await fetch('/api/preferences')).json();
   store.setState({
     worktreeDiskWarningBytes: fresh.preferences?.worca?.ui?.worktree_disk_warning_bytes ?? 2_000_000_000,
     classifierModel: fresh.preferences?.worca?.circuit_breaker?.classifier_model ?? 'haiku',
-    cleanupPolicy: fresh.preferences?.worca?.parallel?.cleanup_policy ?? 'on-success',
-    maxConcurrentPipelines: fresh.preferences?.worca?.parallel?.max_concurrent_pipelines ?? 3,
+    cleanupPolicy: fresh.preferences?.worca?.parallel?.cleanup_policy ?? 'never',
+    maxConcurrentPipelines: fresh.preferences?.worca?.parallel?.max_concurrent_pipelines ?? 10,
   });
   rerender();
 }
 ```
 
-The existing `pref-source-repo` save handler stays untouched; both share the `preferencesTab` Save button or have separate buttons per group — decide during implementation. Recommend a single Save button driving both, to match the project tab's pattern.
+Single Save button in `preferencesTab` drives both the existing source-repo handler and `savePreferences` (parallel calls).
 
-### 8. Validator additions (`worca-ui/server/settings-validator.js`)
+### 9. Validator additions (`worca-ui/server/settings-validator.js`)
 
-#### 8a. Project validator — extends Wave 1
+#### 9a. Project validator — extended
 
-**`worca.parallel`** (Wave 1; extended in Wave 2):
+**`worca.parallel`:**
 
 ```js
 if (w.parallel !== undefined) {
@@ -625,12 +491,12 @@ if (w.parallel !== undefined) {
         (typeof p.default_base_branch !== 'string' || p.default_base_branch.length === 0)) {
       details.push('parallel.default_base_branch must be a non-empty string');
     }
-    // cleanup_policy + max_concurrent_pipelines live in global validator (8b)
+    // cleanup_policy + max_concurrent_pipelines rejected by misplaced-keys helper below
   }
 }
 ```
 
-**`worca.circuit_breaker`** (Wave 1):
+**`worca.circuit_breaker`:**
 
 ```js
 if (w.circuit_breaker !== undefined) {
@@ -646,18 +512,29 @@ if (w.circuit_breaker !== undefined) {
          cb.max_consecutive_failures < 1 || cb.max_consecutive_failures > 10)) {
       details.push('circuit_breaker.max_consecutive_failures must be an integer between 1 and 10');
     }
-    // classifier_model lives in global validator (8b)
+    // classifier_model rejected by misplaced-keys helper below
   }
 }
 ```
 
-`worca.milestones` already validated (`settings-validator.js:248-265`); no change for Wave 1 / Wave 5.
+**Reject misplaced keys (project blob):**
 
-The project validator must also reject keys that belong in global preferences (`cleanup_policy`, `max_concurrent_pipelines`, `ui.worktree_disk_warning_bytes`, `circuit_breaker.classifier_model`) with a helpful message: "this setting is configured in global Preferences (~/.worca/settings.json), not project settings". Prevents users from hand-editing the wrong file and silently having no effect.
+```js
+const GLOBAL_ONLY_KEYS = [
+  ['parallel', 'cleanup_policy'],
+  ['parallel', 'max_concurrent_pipelines'],
+  ['ui', 'worktree_disk_warning_bytes'],
+  ['circuit_breaker', 'classifier_model'],
+];
 
-#### 8b. Global validator — Wave 1
+for (const [section, key] of GLOBAL_ONLY_KEYS) {
+  if (w?.[section]?.[key] !== undefined) {
+    details.push(`worca.${section}.${key} is a global preference (~/.worca/settings.json), not a project setting. Configure it in the global Preferences tab.`);
+  }
+}
+```
 
-A new `validateGlobalSettings(prefs)` function — focused on the four global keys only:
+#### 9b. Global validator (`validateGlobalSettings`)
 
 ```js
 const VALID_CLEANUP_POLICIES = ['never', 'on-success', 'manual-only'];
@@ -667,7 +544,6 @@ function validateGlobalSettings(prefs) {
   const w = prefs?.worca;
   if (!w) return { ok: true };
 
-  // Wave 1 — disk threshold
   if (w.ui?.worktree_disk_warning_bytes !== undefined) {
     const v = w.ui.worktree_disk_warning_bytes;
     if (!Number.isInteger(v) || v < 500_000_000 || v > 50_000_000_000) {
@@ -675,19 +551,16 @@ function validateGlobalSettings(prefs) {
     }
   }
 
-  // Wave 1 — classifier model
   if (w.circuit_breaker?.classifier_model !== undefined &&
       !VALID_MODELS.includes(w.circuit_breaker.classifier_model)) {
     details.push(`circuit_breaker.classifier_model must be one of: ${VALID_MODELS.join(', ')}`);
   }
 
-  // Wave 3 — cleanup policy
   if (w.parallel?.cleanup_policy !== undefined &&
       !VALID_CLEANUP_POLICIES.includes(w.parallel.cleanup_policy)) {
     details.push(`parallel.cleanup_policy must be one of: ${VALID_CLEANUP_POLICIES.join(', ')}`);
   }
 
-  // Wave 4 — max concurrent
   if (w.parallel?.max_concurrent_pipelines !== undefined) {
     const n = w.parallel.max_concurrent_pipelines;
     if (!Number.isInteger(n) || n < 1 || n > 20) {
@@ -699,261 +572,286 @@ function validateGlobalSettings(prefs) {
 }
 ```
 
-Note: `worca.ui` already holds `worca.ui.stages` (consumed by `worca-ui/server/settings-reader.js:11`) **in project settings**. The global blob does not currently have a `ui.stages` consumer; the global validator narrows only `worktree_disk_warning_bytes` and ignores other `ui.*` keys (forward-compatible).
+#### 9c. `VALID_MODELS` superset assertion (risk #9 mitigation)
 
-### 9. Default normalization
-
-#### 9a. Project — `loadSettings()` at `worca-ui/app/views/settings.js:160`
+`worca-ui/server/settings-validator.test.js`:
 
 ```js
-// Wave 1
+test('VALID_MODELS includes every alias from the shipped settings.json template', () => {
+  const template = JSON.parse(readFileSync('../../src/worca/settings.json', 'utf-8'));
+  const aliases = Object.keys(template.worca.models);
+  for (const alias of aliases) {
+    expect(VALID_MODELS).toContain(alias);
+  }
+});
+```
+
+Catches drift the moment a new alias is added to the template without updating the validator.
+
+### 10. Default normalization
+
+#### 10a. Project — `loadSettings()` (`settings.js:160`)
+
+```js
 if (!settingsData.worca.parallel) settingsData.worca.parallel = {};
 if (settingsData.worca.parallel.worktree_base_dir === undefined) {
   settingsData.worca.parallel.worktree_base_dir = '.worktrees';
+}
+if (settingsData.worca.parallel.default_base_branch === undefined) {
+  settingsData.worca.parallel.default_base_branch = 'main';
 }
 if (!settingsData.worca.circuit_breaker) {
   settingsData.worca.circuit_breaker = { enabled: true, max_consecutive_failures: 3 };
 }
 if (!settingsData.worca.milestones) {
-  settingsData.worca.milestones = { plan_approval: true };
+  settingsData.worca.milestones = { plan_approval: true, pr_approval: false };
 }
-
-// Wave 2
-if (settingsData.worca.parallel.default_base_branch === undefined) {
-  settingsData.worca.parallel.default_base_branch = 'main';
-}
-
-// Wave 5
 if (settingsData.worca.milestones.pr_approval === undefined) {
-  settingsData.worca.milestones.pr_approval = true;
+  settingsData.worca.milestones.pr_approval = false;
 }
 ```
 
-#### 9b. Global — `readGlobalSettings()` (server, `worca-ui/server/settings-reader.js`)
+#### 10b. Global — `readGlobalSettings()` (server)
 
-Already shown in Section 2a — applies all four defaults at read time.
+Already shown in §4 — all four defaults applied at read time.
 
-### 10. Tab-scope decisions (final, no later migration)
+### 11. Template + migration (risk #1 mitigation)
 
-| Key | Wave | Tab | Persistence |
-|---|---|---|---|
-| `parallel.worktree_base_dir` | 1 | Project Pipeline | `.claude/settings.json` |
-| `parallel.default_base_branch` | 2 | Project Pipeline | `.claude/settings.json` |
-| `parallel.cleanup_policy` | 3 | **Global Preferences** | `~/.worca/settings.json` |
-| `parallel.max_concurrent_pipelines` | 4 | **Global Preferences** | `~/.worca/settings.json` |
-| `ui.worktree_disk_warning_bytes` | 1 | **Global Preferences** | `~/.worca/settings.json` |
-| `milestones.plan_approval` | 1 | Project Pipeline | `.claude/settings.json` |
-| `milestones.pr_approval` | 5 | Project Pipeline | `.claude/settings.json` |
-| `circuit_breaker.enabled` | 1 | Project Pipeline | `.claude/settings.json` |
-| `circuit_breaker.max_consecutive_failures` | 1 | Project Pipeline | `.claude/settings.json` |
-| `circuit_breaker.classifier_model` | 1 | **Global Preferences** | `~/.worca/settings.json` |
+This is the only block that must ship before users hit the new validator on next save. Two pieces:
+
+#### 11a. Strip global keys from `src/worca/settings.json`
+
+The template currently ships at `src/worca/settings.json:285-290`:
+
+```json
+"parallel": {
+  "worktree_base_dir": ".worktrees",
+  "default_base_branch": "main",
+  "max_concurrent_pipelines": 3,
+  "cleanup_policy": "on-success"
+},
+```
+
+After this PR:
+
+```json
+"parallel": {
+  "worktree_base_dir": ".worktrees",
+  "default_base_branch": "main"
+},
+```
+
+Same surgery applied to `worca.circuit_breaker` (remove `classifier_model`) and `worca.ui` (remove `worktree_disk_warning_bytes` if present). The default values now live exclusively in `readGlobalSettings()`.
+
+#### 11b. `worca init --upgrade` migration
+
+`src/worca/cli/init.py` (or wherever `--upgrade` lives) gains a one-shot migration step that runs once per project:
+
+```python
+def _migrate_global_keys_to_preferences(project_settings_path: str) -> dict:
+    """One-shot: extract any to-be-global keys from .claude/settings.json,
+    write them into ~/.worca/settings.json, then strip from the project file.
+    Idempotent: returns {} on second run."""
+    if not os.path.exists(project_settings_path):
+        return {}
+    with open(project_settings_path) as f:
+        project = json.load(f)
+
+    GLOBAL_KEYS = [
+        ("parallel", "cleanup_policy"),
+        ("parallel", "max_concurrent_pipelines"),
+        ("ui", "worktree_disk_warning_bytes"),
+        ("circuit_breaker", "classifier_model"),
+    ]
+    extracted = {}
+    worca = project.get("worca", {})
+    for section, key in GLOBAL_KEYS:
+        val = worca.get(section, {}).get(key)
+        if val is not None:
+            extracted.setdefault(section, {})[key] = val
+            del worca[section][key]
+            if not worca[section]:
+                del worca[section]
+
+    if not extracted:
+        return {}
+
+    # Merge into ~/.worca/settings.json
+    global_path = os.path.expanduser("~/.worca/settings.json")
+    os.makedirs(os.path.dirname(global_path), exist_ok=True)
+    try:
+        with open(global_path) as f:
+            global_blob = json.load(f)
+    except FileNotFoundError:
+        global_blob = {}
+    global_blob.setdefault("worca", {})
+    for section, kvs in extracted.items():
+        global_blob["worca"].setdefault(section, {}).update(kvs)
+    with open(global_path, "w") as f:
+        json.dump(global_blob, f, indent=2)
+
+    # Re-write the project file without the migrated keys
+    with open(project_settings_path, "w") as f:
+        json.dump(project, f, indent=2)
+
+    return extracted
+```
+
+Returns the migrated dict so the calling CLI command can print a one-liner: `Migrated 3 keys from .claude/settings.json to ~/.worca/settings.json`.
+
+#### 11c. UI banner on detection (defense-in-depth)
+
+When the UI loads a project's settings and the response contains any of the four global-only keys (because the user is on an un-migrated project), show a one-time banner: "This project's settings contain keys that have moved to global Preferences. Click here to migrate." Button calls a new endpoint `POST /api/projects/:id/migrate-global-keys` which runs the same logic as the CLI helper.
+
+This catches users who upgrade `@worca/ui` but never run `worca init --upgrade`.
 
 ## Implementation Plan
 
-### Wave 1 — Global preferences endpoint + plumbing fix + already-consumed editors
+Single PR. Recommended ordering — ship migration & template strip *first* in the diff so reviewers see the breaking change is contained, then build outward:
 
-**Files:**
-- `worca-ui/server/preferences-routes.js` (new)
-- `worca-ui/server/preferences-routes.test.js` (new)
-- `worca-ui/server/settings-reader.js` (add `readGlobalSettings` / `writeGlobalSettings`)
-- `worca-ui/server/settings-validator.js` (new `validateGlobalSettings`; project blocks for `worca.parallel`, `worca.circuit_breaker`; reject-misplaced-keys helper)
-- `worca-ui/server/settings-validator.test.js` (extend)
-- `worca-ui/server/app.js` (mount preferences router)
-- `src/worca/utils/settings.py` (add `load_settings_with_global_fallback`)
-- `src/worca/orchestrator/error_classifier.py` (use the new helper at line 102)
-- `tests/test_settings_global_fallback.py` (new)
-- `worca-ui/app/main.js` (bootstrap fetches `/api/preferences`; populates four state scalars; passes threshold into `worktreesView`)
-- `worca-ui/app/store.js` (add four global-derived scalars to initial state)
-- `worca-ui/app/views/sidebar.js` (Bug A + Bug C — read `state.worktreeDiskWarningBytes`)
-- `worca-ui/app/views/sidebar.test.js` (update fixtures: state-level scalar)
-- `worca-ui/app/views/worktrees.js` (Bug B — accept `options.diskWarningBytes`)
-- `worca-ui/app/views/settings.js`:
-  - Project Pipeline tab: Approval Gates (`plan_approval`), Circuit Breaker (`enabled`, `max_consecutive_failures`), Execution & Parallelism (`worktree_base_dir`); extend `readPipelineFromDom`, `loadSettings` defaults, save handler
-  - Global Preferences tab: Worktrees group (disk threshold), Pipeline Execution group (`classifier_model`); add `readGlobalsFromDom` and `savePreferences`
-- `worca-ui/app/views/settings-approval-gates.test.js` (new)
-- `worca-ui/app/views/settings-circuit-breaker.test.js` (new)
-- `worca-ui/app/views/settings-execution-parallelism.test.js` (new)
-- `worca-ui/app/views/settings-preferences-worktrees.test.js` (new)
-- `worca-ui/app/views/settings-preferences-pipeline.test.js` (new)
-
-**Steps:**
-1. Build `readGlobalSettings` / `writeGlobalSettings` + `validateGlobalSettings`; mount router; smoke-test GET/PUT.
-2. Add `load_settings_with_global_fallback` Python helper; wire into `error_classifier.py:102`.
-3. Add four global-derived scalars to store initial state.
-4. In `bootstrap()`, fetch `/api/preferences`; populate state scalars.
-5. Update `sidebar.js:104-105` to read `state.worktreeDiskWarningBytes`.
-6. Update `worktrees.js:56` to read `options.diskWarningBytes`; update `main.js:2149` call site.
-7. Update `sidebar.test.js` fixtures.
-8. Add Project Pipeline tab editors (Approval Gates, Circuit Breaker, Execution & Parallelism rows for already-consumed keys); extend `readPipelineFromDom`, `loadSettings` defaults, save handler.
-9. Add Global Preferences tab editors (Worktrees + Pipeline Execution groups); add `readGlobalsFromDom`, `savePreferences`.
-10. Add reject-misplaced-keys helper in project validator (rejects `cleanup_policy`, `max_concurrent_pipelines`, `ui.worktree_disk_warning_bytes`, `circuit_breaker.classifier_model` from project blob).
-11. Render tests + validator tests + plumbing test (set scalar, assert sidebar badge variant + worktrees banner).
-12. `cd worca-ui && npm run lint:fix && npx vitest run && npm run build`; `pytest tests/`.
-
-### Wave 2 — `default_base_branch` (project consumer + project editor)
-
-**Files:**
-- `src/worca/scripts/run_worktree.py`
-- `worca-ui/app/views/new-pipeline.js` (placeholder — verify path)
-- `worca-ui/app/views/settings.js` (extend Execution & Parallelism)
-- `tests/test_run_worktree.py`
-- `worca-ui/app/views/settings-execution-parallelism.test.js`
-
-**Steps:**
-1. Move/refactor settings load in `run_worktree.py` to a single read; derive both `worktree_base_dir` and `default_base_branch`.
-2. Replace `base_branch = args.branch or "HEAD"` with `args.branch or _default_branch`.
-3. Thread `default_base_branch` into the New Pipeline form's base-branch placeholder.
-4. Add the `default_base_branch` row + read/save plumbing.
-5. Tests + lint + build.
-
-### Wave 3 — `cleanup_policy` (consumer + global editor)
-
-**Files:**
-- `worca-ui/server/process-manager.js`
-- `worca-ui/server/process-manager.test.js`
-- `src/worca/state/status.py` (verify `worktree_path` in status.json; plumb if missing)
-- `src/worca/scripts/run_worktree.py` (write `worktree_path` to status.json — confirm; W-048 may already do this)
-- `worca-ui/app/views/settings.js` (extend Global Preferences > Worktrees group; extend `readGlobalsFromDom`)
-- `tests/integration/test_cleanup_policy.py` (new)
-- `worca-ui/app/views/settings-preferences-worktrees.test.js`
-
-**Steps:**
-1. Verify `worktree_path` is in status.json; add if missing.
-2. Add post-exit handler in process-manager that reads `cleanup_policy` from global prefs and conditionally calls `removeWorktree`.
-3. Add `cleanup_policy` row to Global > Worktrees group + extend `readGlobalsFromDom`.
-4. Server tests + integration test + lint + build.
-
-### Wave 4 — `max_concurrent_pipelines` enforcement + UI gating + global editor
-
-**Files:**
-- `worca-ui/server/process-registry.js` (add `countRunningPipelinesAcrossProjects`)
-- `worca-ui/server/project-routes.js` (add 409 cap check at `:617`)
-- `worca-ui/server/project-routes.test.js`
-- `worca-ui/app/views/new-pipeline.js` (disable launch button when at cap; 409 banner)
-- `worca-ui/app/views/settings.js` (extend Global > Pipeline Execution group; extend `readGlobalsFromDom`)
-- `worca-ui/app/views/settings-preferences-pipeline.test.js`
-
-**Steps:**
-1. Implement cross-project count helper.
-2. Add 409 cap check before per-project check in `POST /runs`.
-3. Add launch-button gating + 409 banner.
-4. Add `max_concurrent_pipelines` row to Global > Pipeline Execution + extend `readGlobalsFromDom`.
-5. Tests (unit + e2e: launch N, attempt N+1, expect 409) + lint + build.
-
-### Wave 5 — `pr_approval` (consumer + UI affordance + project editor)
-
-**Files:**
-- `src/worca/orchestrator/runner.py` (add PR-stage milestone gate mirroring `plan_approval`)
-- `src/worca/state/status.py` (add `pr_approved` to recognized milestones)
-- `src/worca/orchestrator/events.py` (verify `MILESTONE_SET` payload supports `pr_approved`)
-- `worca-ui/app/views/run-detail.js` (approval panel for `pr_approved === false`)
-- `worca-ui/app/views/run-detail.test.js`
-- `worca-ui/app/views/settings.js` (add `pr_approval` to existing Approval Gates section; extend `readPipelineFromDom`)
-- `tests/test_runner_pr_approval.py` (new)
-- `tests/integration/test_pr_approval_flow.py` (new)
-- `worca-ui/app/views/settings-approval-gates.test.js` (extend)
-
-**Steps:**
-1. Add `pr_approved` milestone schema.
-2. Add PR-stage gate in `runner.py` (find PR-stage dispatch block; wrap with milestone gate).
-3. Add UI approval panel + control wiring.
-4. Add `pr_approval` row to Approval Gates section.
-5. Unit + integration + UI tests + lint + build.
+1. **Template + migration** (§11). Strip global keys from `src/worca/settings.json`. Add `_migrate_global_keys_to_preferences` helper + wire into `worca init --upgrade`. Add migration banner endpoint stub.
+2. **Server: global preferences endpoint** (§4). New `preferences-routes.js`, `readGlobalSettings`/`writeGlobalSettings`, `validateGlobalSettings`. Mount router.
+3. **Server: validator additions** (§9). Project validator extensions + reject-misplaced-keys helper + `VALID_MODELS` superset test.
+4. **Server: enforcement** (§5). `max_concurrent_pipelines` 409 cap + `cleanup_policy` post-completion hook.
+5. **Python runtime** (§6). `load_settings_with_global_fallback` helper. Update `error_classifier.py:102`. Update `run_worktree.py:217`. Add `pr_approval` gate in `runner.py` (with timeout backstop). Extend `status.py` for `pr_approved` milestone.
+6. **UI plumbing** (§7). Add four global-derived scalars to `store.js`. Bootstrap fetch in `main.js`. Fix Bug A/B/C in `sidebar.js`/`worktrees.js`/`main.js:2149`.
+7. **UI: project tab editors** (§2 + §8a). Approval Gates, Circuit Breaker, Execution & Parallelism sections. Extend `readPipelineFromDom` + `loadSettings` defaults + Save handler.
+8. **UI: global tab editors** (§3 + §8b). Worktrees + Pipeline Execution groups. Add `readGlobalsFromDom` + `savePreferences`.
+9. **UI: PR-approval affordance** (§6c UI side). New approval panel in `run-detail.js`. Wire to `/api/projects/:projectId/runs/:id/control`.
+10. **UI: max-concurrent gating + banner** (§5a UI side). Disable launch button when at cap; 409 banner; sidebar "N/cap" badge.
+11. **Tests** (§Test Plan). Run `cd worca-ui && npm run lint:fix && npx vitest run && npm run build`; `pytest tests/`.
+12. **MIGRATION.md** updated with the §11 user-facing migration story.
 
 ## Test Plan
 
-### Wave 1
+### Server (vitest)
 
-**Server tests:**
-- `preferences-routes.test.js`: GET returns merged blob with defaults; PUT validates; PUT rejects out-of-range disk threshold / unknown classifier model.
-- `settings-validator.test.js`: project validator rejects misplaced global keys with helpful message.
-- `tests/test_settings_global_fallback.py`: project + global merge, project wins on overlap.
+- `preferences-routes.test.js`:
+  - `GET` returns merged blob with defaults applied (incl. revised defaults).
+  - `GET` returns defaults when file is missing (ENOENT).
+  - `GET` returns defaults + warning when file has malformed JSON (risk #7).
+  - `PUT` validates; rejects out-of-range disk threshold / unknown classifier model / out-of-range max_concurrent / unknown cleanup_policy.
+  - `PUT` deep-merges (existing keys preserved).
+- `settings-validator.test.js`:
+  - Project validator rejects misplaced global keys with helpful message.
+  - `VALID_MODELS` superset assertion against shipped `settings.json` template (risk #9).
+- `process-manager.test.js`:
+  - `cleanup_policy='on-success'` + clean exit → `removeWorktree` called.
+  - `cleanup_policy='on-success'` + failed exit → no cleanup.
+  - `cleanup_policy='never'` → no cleanup.
+  - `cleanup_policy='manual-only'` → no cleanup.
+- `project-routes.test.js`:
+  - 409 with `code: 'max_concurrent_exceeded'` when over global cap.
+  - 200 when under cap.
+  - Per-project 409 still fires under global cap.
 
-**Render tests:**
-- `settings-approval-gates.test.js` — `plan_approval` switch renders + reads default
-- `settings-circuit-breaker.test.js` — `enabled` + `max_consecutive_failures` controls render
-- `settings-execution-parallelism.test.js` — `worktree_base_dir` input renders
-- `settings-preferences-worktrees.test.js` — disk-threshold MB/GB pair + formatter / reader unit tests
-- `settings-preferences-pipeline.test.js` — classifier-model select reads from `worca.models`
+### Python (pytest)
 
-**Plumbing test (Bugs A/B/C):**
-- Set `state.worktreeDiskWarningBytes = 400_000_000`; assert sidebar badge variant flips at threshold; assert worktrees view renders banner.
+- `tests/test_settings_global_fallback.py`:
+  - Project + global merge, project wins on overlap.
+  - Returns project unchanged when global is missing or malformed.
+- `tests/test_run_worktree.py`:
+  - `--branch` omitted → uses `default_base_branch`.
+  - `--branch` provided → ignores config.
+- `tests/test_runner_pr_approval.py`:
+  - `pr_approval=false` (default) → PR runs without gate.
+  - `pr_approval=true` + control approve → PR runs.
+  - `pr_approval=true` + control reject → `PipelineInterrupted("pr_rejected")`.
+  - `pr_approval=true` + no `ctx` → auto-approve.
+  - `pr_approval=true` + `ctx` but no listener → timeout fires after 1h → auto-approve (mock the timer).
+- `tests/test_init_migration.py`:
+  - `_migrate_global_keys_to_preferences` extracts the four keys, writes to global, removes from project.
+  - Idempotent on second run (returns `{}`).
+  - Handles missing global file (creates it).
+  - Handles missing project file (no-op).
+- `tests/integration/test_cleanup_policy.py`:
+  - Full pipeline with `cleanup_policy='on-success'` leaves no worktree.
+  - Full pipeline with `cleanup_policy='never'` leaves the worktree intact.
+- `tests/integration/test_pr_approval_flow.py`:
+  - Pipeline pauses at PR gate; mock-control approves; PR succeeds.
 
-### Wave 2
-- `tests/test_run_worktree.py`: `--branch` omitted → uses `default_base_branch`; `--branch` provided → ignores config.
-- Render: `default_base_branch` input renders with current value.
+### UI render (vitest)
 
-### Wave 3
-- `process-manager.test.js`: `on-success` + clean exit → `removeWorktree` called; `on-success` + failed exit → not called; `never` → not called.
-- Integration: full pipeline with `cleanup_policy=on-success` leaves no worktree.
-- Render: `cleanup_policy` select renders three options.
+- `settings-approval-gates.test.js` — both switches (`plan_approval` checked default-true; `pr_approval` checked default-false); hint copy present.
+- `settings-circuit-breaker.test.js` — `enabled` + `max_consecutive_failures` controls render.
+- `settings-execution-parallelism.test.js` — `worktree_base_dir` + `default_base_branch` inputs render.
+- `settings-preferences-worktrees.test.js` — disk-threshold MB/GB pair + cleanup_policy select with three options.
+- `settings-preferences-pipeline.test.js` — classifier-model select reads from `worca.models`; max-concurrent input renders.
+- Plumbing test (Bugs A/B/C): set `state.worktreeDiskWarningBytes = 400_000_000`; assert sidebar badge variant flips at threshold; assert worktrees view renders banner.
+- `run-detail.test.js` — approval panel renders when `run.milestones.pr_approved === false && pipeline_status === 'paused'`; not rendered otherwise.
+- `new-pipeline.test.js` — launch button disabled when `state.totalRunning >= state.maxConcurrentPipelines`; 409 banner shown on launch failure.
 
-### Wave 4
-- `project-routes.test.js`: 409 with `code: 'max_concurrent_exceeded'` when over cap; 200 when under.
-- E2E: launch N runs across two projects, attempt N+1, observe 409 + UI banner.
-- Render: `max_concurrent_pipelines` input renders.
+### E2E (playwright, `--workers=1`)
 
-### Wave 5
-- `tests/test_runner_pr_approval.py`: gate skipped when `pr_approval=false`; webhook approve → PR runs; webhook reject → `PipelineInterrupted("pr_rejected")`.
-- Integration: full pipeline pauses at PR gate; mock-control approves; PR succeeds.
-- UI: approval panel renders when `run.milestones.pr_approved === false && pipeline_status === 'paused'`.
+- Launch N runs across two projects, attempt N+1, observe 409 + UI banner.
+- Round-trip: change disk threshold in global Preferences, save, exceed it, observe sidebar badge flip + worktrees banner.
+- Round-trip: enable `pr_approval`, launch a run, pipeline pauses at PR gate, click Approve, PR completes.
 
-### Done criteria (per wave)
-- All new vitest / pytest tests pass.
+### Done criteria
+
+- All vitest / pytest tests green.
 - `cd worca-ui && npm run lint:fix && npx vitest run` clean.
 - `cd worca-ui && npm run build` produces updated bundle.
-- Manual round-trip per wave (e.g., Wave 1: change disk threshold in global Preferences, save, exceed it, observe sidebar badge flip + worktrees banner appear).
+- `pytest tests/` green.
+- `worca init --upgrade` on a project containing pre-W-049 settings emits a one-line migration summary; subsequent runs say nothing.
+- MIGRATION.md updated.
 
 ## Considerations
 
-- **Wave 1 is now ~300 LOC** (was ~200 LOC) because the global preferences endpoint ships up front. Trade-off accepted to avoid a future migration of three keys from project to global, which would surprise any user who configured them per-project in the meantime.
-- **Five waves is heavy.** Worth it because each wave is independently shippable and rolls back cleanly. Bundling waves 1–2 or 4–5 is possible but each PR would exceed ~400 LOC and review quality drops.
-- **`pr_approval` (Wave 5) is the largest consumer addition.** It introduces a new pipeline state and a new UI affordance. If priority drops, this wave can be deferred indefinitely without blocking the rest.
-- **`deploy_approval` is honestly out of scope.** No `Stage.DEPLOY` exists. Saving the value to disk is fine (W-048 already accepts it) but we don't ship an editor that gates a non-existent stage.
-- **`cb.transient_retry_count` is redundant with `len(transient_retry_backoff_seconds)`.** Document as deprecated in `settings.json`; do not expose. If anyone tunes it, the runner ignores them — the fix is to delete the key from defaults in a future cleanup.
-- **Hard caps documented as hard.** Wave 4 hint for `max_concurrent_pipelines` says "Hard cap; server returns 409". Don't reuse "soft cap" language anywhere — the consumer audit shows nothing implements a soft cap today.
-- **Validator / classifier-model coupling.** `VALID_MODELS` in the validator is hardcoded; the UI select is dynamic. Adding a new alias requires updating both. Add a code comment in `worca-ui/server/settings-validator.js:15` noting this.
-- **Project / global merge precedence.** Project settings win over global on overlap. Today there is no overlap in practice — each key lives in exactly one tab. The merge is forward-compatible: if a future feature needs a per-project override of a global key, the merge already does the right thing.
-- **Reject misplaced keys.** The project validator rejects `cleanup_policy`, `max_concurrent_pipelines`, `ui.worktree_disk_warning_bytes`, `circuit_breaker.classifier_model` with a message pointing users to the global Preferences tab. Prevents silent no-ops from hand-edits to `.claude/settings.json`.
-- **Migration:** none. Default normalization in `loadSettings` and `readGlobalSettings` handles upgrades transparently. Existing users with no relevant blocks see hardcoded defaults that match current runner behavior.
-- **Governance impact:** none. No hook scripts read these keys; the new `pr_approval` gate uses the existing webhook control mechanism.
+- **Single-delivery PR is large.** Estimated ~870 LOC implementation + ~1000 LOC tests. Reviewable but requires explicit ordering (template/migration first, then endpoint, then consumers) so the diff reads in dependency order. CODEOWNERS may want a UI-side and Python-side reviewer in parallel.
+- **All four reviewed risk mitigations are folded in.** See "Risk profile after bundling + mitigations" table in Proposal.
+- **Defaults flipped from earlier draft.** `cleanup_policy` is `never`, `pr_approval` is `false`, `max_concurrent_pipelines` is `10`. Each is justified in the table; flip back if the product preference is to gate / auto-cleanup by default.
+- **`pr_approval` timeout is hand-edit only.** Exposing a UI for it adds another control to a tab that's already crowded; users who flip `pr_approval` on are advanced enough to read MIGRATION.md for the timeout knob. Reassess if support questions arise.
+- **`deploy_approval` and `transient_retry_count` stay out.** No consumers; would ship UI for non-existent behavior.
+- **Hint copy guidance:** "Hard cap; server returns 409" for max_concurrent. "Auto-removes the worktree after a clean pipeline exit" for cleanup_policy. Don't reuse "soft cap" phrasing anywhere — nothing implements soft caps.
+- **Validator / classifier-model coupling.** The new `VALID_MODELS` superset test (§9c) catches drift; add a code comment at `settings-validator.js:15` pointing at the test.
+- **Project-over-global merge precedence.** Project wins on overlap. Today there is no overlap in practice (each key lives in exactly one tab and the project validator rejects the global keys). Forward-compatible: if a future feature needs a per-project override of a global key, the merge already does the right thing.
+- **Reject misplaced keys produces a clear error.** The error message points users at the global tab, eliminating the "I set it but nothing happened" confusion.
+- **Migration:** active. §11 strips template, runs one-shot extraction in `worca init --upgrade`, and surfaces a UI banner for users who skip the CLI step.
+- **Governance impact:** none. No hook scripts read these keys; the new `pr_approval` gate uses the existing webhook control mechanism; `removeWorktree` is a `git worktree remove` shell-out (already permitted).
 
 ## Files to Create/Modify
 
-| Path | Wave | Status |
-|------|------|--------|
-| `worca-ui/server/preferences-routes.js` | 1 | create |
-| `worca-ui/server/preferences-routes.test.js` | 1 | create |
-| `worca-ui/server/settings-reader.js` | 1 | modify (global helpers) |
-| `worca-ui/server/settings-validator.js` | 1 | modify (global validator + project blocks + reject-misplaced) |
-| `worca-ui/server/settings-validator.test.js` | 1 | extend |
-| `worca-ui/server/app.js` | 1 | modify (mount router) |
-| `src/worca/utils/settings.py` | 1 | modify (`load_settings_with_global_fallback`) |
-| `src/worca/orchestrator/error_classifier.py` | 1 | modify (use fallback helper) |
-| `tests/test_settings_global_fallback.py` | 1 | create |
-| `worca-ui/app/main.js` | 1 | modify (bootstrap fetch + threading) |
-| `worca-ui/app/store.js` | 1 | modify (four global-derived scalars) |
-| `worca-ui/app/views/sidebar.js` | 1 | modify (Bug A + Bug C consume) |
-| `worca-ui/app/views/sidebar.test.js` | 1 | modify (state shape) |
-| `worca-ui/app/views/worktrees.js` | 1 | modify (Bug B + accept threshold) |
-| `worca-ui/app/views/settings.js` | 1, 2, 3, 4, 5 | modify (project + global tabs grow per wave) |
-| `worca-ui/app/views/settings-approval-gates.test.js` | 1, 5 | create / extend |
-| `worca-ui/app/views/settings-circuit-breaker.test.js` | 1 | create |
-| `worca-ui/app/views/settings-execution-parallelism.test.js` | 1, 2 | create / extend |
-| `worca-ui/app/views/settings-preferences-worktrees.test.js` | 1, 3 | create / extend |
-| `worca-ui/app/views/settings-preferences-pipeline.test.js` | 1, 4 | create / extend |
-| `src/worca/scripts/run_worktree.py` | 2, 3 | modify |
-| `worca-ui/app/views/new-pipeline.js` | 2, 4 | modify (placeholder + cap gating) |
-| `tests/test_run_worktree.py` | 2 | extend |
-| `worca-ui/server/process-manager.js` | 3 | modify (post-exit hook) |
-| `worca-ui/server/process-manager.test.js` | 3 | extend |
-| `src/worca/state/status.py` | 3, 5 | modify (worktree_path; pr_approved milestone) |
-| `tests/integration/test_cleanup_policy.py` | 3 | create |
-| `worca-ui/server/process-registry.js` | 4 | modify (cross-project count) |
-| `worca-ui/server/project-routes.js` | 4 | modify (409 cap check) |
-| `worca-ui/server/project-routes.test.js` | 4 | extend |
-| `src/worca/orchestrator/runner.py` | 5 | modify (PR-stage gate) |
-| `worca-ui/app/views/run-detail.js` | 5 | modify (approval panel) |
-| `worca-ui/app/views/run-detail.test.js` | 5 | extend |
-| `tests/test_runner_pr_approval.py` | 5 | create |
-| `tests/integration/test_pr_approval_flow.py` | 5 | create |
+| Path | Status | Notes |
+|------|--------|---|
+| `src/worca/settings.json` | modify | Strip 4 global keys from template (§11a) |
+| `src/worca/cli/init.py` | modify | Add `_migrate_global_keys_to_preferences` + wire into `--upgrade` (§11b) |
+| `tests/test_init_migration.py` | create | Migration helper tests |
+| `worca-ui/server/preferences-routes.js` | create | GET/PUT /api/preferences (§4) |
+| `worca-ui/server/preferences-routes.test.js` | create | Endpoint tests |
+| `worca-ui/server/settings-reader.js` | modify | `readGlobalSettings` / `writeGlobalSettings` with try/catch (§4) |
+| `worca-ui/server/settings-validator.js` | modify | `validateGlobalSettings` + project blocks + reject-misplaced-keys helper (§9) |
+| `worca-ui/server/settings-validator.test.js` | extend | New blocks + `VALID_MODELS` superset test (§9c) |
+| `worca-ui/server/app.js` | modify | Mount preferences router |
+| `worca-ui/server/process-manager.js` | modify | Post-exit cleanup hook reading global prefs (§5b) |
+| `worca-ui/server/process-manager.test.js` | extend | Cleanup policy branches |
+| `worca-ui/server/process-registry.js` | modify | `countRunningPipelinesAcrossProjects` (§5a) |
+| `worca-ui/server/project-routes.js` | modify | 409 cap check (§5a) + banner-migration endpoint (§11c) |
+| `worca-ui/server/project-routes.test.js` | extend | Cap enforcement |
+| `src/worca/utils/settings.py` | modify | `load_settings_with_global_fallback` (§6a) |
+| `src/worca/orchestrator/error_classifier.py` | modify | Use fallback helper (§6a) |
+| `src/worca/scripts/run_worktree.py` | modify | Read `default_base_branch` + write `worktree_path` to status.json (§6b) |
+| `src/worca/state/status.py` | modify | `worktree_path` field; `pr_approved` milestone (§6c) |
+| `src/worca/orchestrator/runner.py` | modify | PR-stage gate with timeout backstop (§6c) |
+| `src/worca/orchestrator/control.py` (or wherever `_check_control_response` lives) | modify | Add `timeout_seconds` / `timeout_default` params if absent |
+| `tests/test_settings_global_fallback.py` | create | Helper merge tests |
+| `tests/test_run_worktree.py` | extend | `default_base_branch` cases |
+| `tests/test_runner_pr_approval.py` | create | Gate behavior + timeout |
+| `tests/integration/test_cleanup_policy.py` | create | End-to-end policy branches |
+| `tests/integration/test_pr_approval_flow.py` | create | Mock-controlled approve flow |
+| `worca-ui/app/main.js` | modify | Bootstrap fetch + threading (§7) |
+| `worca-ui/app/store.js` | modify | Four global-derived scalars (§7) |
+| `worca-ui/app/views/sidebar.js` | modify | Bug A + Bug C |
+| `worca-ui/app/views/sidebar.test.js` | modify | State shape |
+| `worca-ui/app/views/worktrees.js` | modify | Bug B + accept threshold |
+| `worca-ui/app/views/settings.js` | modify | Project + global tab editors (§§2-3, 8) |
+| `worca-ui/app/views/settings-approval-gates.test.js` | create | `plan_approval` + `pr_approval` switches |
+| `worca-ui/app/views/settings-circuit-breaker.test.js` | create | Enabled + max-failures |
+| `worca-ui/app/views/settings-execution-parallelism.test.js` | create | base-dir + default-branch |
+| `worca-ui/app/views/settings-preferences-worktrees.test.js` | create | Disk threshold + cleanup_policy |
+| `worca-ui/app/views/settings-preferences-pipeline.test.js` | create | Classifier model + max-concurrent |
+| `worca-ui/app/views/run-detail.js` | modify | Approval panel (§6c UI) |
+| `worca-ui/app/views/run-detail.test.js` | extend | Approval panel render conditions |
+| `worca-ui/app/views/new-pipeline.js` | modify | Disable button at cap + 409 banner + base-branch placeholder |
+| `worca-ui/app/views/new-pipeline.test.js` | extend | Cap-disabled state |
+| `MIGRATION.md` | modify | Document `worca init --upgrade` migration |
