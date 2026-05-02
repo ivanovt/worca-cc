@@ -495,7 +495,6 @@ class TestDefaultBaseBranch:
     def test_branch_omitted_uses_config_default_base_branch(self, tmp_path):
         """When --branch is not provided, run_worktree reads
         worca.parallel.default_base_branch from settings (fallback 'main')."""
-        import json
         from unittest.mock import patch as _patch
         from worca.scripts.run_worktree import main
 

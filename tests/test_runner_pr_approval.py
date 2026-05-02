@@ -19,7 +19,6 @@ from worca.orchestrator.runner import (
     _check_control_response_with_timeout,
     PipelineInterrupted,
 )
-from worca.orchestrator.stages import Stage
 from worca.orchestrator.work_request import WorkRequest
 from worca.events.emitter import EventContext
 
@@ -83,6 +82,21 @@ def _reset_signal_event_flag():
     yield
     runner_mod._signal_event_emitted = False
     runner_mod._pending_signal_event = None
+
+
+@pytest.fixture(autouse=True)
+def _no_real_sleep():
+    """Patch time.sleep across this module so the PR-approval polling loop
+    in _check_control_response_with_timeout never actually blocks.
+
+    Tests that call the helper with timeout_seconds in the tens of seconds
+    would otherwise sleep poll_interval=5s on each iteration whenever the
+    mock _check_control_response returns None on the first poll. Currently
+    the immediate-return paths happen to dodge this, but adding any test
+    that exercises the polling loop would silently slow the suite.
+    """
+    with patch("time.sleep"):
+        yield
 
 
 def _run_pr_pipeline(tmp_path, pr_approval=None, timeout_seconds=None,

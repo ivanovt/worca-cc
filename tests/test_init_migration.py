@@ -6,12 +6,9 @@ Covers:
 - Inert milestone key stripping (§11b step 2)
 """
 
-import copy
 import json
 import os
 from pathlib import Path
-
-import pytest
 
 from worca.cli.init import (
     _migrate_global_keys_to_preferences,

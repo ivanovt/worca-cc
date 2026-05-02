@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _schema = json.loads(
@@ -68,8 +69,37 @@ def _get_worca_source(source_flag: str | None, git_root: Path) -> Path:
         raise SystemExit(1)
 
 
+def _atomic_write_json(path: str, data: dict) -> None:
+    """Atomically write JSON to path via tempfile + os.replace.
+
+    Mirrors the JS atomicWriteSync helper so concurrent readers (the UI
+    server) never observe a half-written ~/.worca/settings.json during
+    `worca init --upgrade`.
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _deep_merge(base: dict, overlay: dict) -> dict:
-    """Deep-merge overlay into base. Overlay values win for scalars; dicts merge recursively."""
+    """Non-destructive deep-merge: base wins for scalars; nested dicts merge recursively.
+
+    Overlay only contributes keys absent from base. This is the upgrade
+    semantic — user values in `base` are always preserved, and the template
+    `overlay` only fills in keys the user does not yet have. To get the
+    opposite (overlay wins for scalars), use `_deep_merge_overwrite`.
+    """
     result = base.copy()
     for key, value in overlay.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -295,7 +325,6 @@ def _migrate_global_keys_to_preferences(
 
     if global_path is None:
         global_path = os.path.expanduser("~/.worca/settings.json")
-    os.makedirs(os.path.dirname(global_path), exist_ok=True)
     try:
         with open(global_path) as f:
             global_blob = json.load(f)
@@ -304,13 +333,9 @@ def _migrate_global_keys_to_preferences(
     global_blob.setdefault("worca", {})
     for section, kvs in extracted.items():
         global_blob["worca"].setdefault(section, {}).update(kvs)
-    with open(global_path, "w") as f:
-        json.dump(global_blob, f, indent=2)
-        f.write("\n")
+    _atomic_write_json(global_path, global_blob)
 
-    with open(project_settings_path, "w") as f:
-        json.dump(project, f, indent=2)
-        f.write("\n")
+    _atomic_write_json(project_settings_path, project)
 
     return extracted
 
@@ -341,9 +366,7 @@ def _strip_inert_milestone_keys(project_settings_path: str) -> list[str]:
     if "worca" in project and "milestones" in project["worca"] and not project["worca"]["milestones"]:
         del project["worca"]["milestones"]
 
-    with open(project_settings_path, "w") as f:
-        json.dump(project, f, indent=2)
-        f.write("\n")
+    _atomic_write_json(project_settings_path, project)
 
     return removed
 

@@ -320,17 +320,20 @@ export function createProjectRoutes({
 /**
  * Router for project-scoped sub-routes.
  * The projectResolver middleware must run before this to set req.project.
- * @param {{ prefsDir?: string|null }} [options] — prefsDir enables active
- *   worca-cc version lookup for /worca-status' `outdated` flag.
+ * @param {{ prefsDir?: string|null, launchLock?: LaunchLock }} [options] —
+ *   prefsDir enables active worca-cc version lookup for /worca-status'
+ *   `outdated` flag and gates the global max_concurrent_pipelines check.
+ *   launchLock should be injected by createApp so all routers share the
+ *   same mutex; falls back to a per-router instance if omitted (tests).
  */
 export function createProjectScopedRoutes({
   prefsDir = null,
   serverHost,
   serverPort,
+  launchLock = new LaunchLock(),
 } = {}) {
   const router = Router({ mergeParams: true });
   const prefsPath = prefsDir ? join(prefsDir, 'preferences.json') : null;
-  const launchLock = new LaunchLock();
 
   // Guard: run-related, cost, and pipeline routes require worcaDir
   function requireWorcaDir(req, res, next) {

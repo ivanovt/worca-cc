@@ -1,5 +1,6 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { atomicWriteSync } from './atomic-write.js';
 
 function isPidAlive(pid) {
   try {
@@ -18,7 +19,7 @@ function clearStalePid(statusPath, status) {
       pipeline_status: 'error',
       error: 'Stale PID: process no longer running',
     };
-    writeFileSync(statusPath, `${JSON.stringify(patched, null, 2)}\n`);
+    atomicWriteSync(statusPath, `${JSON.stringify(patched, null, 2)}\n`);
   } catch {
     // best-effort
   }
