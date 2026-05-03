@@ -7,6 +7,7 @@ import {
   openSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -629,57 +630,66 @@ Options:
   -h, --help         Show this help`);
 }
 
-const args = parseArgs(process.argv);
-switch (args.command) {
-  case 'start':
-    start(args);
-    break;
-  case 'stop':
-    stop(args);
-    break;
-  case 'restart':
-    restart(args);
-    break;
-  case 'status':
-    status(args);
-    break;
-  case 'projects':
-    switch (args.subAction) {
-      case 'list':
-        projectsList();
-        break;
-      case 'add':
-        projectsAdd(args.projectPath, args.projectName);
-        break;
-      case 'remove':
-        projectsRemove(args.projectPath);
-        break;
-      default:
-        console.log('Usage: worca-ui projects [list|add|remove]');
-    }
-    break;
-  case 'migrate':
-    if (args.scanDir) {
-      migrateScan(args.scanDir, args.dryRun);
-    } else if (args.migrateAdd) {
-      migrateAdd(args.migrateAdd);
-    } else if (args.migrateStatus) {
-      migrateStatus();
-    } else {
-      console.log(
-        'Usage:\n' +
-          '  worca-ui migrate --scan <dir> [--dry-run]\n' +
-          '  worca-ui migrate --add /path/to/project\n' +
-          '  worca-ui migrate --status',
-      );
-    }
-    break;
-  case 'version':
-    console.log(pkg.version);
-    break;
-  case 'help':
-    printHelp();
-    break;
-  default:
-    printHelp();
+function main() {
+  const args = parseArgs(process.argv);
+  switch (args.command) {
+    case 'start':
+      start(args);
+      break;
+    case 'stop':
+      stop(args);
+      break;
+    case 'restart':
+      restart(args);
+      break;
+    case 'status':
+      status(args);
+      break;
+    case 'projects':
+      switch (args.subAction) {
+        case 'list':
+          projectsList();
+          break;
+        case 'add':
+          projectsAdd(args.projectPath, args.projectName);
+          break;
+        case 'remove':
+          projectsRemove(args.projectPath);
+          break;
+        default:
+          console.log('Usage: worca-ui projects [list|add|remove]');
+      }
+      break;
+    case 'migrate':
+      if (args.scanDir) {
+        migrateScan(args.scanDir, args.dryRun);
+      } else if (args.migrateAdd) {
+        migrateAdd(args.migrateAdd);
+      } else if (args.migrateStatus) {
+        migrateStatus();
+      } else {
+        console.log(
+          'Usage:\n' +
+            '  worca-ui migrate --scan <dir> [--dry-run]\n' +
+            '  worca-ui migrate --add /path/to/project\n' +
+            '  worca-ui migrate --status',
+        );
+      }
+      break;
+    case 'version':
+      console.log(pkg.version);
+      break;
+    case 'help':
+      printHelp();
+      break;
+    default:
+      printHelp();
+  }
+}
+
+// Only run the CLI when this file is the entry point — not when imported
+// by tests (which load the module to access exported helpers like parseArgs).
+const entry = process.argv[1] ? realpathSync(process.argv[1]) : null;
+if (entry === fileURLToPath(import.meta.url)) {
+  main();
 }
