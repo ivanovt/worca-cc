@@ -64,6 +64,43 @@ def get_current_git_head() -> str:
     return result.stdout.strip()
 
 
+def detect_default_branch() -> str:
+    """Return the repo's default branch.
+
+    Probes in order:
+    1. `git symbolic-ref refs/remotes/origin/HEAD` (the upstream-configured
+       default — the canonical answer for any cloned repo).
+    2. `git rev-parse --abbrev-ref HEAD` (the current local branch — covers
+       repos with no upstream, e.g. fresh `git init`).
+    3. The literal string "HEAD" — never errors when passed to
+       `git worktree add`, lets git itself choose the working tree's commit.
+    """
+    result = _run_git("symbolic-ref", "refs/remotes/origin/HEAD")
+    if result.returncode == 0:
+        ref = result.stdout.strip()
+        prefix = "refs/remotes/origin/"
+        if ref.startswith(prefix):
+            return ref[len(prefix):]
+
+    result = _run_git("rev-parse", "--abbrev-ref", "HEAD")
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+
+    return "HEAD"
+
+
+def branch_exists(ref: str) -> bool:
+    """True when `ref` resolves to a commit in the current repo.
+
+    Cheap existence check via `git rev-parse --verify --quiet`; returns
+    False for empty/None input without invoking git.
+    """
+    if not ref:
+        return False
+    result = _run_git("rev-parse", "--verify", "--quiet", ref)
+    return result.returncode == 0
+
+
 def create_pipeline_worktree(
     run_id: str,
     slug: str,

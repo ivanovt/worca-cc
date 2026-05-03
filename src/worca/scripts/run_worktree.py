@@ -29,8 +29,41 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from worca.orchestrator.registry import register_pipeline
 from worca.orchestrator.work_request import normalize
 from worca.state.status import write_status_field
-from worca.utils.git import create_pipeline_worktree, init_worktree_beads
+from worca.utils.git import (
+    branch_exists,
+    create_pipeline_worktree,
+    detect_default_branch,
+    init_worktree_beads,
+)
 from worca.utils.settings import load_settings
+
+
+def _resolve_base_branch(args, settings: dict) -> str:
+    """Pick the base branch for the new worktree.
+
+    Priority:
+    1. `--branch` on the CLI (caller knows best; passed straight to git).
+    2. `worca.parallel.default_base_branch` from settings, but only if the
+       ref actually resolves in this repo. A misconfigured value (e.g. the
+       shipped default of "main" in a "master" repo) emits a warning and
+       falls through to detection.
+    3. `detect_default_branch()` — `origin/HEAD` then current branch then
+       the literal `HEAD`.
+    """
+    if args.branch:
+        return args.branch
+    configured = (
+        settings.get("worca", {}).get("parallel", {}).get("default_base_branch")
+    )
+    if configured:
+        if branch_exists(configured):
+            return configured
+        print(
+            f"warning: configured worca.parallel.default_base_branch "
+            f"'{configured}' does not exist in this repo; auto-detecting",
+            file=sys.stderr,
+        )
+    return detect_default_branch()
 
 
 def _generate_run_id() -> str:
@@ -314,8 +347,7 @@ def main(argv=None) -> int:
     # Step 3: create git worktree at the configured base dir
     _settings = load_settings(args.settings)
     _parallel = _settings.get("worca", {}).get("parallel", {})
-    _default_branch = _parallel.get("default_base_branch", "main")
-    base_branch = args.branch or _default_branch
+    base_branch = _resolve_base_branch(args, _settings)
     _wt_base = _parallel.get("worktree_base_dir", ".worktrees")
     worktree_path = create_pipeline_worktree(run_id, slug, base_branch, _wt_base)
     if not worktree_path:
