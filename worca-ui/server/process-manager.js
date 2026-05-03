@@ -431,6 +431,16 @@ export class ProcessManager {
         const statusDir = resumeCtx ? resumeCtx.worcaDir : this.worcaDir;
         args.push('--status-dir', statusDir);
 
+        // Worktree runs: registry lives in the parent project's .worca, not
+        // the worktree's. run_worktree.py passes --registry-base on initial
+        // launch; resume must do the same so update_pipeline() lands on the
+        // right registry entry. Without this, the runner's terminal /
+        // resume-flip-to-running registry updates silently no-op against a
+        // non-existent <worktree>/.worca/multi/pipelines.d/<id>.json.
+        if (resumeCtx && resumeCtx.worcaDir !== this.worcaDir) {
+          args.push('--registry-base', this.worcaDir);
+        }
+
         // _find_active_runs filters out runs whose pipeline_status is in
         // {completed, interrupted}. To resume an interrupted/failed run, flip
         // the top-level status to "resuming" so the runner can pick it up;

@@ -321,6 +321,31 @@ describe('startPipeline arg building', () => {
     expect(args[args.indexOf('--status-dir') + 1]).toBe(
       join(worktreePath, '.worca'),
     );
+
+    // registry-base must point at the parent's .worca so update_pipeline()
+    // lands on the registered entry (the worktree's own .worca has no
+    // pipelines.d/<id>.json — the entry only exists in the parent).
+    expect(args).toContain('--registry-base');
+    expect(args[args.indexOf('--registry-base') + 1]).toBe(worcaDir);
+  });
+
+  it('resume of a NON-worktree (local) run does NOT pass --registry-base', async () => {
+    // Local in-place runs have status.json under the project's .worca/runs/
+    // and no pipelines.d/ entry, so --registry-base is unnecessary noise.
+    const runId = '20260317-084204-001-local';
+    const localRunDir = join(worcaDir, 'runs', runId);
+    mkdirSync(localRunDir, { recursive: true });
+    writeFileSync(join(localRunDir, 'status.json'), '{}');
+
+    startPipeline(worcaDir, {
+      resume: true,
+      runId,
+      projectRoot: tmpDir,
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const args = getArgs();
+    expect(args).not.toContain('--registry-base');
   });
 
   it('resume flips terminal pipeline_status (interrupted/failed) to "resuming"', async () => {
