@@ -1,6 +1,7 @@
 """Git and worktree operations. All functions run git as a subprocess."""
 
 import os
+import shutil
 import subprocess
 
 from worca.utils.beads import bd_init
@@ -154,6 +155,17 @@ def remove_pipeline_worktree(worktree_path: str) -> bool:
     result = _run_git("worktree", "remove", "--force", worktree_path)
     if result.returncode != 0:
         return False
+
+    # `git worktree remove --force` deletes tracked + untracked files but
+    # leaves *ignored* files in place. The pipeline writes to .worca/, which
+    # is normally gitignored, so a worktree-mode run leaves an orphan .worca/
+    # shell behind. Wipe what's left so the parent dir doesn't accumulate
+    # empty stubs across many cleanups.
+    if os.path.isdir(worktree_path):
+        try:
+            shutil.rmtree(worktree_path)
+        except OSError:
+            pass  # cleanup is best-effort; git side already succeeded
 
     # Delete the branch
     if branch and branch != "HEAD":

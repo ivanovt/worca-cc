@@ -13,7 +13,7 @@
  *   3. `<worcaDir>/multi/pipelines.d/<runId>.json` → `<worktree_path>/.worca/runs/<runId>/`
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 /**
@@ -75,5 +75,39 @@ export function readPipelineOverlay(worcaDir, runId) {
     return data;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Update the multi-pipeline registry entry's status field.
+ *
+ * Mirrors src/worca/orchestrator/registry.py:update_pipeline() — terminal
+ * status (cancelled/completed/failed/interrupted) only. The Python runner
+ * updates the registry on its own terminal paths; this helper exists for
+ * callers (the UI cancel route) that write status.json directly without
+ * going through the runner.
+ *
+ * Returns true when the registry entry existed and was updated, false when
+ * there's no registry entry for this runId (e.g. local in-place run).
+ *
+ * @param {string} worcaDir - the parent project's .worca directory
+ * @param {string} runId
+ * @param {string} status - new status value (e.g. 'cancelled')
+ */
+export function updatePipelineStatus(worcaDir, runId, status) {
+  const regPath = join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`);
+  if (!existsSync(regPath)) return false;
+  try {
+    const data = JSON.parse(readFileSync(regPath, 'utf8'));
+    data.status = status;
+    data.updated_at = new Date().toISOString();
+    // Match Python's atomic write: write to .tmp + rename. Avoids partial
+    // writes if the process crashes mid-write.
+    const tmpPath = `${regPath}.tmp`;
+    writeFileSync(tmpPath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+    renameSync(tmpPath, regPath);
+    return true;
+  } catch {
+    return false;
   }
 }

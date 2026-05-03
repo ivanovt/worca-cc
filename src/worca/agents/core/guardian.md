@@ -56,7 +56,22 @@ The work request and approach summary arrive as a user message.
 
 ## Output
 
-Produce a structured result following the `pr.json` schema.
+Your final response MUST be a single JSON object that matches the `pr.json` schema. **Emit JSON only — no prose, no markdown, no commentary, no leading/trailing text.** Other stages (planner, coordinator, reviewer) reliably produce structured output and the orchestrator reads it directly; a markdown summary instead of JSON silently drops `pr_number` and `pr_url` from the run record.
+
+Required fields:
+- `pr_number` (integer) — captured from `gh pr create` / `gh pr view` output
+- `pr_url` (string, URI) — full URL to the PR
+
+Optional:
+- `review_status` — `"pending"` | `"approved"` | `"changes_requested"` | `"rejected"`
+
+Example final output (this exact shape, no fences, no prose around it):
+
+```
+{"pr_number": 42, "pr_url": "https://github.com/owner/repo/pull/42", "review_status": "pending"}
+```
+
+If the PR couldn't be created (steps 3–7 failed), still emit JSON — set `review_status: "rejected"` and use `0` / empty string for the missing fields, then the orchestrator will treat it as a stage failure.
 
 ## Rules
 

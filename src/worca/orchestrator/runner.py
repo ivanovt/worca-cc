@@ -121,6 +121,8 @@ _signal_project_status_path = None  # project-level status.json for PID cleanup
 _signal_event_ctx = None  # set to EventContext when run starts; signal-safe event emission
 _pending_signal_event = None  # signal handler stashes interrupted-event dict here for deferred dispatch
 _signal_event_emitted = False  # guards against duplicate events.jsonl writes from repeated signals
+_signal_registry_dir = None  # parent .worca for multi-pipeline registry updates from atexit
+_signal_run_id = None  # run_id for registry updates from atexit
 
 
 def _is_signal_kill_exception(exc) -> bool:
@@ -594,6 +596,23 @@ def _atexit_cleanup():
                 _dispatch_pending_signal_event(_signal_event_ctx)
         except Exception:
             pass
+        # Mirror the terminal status into the multi-pipeline registry so the UI
+        # doesn't keep showing "running" for runs killed via os._exit / OOM /
+        # SIGKILL where the finally block can't run. Best-effort.
+        try:
+            if (
+                _signal_run_id
+                and _signal_registry_dir
+                and _signal_status.get("worktree")
+                and _signal_status.get("pipeline_status") in {"interrupted", "failed", "completed"}
+            ):
+                update_pipeline(
+                    _signal_run_id,
+                    status=_signal_status["pipeline_status"],
+                    base=_signal_registry_dir,
+                )
+        except Exception:
+            pass
         # Clean up PID files (per-run + project-level)
         _remove_pid(_signal_status_path)
         if _signal_project_status_path:
@@ -1036,9 +1055,34 @@ def run_stage(
         on_event=on_event,
     )
     # claude CLI returns a JSON envelope; extract structured_output if present
-    if isinstance(raw, dict) and "structured_output" in raw:
+    if isinstance(raw, dict) and raw.get("structured_output"):
         return raw["structured_output"], raw
+    # Fallback for stages whose agent occasionally returns prose instead of
+    # JSON. Currently only Guardian (PR stage) — its prompt was rewritten to
+    # emit JSON-only, but pre-existing runs and the occasional slip would
+    # otherwise lose pr_number/pr_url. Recover what we can from the prose so
+    # downstream events (GIT_PR_CREATED, status.json) still see the PR.
+    if stage == Stage.PR and isinstance(raw, dict):
+        recovered = _extract_pr_fields_from_text(raw.get("result"))
+        if recovered:
+            return recovered, raw
     return raw, raw
+
+
+def _extract_pr_fields_from_text(text) -> Optional[dict]:
+    """Pull pr_url and pr_number out of free-form agent prose.
+
+    Matches GitHub `/pull/N` and GitLab `/merge_requests/N` URLs. Returns None
+    if no PR URL is found. Defensive only — the proper fix is for the agent
+    to emit structured output.
+    """
+    if not isinstance(text, str):
+        return None
+    import re
+    m = re.search(r"https?://[^\s)\]\>]+/(?:pull|merge_requests)/(\d+)", text)
+    if not m:
+        return None
+    return {"pr_url": m.group(0), "pr_number": int(m.group(1))}
 
 
 def run_preflight(
@@ -1252,12 +1296,27 @@ def run_pipeline(
     Saves status after each stage transition.
     Returns final status.
     """
-    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx, _pending_signal_event, _signal_event_emitted
+    global _shutdown_requested, _signal_status, _signal_status_path, _signal_project_status_path, _signal_event_ctx, _pending_signal_event, _signal_event_emitted, _signal_registry_dir, _signal_run_id
     _shutdown_requested = False
     _pending_signal_event = None
     _signal_event_emitted = False
 
-    worca_dir = os.path.dirname(status_path)  # e.g. ".worca"
+    # status_path can arrive in two shapes:
+    #   <worca>/status.json                       (legacy flat layout)
+    #   <worca>/runs/<run_id>/status.json         (caller targeted a specific run,
+    #                                              e.g. worca-ui resume passing the
+    #                                              per-run dir as --status-dir)
+    # In the second shape, dirname(status_path) is the per-run dir, not the worca
+    # root. Treating it as the worca root caused every <worca_dir>/runs/<run_id>/
+    # join below to nest a fresh runs/<run_id>/ underneath, so the runner wrote
+    # status updates and the registry to a shadow path while the original
+    # status.json was never touched. Recover the real worca root so all joins
+    # below land on the existing run dir.
+    _status_dir = os.path.dirname(status_path)
+    if os.path.basename(os.path.dirname(_status_dir)) == "runs":
+        worca_dir = os.path.dirname(os.path.dirname(_status_dir))
+    else:
+        worca_dir = _status_dir
     # In worktree mode the registry lives in the parent project's .worca/, not
     # the worktree's. Caller passes its absolute path; in-place runs use worca_dir.
     registry_dir = registry_base or worca_dir
@@ -1407,6 +1466,8 @@ def run_pipeline(
     _signal_status = status
     _signal_status_path = actual_status_path
     _signal_project_status_path = status_path  # project-level for PID cleanup
+    _signal_registry_dir = registry_dir
+    _signal_run_id = status.get("run_id")
     atexit.register(_atexit_cleanup)
 
     ctx = None
@@ -1500,6 +1561,14 @@ def run_pipeline(
         # Transition pipeline to running state
         status["pipeline_status"] = "running"
         save_status(status, actual_status_path)
+        # On resume, the registry was previously flipped to "interrupted" /
+        # "failed" when the original run stopped. Flip it back so the UI's
+        # filter-by-registry-status views surface the live run again.
+        if resume_stage is not None and status.get("worktree") and status.get("run_id"):
+            try:
+                update_pipeline(status["run_id"], status="running", base=registry_dir)
+            except Exception:
+                pass
 
         stage_order = get_enabled_stages(settings_path)
 
@@ -2879,6 +2948,13 @@ def run_pipeline(
         status["pipeline_status"] = "interrupted"
         status["stop_reason"] = exc.stop_reason
         save_status(status, actual_status_path)
+        # Mirror terminal status into the multi-pipeline registry so global-mode
+        # views don't keep showing the run as "running" after SIGTERM/control_file.
+        if status.get("worktree") and status.get("run_id"):
+            try:
+                update_pipeline(status["run_id"], status="interrupted", base=registry_dir)
+            except Exception:
+                pass  # registry sync is best-effort; status.json is canonical
         if ctx and _pending_signal_event is None and not _signal_event_emitted:
             emit_event(ctx, RUN_INTERRUPTED, run_interrupted_payload(
                 interrupted_stage=status.get("stage", ""),
@@ -2967,6 +3043,8 @@ def run_pipeline(
         _signal_event_ctx = None
         _pending_signal_event = None
         _signal_event_emitted = False
+        _signal_registry_dir = None
+        _signal_run_id = None
         try:
             atexit.unregister(_atexit_cleanup)
         except Exception:

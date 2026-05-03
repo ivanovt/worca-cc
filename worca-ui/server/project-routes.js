@@ -71,7 +71,11 @@ function validateRunId(runId) {
 // Re-exported from run-dir-resolver so callers (including older tests) can
 // continue importing from project-routes. The implementation now overlays
 // worktree runs registered in <worcaDir>/multi/pipelines.d/.
-import { findRunStatusPath, readPipelineOverlay } from './run-dir-resolver.js';
+import {
+  findRunStatusPath,
+  readPipelineOverlay,
+  updatePipelineStatus,
+} from './run-dir-resolver.js';
 export { findRunStatusPath };
 
 /** Validate a branch name — alphanumeric, dots, hyphens, underscores, slashes */
@@ -1085,6 +1089,11 @@ export function createProjectScopedRoutes({
       st.stop_reason = 'force_cancelled';
       st.completed_at = new Date().toISOString();
       writeFileSync(statusPath, `${JSON.stringify(st, null, 2)}\n`, 'utf8');
+
+      // Mirror into the multi-pipeline registry so global-mode views don't
+      // keep reporting the run as "running". Best-effort — the registry entry
+      // only exists for worktree runs.
+      updatePipelineStatus(worcaDir, runId, 'cancelled');
 
       const { broadcast, scheduleRefresh } = req.app.locals;
       if (broadcast) broadcast('run-cancelled', { runId });
