@@ -87,6 +87,23 @@ gh pr create --title "..." --body "..."
 
 **Merging PRs:** Always use `gh pr merge <number> --merge` (not local `git merge` + push). This ensures GitHub auto-closes the PR and links the merge commit properly.
 
+**Reading issues — always pass `--json`.** This repo has at least one classic-Projects-linked issue, and the default `gh issue view N` (and the unfiltered `gh issue list`) fail on the deprecated `repository.issue.projectCards` GraphQL field:
+
+```
+GraphQL: Projects (classic) is being deprecated in favor of the new Projects experience…
+(repository.issue.projectCards)
+```
+
+Use `--json` with explicit fields to bypass it. Defaults that work:
+
+```bash
+gh issue view 119 --json number,title,body,labels,state,assignees,comments
+gh issue list --json number,title,labels,state --limit 30
+gh issue list --label area:cc --json number,title,labels --limit 30
+```
+
+For a human-readable view, post-process with `--jq` (e.g. `--jq '"#\(.number) \(.title)"'`) instead of falling back to the unfiltered command.
+
 The guardian agent uses this when creating PRs. Adapt this section for GitLab (`glab`), Bitbucket, or other hosting platforms.
 
 ## Development Approach
