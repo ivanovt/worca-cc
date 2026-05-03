@@ -10,9 +10,11 @@ async function run() {
   const entry = path.join(appDir, 'main.js');
   const outfile = path.join(appDir, 'main.bundle.js');
   const vendorDir = path.join(appDir, 'vendor');
+  const serverSchemasDir = path.join(repoRoot, 'server', 'schemas');
 
   mkdirSync(appDir, { recursive: true });
   mkdirSync(vendorDir, { recursive: true });
+  mkdirSync(serverSchemasDir, { recursive: true });
 
   // Copy vendor CSS assets
   const vendorAssets = [
@@ -24,6 +26,19 @@ async function run() {
     const srcPath = path.join(repoRoot, 'node_modules', src);
     copyFileSync(srcPath, path.join(vendorDir, dest));
     console.log('copied', dest);
+  }
+
+  // Copy shared schema(s) from the Python source tree so the published npm
+  // package is self-contained (it does not ship src/worca/).
+  const sharedSchemas = [
+    [
+      path.join(repoRoot, '..', 'src', 'worca', 'schemas', 'keys.json'),
+      path.join(serverSchemasDir, 'keys.json'),
+    ],
+  ];
+  for (const [src, dest] of sharedSchemas) {
+    copyFileSync(src, dest);
+    console.log('copied', path.relative(repoRoot, dest));
   }
 
   try {

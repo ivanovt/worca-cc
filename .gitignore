@@ -40,3 +40,4 @@ worca-ui/debug-capture.mjs
 # Build artifacts
 worca-ui/app/main.bundle.js
 worca-ui/app/main.bundle.js.map
+worca-ui/server/schemas/

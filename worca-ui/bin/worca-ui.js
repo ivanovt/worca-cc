@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer } from 'node:net';
+import { connect, createServer } from 'node:net';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -108,6 +110,61 @@ export function parseArgs(argv) {
     }
   }
   return args;
+}
+
+/** Resolve log file path based on mode (mirrors PID file location). */
+function resolveLogPath(isGlobal) {
+  if (isGlobal) {
+    return join(PREFS_DIR, 'worca-ui-global.log');
+  }
+  const projectRoot = findProjectRoot(process.cwd());
+  return join(projectRoot, '.worca', 'worca-ui.log');
+}
+
+/** Try to open a TCP connection. Resolves true if a peer accepts within timeoutMs. */
+function canConnect(port, host, timeoutMs = 250) {
+  return new Promise((resolveProm) => {
+    let done = false;
+    const finish = (ok) => {
+      if (done) return;
+      done = true;
+      try {
+        sock.destroy();
+      } catch {
+        /* ignore */
+      }
+      resolveProm(ok);
+    };
+    const sock = connect({ port, host });
+    sock.once('connect', () => finish(true));
+    sock.once('error', () => finish(false));
+    setTimeout(() => finish(false), timeoutMs);
+  });
+}
+
+/**
+ * Wait for the spawned server to either start listening or die.
+ * Returns 'ready' (port open), 'died' (process exited), or 'timeout'.
+ */
+async function waitForServerStart({ pid, port, host, timeoutMs = 5000 }) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isRunning(pid)) return 'died';
+    if (await canConnect(port, host, 250)) return 'ready';
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return isRunning(pid) ? 'timeout' : 'died';
+}
+
+/** Read the last N lines of a log file. Returns '' if unreadable. */
+function tailLogFile(logPath, maxLines = 60) {
+  try {
+    const content = readFileSync(logPath, 'utf8');
+    const lines = content.split('\n');
+    return lines.slice(-maxLines).join('\n').trimEnd();
+  } catch {
+    return '';
+  }
 }
 
 /** Resolve PID file path and dir based on mode. */
@@ -234,12 +291,54 @@ async function start({ port, host, open, global: isGlobal }) {
     spawnArgs.push('--global');
   }
 
+  // Capture child stdout+stderr to a log file so startup crashes are visible.
+  // Without this, errors thrown during module load (missing files, bad imports,
+  // config errors, port binding races) silently disappear and the CLI cheerfully
+  // reports "started (PID …)" — see CLAUDE.md "missing-module crash" note.
+  const logPath = resolveLogPath(isGlobal);
+  let logFd = null;
+  try {
+    mkdirSync(dirname(logPath), { recursive: true });
+    logFd = openSync(logPath, 'w'); // truncate previous run's output
+  } catch (e) {
+    console.warn(
+      `Warning: could not open log file ${logPath}: ${e.message}\nStartup errors will not be captured.`,
+    );
+  }
+
   const child = spawn(process.execPath, spawnArgs, {
     detached: true,
-    stdio: 'ignore',
+    stdio: logFd != null ? ['ignore', logFd, logFd] : 'ignore',
     cwd: process.cwd(),
   });
+  if (logFd != null) closeSync(logFd); // child holds its own dup
   child.unref();
+
+  const url = `http://${host}:${availablePort}`;
+  const state = await waitForServerStart({
+    pid: child.pid,
+    port: availablePort,
+    host,
+    timeoutMs: 5000,
+  });
+
+  if (state === 'died') {
+    const tail = tailLogFile(logPath);
+    console.error(
+      `\n  worca-ui failed to start. The server process exited during startup.\n`,
+    );
+    if (tail) {
+      console.error('  Last log output:\n');
+      const indented = tail
+        .split('\n')
+        .map((l) => `    ${l}`)
+        .join('\n');
+      console.error(indented);
+      console.error('');
+    }
+    console.error(`  Full log: ${logPath}`);
+    process.exit(1);
+  }
 
   const info = {
     pid: child.pid,
@@ -248,12 +347,17 @@ async function start({ port, host, open, global: isGlobal }) {
     started_at: new Date().toISOString(),
     mode: isGlobal ? 'global' : 'per-project',
     projectPath: isGlobal ? null : findProjectRoot(process.cwd()),
+    logPath,
   };
   writePidFile(pidFile, pidDir, info);
-  const url = `http://${host}:${availablePort}`;
   console.log(
     `worca-ui ${isGlobal ? '(global) ' : ''}started (PID ${child.pid}) at ${url}`,
   );
+  if (state === 'timeout') {
+    console.warn(
+      `  Note: server did not accept connections within 5s but is still running.\n  Tail the log if it does not come up: ${logPath}`,
+    );
+  }
 
   // Hint: if global mode, empty projects.d/, and cwd has .worca/
   if (isGlobal) {
