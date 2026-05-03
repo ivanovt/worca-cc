@@ -525,6 +525,120 @@ class TestExtractPlanPath:
         assert _extract_plan_path(body) is None
 
 
+# --- _extract_plan_path with custom plan_path_template ---
+
+class TestExtractPlanPathCustomTemplate:
+    def test_custom_prefix_matches_link_under_that_prefix(self, tmp_path, monkeypatch):
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        (plans / "W-007-foo.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [plan](plans/W-007-foo.md)"
+        assert _extract_plan_path(
+            body, plan_path_template="plans/{title_slug}.md"
+        ) == "plans/W-007-foo.md"
+
+    def test_custom_prefix_with_deeper_nesting(self, tmp_path, monkeypatch):
+        plans = tmp_path / "documentation" / "plans"
+        plans.mkdir(parents=True)
+        (plans / "W-008-deep.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [plan](documentation/plans/W-008-deep.md)"
+        assert _extract_plan_path(
+            body,
+            plan_path_template="documentation/plans/{title}.md",
+        ) == "documentation/plans/W-008-deep.md"
+
+    def test_custom_prefix_strict_ignores_default_docs_plans_link(
+        self, tmp_path, monkeypatch
+    ):
+        # Both files exist, but only `plans/` should be considered when the
+        # template is configured to write there. A link to docs/plans/* must
+        # not match.
+        (tmp_path / "plans").mkdir()
+        (tmp_path / "plans" / "W-001-real.md").write_text("# Real")
+        (tmp_path / "docs" / "plans").mkdir(parents=True)
+        (tmp_path / "docs" / "plans" / "W-002-other.md").write_text("# Other")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [other](docs/plans/W-002-other.md)"
+        assert _extract_plan_path(
+            body, plan_path_template="plans/{title_slug}.md"
+        ) is None
+
+    def test_default_template_preserves_existing_behavior(self, tmp_path, monkeypatch):
+        plan = tmp_path / "docs" / "plans"
+        plan.mkdir(parents=True)
+        (plan / "W-023-batch.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [W-023](docs/plans/W-023-batch.md)"
+        assert _extract_plan_path(
+            body,
+            plan_path_template="docs/plans/{timestamp}-{title_slug}.md",
+        ) == "docs/plans/W-023-batch.md"
+
+    def test_template_without_placeholder_uses_dirname(self, tmp_path, monkeypatch):
+        # A template with no {placeholder} is a fixed path; treat its dirname
+        # as the prefix so the regex still matches plan files in that dir.
+        plans = tmp_path / "myplans"
+        plans.mkdir()
+        (plans / "fixed.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [plan](myplans/fixed.md)"
+        assert _extract_plan_path(
+            body, plan_path_template="myplans/myplan.md"
+        ) == "myplans/fixed.md"
+
+    def test_empty_template_falls_back_to_default(self, tmp_path, monkeypatch):
+        # An empty/None template must not collapse the prefix to "" (which would
+        # match every markdown link); fall back to the default docs/plans/ prefix.
+        plan = tmp_path / "docs" / "plans"
+        plan.mkdir(parents=True)
+        (plan / "W-009-empty.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [plan](docs/plans/W-009-empty.md)"
+        assert _extract_plan_path(body, plan_path_template="") == "docs/plans/W-009-empty.md"
+        assert _extract_plan_path(body, plan_path_template=None) == "docs/plans/W-009-empty.md"
+
+    def test_template_with_leading_dot_slash(self, tmp_path, monkeypatch):
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        (plans / "W-010-rel.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        body = "## Plan\n\n- [plan](plans/W-010-rel.md)"
+        assert _extract_plan_path(
+            body, plan_path_template="./plans/{title_slug}.md"
+        ) == "plans/W-010-rel.md"
+
+    def test_skips_first_match_with_missing_file_for_substring_collisions(
+        self, tmp_path, monkeypatch
+    ):
+        # Custom prefix `plans/` regex can substring-match `docs/plans/foo.md`
+        # → extract `plans/foo.md` which does not exist. The real plan link
+        # at `plans/real.md` appears later in the body. The function must
+        # iterate matches and return the first one whose file exists.
+        (tmp_path / "plans").mkdir()
+        (tmp_path / "plans" / "real.md").write_text("# Real")
+        (tmp_path / "docs" / "plans").mkdir(parents=True)
+        # Note: docs/plans/decoy.md exists, but plans/decoy.md (substring) does NOT.
+        (tmp_path / "docs" / "plans" / "decoy.md").write_text("# Decoy")
+        monkeypatch.chdir(tmp_path)
+
+        body = (
+            "- [decoy](docs/plans/decoy.md)\n"
+            "- [real](plans/real.md)"
+        )
+        assert _extract_plan_path(
+            body, plan_path_template="plans/{title_slug}.md"
+        ) == "plans/real.md"
+
+
 # --- normalize_github_issue with plan_path ---
 
 class TestNormalizeGithubIssuePlanPath:
@@ -556,3 +670,78 @@ class TestNormalizeGithubIssuePlanPath:
         self._mock_gh(mock_subprocess, "Simple issue", "Just a bug description.")
         wr = normalize_github_issue("gh:issue:5")
         assert wr.plan_path is None
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_custom_template_routes_to_configured_prefix(
+        self, mock_subprocess, tmp_path, monkeypatch
+    ):
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        (plans / "W-031-custom.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        self._mock_gh(
+            mock_subprocess,
+            "W-031: Custom prefix",
+            "## Plan\n\n- [plan](plans/W-031-custom.md)",
+        )
+        wr = normalize_github_issue(
+            "gh:issue:31", plan_path_template="plans/{title_slug}.md"
+        )
+        assert wr.plan_path == "plans/W-031-custom.md"
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_custom_template_does_not_match_default_prefix(
+        self, mock_subprocess, tmp_path, monkeypatch
+    ):
+        # File exists at docs/plans/ but template points to plans/ — do not match.
+        (tmp_path / "docs" / "plans").mkdir(parents=True)
+        (tmp_path / "docs" / "plans" / "W-040.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        self._mock_gh(
+            mock_subprocess,
+            "W-040",
+            "## Plan\n\n- [plan](docs/plans/W-040.md)",
+        )
+        wr = normalize_github_issue(
+            "gh:issue:40", plan_path_template="plans/{title_slug}.md"
+        )
+        assert wr.plan_path is None
+
+
+# --- normalize dispatcher with plan_path_template ---
+
+class TestNormalizeDispatcherPlanPathTemplate:
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_dispatch_threads_template_into_github_issue(
+        self, mock_subprocess, tmp_path, monkeypatch
+    ):
+        plans = tmp_path / "plans"
+        plans.mkdir()
+        (plans / "W-050-thread.md").write_text("# Plan")
+        monkeypatch.chdir(tmp_path)
+
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps({
+            "title": "W-050",
+            "body": "## Plan\n\n- [plan](plans/W-050-thread.md)",
+        })
+        mock_subprocess.run.return_value = mock_result
+
+        wr = normalize(
+            "source",
+            "gh:issue:50",
+            plan_path_template="plans/{title_slug}.md",
+        )
+        assert wr.source_type == "github_issue"
+        assert wr.plan_path == "plans/W-050-thread.md"
+
+    def test_dispatch_ignores_template_for_non_github_sources(self, tmp_path):
+        # Threading the kwarg through must not break prompt/spec/plan/beads paths.
+        wr = normalize(
+            "prompt", "Just a prompt", plan_path_template="anything/{title}.md"
+        )
+        assert wr.source_type == "prompt"
+        assert wr.title == "Just a prompt"

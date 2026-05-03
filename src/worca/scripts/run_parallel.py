@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.work_request import normalize
 from worca.utils.claude_cli import _ARG_INLINE_LIMIT
+from worca.utils.settings import load_settings
 
 
 def _slugify(title: str) -> str:
@@ -151,7 +152,13 @@ def main():
     if args.prompts:
         items = [(p, normalize("prompt", p)) for p in args.prompts]
     else:
-        items = [(s, normalize("source", s)) for s in args.sources]
+        plan_template = load_settings(args.settings).get("worca", {}).get(
+            "plan_path_template"
+        )
+        items = [
+            (s, normalize("source", s, plan_path_template=plan_template))
+            for s in args.sources
+        ]
 
     print(f"Launching {len(items)} parallel pipelines (max {args.max_parallel} concurrent)")
     if args.msize > 1:

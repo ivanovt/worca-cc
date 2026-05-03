@@ -181,7 +181,11 @@ class TestCLIScenarioSourceGhIssue:
         branch = _sanitize_branch_name(wr.title)
         assert "w-027" in branch
         assert re.match(r"^worca/[a-z0-9\-]+-[A-Za-z0-9]{3}$", branch)
-        mock_normalize.assert_called_once_with("source", "gh:issue:42")
+        # plan_path_template is threaded through from settings; in this test
+        # the project's own .claude/settings.json supplies the default value.
+        call_args = mock_normalize.call_args
+        assert call_args.args == ("source", "gh:issue:42")
+        assert "plan_path_template" in call_args.kwargs
 
 
 class TestCLIScenarioPlanOnly:

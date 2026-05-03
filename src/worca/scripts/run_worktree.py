@@ -289,7 +289,10 @@ def main(argv=None) -> int:
 
     # Normalize work request to get a title for the slug and registry entry
     if args.source:
-        wr = normalize("source", args.source)
+        plan_template = load_settings(args.settings).get("worca", {}).get(
+            "plan_path_template"
+        )
+        wr = normalize("source", args.source, plan_path_template=plan_template)
     else:
         wr = normalize("prompt", args.prompt)
 

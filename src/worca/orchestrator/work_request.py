@@ -8,11 +8,39 @@ from typing import Optional
 
 from worca.utils.env import get_env
 
-# Matches markdown links to plan files: [text](docs/plans/something.md)
-# Supports both relative paths and absolute GitHub blob URLs.
-_PLAN_LINK_RE = re.compile(r"\[.*?\]\([^)]*?(docs/plans/[^\)]+\.md)\)")
+_DEFAULT_PLAN_PATH_TEMPLATE = "docs/plans/{timestamp}-{title_slug}.md"
 # Matches GitHub issue URLs: https://github.com/owner/repo/issues/42
 _GH_ISSUE_URL_RE = re.compile(r"https?://github\.com/[^/]+/[^/]+/issues/(\d+)$")
+
+
+def _plan_prefix_from_template(template: Optional[str]) -> str:
+    """Derive the directory prefix from a plan_path_template.
+
+    Strips at the first `{` placeholder. For literal templates with no
+    placeholder, falls back to the dirname. Empty/None templates use the
+    default `docs/plans/` prefix to avoid an empty prefix that would match
+    every markdown link.
+    """
+    if not template:
+        template = _DEFAULT_PLAN_PATH_TEMPLATE
+    if template.startswith("./"):
+        template = template[2:]
+    brace = template.find("{")
+    prefix = template[:brace] if brace >= 0 else os.path.dirname(template) + "/"
+    if not prefix or prefix == "/":
+        prefix = _plan_prefix_from_template(_DEFAULT_PLAN_PATH_TEMPLATE)
+    return prefix
+
+
+def _build_plan_link_re(template: Optional[str]) -> "re.Pattern[str]":
+    """Build a regex matching markdown links to plan files under the prefix
+    derived from `template`. Supports both relative paths and absolute
+    GitHub blob URLs, mirroring the original hardcoded behavior.
+    """
+    prefix = _plan_prefix_from_template(template)
+    return re.compile(
+        rf"\[.*?\]\([^)]*?({re.escape(prefix)}[^\)]+\.md)\)"
+    )
 
 
 _PROMPT_TITLE_THRESHOLD = 60
@@ -144,22 +172,36 @@ def normalize_spec_file(path: str) -> WorkRequest:
     )
 
 
-def _extract_plan_path(body: str) -> Optional[str]:
+def _extract_plan_path(
+    body: str, plan_path_template: Optional[str] = None
+) -> Optional[str]:
     """Extract a plan file path from a GitHub issue body.
 
-    Looks for markdown links to docs/plans/*.md. Returns the path if the
-    file exists on disk, None otherwise (lets the Planner run normally).
+    Looks for markdown links to plan files under the directory derived from
+    `plan_path_template` (default `docs/plans/`). Returns the first path
+    that exists on disk; None when no link or no link's target exists.
+
+    Iterates all matches so a leading link whose target is missing (e.g. a
+    substring match against a longer URL) does not shadow a later, valid
+    link to a real plan file.
     """
-    match = _PLAN_LINK_RE.search(body or "")
-    if match:
+    pattern = _build_plan_link_re(plan_path_template)
+    for match in pattern.finditer(body or ""):
         path = match.group(1)
         if os.path.isfile(path):
             return path
     return None
 
 
-def normalize_github_issue(ref: str) -> WorkRequest:
-    """Create a WorkRequest from a GitHub issue reference like 'gh:issue:42'."""
+def normalize_github_issue(
+    ref: str, plan_path_template: Optional[str] = None
+) -> WorkRequest:
+    """Create a WorkRequest from a GitHub issue reference like 'gh:issue:42'.
+
+    `plan_path_template` is the configured `worca.plan_path_template`; when
+    provided, it determines the directory prefix used to detect plan-file
+    links in the issue body.
+    """
     parts = ref.split(":")
     issue_num = parts[-1]
     result = subprocess.run(
@@ -177,7 +219,7 @@ def normalize_github_issue(ref: str) -> WorkRequest:
         title=data["title"],
         description=body,
         source_ref=f"gh:{issue_num}",
-        plan_path=_extract_plan_path(body),
+        plan_path=_extract_plan_path(body, plan_path_template=plan_path_template),
     )
 
 
@@ -217,8 +259,10 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
 
     source_type can be "prompt", "spec", "plan", or "source" (auto-detect from value).
     For "source", the value is sniffed: gh:issue:N → GitHub, bd:ID → Beads.
-    Extra kwargs are forwarded to the dispatch function (e.g. content for plan).
+    Extra kwargs are forwarded to the dispatch function (e.g. content for plan,
+    plan_path_template for github_issue).
     """
+    plan_path_template = kwargs.pop("plan_path_template", None)
     if source_type == "prompt":
         return normalize_prompt(source_value)
     elif source_type == "plan":
@@ -231,7 +275,9 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
         if gh_url_match:
             source_value = f"gh:issue:{gh_url_match.group(1)}"
         if source_value.startswith("gh:issue:"):
-            return normalize_github_issue(source_value)
+            return normalize_github_issue(
+                source_value, plan_path_template=plan_path_template
+            )
         elif source_value.startswith("bd:"):
             return normalize_beads_task(source_value)
         else:

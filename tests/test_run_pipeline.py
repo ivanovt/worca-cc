@@ -97,8 +97,9 @@ class TestBuildWorkRequest:
         mock_normalize.assert_called_once_with("prompt", "Add auth")
         assert wr.title == "Add auth"
 
+    @patch("worca.scripts.run_pipeline.load_settings", return_value={})
     @patch("worca.scripts.run_pipeline.normalize")
-    def test_source_dispatches_normalize(self, mock_normalize):
+    def test_source_dispatches_normalize(self, mock_normalize, _mock_settings):
         from worca.orchestrator.work_request import WorkRequest
         mock_normalize.return_value = WorkRequest(
             source_type="github_issue", title="Fix bug", description="Body text"
@@ -106,8 +107,31 @@ class TestBuildWorkRequest:
         parser = create_parser()
         args = parser.parse_args(["--source", "gh:issue:42"])
         wr = build_work_request(args)
-        mock_normalize.assert_called_once_with("source", "gh:issue:42")
+        # plan_path_template is threaded through from settings (None when no
+        # template configured, which the mocked load_settings ensures here).
+        mock_normalize.assert_called_once_with(
+            "source", "gh:issue:42", plan_path_template=None
+        )
         assert wr.title == "Fix bug"
+
+    @patch("worca.scripts.run_pipeline.load_settings")
+    @patch("worca.scripts.run_pipeline.normalize")
+    def test_source_threads_configured_plan_path_template(
+        self, mock_normalize, mock_settings
+    ):
+        from worca.orchestrator.work_request import WorkRequest
+        mock_settings.return_value = {
+            "worca": {"plan_path_template": "plans/{title_slug}.md"}
+        }
+        mock_normalize.return_value = WorkRequest(
+            source_type="github_issue", title="W-031", description=""
+        )
+        parser = create_parser()
+        args = parser.parse_args(["--source", "gh:issue:31"])
+        build_work_request(args)
+        mock_normalize.assert_called_once_with(
+            "source", "gh:issue:31", plan_path_template="plans/{title_slug}.md"
+        )
 
     @patch("worca.scripts.run_pipeline.normalize")
     def test_spec_dispatches_normalize(self, mock_normalize):
@@ -189,8 +213,9 @@ class TestBuildWorkRequest:
         wr = build_work_request(args)
         assert "Additional Instructions" not in wr.description
 
+    @patch("worca.scripts.run_pipeline.load_settings", return_value={})
     @patch("worca.scripts.run_pipeline.normalize")
-    def test_source_priority_over_plan(self, mock_normalize):
+    def test_source_priority_over_plan(self, mock_normalize, _mock_settings):
         """When both --source and --plan given, source is primary, plan is plan_file."""
         from worca.orchestrator.work_request import WorkRequest
         mock_normalize.return_value = WorkRequest(
@@ -200,7 +225,9 @@ class TestBuildWorkRequest:
         parser = create_parser()
         args = parser.parse_args(["--source", "gh:issue:42", "--plan", "plan.md"])
         _wr = build_work_request(args)
-        mock_normalize.assert_called_once_with("source", "gh:issue:42")
+        mock_normalize.assert_called_once_with(
+            "source", "gh:issue:42", plan_path_template=None
+        )
 
 
 class TestPromptFile:

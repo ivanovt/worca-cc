@@ -14,6 +14,7 @@ from worca.orchestrator.work_request import normalize, WorkRequest
 from worca.orchestrator.runner import run_pipeline, LoopExhaustedError, PipelineError, _find_active_runs
 from worca.state.status import load_status
 from worca.utils.gh_issues import gh_issue_fail
+from worca.utils.settings import load_settings
 
 
 def create_parser():
@@ -112,7 +113,12 @@ def build_work_request(args):
     # Normalize: source/spec/plan take priority, prompt-only is fallback
     has_primary = args.source or args.spec or args.plan
     if args.source:
-        work_request = normalize("source", args.source)
+        plan_template = load_settings(args.settings).get("worca", {}).get(
+            "plan_path_template"
+        )
+        work_request = normalize(
+            "source", args.source, plan_path_template=plan_template
+        )
     elif args.spec:
         work_request = normalize("spec", args.spec)
     elif args.plan:
