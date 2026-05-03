@@ -34,7 +34,7 @@ from worca.state.status import (
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
-from worca.utils.claude_cli import run_agent, terminate_current
+from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.settings import load_settings
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
@@ -121,6 +121,26 @@ _signal_project_status_path = None  # project-level status.json for PID cleanup
 _signal_event_ctx = None  # set to EventContext when run starts; signal-safe event emission
 _pending_signal_event = None  # signal handler stashes interrupted-event dict here for deferred dispatch
 _signal_event_emitted = False  # guards against duplicate events.jsonl writes from repeated signals
+
+
+def _is_signal_kill_exception(exc) -> bool:
+    """True when `exc` carries proof the agent subprocess was killed by a
+    signal (negative returncode).
+
+    Defense-in-depth for the W-044 signal-test race: when SIGTERM hits the
+    pipeline mid-stage, Python defers the in-process signal handler until
+    a bytecode boundary. A C-level exception raised inside the agent's
+    streaming loop can reach the runner's except-Exception block while
+    `_shutdown_requested` is still False — the same exception, however,
+    is now an `AgentSubprocessError` carrying the actual subprocess exit
+    signal (negative on Unix when killed). Trust that exit code over the
+    timing-sensitive flag, but only when it is unambiguously negative.
+    """
+    return (
+        isinstance(exc, AgentSubprocessError)
+        and exc.returncode is not None
+        and exc.returncode < 0
+    )
 
 
 def _check_control_file(
@@ -1859,7 +1879,11 @@ def run_pipeline(
                     ))
                 raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
             except Exception as e:
-                if _shutdown_requested:
+                # Treat as interruption when EITHER the in-process signal
+                # handler has run (sets _shutdown_requested) OR the agent
+                # subprocess died with a negative returncode (signal kill
+                # whose handler hasn't yet been delivered to Python).
+                if _shutdown_requested or _is_signal_kill_exception(e):
                     stage_completed = datetime.now(timezone.utc).isoformat()
                     complete_iteration(status, current_stage.value, status="interrupted", completed_at=stage_completed)
                     update_stage(status, current_stage.value, status="interrupted", completed_at=stage_completed)
@@ -1870,6 +1894,12 @@ def run_pipeline(
                             elapsed_ms=int((time.time() - t0) * 1000),
                         ))
                     raise PipelineInterrupted(f"Pipeline interrupted during {current_stage.value}", stop_reason="signal")
+                # Telemetry: when the failure carries a subprocess
+                # returncode, surface it so future flakes give us data
+                # instead of speculation.
+                _rc = getattr(e, "returncode", None)
+                _rc_suffix = f" (returncode={_rc})" if _rc is not None else ""
+                _log(f"Stage {current_stage.value} failed: {e}{_rc_suffix}", "warn")
                 stage_completed = datetime.now(timezone.utc).isoformat()
                 complete_iteration(
                     status, current_stage.value,

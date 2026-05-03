@@ -410,3 +410,49 @@ def test_query_ready_bead_empty_allowed_ids_returns_none():
     with patch("worca.orchestrator.runner.bd_ready", return_value=fake_beads):
         result = runner._query_ready_bead(allowed_ids=[])
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Race-safe exception classification (defense-in-depth for the signal-test flake)
+# ---------------------------------------------------------------------------
+
+
+class TestIsSignalKillException:
+    """The runner exposes _is_signal_kill_exception so the except-Exception
+    block can route signal-induced agent deaths to the interruption path
+    even when the in-process signal handler hasn't yet run (Python defers
+    signal delivery to bytecode boundaries; a C-level exception raised
+    before that boundary leaves _shutdown_requested still False).
+    """
+
+    def test_true_for_negative_returncode(self):
+        from worca.utils.claude_cli import AgentSubprocessError
+        err = AgentSubprocessError("killed by signal 15", returncode=-15)
+        assert runner._is_signal_kill_exception(err) is True
+
+    def test_false_for_positive_returncode(self):
+        """Guardrail #1: real failures (positive exit codes) must NOT be
+        reclassified as interruptions — they remain failures so the
+        circuit breaker and stage-failure paths still fire correctly."""
+        from worca.utils.claude_cli import AgentSubprocessError
+        err = AgentSubprocessError("agent failed", returncode=1)
+        assert runner._is_signal_kill_exception(err) is False
+
+    def test_false_for_zero_returncode(self):
+        from worca.utils.claude_cli import AgentSubprocessError
+        err = AgentSubprocessError("clean exit but no result", returncode=0)
+        assert runner._is_signal_kill_exception(err) is False
+
+    def test_false_for_none_returncode(self):
+        """If we couldn't determine the returncode (subprocess wedged), do
+        NOT assume interruption — fall through to the failed path."""
+        from worca.utils.claude_cli import AgentSubprocessError
+        err = AgentSubprocessError("uncaught", returncode=None)
+        assert runner._is_signal_kill_exception(err) is False
+
+    def test_false_for_unrelated_exceptions(self):
+        """Plain RuntimeError and other exception types must not match —
+        only AgentSubprocessError carries the trustworthy returncode."""
+        assert runner._is_signal_kill_exception(RuntimeError("generic")) is False
+        assert runner._is_signal_kill_exception(ValueError("oops")) is False
+        assert runner._is_signal_kill_exception(KeyError("missing")) is False

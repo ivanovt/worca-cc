@@ -25,6 +25,51 @@ _ARG_INLINE_LIMIT = 128 * 1024  # bytes
 _current_proc = None
 _proc_lock = threading.Lock()
 
+# Bounded wait when reaping the agent subprocess after a stream-side
+# exception. Long enough for a signaled subprocess to finish dying, short
+# enough to keep the failure path snappy.
+_REAP_WAIT_TIMEOUT = 2.0
+
+
+class AgentSubprocessError(RuntimeError):
+    """Raised when the agent subprocess exits abnormally.
+
+    Subclasses RuntimeError so existing `except RuntimeError` and `except
+    Exception` callers in the runner continue to work. Exposes the raw
+    subprocess returncode so callers can distinguish a real agent failure
+    (positive exit code) from a signal-induced death (negative exit code,
+    e.g. -SIGTERM = -15).
+    """
+
+    def __init__(self, message: str, returncode):
+        super().__init__(message)
+        self.returncode = returncode
+
+
+def _reap_returncode(proc):
+    """Best-effort reap of `proc` to obtain a definitive returncode.
+
+    Used when an exception escapes the streaming loop before `proc.wait()`
+    runs naturally — without this, `proc.returncode` may be `None` and the
+    caller cannot tell whether the subprocess died from a signal or a real
+    failure. Bounded by `_REAP_WAIT_TIMEOUT`; if the subprocess is wedged,
+    we kill it so the caller is not blocked indefinitely.
+    """
+    try:
+        proc.wait(timeout=_REAP_WAIT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try:
+            proc.kill()
+        except (ProcessLookupError, OSError):
+            pass
+        try:
+            proc.wait(timeout=_REAP_WAIT_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            pass
+    except Exception:
+        pass
+    return proc.returncode
+
 
 def terminate_current():
     """Terminate the currently running claude subprocess, if any.
@@ -303,8 +348,9 @@ def run_agent(
         except OSError:
             agent_pid_path = None
 
+    log_file = None
+    result_event = None
     try:
-        log_file = None
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
             log_file = open(log_path, "w")
@@ -318,15 +364,33 @@ def run_agent(
         stderr_thread = threading.Thread(target=_tee_stderr, daemon=True)
         stderr_thread.start()
 
-        # Process stdout stream events
-        result_event = process_stream(
-            proc.stdout,
-            log_file=log_file,
-            on_event=on_event,
-        )
-
-        stderr_thread.join(timeout=5)
-        proc.wait()
+        try:
+            # Process stdout stream events. May raise RuntimeError when the
+            # subprocess dies before emitting a result event (signal kill,
+            # crash, or a real agent failure that aborts mid-stream).
+            result_event = process_stream(
+                proc.stdout,
+                log_file=log_file,
+                on_event=on_event,
+            )
+            stderr_thread.join(timeout=5)
+            proc.wait()
+        except Exception as stream_exc:
+            # The streaming layer cannot tell why the subprocess stopped
+            # producing output. Reap it (with a bounded wait) so the
+            # returncode is definitive, then route on the actual exit
+            # signal: negative -> signal kill (interruption), otherwise
+            # surface as AgentSubprocessError carrying the returncode.
+            stderr_thread.join(timeout=5)
+            rc = _reap_returncode(proc)
+            if rc is not None and rc < 0:
+                raise InterruptedError(
+                    f"claude agent killed by signal {-rc}"
+                ) from stream_exc
+            raise AgentSubprocessError(
+                f"claude agent stream failed: {stream_exc}",
+                returncode=rc,
+            ) from stream_exc
 
         if log_file:
             log_file.close()
@@ -353,9 +417,10 @@ def run_agent(
         raise InterruptedError(f"claude agent killed by signal {-proc.returncode}")
     if proc.returncode != 0:
         error_msg = result_event.get("result", "") if result_event else ""
-        raise RuntimeError(
+        raise AgentSubprocessError(
             f"claude agent failed (exit code {proc.returncode})"
-            + (f": {error_msg[:500]}" if error_msg else "")
+            + (f": {error_msg[:500]}" if error_msg else ""),
+            returncode=proc.returncode,
         )
 
     return result_event

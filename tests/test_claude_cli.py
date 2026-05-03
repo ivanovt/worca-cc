@@ -1,9 +1,10 @@
 """Tests for worca.utils.claude_cli - Claude CLI wrapper."""
 
 import json
+import subprocess
 from unittest.mock import patch, MagicMock
 
-from worca.utils.claude_cli import run_agent, build_command
+from worca.utils.claude_cli import run_agent, build_command, AgentSubprocessError
 
 
 # --- WORCA_CLAUDE_BIN env var override ---
@@ -201,3 +202,151 @@ def test_run_agent_omits_model_when_none():
         run_agent("prompt", agent="planner")
     args = mock_popen.call_args[0][0]
     assert "--model" not in args
+
+
+# ---------------------------------------------------------------------------
+# AgentSubprocessError + signal-aware exception classification
+# ---------------------------------------------------------------------------
+
+
+def test_agent_subprocess_error_subclasses_runtimeerror():
+    """Existing callers that catch RuntimeError must continue to work."""
+    err = AgentSubprocessError("agent failed (exit 7)", returncode=7)
+    assert isinstance(err, RuntimeError)
+    assert err.returncode == 7
+    assert "agent failed" in str(err)
+
+
+def test_run_agent_raises_subprocess_error_with_returncode_for_real_failures():
+    """Positive non-zero returncode -> AgentSubprocessError carries returncode.
+
+    Guardrail #1: real agent failures must remain classified as failures
+    (not interruptions). Returncode 1 is a real failure; the typed exception
+    preserves it so downstream telemetry (and the runner's classifier) can
+    distinguish it from a signal-induced exit.
+    """
+    result_event = {"is_error": True, "result": "agent failed"}
+    mock_proc = _make_mock_popen(result_event, returncode=1)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        try:
+            run_agent("fail", agent="planner", max_turns=5)
+            assert False, "Should have raised"
+        except AgentSubprocessError as e:
+            assert e.returncode == 1
+            assert "agent failed" in str(e)
+
+
+def test_run_agent_raises_interrupted_when_subprocess_killed_mid_stream():
+    """Race coverage: process_stream throws AND subprocess.returncode is
+    negative (killed by signal). Must produce InterruptedError, not a
+    RuntimeError that would be misclassified as a stage failure.
+
+    Reproduces the failure mode of the W-044 signal-test flake: when the
+    agent dies before emitting a `result` event, process_stream raises
+    `RuntimeError("No result event found...")` and the negative-returncode
+    branch at end of run_agent is never reached.
+    """
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    # Stream ends with no result event — process_stream will raise.
+    mock_proc.stdout = iter(["{\"type\":\"system\",\"subtype\":\"init\"}\n"])
+    mock_proc.stderr = iter([])
+    # Subprocess died from SIGTERM (-15) — must be observable via wait().
+    mock_proc.returncode = -15
+    mock_proc.wait.return_value = -15
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        try:
+            run_agent("prompt", agent="planner", max_turns=5)
+            assert False, "Should have raised InterruptedError"
+        except InterruptedError as e:
+            # Message should mention the signal so logs are useful.
+            assert "15" in str(e) or "signal" in str(e).lower()
+
+
+def test_run_agent_waits_briefly_for_returncode_when_stream_throws():
+    """When process_stream throws and returncode is not yet set, run_agent
+    must call proc.wait() with a bounded timeout so the returncode is
+    definitive before classifying the failure.
+    """
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_proc.stdout = iter([])  # empty stream -> process_stream raises
+    mock_proc.stderr = iter([])
+    # Simulate the race: returncode unset at exception time, set after wait().
+    state = {"returncode": None}
+
+    def _wait(timeout=None):
+        # Once wait() is called the kernel has reaped the process; pretend
+        # it died from SIGTERM.
+        state["returncode"] = -15
+        mock_proc.returncode = -15
+        return -15
+
+    type(mock_proc).returncode = property(lambda self: state["returncode"])
+    mock_proc.wait.side_effect = _wait
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        try:
+            run_agent("prompt", agent="planner", max_turns=5)
+            assert False, "Should have raised InterruptedError"
+        except InterruptedError:
+            pass
+    # wait() was called at least once to nail down the returncode.
+    assert mock_proc.wait.called
+
+
+def test_run_agent_stream_failure_with_clean_exit_still_raises_subprocess_error():
+    """If process_stream throws but the subprocess actually exited 0
+    (unusual — partial output, normal exit), the failure is real (no
+    result event) and should surface as AgentSubprocessError, not get
+    silently reclassified as an interruption.
+
+    Guardrail #2: only `returncode < 0` reclassifies — clean exits stay
+    as failures.
+    """
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_proc.stdout = iter([])
+    mock_proc.stderr = iter([])
+    mock_proc.returncode = 0
+    mock_proc.wait.return_value = 0
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        try:
+            run_agent("prompt", agent="planner", max_turns=5)
+            assert False, "Should have raised"
+        except InterruptedError:
+            assert False, "Clean exit must NOT be reclassified as interrupted"
+        except (AgentSubprocessError, RuntimeError):
+            pass  # Expected: real failure, no result event found.
+
+
+def test_run_agent_handles_wait_timeout_after_stream_failure():
+    """If proc.wait times out (subprocess is wedged after stream failure),
+    run_agent must not hang forever — kill and re-wait.
+    """
+    mock_proc = MagicMock()
+    mock_proc.pid = 12345
+    mock_proc.stdout = iter([])
+    mock_proc.stderr = iter([])
+    mock_proc.returncode = None
+    wait_calls = []
+
+    def _wait(timeout=None):
+        wait_calls.append(timeout)
+        if timeout is not None and len(wait_calls) == 1:
+            # First bounded wait times out
+            raise subprocess.TimeoutExpired(cmd="claude", timeout=timeout)
+        # Second wait (after kill) succeeds — subprocess died with -SIGKILL
+        mock_proc.returncode = -9
+        return -9
+
+    mock_proc.wait.side_effect = _wait
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        try:
+            run_agent("prompt", agent="planner", max_turns=5)
+        except InterruptedError:
+            pass  # acceptable
+        except (AgentSubprocessError, RuntimeError):
+            pass  # also acceptable
+    # Critical: kill() was called, and wait() ran at least twice.
+    assert mock_proc.kill.called
+    assert len(wait_calls) >= 2
