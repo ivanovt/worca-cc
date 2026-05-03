@@ -286,6 +286,60 @@ describe('startPipeline arg building', () => {
     expect(args).toContain('--resume');
     expect(args).not.toContain('--status-dir');
   });
+
+  it('resume of a worktree-registered run spawns inside the worktree cwd', async () => {
+    // Set up a separate worktree path with its own .claude/worca runtime and
+    // register the run in the parent's pipelines.d/.
+    const runId = '20260317-084204-001-wtres';
+    const worktreePath = join(tmpDir, '.worktrees', `pipeline-${runId}`);
+    const wtScriptDir = join(worktreePath, '.claude', 'worca', 'scripts');
+    mkdirSync(wtScriptDir, { recursive: true });
+    writeFileSync(join(wtScriptDir, 'run_pipeline.py'), '# stub');
+    mkdirSync(join(worktreePath, '.worca', 'runs', runId), { recursive: true });
+    mkdirSync(join(worcaDir, 'multi', 'pipelines.d'), { recursive: true });
+    writeFileSync(
+      join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`),
+      JSON.stringify({ run_id: runId, worktree_path: worktreePath }),
+    );
+
+    // Note: NOT passing projectRoot — that's what the resume route does.
+    startPipeline(worcaDir, { resume: true, runId });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const opts = spawnCalls[0][2];
+    expect(opts.cwd).toBe(worktreePath);
+
+    const args = getArgs();
+    expect(args).toContain('--status-dir');
+    expect(args[args.indexOf('--status-dir') + 1]).toBe(
+      join(worktreePath, '.worca', 'runs', runId),
+    );
+  });
+
+  it('resume of a worktree run ignores projectRoot in favor of the worktree', async () => {
+    // The WebSocket resume-run handler passes projectRoot unconditionally.
+    // For worktree-hosted runs the worktree must still win.
+    const runId = '20260317-084204-001-wsres';
+    const worktreePath = join(tmpDir, '.worktrees', `pipeline-${runId}`);
+    const wtScriptDir = join(worktreePath, '.claude', 'worca', 'scripts');
+    mkdirSync(wtScriptDir, { recursive: true });
+    writeFileSync(join(wtScriptDir, 'run_pipeline.py'), '# stub');
+    mkdirSync(join(worktreePath, '.worca', 'runs', runId), { recursive: true });
+    mkdirSync(join(worcaDir, 'multi', 'pipelines.d'), { recursive: true });
+    writeFileSync(
+      join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`),
+      JSON.stringify({ run_id: runId, worktree_path: worktreePath }),
+    );
+
+    startPipeline(worcaDir, {
+      resume: true,
+      runId,
+      projectRoot: tmpDir, // simulate the WS handler
+    });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    expect(spawnCalls[0][2].cwd).toBe(worktreePath);
+  });
 });
 
 // --- Large prompt offloading ---

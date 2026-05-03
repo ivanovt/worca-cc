@@ -371,7 +371,21 @@ export class ProcessManager {
    * @returns {Promise<{ pid: number }>}
    */
   async startPipeline(opts = {}) {
-    const cwd = opts.projectRoot || this.projectRoot;
+    // Resume must spawn inside the run's own working tree. Worktree-hosted
+    // runs live under <worktree>/.worca/runs/<id>; if we spawn from the parent
+    // project root, git operations and relative settings paths target the
+    // wrong tree and the resumed pipeline corrupts state on the parent
+    // branch. Worktree wins over opts.projectRoot for resume — callers
+    // routinely pass proj.projectRoot without knowing whether the run is
+    // worktree-hosted. Mirrors the cwd derivation in restartStage.
+    let resumeCtx = null;
+    if (opts.resume && opts.runId) {
+      resumeCtx = this.resolveRunContext(opts.runId);
+    }
+    const cwd =
+      resumeCtx && resumeCtx.worcaDir !== this.worcaDir
+        ? join(resumeCtx.worcaDir, '..')
+        : opts.projectRoot || this.projectRoot;
     const pipelineScriptRel = '.claude/worca/scripts/run_pipeline.py';
     const worktreeScriptRel = '.claude/worca/scripts/run_worktree.py';
 
@@ -408,9 +422,8 @@ export class ProcessManager {
     if (opts.resume) {
       args.push('--resume');
       if (opts.runId) {
-        const ctx = this.resolveRunContext(opts.runId);
-        const statusDir = ctx
-          ? ctx.runDir
+        const statusDir = resumeCtx
+          ? resumeCtx.runDir
           : join(this.worcaDir, 'runs', opts.runId);
         args.push('--status-dir', statusDir);
       }

@@ -71,7 +71,7 @@ function validateRunId(runId) {
 // Re-exported from run-dir-resolver so callers (including older tests) can
 // continue importing from project-routes. The implementation now overlays
 // worktree runs registered in <worcaDir>/multi/pipelines.d/.
-import { findRunStatusPath } from './run-dir-resolver.js';
+import { findRunStatusPath, readPipelineOverlay } from './run-dir-resolver.js';
 export { findRunStatusPath };
 
 /** Validate a branch name — alphanumeric, dots, hyphens, underscores, slashes */
@@ -686,8 +686,14 @@ export function createProjectScopedRoutes({
     }
     try {
       let status = JSON.parse(readFileSync(statusPath, 'utf8'));
-      // Reconcile stale "running" status when no process is alive
-      if (status.pipeline_status === 'running' && pm && !pm.getRunningPid()) {
+      // Reconcile stale "running" status when no process is alive.
+      // Pass runId so worktree-hosted pipelines (PID lives under
+      // <worktree>/.worca/runs/<id>/pipeline.pid) are detected correctly.
+      if (
+        status.pipeline_status === 'running' &&
+        pm &&
+        !pm.getRunningPid(runId)
+      ) {
         try {
           pm.reconcileStatus();
           status = JSON.parse(readFileSync(statusPath, 'utf8'));
@@ -1337,7 +1343,7 @@ export function createProjectScopedRoutes({
         .json({ ok: false, error: `Run "${runId}" not found` });
     }
 
-    const running = req.project.pm.getRunningPid();
+    const running = req.project.pm.getRunningPid(runId);
     if (running) {
       return res.status(409).json({
         ok: false,
@@ -1366,7 +1372,11 @@ export function createProjectScopedRoutes({
       }
     }
 
-    const cwd = projectRoot || process.cwd();
+    // Worktree-hosted runs live outside the parent project. Spawn the learner
+    // inside the worktree so its default --status-dir=.worca and any git
+    // operations land on the right tree, mirroring run_pipeline.py resume.
+    const overlay = readPipelineOverlay(worcaDir, runId);
+    const cwd = overlay?.worktree_path || projectRoot || process.cwd();
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
