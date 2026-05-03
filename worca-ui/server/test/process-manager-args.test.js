@@ -259,7 +259,11 @@ describe('startPipeline arg building', () => {
     expect(args).not.toContain('--prompt');
   });
 
-  it('includes --status-dir when resume=true and runId provided', async () => {
+  it('passes --status-dir as the worca root for resume (not the per-run dir)', async () => {
+    // The runner derives worca_dir from dirname(status_path) and builds the
+    // run dir as <worca_dir>/runs/<run_id>/. Passing the per-run dir would
+    // make it nest a fresh runs/<run_id>/ underneath and write status to a
+    // shadow path the UI never reads.
     startPipeline(worcaDir, {
       resume: true,
       runId: 'run-20260101-abc',
@@ -270,7 +274,9 @@ describe('startPipeline arg building', () => {
     const args = getArgs();
     expect(args).toContain('--resume');
     expect(args).toContain('--status-dir');
-    expect(args[args.indexOf('--status-dir') + 1]).toContain(
+    expect(args[args.indexOf('--status-dir') + 1]).toBe(worcaDir);
+    // Must NOT be the per-run dir.
+    expect(args[args.indexOf('--status-dir') + 1]).not.toContain(
       'run-20260101-abc',
     );
   });
@@ -309,11 +315,78 @@ describe('startPipeline arg building', () => {
     const opts = spawnCalls[0][2];
     expect(opts.cwd).toBe(worktreePath);
 
+    // status-dir is the worktree's worca root, not the per-run dir.
     const args = getArgs();
     expect(args).toContain('--status-dir');
     expect(args[args.indexOf('--status-dir') + 1]).toBe(
-      join(worktreePath, '.worca', 'runs', runId),
+      join(worktreePath, '.worca'),
     );
+  });
+
+  it('resume flips terminal pipeline_status (interrupted/failed) to "resuming"', async () => {
+    // _find_active_runs filters out pipeline_status in {completed, interrupted}.
+    // The runner won't pick up an interrupted run for resume unless we flip
+    // its status to a non-terminal value first.
+    const runId = '20260317-084204-001-flip';
+    const worktreePath = join(tmpDir, '.worktrees', `pipeline-${runId}`);
+    const wtScriptDir = join(worktreePath, '.claude', 'worca', 'scripts');
+    mkdirSync(wtScriptDir, { recursive: true });
+    writeFileSync(join(wtScriptDir, 'run_pipeline.py'), '# stub');
+    const wtRunDir = join(worktreePath, '.worca', 'runs', runId);
+    mkdirSync(wtRunDir, { recursive: true });
+    const statusPath = join(wtRunDir, 'status.json');
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        run_id: runId,
+        pipeline_status: 'interrupted',
+        stop_reason: 'signal',
+        work_request: { title: 't' },
+      }),
+    );
+    mkdirSync(join(worcaDir, 'multi', 'pipelines.d'), { recursive: true });
+    writeFileSync(
+      join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`),
+      JSON.stringify({ run_id: runId, worktree_path: worktreePath }),
+    );
+
+    startPipeline(worcaDir, { resume: true, runId });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const updated = JSON.parse(readFileSync(statusPath, 'utf8'));
+    expect(updated.pipeline_status).toBe('resuming');
+    expect(updated.stop_reason).toBeUndefined();
+  });
+
+  it('resume leaves non-terminal pipeline_status alone', async () => {
+    // If pipeline_status is already 'paused' or 'running', don't clobber it.
+    const runId = '20260317-084204-001-keep';
+    const worktreePath = join(tmpDir, '.worktrees', `pipeline-${runId}`);
+    const wtScriptDir = join(worktreePath, '.claude', 'worca', 'scripts');
+    mkdirSync(wtScriptDir, { recursive: true });
+    writeFileSync(join(wtScriptDir, 'run_pipeline.py'), '# stub');
+    const wtRunDir = join(worktreePath, '.worca', 'runs', runId);
+    mkdirSync(wtRunDir, { recursive: true });
+    const statusPath = join(wtRunDir, 'status.json');
+    writeFileSync(
+      statusPath,
+      JSON.stringify({
+        run_id: runId,
+        pipeline_status: 'paused',
+        work_request: { title: 't' },
+      }),
+    );
+    mkdirSync(join(worcaDir, 'multi', 'pipelines.d'), { recursive: true });
+    writeFileSync(
+      join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`),
+      JSON.stringify({ run_id: runId, worktree_path: worktreePath }),
+    );
+
+    startPipeline(worcaDir, { resume: true, runId });
+    await vi.waitFor(() => expect(spawnCalls.length).toBe(1), { timeout: 100 });
+
+    const updated = JSON.parse(readFileSync(statusPath, 'utf8'));
+    expect(updated.pipeline_status).toBe('paused');
   });
 
   it('resume of a worktree run ignores projectRoot in favor of the worktree', async () => {

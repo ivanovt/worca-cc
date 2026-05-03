@@ -422,10 +422,39 @@ export class ProcessManager {
     if (opts.resume) {
       args.push('--resume');
       if (opts.runId) {
-        const statusDir = resumeCtx
-          ? resumeCtx.runDir
-          : join(this.worcaDir, 'runs', opts.runId);
+        // The runner derives worca_dir from os.path.dirname(status_path) and
+        // builds the per-run dir as <worca_dir>/runs/<run_id>/. We must pass
+        // the worca root, not the per-run dir — passing <worca>/runs/<id>
+        // would make the runner compute a nested <worca>/runs/<id>/runs/<id>/
+        // and write status updates there while the UI keeps reading the
+        // original. _find_active_runs(worca_root) then locates the run.
+        const statusDir = resumeCtx ? resumeCtx.worcaDir : this.worcaDir;
         args.push('--status-dir', statusDir);
+
+        // _find_active_runs filters out runs whose pipeline_status is in
+        // {completed, interrupted}. To resume an interrupted/failed run, flip
+        // the top-level status to "resuming" so the runner can pick it up;
+        // it'll transition to "running" once it's processing.
+        const statusPath = resumeCtx
+          ? join(resumeCtx.runDir, 'status.json')
+          : join(this.worcaDir, 'runs', opts.runId, 'status.json');
+        try {
+          const s = JSON.parse(readFileSync(statusPath, 'utf8'));
+          if (
+            s.pipeline_status === 'interrupted' ||
+            s.pipeline_status === 'failed'
+          ) {
+            s.pipeline_status = 'resuming';
+            delete s.stop_reason;
+            writeFileSync(
+              statusPath,
+              `${JSON.stringify(s, null, 2)}\n`,
+              'utf8',
+            );
+          }
+        } catch {
+          /* non-fatal — runner will surface a clearer error if the file is missing */
+        }
       }
     } else if (opts.sourceType !== undefined) {
       // New format: separate source and prompt args

@@ -935,7 +935,14 @@ export function createProjectScopedRoutes({
     }
     const { worcaDir, settingsPath } = req.project;
     try {
-      const controlDir = join(worcaDir, 'runs', runId);
+      // Worktree runs read control.json from <worktree>/.worca/runs/<id>/.
+      // Writing it to the parent project's worcaDir leaves the runner
+      // unaware of the stop request — SIGTERM still works, but we lose
+      // graceful-shutdown semantics.
+      const overlay = readPipelineOverlay(worcaDir, runId);
+      const controlDir = overlay?.worktree_path
+        ? join(overlay.worktree_path, '.worca', 'runs', runId)
+        : join(worcaDir, 'runs', runId);
       mkdirSync(controlDir, { recursive: true });
       writeFileSync(
         join(controlDir, 'control.json'),
@@ -1141,7 +1148,12 @@ export function createProjectScopedRoutes({
           pipeline_status: st.pipeline_status,
         });
       }
-      const controlDir = join(worcaDir, 'runs', runId);
+      // Worktree runs read control.json from <worktree>/.worca/runs/<id>/;
+      // writing to the parent's worcaDir is invisible to the runner.
+      const overlay = readPipelineOverlay(worcaDir, runId);
+      const controlDir = overlay?.worktree_path
+        ? join(overlay.worktree_path, '.worca', 'runs', runId)
+        : join(worcaDir, 'runs', runId);
       mkdirSync(controlDir, { recursive: true });
       writeFileSync(
         join(controlDir, 'control.json'),
