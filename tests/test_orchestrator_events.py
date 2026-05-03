@@ -45,9 +45,12 @@ def test_dispatch_calls_matching_command(tmp_path):
 
     dispatch_shell_hooks(event, hooks)
 
-    # Give the async process a moment
+    # Wait for the redirected file AND its first byte; cat creates the file
+    # before flushing, so exists() alone races on slower CI runners.
     deadline = time.time() + 2.0
-    while not out_file.exists() and time.time() < deadline:
+    while time.time() < deadline:
+        if out_file.exists() and out_file.stat().st_size > 0:
+            break
         time.sleep(0.05)
 
     assert out_file.exists(), "Command was not invoked"
@@ -65,7 +68,9 @@ def test_dispatch_pipes_full_envelope_on_stdin(tmp_path):
     dispatch_shell_hooks(event, hooks)
 
     deadline = time.time() + 2.0
-    while not out_file.exists() and time.time() < deadline:
+    while time.time() < deadline:
+        if out_file.exists() and out_file.stat().st_size > 0:
+            break
         time.sleep(0.05)
 
     assert out_file.exists()
@@ -96,7 +101,9 @@ def test_dispatch_wildcard_catches_all_events(tmp_path):
     dispatch_shell_hooks(event, hooks)
 
     deadline = time.time() + 2.0
-    while not out_file.exists() and time.time() < deadline:
+    while time.time() < deadline:
+        if out_file.exists() and out_file.stat().st_size > 0:
+            break
         time.sleep(0.05)
 
     assert out_file.exists(), "Wildcard handler was not invoked"
