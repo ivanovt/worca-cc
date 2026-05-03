@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 
 SETTINGS_PATH = Path(__file__).resolve().parents[1] / "src" / "worca" / "settings.json"
+KEYS_SCHEMA_PATH = Path(__file__).resolve().parents[1] / "src" / "worca" / "schemas" / "keys.json"
 
 
 class TestSettingsCircuitBreaker:
@@ -26,8 +27,13 @@ class TestSettingsCircuitBreaker:
     def test_circuit_breaker_transient_retry_backoff_seconds(self):
         assert self.worca["circuit_breaker"]["transient_retry_backoff_seconds"] == [10, 30, 90]
 
-    def test_circuit_breaker_classifier_model(self):
-        assert self.worca["circuit_breaker"]["classifier_model"] == "haiku"
+    def test_circuit_breaker_classifier_model_is_global_only(self):
+        """classifier_model is a global-only key (lives in ~/.worca/settings.json),
+        so it must NOT appear in the project settings.json. Its default is in keys.json."""
+        assert "classifier_model" not in self.worca["circuit_breaker"]
+        with open(KEYS_SCHEMA_PATH) as f:
+            keys = json.load(f)
+        assert keys["defaults"]["global"]["circuit_breaker"]["classifier_model"] == "haiku"
 
 
 class TestSettingsPreflightStage:

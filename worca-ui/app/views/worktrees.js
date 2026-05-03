@@ -46,14 +46,14 @@ function _statusBadgeVariant(status) {
   return STATUS_BADGE_VARIANT[status] || 'neutral';
 }
 
-function _diskSummaryView(worktrees) {
+function _diskSummaryView(worktrees, diskWarningBytes = 2_000_000_000) {
   const total = worktrees.reduce((s, w) => s + (w.disk_bytes || 0), 0);
   const cleanable = worktrees
     .filter((w) => w.status === 'completed')
     .reduce((s, w) => s + (w.disk_bytes || 0), 0);
   const resumable = worktrees.filter((w) => w.resumable);
   const resumableBytes = resumable.reduce((s, w) => s + (w.disk_bytes || 0), 0);
-  const over2gb = total > 2_000_000_000;
+  const over2gb = total > diskWarningBytes;
 
   // Warning banner only when over the threshold; otherwise a quiet meta line.
   if (over2gb) {
@@ -306,6 +306,7 @@ function _bulkDialogView(
 export function worktreesView(
   worktrees,
   {
+    diskWarningBytes,
     filter = '',
     onFilter,
     onSelectRun,
@@ -340,7 +341,7 @@ export function worktreesView(
 
   return html`
     <div class="worktrees-view">
-      ${_diskSummaryView(worktrees)}
+      ${_diskSummaryView(worktrees, diskWarningBytes)}
       <div class="worktrees-toolbar">
         <sl-input
           size="small"

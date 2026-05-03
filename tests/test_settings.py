@@ -249,18 +249,28 @@ class TestLoadSettings:
 
 
 class TestParallelSettings:
-    """Tests for the worca.parallel settings section."""
+    """Tests for the worca.parallel settings section.
 
-    PARALLEL_DEFAULTS = {
-        "max_concurrent_pipelines": 3,
+    Post-W-049, max_concurrent_pipelines and cleanup_policy are global-only
+    keys (live in ~/.worca/settings.json). The project template only contains
+    project-scoped keys: default_base_branch and worktree_base_dir.
+    """
+
+    PROJECT_PARALLEL_DEFAULTS = {
         "default_base_branch": "main",
-        "cleanup_policy": "on-success",
+        "worktree_base_dir": ".worktrees",
+    }
+
+    ALL_PARALLEL_DEFAULTS = {
+        "max_concurrent_pipelines": 10,
+        "default_base_branch": "main",
+        "cleanup_policy": "never",
         "worktree_base_dir": ".worktrees",
     }
 
     def _base_with_parallel(self, parallel_overrides=None):
         """Return a minimal settings dict containing the parallel section."""
-        parallel = dict(self.PARALLEL_DEFAULTS)
+        parallel = dict(self.ALL_PARALLEL_DEFAULTS)
         if parallel_overrides:
             parallel.update(parallel_overrides)
         return {"worca": {"parallel": parallel}}
@@ -273,9 +283,9 @@ class TestParallelSettings:
         result = load_settings(str(settings_file))
         p = result["worca"]["parallel"]
 
-        assert p["max_concurrent_pipelines"] == 3
+        assert p["max_concurrent_pipelines"] == 10
         assert p["default_base_branch"] == "main"
-        assert p["cleanup_policy"] == "on-success"
+        assert p["cleanup_policy"] == "never"
         assert p["worktree_base_dir"] == ".worktrees"
 
     def test_local_override_max_concurrent(self, tmp_path):
@@ -291,9 +301,8 @@ class TestParallelSettings:
         p = result["worca"]["parallel"]
 
         assert p["max_concurrent_pipelines"] == 5
-        # other parallel keys preserved from base
         assert p["default_base_branch"] == "main"
-        assert p["cleanup_policy"] == "on-success"
+        assert p["cleanup_policy"] == "never"
         assert p["worktree_base_dir"] == ".worktrees"
 
     def test_local_override_cleanup_policy(self, tmp_path):
@@ -336,13 +345,13 @@ class TestParallelSettings:
         """Overriding parallel keys does not affect sibling worca sections."""
         base = {
             "worca": {
-                "parallel": dict(self.PARALLEL_DEFAULTS),
+                "parallel": dict(self.ALL_PARALLEL_DEFAULTS),
                 "budget": {"warning_pct": 80, "max_cost_usd": None},
                 "events": {"enabled": True},
             }
         }
         local = {
-            "worca": {"parallel": {"max_concurrent_pipelines": 10}}
+            "worca": {"parallel": {"max_concurrent_pipelines": 20}}
         }
 
         settings_file = tmp_path / "settings.json"
@@ -351,13 +360,12 @@ class TestParallelSettings:
         local_file.write_text(json.dumps(local))
 
         result = load_settings(str(settings_file))
-        assert result["worca"]["parallel"]["max_concurrent_pipelines"] == 10
-        # siblings untouched
+        assert result["worca"]["parallel"]["max_concurrent_pipelines"] == 20
         assert result["worca"]["budget"]["warning_pct"] == 80
         assert result["worca"]["events"]["enabled"] is True
 
     def test_real_settings_has_parallel_section(self):
-        """The src/worca/settings.json contains the parallel section."""
+        """The src/worca/settings.json contains the project-scoped parallel keys."""
         settings_path = os.path.join(
             os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
         )
@@ -365,7 +373,9 @@ class TestParallelSettings:
         assert "parallel" in result.get("worca", {}), \
             "worca.parallel section missing from src/worca/settings.json"
         p = result["worca"]["parallel"]
-        assert p["max_concurrent_pipelines"] == 3
         assert p["default_base_branch"] == "main"
-        assert p["cleanup_policy"] == "on-success"
         assert p["worktree_base_dir"] == ".worktrees"
+        assert "max_concurrent_pipelines" not in p, \
+            "global-only key max_concurrent_pipelines should not be in project template"
+        assert "cleanup_policy" not in p, \
+            "global-only key cleanup_policy should not be in project template"

@@ -11,6 +11,8 @@ import express from 'express';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { RAW_BODY } from './integrations/index.js';
 import { verify } from './integrations/verify.js';
+import { LaunchLock } from './launch-lock.js';
+import { createPreferencesRouter } from './preferences-routes.js';
 import { ProcessManager } from './process-manager.js';
 import { scanDirectory } from './project-registry.js';
 import {
@@ -19,6 +21,7 @@ import {
   projectResolver,
 } from './project-routes.js';
 import { validateIntegrationsConfig } from './settings-validator.js';
+import { createStatusRouter } from './status-routes.js';
 import { discoverSubagents } from './subagents-discovery.js';
 import { checkWorcaVersion } from './version-check.js';
 import { getVersionInfo } from './versions.js';
@@ -89,6 +92,13 @@ export function createApp(options = {}) {
   const webhookInbox = options.webhookInbox || createInbox();
   app.locals.webhookInbox = webhookInbox;
 
+  // Single LaunchLock instance shared across BOTH legacy /api and
+  // /api/projects/:id mounts so the global max_concurrent_pipelines cap is
+  // enforced atomically across all entry points. Without this, two routers
+  // each held their own mutex and concurrent launches via /api/runs +
+  // /api/projects/:id/runs could both pass the cap check and start.
+  const launchLock = new LaunchLock();
+
   // ─── Legacy single-project API ─────────────────────────────────────────
   // Mounts the shared project-scoped routes at /api with a middleware that
   // injects req.project from the closure options, so /api/runs, /api/settings,
@@ -112,7 +122,12 @@ export function createApp(options = {}) {
       };
       next();
     },
-    createProjectScopedRoutes({ serverHost, serverPort }),
+    createProjectScopedRoutes({
+      prefsDir,
+      serverHost,
+      serverPort,
+      launchLock,
+    }),
   );
 
   // ─── Unique routes (not in project-scoped router) ──────────────────────
@@ -519,6 +534,8 @@ export function createApp(options = {}) {
 
   // ─── Multi-project routes ──────────────────────────────────────────────
   if (prefsDir) {
+    app.use('/api/preferences', createPreferencesRouter({ prefsDir }));
+    app.use('/api/status', createStatusRouter({ prefsDir }));
     app.use(
       '/api/projects',
       createProjectRoutes({ prefsDir, projectRoot, serverHost, serverPort }),
@@ -526,7 +543,12 @@ export function createApp(options = {}) {
     app.use(
       '/api/projects/:projectId',
       projectResolver({ prefsDir, projectRoot }),
-      createProjectScopedRoutes({ prefsDir, serverHost, serverPort }),
+      createProjectScopedRoutes({
+        prefsDir,
+        serverHost,
+        serverPort,
+        launchLock,
+      }),
     );
   }
 

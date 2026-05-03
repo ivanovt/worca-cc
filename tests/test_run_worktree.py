@@ -180,6 +180,7 @@ def _patches(worktree_path=_WORKTREE_PATH):
         patch("worca.scripts.run_worktree.os.path.isdir", return_value=True),
         patch("worca.scripts.run_worktree.subprocess.Popen"),
         patch("worca.scripts.run_worktree._copy_claude_config"),
+        patch("worca.scripts.run_worktree.write_status_field"),
     ]
 
 
@@ -188,19 +189,19 @@ class TestCreatesWorktree:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
-             plist[3], plist[4], plist[5], plist[6], plist[7]:
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
         mock_create.assert_called_once_with(
-            _RUN_ID, "add-auth", "HEAD", ".worktrees"
+            _RUN_ID, "add-auth", "main", ".worktrees"
         )
 
     def test_creates_worktree_with_base_branch(self):
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
-             plist[3], plist[4], plist[5], plist[6], plist[7]:
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth", "--branch", "feature/auth"])
         assert rc == 0
@@ -221,19 +222,19 @@ class TestCreatesWorktree:
         )
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
-             plist[3], plist[4], plist[5], plist[6], plist[7], \
-             _patch("worca.utils.settings.load_settings",
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], \
+             _patch("worca.scripts.run_worktree.load_settings",
                     return_value={"worca": {"parallel": {"worktree_base_dir": "~/wt-foo"}}}):
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth", "--settings", str(settings_file)])
         assert rc == 0
-        mock_create.assert_called_once_with(_RUN_ID, "add-auth", "HEAD", "~/wt-foo")
+        mock_create.assert_called_once_with(_RUN_ID, "add-auth", "main", "~/wt-foo")
 
     def test_returns_error_when_worktree_creation_fails(self, capsys):
         from worca.scripts.run_worktree import main
         plist = _patches(worktree_path="")
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4] as mock_reg, plist[5], plist[6] as mock_popen, plist[7]:
+             plist[3], plist[4] as mock_reg, plist[5], plist[6] as mock_popen, plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 1
@@ -246,7 +247,7 @@ class TestRegistersInPipelinesD:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7]:
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -263,7 +264,7 @@ class TestFleetIdPassthrough:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7]:
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth", "--fleet-id", "fleet-xyz"])
         assert rc == 0
@@ -274,7 +275,7 @@ class TestFleetIdPassthrough:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7]:
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -287,7 +288,7 @@ class TestTargetBranchPassthrough:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7]:
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth", "--branch", "feature/auth"])
         assert rc == 0
@@ -298,7 +299,7 @@ class TestTargetBranchPassthrough:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7]:
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -312,7 +313,7 @@ class TestGuidePassthrough:
         guide = str(tmp_path / "spec.md")
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7]:
+             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth", "--guide", guide])
         assert rc == 0
@@ -327,7 +328,7 @@ class TestGuidePassthrough:
         g2 = str(tmp_path / "spec2.md")
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7]:
+             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth", "--guide", g1, "--guide", g2])
         assert rc == 0
@@ -340,7 +341,7 @@ class TestSpawnsDetached:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7]:
+             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -355,7 +356,7 @@ class TestSpawnsDetached:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7]:
+             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -366,7 +367,7 @@ class TestSpawnsDetached:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7]:
+             plist[3], plist[4], plist[5], plist[6] as mock_popen, plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -377,7 +378,7 @@ class TestSpawnsDetached:
         from worca.scripts.run_worktree import main
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2], \
-             plist[3], plist[4], plist[5], plist[6], plist[7]:
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -488,6 +489,86 @@ class TestCopyClaudeConfig:
         assert (dst / "worca" / "scripts" / "run_pipeline.py").read_text() == "py"
 
 
+class TestDefaultBaseBranch:
+    """--branch omitted uses default_base_branch from settings; --branch provided ignores it."""
+
+    def test_branch_omitted_uses_config_default_base_branch(self, tmp_path):
+        """When --branch is not provided, run_worktree reads
+        worca.parallel.default_base_branch from settings (fallback 'main')."""
+        from unittest.mock import patch as _patch
+        from worca.scripts.run_worktree import main
+
+        plist = _patches()
+        settings = {"worca": {"parallel": {"default_base_branch": "develop"}}}
+        with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], \
+             _patch("worca.scripts.run_worktree.load_settings", return_value=settings):
+            mock_norm.return_value = _wr("Add auth")
+            rc = main(["--prompt", "Add auth"])
+        assert rc == 0
+        mock_create.assert_called_once_with(
+            _RUN_ID, "add-auth", "develop", ".worktrees"
+        )
+
+    def test_branch_omitted_falls_back_to_main(self, tmp_path):
+        """When --branch not provided and no default_base_branch in settings,
+        falls back to 'main'."""
+        from unittest.mock import patch as _patch
+        from worca.scripts.run_worktree import main
+
+        plist = _patches()
+        settings = {"worca": {"parallel": {}}}
+        with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], \
+             _patch("worca.scripts.run_worktree.load_settings", return_value=settings):
+            mock_norm.return_value = _wr("Add auth")
+            rc = main(["--prompt", "Add auth"])
+        assert rc == 0
+        mock_create.assert_called_once_with(
+            _RUN_ID, "add-auth", "main", ".worktrees"
+        )
+
+    def test_branch_provided_ignores_config(self, tmp_path):
+        """When --branch is explicitly provided, default_base_branch is ignored."""
+        from unittest.mock import patch as _patch
+        from worca.scripts.run_worktree import main
+
+        plist = _patches()
+        settings = {"worca": {"parallel": {"default_base_branch": "develop"}}}
+        with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], \
+             _patch("worca.scripts.run_worktree.load_settings", return_value=settings):
+            mock_norm.return_value = _wr("Add auth")
+            rc = main(["--prompt", "Add auth", "--branch", "feature/auth"])
+        assert rc == 0
+        mock_create.assert_called_once_with(
+            _RUN_ID, "add-auth", "feature/auth", ".worktrees"
+        )
+
+
+class TestWorktreePathWrittenToStatus:
+    """worktree_path is written to status.json after worktree creation."""
+
+    def test_worktree_path_written_to_status_json(self):
+        """run_worktree writes worktree_path to status.json via write_status_field."""
+        from unittest.mock import patch as _patch
+        from worca.scripts.run_worktree import main
+
+        plist = _patches()
+        settings = {"worca": {"parallel": {}}}
+        with plist[0], plist[1] as mock_norm, plist[2], \
+             plist[3], plist[4], plist[5], plist[6], plist[7], \
+             plist[8] as mock_write, \
+             _patch("worca.scripts.run_worktree.load_settings", return_value=settings):
+            mock_norm.return_value = _wr("Add auth")
+            rc = main(["--prompt", "Add auth"])
+        assert rc == 0
+        mock_write.assert_called_once()
+        args = mock_write.call_args
+        assert args[0][1] == "worktree_path"
+        assert args[0][2] == _WORKTREE_PATH
+
+
 class TestMissingWorcaRuntime:
     def test_fails_fast_when_runtime_missing(self, capsys):
         from worca.scripts.run_worktree import main
@@ -496,7 +577,7 @@ class TestMissingWorcaRuntime:
         with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
              plist[3], plist[4] as mock_reg, \
              patch("worca.scripts.run_worktree.os.path.isdir", return_value=False), \
-             plist[6] as mock_popen, plist[7]:
+             plist[6] as mock_popen, plist[7], plist[8]:
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 1

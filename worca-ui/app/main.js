@@ -49,11 +49,16 @@ import {
 } from './views/log-viewer.js';
 import {
   getNewRunSubmitState,
+  isAtCapacity,
   newRunView,
   submitNewRun,
 } from './views/new-run.js';
 import { runCardView } from './views/run-card.js';
-import { runBeadsSectionView, runDetailView } from './views/run-detail.js';
+import {
+  prApprovalPanelView,
+  runBeadsSectionView,
+  runDetailView,
+} from './views/run-detail.js';
 import { runListView } from './views/run-list.js';
 import {
   loadSettings,
@@ -513,6 +518,13 @@ ws.on('runs-list', (payload, msg) => {
 // count badge and worktrees view stay in sync without a manual reload.
 ws.on('runs-list', () => {
   fetchWorktrees();
+  const runs = store.getState().runs;
+  let totalRunning = 0;
+  for (const r of Object.values(runs)) {
+    const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
+    if (ps === 'running' || ps === 'paused') totalRunning++;
+  }
+  store.setState({ totalRunning });
 });
 
 ws.on('run-snapshot', (payload) => {
@@ -1341,6 +1353,54 @@ function handleCancelRun(runId) {
   );
 }
 
+// --- PR Approval ---
+
+async function handleApprovePR(runId) {
+  try {
+    const res = await fetch(projectUrl(`/runs/${runId}/control`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve', source: 'ui-pr-approval' }),
+    });
+    if (res.status === 404) {
+      showActionError('This run has already finished. Refreshing...');
+      return;
+    }
+    if (res.status === 409) {
+      showActionError('This run is no longer awaiting approval.');
+      return;
+    }
+    if (!res.ok) {
+      showActionError('Could not deliver decision; try again.');
+    }
+  } catch {
+    showActionError('Could not deliver decision; try again.');
+  }
+}
+
+async function handleRejectPR(runId) {
+  try {
+    const res = await fetch(projectUrl(`/runs/${runId}/control`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reject', source: 'ui-pr-approval' }),
+    });
+    if (res.status === 404) {
+      showActionError('This run has already finished. Refreshing...');
+      return;
+    }
+    if (res.status === 409) {
+      showActionError('This run is no longer awaiting approval.');
+      return;
+    }
+    if (!res.ok) {
+      showActionError('Could not deliver decision; try again.');
+    }
+  } catch {
+    showActionError('Could not deliver decision; try again.');
+  }
+}
+
 // --- Archive/Unarchive ---
 
 const { archiveRun, unarchiveRun } = createArchiveActions({
@@ -1836,8 +1896,9 @@ function contentHeaderView() {
     title = 'New Pipeline';
     showBack = true;
     const nrs = getNewRunSubmitState();
+    const capReached = isAtCapacity(state);
     actionButton = html`
-      <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting}
+      <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting || capReached}
         @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId })}>
 
         ${unsafeHTML(iconSvg(Play, 14))}
@@ -2005,6 +2066,7 @@ function mainContentView() {
         </div>
         <div class="run-detail-layout__logs">
           <div class="run-detail-column-header">Artifacts</div>
+          ${prApprovalPanelView(run, { onApprove: handleApprovePR, onReject: handleRejectPR })}
           ${liveOutputView(getActiveStage(), isRunning)}
           ${logViewerView(logState, {
             onStageFilter: handleStageFilter,
@@ -2071,6 +2133,13 @@ function mainContentView() {
       onSaveSourceRepo: handleSaveSourceRepo,
       onSaveNotifications: handleSaveNotifications,
       onRequestPermission: () => notificationManager.requestPermission(),
+      globals: {
+        worktreeDiskWarningBytes: state.worktreeDiskWarningBytes,
+        classifierModel: state.classifierModel,
+        cleanupPolicy: state.cleanupPolicy,
+        maxConcurrentPipelines: state.maxConcurrentPipelines,
+      },
+      onSaveGlobals: (patch) => store.setState(patch),
       projects: state.projects || [],
       integrations: {
         status: integrationsStatus,
@@ -2147,6 +2216,7 @@ function mainContentView() {
 
   if (route.section === 'worktrees') {
     return worktreesView(state.worktrees || [], {
+      diskWarningBytes: state.worktreeDiskWarningBytes,
       filter: worktreesFilter,
       onFilter: (value) => {
         worktreesFilter = value;
@@ -2332,6 +2402,31 @@ if (route.projectId) {
   store.setState({ currentProjectId: route.projectId });
 }
 fetchProjectInfo();
+Promise.all([
+  fetch('/api/preferences')
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null),
+  fetch('/api/status/runs-count')
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null),
+]).then(([prefsRes, countRes]) => {
+  const patch = {};
+  if (prefsRes?.ok) {
+    const p = prefsRes.preferences?.worca ?? {};
+    if (p.ui?.worktree_disk_warning_bytes != null)
+      patch.worktreeDiskWarningBytes = p.ui.worktree_disk_warning_bytes;
+    if (p.circuit_breaker?.classifier_model != null)
+      patch.classifierModel = p.circuit_breaker.classifier_model;
+    if (p.parallel?.cleanup_policy != null)
+      patch.cleanupPolicy = p.parallel.cleanup_policy;
+    if (p.parallel?.max_concurrent_pipelines != null)
+      patch.maxConcurrentPipelines = p.parallel.max_concurrent_pipelines;
+  }
+  if (countRes?.ok && typeof countRes.totalRunning === 'number') {
+    patch.totalRunning = countRes.totalRunning;
+  }
+  if (Object.keys(patch).length > 0) store.setState(patch);
+});
 if (route.section === 'settings') {
   loadSettings(null).then(() => rerender());
   startIntegrationsPoll();
@@ -2341,5 +2436,23 @@ if (route.section === 'project-settings') {
     rerender(),
   );
 }
+
+// Single-project polling fallback: WS totalRunning derivation only covers
+// the focused project's runs. Poll /api/status/runs-count every 5s so
+// the cap badge and gating stay accurate across all projects.
+setInterval(() => {
+  fetch('/api/status/runs-count')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (data?.ok && typeof data.totalRunning === 'number') {
+        const patch = { totalRunning: data.totalRunning };
+        if (typeof data.cap === 'number')
+          patch.maxConcurrentPipelines = data.cap;
+        store.setState(patch);
+      }
+    })
+    .catch(() => {});
+}, 5000);
+
 rerender();
 attachStickyHeaderListener();

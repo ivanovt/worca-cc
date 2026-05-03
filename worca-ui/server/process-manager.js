@@ -22,6 +22,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { dispatchExternal } from './dispatch-external.js';
+import { readGlobalSettings } from './settings-reader.js';
+import { removeWorktree } from './worktree-ops.js';
 
 /** Byte threshold — must match claude_cli.py _ARG_INLINE_LIMIT */
 const ARG_INLINE_LIMIT = 128 * 1024;
@@ -78,10 +80,11 @@ export class ProcessManager {
   /**
    * @param {{ worcaDir: string, projectRoot?: string, settingsPath?: string }} options
    */
-  constructor({ worcaDir, projectRoot, settingsPath }) {
+  constructor({ worcaDir, projectRoot, settingsPath, prefsDir }) {
     this.worcaDir = worcaDir;
     this.projectRoot = projectRoot || process.cwd();
     this.settingsPath = settingsPath ?? null;
+    this.prefsDir = prefsDir ?? null;
   }
 
   /**
@@ -292,10 +295,74 @@ export class ProcessManager {
           }
         }
       }
+
+      this.maybeAutoCleanup(runId);
     }
 
     await Promise.all(dispatches);
     return fixed;
+  }
+
+  /**
+   * Post-completion cleanup hook (§5b).
+   * When cleanup_policy is 'on-success' and the run completed cleanly,
+   * removes the worktree via worktree-ops and emits a worktree.auto_cleanup
+   * event. 'never' (default) and 'manual-only' are both no-ops.
+   * @param {string} runId
+   * @returns {{ cleaned: boolean, runId?: string, path?: string, reason?: string }}
+   */
+  maybeAutoCleanup(runId) {
+    const ctx = this.resolveRunContext(runId);
+    const runDir = ctx ? ctx.runDir : join(this.worcaDir, 'runs', runId);
+    const statusPath = join(runDir, 'status.json');
+
+    if (!existsSync(statusPath)) return { cleaned: false };
+
+    let status;
+    try {
+      status = JSON.parse(readFileSync(statusPath, 'utf8'));
+    } catch {
+      return { cleaned: false };
+    }
+
+    const worktreePath = status.worktree_path;
+    if (!worktreePath) return { cleaned: false };
+
+    const exitOk = status.pipeline_status === 'completed';
+    if (!exitOk) return { cleaned: false };
+
+    let policy = 'never';
+    if (this.prefsDir) {
+      try {
+        const globalPrefs = readGlobalSettings(
+          join(this.prefsDir, 'settings.json'),
+        );
+        policy = globalPrefs?.worca?.parallel?.cleanup_policy ?? 'never';
+      } catch {
+        // Fall back to default 'never'
+      }
+    }
+
+    if (policy !== 'on-success') return { cleaned: false };
+
+    removeWorktree(this.worcaDir, runId);
+
+    try {
+      const eventsPath = join(runDir, 'events.jsonl');
+      const evt = {
+        schema_version: '1',
+        event_id: randomUUID(),
+        event_type: 'worktree.auto_cleanup',
+        timestamp: new Date().toISOString(),
+        run_id: status.run_id ?? runId,
+        payload: { runId, path: worktreePath, reason: 'on-success' },
+      };
+      appendFileSync(eventsPath, `${JSON.stringify(evt)}\n`, 'utf8');
+    } catch {
+      /* non-fatal */
+    }
+
+    return { cleaned: true, runId, path: worktreePath, reason: 'on-success' };
   }
 
   /**
@@ -534,14 +601,17 @@ export class ProcessManager {
     // Fire-and-forget: reconcileStatus is async but we intentionally don't
     // await it — this is a background cleanup path after the response is sent.
     const worcaDir = this.worcaDir;
-    const { settingsPath } = this;
+    const { settingsPath, prefsDir } = this;
     const watchdog = setTimeout(() => {
       try {
         process.kill(pid, 0); // check alive
         process.kill(pid, 'SIGKILL');
-        setTimeout(() => reconcileStatus(worcaDir, settingsPath), 500);
+        setTimeout(
+          () => reconcileStatus(worcaDir, settingsPath, prefsDir),
+          500,
+        );
       } catch {
-        reconcileStatus(worcaDir, settingsPath);
+        reconcileStatus(worcaDir, settingsPath, prefsDir);
       }
     }, 10000);
     watchdog.unref();
@@ -830,9 +900,13 @@ export function getRunningPid(worcaDir, runId) {
   return new ProcessManager({ worcaDir }).getRunningPid(runId);
 }
 
-/** @param {string} worcaDir @param {string} [settingsPath] */
-export function reconcileStatus(worcaDir, settingsPath) {
-  return new ProcessManager({ worcaDir, settingsPath }).reconcileStatus();
+/** @param {string} worcaDir @param {string} [settingsPath] @param {string} [prefsDir] */
+export function reconcileStatus(worcaDir, settingsPath, prefsDir) {
+  return new ProcessManager({
+    worcaDir,
+    settingsPath,
+    prefsDir,
+  }).reconcileStatus();
 }
 
 /** @param {string} worcaDir @param {object} opts */

@@ -227,6 +227,7 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
         "run_id": None,
         "branch": branch,
         "worktree": None,
+        "worktree_path": None,
         "plan_file": None,
         "pipeline_template": pipeline_template,
         "git_head": git_head,
@@ -242,3 +243,14 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
         "pr_review_outcome": None,
     }
     return status
+
+
+def write_status_field(path: str, field: str, value) -> None:
+    """Load status.json (or create empty dict), set field, save atomically."""
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            data = json.load(f)
+    else:
+        data = {}
+    data[field] = value
+    save_status(data, path)

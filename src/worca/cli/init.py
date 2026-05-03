@@ -8,12 +8,19 @@ Source resolution order:
   3. Installed pip package (default)
 """
 
+import importlib.resources
 import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
+
+_schema = json.loads(
+    importlib.resources.files("worca.schemas").joinpath("keys.json").read_text()
+)
+_GLOBAL_ONLY_KEYS = [tuple(k) for k in _schema["global_only_keys"]]
 
 
 def _find_git_root() -> Path:
@@ -62,8 +69,37 @@ def _get_worca_source(source_flag: str | None, git_root: Path) -> Path:
         raise SystemExit(1)
 
 
+def _atomic_write_json(path: str, data: dict) -> None:
+    """Atomically write JSON to path via tempfile + os.replace.
+
+    Mirrors the JS atomicWriteSync helper so concurrent readers (the UI
+    server) never observe a half-written ~/.worca/settings.json during
+    `worca init --upgrade`.
+    """
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
 def _deep_merge(base: dict, overlay: dict) -> dict:
-    """Deep-merge overlay into base. Overlay values win for scalars; dicts merge recursively."""
+    """Non-destructive deep-merge: base wins for scalars; nested dicts merge recursively.
+
+    Overlay only contributes keys absent from base. This is the upgrade
+    semantic — user values in `base` are always preserved, and the template
+    `overlay` only fills in keys the user does not yet have. To get the
+    opposite (overlay wins for scalars), use `_deep_merge_overwrite`.
+    """
     result = base.copy()
     for key, value in overlay.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -260,6 +296,79 @@ def _migrate_agent_overrides(git_root: Path) -> list[str]:
         pass  # Directory not empty, leave it
 
     return changes
+
+
+def _migrate_global_keys_to_preferences(
+    project_settings_path: str,
+    global_path: str | None = None,
+) -> dict:
+    """One-shot: extract to-be-global keys from .claude/settings.json,
+    write them into ~/.worca/settings.json, then strip from the project file.
+    Idempotent: returns {} on second run."""
+    if not os.path.exists(project_settings_path):
+        return {}
+    with open(project_settings_path) as f:
+        project = json.load(f)
+
+    extracted: dict = {}
+    worca = project.get("worca", {})
+    for section, key in _GLOBAL_ONLY_KEYS:
+        val = worca.get(section, {}).get(key)
+        if val is not None:
+            extracted.setdefault(section, {})[key] = val
+            del worca[section][key]
+            if not worca[section]:
+                del worca[section]
+
+    if not extracted:
+        return {}
+
+    if global_path is None:
+        global_path = os.path.expanduser("~/.worca/settings.json")
+    try:
+        with open(global_path) as f:
+            global_blob = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        global_blob = {}
+    global_blob.setdefault("worca", {})
+    for section, kvs in extracted.items():
+        global_blob["worca"].setdefault(section, {}).update(kvs)
+    _atomic_write_json(global_path, global_blob)
+
+    _atomic_write_json(project_settings_path, project)
+
+    return extracted
+
+
+def _strip_inert_milestone_keys(project_settings_path: str) -> list[str]:
+    """One-shot: remove pr_approval and deploy_approval from .claude/settings.json
+    if they were template-default values (true).
+
+    Only strips when value is exactly True. False, strings, ints etc. are
+    treated as intentional user overrides and left alone.
+
+    Returns the list of removed keys. Idempotent: returns [] on second run."""
+    if not os.path.exists(project_settings_path):
+        return []
+    with open(project_settings_path) as f:
+        project = json.load(f)
+
+    milestones = project.get("worca", {}).get("milestones", {})
+    removed = []
+    for key in ("pr_approval", "deploy_approval"):
+        if milestones.get(key) is True:
+            del milestones[key]
+            removed.append(key)
+
+    if not removed:
+        return []
+
+    if "worca" in project and "milestones" in project["worca"] and not project["worca"]["milestones"]:
+        del project["worca"]["milestones"]
+
+    _atomic_write_json(project_settings_path, project)
+
+    return removed
 
 
 def _remove_files_from_dir(directory: Path, filenames: list[str], changes: list[str]) -> None:
@@ -619,6 +728,21 @@ def run_init(
         if source_settings.exists():
             shutil.copy2(str(source_settings), str(settings_path))
             print("Settings: created from template")
+
+    # --- Global key migration (only on --upgrade, after settings merge) ---
+    if upgrade and settings_path.exists():
+        extracted = _migrate_global_keys_to_preferences(str(settings_path))
+        if extracted:
+            n = sum(len(v) for v in extracted.values())
+            print(f"Migrated {n} key(s) to ~/.worca/settings.json")
+
+        stripped = _strip_inert_milestone_keys(str(settings_path))
+        if stripped:
+            keys_str = ", ".join(stripped)
+            print(
+                f"Reset {len(stripped)} template-default milestone key(s) "
+                f"({keys_str}) — gate now opt-in via Pipeline tab"
+            )
 
     # --- .gitignore ---
     gitignore_changes = _ensure_gitignore(git_root)

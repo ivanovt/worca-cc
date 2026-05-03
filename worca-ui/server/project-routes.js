@@ -19,12 +19,17 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Router } from 'express';
+import lockfile from 'proper-lockfile';
 import { actionAllowed } from '../app/utils/state-actions.js';
+import { atomicWriteSync } from './atomic-write.js';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { dispatchExternal } from './dispatch-external.js';
 import { ensureWebhookForUi } from './ensure-webhook.js';
+import { extractAndStripGlobalKeys } from './global-keys.js';
+import { LaunchLock } from './launch-lock.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
+import { countRunningPipelinesAcrossProjects } from './process-registry.js';
 import {
   getMaxProjects,
   readProjects,
@@ -40,6 +45,7 @@ import {
   readLocalSettings,
   readMergedSettings,
 } from './settings-merge.js';
+import { readGlobalSettings, writeGlobalSettings } from './settings-reader.js';
 import { validateSettingsPayload } from './settings-validator.js';
 import { isVersionBehind } from './version-check.js';
 import { getVersionInfo } from './versions.js';
@@ -129,6 +135,7 @@ export function projectResolver({ prefsDir, projectRoot }) {
         settingsPath:
           project.settingsPath ||
           join(project.path, '.claude', 'settings.json'),
+        prefsDir,
       }),
     };
     next();
@@ -313,13 +320,17 @@ export function createProjectRoutes({
 /**
  * Router for project-scoped sub-routes.
  * The projectResolver middleware must run before this to set req.project.
- * @param {{ prefsDir?: string|null }} [options] — prefsDir enables active
- *   worca-cc version lookup for /worca-status' `outdated` flag.
+ * @param {{ prefsDir?: string|null, launchLock?: LaunchLock }} [options] —
+ *   prefsDir enables active worca-cc version lookup for /worca-status'
+ *   `outdated` flag and gates the global max_concurrent_pipelines check.
+ *   launchLock should be injected by createApp so all routers share the
+ *   same mutex; falls back to a per-router instance if omitted (tests).
  */
 export function createProjectScopedRoutes({
   prefsDir = null,
   serverHost,
   serverPort,
+  launchLock = new LaunchLock(),
 } = {}) {
   const router = Router({ mergeParams: true });
   const prefsPath = prefsDir ? join(prefsDir, 'preferences.json') : null;
@@ -437,7 +448,7 @@ export function createProjectScopedRoutes({
   });
 
   // POST /api/projects/:projectId/settings
-  router.post('/settings', (req, res) => {
+  router.post('/settings', async (req, res) => {
     const { settingsPath } = req.project;
     if (!settingsPath) {
       return res.status(501).json({
@@ -471,12 +482,6 @@ export function createProjectScopedRoutes({
     }
 
     try {
-      // Split persistence target: project-shared keys (the worca namespace)
-      // go to settings.json so they propagate to worktree pipelines and to
-      // teammates via git. Per-machine keys (permissions, hooks, mcpServers)
-      // stay in settings.local.json which is gitignored and intentionally
-      // skipped when populating worktrees (see _copy_claude_config in
-      // src/worca/scripts/run_worktree.py).
       let baseChanged = false;
       let base = {};
       try {
@@ -488,16 +493,9 @@ export function createProjectScopedRoutes({
       }
 
       if (body.worca && typeof body.worca === 'object') {
-        // Deep-merge sub-keys so a partial update (e.g. agents.implementer)
-        // doesn't clobber sibling subtrees (agents.planner, governance, etc.).
-        // The previous local-only model relied on read-time deep-merge for
-        // this; writing to base requires us to merge at write time.
         if (!base.worca || typeof base.worca !== 'object') base.worca = {};
         base.worca = deepMerge(base.worca, body.worca);
 
-        // Migration: when the client writes the new governance.subagent_dispatch
-        // shape, drop the legacy governance.dispatch key. Deep-merge alone
-        // would leave both side-by-side because they have different names.
         if (
           body.worca.governance &&
           typeof body.worca.governance === 'object' &&
@@ -511,16 +509,47 @@ export function createProjectScopedRoutes({
         baseChanged = true;
       }
 
-      if (baseChanged) {
-        mkdirSync(dirname(settingsPath), { recursive: true });
-        writeFileSync(
-          settingsPath,
-          `${JSON.stringify(base, null, 2)}\n`,
-          'utf8',
-        );
+      // STEP 1: extract misplaced global keys + inert milestone keys
+      const autoMigrated = extractAndStripGlobalKeys(base);
+
+      // STEP 2: write extracted global keys to ~/.worca/settings.json
+      const globalSettingsPath = prefsDir
+        ? join(prefsDir, 'settings.json')
+        : null;
+
+      if (
+        globalSettingsPath &&
+        Object.keys(autoMigrated.globalExtracted).length > 0
+      ) {
+        let release;
+        try {
+          release = await lockfile.lock(globalSettingsPath, {
+            retries: { retries: 5, minTimeout: 50, maxTimeout: 500 },
+            realpath: false,
+          });
+          writeGlobalSettings(globalSettingsPath, {
+            worca: autoMigrated.globalExtracted,
+          });
+        } catch (err) {
+          return res.status(500).json({
+            error: {
+              code: 'global_write_error',
+              message:
+                'Failed to migrate global keys; project settings not saved.',
+              detail: err.message,
+            },
+          });
+        } finally {
+          if (release) await release();
+        }
       }
 
-      // permissions remains in settings.local.json (machine-specific).
+      // STEP 3: atomic project write
+      if (baseChanged) {
+        mkdirSync(dirname(settingsPath), { recursive: true });
+        atomicWriteSync(settingsPath, `${JSON.stringify(base, null, 2)}\n`);
+      }
+
       if (body.permissions !== undefined) {
         const lp = localPathFor(settingsPath);
         const local = readLocalSettings(settingsPath);
@@ -533,6 +562,7 @@ export function createProjectScopedRoutes({
       res.json({
         worca: merged.worca || {},
         permissions: merged.permissions || {},
+        autoMigrated,
       });
     } catch (err) {
       res
@@ -793,26 +823,47 @@ export function createProjectScopedRoutes({
         ? Math.max(1, Math.min(10, Math.round(Number(mloops))))
         : 1;
 
-    try {
-      const result = await req.project.pm.startPipeline({
-        sourceType,
-        sourceValue: hasSource ? sourceValue : undefined,
-        prompt: hasPrompt ? prompt : undefined,
-        msize: msizeVal,
-        mloops: mloopsVal,
-        planFile: hasPlan ? planFile.trim() : undefined,
-        branch: branch || undefined,
-        template: template || undefined,
-      });
-      const { broadcast } = req.app.locals;
-      if (broadcast) broadcast('run-started', { pid: result.pid });
-      res.json({ ok: true, pid: result.pid, sourceType, prompt });
-    } catch (err) {
-      if (err.code === 'already_running') {
-        return res.status(409).json({ ok: false, error: err.message });
+    // Atomically check global cap and start pipeline under lock
+    await launchLock.withLock(async () => {
+      if (prefsDir) {
+        const globalSettings = readGlobalSettings(
+          join(prefsDir, 'settings.json'),
+        );
+        const cap =
+          globalSettings.worca?.parallel?.max_concurrent_pipelines ?? 10;
+        const totalRunning = countRunningPipelinesAcrossProjects(prefsDir);
+        if (totalRunning >= cap) {
+          res.status(409).json({
+            ok: false,
+            error: `Maximum concurrent pipelines reached (${cap}). Stop a running pipeline or increase the limit in global preferences.`,
+            code: 'max_concurrent_exceeded',
+          });
+          return;
+        }
       }
-      res.status(500).json({ ok: false, error: err.message });
-    }
+
+      try {
+        const result = await req.project.pm.startPipeline({
+          sourceType,
+          sourceValue: hasSource ? sourceValue : undefined,
+          prompt: hasPrompt ? prompt : undefined,
+          msize: msizeVal,
+          mloops: mloopsVal,
+          planFile: hasPlan ? planFile.trim() : undefined,
+          branch: branch || undefined,
+          template: template || undefined,
+        });
+        const { broadcast } = req.app.locals;
+        if (broadcast) broadcast('run-started', { pid: result.pid });
+        res.json({ ok: true, pid: result.pid, sourceType, prompt });
+      } catch (err) {
+        if (err.code === 'already_running') {
+          res.status(409).json({ ok: false, error: err.message });
+          return;
+        }
+        res.status(500).json({ ok: false, error: err.message });
+      }
+    });
   });
 
   // POST /api/projects/:projectId/runs/:id/pause
@@ -1049,6 +1100,57 @@ export function createProjectScopedRoutes({
           }
         });
       }
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // POST /api/projects/:projectId/runs/:id/control — generic run control action
+  const VALID_CONTROL_ACTIONS = new Set(['approve', 'reject']);
+  router.post('/runs/:id/control', requireWorcaDir, (req, res) => {
+    const runId = req.params.id;
+    if (!validateRunId(runId)) {
+      return res.status(400).json({ ok: false, error: 'Invalid runId' });
+    }
+    const { action, source } = req.body || {};
+    if (!action || !VALID_CONTROL_ACTIONS.has(action)) {
+      return res.status(400).json({
+        ok: false,
+        error: `Invalid action. Must be one of: ${[...VALID_CONTROL_ACTIONS].join(', ')}`,
+      });
+    }
+    const { worcaDir } = req.project;
+    const statusPath = findRunStatusPath(worcaDir, runId);
+    if (!statusPath) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Run "${runId}" not found` });
+    }
+    try {
+      const st = JSON.parse(readFileSync(statusPath, 'utf8'));
+      if (st.pipeline_status !== 'paused') {
+        return res.status(409).json({
+          ok: false,
+          error: 'Run is not paused',
+          pipeline_status: st.pipeline_status,
+        });
+      }
+      const controlDir = join(worcaDir, 'runs', runId);
+      mkdirSync(controlDir, { recursive: true });
+      writeFileSync(
+        join(controlDir, 'control.json'),
+        `${JSON.stringify(
+          {
+            action,
+            requested_at: new Date().toISOString(),
+            source: source || 'ui',
+          },
+          null,
+          2,
+        )}\n`,
+        'utf8',
+      );
+      res.json({ ok: true, action, runId });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

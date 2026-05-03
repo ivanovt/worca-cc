@@ -199,9 +199,7 @@
       "plan_review": 2
     },
     "milestones": {
-      "plan_approval": true,
-      "pr_approval": true,
-      "deploy_approval": true
+      "plan_approval": true
     },
     "plan_path_template": "docs/plans/{timestamp}-{title_slug}.md",
     "agent_overrides_dir": ".claude/agents",
@@ -244,8 +242,7 @@
         10,
         30,
         90
-      ],
-      "classifier_model": "haiku"
+      ]
     },
     "events": {
       "enabled": true,
@@ -283,9 +280,7 @@
       "mloops": 1
     },
     "parallel": {
-      "max_concurrent_pipelines": 3,
       "default_base_branch": "main",
-      "cleanup_policy": "on-success",
       "worktree_base_dir": ".worktrees"
     }
   }

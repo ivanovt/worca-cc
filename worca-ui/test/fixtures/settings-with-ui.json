@@ -12,7 +12,7 @@
     },
     "milestones": {
       "plan_approval": true,
-      "pr_approval": true
+      "pr_approval": false
     },
     "ui": {
       "stages": {

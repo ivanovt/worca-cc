@@ -60,6 +60,37 @@ Forward-incompatible renames (e.g. `stages.review.agent: guardian -> reviewer` i
 
 If you want to hard-reset your settings to the current template, use `worca init --force` (destructive). Project-specific overrides that should never be touched by any upgrade still belong in `.claude/settings.local.json`.
 
+### Global key extraction (W-049)
+
+Four settings keys that are naturally global (apply across all projects) are extracted from `.claude/settings.json` into `~/.worca/settings.json`:
+
+| Key (under `worca.`) | Default | Scope after migration |
+|---|---|---|
+| `parallel.cleanup_policy` | `never` | Global (`~/.worca/settings.json`) |
+| `parallel.max_concurrent_pipelines` | `10` | Global |
+| `ui.worktree_disk_warning_bytes` | `2000000000` | Global |
+| `circuit_breaker.classifier_model` | `haiku` | Global |
+
+If `~/.worca/settings.json` does not exist, it is created. Existing values in the global file are preserved (project values merge in). After extraction, the keys are removed from the project file.
+
+Idempotent: runs silently on second invocation.
+
+Source: `_migrate_global_keys_to_preferences` in `src/worca/cli/init.py`.
+
+### Inert milestone key stripping (W-049)
+
+`pr_approval` and `deploy_approval` under `worca.milestones` are removed from `.claude/settings.json` **if and only if** their value is exactly `true` (the old template default). Any other value (`false`, a string, etc.) is left alone as an intentional user override.
+
+Why: these keys were inert before W-049 — the runner ignored them. After W-049, the runner gates on `pr_approval is True`, so leaving the template default in place would activate the PR-creation approval gate on every upgraded project, hanging autonomous flows.
+
+Stripping the default lets the runner's missing-key behavior (`false`) take effect, keeping the gate opt-in.
+
+If both keys are removed and `worca.milestones` becomes empty, the empty object is cleaned up.
+
+Idempotent: runs silently on second invocation.
+
+Source: `_strip_inert_milestone_keys` in `src/worca/cli/init.py`.
+
 ### .gitignore entries
 
 These entries are added if missing: `.worca/`, `logs/`, `.claude/settings.local.json`.
@@ -256,6 +287,45 @@ W-048: Worktree-based pipeline isolation and unified run aggregation.
 - **`pipelines.d/` fan-out in `discoverRuns`** — Worktree runs are now visible in the unified runs list alongside root project runs. No UI changes required.
 
 **No automatic migrations required** — these are runtime behavior and protocol changes. Run `worca init --upgrade` once to remove the stale `active_run` file from `.worca/`. Update any external integrations or scripts that depend on the removed batch scripts, WebSocket protocol types, or `active_run` file.
+
+### 0.18.x → 0.19.0
+
+W-049: Settings UI for execution, approval gates, circuit breaker, and worktree disk threshold.
+
+**Default changes:**
+
+| Setting | Old default | New default | Rationale |
+|---|---|---|---|
+| `cleanup_policy` | `on-success` | `never` | Auto-deletion would silently break worktree inspection workflows |
+| `max_concurrent_pipelines` | `3` | `10` | A cap of 3 immediately blocks users with 4+ projects |
+| `pr_approval` | `true` (inert) | `false` (active) | Default-true would hang every autonomous run at the PR-creation gate |
+
+**Project/global settings split:**
+
+Four keys move from project-scoped (`.claude/settings.json`) to global-scoped (`~/.worca/settings.json`): `cleanup_policy`, `max_concurrent_pipelines`, `worktree_disk_warning_bytes`, `classifier_model`. The canonical list and defaults live in `src/worca/schemas/keys.json`.
+
+**Automatic migration via `worca init --upgrade`:**
+
+1. Global keys are extracted from the project file into `~/.worca/settings.json` (created if absent).
+2. Template-default `pr_approval: true` and `deploy_approval: true` are stripped from the project file to prevent the new PR-approval gate from activating unexpectedly.
+
+Both steps are idempotent. Run output:
+
+```
+Migrated 4 key(s) to ~/.worca/settings.json
+Reset 2 template-default milestone key(s) (pr_approval, deploy_approval) — gate now opt-in via Pipeline tab
+```
+
+**If you skip `worca init --upgrade`:**
+
+The UI's settings editor handles migration automatically. When you open project settings, a banner appears if misplaced global keys or inert milestone defaults are detected. Clicking "Migrate now" (or simply saving settings) triggers the same extraction — the server's save handler auto-migrates on every save. No data is lost; no separate endpoint or manual JSON editing is required.
+
+**New features:**
+
+- Settings UI panels for Execution & Parallelism, Approval Gates, and Circuit Breaker configuration.
+- Global Preferences tab (`~/.worca/settings.json`) for cross-project settings (worktree cleanup, concurrency cap, disk threshold, classifier model).
+- PR-approval gate: when `worca.milestones.pr_approval` is `true`, the pipeline pauses before PR creation and waits for user approval via the run-detail UI.
+- Server-enforced `max_concurrent_pipelines` cap with launch mutex (returns 409 when at capacity).
 
 ## Getting help
 

@@ -4,6 +4,13 @@ vi.mock('node:fs', () => ({
   readFileSync: vi.fn(),
 }));
 
+vi.mock('../keys-schema.js', () => ({
+  GLOBAL_ONLY_KEYS: [],
+  NORMALIZE_SKIP_KEYS: [],
+  GLOBAL_DEFAULTS: {},
+  PROJECT_DEFAULTS: {},
+}));
+
 import { readFileSync } from 'node:fs';
 import { loadIntegrationsConfig } from './config-loader.js';
 

@@ -245,7 +245,7 @@ describe('worktreesView - disk summary', () => {
     expect(output).not.toContain('Held by resumable');
   });
 
-  it('renders a warning alert when total exceeds 2 GB', () => {
+  it('renders a warning alert when total exceeds default 2 GB', () => {
     // Two 1.2 GB worktrees → 2.4 GB total
     const big = {
       ...completedWorktree,
@@ -255,6 +255,29 @@ describe('worktreesView - disk summary', () => {
     const output = renderToString(worktreesView([completedWorktree, big]));
     expect(output).toContain('worktrees-disk-alert');
     expect(output).toContain('disk usage is high');
+  });
+
+  it('uses custom diskWarningBytes option for threshold', () => {
+    const wt = {
+      ...completedWorktree,
+      disk_bytes: 600_000_000,
+    };
+    const output = renderToString(
+      worktreesView([wt], { diskWarningBytes: 500_000_000 }),
+    );
+    expect(output).toContain('worktrees-disk-alert');
+    expect(output).toContain('disk usage is high');
+  });
+
+  it('does not show warning when below custom diskWarningBytes', () => {
+    const wt = {
+      ...completedWorktree,
+      disk_bytes: 400_000_000,
+    };
+    const output = renderToString(
+      worktreesView([wt], { diskWarningBytes: 500_000_000 }),
+    );
+    expect(output).not.toContain('worktrees-disk-alert');
   });
 });
 

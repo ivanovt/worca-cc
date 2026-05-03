@@ -204,6 +204,12 @@ export async function submitNewRun({ rerender, onStarted, projectId }) {
     });
 
     const data = await res.json();
+    if (res.status === 409 && data.code === 'max_concurrent_exceeded') {
+      submitStatus = 'error';
+      submitError = data.error || 'Concurrent pipeline limit reached.';
+      rerender();
+      return;
+    }
     if (data.ok) {
       submitStatus = null;
       // Don't call refreshRuns() here — the Python process hasn't written
@@ -231,8 +237,15 @@ export function hasActivePipeline(state) {
   return Object.values(runs).some((r) => r.active === true);
 }
 
+export function isAtCapacity(state) {
+  const cap = state?.maxConcurrentPipelines ?? 10;
+  const running = state?.totalRunning ?? 0;
+  return running >= cap;
+}
+
 export function newRunView(_state, { rerender }) {
   const projectId = _state.currentProjectId || null;
+  const atCapacity = isAtCapacity(_state);
 
   function handleSourceTypeChange(e) {
     sourceType = e.target.value;
@@ -337,6 +350,15 @@ export function newRunView(_state, { rerender }) {
           Each pipeline now runs in its own git worktree — parallel runs no longer collide on the working tree.
         </sl-alert>
       `
+      }
+      ${
+        atCapacity
+          ? html`
+        <sl-alert variant="warning" open class="capacity-warning">
+          Pipeline limit reached — ${_state.totalRunning ?? 0} of ${_state.maxConcurrentPipelines ?? 10} slots in use. Stop a running pipeline or increase the limit in Settings.
+        </sl-alert>
+      `
+          : nothing
       }
       ${submitStatus === 'error' ? html`<div class="new-run-error">${submitError}</div>` : nothing}
 

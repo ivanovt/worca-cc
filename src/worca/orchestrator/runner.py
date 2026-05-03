@@ -194,6 +194,29 @@ def _handle_pause(ctx: EventContext, reason: str) -> None:
             raise PipelineInterrupted(f"Aborted via control webhook: {reason}", stop_reason="control_webhook")
 
 
+def _check_control_response_with_timeout(
+    ctx: EventContext,
+    event: dict,
+    *,
+    timeout_seconds: int,
+    timeout_default: str,
+) -> str:
+    """Deadline-aware wrapper around _check_control_response.
+
+    Polls until the helper returns a non-None action OR the deadline elapses,
+    in which case returns timeout_default and emits a log line.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    poll_interval = 5
+    while time.monotonic() < deadline:
+        action = _check_control_response(ctx, event)
+        if action is not None:
+            return action
+        time.sleep(poll_interval)
+    _log(f"pr_approval gate auto-approved on {timeout_seconds}s timeout (event={event.get('id')})", "warn")
+    return timeout_default
+
+
 def _base62(n: int, length: int = 3) -> str:
     """Encode an integer as a base62 string of fixed length."""
     chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -2646,6 +2669,79 @@ def run_pipeline(
                         stage_idx = stage_order.index(Stage.PLAN)
                         continue
 
+            # PR stage: approval gate + completion
+            elif current_stage == Stage.PR:
+                # Milestone semantics intentionally asymmetric across approval gates:
+                #   - plan_approval: default-true (opt-out). Already in production at this default;
+                #     flipping it would silently disable an existing gate on every upgraded project.
+                #   - pr_approval:   default-false (opt-in). New in W-049; default-true would hang
+                #     every autonomous run waiting for an approval event nobody sends.
+                _ms_cfg = load_settings(settings_path).get("worca", {}).get("milestones", {})
+                if _ms_cfg.get("pr_approval") is not True:
+                    pr_approved = True
+                else:
+                    set_milestone(status, "pr_approved", False)
+                    status["pipeline_status"] = "paused"
+                    save_status(status, actual_status_path)
+                    pr_approved = False
+                    if ctx:
+                        _ms_event = emit_event(ctx, MILESTONE_SET, milestone_set_payload(
+                            milestone="pr_approved", value=False, stage=Stage.PR.value,
+                        ))
+                        if _ms_event:
+                            _action = _check_control_response_with_timeout(
+                                ctx, _ms_event,
+                                timeout_seconds=_ms_cfg.get("pr_approval_timeout_seconds", 3600),
+                                timeout_default="approve",
+                            )
+                            if _action == "approve":
+                                pr_approved = True
+                                set_milestone(status, "pr_approved", True)
+                                status["pipeline_status"] = "running"
+                            elif _action == "reject":
+                                raise PipelineInterrupted("PR creation rejected by user", stop_reason="pr_rejected")
+                            elif _action == "pause":
+                                _handle_pause(ctx, "pr_approved milestone")
+                            elif _action == "abort":
+                                raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
+                    else:
+                        pr_approved = True
+                        set_milestone(status, "pr_approved", True)
+                        status["pipeline_status"] = "running"
+
+                if not pr_approved:
+                    save_status(status, actual_status_path)
+                    return
+
+                iter_extras["outcome"] = "success"
+                complete_iteration(status, current_stage.value, **iter_extras)
+                update_stage(status, current_stage.value, **stage_extras)
+                save_status(status, actual_status_path)
+                if ctx:
+                    _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
+                        stage=current_stage.value, iteration=iter_num,
+                        duration_ms=iter_extras.get("duration_ms", 0),
+                        cost_usd=iter_extras.get("cost_usd", 0.0),
+                        turns=iter_extras.get("turns", 0),
+                        outcome=iter_extras["outcome"],
+                        token_usage=iter_extras.get("token_usage"),
+                    ))
+                    if _sc_event:
+                        _action = _check_control_response(ctx, _sc_event)
+                        if _action == "pause":
+                            _handle_pause(ctx, f"{current_stage.value} stage.completed")
+                        elif _action == "abort":
+                            raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
+                if ctx and isinstance(result, dict):
+                    _pr_url = result.get("pr_url")
+                    _pr_number = result.get("pr_number")
+                    if _pr_url and _pr_number is not None:
+                        emit_event(ctx, GIT_PR_CREATED, git_pr_created_payload(
+                            pr_url=_pr_url,
+                            pr_number=_pr_number,
+                            title=work_request.title,
+                        ))
+
             # Default: complete iteration for stages without special handling
             else:
                 iter_extras["outcome"] = "success"
@@ -2667,16 +2763,6 @@ def run_pipeline(
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
                             raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
-                # PR stage: emit git.pr_created if result has pr_url
-                if ctx and current_stage == Stage.PR and isinstance(result, dict):
-                    _pr_url = result.get("pr_url")
-                    _pr_number = result.get("pr_number")
-                    if _pr_url and _pr_number is not None:
-                        emit_event(ctx, GIT_PR_CREATED, git_pr_created_payload(
-                            pr_url=_pr_url,
-                            pr_number=_pr_number,
-                            title=work_request.title,
-                        ))
 
             # Persist context and loop counters after each completed stage
             status["loop_counters"] = dict(loop_counters)

@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { hasActivePipeline, newRunView, resetNewRunState } from './new-run.js';
+import {
+  hasActivePipeline,
+  isAtCapacity,
+  newRunView,
+  resetNewRunState,
+} from './new-run.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -87,6 +92,68 @@ describe('newRunView worktree info banner', () => {
     resetNewRunState({ bannerDismissed: true });
     const out = renderToString(newRunView({}, { rerender }));
     expect(out).not.toContain('parallel runs no longer collide');
+  });
+});
+
+describe('newRunView cap-disabled state', () => {
+  const rerender = () => {};
+
+  it('renders capacity warning banner when totalRunning >= maxConcurrentPipelines', () => {
+    resetNewRunState();
+    const state = {
+      runs: {},
+      totalRunning: 5,
+      maxConcurrentPipelines: 5,
+    };
+    const out = renderToString(newRunView(state, { rerender }));
+    expect(out).toContain('capacity-warning');
+    expect(out).toContain('5');
+  });
+
+  it('does not render capacity warning when under cap', () => {
+    resetNewRunState();
+    const state = {
+      runs: {},
+      totalRunning: 3,
+      maxConcurrentPipelines: 10,
+    };
+    const out = renderToString(newRunView(state, { rerender }));
+    expect(out).not.toContain('capacity-warning');
+  });
+
+  it('renders capacity warning when totalRunning exceeds cap', () => {
+    resetNewRunState();
+    const state = {
+      runs: {},
+      totalRunning: 7,
+      maxConcurrentPipelines: 5,
+    };
+    const out = renderToString(newRunView(state, { rerender }));
+    expect(out).toContain('capacity-warning');
+  });
+});
+
+describe('isAtCapacity', () => {
+  it('returns true when totalRunning equals maxConcurrentPipelines', () => {
+    expect(isAtCapacity({ totalRunning: 5, maxConcurrentPipelines: 5 })).toBe(
+      true,
+    );
+  });
+
+  it('returns true when totalRunning exceeds maxConcurrentPipelines', () => {
+    expect(isAtCapacity({ totalRunning: 7, maxConcurrentPipelines: 5 })).toBe(
+      true,
+    );
+  });
+
+  it('returns false when under cap', () => {
+    expect(isAtCapacity({ totalRunning: 3, maxConcurrentPipelines: 10 })).toBe(
+      false,
+    );
+  });
+
+  it('returns false with default cap when state has no fields', () => {
+    expect(isAtCapacity({})).toBe(false);
   });
 });
 

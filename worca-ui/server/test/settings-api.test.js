@@ -41,8 +41,7 @@ const SAMPLE_SETTINGS = {
     loops: { implement_test: 3, pr_changes: 3, restart_planning: 2 },
     milestones: {
       plan_approval: true,
-      pr_approval: true,
-      deploy_approval: true,
+      pr_approval: false,
     },
     governance: {
       guards: {

@@ -10,7 +10,7 @@ import traceback
 from typing import Optional
 
 from worca.utils.claude_cli import _ARG_INLINE_LIMIT
-from worca.utils.settings import load_settings
+from worca.utils.settings import load_settings_with_global_fallback
 
 CATEGORY_TRANSIENT = "infra_transient"
 CATEGORY_PERMANENT = "infra_permanent"
@@ -56,7 +56,7 @@ _SCHEMA = {
 
 
 def _read_settings(settings_path: str) -> dict:
-    return load_settings(settings_path)
+    return load_settings_with_global_fallback(settings_path)
 
 
 def _get_cb_settings(settings_path: str) -> dict:

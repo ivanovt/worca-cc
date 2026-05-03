@@ -120,15 +120,18 @@ class TestPreToolUseBlockedEvent:
 class TestPostToolUseTestGateEvent:
     """post_tool_use emits pipeline.hook.test_gate when test gate blocks."""
 
+    _ENV_KEYS = ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT", "WORCA_RUN_DIR"]
+
     def setup_method(self):
-        for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
-            os.environ.pop(k, None)
+        self._saved_env = {k: os.environ.pop(k, None) for k in self._ENV_KEYS}
         from worca.hooks import test_gate
         test_gate._state["strikes"] = 0
 
     def teardown_method(self):
-        for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
+        for k in self._ENV_KEYS:
             os.environ.pop(k, None)
+            if self._saved_env.get(k) is not None:
+                os.environ[k] = self._saved_env[k]
         from worca.hooks import test_gate
         test_gate._state["strikes"] = 0
 
