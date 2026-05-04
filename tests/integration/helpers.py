@@ -30,6 +30,13 @@ class PipelineEnv:
     run: Callable
     run_background: Callable
     add_webhook: Callable
+    # W-050 Phase 0 helpers — see conftest.py for the implementations.
+    enable_stages: Callable = None  # type: ignore[assignment]
+    set_governance_agent: Callable = None  # type: ignore[assignment]
+    enable_beads: Callable = None  # type: ignore[assignment]
+    stubs_dir: Optional[Path] = None
+    stub_log_path: Optional[Path] = None
+    stub_response_files: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -205,3 +212,94 @@ def write_control_pause(proc, env: PipelineEnv) -> None:
         "requested_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "source": "test",
     }))
+
+
+# ---------------------------------------------------------------------------
+# W-050 Phase 0 — scenario / run-dir / stub-log helpers
+# ---------------------------------------------------------------------------
+
+def make_iteration_scenario(
+    per_agent_per_iter: dict,
+    default: Optional[dict] = None,
+) -> dict:
+    """Build a scenario where agents return different directives per iteration.
+
+    Args:
+        per_agent_per_iter: ``{agent_name: {iter_N: directive, "default": directive}}``.
+            Each inner dict maps iteration keys (``"iter_1"``, ``"iter_2"``, ...) and
+            optionally ``"default"`` to directive dicts (the same shape mock_claude
+            already accepts: ``{"action": "succeed", "result_text": "...", ...}``).
+        default: Scenario-level fallback directive. Defaults to a short success.
+
+    Example:
+        ``make_iteration_scenario({
+            "tester": {
+                "iter_1": {"action": "fail", "error": "boom"},
+                "iter_2": {"action": "succeed"},
+            }
+        })``
+    """
+    scenario = {
+        "agents": dict(per_agent_per_iter),
+        "default": default or {"action": "succeed", "delay_s": 0.05},
+    }
+    return scenario
+
+
+def read_run_dir(worca_dir: Path) -> Path:
+    """Return the path to the most recent run directory.
+
+    Useful in Phase 1+ tests that need to inspect ``runs/<id>/iterations/`` or
+    ``agents/resolved/`` artifacts created by the pipeline.
+    """
+    run_id = _find_latest_run_id(worca_dir)
+    return worca_dir / "runs" / run_id
+
+
+def assert_stage_sequence(events: list, expected_stages: list[str]) -> None:
+    """Assert that ``pipeline.stage.started`` events fire in the given order.
+
+    Reads stage names from the events.jsonl stream — only the first occurrence
+    of each stage is checked, which tolerates in-stage retry loops emitting
+    repeated ``pipeline.stage.started`` events. The check is a subsequence
+    match: extra stages between the expected ones are allowed (existing event
+    streams include preflight, coordinator, etc. that callers may not care about).
+    """
+    seen_order: list[str] = []
+    seen_set: set[str] = set()
+    for event in events:
+        # Tolerate both the canonical "pipeline.stage.started" type and the
+        # short "stage.started" form some test paths emit.
+        if event.get("event_type") not in ("pipeline.stage.started", "stage.started"):
+            continue
+        stage = (
+            event.get("stage")
+            or event.get("payload", {}).get("stage")
+            or event.get("data", {}).get("stage")
+        )
+        if not stage or stage in seen_set:
+            continue
+        seen_set.add(stage)
+        seen_order.append(stage)
+
+    relevant = [s for s in seen_order if s in expected_stages]
+    assert relevant == expected_stages, (
+        f"Stage sequence mismatch.\n  expected: {expected_stages}\n  got:      {relevant}\n"
+        f"  all stages seen: {seen_order}"
+    )
+
+
+def read_stub_log(log_path: Path) -> list[dict]:
+    """Read invocations recorded by the bd / gh stubs (see stubs/_stub_lib.py)."""
+    if not log_path.exists():
+        return []
+    out: list[dict] = []
+    for line in log_path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            out.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return out

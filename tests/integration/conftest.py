@@ -18,6 +18,7 @@ from tests.integration.helpers import (
 )
 
 MOCK_CLAUDE_BIN = Path(__file__).parent.parent / "mock_claude" / "mock_claude.py"
+STUBS_DIR = Path(__file__).parent / "stubs"
 
 # Repo root — used to locate .coveragerc and the project source dir for
 # coverage-tracked subprocess runs.
@@ -95,6 +96,16 @@ def pipeline_env(tmp_path):
     worca_dir = project / ".worca"
     _scenario_counter = [0]
 
+    # Mutable per-test overrides that next run() / run_background() will pick
+    # up. Setters below mutate this dict — see set_governance_agent / enable_beads.
+    # Keys absent from _overrides keep the documented defaults (WORCA_AGENT="",
+    # WORCA_SKIP_BEADS="1") so existing tests are unaffected.
+    _overrides: dict = {}
+
+    # Stub log path is fixed per-fixture; tests read it via read_stub_log.
+    _stub_log_path = tmp_path / "stub_invocations.jsonl"
+    _stub_response_files: dict = {}
+
     def _base_env(scenario_path: Path) -> dict:
         env = {
             **os.environ,
@@ -108,6 +119,9 @@ def pipeline_env(tmp_path):
             # CWD by default. Force them into REPO_ROOT so `coverage combine`
             # finds every fragment regardless of which tmpdir the test ran in.
             env["COVERAGE_FILE"] = str(REPO_ROOT / ".coverage")
+
+        # Apply per-test overrides last so they win.
+        env.update(_overrides)
         return env
 
     def run(scenario: dict, prompt: str = "test task",
@@ -167,12 +181,59 @@ def pipeline_env(tmp_path):
         s["worca"]["webhooks"] = [{"url": url}]
         settings_path.write_text(json.dumps(s, indent=2))
 
+    def enable_stages(*names: str) -> None:
+        """Flip ``worca.stages.<name>.enabled`` to True for each stage name.
+
+        Tests that need preflight, plan_review, or learn to actually run call
+        this *after* fixture setup (which disables them by default for speed).
+        """
+        s = json.loads(settings_path.read_text())
+        s.setdefault("worca", {}).setdefault("stages", {})
+        for name in names:
+            s["worca"]["stages"].setdefault(name, {})["enabled"] = True
+        settings_path.write_text(json.dumps(s, indent=2))
+
+    def set_governance_agent(name: str) -> None:
+        """Set ``WORCA_AGENT`` for the next run so live hooks see a real agent.
+
+        The fixture default empty string short-circuits guardian-only / dispatch
+        / plan_check enforcement. Phase 2 governance tests need a real agent
+        identity. Replaces, does not append (per W-050 plan Considerations).
+        """
+        _overrides["WORCA_AGENT"] = name
+
+    def enable_beads(response_file: Path | None = None) -> None:
+        """Activate the bd stub and clear ``WORCA_SKIP_BEADS`` for the next run.
+
+        The stubs directory is prepended to ``PATH`` only inside the next
+        run subprocess — global PATH is never mutated (W-050 plan rule #16).
+
+        Args:
+            response_file: Optional path to a JSON file with canned bd
+                responses. See ``tests/integration/stubs/_stub_lib.py`` for
+                the schema.
+        """
+        existing_path = _overrides.get("PATH", os.environ.get("PATH", ""))
+        if str(STUBS_DIR) not in existing_path.split(os.pathsep):
+            _overrides["PATH"] = f"{STUBS_DIR}{os.pathsep}{existing_path}"
+        _overrides["WORCA_SKIP_BEADS"] = ""
+        _overrides["WORCA_STUB_LOG"] = str(_stub_log_path)
+        if response_file is not None:
+            _overrides["WORCA_STUB_BD_RESPONSE_FILE"] = str(response_file)
+            _stub_response_files["bd"] = Path(response_file)
+
     return PipelineEnv(
         project=project,
         worca_dir=worca_dir,
         run=run,
         run_background=run_background,
         add_webhook=add_webhook,
+        enable_stages=enable_stages,
+        set_governance_agent=set_governance_agent,
+        enable_beads=enable_beads,
+        stubs_dir=STUBS_DIR,
+        stub_log_path=_stub_log_path,
+        stub_response_files=_stub_response_files,
     )
 
 

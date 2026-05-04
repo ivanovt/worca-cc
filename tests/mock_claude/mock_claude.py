@@ -4,17 +4,34 @@
 Reads MOCK_CLAUDE_SCENARIO env var for a path to a JSON scenario file.
 Parses --agent from argv to select a per-agent directive.
 Emits stream-JSON events matching Claude CLI output format, then exits.
+
+Directive resolution order (per scenario):
+
+    1. ``agents[name]["iter_N"]``   — exact iteration match (N parsed from
+                                       resolved template path stem)
+    2. ``agents[name]["default"]``  — agent default when ``agents[name]`` is
+                                       a dict-of-iterations
+    3. ``agents[name]``             — flat (non-dict-of-iterations) directive
+    4. ``scenario["default"]``      — scenario fallback
+
+A value under ``agents[name]`` is treated as a *dict-of-iterations* iff it
+contains at least one ``iter_N`` key or a ``default`` key. Otherwise it is
+treated as a flat directive (this is the pre-W-050 behavior — existing
+scenarios keep working unchanged).
 """
 import json
 import os
+import re
 import signal
 import sys
 import time
 
-
-import re
-
+# Resolved template path stems look like ``{stage}-{agent}-iter-{N}``
+# (e.g. ``plan-planner-iter-1``). _RESOLVED_RE extracts the agent slug;
+# _ITER_RE extracts the iteration number. Per W-050 plan binding rule #6,
+# _RESOLVED_RE must not be changed — _ITER_RE is the iteration-side companion.
 _RESOLVED_RE = re.compile(r"^[a-z_]+-([a-z_]+)-iter-\d+$")
+_ITER_RE = re.compile(r"-iter-(\d+)$")
 
 
 def _extract_agent_name(agent_path):
@@ -26,6 +43,50 @@ def _extract_agent_name(agent_path):
     stem = os.path.splitext(os.path.basename(agent_path))[0]
     m = _RESOLVED_RE.match(stem)
     return m.group(1) if m else stem
+
+
+def _extract_iteration(agent_path):
+    """Return the iteration number from a resolved template path, or None.
+
+    Resolved: .worca/runs/.../resolved/plan-planner-iter-3.md → 3
+    Plain:    .claude/worca/agents/core/planner.md → None
+    """
+    if not agent_path:
+        return None
+    stem = os.path.splitext(os.path.basename(agent_path))[0]
+    m = _ITER_RE.search(stem)
+    return int(m.group(1)) if m else None
+
+
+def _is_per_iteration_block(value):
+    """A dict is per-iteration iff it has any ``iter_N`` key or a ``default`` key."""
+    if not isinstance(value, dict):
+        return False
+    for key in value:
+        if key == "default" or (isinstance(key, str) and key.startswith("iter_")):
+            return True
+    return False
+
+
+def _resolve_directive(scenario, agent, iteration):
+    """Pick the directive for (agent, iteration) using the documented fallback chain."""
+    agents_cfg = scenario.get("agents", {}) or {}
+    agent_block = agents_cfg.get(agent) if agent else None
+
+    if _is_per_iteration_block(agent_block):
+        if iteration is not None:
+            iter_directive = agent_block.get(f"iter_{iteration}")
+            if iter_directive is not None:
+                return iter_directive
+        agent_default = agent_block.get("default")
+        if agent_default is not None:
+            return agent_default
+        return scenario.get("default", {})
+
+    if agent_block is not None:
+        return agent_block
+
+    return scenario.get("default", {})
 
 
 def main():
@@ -50,8 +111,8 @@ def main():
             break
 
     agent = _extract_agent_name(agent_raw) if agent_raw else None
-    agents_cfg = scenario.get("agents", {})
-    directive = agents_cfg.get(agent) or scenario.get("default", {})
+    iteration = _extract_iteration(agent_raw) if agent_raw else None
+    directive = _resolve_directive(scenario, agent, iteration)
     action = directive.get("action", "succeed")
     delay = directive.get("delay_s", 0.5)
 
