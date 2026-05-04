@@ -24,6 +24,35 @@ class PipelineResult:
 
 
 @dataclass
+class WorktreeResult:
+    """Outcome of a ``run_worktree.py`` invocation (W-050 Phase 3).
+
+    Worktree mode is fire-and-forget: ``run_worktree.py`` exits as soon as it
+    has spawned the detached pipeline subprocess, so ``returncode`` reflects
+    only the launch step. ``run_id`` and ``worktree_path`` are parsed from
+    stdout (the script prints them on the last two lines). ``status`` and
+    ``events`` are collected from ``<worktree>/.worca/runs/<run_id>/`` after
+    the helper waits for the pipeline to reach a terminal state.
+    """
+    returncode: int
+    run_id: str
+    worktree_path: str
+    status: dict
+    events: list
+    stdout: str
+    stderr: str
+
+
+@dataclass
+class ParallelResult:
+    """Outcome of a ``run_parallel.py`` invocation (W-050 Phase 3)."""
+    returncode: int
+    summary: list  # parsed parallel-results.json
+    stdout: str
+    stderr: str
+
+
+@dataclass
 class PipelineEnv:
     project: Path
     worca_dir: Path
@@ -36,6 +65,9 @@ class PipelineEnv:
     enable_beads: Callable = None  # type: ignore[assignment]
     # W-050 Phase 2 helper — drives a claude_hooks entry-point as a subprocess.
     run_hook: Callable = None  # type: ignore[assignment]
+    # W-050 Phase 3 helpers — drive run_worktree.py / run_parallel.py.
+    run_worktree: Callable = None  # type: ignore[assignment]
+    run_parallel: Callable = None  # type: ignore[assignment]
     stubs_dir: Optional[Path] = None
     stub_log_path: Optional[Path] = None
     stub_response_files: dict = field(default_factory=dict)

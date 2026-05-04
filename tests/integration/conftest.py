@@ -4,15 +4,18 @@ import os
 import subprocess
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
 
 from tests.integration.helpers import (
+    ParallelResult,
     PipelineEnv,
     PipelineResult,
     WebhookCapture,
+    WorktreeResult,
     _find_latest_status,
     _read_events_jsonl,
 )
@@ -180,6 +183,148 @@ def pipeline_env(tmp_path):
             start_new_session=True,  # own process group so signals target full tree
         )
 
+    # W-050 Phase 3: track worktrees created via run_worktree / run_parallel
+    # so the fixture finalizer can `git worktree remove --force` them on
+    # teardown — even on test failure (plan rule #15).
+    _created_worktrees: list[str] = []
+
+    def run_worktree(
+        scenario: dict,
+        prompt: str = "test task",
+        branch: str | None = None,
+        guide: list[str] | None = None,
+        timeout: int = 60,
+        wait: bool = True,
+        wait_timeout: int = 60,
+    ) -> WorktreeResult:
+        """Spawn ``run_worktree.py`` and (optionally) wait for the detached
+        pipeline to reach a terminal state.
+
+        ``run_worktree.py`` is fire-and-forget: it creates the worktree,
+        spawns the pipeline subprocess detached (stdin/stdout/stderr=DEVNULL,
+        start_new_session=True), and exits as soon as it has printed the
+        run_id and worktree path. So the returned ``returncode`` reflects
+        only the launch step. With ``wait=True`` (default) the helper polls
+        ``<worktree>/.worca/runs/<run_id>/status.json`` until ``pipeline_status``
+        is ``completed`` / ``failed`` so subsequent assertions can read the
+        run dir without race conditions.
+
+        Worktrees are auto-tracked for fixture-teardown cleanup (plan rule #15).
+        """
+        _scenario_counter[0] += 1
+        scenario_path = tmp_path / f"scenario_{_scenario_counter[0]}.json"
+        scenario_path.write_text(json.dumps(scenario))
+
+        cmd = [sys.executable, "-m", "worca.scripts.run_worktree",
+               "--prompt", prompt]
+        if branch:
+            cmd.extend(["--branch", branch])
+        if guide:
+            for g in guide:
+                cmd.extend(["--guide", g])
+        cmd = _wrap_with_coverage(cmd)
+
+        env = _base_env_common()
+        env["MOCK_CLAUDE_SCENARIO"] = str(scenario_path)
+
+        result = subprocess.run(
+            cmd, cwd=str(project), env=env,
+            capture_output=True, text=True, timeout=timeout,
+        )
+
+        # stdout: "<run_id>\n<worktree_path>\n"
+        lines = (result.stdout or "").strip().splitlines()
+        run_id = lines[0] if lines else ""
+        worktree_path = lines[1] if len(lines) > 1 else ""
+
+        if worktree_path:
+            _created_worktrees.append(worktree_path)
+
+        status: dict = {}
+        events: list = []
+        if wait and worktree_path and run_id:
+            run_dir = Path(worktree_path) / ".worca" / "runs" / run_id
+            status_path = run_dir / "status.json"
+            deadline = time.time() + wait_timeout
+            while time.time() < deadline:
+                if status_path.exists():
+                    try:
+                        data = json.loads(status_path.read_text())
+                        if data.get("pipeline_status") in ("completed", "failed"):
+                            status = data
+                            break
+                    except (json.JSONDecodeError, OSError):
+                        pass
+                time.sleep(0.3)
+            events_path = run_dir / "events.jsonl"
+            if events_path.exists():
+                events = [
+                    json.loads(line) for line in events_path.read_text().splitlines()
+                    if line.strip()
+                ]
+
+        return WorktreeResult(
+            returncode=result.returncode,
+            run_id=run_id,
+            worktree_path=worktree_path,
+            status=status,
+            events=events,
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
+        )
+
+    def run_parallel(
+        scenario: dict,
+        prompts: list[str],
+        timeout: int = 180,
+    ) -> ParallelResult:
+        """Spawn ``run_parallel.py`` with the given prompts. All concurrent
+        pipelines read the same MOCK_CLAUDE_SCENARIO (mock_claude is keyed
+        on agent role, not on prompt), so the scenario applies uniformly.
+
+        The helper waits for ``run_parallel.py`` to finish — it is synchronous
+        from the caller's perspective (uses ProcessPoolExecutor with as_completed).
+        """
+        _scenario_counter[0] += 1
+        scenario_path = tmp_path / f"scenario_{_scenario_counter[0]}.json"
+        scenario_path.write_text(json.dumps(scenario))
+
+        cmd = [sys.executable, "-m", "worca.scripts.run_parallel",
+               "--prompts", *prompts]
+        cmd = _wrap_with_coverage(cmd)
+
+        env = _base_env_common()
+        env["MOCK_CLAUDE_SCENARIO"] = str(scenario_path)
+
+        result = subprocess.run(
+            cmd, cwd=str(project), env=env,
+            capture_output=True, text=True, timeout=timeout,
+        )
+
+        # run_parallel writes a parallel-results.json into worktree-dir.
+        # Default worktree dir is .worktrees/ inside the project.
+        summary: list = []
+        summary_path = project / ".worktrees" / "parallel-results.json"
+        if summary_path.exists():
+            try:
+                summary = json.loads(summary_path.read_text())
+            except json.JSONDecodeError:
+                pass
+
+        # Track every worktree run_parallel created so the fixture finalizer
+        # cleans them up (the slug-based dirs that run_parallel writes to).
+        for entry in summary:
+            wt = entry.get("worktree")
+            if wt and wt not in _created_worktrees:
+                _created_worktrees.append(wt)
+
+        return ParallelResult(
+            returncode=result.returncode,
+            summary=summary,
+            stdout=result.stdout or "",
+            stderr=result.stderr or "",
+        )
+
     def run_hook(
         name: str,
         payload: dict,
@@ -266,12 +411,14 @@ def pipeline_env(tmp_path):
             _overrides["WORCA_STUB_BD_RESPONSE_FILE"] = str(response_file)
             _stub_response_files["bd"] = Path(response_file)
 
-    return PipelineEnv(
+    yield PipelineEnv(
         project=project,
         worca_dir=worca_dir,
         run=run,
         run_background=run_background,
         run_hook=run_hook,
+        run_worktree=run_worktree,
+        run_parallel=run_parallel,
         add_webhook=add_webhook,
         enable_stages=enable_stages,
         set_governance_agent=set_governance_agent,
@@ -280,6 +427,20 @@ def pipeline_env(tmp_path):
         stub_log_path=_stub_log_path,
         stub_response_files=_stub_response_files,
     )
+
+    # W-050 Phase 3 — fixture finalizer (plan rule #15): always remove
+    # worktrees we created, even on test failure, so the parent repo isn't
+    # littered with locked worktree refs across the suite.
+    for wt_path in _created_worktrees:
+        if not Path(wt_path).exists():
+            continue
+        try:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", wt_path],
+                cwd=str(project), capture_output=True, timeout=10,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass
 
 
 # ---------------------------------------------------------------------------
