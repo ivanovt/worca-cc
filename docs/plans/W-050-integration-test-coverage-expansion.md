@@ -96,6 +96,84 @@ coverage html                              # htmlcov/index.html
 
 Setting `WORCA_COVERAGE=1` activates `_wrap_with_coverage()` in `tests/integration/conftest.py` — pipeline subprocesses get wrapped with `coverage run --parallel-mode`. Without the env var, the suite runs at normal speed.
 
+## Pipeline Run Notes
+
+This plan is intended to be executed by the worca autonomous pipeline. The notes below address failure modes specific to autonomous execution that a human implementer would handle by judgment. **All notes here are binding constraints on the planner / coordinator / implementer / tester / reviewer / guardian agents.**
+
+### Sequencing & PR strategy
+
+1. **One PR per phase, phases land in order.** Phase 0 must merge before any other phase opens a PR. Phases 1-7 do not depend on each other and can run in any order *after* Phase 0 is merged. Each phase PR description must reference Phase 0's commit SHA so reviewers can verify ordering.
+2. **Do not bundle phases.** A single mega-PR is rejected on review. If the pipeline is tempted to combine phases, it must split first.
+
+### Done-criteria per phase
+
+3. **Each phase PR description must include a "Coverage delta" section** with before/after numbers on the modules that phase targets:
+   ```
+   WORCA_COVERAGE=1 pytest tests/integration/ --timeout=120
+   coverage combine && coverage report
+   ```
+   Phase fails review if delta on its named target modules is < +10 percentage points (line coverage).
+4. **All ~124 existing integration tests must continue to pass** under the modified fixture / mock. The tester agent must run the full integration suite (not only new tests) and report total pass count in the PR description.
+
+### Mock & fixture backward compatibility
+
+5. **`mock_claude.py` per-iteration directives must be backward compatible.** Phase 0 must include a regression test in `tests/mock_claude/test_mock_claude.py` that loads at least three pre-existing scenario JSONs (from current integration tests) and asserts identical mock behavior. If existing scenarios silently fall through to defaults, all 124 tests pass while testing nothing — the regression test catches this.
+6. **Do not change the existing `_RESOLVED_RE` regex** in `mock_claude.py` (line 17). Iteration parsing reuses it; widening it can mis-extract agent names from resolved template paths.
+
+### Scope lock (binding)
+
+7. **Out of scope for every W-050 phase:**
+   - Refactoring any code under `src/worca/` (this plan adds *tests*, not source changes)
+   - Fixing pre-existing failing tests (CLAUDE.md: "Pre-existing failures in unrelated tests should be ignored")
+   - Modifying CLI flags or argparse definitions
+   - Modifying `.github/workflows/*.yml` to make coverage the default test job (see #11 below)
+   - Adding `--fail-under` thresholds (see #10)
+8. **Files this plan may touch:** `tests/integration/**`, `tests/mock_claude/**`, `.coveragerc`, the new `tests/integration/stubs/` directory, and `pyproject.toml` (only if a new dev dep is genuinely required). Touching anything outside this list requires explicit justification in the PR description.
+
+### Governance hook safety (Phase 2)
+
+9. **The pipeline itself runs under the very hooks Phase 2 tests.** A buggy hook change can lock the pipeline out of further commits. Phase 2 implementer must:
+   - Run hook unit tests before each commit: `pytest tests/test_pre_tool_use.py tests/test_post_tool_use.py tests/test_plan_check.py tests/test_guard.py tests/test_tracking.py tests/test_session.py`
+   - Abort the iteration if any unit test fails
+   - Never modify any file under `src/worca/claude_hooks/` or `src/worca/hooks/` — Phase 2 only adds *tests* that drive existing hook code
+
+### Coverage gating
+
+10. **Do not add `--fail-under` to `.coveragerc`, CI, shell scripts, or any tool config during W-050.** Coverage remains a measurement tool, not a gate, until all phases land. A separate post-merge phase 8 (out of scope here) will set per-module thresholds once data is available.
+11. **CI coverage runs as an opt-in side job, never the default.** Pipeline may add a new `python-coverage` job in `.github/workflows/test.yml` with `continue-on-error: true` and a 15-minute timeout. The existing `python-tests` job must remain unchanged. Do not swap `pytest tests/` for `WORCA_COVERAGE=1 pytest tests/` in any existing job.
+
+### Test runtime & timeouts
+
+12. **Coverage adds ~85% overhead.** New tests in Phases 1, 4, 6 that exercise multi-iteration runs must set `@pytest.mark.timeout(180)` explicitly. Do not change the global `timeout = 30` default in `pyproject.toml`.
+13. **Keep `delay_s` ≤ 0.05 in scenarios.** Each iteration of a per-iteration scenario adds wall time; high `delay_s` values inflate suite runtime quickly when combined with coverage overhead.
+
+### Phase-specific safeguards
+
+14. **Phase 1 — sanity-check the mock.** Each new test file (`test_implementer_tester_loop.py`, `test_reviewer_loop.py`, etc.) must include at least one assertion that the per-iteration mock *actually changes behavior between iterations* — e.g. verify iteration 1 returns different output than iteration 2 from the agent log. If the mock silently always returns the default, the entire phase tests nothing while passing.
+15. **Phase 3 — worktree-inside-worktree.** If the W-050 pipeline run itself uses `run_worktree.py`, Phase 3 tests will create worktrees inside an already-worktreed run. Tests must:
+    - Use unique worktree paths (`tmp_path / f"wt-{uuid4().hex}"`)
+    - Not assume the parent repo's branch is `master`
+    - Use `realpath` when comparing worktree paths (macOS canonicalizes `/var/...` to `/private/var/...`)
+    - Clean up via `git worktree remove --force` in a pytest fixture finalizer, *even on test failure*
+16. **Phase 5 — stub binaries must never modify global PATH.** The pipeline uses real `bd` for issue tracking; a globally-shadowed `bd` breaks the pipeline mid-run. Stubs must be activated per-test via `monkeypatch.setenv("PATH", ...)`. Same rule for the `gh` stub. Do not write to `~/.bashrc`, `~/.zshrc`, or any persistent PATH location.
+17. **Phase 6 — UI server lifecycle.** Tests must bind to port 0 (ephemeral) and discover the assigned port from `server.address`. The child process must be killed in a fixture finalizer (`finally: proc.kill(); proc.wait(timeout=5)`) so a hung server doesn't leak across tests.
+
+### `cli/init.py` measurement artifact (do not "fix")
+
+18. **The 0% line coverage on `src/worca/cli/init.py` is intentional.** `worca init` runs as a non-coverage-wrapped subprocess in the fixture's project setup (conftest.py:46) — by design, because wrapping the init step would multiply runtime by N (one init per test). Pipeline must not modify the init invocation in conftest.py to wrap with coverage.
+
+### Recommended pipeline invocation
+
+```bash
+# From the worca-cc repo, on a clean master:
+python -m worca.scripts.run_worktree \
+    --source gh:issue:123 \
+    --branch master \
+    --prompt "Implement Phase 0 of W-050: fixture extensions"
+```
+
+Run one phase per pipeline invocation. After phase 0 merges, repeat with `--prompt "Implement Phase 1 of W-050: agent retry loops"`, and so on. Using `run_worktree.py` (not in-place `run_pipeline.py`) is mandatory because Phase 3's worktree tests would otherwise clobber the active run's `.worca/runs/` directory.
+
 ## Design
 
 ### 1. Fixture extensions (Phase 0 — foundation)
