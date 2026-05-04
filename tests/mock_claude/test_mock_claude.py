@@ -341,3 +341,51 @@ def test_backcompat_resolved_template_path_falls_back_to_flat_directive():
     assert result.returncode == 0
     text = next(ev for ev in _lines(result) if ev["type"] == "result")["result"]
     assert text == "planner via resolved"
+
+
+# ===========================================================================
+# Structured output pass-through (W-050 Phase 1 prereq)
+# ===========================================================================
+#
+# The runner extracts ``structured_output`` from the result envelope
+# (src/worca/orchestrator/runner.py:1058) and uses it as the post-stage
+# result dict — this is how tester ``{"passed": True}`` and reviewer
+# ``{"outcome": "approve"}`` drive loop decisions.
+
+def test_structured_output_emitted_when_provided():
+    scenario = {"default": {"action": "succeed", "delay_s": 0,
+                            "structured_output": {"passed": True}}}
+    result = _run(scenario)
+    ev = next(e for e in _lines(result) if e["type"] == "result")
+    assert ev["structured_output"] == {"passed": True}
+
+
+def test_structured_output_omitted_when_not_provided():
+    """Pre-W-050 scenarios without structured_output must not gain the key."""
+    scenario = {"default": {"action": "succeed", "delay_s": 0}}
+    result = _run(scenario)
+    ev = next(e for e in _lines(result) if e["type"] == "result")
+    assert "structured_output" not in ev
+
+
+def test_structured_output_resolves_per_iteration():
+    scenario = {
+        "agents": {
+            "tester": {
+                "iter_1": {"action": "succeed", "delay_s": 0,
+                           "structured_output": {"passed": False,
+                                                  "failures": [{"test_name": "t"}]}},
+                "iter_2": {"action": "succeed", "delay_s": 0,
+                           "structured_output": {"passed": True}},
+            }
+        },
+        "default": {"action": "succeed", "delay_s": 0},
+    }
+    iter1 = _run(scenario, agent=_resolved_path("test", "tester", 1))
+    iter2 = _run(scenario, agent=_resolved_path("test", "tester", 2))
+    assert next(e for e in _lines(iter1) if e["type"] == "result")["structured_output"] == {
+        "passed": False, "failures": [{"test_name": "t"}],
+    }
+    assert next(e for e in _lines(iter2) if e["type"] == "result")["structured_output"] == {
+        "passed": True,
+    }

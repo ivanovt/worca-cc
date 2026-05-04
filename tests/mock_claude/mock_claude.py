@@ -128,14 +128,25 @@ def main():
 
     if action == "succeed":
         result_text = directive.get("result_text", "Done.")
-        print(json.dumps({
+        envelope = {
             "type": "result",
             "subtype": "success",
             "result": result_text,
             "num_turns": 1,
             "total_cost_usd": 0.001,
             "duration_ms": int(delay * 1000),
-        }))
+        }
+        # Per-stage structured output. The runner extracts ``structured_output``
+        # from the result envelope (orchestrator/runner.py:1058) — directives
+        # that set this drive the post-stage pipeline logic
+        # (e.g. ``{"passed": True}`` for tester, ``{"outcome": "approve"}``
+        # for reviewer). When omitted, the runner reads the raw envelope
+        # and ``passed`` / ``outcome`` default to falsy — the pre-W-050
+        # behavior, kept for backward compat.
+        structured = directive.get("structured_output")
+        if structured is not None:
+            envelope["structured_output"] = structured
+        print(json.dumps(envelope))
         sys.stdout.flush()
 
     elif action == "fail":
