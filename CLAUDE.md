@@ -141,6 +141,16 @@ Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing 
 
 **Playwright note:** Browser e2e tests must run with `--workers=1` (serial). Parallel workers cause flaky failures due to browser context contamination between isolated test servers.
 
+**Coverage runs** (Python):
+
+```bash
+WORCA_COVERAGE=1 pytest tests/integration/   # subprocess-instrumented run
+coverage combine && coverage report          # merge fragments + report
+coverage html                                  # htmlcov/index.html
+```
+
+The integration suite uses subprocess-level coverage — each pipeline run is wrapped with `coverage run --parallel-mode` by `tests/integration/conftest.py:_wrap_with_coverage`, producing one fragment per pipeline subprocess. Setting `WORCA_COVERAGE=1` activates this AND auto-disables `pytest-cov` for the run (via the `pytest_load_initial_conftests` hook in `tests/conftest.py`) — without that, pytest-cov's session_finish hook silently consumes the fragments before `coverage combine` can merge them. Without `WORCA_COVERAGE=1`, the standard `pytest --cov=worca` flow stays available for unit-test coverage.
+
 ## Governance
 
 - Only the **guardian** agent may run `git commit` (enforced by pre_tool_use hook checking `WORCA_AGENT` env var)
