@@ -106,11 +106,17 @@ def pipeline_env(tmp_path):
     _stub_log_path = tmp_path / "stub_invocations.jsonl"
     _stub_response_files: dict = {}
 
-    def _base_env(scenario_path: Path) -> dict:
+    def _base_env_common() -> dict:
+        """Scenario-independent env shared by pipeline runs and hook subprocesses.
+
+        Sets the mock-claude binary, governance defaults, beads skip, and (under
+        WORCA_COVERAGE=1) COVERAGE_FILE so coverage fragments land in REPO_ROOT
+        instead of the per-test tmpdir. Per-test ``_overrides`` are applied last
+        so they always win.
+        """
         env = {
             **os.environ,
             "WORCA_CLAUDE_BIN": f"{sys.executable} {MOCK_CLAUDE_BIN}",
-            "MOCK_CLAUDE_SCENARIO": str(scenario_path),
             "WORCA_AGENT": "",  # not in agent mode — hooks should not enforce agent guards
             "WORCA_SKIP_BEADS": "1",  # bd binary may not work in CI
         }
@@ -120,8 +126,12 @@ def pipeline_env(tmp_path):
             # finds every fragment regardless of which tmpdir the test ran in.
             env["COVERAGE_FILE"] = str(REPO_ROOT / ".coverage")
 
-        # Apply per-test overrides last so they win.
         env.update(_overrides)
+        return env
+
+    def _base_env(scenario_path: Path) -> dict:
+        env = _base_env_common()
+        env["MOCK_CLAUDE_SCENARIO"] = str(scenario_path)
         return env
 
     def run(scenario: dict, prompt: str = "test task",
@@ -168,6 +178,40 @@ def pipeline_env(tmp_path):
             cmd, cwd=str(project), env=_base_env(scenario_path),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True,  # own process group so signals target full tree
+        )
+
+    def run_hook(
+        name: str,
+        payload: dict,
+        env_overrides: dict | None = None,
+        timeout: int = 10,
+    ) -> subprocess.CompletedProcess:
+        """Invoke a claude_hooks entry-point as a subprocess (W-050 Phase 2).
+
+        Spawns ``python -m worca.claude_hooks.<name>`` with ``payload`` piped as
+        JSON on stdin — matching how Claude Code invokes hooks at runtime — and
+        returns the CompletedProcess so tests can assert on returncode / stderr.
+
+        The command is wrapped via ``_wrap_with_coverage`` and the env carries
+        ``COVERAGE_FILE`` under WORCA_COVERAGE=1, so hook subprocesses produce
+        coverage fragments alongside pipeline runs. ``set_governance_agent`` /
+        ``enable_beads`` overrides apply just like for ``run()``.
+
+        Args:
+            name: hook module suffix, e.g. ``"pre_tool_use"`` or ``"post_tool_use"``.
+            payload: dict serialized to stdin JSON (the hook's ``data`` input).
+            env_overrides: per-call env additions, applied after fixture overrides.
+            timeout: subprocess timeout in seconds.
+        """
+        cmd = [sys.executable, "-m", f"worca.claude_hooks.{name}"]
+        cmd = _wrap_with_coverage(cmd)
+        env = _base_env_common()
+        if env_overrides:
+            env.update(env_overrides)
+        return subprocess.run(
+            cmd, cwd=str(project), env=env,
+            input=json.dumps(payload), text=True,
+            capture_output=True, timeout=timeout,
         )
 
     def add_webhook(url: str) -> None:
@@ -227,6 +271,7 @@ def pipeline_env(tmp_path):
         worca_dir=worca_dir,
         run=run,
         run_background=run_background,
+        run_hook=run_hook,
         add_webhook=add_webhook,
         enable_stages=enable_stages,
         set_governance_agent=set_governance_agent,

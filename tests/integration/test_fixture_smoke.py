@@ -169,3 +169,69 @@ def test_stub_log_records_invocations_via_path(pipeline_env, monkeypatch):
     assert len(invocations) == 1
     assert invocations[0]["binary"] == "bd"
     assert invocations[0]["argv"] == ["ready", "--json", "id"]
+
+
+# ---------------------------------------------------------------------------
+# W-050 Phase 2 — run_hook smoke tests
+# ---------------------------------------------------------------------------
+
+
+def test_run_hook_benign_payload_exits_zero(pipeline_env):
+    """Plumbing check: pre_tool_use over a Read tool call returns exit 0.
+
+    Read isn't a guarded operation and plan_check only inspects Write/Edit, so
+    a happy-path call must succeed. This verifies the subprocess wiring (cwd,
+    stdin JSON, env, coverage wrapping) without depending on governance state.
+    """
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Read", "tool_input": {"file_path": "README.md"}},
+    )
+    assert proc.returncode == 0, (
+        f"unexpected returncode: {proc.returncode}\nstderr: {proc.stderr[:500]}"
+    )
+
+
+def test_run_hook_honors_set_governance_agent(pipeline_env):
+    """plan_check enforces only when WORCA_AGENT is set — verifies the
+    set_governance_agent override reaches the hook subprocess.
+
+    With WORCA_AGENT="implementer" and no MASTER_PLAN.md in the project, a
+    Write to a .py file must be blocked by check_plan (exit 2, "Blocked" in
+    stderr). Without set_governance_agent, the same call would exit 0 because
+    plan_check returns early when WORCA_AGENT is empty.
+    """
+    pipeline_env.set_governance_agent("implementer")
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Write", "tool_input": {
+            "file_path": "src/foo.py",
+            "content": "print('hi')",
+        }},
+    )
+    assert proc.returncode == 2, (
+        f"expected block (exit 2), got {proc.returncode}\n"
+        f"stderr: {proc.stderr[:500]}"
+    )
+    assert "Blocked" in proc.stderr or "plan" in proc.stderr.lower()
+
+
+def test_run_hook_env_overrides_apply_per_call(pipeline_env):
+    """env_overrides on a single run_hook call should win over fixture defaults.
+
+    Sets WORCA_AGENT via env_overrides (without going through
+    set_governance_agent) and confirms plan_check engages — proves the per-call
+    override path works independently of the persistent _overrides dict.
+    """
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Write", "tool_input": {
+            "file_path": "src/foo.py",
+            "content": "x = 1",
+        }},
+        env_overrides={"WORCA_AGENT": "implementer"},
+    )
+    assert proc.returncode == 2, (
+        f"expected block (exit 2), got {proc.returncode}\n"
+        f"stderr: {proc.stderr[:500]}"
+    )

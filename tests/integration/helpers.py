@@ -34,6 +34,8 @@ class PipelineEnv:
     enable_stages: Callable = None  # type: ignore[assignment]
     set_governance_agent: Callable = None  # type: ignore[assignment]
     enable_beads: Callable = None  # type: ignore[assignment]
+    # W-050 Phase 2 helper — drives a claude_hooks entry-point as a subprocess.
+    run_hook: Callable = None  # type: ignore[assignment]
     stubs_dir: Optional[Path] = None
     stub_log_path: Optional[Path] = None
     stub_response_files: dict = field(default_factory=dict)
