@@ -19,6 +19,31 @@ from tests.integration.helpers import (
 
 MOCK_CLAUDE_BIN = Path(__file__).parent.parent / "mock_claude" / "mock_claude.py"
 
+# Repo root — used to locate .coveragerc and the project source dir for
+# coverage-tracked subprocess runs.
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _coverage_enabled() -> bool:
+    return os.environ.get("WORCA_COVERAGE") == "1"
+
+
+def _wrap_with_coverage(cmd: list) -> list:
+    """If WORCA_COVERAGE=1, wrap a `python -m <module>` command with coverage.
+
+    Turns `[python, -m, worca.scripts.run_pipeline, ...]` into
+    `[python, -m, coverage, run, --rcfile=.coveragerc, --parallel-mode,
+      -m, worca.scripts.run_pipeline, ...]`. Coverage data files land in
+    REPO_ROOT/.coverage.<host>.<pid>.<rand> and are merged with `coverage combine`.
+    """
+    if not _coverage_enabled() or len(cmd) < 3 or cmd[1] != "-m":
+        return cmd
+    rcfile = REPO_ROOT / ".coveragerc"
+    return [
+        cmd[0], "-m", "coverage", "run",
+        f"--rcfile={rcfile}", "--parallel-mode",
+    ] + cmd[1:]
+
 
 # ---------------------------------------------------------------------------
 # pipeline_env fixture
@@ -71,13 +96,19 @@ def pipeline_env(tmp_path):
     _scenario_counter = [0]
 
     def _base_env(scenario_path: Path) -> dict:
-        return {
+        env = {
             **os.environ,
             "WORCA_CLAUDE_BIN": f"{sys.executable} {MOCK_CLAUDE_BIN}",
             "MOCK_CLAUDE_SCENARIO": str(scenario_path),
             "WORCA_AGENT": "",  # not in agent mode — hooks should not enforce agent guards
             "WORCA_SKIP_BEADS": "1",  # bd binary may not work in CI
         }
+        if _coverage_enabled():
+            # Coverage subprocesses write .coverage.<host>.<pid>.<rand> next to
+            # CWD by default. Force them into REPO_ROOT so `coverage combine`
+            # finds every fragment regardless of which tmpdir the test ran in.
+            env["COVERAGE_FILE"] = str(REPO_ROOT / ".coverage")
+        return env
 
     def run(scenario: dict, prompt: str = "test task",
             timeout: int = 60, extra_args=None) -> PipelineResult:
@@ -89,6 +120,7 @@ def pipeline_env(tmp_path):
                "--prompt", prompt]
         if extra_args:
             cmd.extend(extra_args)
+        cmd = _wrap_with_coverage(cmd)
 
         result = subprocess.run(
             cmd, cwd=str(project), env=_base_env(scenario_path),
@@ -116,6 +148,7 @@ def pipeline_env(tmp_path):
                "--prompt", prompt]
         if extra_args:
             cmd.extend(extra_args)
+        cmd = _wrap_with_coverage(cmd)
 
         return subprocess.Popen(
             cmd, cwd=str(project), env=_base_env(scenario_path),

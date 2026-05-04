@@ -41,3 +41,9 @@ worca-ui/debug-capture.mjs
 worca-ui/app/main.bundle.js
 worca-ui/app/main.bundle.js.map
 worca-ui/server/schemas/
+
+# Coverage artifacts
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
