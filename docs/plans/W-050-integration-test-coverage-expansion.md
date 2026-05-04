@@ -24,6 +24,78 @@ User-facing impact: the parts of the system that have failed in production (drop
 
 Extend the integration harness with per-iteration scenarios, governance-aware env vars, and stub `bd`/`gh` binaries. Then add ~70 tests across 13 new files, organized into 7 phases. Net result: the suite grows from ~124 → ~195 tests (+57%) while closing the agent-loop, governance-live, worktree, beads, learn, resume, and UI-API blind spots.
 
+## Baseline Coverage (2026-05-04)
+
+Measured with `pytest-cov` + `coverage` (branch mode, subprocess-aware). Captured before any phase of W-050 lands so we can quantify each phase's contribution.
+
+**Run:** 114 passed / 45 skipped / 0 failed, 6:27 wall time (vs ~3:30 without coverage — ~85% overhead).
+**Total: 32.0% line, 13% branch (BrPart 338).** 6,783 statements / 2,586 branches across `src/worca/`.
+
+### Best-covered modules (state-machine core works)
+
+| Module | Cover |
+|---|---|
+| `orchestrator/stages.py` | 94.5% |
+| `utils/env.py` | 87.1% |
+| `orchestrator/overlay.py` | 79.6% |
+| `utils/settings.py` | 68.8% |
+| `orchestrator/control.py` | 68.1% |
+| `orchestrator/error_classifier.py` | 66.4% |
+| `events/types.py` | 61.0% |
+| `events/emitter.py` | 59.5% |
+| `scripts/run_pipeline.py` | 57.9% |
+| `utils/claude_cli.py` | 56.2% |
+| `orchestrator/runner.py` | **50.6%** (1,582 stmts — the big one) |
+
+### Zero-coverage modules — exact targets of W-050
+
+**Hook layer (Phase 2):** every file in `claude_hooks/` (post/pre tool use, session_*, subagent_*, user_prompt_submit, stop, pre_compact) and `hooks/` (guard, plan_check, tracking, session, prompt) at **0.0%**. Plus `events/hook_emitter.py` and `events/dispatch_external.py` at 0%. Caused by `WORCA_AGENT=""` in the fixture short-circuiting governance hooks.
+
+**Worktree / parallel / sync (Phase 3):**
+- `scripts/run_worktree.py` (167 lines), `scripts/run_parallel.py` (111 lines), `scripts/sync_commit.py` (118 lines), `scripts/sync_pr.py` (83 lines), `scripts/worca_lifecycle.py` (152 lines) — all **0.0%**
+- `orchestrator/cleanup.py`, `cli/cleanup.py` — **0.0%**
+
+**Disabled stages (Phase 1):** `scripts/preflight_checks.py` and `scripts/run_learn.py` at 0% — preflight + learn disabled in fixture.
+
+**CLI surface:** `cli/init.py` (446 lines) and the rest of `cli/*` at 0%. Note: `worca init` *is* invoked once per test, but as a non-coverage-wrapped subprocess. This is a measurement artifact; easy to fix by wrapping the init step too.
+
+### Partial-coverage modules — high-value lift targets
+
+| Module | Cover | Phase |
+|---|---|---|
+| `orchestrator/registry.py` | 11.3% | (incidental) |
+| `utils/git.py` | 17.3% | Phase 3 |
+| `orchestrator/work_request.py` | 19.0% | Phase 5 |
+| `utils/gh_issues.py` | 21.6% | Phase 5 |
+| `orchestrator/resume.py` | 22.6% | Phase 4 |
+| `utils/beads.py` | 32.4% | Phase 5 |
+| `orchestrator/templates.py` | 40.1% | Phase 1 (overlay reuse) |
+| `orchestrator/prompt_builder.py` | 43.7% | Phase 1 |
+| `state/status.py` | 46.6% | Phase 1/4 |
+| `events/webhook.py` | 47.0% | Phase 6 |
+| `utils/token_usage.py` | 51.1% | Phase 1 |
+| `orchestrator/runner.py` | 50.6% | Phase 1 (biggest single move) |
+
+### Branch coverage detail
+
+`runner.py` carries **726 branches with 169 partial** — the BrPart column. Many of those partials are the "if condition X happens during retry" cases that line coverage counts as "covered." This is exactly the case branch coverage was designed for, and where Phase 1 (agent retry loops) will move the most.
+
+### Expected post-W-050
+
+Rough estimate: **32% → 60-65% line coverage**, with branch coverage moving proportionally more in `runner.py`, `prompt_builder.py`, and `resume.py`. Each phase commit should include the post-phase coverage delta in its description so we can attribute movement.
+
+### How to reproduce locally
+
+```bash
+pip install -e ".[dev]"                   # installs pytest-cov + coverage[toml]
+WORCA_COVERAGE=1 pytest tests/integration/ --timeout=120
+coverage combine
+coverage report                            # terminal
+coverage html                              # htmlcov/index.html
+```
+
+Setting `WORCA_COVERAGE=1` activates `_wrap_with_coverage()` in `tests/integration/conftest.py` — pipeline subprocesses get wrapped with `coverage run --parallel-mode`. Without the env var, the suite runs at normal speed.
+
 ## Design
 
 ### 1. Fixture extensions (Phase 0 — foundation)
