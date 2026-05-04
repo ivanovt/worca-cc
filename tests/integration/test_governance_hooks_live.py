@@ -109,6 +109,104 @@ def test_planner_blocked_from_writing_source_files(pipeline_env):
 
 
 # ---------------------------------------------------------------------------
+# guard — read-only roles (reviewer/tester/coordinator/plan_reviewer)
+# ---------------------------------------------------------------------------
+
+
+def test_reviewer_blocked_from_writing_files(pipeline_env):
+    """Reviewer is read-only — any Write/Edit must be blocked, regardless of
+    file type. Guards against the W-039 incident where reviewer was observed
+    writing files to verify claims (now part of the read-only agent list)."""
+    pipeline_env.set_governance_agent("reviewer")
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Write", "tool_input": {
+            "file_path": "notes.txt",
+            "content": "review notes",
+        }},
+    )
+    assert proc.returncode == 2
+    assert "reviewer" in proc.stderr.lower()
+    assert "read-only" in proc.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# guard — guardian source-file restriction (PRs, not patches)
+# ---------------------------------------------------------------------------
+
+
+def test_guardian_blocked_from_writing_source_files(pipeline_env):
+    """Guardian's job is creating PRs, not editing code — Write to .py is
+    blocked but .md is allowed (PR descriptions, release notes)."""
+    pipeline_env.set_governance_agent("guardian")
+
+    proc_py = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Write", "tool_input": {
+            "file_path": "src/feature.py",
+            "content": "x = 1",
+        }},
+    )
+    assert proc_py.returncode == 2, (
+        f"guardian must not write .py; got rc={proc_py.returncode}, "
+        f"stderr: {proc_py.stderr[:300]}"
+    )
+    assert "guardian" in proc_py.stderr.lower()
+
+    proc_md = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Write", "tool_input": {
+            "file_path": "RELEASE_NOTES.md",
+            "content": "# 0.1.0\n",
+        }},
+    )
+    assert proc_md.returncode == 0, (
+        f"guardian should be allowed to write .md; stderr: {proc_md.stderr[:300]}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# guard — WORCA_AGENT evasion blocked (governance bypass)
+# ---------------------------------------------------------------------------
+
+
+def test_env_evasion_blocked(pipeline_env):
+    """Attempting to unset WORCA_AGENT before running a restricted command
+    must be blocked — the role check would otherwise pass once the env var
+    is gone. The guard runs the evasion check on the *raw* command (not the
+    cd-stripped form) so left-of-`&&` evasions are caught."""
+    pipeline_env.set_governance_agent("implementer")
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Bash", "tool_input": {
+            "command": "unset WORCA_AGENT && echo bypass",
+        }},
+    )
+    assert proc.returncode == 2
+    assert "WORCA_AGENT" in proc.stderr or "evasion" in proc.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# guard — force push blocked (role-independent)
+# ---------------------------------------------------------------------------
+
+
+def test_force_push_blocked(pipeline_env):
+    """`git push --force` is blocked regardless of role — protects shared
+    branches from history rewrites. Runs as guardian to also confirm the
+    block fires even for the role normally allowed to push."""
+    pipeline_env.set_governance_agent("guardian")
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Bash", "tool_input": {
+            "command": "git push --force origin master",
+        }},
+    )
+    assert proc.returncode == 2
+    assert "force" in proc.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
 # tracking — subagent dispatch denylist
 # ---------------------------------------------------------------------------
 
