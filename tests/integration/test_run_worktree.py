@@ -19,6 +19,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 
 _DEFAULT_SCENARIO = {"default": {"action": "succeed", "delay_s": 0}}
@@ -127,11 +129,15 @@ def test_run_worktree_branch_argument_targets_specified_base(pipeline_env):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.timeout(180)
 def test_run_worktree_guide_argument_accepted(pipeline_env, tmp_path):
     """``--guide`` is repeatable and resolved to absolute paths before being
     forwarded to the pipeline. We assert run_worktree accepts the flag and
     reports the worktree as launched — verifying the pipeline actually picked
-    up the guide is run_pipeline.py's domain (already covered by Phase 1)."""
+    up the guide is run_pipeline.py's domain (already covered by Phase 1).
+
+    Marked ``timeout(180)`` per plan §12 — this test spawns a full pipeline
+    subprocess and routinely exceeds the global 30s default in CI."""
     guide_a = tmp_path / "guide_a.md"
     guide_a.write_text("# A\n")
     guide_b = tmp_path / "guide_b.md"
