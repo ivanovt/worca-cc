@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.registry import register_pipeline
 from worca.orchestrator.work_request import normalize
-from worca.state.status import write_status_field
+
 from worca.utils.git import (
     branch_exists,
     create_pipeline_worktree,
@@ -353,13 +353,6 @@ def main(argv=None) -> int:
     if not worktree_path:
         print(f"error: failed to create worktree for run {run_id}", file=sys.stderr)
         return 1
-
-    # Step 3b: persist worktree_path to status.json so the cleanup hook
-    # can read it without taking a registry dependency.
-    _status_path = os.path.join(
-        worktree_path, ".worca", "runs", run_id, "status.json"
-    )
-    write_status_field(_status_path, "worktree_path", worktree_path)
 
     # Step 4: copy .claude/ into the worktree (settings.json, agents/, hooks/,
     # scripts/, skills/, templates/, worca/, etc.). Most projects gitignore

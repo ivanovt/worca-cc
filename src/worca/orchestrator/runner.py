@@ -4,6 +4,7 @@ Orchestrates the full pipeline from plan through PR.
 """
 
 import atexit
+import dataclasses
 import json
 import os
 import re
@@ -1414,13 +1415,7 @@ def run_pipeline(
             create_branch(branch_name)
             _branch_just_created = True
 
-        wr_dict = {
-            "source_type": work_request.source_type,
-            "title": work_request.title,
-            "description": work_request.description,
-            "source_ref": work_request.source_ref,
-            "priority": work_request.priority,
-        }
+        wr_dict = dataclasses.asdict(work_request)
         status = init_status(wr_dict, branch_name, git_head=get_current_git_head(), pipeline_template=pipeline_template)
 
         if worktree:

@@ -4326,3 +4326,47 @@ def test_resolve_project_root_worktree_mode_relative_registry_base():
         registry_base=".worca",
     )
     assert result == cwd
+
+
+def test_wr_dict_includes_plan_path(tmp_path, monkeypatch):
+    """plan_path from WorkRequest must be persisted in status['work_request'].
+
+    runner.py builds wr_dict from WorkRequest fields before calling init_status().
+    If plan_path is omitted from wr_dict, a resumed gh-issue run loses its
+    auto-detected plan link (run_pipeline.py:191 reads wr.get("plan_path")).
+    """
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan_path = "docs/plans/W-042-my-feature.md"
+    plan_file = tmp_path / "W-042-my-feature.md"
+    plan_file.write_text("# Plan\n")
+
+    settings = _make_template_test_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir()
+    status_path = str(worca_dir / "status.json")
+    monkeypatch.chdir(tmp_path)
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"), \
+         patch("worca.orchestrator.runner.gh_issue_start"), \
+         patch("worca.orchestrator.runner.gh_issue_complete"):
+        result = run_pipeline(
+            WorkRequest(
+                source_type="github_issue",
+                source_ref="gh:42",
+                title="My feature",
+                plan_path=plan_path,
+            ),
+            plan_file=str(plan_file),
+            settings_path=str(settings),
+            status_path=status_path,
+        )
+
+    assert result["work_request"]["plan_path"] == plan_path

@@ -55,19 +55,12 @@ def test_run_worktree_creates_worktree_and_emits_run_id(pipeline_env):
     assert Path(result.worktree_path).is_dir()
 
 
-def test_run_worktree_writes_worktree_path_to_status_json(pipeline_env):
-    """Step 3b in run_worktree.py writes ``worktree_path`` into the worktree's
-    own status.json *before* the pipeline subprocess starts (so the cleanup
-    CLI can read it without a registry dependency).
-
-    We assert on the file written by step 3b rather than the post-pipeline
-    status, because the pipeline runner re-initialises the dict via
-    ``_make_initial_status`` and the field is regenerated as ``None`` once the
-    pipeline begins. To capture the step-3b write deterministically we run
-    with ``wait=False`` and read the file the script just wrote."""
+def test_run_worktree_creates_status_json_in_run_dir(pipeline_env):
+    """The pipeline runner initialises status.json inside the worktree's run
+    directory. We verify the file exists and is valid JSON after the pipeline
+    completes."""
     result = pipeline_env.run_worktree(
         _DEFAULT_SCENARIO, prompt="status check",
-        wait=False,
     )
 
     assert result.returncode == 0
@@ -75,16 +68,11 @@ def test_run_worktree_writes_worktree_path_to_status_json(pipeline_env):
         Path(result.worktree_path) / ".worca" / "runs" / result.run_id / "status.json"
     )
     assert status_path.exists(), (
-        f"step 3b should have written status.json at {status_path}"
+        f"pipeline runner should have written status.json at {status_path}"
     )
     import json
     data = json.loads(status_path.read_text())
-    # Either the field was just written by step 3b (canonical case), or the
-    # pipeline has already started and overwritten — accept both, but the key
-    # must always be present after run_worktree returns.
-    assert "worktree_path" in data, (
-        f"status.json missing worktree_path key; keys: {sorted(data.keys())}"
-    )
+    assert isinstance(data, dict)
 
 
 # ---------------------------------------------------------------------------

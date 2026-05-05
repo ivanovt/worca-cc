@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 import pytest
+
+from tests.integration.helpers import run_and_act, send_sigkill
 
 
 def _setup_stub_path(monkeypatch, pipeline_env) -> None:
@@ -260,11 +263,13 @@ def test_pipeline_with_source_gh_issue_uses_extracted_plan_link(
     assert wr.get("source_type") == "github_issue"
     assert wr.get("source_ref") == "gh:42"
 
-    # The runner promotes the auto-detected plan_path into status.plan_file
-    # (top-level) and marks PLAN as skipped — that's the persisted evidence
-    # that auto-detection ran. NB: ``plan_path`` is currently dropped from
-    # the persisted ``work_request`` dict (runner.py:1417 only copies five
-    # fields), so we assert on what actually reaches status.json.
+    # The runner persists the auto-detected plan_path in work_request (nested)
+    # and promotes it to status.plan_file (top-level). PLAN is auto-completed
+    # (skipped) when plan_file is set at pipeline start.
+    assert wr.get("plan_path", "").endswith("W-050-phase5.md"), (
+        f"work_request.plan_path should be persisted in status; "
+        f"got plan_path={wr.get('plan_path')!r}\nwork_request: {wr}"
+    )
     assert result.status.get("plan_file", "").endswith("W-050-phase5.md"), (
         f"status.plan_file should reflect the auto-detected plan link; "
         f"got plan_file={result.status.get('plan_file')!r}\n"
@@ -276,4 +281,107 @@ def test_pipeline_with_source_gh_issue_uses_extracted_plan_link(
     )
     assert plan_stage.get("skipped") is True, (
         f"PLAN stage should carry skipped=True; got {plan_stage}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Resume: plan_path preserved, PLAN stays skipped (regression for the
+# runner.py plan_path persistence fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(180)
+@pytest.mark.skipif(sys.platform == "win32", reason="signal-based tests require Unix")
+def test_gh_issue_plan_path_preserved_on_resume(
+    pipeline_env, monkeypatch, tmp_path
+):
+    """Regression test for runner.py:1417 plan_path persistence fix.
+
+    Before the fix, ``wr_dict`` was built from only 5 hard-coded fields and
+    ``plan_path`` was silently dropped, so a resumed gh-issue run always saw
+    ``plan_path=None`` and could re-run the PLAN stage.  After the fix
+    (``dataclasses.asdict``), ``plan_path`` survives in
+    ``status['work_request']``.  On resume the runner loads the existing
+    status (which already has PLAN completed/skipped) so PLAN is never
+    re-executed."""
+    plans_dir = pipeline_env.project / "docs" / "plans"
+    plans_dir.mkdir(parents=True, exist_ok=True)
+    plan_file = plans_dir / "W-050-resume-regression.md"
+    plan_file.write_text("# Resume regression plan\n")
+
+    response_file = tmp_path / "gh_responses.json"
+    response_file.write_text(json.dumps({
+        "issue view 77 --json title,body": {
+            "stdout": json.dumps({
+                "title": "Resume regression GH issue",
+                "body": (
+                    "## Plan\n\n"
+                    "[the plan]"
+                    "(https://github.com/x/y/blob/main/docs/plans/W-050-resume-regression.md)\n"
+                ),
+            }),
+            "exit": 0,
+        },
+        "default": {"stdout": "", "exit": 0},
+    }))
+
+    pipeline_env.enable_beads()
+    monkeypatch.setenv("WORCA_STUB_GH_RESPONSE_FILE", str(response_file))
+
+    # Kill during implement — by then PLAN is already completed/skipped.
+    first = run_and_act(
+        pipeline_env,
+        {
+            "agents": {"implementer": {"action": "hang"}},
+            "default": {"action": "succeed", "delay_s": 0.05},
+        },
+        send_sigkill,
+        act_after_stage="implement",
+        timeout=20,
+        extra_args=["--source", "gh:issue:77"],
+    )
+
+    # SIGKILL leaves the run non-terminal.
+    assert first.status.get("pipeline_status") not in ("completed", "failed", "interrupted"), (
+        f"first run must be non-terminal after SIGKILL; "
+        f"got {first.status.get('pipeline_status')!r}"
+    )
+
+    # plan_path must be persisted in work_request (was always None before fix).
+    wr = first.status.get("work_request", {})
+    assert wr.get("plan_path", "").endswith("W-050-resume-regression.md"), (
+        f"work_request.plan_path not persisted; got: {wr.get('plan_path')!r}"
+    )
+
+    # PLAN was auto-completed/skipped before implement started.
+    plan_stage = first.status.get("stages", {}).get("plan", {})
+    assert plan_stage.get("status") == "completed"
+    assert plan_stage.get("skipped") is True, (
+        f"PLAN should be skipped before implement stage; got {plan_stage}"
+    )
+
+    # Resume to completion.
+    resumed = pipeline_env.run(
+        {"default": {"action": "succeed", "delay_s": 0.05}},
+        extra_args=["--resume"],
+        timeout=60,
+    )
+    assert resumed.returncode == 0, (
+        f"resume should complete cleanly; rc={resumed.returncode}\n"
+        f"stderr: {resumed.stderr[:400]}"
+    )
+    assert resumed.status.get("pipeline_status") == "completed"
+
+    # plan_path must survive the resume.
+    wr_resumed = resumed.status.get("work_request", {})
+    assert wr_resumed.get("plan_path", "").endswith("W-050-resume-regression.md"), (
+        f"plan_path should be preserved across resume; "
+        f"got: {wr_resumed.get('plan_path')!r}"
+    )
+
+    # PLAN must remain completed/skipped — never re-run.
+    plan_stage_resumed = resumed.status.get("stages", {}).get("plan", {})
+    assert plan_stage_resumed.get("status") == "completed"
+    assert plan_stage_resumed.get("skipped") is True, (
+        f"PLAN should remain skipped after resume; got {plan_stage_resumed}"
     )
