@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseArgs } from './worca-ui.js';
+import { buildSpawnArgs, parseArgs } from './worca-ui.js';
 
 describe('parseArgs', () => {
   it('sets global flag when --global is passed', () => {
@@ -122,5 +122,64 @@ describe('parseArgs', () => {
     expect(result.subAction).toBe('add');
     expect(result.projectPath).toBe('/tmp/proj');
     expect(result.projectName).toBe('my-slug');
+  });
+});
+
+const SCRIPT = '/fake/server/index.js';
+
+describe('buildSpawnArgs', () => {
+  it('always includes serverScript, --port, and --host', () => {
+    const args = buildSpawnArgs({
+      serverScript: SCRIPT,
+      port: 3401,
+      host: '0.0.0.0',
+      isGlobal: true,
+      projectPath: null,
+    });
+    expect(args[0]).toBe(SCRIPT);
+    const portIdx = args.indexOf('--port');
+    expect(portIdx).toBeGreaterThan(-1);
+    expect(args[portIdx + 1]).toBe('3401');
+    const hostIdx = args.indexOf('--host');
+    expect(hostIdx).toBeGreaterThan(-1);
+    expect(args[hostIdx + 1]).toBe('0.0.0.0');
+  });
+
+  it('pushes --global when isGlobal is true', () => {
+    const args = buildSpawnArgs({
+      serverScript: SCRIPT,
+      port: 3400,
+      host: '127.0.0.1',
+      isGlobal: true,
+      projectPath: null,
+    });
+    expect(args).toContain('--global');
+    expect(args).not.toContain('--project');
+  });
+
+  it('pushes --project <path> when isGlobal is false and projectPath is set', () => {
+    const args = buildSpawnArgs({
+      serverScript: SCRIPT,
+      port: 3400,
+      host: '127.0.0.1',
+      isGlobal: false,
+      projectPath: '/my/proj',
+    });
+    const idx = args.indexOf('--project');
+    expect(idx).toBeGreaterThan(-1);
+    expect(args[idx + 1]).toBe('/my/proj');
+    expect(args).not.toContain('--global');
+  });
+
+  it('omits both --global and --project when isGlobal is false and projectPath is null', () => {
+    const args = buildSpawnArgs({
+      serverScript: SCRIPT,
+      port: 3400,
+      host: '127.0.0.1',
+      isGlobal: false,
+      projectPath: null,
+    });
+    expect(args).not.toContain('--global');
+    expect(args).not.toContain('--project');
   });
 });
