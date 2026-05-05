@@ -69,4 +69,56 @@ describe('resolveLatestRunDir', () => {
     writeFileSync(join(runDir, 'pipeline.pid'), 'not-a-number', 'utf8');
     expect(resolveLatestRunDir(worcaDir)).toBe(worcaDir);
   });
+
+  it('worktree-only project returns worktree runDir', () => {
+    // No local runs/ at all; only a pipelines.d/ worktree registration with live PID
+    const wtDir = join(worcaDir, 'worktree-only-dir');
+    const runId = 'run-wt-latest-001';
+    const wtRunDir = join(wtDir, '.worca', 'runs', runId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(join(wtRunDir, 'pipeline.pid'), String(process.pid), 'utf8');
+
+    const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${runId}.json`),
+      JSON.stringify({ run_id: runId, worktree_path: wtDir }),
+      'utf8',
+    );
+
+    // FAILS with current code: current impl only looks in worcaDir/runs/ and
+    // falls back to worcaDir when nothing is found there.
+    expect(resolveLatestRunDir(worcaDir)).toBe(wtRunDir);
+  });
+
+  it('mixed local+worktree returns newest live-PID dir', () => {
+    // Local run (older ID, alphabetically earlier)
+    const localRunId = 'run-2026-01-01-local';
+    const localRunDir = join(worcaDir, 'runs', localRunId);
+    mkdirSync(localRunDir, { recursive: true });
+    writeFileSync(
+      join(localRunDir, 'pipeline.pid'),
+      String(process.pid),
+      'utf8',
+    );
+
+    // Worktree run (newer ID, alphabetically later → should win)
+    const wtRunId = 'run-2026-06-01-worktree';
+    const wtDir = join(worcaDir, 'worktree-newer-dir');
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(join(wtRunDir, 'pipeline.pid'), String(process.pid), 'utf8');
+
+    const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({ run_id: wtRunId, worktree_path: wtDir }),
+      'utf8',
+    );
+
+    // FAILS with current code: returns localRunDir because the worktree run
+    // is invisible (pipelines.d/ is never consulted).
+    expect(resolveLatestRunDir(worcaDir)).toBe(wtRunDir);
+  });
 });

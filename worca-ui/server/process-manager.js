@@ -201,12 +201,48 @@ export class ProcessManager {
       }
     }
 
+    // Also scan pipelines.d/ for worktree PIDs (worktree runs never appear in runs/)
+    const pipelinesDir = join(this.worcaDir, 'multi', 'pipelines.d');
+    if (existsSync(pipelinesDir)) {
+      try {
+        for (const entry of readdirSync(pipelinesDir)) {
+          if (!entry.endsWith('.json')) continue;
+          const runId = entry.slice(0, -5);
+          try {
+            const reg = JSON.parse(
+              readFileSync(join(pipelinesDir, entry), 'utf8'),
+            );
+            if (reg.worktree_path) {
+              const wtPidPath = join(
+                reg.worktree_path,
+                '.worca',
+                'runs',
+                runId,
+                'pipeline.pid',
+              );
+              if (existsSync(wtPidPath)) runIds.add(runId);
+            }
+          } catch {
+            /* ignore malformed registry entry */
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+
     for (const runId of runIds) {
       // Check if this run's process is alive
       const alive = this.getRunningPid(runId);
       if (alive) continue;
 
-      const statusPath = join(this.worcaDir, 'runs', runId, 'status.json');
+      // Route all paths through resolveRunContext so worktree runs use
+      // their worktree dir rather than the project-root runs/ dir.
+      const ctx = this.resolveRunContext(runId);
+      if (!ctx) continue;
+      const { runDir } = ctx;
+
+      const statusPath = join(runDir, 'status.json');
       if (!existsSync(statusPath)) continue;
 
       let status;
@@ -236,7 +272,7 @@ export class ProcessManager {
 
       // Append synthetic terminal event if none exists yet.
       // Use pipeline.run.interrupted for signal-killed runs, pipeline.run.failed otherwise.
-      const eventsPath = join(this.worcaDir, 'runs', runId, 'events.jsonl');
+      const eventsPath = join(runDir, 'events.jsonl');
       let hasTerminalEvent = false;
       if (existsSync(eventsPath)) {
         try {
@@ -269,7 +305,7 @@ export class ProcessManager {
         if (this.settingsPath) {
           dispatches.push(
             dispatchExternal({
-              runDir: join(this.worcaDir, 'runs', runId),
+              runDir,
               settingsPath: this.settingsPath,
               eventType,
               payload,
@@ -744,7 +780,9 @@ export class ProcessManager {
    * @param {string} runId
    */
   _killAgentSubprocess(runId) {
-    const pidPath = join(this.worcaDir, 'runs', runId, 'agent.pid');
+    const ctx = this.resolveRunContext(runId);
+    const runDir = ctx ? ctx.runDir : join(this.worcaDir, 'runs', runId);
+    const pidPath = join(runDir, 'agent.pid');
     if (!existsSync(pidPath)) return;
     try {
       const agentPid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);

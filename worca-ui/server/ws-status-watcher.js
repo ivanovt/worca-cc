@@ -37,9 +37,11 @@ const TERMINAL_STATUSES = new Set([
  * @returns {string}
  */
 export function resolveLatestRunDir(worcaDir) {
+  // Collect (runId → runDir) for all live runs from local runs/ and worktree pipelines.d/
+  const liveRuns = new Map();
+
   const runsDir = join(worcaDir, 'runs');
   if (existsSync(runsDir)) {
-    let latest = null;
     try {
       for (const entry of readdirSync(runsDir, { withFileTypes: true })) {
         if (!entry.isDirectory()) continue;
@@ -49,7 +51,7 @@ export function resolveLatestRunDir(worcaDir) {
           const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
           if (!Number.isNaN(pid) && pid > 0) {
             process.kill(pid, 0); // throws if dead
-            if (!latest || entry.name > latest) latest = entry.name;
+            liveRuns.set(entry.name, join(runsDir, entry.name));
           }
         } catch {
           /* dead process or invalid PID */
@@ -58,9 +60,45 @@ export function resolveLatestRunDir(worcaDir) {
     } catch {
       /* ignore */
     }
-    if (latest) return join(runsDir, latest);
   }
-  return worcaDir; // legacy fallback
+
+  // Also scan pipelines.d/ for worktree PIDs (worktree runs never appear in runs/)
+  const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
+  if (existsSync(pipelinesDir)) {
+    try {
+      for (const entry of readdirSync(pipelinesDir)) {
+        if (!entry.endsWith('.json')) continue;
+        const runId = entry.slice(0, -5);
+        try {
+          const reg = JSON.parse(
+            readFileSync(join(pipelinesDir, entry), 'utf8'),
+          );
+          if (!reg.worktree_path) continue;
+          const wtRunDir = join(reg.worktree_path, '.worca', 'runs', runId);
+          const pidPath = join(wtRunDir, 'pipeline.pid');
+          if (!existsSync(pidPath)) continue;
+          const pid = parseInt(readFileSync(pidPath, 'utf8').trim(), 10);
+          if (!Number.isNaN(pid) && pid > 0) {
+            process.kill(pid, 0); // throws if dead
+            liveRuns.set(runId, wtRunDir);
+          }
+        } catch {
+          /* dead process or invalid PID */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (liveRuns.size === 0) return worcaDir; // legacy fallback
+
+  // Return the runDir of the latest (alphabetically largest) live run ID
+  let latestId = null;
+  for (const id of liveRuns.keys()) {
+    if (!latestId || id > latestId) latestId = id;
+  }
+  return liveRuns.get(latestId);
 }
 
 /**
