@@ -24,11 +24,20 @@ import pytest
 
 def _setup_stub_path(monkeypatch, pipeline_env) -> None:
     """Prepend the stubs/ directory to PATH for the duration of the test only.
-    Plan rule #16 — must use monkeypatch (per-test scope), never global PATH."""
+    Plan rule #16 — must use monkeypatch (per-test scope), never global PATH.
+
+    Also clears ``worca.utils.env._extra_dirs`` for the test scope. That list
+    is populated at import time from ``shutil.which`` and gets prepended ahead
+    of the user PATH inside ``get_env()``; on dev machines with the real
+    ``bd`` installed it would shadow the stub. Clearing it per-test keeps the
+    in-process stub path winning regardless of the host environment.
+    """
     monkeypatch.setenv(
         "PATH", f"{pipeline_env.stubs_dir}{os.pathsep}{os.environ['PATH']}"
     )
     monkeypatch.setenv("WORCA_STUB_LOG", str(pipeline_env.stub_log_path))
+    import worca.utils.env as _env_module
+    monkeypatch.setattr(_env_module, "_extra_dirs", [])
 
 
 # ---------------------------------------------------------------------------
