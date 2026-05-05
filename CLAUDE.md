@@ -141,6 +141,26 @@ Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing 
 
 **Playwright note:** Browser e2e tests must run with `--workers=1` (serial). Parallel workers cause flaky failures due to browser context contamination between isolated test servers.
 
+**Coverage runs** (Python) use the centralized runner in `scripts/coverage.py`:
+
+```bash
+python scripts/coverage.py ci                                     # run + combine + JSON + XML + text
+python scripts/coverage.py run                                    # pytest under WORCA_COVERAGE=1
+python scripts/coverage.py combine                                # merge .coverage.* fragments
+python scripts/coverage.py report --format=text                   # terminal (default)
+python scripts/coverage.py report --format=json --out=cov.json    # augmented JSON
+python scripts/coverage.py report --format=html                   # htmlcov/
+python scripts/coverage.py compare --baseline=before.json --current=after.json
+```
+
+`ci` is the one-shot used locally and in CI: it erases stale state, runs pytest with `WORCA_COVERAGE=1`, combines fragments, and writes `coverage-out/coverage.json` (augmented schema with `summary`, `modules`, `omitted`, `raw`) plus `coverage-out/coverage.xml` (Cobertura-compatible). The pytest exit code is forwarded so CI fails on real test regressions even when coverage upload succeeds.
+
+`compare` diffs a current `coverage.json` against a saved baseline and prints per-module pp deltas — useful for per-phase tracking without bolting in a `--fail-under` gate. Threshold enforcement stays out of scope until baselines stabilize.
+
+The integration suite uses subprocess-level coverage — each pipeline run is wrapped with `coverage run --parallel-mode` by `tests/integration/conftest.py:_wrap_with_coverage`, producing one fragment per pipeline subprocess. Setting `WORCA_COVERAGE=1` activates this AND auto-disables `pytest-cov` for the run (via the `pytest_load_initial_conftests` hook in `tests/conftest.py`) — without that, pytest-cov's session_finish hook silently consumes the fragments before `coverage combine` can merge them. Without `WORCA_COVERAGE=1`, the standard `pytest --cov=worca` flow stays available for unit-test coverage.
+
+The raw `coverage` CLI still works for ad-hoc use (`coverage combine && coverage report`); the runner is just a thin orchestrator that handles the cleanup-and-combine sequencing and exposes a JSON shape stable enough for downstream tooling.
+
 ## Governance
 
 - Only the **guardian** agent may run `git commit` (enforced by pre_tool_use hook checking `WORCA_AGENT` env var)

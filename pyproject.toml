@@ -35,6 +35,9 @@ dev = [
     "coverage[toml]>=7.4",
     "ruff>=0.1.0",
     "jsonschema>=4.0",
+    # W-050 Phase 6 — UI server WebSocket integration tests use a thin
+    # synchronous client. Stdlib has no websocket primitive.
+    "websocket-client>=1.0",
 ]
 
 [tool.setuptools.packages.find]

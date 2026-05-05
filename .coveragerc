@@ -10,7 +10,7 @@ omit =
     */__pycache__/*
     */mock_claude.py
     */worca/__init__.py
-    */worca/**/test_*.py
+    */worca/utils/test_claude_cli.py
 
 [paths]
 source =

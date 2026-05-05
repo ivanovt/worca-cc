@@ -46,4 +46,6 @@ worca-ui/server/schemas/
 .coverage
 .coverage.*
 coverage.xml
+coverage.json
+coverage-out/
 htmlcov/
