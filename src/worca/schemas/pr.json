@@ -14,8 +14,7 @@
     }
   },
   "if": {
-    "properties": { "outcome": { "const": "success" } },
-    "required": ["outcome"]
+    "properties": { "outcome": { "const": "success" } }
   },
   "then": {
     "required": ["commit_sha"]

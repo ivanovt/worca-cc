@@ -1090,17 +1090,72 @@ def _extract_pr_fields_from_text(text) -> Optional[dict]:
 PRVerification = collections.namedtuple("PRVerification", ["ok", "reason"])
 
 
-def _verify_pr_stage(stage_output, baseline_head: str) -> PRVerification:
+def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> Optional[PRVerification]:
+    """Best-effort `gh pr view` check.
+
+    Confirms the PR actually exists on the hosting platform and that its URL
+    matches the URL guardian reported — defends against a fabricated `pr_url`
+    that passes structural checks.
+
+    Returns:
+        PRVerification on a definitive answer (PR exists and matches → ok=True;
+        gh ran cleanly but the PR is missing or the URL differs → ok=False).
+        None when gh could not run a meaningful check (binary missing, no auth,
+        no remote, transport error). Callers fall back on local invariants.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "url,number"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        stderr_lower = (r.stderr or "").lower()
+        for needle in (
+            "auth", "gh_token", "no such remote", "not a git repo",
+            "no default remote", "no git remote", "could not determine",
+        ):
+            if needle in stderr_lower:
+                return None
+        return PRVerification(
+            ok=False,
+            reason=f"gh pr view #{pr_number} failed: {(r.stderr or '').strip()[:200]}",
+        )
+    try:
+        data = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    actual_number = data.get("number")
+    actual_url = data.get("url")
+    if actual_number != pr_number:
+        return PRVerification(
+            ok=False,
+            reason=f"gh returned PR #{actual_number}, guardian reported #{pr_number}",
+        )
+    if actual_url and actual_url != expected_url:
+        return PRVerification(
+            ok=False,
+            reason=f"PR URL mismatch: gh has {actual_url!r}, guardian reported {expected_url!r}",
+        )
+    return PRVerification(ok=True, reason="")
+
+
+def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVerification:
     """Post-condition check after the PR stage reports success.
 
-    Validates three invariants:
-    1. git HEAD changed from baseline_head (a new commit was made).
-    2. commit_sha, pr_url, and pr_number are present in structured output.
+    Validates four invariants:
+    1. stage_output is a structured dict carrying commit_sha, pr_url, pr_number.
+    2. git HEAD changed from baseline_head (a new commit was made).
     3. The reported commit_sha is a prefix of (or equal to) the actual HEAD SHA.
+    4. (Best-effort) `gh pr view <pr_number>` confirms the PR exists and its
+       URL matches `pr_url`. Skipped silently when gh cannot run.
 
     Args:
         stage_output: Structured output dict from the guardian agent.
         baseline_head: git HEAD SHA captured before the PR stage ran.
+        gh_lookup: Optional callable(pr_number, expected_url) → PRVerification|None.
+            Defaults to _verify_pr_via_gh. Tests inject a stub.
 
     Returns:
         PRVerification(ok=True, reason="") on success, or
@@ -1124,6 +1179,12 @@ def _verify_pr_stage(stage_output, baseline_head: str) -> PRVerification:
             ok=False,
             reason=f"commit sha mismatch: reported {reported_sha!r} but HEAD is {actual_head!r}",
         )
+
+    if gh_lookup is None:
+        gh_lookup = _verify_pr_via_gh
+    gh_result = gh_lookup(stage_output["pr_number"], stage_output["pr_url"])
+    if gh_result is not None and not gh_result.ok:
+        return gh_result
 
     return PRVerification(ok=True, reason="")
 
@@ -1570,6 +1631,10 @@ def run_pipeline(
             loop_counters = restore_loop_counters(status)
         else:
             loop_counters = {}
+        # Captured once on first entry to the PR stage; preserved across
+        # PR-stage retries so iter_2 verification compares against the same
+        # pre-stage HEAD as iter_1.
+        _pr_baseline_head: Optional[str] = None
         max_beads = 0
 
         # Initialize PromptBuilder for context threading across stages
@@ -1957,7 +2022,7 @@ def run_pipeline(
                     # kills it (terminate_current already fired as a no-op).
                     if _shutdown_requested:
                         raise InterruptedError("Pipeline shutdown requested before stage execution")
-                    if current_stage == Stage.PR:
+                    if current_stage == Stage.PR and _pr_baseline_head is None:
                         _pr_baseline_head = get_current_git_head()
                     result, raw_envelope = run_stage(
                         current_stage, context, settings_path,

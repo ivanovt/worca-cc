@@ -171,4 +171,22 @@ describe('runDetailView pr-verified badge in guardian stage', () => {
     const out = renderToString(runDetailView(run));
     expect(out).not.toContain('pr-verified-badge');
   });
+
+  it('renders pr-verified-badge when guardian has multiple iterations (retry path)', () => {
+    const multiIterGuardian = {
+      status: 'completed',
+      iterations: [
+        { number: 1, status: 'error', outcome: 'reject' },
+        { number: 2, status: 'completed', outcome: 'success' },
+      ],
+    };
+    const run = {
+      pipeline_status: 'completed',
+      milestones: { pr_verified: true },
+      stages: { guardian: multiIterGuardian },
+    };
+    const out = renderToString(runDetailView(run));
+    expect(out).toContain('pr-verified-badge');
+    expect(out).toContain('Verified');
+  });
 });

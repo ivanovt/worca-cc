@@ -860,6 +860,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                             ${stageTurns > 0 ? html`<span class="stage-totals-item"><span class="meta-label">Turns:</span> <span class="meta-value">${stageTurns}</span></span>` : nothing}
                           </div>`;
                       })()}
+                      ${key === 'guardian' ? _prVerifiedBadgeView(run) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -911,7 +912,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowView(iterations[0]) : nothing}
-                      ${key === 'guardian' && iterations.length === 1 ? _prVerifiedBadgeView(run) : nothing}
+                      ${key === 'guardian' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
