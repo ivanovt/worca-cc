@@ -11,34 +11,8 @@ is keyed on agent role, not prompt), so a scenario that succeeds applies
 uniformly and a scenario that fails fails uniformly — which gives us the
 right shape of "all-OK" and "all-failed" tests for the executor's per-task
 result handling.
-
-Setup note: ``run_parallel.py`` does NOT copy ``.claude/`` into the new
-worktrees the way ``run_worktree.py`` does — it relies on the runtime being
-present in tracked files. The fixture-installed ``.claude/`` is untracked by
-default, so each test commits it before running so ``git worktree add`` will
-populate the runtime in the new worktree's working tree.
 """
 from __future__ import annotations
-
-import subprocess
-
-
-
-def _commit_claude_runtime(project) -> None:
-    """Commit .claude/ so `git worktree add` includes the runtime.
-
-    run_parallel.py expects .claude/worca/scripts/run_pipeline.py to exist in
-    each created worktree's cwd, but git worktrees only inherit *tracked*
-    files. The integration fixture installs .claude/ via `worca init` but
-    leaves it untracked (matching real-world projects that gitignore .claude/).
-    Tests that exercise run_parallel.py compensate by committing the runtime
-    once at test setup; tests for run_worktree don't need this because that
-    script copies .claude/ into the new worktree explicitly.
-    """
-    subprocess.run(["git", "add", ".claude"], cwd=str(project),
-                   check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "test: add .claude runtime"],
-                   cwd=str(project), check=True, capture_output=True)
 
 
 _HAPPY = {"default": {"action": "succeed", "delay_s": 0}}
@@ -58,7 +32,6 @@ def test_run_parallel_completes_two_prompts(pipeline_env):
     """Two parallel prompts both run to completion and return rc=0 from
     run_parallel.py. The summary contains one entry per prompt with the
     worktree path and the inner pipeline's returncode."""
-    _commit_claude_runtime(pipeline_env.project)
     result = pipeline_env.run_parallel(_HAPPY, prompts=["task one", "task two"])
 
     assert result.returncode == 0, (
@@ -80,7 +53,6 @@ def test_run_parallel_aggregates_per_prompt_failures(pipeline_env):
     — i.e. one task's failure does NOT abort the others. This exercises the
     executor's ``except Exception`` / non-zero-rc handling at runner.py line
     197 onward."""
-    _commit_claude_runtime(pipeline_env.project)
     result = pipeline_env.run_parallel(
         _TESTER_FAILS, prompts=["fail one", "fail two"],
     )
@@ -107,7 +79,6 @@ def test_run_parallel_summary_json_shape(pipeline_env):
     """The summary file at ``.worktrees/parallel-results.json`` is a list of
     dicts with stable keys (worktree, prompt, returncode, stdout, stderr).
     Downstream tooling (run reports, fleet UI) depends on this shape."""
-    _commit_claude_runtime(pipeline_env.project)
     result = pipeline_env.run_parallel(_HAPPY, prompts=["shape test"])
 
     assert result.returncode == 0

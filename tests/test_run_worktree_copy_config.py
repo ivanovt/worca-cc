@@ -12,7 +12,7 @@ settings.local.json (permissions, hooks, mcpServers, etc.) stays parent-only.
 
 import json
 
-from worca.scripts.run_worktree import _copy_claude_config
+from worca.utils.runtime import copy_claude_config
 
 
 def _read_json(path: str) -> dict:
@@ -30,7 +30,7 @@ def test_skips_settings_local_json_top_level(tmp_path):
         json.dumps({"permissions": {"allow": ["Bash"]}})
     )
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     assert (dst / ".claude" / "settings.json").exists()
     assert not (dst / ".claude" / "settings.local.json").exists()
@@ -60,7 +60,7 @@ def test_propagates_worca_webhooks_from_parent_local(tmp_path):
         )
     )
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     merged = _read_json(str(dst / ".claude" / "settings.json"))
     assert merged["worca"]["webhooks"] == [
@@ -109,7 +109,7 @@ def test_local_webhooks_replace_base_webhooks_wholesale(tmp_path):
         )
     )
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     merged = _read_json(str(dst / ".claude" / "settings.json"))
     # Local replaces base wholesale (not concatenation, not dedup).
@@ -130,7 +130,7 @@ def test_no_op_when_no_parent_local_settings(tmp_path):
     base = {"worca": {"agents": {"implementer": {"model": "opus"}}}}
     (src / ".claude" / "settings.json").write_text(json.dumps(base))
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     merged = _read_json(str(dst / ".claude" / "settings.json"))
     assert merged == base
@@ -154,7 +154,7 @@ def test_no_op_when_local_has_no_worca_runtime_keys(tmp_path):
         )
     )
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     merged = _read_json(str(dst / ".claude" / "settings.json"))
     # Only webhooks/events propagate from local; agents stays as-is from base
@@ -173,7 +173,7 @@ def test_propagates_only_worca_events_when_webhooks_absent(tmp_path):
         json.dumps({"worca": {"events": {"enabled": False}}})
     )
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     merged = _read_json(str(dst / ".claude" / "settings.json"))
     assert merged["worca"]["events"] == {"enabled": False}
@@ -204,7 +204,7 @@ def test_augments_tracked_settings_json_with_runtime_keys(tmp_path):
     tracked = {"worca": {"agents": {"implementer": {"model": "opus"}}}}
     (dst / ".claude" / "settings.json").write_text(json.dumps(tracked))
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     merged = _read_json(str(dst / ".claude" / "settings.json"))
     # The tracked agents config is preserved.
@@ -234,7 +234,7 @@ def test_propagated_settings_json_is_pretty_printed(tmp_path):
         )
     )
 
-    _copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
+    copy_claude_config(str(src / ".claude"), str(dst / ".claude"))
 
     content = (dst / ".claude" / "settings.json").read_text()
     assert content.endswith("\n")
