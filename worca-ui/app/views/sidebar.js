@@ -192,7 +192,6 @@ export function sidebarView(
             <span>Running</span>
           </span>
           ${activeCount > 0 ? html`<sl-badge variant="primary" pill>${activeCount}</sl-badge>` : ''}
-          ${totalRunning > 0 ? html`<sl-badge variant="${atCapacity ? 'warning' : 'neutral'}" pill class="running-cap-badge">${totalRunning}/${maxConcurrentPipelines}</sl-badge>` : ''}
         </div>
         <div class="sidebar-item ${route.section === 'history' ? 'active' : ''}"
              @click=${() => onNavigate('history')}>

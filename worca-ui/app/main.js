@@ -2440,7 +2440,7 @@ if (route.section === 'project-settings') {
 
 // Single-project polling fallback: WS totalRunning derivation only covers
 // the focused project's runs. Poll /api/status/runs-count every 5s so
-// the cap badge and gating stay accurate across all projects.
+// launch gating stays accurate across all projects.
 setInterval(() => {
   fetch('/api/status/runs-count')
     .then((r) => (r.ok ? r.json() : null))

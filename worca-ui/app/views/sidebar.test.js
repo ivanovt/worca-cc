@@ -156,45 +156,7 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
   });
 });
 
-describe('sidebar - Running N/cap badge', () => {
-  it('shows totalRunning/cap badge when totalRunning > 0', async () => {
-    const { sidebarView } = await import('./sidebar.js');
-    const state = makeState({
-      totalRunning: 3,
-      maxConcurrentPipelines: 10,
-    });
-    const output = renderToString(
-      sidebarView(state, route, 'open', defaultOpts()),
-    );
-    expect(output).toContain('running-cap-badge');
-    expect(output).toContain('3/10');
-  });
-
-  it('does not show running-cap-badge when totalRunning is 0', async () => {
-    const { sidebarView } = await import('./sidebar.js');
-    const state = makeState({
-      totalRunning: 0,
-      maxConcurrentPipelines: 10,
-    });
-    const output = renderToString(
-      sidebarView(state, route, 'open', defaultOpts()),
-    );
-    expect(output).not.toContain('running-cap-badge');
-  });
-
-  it('badge variant is warning when at capacity', async () => {
-    const { sidebarView } = await import('./sidebar.js');
-    const state = makeState({
-      totalRunning: 5,
-      maxConcurrentPipelines: 5,
-    });
-    const output = renderToString(
-      sidebarView(state, route, 'open', defaultOpts()),
-    );
-    expect(output).toContain('running-cap-badge');
-    expect(output).toContain('5/5');
-  });
-
+describe('sidebar - New Pipeline button capacity gating', () => {
   it('disables New Pipeline button when at capacity', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
