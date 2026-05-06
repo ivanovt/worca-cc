@@ -227,7 +227,6 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
         "run_id": None,
         "branch": branch,
         "worktree": None,
-        "worktree_path": None,
         "plan_file": None,
         "pipeline_template": pipeline_template,
         "git_head": git_head,

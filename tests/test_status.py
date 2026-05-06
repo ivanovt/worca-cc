@@ -230,6 +230,12 @@ def test_init_status_has_plan_file():
     assert result["plan_file"] is None
 
 
+def test_init_status_worktree_path_key_absent():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert "worktree_path" not in result
+
+
 # --- start_iteration ---
 
 def test_start_iteration_creates_list():
@@ -379,15 +385,6 @@ def test_resolve_status_passthrough_known_values():
 
 def test_resolve_status_passthrough_unknown():
     assert resolve_status("unknown_val") == "unknown_val"
-
-
-# --- init_status worktree_path ---
-
-def test_init_status_has_worktree_path_none_by_default():
-    wr = {"title": "Task"}
-    result = init_status(wr, "feat/task")
-    assert "worktree_path" in result
-    assert result["worktree_path"] is None
 
 
 # --- write_status_field ---
