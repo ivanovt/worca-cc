@@ -22,7 +22,7 @@ class TestTemplateLoading:
     def test_enabled_stages(self):
         stages = _config()["stages"]
         enabled = {name for name, cfg in stages.items() if cfg.get("enabled", True)}
-        assert enabled == {"pr"}
+        assert enabled == {"plan_review", "pr"}
 
     def test_disabled_stages(self):
         stages = _config()["stages"]
@@ -39,6 +39,9 @@ class TestTemplateLoading:
 
     def test_pr_enabled(self):
         assert _config()["stages"]["pr"]["enabled"] is True
+
+    def test_plan_review_enabled(self):
+        assert _config()["stages"]["plan_review"]["enabled"] is True
 
     def test_milestones_all_disabled(self):
         milestones = _config()["milestones"]

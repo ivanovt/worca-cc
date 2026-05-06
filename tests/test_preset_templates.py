@@ -113,8 +113,15 @@ class TestRefactorConfig:
     def _config(self):
         return json.loads((TEMPLATES_DIR / "refactor" / "template.json").read_text())["config"]
 
-    def test_pr_disabled(self):
-        assert self._config()["stages"]["pr"]["enabled"] is False
+    def test_pr_enabled_by_default(self):
+        # `pr` is not overridden in the template, so it inherits the default (enabled).
+        assert self._config()["stages"].get("pr", {}).get("enabled", True) is True
+
+    def test_plan_review_enabled(self):
+        assert self._config()["stages"]["plan_review"]["enabled"] is True
+
+    def test_learn_enabled(self):
+        assert self._config()["stages"]["learn"]["enabled"] is True
 
 
 class TestQuickFixConfig:
@@ -143,6 +150,9 @@ class TestInvestigateConfig:
 
     def test_implement_disabled(self):
         assert self._config()["stages"]["implement"]["enabled"] is False
+
+    def test_plan_review_enabled(self):
+        assert self._config()["stages"]["plan_review"]["enabled"] is True
 
     def test_planner_opus(self):
         assert self._config()["agents"]["planner"]["model"] == "opus"

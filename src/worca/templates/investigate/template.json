@@ -7,11 +7,12 @@
   "tags": ["analysis", "no-code", "plan-pr"],
   "config": {
     "stages": {
-      "coordinate": { "enabled": false },
-      "implement":  { "enabled": false },
-      "test":       { "enabled": false },
-      "review":     { "enabled": false },
-      "pr":         { "enabled": true }
+      "plan_review": { "enabled": true },
+      "coordinate":  { "enabled": false },
+      "implement":   { "enabled": false },
+      "test":        { "enabled": false },
+      "review":      { "enabled": false },
+      "pr":          { "enabled": true }
     },
     "agents": {
       "planner": { "model": "opus", "max_turns": 200 }
