@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -455,5 +461,85 @@ describe('reconcileStatus signal stop_reason synthetic event type', () => {
       readFileSync(eventsPath, 'utf8').split('\n').filter(Boolean)[0],
     );
     expect(evt.event_type).toBe('pipeline.run.failed');
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Worktree-blind callsite tests (must FAIL before Phase 2 fix lands)
+// ──────────────────────────────────────────────────────────────────────────────
+describe('reconcileStatus worktree-blind callsites', () => {
+  let worcaDir;
+
+  beforeEach(() => {
+    worcaDir = makeTmpDir();
+  });
+  afterEach(() => rmSync(worcaDir, { recursive: true, force: true }));
+
+  it('discovers worktree runs via pipelines.d/ (not just runs/)', async () => {
+    // Worktree run: registered in pipelines.d/, no local runs/ entry
+    const wtDir = makeTmpDir();
+    try {
+      const runId = 'run-wt-disc-001';
+      const wtRunDir = join(wtDir, '.worca', 'runs', runId);
+      mkdirSync(wtRunDir, { recursive: true });
+      writeFileSync(
+        join(wtRunDir, 'status.json'),
+        `${JSON.stringify({ pipeline_status: 'running', run_id: runId }, null, 2)}\n`,
+        'utf8',
+      );
+      writeFileSync(join(wtRunDir, 'pipeline.pid'), '999999999', 'utf8');
+
+      const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
+      mkdirSync(pipelinesDir, { recursive: true });
+      writeFileSync(
+        join(pipelinesDir, `${runId}.json`),
+        JSON.stringify({ run_id: runId, worktree_path: wtDir }),
+        'utf8',
+      );
+
+      const fixed = await reconcileStatus(worcaDir);
+
+      // FAILS with current code: reconcileStatus only scans worcaDir/runs/
+      // and never reads pipelines.d/, so the worktree run is invisible.
+      expect(fixed).toBe(true);
+    } finally {
+      rmSync(wtDir, { recursive: true, force: true });
+    }
+  });
+
+  it('writes events.jsonl to worktree runDir not projectRoot/runs/', async () => {
+    // Worktree run: registered in pipelines.d/, no local runs/ entry
+    const wtDir = makeTmpDir();
+    try {
+      const runId = 'run-wt-events-001';
+      const wtRunDir = join(wtDir, '.worca', 'runs', runId);
+      mkdirSync(wtRunDir, { recursive: true });
+      writeFileSync(
+        join(wtRunDir, 'status.json'),
+        `${JSON.stringify({ pipeline_status: 'running', run_id: runId }, null, 2)}\n`,
+        'utf8',
+      );
+      writeFileSync(join(wtRunDir, 'pipeline.pid'), '999999999', 'utf8');
+
+      const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
+      mkdirSync(pipelinesDir, { recursive: true });
+      writeFileSync(
+        join(pipelinesDir, `${runId}.json`),
+        JSON.stringify({ run_id: runId, worktree_path: wtDir }),
+        'utf8',
+      );
+
+      await reconcileStatus(worcaDir);
+
+      const wtEventsPath = join(wtRunDir, 'events.jsonl');
+      const localEventsPath = join(worcaDir, 'runs', runId, 'events.jsonl');
+
+      // FAILS with current code: run not discovered via pipelines.d/ so no
+      // events file is written at all; also verifies path is worktree, not local.
+      expect(existsSync(wtEventsPath)).toBe(true);
+      expect(existsSync(localEventsPath)).toBe(false);
+    } finally {
+      rmSync(wtDir, { recursive: true, force: true });
+    }
   });
 });

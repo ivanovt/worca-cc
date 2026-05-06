@@ -158,6 +158,7 @@ export function createMessageRouter({
       }
       const agentName = run.stages?.[stage]?.agent || stage;
       const effectiveRunId = run.run_id || runId;
+      const effectiveWorcaDir = run.worktree_worca_dir || proj.worcaDir;
 
       const iterations = run.stages?.[stage]?.iterations || [];
       const iterationPrompts = iterations.map((iter, idx) => {
@@ -189,7 +190,7 @@ export function createMessageRouter({
         const iterNum = iter.number ?? 0;
         const resolvedCandidates = [
           join(
-            proj.worcaDir,
+            effectiveWorcaDir,
             'runs',
             effectiveRunId,
             'agents',
@@ -197,7 +198,7 @@ export function createMessageRouter({
             `${stage}-${agentName}-iter-${iterNum}.md`,
           ),
           join(
-            proj.worcaDir,
+            effectiveWorcaDir,
             'results',
             effectiveRunId,
             'agents',
@@ -206,7 +207,7 @@ export function createMessageRouter({
           ),
           // Fallback for early W-037 runs without stage prefix
           join(
-            proj.worcaDir,
+            effectiveWorcaDir,
             'runs',
             effectiveRunId,
             'agents',
@@ -214,7 +215,7 @@ export function createMessageRouter({
             `${agentName}-iter-${iterNum}.md`,
           ),
           join(
-            proj.worcaDir,
+            effectiveWorcaDir,
             'results',
             effectiveRunId,
             'agents',
@@ -241,14 +242,14 @@ export function createMessageRouter({
       if (!resolvedPrompt) {
         const templateCandidates = [
           join(
-            proj.worcaDir,
+            effectiveWorcaDir,
             'runs',
             effectiveRunId,
             'agents',
             `${agentName}.md`,
           ),
           join(
-            proj.worcaDir,
+            effectiveWorcaDir,
             'results',
             effectiveRunId,
             'agents',
