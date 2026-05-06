@@ -94,8 +94,8 @@ class TestBugfixConfig:
     def test_planner_model_opus(self):
         assert self._config()["agents"]["planner"]["model"] == "opus"
 
-    def test_coordinator_model_sonnet(self):
-        assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
+    def test_coordinator_model_opus(self):
+        assert self._config()["agents"]["coordinator"]["model"] == "opus"
 
 
 class TestFeatureConfig:
@@ -131,8 +131,8 @@ class TestQuickFixConfig:
     def test_planner_model_opus(self):
         assert self._config()["agents"]["planner"]["model"] == "opus"
 
-    def test_coordinator_model_sonnet(self):
-        assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
+    def test_coordinator_model_opus(self):
+        assert self._config()["agents"]["coordinator"]["model"] == "opus"
 
     def test_test_stage_disabled(self):
         assert self._config()["stages"]["test"]["enabled"] is False
@@ -168,6 +168,6 @@ class TestTestOnlyConfig:
     def test_planner_model_opus(self):
         assert self._config()["agents"]["planner"]["model"] == "opus"
 
-    def test_coordinator_model_sonnet(self):
-        assert self._config()["agents"]["coordinator"]["model"] == "sonnet"
+    def test_coordinator_model_opus(self):
+        assert self._config()["agents"]["coordinator"]["model"] == "opus"
 

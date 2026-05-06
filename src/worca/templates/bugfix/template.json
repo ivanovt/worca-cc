@@ -8,7 +8,7 @@
   "config": {
     "agents": {
       "planner":     { "model": "opus", "max_turns": 50 },
-      "coordinator": { "model": "sonnet", "max_turns": 50 },
+      "coordinator": { "model": "opus", "max_turns": 50 },
       "reviewer":    { "model": "opus", "max_turns": 50 }
     },
     "loops": {

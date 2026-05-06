@@ -13,7 +13,7 @@
     },
     "agents": {
       "planner":     { "model": "opus", "max_turns": 50 },
-      "coordinator": { "model": "sonnet", "max_turns": 50 },
+      "coordinator": { "model": "opus", "max_turns": 50 },
       "implementer": { "model": "sonnet", "max_turns": 100 }
     },
     "loops": {
