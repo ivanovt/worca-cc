@@ -184,9 +184,9 @@ def _patches(worktree_path=_WORKTREE_PATH):
         patch("worca.scripts.run_worktree.create_pipeline_worktree", return_value=worktree_path),
         patch("worca.scripts.run_worktree.init_worktree_beads", return_value=True),
         patch("worca.scripts.run_worktree.register_pipeline"),
-        patch("worca.scripts.run_worktree.os.path.isdir", return_value=True),
+        patch("worca.utils.runtime.os.path.isdir", return_value=True),
         patch("worca.scripts.run_worktree.subprocess.Popen"),
-        patch("worca.scripts.run_worktree._copy_claude_config"),
+        patch("worca.scripts.run_worktree.copy_claude_config"),
         patch("worca.scripts.run_worktree.branch_exists", return_value=True),
         patch("worca.scripts.run_worktree.detect_default_branch", return_value="main"),
     ]
@@ -407,7 +407,7 @@ class TestCopyClaudeConfig:
     """_copy_claude_config: project's .claude/ → worktree, no-clobber."""
 
     def test_copies_settings_and_subdirs(self, tmp_path):
-        from worca.scripts.run_worktree import _copy_claude_config
+        from worca.utils.runtime import copy_claude_config
 
         src = tmp_path / "project" / ".claude"
         dst = tmp_path / "worktree" / ".claude"
@@ -417,14 +417,14 @@ class TestCopyClaudeConfig:
         (src / "agents" / "planner.md").write_text("plan")
         (src / "hooks" / "pre.py").write_text("h")
 
-        _copy_claude_config(str(src), str(dst))
+        copy_claude_config(str(src), str(dst))
 
         assert (dst / "settings.json").read_text() == '{"a": 1}'
         assert (dst / "agents" / "planner.md").read_text() == "plan"
         assert (dst / "hooks" / "pre.py").read_text() == "h"
 
     def test_skips_settings_local_json(self, tmp_path):
-        from worca.scripts.run_worktree import _copy_claude_config
+        from worca.utils.runtime import copy_claude_config
 
         src = tmp_path / "project" / ".claude"
         dst = tmp_path / "worktree" / ".claude"
@@ -432,7 +432,7 @@ class TestCopyClaudeConfig:
         (src / "settings.json").write_text("{}")
         (src / "settings.local.json").write_text('{"machine": "local"}')
 
-        _copy_claude_config(str(src), str(dst))
+        copy_claude_config(str(src), str(dst))
 
         assert (dst / "settings.json").exists()
         assert not (dst / "settings.local.json").exists()
@@ -440,7 +440,7 @@ class TestCopyClaudeConfig:
     def test_no_clobber_preserves_tracked_files(self, tmp_path):
         """When git already populated the worktree (committed .claude/),
         the copy must not overwrite those files."""
-        from worca.scripts.run_worktree import _copy_claude_config
+        from worca.utils.runtime import copy_claude_config
 
         src = tmp_path / "project" / ".claude"
         dst = tmp_path / "worktree" / ".claude"
@@ -451,13 +451,13 @@ class TestCopyClaudeConfig:
         # Project's untracked-on-master version (newer)
         (src / "settings.json").write_text('{"version": "uncommitted"}')
 
-        _copy_claude_config(str(src), str(dst))
+        copy_claude_config(str(src), str(dst))
 
         # Tracked file wins
         assert (dst / "settings.json").read_text() == '{"version": "tracked"}'
 
     def test_no_clobber_within_subdirs(self, tmp_path):
-        from worca.scripts.run_worktree import _copy_claude_config
+        from worca.utils.runtime import copy_claude_config
 
         src = tmp_path / "project" / ".claude"
         dst = tmp_path / "worktree" / ".claude"
@@ -467,7 +467,7 @@ class TestCopyClaudeConfig:
         (src / "agents" / "planner.md").write_text("uncommitted")
         (src / "agents" / "tester.md").write_text("new")
 
-        _copy_claude_config(str(src), str(dst))
+        copy_claude_config(str(src), str(dst))
 
         assert (dst / "agents" / "planner.md").read_text() == "tracked"
         # Files only in src still get copied through
@@ -475,24 +475,24 @@ class TestCopyClaudeConfig:
 
     def test_no_op_when_src_missing(self, tmp_path):
         """If the project has no .claude/ at all (edge case), don't crash."""
-        from worca.scripts.run_worktree import _copy_claude_config
+        from worca.utils.runtime import copy_claude_config
 
         src = tmp_path / "project" / ".claude"  # never created
         dst = tmp_path / "worktree" / ".claude"
 
-        _copy_claude_config(str(src), str(dst))  # must not raise
+        copy_claude_config(str(src), str(dst))  # must not raise
         assert not dst.exists()
 
     def test_includes_worca_runtime(self, tmp_path):
         """worca/ subdir must come along — that's the whole runtime."""
-        from worca.scripts.run_worktree import _copy_claude_config
+        from worca.utils.runtime import copy_claude_config
 
         src = tmp_path / "project" / ".claude"
         dst = tmp_path / "worktree" / ".claude"
         (src / "worca" / "scripts").mkdir(parents=True)
         (src / "worca" / "scripts" / "run_pipeline.py").write_text("py")
 
-        _copy_claude_config(str(src), str(dst))
+        copy_claude_config(str(src), str(dst))
 
         assert (dst / "worca" / "scripts" / "run_pipeline.py").read_text() == "py"
 
@@ -641,16 +641,18 @@ class TestDefaultBaseBranch:
 
 class TestMissingWorcaRuntime:
     def test_fails_fast_when_runtime_missing(self, capsys):
+        import pytest
         from worca.scripts.run_worktree import main
         plist = _patches()
         # Override isdir to return False — simulates missing .claude/worca/.
         with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
              plist[3], plist[4] as mock_reg, \
-             patch("worca.scripts.run_worktree.os.path.isdir", return_value=False), \
+             patch("worca.utils.runtime.os.path.isdir", return_value=False), \
              plist[6] as mock_popen, plist[7], plist[8], plist[9]:
             mock_norm.return_value = _wr("Add auth")
-            rc = main(["--prompt", "Add auth"])
-        assert rc == 1
+            with pytest.raises(SystemExit) as exc_info:
+                main(["--prompt", "Add auth"])
+        assert exc_info.value.code == 1
         err = capsys.readouterr().err
         assert "worca runtime not found" in err
         # Validation must run before any side effects.

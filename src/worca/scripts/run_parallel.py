@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.orchestrator.work_request import normalize
 from worca.utils.claude_cli import _ARG_INLINE_LIMIT
+from worca.utils.runtime import copy_claude_config, validate_runtime
 from worca.utils.settings import load_settings
 
 
@@ -148,6 +149,8 @@ def main():
 
     args = parser.parse_args()
 
+    validate_runtime()
+
     # Build work request list
     if args.prompts:
         items = [(p, normalize("prompt", p)) for p in args.prompts]
@@ -173,6 +176,7 @@ def main():
         slug = _slugify(wr.title)
         branch = f"worca/{slug}"
         worktree_path = _create_worktree(args.worktree_dir, slug, branch)
+        copy_claude_config(".claude", os.path.join(worktree_path, ".claude"))
         worktrees.append((worktree_path, raw_input, wr))
         print(f"  Created: {worktree_path} -> {branch}")
 
