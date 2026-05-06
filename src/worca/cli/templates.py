@@ -2,6 +2,7 @@
 
 Subcommands:
   worca templates list              — tabular output of all templates
+  worca templates list --json       — machine-readable JSON for tooling
   worca templates show <id>         — pretty-print template.json for a given ID
   worca templates save <id>         — snapshot current settings as template
   worca templates delete <id>       — remove a project or user template
@@ -46,10 +47,26 @@ def _make_resolver():
     return TemplateResolver(builtin_dir, project_dir, user_dir)
 
 
-def cmd_templates_list(_args):
-    """worca templates list — tabular output."""
+def cmd_templates_list(args):
+    """worca templates list — tabular output, or JSON when --json is passed."""
     resolver = _make_resolver()
     templates = resolver.list()
+
+    if getattr(args, "json", False):
+        payload = [
+            {
+                "id": t.id,
+                "name": t.name,
+                "description": t.description,
+                "tier": t.tier,
+                "tags": list(t.tags),
+                "builtin": t.builtin,
+                "created_at": t.created_at,
+            }
+            for t in templates
+        ]
+        print(json.dumps(payload, indent=2))
+        return
 
     col_id = max((len(t.id) for t in templates), default=2)
     col_id = max(col_id, len("ID"))
@@ -91,7 +108,14 @@ def register_subcommand(sub):
     templates_sub = templates_parser.add_subparsers(dest="templates_command")
 
     # list
-    templates_sub.add_parser("list", help="List all available templates")
+    list_parser = templates_sub.add_parser("list", help="List all available templates")
+    list_parser.add_argument(
+        "--json",
+        dest="json",
+        action="store_true",
+        default=False,
+        help="Emit JSON array (id, name, description, tier, tags, builtin, created_at) instead of the table",
+    )
 
     # show
     show_parser = templates_sub.add_parser("show", help="Show details of a template")

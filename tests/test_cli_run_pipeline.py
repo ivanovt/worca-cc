@@ -64,3 +64,97 @@ class TestCmdRun:
         from worca.cli.main import main
         with pytest.raises(SystemExit):
             main(["run", "--prompt", "hello"])
+
+
+class TestCmdRunWorktree:
+    """`worca run --worktree` dispatch + validation."""
+
+    def _scaffold(self, tmp_path, monkeypatch, *, with_worktree_script: bool = True):
+        (tmp_path / ".git").mkdir()
+        scripts = tmp_path / ".claude" / "worca" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "run_pipeline.py").write_text("")
+        if with_worktree_script:
+            (scripts / "run_worktree.py").write_text("")
+        monkeypatch.chdir(tmp_path)
+
+    def test_worktree_dispatches_to_run_worktree_script(self, tmp_path, monkeypatch):
+        """--worktree picks run_worktree.py when present and forwards core args."""
+        self._scaffold(tmp_path, monkeypatch)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit) as exc_info:
+                main(["run", "--worktree", "--source", "gh:issue:127",
+                      "--template", "bugfix"])
+        assert exc_info.value.code == 0
+        argv = mock_run.call_args[0][0]
+        assert "run_worktree.py" in argv[1]
+        assert "run_pipeline.py" not in argv[1]
+        assert "--source" in argv and "gh:issue:127" in argv
+        assert "--template" in argv and "bugfix" in argv
+
+    def test_worktree_forwards_branch_and_guide(self, tmp_path, monkeypatch):
+        """--branch and --guide are only forwarded under --worktree."""
+        self._scaffold(tmp_path, monkeypatch)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit):
+                main(["run", "--worktree", "--prompt", "x",
+                      "--branch", "develop", "--guide", "spec.md", "--guide", "notes.md"])
+        argv = mock_run.call_args[0][0]
+        assert argv[argv.index("--branch") + 1] == "develop"
+        guides = [argv[i + 1] for i, a in enumerate(argv) if a == "--guide"]
+        assert guides == ["spec.md", "notes.md"]
+
+    def test_worktree_falls_back_when_script_missing(self, tmp_path, monkeypatch, capsys):
+        """If run_worktree.py is absent, fall back to in-place run_pipeline.py with a warning."""
+        self._scaffold(tmp_path, monkeypatch, with_worktree_script=False)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit):
+                main(["run", "--worktree", "--prompt", "x"])
+        argv = mock_run.call_args[0][0]
+        assert "run_pipeline.py" in argv[1]
+        assert "falling back" in capsys.readouterr().err.lower()
+
+    def test_branch_without_worktree_rejected(self, tmp_path, monkeypatch, capsys):
+        """--branch without --worktree exits 2 with a clear error."""
+        self._scaffold(tmp_path, monkeypatch)
+        from worca.cli.main import main
+        with pytest.raises(SystemExit) as exc_info:
+            main(["run", "--prompt", "x", "--branch", "develop"])
+        assert exc_info.value.code == 2
+        assert "--branch requires --worktree" in capsys.readouterr().err
+
+    def test_guide_without_worktree_rejected(self, tmp_path, monkeypatch, capsys):
+        """--guide without --worktree exits 2 with a clear error."""
+        self._scaffold(tmp_path, monkeypatch)
+        from worca.cli.main import main
+        with pytest.raises(SystemExit) as exc_info:
+            main(["run", "--prompt", "x", "--guide", "spec.md"])
+        assert exc_info.value.code == 2
+        assert "--guide requires --worktree" in capsys.readouterr().err
+
+    def test_worktree_with_resume_rejected(self, tmp_path, monkeypatch, capsys):
+        """--worktree + --resume is nonsensical (resume must use original tree)."""
+        self._scaffold(tmp_path, monkeypatch)
+        from worca.cli.main import main
+        with pytest.raises(SystemExit) as exc_info:
+            main(["run", "--worktree", "--resume"])
+        assert exc_info.value.code == 2
+        assert "resume" in capsys.readouterr().err.lower()
+
+    def test_no_worktree_flag_still_uses_run_pipeline(self, tmp_path, monkeypatch):
+        """Default behaviour unchanged when --worktree is absent."""
+        self._scaffold(tmp_path, monkeypatch)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit):
+                main(["run", "--prompt", "hello"])
+        argv = mock_run.call_args[0][0]
+        assert "run_pipeline.py" in argv[1]
+        assert "run_worktree.py" not in argv[1]

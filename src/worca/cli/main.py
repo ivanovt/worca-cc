@@ -188,6 +188,25 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--source", dest="source_arg", default=None, help="Work source")
     run_parser.add_argument("--template", default=None, help="Template ID to apply before running")
     run_parser.add_argument("--param", action="append", metavar="KEY=VALUE", help="Template parameter override (repeatable)")
+    run_parser.add_argument(
+        "--worktree",
+        action="store_true",
+        default=False,
+        help="Launch in an isolated git worktree (parallel-safe). Mirrors the UI's default; "
+        "falls back to in-place if run_worktree.py is missing.",
+    )
+    run_parser.add_argument(
+        "--branch",
+        default=None,
+        help="Base branch to fork the worktree from (--worktree only; default: HEAD)",
+    )
+    run_parser.add_argument(
+        "--guide",
+        action="append",
+        metavar="PATH",
+        default=None,
+        help="Path to a reference guide injected into the plan prompt (--worktree only, repeatable)",
+    )
 
     # lifecycle commands: pause, stop, resume, status
     for name in ("pause", "stop", "resume", "status"):

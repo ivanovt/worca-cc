@@ -139,6 +139,45 @@ class TestTemplatesList:
         # Header + at least 2 rows
         assert len(lines) >= 3
 
+    def _run_list_json(self, capsys, builtin_dir=None, project_dir=None, user_dir=None):
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ):
+            main(["templates", "list", "--json"])
+        return capsys.readouterr().out
+
+    def test_list_json_emits_array_with_full_shape(self, capsys, tmp_path):
+        """--json must emit a JSON array; each entry has the documented fields."""
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        _write_template(builtin_dir / "bugfix", _minimal("bugfix", tags=["fast"]))
+        _write_template(
+            project_dir / "house-style", _minimal("house-style", tier="project")
+        )
+
+        output = self._run_list_json(capsys, builtin_dir=builtin_dir, project_dir=project_dir)
+        payload = json.loads(output)
+
+        assert isinstance(payload, list)
+        by_id = {entry["id"]: entry for entry in payload}
+        assert {"bugfix", "house-style"} <= set(by_id)
+
+        for entry in payload:
+            # Documented fields the skill / downstream tooling rely on.
+            assert set(entry.keys()) == {
+                "id", "name", "description", "tier", "tags", "builtin", "created_at",
+            }
+
+        assert by_id["bugfix"]["tier"] == "builtin"
+        assert by_id["bugfix"]["tags"] == ["fast"]
+        assert by_id["house-style"]["tier"] == "project"
+
+    def test_list_json_empty_emits_empty_array(self, capsys, tmp_path):
+        """No templates anywhere → `[]`, not a crash, not the table header."""
+        output = self._run_list_json(capsys)
+        assert json.loads(output) == []
+
 
 # ---------------------------------------------------------------------------
 # worca templates show
