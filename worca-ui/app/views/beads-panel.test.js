@@ -224,6 +224,51 @@ describe('beadsPanelView - run/branch metadata strip', () => {
     expect(output).not.toContain('View PR');
   });
 
+  it('uses run.pr.url with "PR #N" label when run.pr is set', () => {
+    const run = {
+      branch: 'worca/feature',
+      pr: {
+        url: 'https://github.com/owner/repo/pull/42',
+        number: 42,
+      },
+    };
+    const output = renderToString(
+      beadsPanelView([], {
+        ...baseOptions,
+        run,
+      }),
+    );
+    expect(output).toContain('https://github.com/owner/repo/pull/42');
+    expect(output).toContain('PR #42');
+  });
+
+  it('falls back to run.pr_url with "View PR" label when run.pr is absent', () => {
+    const run = {
+      branch: 'worca/feature',
+      pr_url: 'https://github.com/owner/repo/pull/7',
+    };
+    const output = renderToString(
+      beadsPanelView([], {
+        ...baseOptions,
+        run,
+      }),
+    );
+    expect(output).toContain('https://github.com/owner/repo/pull/7');
+    expect(output).toContain('View PR');
+  });
+
+  it('hides PR link when neither run.pr nor run.pr_url is set', () => {
+    const run = { branch: 'worca/feature' };
+    const output = renderToString(
+      beadsPanelView([], {
+        ...baseOptions,
+        run,
+      }),
+    );
+    expect(output).not.toContain('PR #');
+    expect(output).not.toContain('View PR');
+  });
+
   it('shows both run ID and branch when both present', () => {
     const run = { branch: 'worca/feature-xyz' };
     const output = renderToString(

@@ -2971,15 +2971,38 @@ def run_pipeline(
                             milestone="pr_verified", value=True,
                             stage=Stage.PR.value,
                         ))
-                if ctx and isinstance(result, dict):
+                if isinstance(result, dict):
                     _pr_url = result.get("pr_url")
                     _pr_number = result.get("pr_number")
                     if _pr_url and _pr_number is not None:
-                        emit_event(ctx, GIT_PR_CREATED, git_pr_created_payload(
-                            pr_url=_pr_url,
-                            pr_number=_pr_number,
-                            title=work_request.title,
-                        ))
+                        _commit_sha = result.get("commit_sha")
+                        _source_branch = result.get("source_branch")
+                        _target_branch = result.get("target_branch")
+                        _provider = result.get("provider")
+                        _is_draft = result.get("is_draft")
+                        _review_status = result.get("review_status")
+                        status["pr"] = {
+                            "url": _pr_url,
+                            "number": _pr_number,
+                            "commit_sha": _commit_sha,
+                            "source_branch": _source_branch,
+                            "target_branch": _target_branch,
+                            "provider": _provider,
+                            "is_draft": _is_draft,
+                            "review_status": _review_status,
+                        }
+                        save_status(status, actual_status_path)
+                        if ctx:
+                            emit_event(ctx, GIT_PR_CREATED, git_pr_created_payload(
+                                pr_url=_pr_url,
+                                pr_number=_pr_number,
+                                title=work_request.title,
+                                commit_sha=_commit_sha,
+                                source_branch=_source_branch,
+                                target_branch=_target_branch,
+                                provider=_provider,
+                                is_draft=_is_draft,
+                            ))
 
             # Default: complete iteration for stages without special handling
             else:

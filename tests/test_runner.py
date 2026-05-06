@@ -2766,7 +2766,12 @@ def test_git_pr_created_payload_fields(tmp_path):
     def mock_run_stage(stage, context, sp, msize=1, iteration=1,
                        prompt_override=None, **kwargs):
         return {"pr_url": "https://github.com/org/repo/pull/99",
-                "pr_number": 99}, {"type": "result"}
+                "pr_number": 99,
+                "commit_sha": "abc1234567",
+                "source_branch": "feature/x",
+                "target_branch": "main",
+                "provider": "github",
+                "is_draft": False}, {"type": "result"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
         with patch("worca.orchestrator.runner.create_branch"):
@@ -2785,6 +2790,75 @@ def test_git_pr_created_payload_fields(tmp_path):
     assert p["pr_url"] == "https://github.com/org/repo/pull/99"
     assert p["pr_number"] == 99
     assert "title" in p
+    assert p["commit_sha"] == "abc1234567"
+    assert p["source_branch"] == "feature/x"
+    assert p["target_branch"] == "main"
+    assert p["provider"] == "github"
+    assert p["is_draft"] is False
+
+
+def test_pr_metadata_persisted_without_ctx(tmp_path):
+    """PR metadata is written to status['pr'] even in headless runs (no event ctx)."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings_path = _make_minimal_settings(tmp_path, extra={
+        "stages": {
+            "plan": {"agent": "planner", "enabled": False},
+            "coordinate": {"agent": "coordinator", "enabled": False},
+            "implement": {"agent": "implementer", "enabled": False},
+            "test": {"agent": "tester", "enabled": False},
+            "review": {"agent": "guardian", "enabled": False},
+            "pr": {"agent": "guardian", "enabled": True},
+        },
+        "agents": {
+            "guardian": {"model": "opus", "max_turns": 10},
+        },
+    })
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+    wr = WorkRequest(source_type="prompt", title="Headless PR test")
+
+    def mock_run_stage(stage, context, sp, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"pr_url": "https://github.com/org/repo/pull/7",
+                "pr_number": 7,
+                "commit_sha": "deadbeef1",
+                "source_branch": "feat/headless",
+                "target_branch": "main",
+                "provider": "github",
+                "is_draft": True}, {"type": "result"}
+
+    import os.path as osp
+    _orig_join = osp.join
+
+    def null_events_join(*args):
+        if len(args) >= 2 and args[-1] == "events.jsonl":
+            return None
+        return _orig_join(*args)
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"), \
+         patch("os.path.join", side_effect=null_events_join):
+        final_status = run_pipeline(
+            wr, plan_file=str(plan),
+            settings_path=settings_path,
+            status_path=status_path,
+        )
+
+    pr = final_status.get("pr")
+    assert pr is not None, "status['pr'] must be set even in headless runs"
+    assert pr["url"] == "https://github.com/org/repo/pull/7"
+    assert pr["number"] == 7
+    assert pr["commit_sha"] == "deadbeef1"
+    assert pr["source_branch"] == "feat/headless"
+    assert pr["target_branch"] == "main"
+    assert pr["provider"] == "github"
+    assert pr["is_draft"] is True
 
 
 def test_git_pr_created_not_emitted_without_pr_url(tmp_path):

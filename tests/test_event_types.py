@@ -516,6 +516,39 @@ def test_git_pr_created_payload_required_fields():
     assert p["title"] == "Add events module"
 
 
+def test_git_pr_created_payload_extended_fields():
+    from worca.events.types import git_pr_created_payload
+    p = git_pr_created_payload(
+        pr_url="https://github.com/org/repo/pull/42",
+        pr_number=42,
+        title="Add events module",
+        commit_sha="abc1234567",
+        source_branch="feature/x",
+        target_branch="main",
+        provider="github",
+        is_draft=False,
+    )
+    assert p["commit_sha"] == "abc1234567"
+    assert p["source_branch"] == "feature/x"
+    assert p["target_branch"] == "main"
+    assert p["provider"] == "github"
+    assert p["is_draft"] is False
+
+
+def test_git_pr_created_payload_backwards_compat_no_extended_fields():
+    from worca.events.types import git_pr_created_payload
+    p = git_pr_created_payload(
+        pr_url="https://github.com/org/repo/pull/42",
+        pr_number=42,
+        title="Old call",
+    )
+    assert p["commit_sha"] is None
+    assert p["source_branch"] is None
+    assert p["target_branch"] is None
+    assert p["provider"] is None
+    assert p["is_draft"] is None
+
+
 def test_git_pr_merged_payload_required_fields():
     from worca.events.types import git_pr_merged_payload
     p = git_pr_merged_payload(

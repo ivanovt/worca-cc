@@ -241,6 +241,7 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
             "pr_verified": None,
         },
         "pr_review_outcome": None,
+        "pr": None,
     }
     return status
 

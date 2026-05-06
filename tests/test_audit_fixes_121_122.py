@@ -65,6 +65,10 @@ def test_runner_keeps_legacy_flat_status_path(tmp_path):
 
 
 # ─── #122.1: Guardian PR fallback ────────────────────────────────────────────
+# NOTE: The prose fallback (_extract_pr_fields_from_text) only recovers
+# pr_url and pr_number. Extended fields (commit_sha, source_branch,
+# target_branch, provider, is_draft) are NOT recoverable from prose — agents
+# must emit structured JSON output for those fields to be persisted.
 
 
 def test_extract_pr_fields_from_text_github():

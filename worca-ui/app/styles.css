@@ -3436,6 +3436,51 @@ sl-details.learnings-panel::part(content) {
   align-items: center;
 }
 
+.pr-details-section {
+  margin-top: 8px;
+}
+
+.pr-details-table {
+  border-collapse: collapse;
+  font-size: 13px;
+  width: 100%;
+}
+
+.pr-details-table td {
+  padding: 3px 8px 3px 0;
+  vertical-align: middle;
+}
+
+.pr-details-table td.meta-label {
+  white-space: nowrap;
+  width: 1%;
+  padding-right: 10px;
+}
+
+.pr-commit-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pr-commit-sha {
+  font-family: monospace;
+  font-size: 12px;
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border-subtle);
+}
+
+.pr-branch-flow {
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.pr-title-badge {
+  margin-left: 6px;
+}
+
 .classification-strip {
   margin-top: 10px;
   padding: 8px 10px;
