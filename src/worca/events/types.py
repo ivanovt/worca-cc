@@ -459,8 +459,24 @@ def git_commit_payload(
     }
 
 
-def git_pr_created_payload(pr_url: str, pr_number: int, title: str) -> dict:
-    return {"pr_url": pr_url, "pr_number": pr_number, "title": title}
+def git_pr_created_payload(
+    pr_url: str,
+    pr_number: int,
+    title: str,
+    commit_sha: str = None,
+    source_branch: str = None,
+    target_branch: str = None,
+    provider: str = None,
+) -> dict:
+    return {
+        "pr_url": pr_url,
+        "pr_number": pr_number,
+        "title": title,
+        "commit_sha": commit_sha,
+        "source_branch": source_branch,
+        "target_branch": target_branch,
+        "provider": provider,
+    }
 
 
 def git_pr_merged_payload(pr_url: str, pr_number: int) -> dict:

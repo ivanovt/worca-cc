@@ -8,6 +8,12 @@
     "pr_number": { "type": "integer" },
     "pr_url": { "type": "string", "format": "uri" },
     "commit_sha": { "type": "string", "minLength": 7 },
+    "source_branch": { "type": "string" },
+    "target_branch": { "type": "string" },
+    "provider": {
+      "type": "string",
+      "enum": ["github", "gitlab", "bitbucket", "azure_devops", "gitea", "gerrit", "other"]
+    },
     "review_status": {
       "type": "string",
       "enum": ["pending", "approved", "changes_requested", "rejected"]

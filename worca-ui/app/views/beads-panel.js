@@ -431,7 +431,9 @@ export function beadsPanelView(
 
   const branch = run?.branch || run?.work_request?.branch || '';
   const displayRunId = runId || run?.run_id || '';
-  const pr = run?.pr_url || null;
+  const prUrl = run?.pr?.url || run?.pr_url || null;
+  const prNumber = run?.pr?.number ?? null;
+  const prLabel = prNumber != null ? `PR #${prNumber}` : 'View PR';
 
   const metaStripView =
     branch || displayRunId
@@ -453,7 +455,7 @@ export function beadsPanelView(
         <div class="run-branch">
           <span class="stage-meta-icon">${unsafeHTML(iconSvg(GitBranch, 14))}</span>
           <span>${branch}</span>
-          ${pr ? html`<a class="run-pr-link" href="${pr}" target="_blank">View PR</a>` : nothing}
+          ${prUrl ? html`<a class="run-pr-link" href="${prUrl}" target="_blank">${prLabel}</a>` : nothing}
         </div>
       `
           : nothing

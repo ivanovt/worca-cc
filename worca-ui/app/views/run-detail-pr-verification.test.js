@@ -28,7 +28,7 @@ const guardianStage = {
 const baseRun = {
   pipeline_status: 'failed',
   milestones: { pr_verified: false },
-  stages: { guardian: guardianStage },
+  stages: { pr: guardianStage },
 };
 
 describe('prVerificationBannerView', () => {
@@ -132,7 +132,7 @@ describe('runDetailView pr-verified badge in guardian stage', () => {
     const run = {
       pipeline_status: 'completed',
       milestones: { pr_verified: true },
-      stages: { guardian: guardianStage },
+      stages: { pr: guardianStage },
     };
     const out = renderToString(runDetailView(run));
     expect(out).toContain('pr-verified-badge');
@@ -166,7 +166,7 @@ describe('runDetailView pr-verified badge in guardian stage', () => {
   it('does not render pr-verified-badge when milestones is absent', () => {
     const run = {
       pipeline_status: 'failed',
-      stages: { guardian: guardianStage },
+      stages: { pr: guardianStage },
     };
     const out = renderToString(runDetailView(run));
     expect(out).not.toContain('pr-verified-badge');
@@ -183,7 +183,7 @@ describe('runDetailView pr-verified badge in guardian stage', () => {
     const run = {
       pipeline_status: 'completed',
       milestones: { pr_verified: true },
-      stages: { guardian: multiIterGuardian },
+      stages: { pr: multiIterGuardian },
     };
     const out = renderToString(runDetailView(run));
     expect(out).toContain('pr-verified-badge');

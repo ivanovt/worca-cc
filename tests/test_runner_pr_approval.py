@@ -109,7 +109,13 @@ def _run_pr_pipeline(tmp_path, pr_approval=None, timeout_seconds=None,
 
     def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
                        prompt_override=None, **kwargs):
-        return _mock_stage(stage, {"pr_url": "https://github.com/test/1", "pr_number": 1})
+        return _mock_stage(stage, {
+            "pr_url": "https://github.com/test/repo/pull/1",
+            "pr_number": 1,
+            "commit_sha": "abc1234567",
+            "source_branch": "feature/test",
+            "target_branch": "main",
+        })
 
     patches = [
         patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage),
@@ -186,7 +192,13 @@ class TestPrApprovalReject:
 
         def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
                            prompt_override=None, **kwargs):
-            return _mock_stage(stage, {"pr_url": "https://github.com/test/1", "pr_number": 1})
+            return _mock_stage(stage, {
+                "pr_url": "https://github.com/test/repo/pull/1",
+                "pr_number": 1,
+                "commit_sha": "abc1234567",
+                "source_branch": "feature/test",
+                "target_branch": "main",
+            })
 
         with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
              patch("worca.orchestrator.runner.create_branch"), \
@@ -215,7 +227,13 @@ class TestPrApprovalNoCtx:
 
         def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
                            prompt_override=None, **kwargs):
-            return _mock_stage(stage, {"pr_url": "https://github.com/test/1", "pr_number": 1})
+            return _mock_stage(stage, {
+                "pr_url": "https://github.com/test/repo/pull/1",
+                "pr_number": 1,
+                "commit_sha": "abc1234567",
+                "source_branch": "feature/test",
+                "target_branch": "main",
+            })
 
         # Prevent ctx from being created by making EventContext raise.
         # runner.py wraps EventContext construction in `if events_path:` and
