@@ -2,13 +2,21 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PROutput",
   "type": "object",
-  "required": ["pr_number", "pr_url"],
+  "required": ["outcome", "pr_number", "pr_url"],
   "properties": {
+    "outcome": { "type": "string", "enum": ["success", "reject"] },
     "pr_number": { "type": "integer" },
     "pr_url": { "type": "string", "format": "uri" },
+    "commit_sha": { "type": "string", "minLength": 7 },
     "review_status": {
       "type": "string",
       "enum": ["pending", "approved", "changes_requested", "rejected"]
     }
+  },
+  "if": {
+    "properties": { "outcome": { "const": "success" } }
+  },
+  "then": {
+    "required": ["commit_sha"]
   }
 }

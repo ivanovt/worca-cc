@@ -199,6 +199,13 @@ def test_init_status_has_milestones():
     assert result["milestones"]["deploy_approved"] is None
 
 
+def test_init_status_has_pr_verified_milestone():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert "pr_verified" in result["milestones"]
+    assert result["milestones"]["pr_verified"] is None
+
+
 def test_init_status_has_stage_field():
     wr = {"title": "Task"}
     result = init_status(wr, "feat/task")

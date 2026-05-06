@@ -4,6 +4,7 @@ Orchestrates the full pipeline from plan through PR.
 """
 
 import atexit
+import collections
 import dataclasses
 import json
 import os
@@ -1086,6 +1087,108 @@ def _extract_pr_fields_from_text(text) -> Optional[dict]:
     return {"pr_url": m.group(0), "pr_number": int(m.group(1))}
 
 
+PRVerification = collections.namedtuple("PRVerification", ["ok", "reason"])
+
+
+def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> Optional[PRVerification]:
+    """Best-effort `gh pr view` check.
+
+    Confirms the PR actually exists on the hosting platform and that its URL
+    matches the URL guardian reported — defends against a fabricated `pr_url`
+    that passes structural checks.
+
+    Returns:
+        PRVerification on a definitive answer (PR exists and matches → ok=True;
+        gh ran cleanly but the PR is missing or the URL differs → ok=False).
+        None when gh could not run a meaningful check (binary missing, no auth,
+        no remote, transport error). Callers fall back on local invariants.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "url,number"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        stderr_lower = (r.stderr or "").lower()
+        for needle in (
+            "auth", "gh_token", "no such remote", "not a git repo",
+            "no default remote", "no git remote", "could not determine",
+        ):
+            if needle in stderr_lower:
+                return None
+        return PRVerification(
+            ok=False,
+            reason=f"gh pr view #{pr_number} failed: {(r.stderr or '').strip()[:200]}",
+        )
+    try:
+        data = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    actual_number = data.get("number")
+    actual_url = data.get("url")
+    if actual_number != pr_number:
+        return PRVerification(
+            ok=False,
+            reason=f"gh returned PR #{actual_number}, guardian reported #{pr_number}",
+        )
+    if actual_url and actual_url != expected_url:
+        return PRVerification(
+            ok=False,
+            reason=f"PR URL mismatch: gh has {actual_url!r}, guardian reported {expected_url!r}",
+        )
+    return PRVerification(ok=True, reason="")
+
+
+def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVerification:
+    """Post-condition check after the PR stage reports success.
+
+    Validates four invariants:
+    1. stage_output is a structured dict carrying commit_sha, pr_url, pr_number.
+    2. git HEAD changed from baseline_head (a new commit was made).
+    3. The reported commit_sha is a prefix of (or equal to) the actual HEAD SHA.
+    4. (Best-effort) `gh pr view <pr_number>` confirms the PR exists and its
+       URL matches `pr_url`. Skipped silently when gh cannot run.
+
+    Args:
+        stage_output: Structured output dict from the guardian agent.
+        baseline_head: git HEAD SHA captured before the PR stage ran.
+        gh_lookup: Optional callable(pr_number, expected_url) → PRVerification|None.
+            Defaults to _verify_pr_via_gh. Tests inject a stub.
+
+    Returns:
+        PRVerification(ok=True, reason="") on success, or
+        PRVerification(ok=False, reason=<explanation>) on failure.
+    """
+    if not isinstance(stage_output, dict):
+        return PRVerification(ok=False, reason="stage output is not a structured dict")
+
+    for field in ("commit_sha", "pr_url", "pr_number"):
+        if field not in stage_output:
+            return PRVerification(ok=False, reason=f"missing required field: {field}")
+
+    actual_head = get_current_git_head()
+
+    if actual_head == baseline_head:
+        return PRVerification(ok=False, reason="no new commit on HEAD — git HEAD unchanged from baseline")
+
+    reported_sha = stage_output["commit_sha"]
+    if not actual_head.startswith(reported_sha):
+        return PRVerification(
+            ok=False,
+            reason=f"commit sha mismatch: reported {reported_sha!r} but HEAD is {actual_head!r}",
+        )
+
+    if gh_lookup is None:
+        gh_lookup = _verify_pr_via_gh
+    gh_result = gh_lookup(stage_output["pr_number"], stage_output["pr_url"])
+    if gh_result is not None and not gh_result.ok:
+        return gh_result
+
+    return PRVerification(ok=True, reason="")
+
+
 def run_preflight(
     context: dict,
     settings_path: str = ".claude/settings.json",
@@ -1528,6 +1631,10 @@ def run_pipeline(
             loop_counters = restore_loop_counters(status)
         else:
             loop_counters = {}
+        # Captured once on first entry to the PR stage; preserved across
+        # PR-stage retries so iter_2 verification compares against the same
+        # pre-stage HEAD as iter_1.
+        _pr_baseline_head: Optional[str] = None
         max_beads = 0
 
         # Initialize PromptBuilder for context threading across stages
@@ -1915,6 +2022,8 @@ def run_pipeline(
                     # kills it (terminate_current already fired as a no-op).
                     if _shutdown_requested:
                         raise InterruptedError("Pipeline shutdown requested before stage execution")
+                    if current_stage == Stage.PR and _pr_baseline_head is None:
+                        _pr_baseline_head = get_current_git_head()
                     result, raw_envelope = run_stage(
                         current_stage, context, settings_path,
                         msize=msize, iteration=iter_num,
@@ -2807,6 +2916,34 @@ def run_pipeline(
                     save_status(status, actual_status_path)
                     return
 
+                # Post-condition verification: only when guardian explicitly
+                # declares outcome=success (prose-fallback and partial outputs
+                # bypass this gate — they already recovered what they can).
+                _pr_verification_passed = False
+                if isinstance(result, dict) and result.get("outcome") == "success":
+                    _vr = _verify_pr_stage(result, _pr_baseline_head)
+                    if not _vr.ok:
+                        _log(f"PR stage verification failed: {_vr.reason}", "warn")
+                        loop_counters["pr_verification_retry"] = (
+                            loop_counters.get("pr_verification_retry", 0) + 1
+                        )
+                        status["loop_counters"] = dict(loop_counters)
+                        iter_extras["outcome"] = "reject"
+                        complete_iteration(status, current_stage.value, **iter_extras)
+                        if loop_counters["pr_verification_retry"] > 1:
+                            set_milestone(status, "pr_verified", False)
+                            if ctx:
+                                emit_event(ctx, MILESTONE_SET, milestone_set_payload(
+                                    milestone="pr_verified", value=False,
+                                    stage=Stage.PR.value,
+                                ))
+                            raise PipelineError(
+                                f"PR verification failed after retry: {_vr.reason}"
+                            )
+                        save_status(status, actual_status_path)
+                        continue
+                    _pr_verification_passed = True
+
                 iter_extras["outcome"] = "success"
                 complete_iteration(status, current_stage.value, **iter_extras)
                 update_stage(status, current_stage.value, **stage_extras)
@@ -2826,6 +2963,14 @@ def run_pipeline(
                             _handle_pause(ctx, f"{current_stage.value} stage.completed")
                         elif _action == "abort":
                             raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
+                if _pr_verification_passed:
+                    set_milestone(status, "pr_verified", True)
+                    save_status(status, actual_status_path)
+                    if ctx:
+                        emit_event(ctx, MILESTONE_SET, milestone_set_payload(
+                            milestone="pr_verified", value=True,
+                            stage=Stage.PR.value,
+                        ))
                 if ctx and isinstance(result, dict):
                     _pr_url = result.get("pr_url")
                     _pr_number = result.get("pr_number")
