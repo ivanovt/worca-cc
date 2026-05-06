@@ -359,6 +359,35 @@ def pipeline_env(tmp_path):
             capture_output=True, timeout=timeout,
         )
 
+    def run_cli(
+        name: str,
+        *args: str,
+        env_overrides: dict | None = None,
+        timeout: int = 30,
+    ) -> subprocess.CompletedProcess:
+        """Invoke a worca CLI subcommand as a coverage-tracked subprocess.
+
+        Spawns ``python -m worca.cli.main <name> <args>`` via
+        ``_wrap_with_coverage`` with ``COVERAGE_FILE`` pointing to
+        ``REPO_ROOT/.coverage`` so fragments land where ``coverage combine``
+        can find them (not in the per-test tmpdir). Mirrors ``run_hook``.
+
+        Args:
+            name: CLI subcommand name, e.g. ``"cleanup"``.
+            *args: Additional arguments forwarded to the subcommand.
+            env_overrides: per-call env additions, applied after fixture overrides.
+            timeout: subprocess timeout in seconds.
+        """
+        cmd = [sys.executable, "-m", "worca.cli.main", name, *args]
+        cmd = _wrap_with_coverage(cmd)
+        env = _base_env_common()
+        if env_overrides:
+            env.update(env_overrides)
+        return subprocess.run(
+            cmd, cwd=str(project), env=env,
+            capture_output=True, text=True, timeout=timeout,
+        )
+
     def add_webhook(url: str) -> None:
         """Add a webhook URL to settings for event dispatch testing.
 
@@ -419,6 +448,7 @@ def pipeline_env(tmp_path):
         run_hook=run_hook,
         run_worktree=run_worktree,
         run_parallel=run_parallel,
+        run_cli=run_cli,
         add_webhook=add_webhook,
         enable_stages=enable_stages,
         set_governance_agent=set_governance_agent,
