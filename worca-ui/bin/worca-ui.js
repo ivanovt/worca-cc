@@ -113,6 +113,23 @@ export function parseArgs(argv) {
   return args;
 }
 
+/** Build the argv array for spawning server/index.js. Exported for testing. */
+export function buildSpawnArgs({
+  serverScript,
+  port,
+  host,
+  isGlobal,
+  projectPath,
+}) {
+  const args = [serverScript, '--port', String(port), '--host', host];
+  if (isGlobal) {
+    args.push('--global');
+  } else if (projectPath) {
+    args.push('--project', projectPath);
+  }
+  return args;
+}
+
 /** Resolve log file path based on mode (mirrors PID file location). */
 function resolveLogPath(isGlobal) {
   if (isGlobal) {
@@ -242,7 +259,7 @@ function describePortOccupant(port) {
   return null;
 }
 
-async function start({ port, host, open, global: isGlobal }) {
+async function start({ port, host, open, global: isGlobal, projectPath }) {
   const { pidDir, pidFile } = resolvePidPaths(isGlobal);
 
   const existing = readPidFile(pidFile);
@@ -281,16 +298,13 @@ async function start({ port, host, open, global: isGlobal }) {
     }
   }
 
-  const spawnArgs = [
-    SERVER_SCRIPT,
-    '--port',
-    String(availablePort),
-    '--host',
+  const spawnArgs = buildSpawnArgs({
+    serverScript: SERVER_SCRIPT,
+    port: availablePort,
     host,
-  ];
-  if (isGlobal) {
-    spawnArgs.push('--global');
-  }
+    isGlobal,
+    projectPath,
+  });
 
   // Capture child stdout+stderr to a log file so startup crashes are visible.
   // Without this, errors thrown during module load (missing files, bad imports,

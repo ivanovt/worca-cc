@@ -4,21 +4,20 @@ import { createServer } from 'node:http';
 import { homedir, platform } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
+import { parseServerArgv } from './argv-parser.js';
 import { createIntegrations } from './integrations/index.js';
 import { attachWsServer } from './ws.js';
 
-// Parse argv
-let port = parseInt(process.env.PORT, 10) || 3400;
-let host = process.env.HOST || '127.0.0.1';
-let isGlobal = true;
-for (let i = 0; i < process.argv.length; i++) {
-  if (process.argv[i] === '--port' && process.argv[i + 1])
-    port = parseInt(process.argv[++i], 10);
-  if (process.argv[i] === '--host' && process.argv[i + 1])
-    host = process.argv[++i];
-  if (process.argv[i] === '--global') isGlobal = true;
-  if (process.argv[i] === '--project') isGlobal = false;
-}
+// Parse argv (env vars provide defaults; argv flags take precedence)
+const {
+  port,
+  host,
+  isGlobal,
+  projectPath: explicitProjectPath,
+} = parseServerArgv(process.argv, {
+  port: parseInt(process.env.PORT, 10) || 3400,
+  host: process.env.HOST || '127.0.0.1',
+});
 
 // Resolve project root: walk up from cwd until we find .claude/settings.json
 import { existsSync } from 'node:fs';
@@ -44,8 +43,8 @@ if (isGlobal) {
   worcaDir = null;
   settingsPath = null;
 } else {
-  // Per-project mode: resolve from cwd
-  projectRoot = findProjectRoot(process.cwd());
+  // Per-project mode: use explicit path when provided, otherwise walk up from cwd
+  projectRoot = explicitProjectPath ?? findProjectRoot(process.cwd());
   worcaDir = join(projectRoot, '.worca');
   settingsPath = join(projectRoot, '.claude', 'settings.json');
 }
