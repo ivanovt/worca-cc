@@ -166,3 +166,89 @@ def test_pr_stage_iteration_recorded_on_success(pipeline_env):
     assert len(pr_iters) == 1
     assert pr_iters[0]["outcome"] == "success"
     assert result.status["stages"]["pr"]["status"] == "completed"
+
+
+# ===========================================================================
+# 6. Post-condition verification: pr_verified milestone
+# ===========================================================================
+
+def test_pr_verified_milestone_true_when_guardian_commits_and_declares_success(pipeline_env):
+    """When guardian commits and emits outcome=success, pr_verified=True in status."""
+    scenario = {
+        "agents": {
+            "tester": _tester_pass(),
+            "guardian": {
+                "action": "succeed",
+                "run_command": "git commit --allow-empty -m 'guardian: created PR'",
+                "structured_output": {
+                    "outcome": "success",
+                    "pr_url": "https://github.com/example/repo/pull/1",
+                    "pr_number": 1,
+                    "commit_sha": "$HEAD",
+                },
+            },
+        },
+        "default": {"action": "succeed", "delay_s": 0.05},
+    }
+    result = pipeline_env.run(scenario, prompt="pr verify pass", timeout=120)
+    assert result.returncode == 0, f"stderr: {result.stderr[-500:]}"
+    assert result.status.get("milestones", {}).get("pr_verified") is True
+
+
+def test_pr_verification_retries_then_succeeds_on_second_attempt(pipeline_env):
+    """Retry fires when iter_1 fails verification; iter_2 commits and pr_verified=True."""
+    scenario = make_iteration_scenario({
+        "tester": _tester_pass(),
+        "guardian": {
+            "iter_1": {
+                "action": "succeed", "delay_s": 0.05,
+                "structured_output": {
+                    "outcome": "success",
+                    "pr_url": "https://github.com/example/repo/pull/1",
+                    "pr_number": 1,
+                    "commit_sha": "abc1234deadbeef",
+                },
+            },
+            "iter_2": {
+                "action": "succeed", "delay_s": 0.05,
+                "run_command": "git commit --allow-empty -m 'guardian: created PR on retry'",
+                "structured_output": {
+                    "outcome": "success",
+                    "pr_url": "https://github.com/example/repo/pull/1",
+                    "pr_number": 1,
+                    "commit_sha": "$HEAD",
+                },
+            },
+        },
+    })
+    result = pipeline_env.run(scenario, prompt="pr retry success", timeout=120)
+    assert result.returncode == 0, f"stderr: {result.stderr[-500:]}"
+    assert result.status.get("milestones", {}).get("pr_verified") is True
+
+    pr_iters = result.status["stages"]["pr"]["iterations"]
+    assert len(pr_iters) == 2, f"expected 2 pr iterations, got {len(pr_iters)}"
+    assert pr_iters[0]["outcome"] == "reject", "iter_1 should be rejected by verification"
+    assert pr_iters[1]["outcome"] == "success", "iter_2 should succeed"
+
+
+def test_pr_stage_halts_with_pr_verified_false_when_no_new_commit(pipeline_env):
+    """When guardian declares outcome=success but HEAD doesn't change, pipeline halts."""
+    scenario = {
+        "agents": {
+            "tester": _tester_pass(),
+            "guardian": {
+                "action": "succeed", "delay_s": 0.05,
+                "structured_output": {
+                    "outcome": "success",
+                    "pr_url": "https://github.com/example/repo/pull/1",
+                    "pr_number": 1,
+                    "commit_sha": "abc1234deadbeef",
+                },
+            },
+        },
+        "default": {"action": "succeed", "delay_s": 0.05},
+    }
+    result = pipeline_env.run(scenario, prompt="pr verify fail", timeout=120)
+    assert result.returncode != 0, "expected pipeline to fail but it succeeded"
+    assert result.status.get("milestones", {}).get("pr_verified") is False
+    assert result.status.get("pipeline_status") == "failed"

@@ -23,6 +23,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
 
@@ -89,6 +90,18 @@ def _resolve_directive(scenario, agent, iteration):
     return scenario.get("default", {})
 
 
+def _substitute_head_placeholder(obj):
+    """Replace string values that are exactly "$HEAD" with the actual git HEAD SHA."""
+    if isinstance(obj, str) and obj == "$HEAD":
+        r = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else obj
+    if isinstance(obj, dict):
+        return {k: _substitute_head_placeholder(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_substitute_head_placeholder(item) for item in obj]
+    return obj
+
+
 def main():
     scenario_path = os.environ.get("MOCK_CLAUDE_SCENARIO")
     if not scenario_path:
@@ -127,6 +140,10 @@ def main():
     time.sleep(delay)
 
     if action == "succeed":
+        run_cmd = directive.get("run_command")
+        if run_cmd:
+            subprocess.run(run_cmd, shell=True, check=False)
+
         result_text = directive.get("result_text", "Done.")
         envelope = {
             "type": "result",
@@ -145,6 +162,7 @@ def main():
         # behavior, kept for backward compat.
         structured = directive.get("structured_output")
         if structured is not None:
+            structured = _substitute_head_placeholder(structured)
             envelope["structured_output"] = structured
         print(json.dumps(envelope))
         sys.stdout.flush()

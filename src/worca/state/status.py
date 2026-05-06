@@ -238,6 +238,7 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
             "plan_approved": None,
             "pr_approved": None,
             "deploy_approved": None,
+            "pr_verified": None,
         },
         "pr_review_outcome": None,
     }

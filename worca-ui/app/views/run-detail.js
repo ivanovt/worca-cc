@@ -271,6 +271,35 @@ function _circuitBreakerBannerView(run, settings) {
   return nothing;
 }
 
+export function prVerificationBannerView(run) {
+  if (
+    !(
+      run?.milestones?.pr_verified === false &&
+      run?.pipeline_status === 'failed'
+    )
+  ) {
+    return nothing;
+  }
+  return html`
+    <sl-alert class="pr-verification-banner" variant="danger" open>
+      <strong>PR verification failed:</strong> Guardian reported success but no new commit or PR was detected.
+    </sl-alert>
+  `;
+}
+
+function _prVerifiedBadgeView(run) {
+  const verified = run?.milestones?.pr_verified;
+  if (verified === null || verified === undefined) return nothing;
+  return html`
+    <div class="pr-verified-row">
+      <span class="meta-label">PR Verification:</span>
+      <sl-badge class="pr-verified-badge" variant="${verified ? 'success' : 'danger'}" pill>
+        ${verified ? 'Verified' : 'Not Verified'}
+      </sl-badge>
+    </div>
+  `;
+}
+
 function _preflightCheckBadgeVariant(status) {
   if (status === 'pass') return 'success';
   if (status === 'warn') return 'warning';
@@ -618,6 +647,7 @@ export function runDetailView(run, settings = {}, options = {}) {
     <div class="run-detail-overview">
       ${stageTimelineView(stages, stageUi, run.active)}
       ${_circuitBreakerBannerView(run, settings)}
+      ${prVerificationBannerView(run)}
 
       <div class="run-info-section">
         ${
@@ -881,6 +911,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowView(iterations[0]) : nothing}
+                      ${key === 'guardian' && iterations.length === 1 ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
