@@ -33,7 +33,6 @@ const prObject = {
   source_branch: 'feature/my-feature',
   target_branch: 'main',
   provider: 'github',
-  is_draft: false,
 };
 
 const baseRun = {
@@ -94,24 +93,10 @@ describe('_prDetailsView via runDetailView — pr stage', () => {
     expect(out).toContain('pr-branch-flow');
   });
 
-  it('does not render Draft badge when is_draft=false', () => {
-    const out = renderToString(runDetailView(baseRun));
-    expect(out).not.toContain('pr-draft-badge');
-    expect(out).not.toContain('Draft');
-  });
-
-  it('renders Draft badge with warning variant when is_draft=true', () => {
-    const run = { ...baseRun, pr: { ...prObject, is_draft: true } };
-    const out = renderToString(runDetailView(run));
-    expect(out).toContain('pr-draft-badge');
-    expect(out).toContain('Draft');
-    expect(out).toContain('variant="warning"');
-  });
-
-  it('renders review_status badge when is_draft=false and review_status set', () => {
+  it('renders review_status badge when review_status set', () => {
     const run = {
       ...baseRun,
-      pr: { ...prObject, is_draft: false, review_status: 'approved' },
+      pr: { ...prObject, review_status: 'approved' },
     };
     const out = renderToString(runDetailView(run));
     expect(out).toContain('pr-review-status-badge');
@@ -122,7 +107,7 @@ describe('_prDetailsView via runDetailView — pr stage', () => {
   it('renders review_status=changes_requested with warning variant', () => {
     const run = {
       ...baseRun,
-      pr: { ...prObject, is_draft: false, review_status: 'changes_requested' },
+      pr: { ...prObject, review_status: 'changes_requested' },
     };
     const out = renderToString(runDetailView(run));
     expect(out).toContain('pr-review-status-badge');
@@ -132,27 +117,15 @@ describe('_prDetailsView via runDetailView — pr stage', () => {
   it('renders review_status=rejected with danger variant', () => {
     const run = {
       ...baseRun,
-      pr: { ...prObject, is_draft: false, review_status: 'rejected' },
+      pr: { ...prObject, review_status: 'rejected' },
     };
     const out = renderToString(runDetailView(run));
     expect(out).toContain('pr-review-status-badge');
     expect(out).toContain('variant="danger"');
   });
 
-  it('prefers is_draft=true over review_status', () => {
-    const run = {
-      ...baseRun,
-      pr: { ...prObject, is_draft: true, review_status: 'approved' },
-    };
-    const out = renderToString(runDetailView(run));
-    expect(out).toContain('pr-draft-badge');
-    expect(out).not.toContain('pr-review-status-badge');
-  });
-
-  it('renders nothing for status row when is_draft=false and no review_status', () => {
-    const run = { ...baseRun, pr: { ...prObject, is_draft: false } };
-    const out = renderToString(runDetailView(run));
-    expect(out).not.toContain('pr-draft-badge');
+  it('renders nothing for status row when review_status is absent', () => {
+    const out = renderToString(runDetailView(baseRun));
     expect(out).not.toContain('pr-review-status-badge');
   });
 
@@ -225,19 +198,6 @@ describe('PR stage title badge', () => {
     const out = renderToString(runDetailView(baseRun));
     expect(out).toContain('pr-title-badge');
     expect(out).toContain('PR #42');
-  });
-
-  it('shows "· draft" suffix in title badge when is_draft=true', () => {
-    const run = { ...baseRun, pr: { ...prObject, is_draft: true } };
-    const out = renderToString(runDetailView(run));
-    expect(out).toContain('PR #42');
-    expect(out).toContain('draft');
-  });
-
-  it('uses warning variant for draft title badge', () => {
-    const run = { ...baseRun, pr: { ...prObject, is_draft: true } };
-    const out = renderToString(runDetailView(run));
-    expect(out).toContain('pr-title-badge');
   });
 
   it('does not render pr-title-badge when no PR data', () => {

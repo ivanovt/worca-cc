@@ -526,13 +526,11 @@ def test_git_pr_created_payload_extended_fields():
         source_branch="feature/x",
         target_branch="main",
         provider="github",
-        is_draft=False,
     )
     assert p["commit_sha"] == "abc1234567"
     assert p["source_branch"] == "feature/x"
     assert p["target_branch"] == "main"
     assert p["provider"] == "github"
-    assert p["is_draft"] is False
 
 
 def test_git_pr_created_payload_backwards_compat_no_extended_fields():
@@ -546,7 +544,6 @@ def test_git_pr_created_payload_backwards_compat_no_extended_fields():
     assert p["source_branch"] is None
     assert p["target_branch"] is None
     assert p["provider"] is None
-    assert p["is_draft"] is None
 
 
 def test_git_pr_merged_payload_required_fields():

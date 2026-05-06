@@ -38,12 +38,11 @@ You receive the review outcome and proof status from the Reviewer. You have acce
    git push -u origin <branch-name>
    ```
 7. Open the PR using the hosting CLI documented in CLAUDE.md (usually `gh pr create` or `glab mr create`). Read `target_branch` from the run's `status.json`; if set, pass it as `--base {target_branch}` so the PR targets the correct branch. If `target_branch` is absent or null, omit `--base` and let the hosting platform use its default. Capture the PR URL and include it in your structured output.
-8. Record all output fields for your `pr.json` structured output:
-   - `commit_sha` — run `git rev-parse HEAD` after committing
-   - `source_branch` — run `git rev-parse --abbrev-ref HEAD` to capture the current branch name
-   - `target_branch` — read from the run's `status.json` (same value used in step 7); fall back to the platform default branch if absent
-   - `provider` (optional) — derive from the PR URL hostname: `github.com` → `github`, `gitlab.com` → `gitlab`, `bitbucket.org` → `bitbucket`, `dev.azure.com` → `azure_devops`, others use the hostname to guess or set `other`
-   - `is_draft` (optional) — `true` if the PR was created as a draft, `false` otherwise
+8. Record output fields for your `pr.json` structured output:
+   - `commit_sha` — run `git rev-parse HEAD` after committing (required on success)
+   - `source_branch` (optional) — the runner fills this from the run state; only set it explicitly if you committed on a different branch than the run's working branch
+   - `target_branch` (optional) — same: the runner reads it from `status.json`; only set it if you used a different `--base`
+   - `provider` (optional) — the runner derives this from the PR URL; you may emit it but it isn't required
 9. Mark the PR as ready for human review (this is done by `gh pr create` unless `--draft` is passed).
 10. Wait for PRE-PR APPROVAL milestone gate (orchestrator handles this after your structured output is parsed).
 
@@ -66,22 +65,21 @@ Your final response MUST be a single JSON object that matches the `pr.json` sche
 Required fields:
 - `pr_number` (integer) — captured from `gh pr create` / `gh pr view` output
 - `pr_url` (string, URI) — full URL to the PR
-- `source_branch` (string) — current branch name, from `git rev-parse --abbrev-ref HEAD`
-- `target_branch` (string) — branch the PR targets, from `status.json` or platform default
 - `commit_sha` (string, ≥7 chars) — output of `git rev-parse HEAD` after committing (required when `outcome == "success"`)
 
-Optional:
-- `provider` — `"github"` | `"gitlab"` | `"bitbucket"` | `"azure_devops"` | `"gitea"` | `"gerrit"` | `"other"` — derive from the PR URL hostname
-- `is_draft` (boolean) — `true` if the PR was created as a draft
+Optional (the runner fills these from local state if you omit them — only emit them to override):
+- `source_branch` (string) — current branch name; runner default is the run's working branch
+- `target_branch` (string) — branch the PR targets; runner default is `status.json`'s `target_branch`
+- `provider` — `"github"` | `"gitlab"` | `"bitbucket"` | `"azure_devops"` | `"gitea"` | `"gerrit"` | `"other"` — runner derives this from the PR URL
 - `review_status` — `"pending"` | `"approved"` | `"changes_requested"` | `"rejected"`
 
 Example final output (this exact shape, no fences, no prose around it):
 
 ```
-{"outcome": "success", "pr_number": 42, "pr_url": "https://github.com/owner/repo/pull/42", "commit_sha": "abc1234def5", "source_branch": "feature/my-branch", "target_branch": "main", "provider": "github", "is_draft": false, "review_status": "pending"}
+{"outcome": "success", "pr_number": 42, "pr_url": "https://github.com/owner/repo/pull/42", "commit_sha": "abc1234def5", "review_status": "pending"}
 ```
 
-If the PR couldn't be created (steps 3–7 failed), still emit JSON — set `review_status: "rejected"` and use `0` / empty string for the missing fields (`pr_number: 0`, `pr_url: ""`, `source_branch: ""`, `target_branch: ""`), then the orchestrator will treat it as a stage failure.
+If the PR couldn't be created (steps 3–7 failed), still emit JSON — set `outcome: "reject"`, `review_status: "rejected"`, and use `0` / empty string for the missing fields (`pr_number: 0`, `pr_url: ""`), then the orchestrator will treat it as a stage failure.
 
 ## Rules
 

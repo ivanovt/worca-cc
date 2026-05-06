@@ -2770,8 +2770,7 @@ def test_git_pr_created_payload_fields(tmp_path):
                 "commit_sha": "abc1234567",
                 "source_branch": "feature/x",
                 "target_branch": "main",
-                "provider": "github",
-                "is_draft": False}, {"type": "result"}
+                "provider": "github"}, {"type": "result"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
         with patch("worca.orchestrator.runner.create_branch"):
@@ -2794,11 +2793,10 @@ def test_git_pr_created_payload_fields(tmp_path):
     assert p["source_branch"] == "feature/x"
     assert p["target_branch"] == "main"
     assert p["provider"] == "github"
-    assert p["is_draft"] is False
 
 
 def test_pr_metadata_persisted_without_ctx(tmp_path):
-    """PR metadata is written to status['pr'] even in headless runs (no event ctx)."""
+    """PR metadata is written to status['pr'] even when EventContext is unavailable."""
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -2828,22 +2826,16 @@ def test_pr_metadata_persisted_without_ctx(tmp_path):
                 "commit_sha": "deadbeef1",
                 "source_branch": "feat/headless",
                 "target_branch": "main",
-                "provider": "github",
-                "is_draft": True}, {"type": "result"}
+                "provider": "github"}, {"type": "result"}
 
-    import os.path as osp
-    _orig_join = osp.join
-
-    def null_events_join(*args):
-        if len(args) >= 2 and args[-1] == "events.jsonl":
-            return None
-        return _orig_join(*args)
-
+    # Suppress event emission to exercise the persistence path that doesn't
+    # depend on ctx — status['pr'] is written and saved unconditionally,
+    # only the GIT_PR_CREATED event is gated on `if ctx`.
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
          patch("worca.orchestrator.runner.create_branch"), \
          patch("worca.orchestrator.runner._write_pid"), \
          patch("worca.orchestrator.runner._remove_pid"), \
-         patch("os.path.join", side_effect=null_events_join):
+         patch("worca.orchestrator.runner.emit_event", return_value=None):
         final_status = run_pipeline(
             wr, plan_file=str(plan),
             settings_path=settings_path,
@@ -2851,14 +2843,119 @@ def test_pr_metadata_persisted_without_ctx(tmp_path):
         )
 
     pr = final_status.get("pr")
-    assert pr is not None, "status['pr'] must be set even in headless runs"
+    assert pr is not None, "status['pr'] must be set even when ctx is None"
     assert pr["url"] == "https://github.com/org/repo/pull/7"
     assert pr["number"] == 7
     assert pr["commit_sha"] == "deadbeef1"
     assert pr["source_branch"] == "feat/headless"
     assert pr["target_branch"] == "main"
     assert pr["provider"] == "github"
-    assert pr["is_draft"] is True
+
+
+def test_pr_metadata_runner_fills_branches_and_provider(tmp_path):
+    """When agent omits source/target branch and provider, runner fills them.
+
+    source_branch ← status['branch'] (the run's working branch)
+    target_branch ← status['target_branch']
+    provider      ← parse_pr_url(pr_url)
+    """
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings_path = _make_minimal_settings(tmp_path, extra={
+        "stages": {
+            "plan": {"agent": "planner", "enabled": False},
+            "coordinate": {"agent": "coordinator", "enabled": False},
+            "implement": {"agent": "implementer", "enabled": False},
+            "test": {"agent": "tester", "enabled": False},
+            "review": {"agent": "guardian", "enabled": False},
+            "pr": {"agent": "guardian", "enabled": True},
+        },
+        "agents": {
+            "guardian": {"model": "opus", "max_turns": 10},
+        },
+    })
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+    wr = WorkRequest(source_type="prompt", title="Runner-derived PR fields")
+
+    def mock_run_stage(stage, context, sp, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        # Agent emits only the minimal required fields — no branches, no provider.
+        return {"pr_url": "https://gitlab.com/group/proj/-/merge_requests/3",
+                "pr_number": 3,
+                "commit_sha": "feedface1"}, {"type": "result"}
+
+    import os
+    os.environ["WORCA_TARGET_BRANCH"] = "develop"
+    try:
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+             patch("worca.orchestrator.runner.create_branch"), \
+             patch("worca.orchestrator.runner._write_pid"), \
+             patch("worca.orchestrator.runner._remove_pid"):
+            final_status = run_pipeline(
+                wr, plan_file=str(plan),
+                settings_path=settings_path,
+                status_path=status_path,
+            )
+    finally:
+        del os.environ["WORCA_TARGET_BRANCH"]
+
+    pr = final_status.get("pr")
+    assert pr is not None
+    # Branches: runner-derived from status, since agent omitted them.
+    assert pr["source_branch"] == final_status["branch"]
+    assert pr["target_branch"] == "develop"
+    # Provider: parsed from the gitlab.com URL.
+    assert pr["provider"] == "gitlab"
+
+
+def test_pr_metadata_runner_overrides_other_provider(tmp_path):
+    """When agent emits provider='other' but URL is recognisable, runner upgrades it."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings_path = _make_minimal_settings(tmp_path, extra={
+        "stages": {
+            "plan": {"agent": "planner", "enabled": False},
+            "coordinate": {"agent": "coordinator", "enabled": False},
+            "implement": {"agent": "implementer", "enabled": False},
+            "test": {"agent": "tester", "enabled": False},
+            "review": {"agent": "guardian", "enabled": False},
+            "pr": {"agent": "guardian", "enabled": True},
+        },
+        "agents": {
+            "guardian": {"model": "opus", "max_turns": 10},
+        },
+    })
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+    wr = WorkRequest(source_type="prompt", title="Provider override test")
+
+    def mock_run_stage(stage, context, sp, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"pr_url": "https://github.com/owner/repo/pull/5",
+                "pr_number": 5,
+                "commit_sha": "deadbeef1",
+                "provider": "other"}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        final_status = run_pipeline(
+            wr, plan_file=str(plan),
+            settings_path=settings_path,
+            status_path=status_path,
+        )
+
+    pr = final_status.get("pr")
+    assert pr is not None
+    assert pr["provider"] == "github"  # upgraded from "other"
 
 
 def test_git_pr_created_not_emitted_without_pr_url(tmp_path):

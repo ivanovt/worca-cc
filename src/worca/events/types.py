@@ -467,7 +467,6 @@ def git_pr_created_payload(
     source_branch: str = None,
     target_branch: str = None,
     provider: str = None,
-    is_draft: bool = None,
 ) -> dict:
     return {
         "pr_url": pr_url,
@@ -477,7 +476,6 @@ def git_pr_created_payload(
         "source_branch": source_branch,
         "target_branch": target_branch,
         "provider": provider,
-        "is_draft": is_draft,
     }
 
 

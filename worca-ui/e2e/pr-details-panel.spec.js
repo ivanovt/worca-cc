@@ -10,7 +10,6 @@ const PR_DATA = {
   source_branch: 'feature/my-feature',
   target_branch: 'main',
   provider: 'github',
-  is_draft: false,
 };
 
 async function openRunDetail(page, baseUrl, runId) {

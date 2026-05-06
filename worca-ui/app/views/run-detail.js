@@ -313,12 +313,12 @@ function _prDetailsView(run) {
   if (!prUrl) return nothing;
 
   const number = pr?.number;
+  const numberLabel = number != null ? `#${number} ↗` : '↗';
   const commitSha = pr?.commit_sha;
   const shortSha = commitSha ? commitSha.slice(0, 7) : null;
   const source = pr?.source_branch;
   const target = pr?.target_branch;
   const provider = pr?.provider;
-  const isDraft = pr?.is_draft;
   const reviewStatus = pr?.review_status;
 
   return html`
@@ -327,7 +327,7 @@ function _prDetailsView(run) {
         <tbody>
           <tr>
             <td class="meta-label">PR</td>
-            <td><a class="run-pr-link" href="${prUrl}" target="_blank" rel="noopener noreferrer">#${number} ↗</a></td>
+            <td><a class="run-pr-link" href="${prUrl}" target="_blank" rel="noopener noreferrer">${numberLabel}</a></td>
           </tr>
           ${
             provider
@@ -357,17 +357,12 @@ function _prDetailsView(run) {
               : nothing
           }
           ${
-            isDraft
+            reviewStatus
               ? html`<tr>
-            <td class="meta-label">Status</td>
-            <td><sl-badge class="pr-draft-badge" variant="warning" pill>Draft</sl-badge></td>
-          </tr>`
-              : reviewStatus
-                ? html`<tr>
             <td class="meta-label">Status</td>
             <td><sl-badge class="pr-review-status-badge" variant="${_prReviewStatusVariant(reviewStatus)}" pill>${reviewStatus.replace(/_/g, ' ')}</sl-badge></td>
           </tr>`
-                : nothing
+              : nothing
           }
         </tbody>
       </table>
@@ -380,9 +375,8 @@ function _prTitleBadge(run) {
   const prUrl = pr?.url || run?.pr_url;
   if (!prUrl) return nothing;
   const number = pr?.number;
-  const isDraft = pr?.is_draft;
-  const label = isDraft ? `PR #${number} · draft` : `PR #${number}`;
-  return html`<sl-badge class="pr-title-badge" variant="${isDraft ? 'warning' : 'success'}" pill>${label}</sl-badge>`;
+  const label = `PR #${number}`;
+  return html`<sl-badge class="pr-title-badge" variant="success" pill>${label}</sl-badge>`;
 }
 
 function _preflightCheckBadgeVariant(status) {

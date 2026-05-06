@@ -1,100 +1,67 @@
-"""Tests for the base guardian agent template content — verifies schema alignment.
+"""Schema-alignment tests for the guardian agent template.
 
-These tests verify that guardian.md documents all fields the orchestrator
-expects in the pr.json output, including new required and optional fields
-added in W-051.
+Rather than asserting individual strings are present in guardian.md (which
+breaks on every reword), we extract the JSON example block from the template
+and validate it against pr.json. This catches real drift (missing required
+field, wrong enum, type mismatch) and ignores prose changes.
 """
 
+import json
+import re
 from pathlib import Path
 
-GUARDIAN_PATH = (
-    Path(__file__).parent.parent
-    / "src"
-    / "worca"
-    / "agents"
-    / "core"
-    / "guardian.md"
-)
+import jsonschema
+import pytest
+
+REPO_ROOT = Path(__file__).parent.parent
+GUARDIAN_PATH = REPO_ROOT / "src" / "worca" / "agents" / "core" / "guardian.md"
+SCHEMA_PATH = REPO_ROOT / "src" / "worca" / "schemas" / "pr.json"
 
 
-def _guardian():
+@pytest.fixture
+def guardian_md() -> str:
     return GUARDIAN_PATH.read_text()
 
 
-class TestGuardianRequired:
-    def test_documents_source_branch_field(self):
-        assert "source_branch" in _guardian()
-
-    def test_documents_target_branch_field(self):
-        assert "target_branch" in _guardian()
-
-    def test_documents_commit_sha_field(self):
-        assert "commit_sha" in _guardian()
-
-    def test_documents_pr_number_field(self):
-        assert "pr_number" in _guardian()
-
-    def test_documents_pr_url_field(self):
-        assert "pr_url" in _guardian()
+@pytest.fixture
+def pr_schema() -> dict:
+    return json.loads(SCHEMA_PATH.read_text())
 
 
-class TestGuardianOptional:
-    def test_documents_provider_field(self):
-        assert "provider" in _guardian()
-
-    def test_documents_is_draft_field(self):
-        assert "is_draft" in _guardian()
-
-    def test_documents_review_status_field(self):
-        assert "review_status" in _guardian()
-
-
-class TestGuardianCaptureInstructions:
-    def test_source_branch_capture_command(self):
-        # Must instruct agent to run: git rev-parse --abbrev-ref HEAD
-        assert "git rev-parse --abbrev-ref HEAD" in _guardian()
-
-    def test_target_branch_from_status_json(self):
-        # Must instruct agent to read target_branch from status.json
-        assert "status.json" in _guardian()
-
-    def test_provider_heuristic_from_url(self):
-        # Must mention deriving provider from PR URL hostname
-        content = _guardian()
-        assert "hostname" in content or "provider" in content and "URL" in content
-
-    def test_provider_heuristic_mentions_url_derivation(self):
-        # The provider instruction must mention using the PR URL
-        content = _guardian()
-        # Should mention provider determination from URL
-        assert "pr_url" in content or "PR URL" in content
+def _extract_json_blocks(md: str) -> list:
+    """Pull all fenced JSON-object blocks out of guardian.md."""
+    blocks = []
+    for match in re.finditer(r"```\s*\n(\{.*?\})\s*\n```", md, re.DOTALL):
+        try:
+            blocks.append(json.loads(match.group(1)))
+        except json.JSONDecodeError:
+            continue
+    return blocks
 
 
-class TestGuardianJsonExample:
-    def test_json_example_contains_source_branch(self):
-        assert '"source_branch"' in _guardian()
-
-    def test_json_example_contains_target_branch(self):
-        assert '"target_branch"' in _guardian()
-
-    def test_json_example_contains_provider(self):
-        assert '"provider"' in _guardian()
-
-    def test_json_example_contains_is_draft(self):
-        assert '"is_draft"' in _guardian()
-
-    def test_json_example_contains_commit_sha(self):
-        assert '"commit_sha"' in _guardian()
+def test_guardian_md_exists(guardian_md):
+    assert guardian_md.strip(), "guardian.md must not be empty"
 
 
-class TestGuardianFailurePath:
-    def test_failure_path_mentions_empty_string_for_missing_fields(self):
-        content = _guardian()
-        # Failure path must explain that missing fields can be empty string or 0
-        assert 'empty string' in content or '""' in content
+def test_guardian_md_contains_at_least_one_json_example(guardian_md):
+    blocks = _extract_json_blocks(guardian_md)
+    assert blocks, "guardian.md must contain at least one fenced JSON example"
 
-    def test_failure_path_mentions_new_fields(self):
-        content = _guardian()
-        # The failure path section should cover new fields too
-        # Check that the section at the bottom references the overall missing-fields pattern
-        assert "missing" in content.lower() or "0" in content
+
+def test_guardian_json_example_validates_against_schema(guardian_md, pr_schema):
+    """The example output in guardian.md must validate against pr.json.
+
+    This is the only test that catches drift between the schema and the
+    documented example, and it survives prompt rewordings.
+    """
+    blocks = _extract_json_blocks(guardian_md)
+    for block in blocks:
+        jsonschema.validate(block, pr_schema)
+
+
+def test_guardian_json_example_has_outcome_success(guardian_md):
+    """The primary example should show a successful PR (the happy path)."""
+    blocks = _extract_json_blocks(guardian_md)
+    assert any(b.get("outcome") == "success" for b in blocks), (
+        "guardian.md should include at least one outcome=success example"
+    )

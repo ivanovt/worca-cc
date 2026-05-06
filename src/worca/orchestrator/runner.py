@@ -38,6 +38,7 @@ from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_a
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
 from worca.utils.git import create_branch, current_branch, get_current_git_head
+from worca.utils.pr_url import parse_pr_url
 from worca.utils.settings import load_settings
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
@@ -2976,10 +2977,25 @@ def run_pipeline(
                     _pr_number = result.get("pr_number")
                     if _pr_url and _pr_number is not None:
                         _commit_sha = result.get("commit_sha")
-                        _source_branch = result.get("source_branch")
-                        _target_branch = result.get("target_branch")
+                        # Branches: prefer agent value, fall back to runner state.
+                        # The orchestrator already knows both — no reason to
+                        # require the agent to re-emit them.
+                        _source_branch = (
+                            result.get("source_branch")
+                            or status.get("branch")
+                        )
+                        _target_branch = (
+                            result.get("target_branch")
+                            or status.get("target_branch")
+                        )
+                        # Provider: agent may emit it, but verify/fill from URL.
                         _provider = result.get("provider")
-                        _is_draft = result.get("is_draft")
+                        if not _provider or _provider == "other":
+                            _parsed = parse_pr_url(_pr_url)
+                            if _parsed["provider"] != "other":
+                                _provider = _parsed["provider"]
+                            elif not _provider:
+                                _provider = "other"
                         _review_status = result.get("review_status")
                         status["pr"] = {
                             "url": _pr_url,
@@ -2988,7 +3004,6 @@ def run_pipeline(
                             "source_branch": _source_branch,
                             "target_branch": _target_branch,
                             "provider": _provider,
-                            "is_draft": _is_draft,
                             "review_status": _review_status,
                         }
                         save_status(status, actual_status_path)
@@ -3001,7 +3016,6 @@ def run_pipeline(
                                 source_branch=_source_branch,
                                 target_branch=_target_branch,
                                 provider=_provider,
-                                is_draft=_is_draft,
                             ))
 
             # Default: complete iteration for stages without special handling

@@ -24,8 +24,6 @@ def _success_doc():
         "pr_number": 42,
         "pr_url": "https://github.com/org/repo/pull/42",
         "commit_sha": "abc1234",
-        "source_branch": "feature/my-branch",
-        "target_branch": "main",
     }
 
 
@@ -34,8 +32,6 @@ def _reject_doc():
         "outcome": "reject",
         "pr_number": 0,
         "pr_url": "https://github.com/org/repo/pull/0",
-        "source_branch": "feature/my-branch",
-        "target_branch": "main",
     }
 
 
@@ -61,8 +57,9 @@ class TestSchemaStructure:
     def test_source_branch_is_string(self, schema):
         assert schema["properties"]["source_branch"]["type"] == "string"
 
-    def test_source_branch_in_required(self, schema):
-        assert "source_branch" in schema["required"]
+    def test_source_branch_not_in_required(self, schema):
+        # Branches are runner-derived; agents may omit them.
+        assert "source_branch" not in schema["required"]
 
     def test_schema_has_target_branch_property(self, schema):
         assert "target_branch" in schema["properties"]
@@ -70,8 +67,8 @@ class TestSchemaStructure:
     def test_target_branch_is_string(self, schema):
         assert schema["properties"]["target_branch"]["type"] == "string"
 
-    def test_target_branch_in_required(self, schema):
-        assert "target_branch" in schema["required"]
+    def test_target_branch_not_in_required(self, schema):
+        assert "target_branch" not in schema["required"]
 
     def test_schema_has_provider_property(self, schema):
         assert "provider" in schema["properties"]
@@ -87,14 +84,9 @@ class TestSchemaStructure:
     def test_provider_not_in_required(self, schema):
         assert "provider" not in schema["required"]
 
-    def test_schema_has_is_draft_property(self, schema):
-        assert "is_draft" in schema["properties"]
-
-    def test_is_draft_is_boolean(self, schema):
-        assert schema["properties"]["is_draft"]["type"] == "boolean"
-
-    def test_is_draft_not_in_required(self, schema):
-        assert "is_draft" not in schema["required"]
+    def test_is_draft_not_present(self, schema):
+        # is_draft was removed; reintroduce only when there's a producer.
+        assert "is_draft" not in schema["properties"]
 
 
 class TestSuccessOutcome:
@@ -123,17 +115,16 @@ class TestSuccessOutcome:
         doc["commit_sha"] = "a" * 40
         jsonschema.validate(doc, schema)
 
-    def test_success_missing_source_branch_invalid(self, schema):
+    def test_success_without_branches_valid(self, schema):
+        # Branches are optional — runner fills them.
         doc = _success_doc()
-        del doc["source_branch"]
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+        jsonschema.validate(doc, schema)
 
-    def test_success_missing_target_branch_invalid(self, schema):
+    def test_success_with_branches_valid(self, schema):
         doc = _success_doc()
-        del doc["target_branch"]
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+        doc["source_branch"] = "feature/x"
+        doc["target_branch"] = "main"
+        jsonschema.validate(doc, schema)
 
     def test_success_with_valid_provider_valid(self, schema):
         doc = _success_doc()
@@ -146,26 +137,11 @@ class TestSuccessOutcome:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_success_with_is_draft_true_valid(self, schema):
-        doc = _success_doc()
-        doc["is_draft"] = True
-        jsonschema.validate(doc, schema)
-
-    def test_success_with_is_draft_false_valid(self, schema):
-        doc = _success_doc()
-        doc["is_draft"] = False
-        jsonschema.validate(doc, schema)
-
-    def test_success_with_is_draft_non_boolean_invalid(self, schema):
-        doc = _success_doc()
-        doc["is_draft"] = "true"
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
-
     def test_success_all_optional_fields_valid(self, schema):
         doc = _success_doc()
+        doc["source_branch"] = "feature/x"
+        doc["target_branch"] = "main"
         doc["provider"] = "gitlab"
-        doc["is_draft"] = False
         doc["review_status"] = "pending"
         jsonschema.validate(doc, schema)
 
@@ -179,17 +155,9 @@ class TestRejectOutcome:
         doc["commit_sha"] = "abc1234"
         jsonschema.validate(doc, schema)
 
-    def test_reject_missing_source_branch_invalid(self, schema):
-        doc = _reject_doc()
-        del doc["source_branch"]
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
-
-    def test_reject_missing_target_branch_invalid(self, schema):
-        doc = _reject_doc()
-        del doc["target_branch"]
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+    def test_reject_without_branches_valid(self, schema):
+        # Reject path: agent typically can't compute branches anyway.
+        jsonschema.validate(_reject_doc(), schema)
 
 
 class TestProviderEnum:

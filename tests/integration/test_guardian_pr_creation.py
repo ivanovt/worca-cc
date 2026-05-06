@@ -48,7 +48,6 @@ def test_guardian_structured_pr_fields_emit_pr_created_event(pipeline_env):
                     "source_branch": "feature/test-branch",
                     "target_branch": "main",
                     "provider": "github",
-                    "is_draft": False,
                 },
             },
         },
@@ -66,7 +65,6 @@ def test_guardian_structured_pr_fields_emit_pr_created_event(pipeline_env):
     assert payload["source_branch"] == "feature/test-branch"
     assert payload["target_branch"] == "main"
     assert payload["provider"] == "github"
-    assert payload["is_draft"] is False
 
 
 # ===========================================================================
@@ -169,7 +167,6 @@ def test_pr_stage_iteration_recorded_on_success(pipeline_env):
                     "source_branch": "feature/iter-test",
                     "target_branch": "main",
                     "provider": "github",
-                    "is_draft": False,
                 },
             },
         },
@@ -274,7 +271,7 @@ def test_pr_stage_halts_with_pr_verified_false_when_no_new_commit(pipeline_env):
 # ===========================================================================
 
 def test_guardian_pr_metadata_persisted_in_status(pipeline_env):
-    """All new PR metadata fields from structured_output are written to status['pr']."""
+    """All PR metadata fields from structured_output are written to status['pr']."""
     scenario = {
         "agents": {
             "tester": _tester_pass(),
@@ -287,7 +284,6 @@ def test_guardian_pr_metadata_persisted_in_status(pipeline_env):
                     "source_branch": "feature/my-feature",
                     "target_branch": "main",
                     "provider": "github",
-                    "is_draft": False,
                 },
             },
         },
@@ -304,4 +300,3 @@ def test_guardian_pr_metadata_persisted_in_status(pipeline_env):
     assert pr["source_branch"] == "feature/my-feature"
     assert pr["target_branch"] == "main"
     assert pr["provider"] == "github"
-    assert pr["is_draft"] is False
