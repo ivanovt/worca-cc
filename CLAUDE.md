@@ -145,6 +145,7 @@ Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing 
 
 ```bash
 python scripts/coverage.py ci                                     # run + combine + JSON + XML + text
+python scripts/coverage.py ci --include-unit-tests                # include unit tests (wraps pytest with coverage run)
 python scripts/coverage.py run                                    # pytest under WORCA_COVERAGE=1
 python scripts/coverage.py combine                                # merge .coverage.* fragments
 python scripts/coverage.py report --format=text                   # terminal (default)
@@ -154,6 +155,8 @@ python scripts/coverage.py compare --baseline=before.json --current=after.json
 ```
 
 `ci` is the one-shot used locally and in CI: it erases stale state, runs pytest with `WORCA_COVERAGE=1`, combines fragments, and writes `coverage-out/coverage.json` (augmented schema with `summary`, `modules`, `omitted`, `raw`) plus `coverage-out/coverage.xml` (Cobertura-compatible). The pytest exit code is forwarded so CI fails on real test regressions even when coverage upload succeeds.
+
+`--include-unit-tests` wraps the pytest invocation itself with `coverage run --parallel-mode` and targets `tests/` (instead of `tests/integration/` only), so in-process unit test calls are measured alongside subprocess fragments. Default off — doubles wall time but produces accurate per-module numbers for modules exercised only by unit tests. Pass this flag explicitly when a full-coverage baseline is needed.
 
 `compare` diffs a current `coverage.json` against a saved baseline and prints per-module pp deltas — useful for per-phase tracking without bolting in a `--fail-under` gate. Threshold enforcement stays out of scope until baselines stabilize.
 

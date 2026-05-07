@@ -13,42 +13,10 @@ the four documented modes — ``--dry-run``, ``--all``, ``--run-id``,
 from __future__ import annotations
 
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
 
-
 _HAPPY = {"default": {"action": "succeed", "delay_s": 0}}
-
-
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-
-
-def _run_cleanup(project: Path, *args: str, timeout: int = 30) -> subprocess.CompletedProcess:
-    """Invoke ``python -m worca.cli.main cleanup <args>`` from the project.
-
-    Inherits the parent process env (no MOCK_CLAUDE_SCENARIO needed — cleanup
-    doesn't spawn pipelines). When WORCA_COVERAGE=1, wraps via ``coverage run
-    --parallel-mode`` AND points ``COVERAGE_FILE`` at REPO_ROOT/.coverage so
-    the fragment lands where ``coverage combine`` will find it (without this
-    the fragment writes next to ``cwd`` — a per-test tmpdir — and is lost
-    when the test exits).
-    """
-    env = os.environ.copy()
-    if env.get("WORCA_COVERAGE") == "1":
-        env["COVERAGE_FILE"] = str(_REPO_ROOT / ".coverage")
-        cmd = [sys.executable, "-m", "coverage", "run",
-               f"--rcfile={_REPO_ROOT / '.coveragerc'}",
-               "--parallel-mode",
-               "-m", "worca.cli.main", "cleanup", *args]
-    else:
-        cmd = [sys.executable, "-m", "worca.cli.main", "cleanup", *args]
-    return subprocess.run(
-        cmd, cwd=str(project), capture_output=True, text=True,
-        timeout=timeout, env=env,
-    )
 
 
 def _registry_entries(project: Path) -> list[dict]:
@@ -78,7 +46,7 @@ def test_cleanup_dry_run_lists_without_removing(pipeline_env):
     wt_path = Path(result.worktree_path)
     assert wt_path.is_dir()
 
-    proc = _run_cleanup(pipeline_env.project, "--dry-run")
+    proc = pipeline_env.run_cli("cleanup", "--dry-run")
     assert proc.returncode == 0, f"cleanup --dry-run rc={proc.returncode}\n{proc.stderr}"
     assert result.run_id in proc.stdout, (
         f"dry-run listing should mention run_id {result.run_id}; "
@@ -107,7 +75,7 @@ def test_cleanup_all_removes_completed_worktrees(pipeline_env):
     wt_path = Path(result.worktree_path)
     assert wt_path.is_dir()
 
-    proc = _run_cleanup(pipeline_env.project, "--all")
+    proc = pipeline_env.run_cli("cleanup", "--all")
     assert proc.returncode == 0, f"cleanup --all rc={proc.returncode}\n{proc.stderr}"
     assert "Removed" in proc.stdout, f"unexpected stdout: {proc.stdout[:500]}"
 
@@ -135,7 +103,7 @@ def test_cleanup_run_id_targets_only_specified_worktree(pipeline_env):
     wt_a, wt_b = Path(result_a.worktree_path), Path(result_b.worktree_path)
     assert wt_a.is_dir() and wt_b.is_dir()
 
-    proc = _run_cleanup(pipeline_env.project, "--run-id", result_b.run_id)
+    proc = pipeline_env.run_cli("cleanup", "--run-id", result_b.run_id)
     assert proc.returncode == 0, (
         f"cleanup --run-id rc={proc.returncode}\n{proc.stderr}"
     )
@@ -162,7 +130,7 @@ def test_cleanup_older_than_skips_recent_worktrees(pipeline_env):
     wt_path = Path(result.worktree_path)
     assert wt_path.is_dir()
 
-    proc = _run_cleanup(pipeline_env.project, "--all", "--older-than", "1h")
+    proc = pipeline_env.run_cli("cleanup", "--all", "--older-than", "1h")
     assert proc.returncode == 0, (
         f"cleanup --older-than rc={proc.returncode}\n{proc.stderr}"
     )

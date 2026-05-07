@@ -74,10 +74,22 @@ def _count_fragments() -> int:
     return len(list(REPO_ROOT.glob(".coverage.*")))
 
 
-def _run_pytest(target: str, timeout: str, extra: list[str] | None = None) -> int:
+def _run_pytest(
+    target: str,
+    timeout: str,
+    extra: list[str] | None = None,
+    wrap_coverage: bool = False,
+) -> int:
     env = dict(os.environ)
     env["WORCA_COVERAGE"] = "1"
-    cmd = [sys.executable, "-m", "pytest", target, f"--timeout={timeout}"]
+    if wrap_coverage:
+        cmd = [
+            sys.executable, "-m", "coverage", "run",
+            f"--rcfile={COVERAGERC}", "--parallel-mode",
+            "-m", "pytest", target, f"--timeout={timeout}",
+        ]
+    else:
+        cmd = [sys.executable, "-m", "pytest", target, f"--timeout={timeout}"]
     if extra:
         cmd.extend(extra)
     _info(f"running: {' '.join(cmd)}")
@@ -258,7 +270,9 @@ def cmd_ci(args: argparse.Namespace) -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    rc = _run_pytest(args.target, args.timeout, args.extra)
+    include_unit = getattr(args, "include_unit_tests", False)
+    target = "tests/" if include_unit else args.target
+    rc = _run_pytest(target, args.timeout, args.extra, wrap_coverage=include_unit)
     if rc != 0:
         _info(f"pytest failed (rc={rc}); continuing to combine + report")
 
@@ -319,6 +333,9 @@ def _build_parser() -> argparse.ArgumentParser:
                       help="Glob filter for the final text report only")
     p_ci.add_argument("--extra", nargs=argparse.REMAINDER,
                       help="Extra args forwarded to pytest after `--`")
+    p_ci.add_argument("--include-unit-tests", action="store_true", default=False,
+                      help="Wrap pytest with coverage run --parallel-mode and target tests/ "
+                           "instead of tests/integration/, capturing in-process coverage")
     p_ci.set_defaults(func=cmd_ci)
 
     return parser

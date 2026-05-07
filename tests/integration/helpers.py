@@ -68,6 +68,8 @@ class PipelineEnv:
     # W-050 Phase 3 helpers — drive run_worktree.py / run_parallel.py.
     run_worktree: Callable = None  # type: ignore[assignment]
     run_parallel: Callable = None  # type: ignore[assignment]
+    # W-050 coverage helper — drives a worca.cli.main subcommand as a subprocess.
+    run_cli: Callable = None  # type: ignore[assignment]
     stubs_dir: Optional[Path] = None
     stub_log_path: Optional[Path] = None
     stub_response_files: dict = field(default_factory=dict)
