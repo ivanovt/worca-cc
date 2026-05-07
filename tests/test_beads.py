@@ -1,8 +1,11 @@
 """Tests for worca.utils.beads - bd CLI wrapper."""
 
-from unittest.mock import patch, MagicMock
+import os
+import signal
+import subprocess
+from unittest.mock import patch, MagicMock, mock_open
 
-from worca.utils.beads import bd_create, bd_ready, bd_show, bd_close, bd_update, bd_dep_add
+from worca.utils.beads import bd_create, bd_ready, bd_show, bd_close, bd_update, bd_dep_add, bd_daemon_stop
 
 
 # --- bd_create ---
@@ -209,3 +212,76 @@ def test_bd_dep_add_failure():
     with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
         result = bd_dep_add("proj-001", "proj-999")
     assert result is False
+
+
+# --- bd_daemon_stop ---
+
+def test_bd_daemon_stop_success():
+    """bd daemon stop succeeds within timeout — returns True, no pidfile needed."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is True
+
+
+def test_bd_daemon_stop_timeout_sigterm_fallback():
+    """subprocess times out → falls back to SIGTERM from pidfile → returns True."""
+    with (
+        patch("worca.utils.beads.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="bd", timeout=2.0)),
+        patch("builtins.open", mock_open(read_data="9999\n")),
+        patch("worca.utils.beads.os.kill") as mock_kill,
+    ):
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is True
+    mock_kill.assert_called_once_with(9999, signal.SIGTERM)
+
+
+def test_bd_daemon_stop_no_pidfile():
+    """subprocess fails, pidfile absent — returns False, error is swallowed."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    with (
+        patch("worca.utils.beads.subprocess.run", return_value=mock_result),
+        patch("builtins.open", side_effect=FileNotFoundError),
+    ):
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is False
+
+
+def test_bd_daemon_stop_dead_pid():
+    """subprocess fails, pidfile has a dead PID — os.kill raises ProcessLookupError, returns False."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    with (
+        patch("worca.utils.beads.subprocess.run", return_value=mock_result),
+        patch("builtins.open", mock_open(read_data="12345\n")),
+        patch("worca.utils.beads.os.kill", side_effect=ProcessLookupError),
+    ):
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is False
+
+
+def test_bd_daemon_stop_oserror_swallowed():
+    """subprocess raises OSError (e.g. bd not on PATH), pidfile SIGTERM also fails — returns False."""
+    with (
+        patch("worca.utils.beads.subprocess.run", side_effect=OSError("bd not found")),
+        patch("builtins.open", mock_open(read_data="7777\n")),
+        patch("worca.utils.beads.os.kill", side_effect=OSError("permission denied")),
+    ):
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is False
+
+
+def test_bd_daemon_stop_corrupt_pidfile():
+    """subprocess fails, pidfile has non-integer content — ValueError swallowed, returns False."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    with (
+        patch("worca.utils.beads.subprocess.run", return_value=mock_result),
+        patch("builtins.open", mock_open(read_data="not-a-pid\n")),
+        patch("worca.utils.beads.os.kill") as mock_kill,
+    ):
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is False
+    mock_kill.assert_not_called()

@@ -456,3 +456,127 @@ class TestIsSignalKillException:
         assert runner._is_signal_kill_exception(RuntimeError("generic")) is False
         assert runner._is_signal_kill_exception(ValueError("oops")) is False
         assert runner._is_signal_kill_exception(KeyError("missing")) is False
+
+
+# --- Finally block: daemon stop in worktree mode ---
+
+
+def _minimal_settings(tmp_path):
+    s = tmp_path / "settings.json"
+    s.write_text(json.dumps({
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }))
+    return s
+
+
+def _run_pipeline_minimal(tmp_path, worktree: bool):
+    from worca.orchestrator.runner import run_pipeline
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    settings = _minimal_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+    wr = WorkRequest(source_type="prompt", title="Daemon stop test")
+
+    def _mock_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner._ensure_beads_initialized"):
+        with patch("worca.orchestrator.runner.run_stage", side_effect=_mock_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        with patch("worca.orchestrator.runner.bd_daemon_stop") as mock_stop:
+                            run_pipeline(
+                                wr,
+                                plan_file=str(plan),
+                                settings_path=str(settings),
+                                status_path=status_path,
+                                worktree=worktree,
+                            )
+                            return mock_stop
+
+
+def test_run_pipeline_finally_calls_bd_daemon_stop_in_worktree_mode(tmp_path):
+    """In worktree mode the finally block calls bd_daemon_stop once."""
+    mock_stop = _run_pipeline_minimal(tmp_path, worktree=True)
+    mock_stop.assert_called_once()
+
+
+def test_run_pipeline_finally_does_not_call_bd_daemon_stop_in_place_mode(tmp_path):
+    """In in-place mode (worktree=False) bd_daemon_stop is never called."""
+    mock_stop = _run_pipeline_minimal(tmp_path, worktree=False)
+    mock_stop.assert_not_called()
+
+
+# --- _clear_stale_daemon_lock tests ---
+
+
+def test_clear_stale_daemon_lock_removes_files_for_dead_pid(tmp_path):
+    """When daemon.pid contains a PID that is not running, both lock files are removed."""
+    beads_dir = tmp_path / ".beads"
+    beads_dir.mkdir()
+    pid_file = beads_dir / "daemon.pid"
+    lock_file = beads_dir / "daemon.lock"
+    pid_file.write_text("999999\n")
+    lock_file.write_text("")
+
+    with patch("os.kill", side_effect=ProcessLookupError):
+        runner._clear_stale_daemon_lock(str(beads_dir))
+
+    assert not pid_file.exists()
+    assert not lock_file.exists()
+
+
+def test_clear_stale_daemon_lock_leaves_files_for_live_pid(tmp_path):
+    """When daemon.pid contains a running PID, the lock files are left untouched."""
+    beads_dir = tmp_path / ".beads"
+    beads_dir.mkdir()
+    pid_file = beads_dir / "daemon.pid"
+    lock_file = beads_dir / "daemon.lock"
+    pid_file.write_text("12345\n")
+    lock_file.write_text("")
+
+    with patch("os.kill", return_value=None):
+        runner._clear_stale_daemon_lock(str(beads_dir))
+
+    assert pid_file.exists()
+    assert lock_file.exists()
+
+
+def test_clear_stale_daemon_lock_noop_when_pidfile_missing(tmp_path):
+    """When daemon.pid does not exist, the function returns without error."""
+    beads_dir = tmp_path / ".beads"
+    beads_dir.mkdir()
+
+    runner._clear_stale_daemon_lock(str(beads_dir))
+
+
+def test_clear_stale_daemon_lock_leaves_files_on_permission_error(tmp_path):
+    """When os.kill raises PermissionError the PID is assumed live; files are left."""
+    beads_dir = tmp_path / ".beads"
+    beads_dir.mkdir()
+    pid_file = beads_dir / "daemon.pid"
+    lock_file = beads_dir / "daemon.lock"
+    pid_file.write_text("42\n")
+    lock_file.write_text("")
+
+    with patch("os.kill", side_effect=PermissionError):
+        runner._clear_stale_daemon_lock(str(beads_dir))
+
+    assert pid_file.exists()
+    assert lock_file.exists()

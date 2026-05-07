@@ -5,6 +5,7 @@ Uses real temporary git repos to exercise actual worktree creation/removal.
 
 import os
 import subprocess
+from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -165,6 +166,31 @@ class TestRemovePipelineWorktree:
 
         ok = remove_pipeline_worktree("/tmp/nonexistent-worktree-xyz")
         assert ok is False
+
+    def test_calls_daemon_stop_when_beads_exists(self, git_repo):
+        from worca.utils.git import create_pipeline_worktree, remove_pipeline_worktree
+
+        wt_path = create_pipeline_worktree("dstop1", "feat")
+        beads_dir = os.path.join(wt_path, ".beads")
+        os.makedirs(beads_dir)
+
+        with patch("worca.utils.git.bd_daemon_stop") as mock_stop:
+            mock_stop.return_value = True
+            remove_pipeline_worktree(wt_path)
+
+        mock_stop.assert_called_once_with(beads_dir)
+
+    def test_skips_daemon_stop_when_no_beads(self, git_repo):
+        from worca.utils.git import create_pipeline_worktree, remove_pipeline_worktree
+
+        wt_path = create_pipeline_worktree("dstop2", "feat")
+        # Ensure .beads/ does NOT exist
+        assert not os.path.isdir(os.path.join(wt_path, ".beads"))
+
+        with patch("worca.utils.git.bd_daemon_stop") as mock_stop:
+            remove_pipeline_worktree(wt_path)
+
+        mock_stop.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

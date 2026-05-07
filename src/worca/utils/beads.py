@@ -1,10 +1,15 @@
 """Wrapper for the bd (beads) CLI. All functions run bd as a subprocess."""
 
+import logging
+import os
 import re
+import signal
 import subprocess
 from typing import Optional
 
 from worca.utils.env import get_env
+
+logger = logging.getLogger(__name__)
 
 
 def _run_bd(*args: str, beads_dir: Optional[str] = None, cwd: Optional[str] = None) -> subprocess.CompletedProcess:
@@ -150,6 +155,48 @@ def bd_dep_add(issue_id: str, depends_on: str) -> bool:
     """
     result = _run_bd("dep", "add", issue_id, depends_on)
     return result.returncode == 0
+
+
+def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
+    """Stop the bd daemon for the given beads_dir.
+
+    Two-phase stop:
+    1. Run `bd daemon stop` with a timeout.
+    2. On timeout or non-zero exit, fall back to SIGTERM via daemon.pid.
+
+    All failures are best-effort — logged and swallowed. Returns True if the
+    daemon was stopped (either phase succeeded), False otherwise.
+    """
+    # Phase 1: bd daemon stop
+    try:
+        result = subprocess.run(
+            ["bd", "daemon", "stop"],
+            capture_output=True,
+            text=True,
+            env=get_env(BEADS_DIR=beads_dir),
+            timeout=timeout,
+        )
+        if result.returncode == 0:
+            return True
+    except subprocess.TimeoutExpired:
+        logger.warning("bd daemon stop timed out for %s, falling back to SIGTERM", beads_dir)
+    except OSError as exc:
+        logger.warning("bd daemon stop OSError for %s: %s", beads_dir, exc)
+
+    # Phase 2: SIGTERM from pidfile
+    pidfile = os.path.join(beads_dir, "daemon.pid")
+    try:
+        with open(pidfile) as fh:
+            pid = int(fh.read().strip())
+        os.kill(pid, signal.SIGTERM)
+        return True
+    except (FileNotFoundError, ValueError):
+        logger.warning("No daemon pidfile at %s", pidfile)
+    except ProcessLookupError:
+        logger.warning("bd daemon PID already dead (pidfile: %s)", pidfile)
+    except OSError as exc:
+        logger.warning("SIGTERM to bd daemon failed for %s: %s", beads_dir, exc)
+    return False
 
 
 def bd_init(cwd: Optional[str] = None) -> bool:
