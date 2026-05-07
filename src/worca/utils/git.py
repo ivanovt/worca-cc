@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 
-from worca.utils.beads import bd_init
+from worca.utils.beads import bd_daemon_stop, bd_init
 from worca.utils.env import get_env
 
 
@@ -138,6 +138,11 @@ def remove_pipeline_worktree(worktree_path: str) -> bool:
 
     Returns True if both operations succeed, False otherwise.
     """
+    # Stop the beads daemon for this worktree before removing the directory
+    beads_dir = os.path.join(worktree_path, ".beads")
+    if os.path.isdir(beads_dir):
+        bd_daemon_stop(beads_dir)
+
     # Detect branch from worktree HEAD before removal
     branch = ""
     head_path = os.path.join(worktree_path, ".git")

@@ -34,7 +34,7 @@ from worca.state.status import (
     load_status, save_status, update_stage, set_milestone, init_status,
     start_iteration, complete_iteration,
 )
-from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add
+from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
 from worca.utils.git import create_branch, current_branch, get_current_git_head
@@ -1345,11 +1345,39 @@ def _claim_bead(bead_id: str) -> bool:
     return bd_update(bead_id, status="in_progress")
 
 
+def _clear_stale_daemon_lock(beads_dir: str) -> None:
+    """Remove daemon.pid and daemon.lock when the recorded PID is no longer running.
+
+    Uses os.kill(pid, 0) to probe liveness without sending a signal.
+    If the PID is live or PermissionError is raised (process owned by another user),
+    the files are left untouched.  If the pidfile is absent, this is a no-op.
+    """
+    pid_path = os.path.join(beads_dir, "daemon.pid")
+    lock_path = os.path.join(beads_dir, "daemon.lock")
+    try:
+        with open(pid_path) as fh:
+            pid_text = fh.read().strip()
+        pid = int(pid_text)
+    except (FileNotFoundError, ValueError):
+        return
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        for p in (pid_path, lock_path):
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
+    except PermissionError:
+        pass
+
+
 def _ensure_beads_initialized() -> None:
     """Check if beads is initialized in the current project, init if not."""
     import subprocess
     if os.environ.get("WORCA_SKIP_BEADS"):
         return
+    _clear_stale_daemon_lock(os.path.join(os.getcwd(), ".beads"))
     from worca.utils.env import get_env
     env = get_env()
     result = subprocess.run(
@@ -3210,6 +3238,17 @@ def run_pipeline(
             if (status and status.get("worktree") and status.get("run_id")
                     and status.get("pipeline_status") == "failed"):
                 update_pipeline(status["run_id"], status="failed", base=registry_dir)
+        except Exception:
+            pass
+        # Stop the worktree-scoped beads daemon. Never touch the parent project's
+        # daemon (shared with worca-ui and user shells).
+        try:
+            if status and status.get("worktree"):
+                beads_dir = os.path.normpath(
+                    os.path.join(os.path.abspath(worca_dir), "..", ".beads")
+                )
+                if os.path.isdir(beads_dir):
+                    bd_daemon_stop(beads_dir)
         except Exception:
             pass
         _restore_signal_handlers()

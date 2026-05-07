@@ -1,10 +1,38 @@
 """Wrapper for the bd (beads) CLI. All functions run bd as a subprocess."""
 
+import logging
+import os
 import re
+import signal
 import subprocess
+import time
 from typing import Optional
 
 from worca.utils.env import get_env
+
+logger = logging.getLogger(__name__)
+
+# Polling budget for waiting on SIGTERM'd daemon to exit before falling
+# through (or escalating in the future).  ~1s total, 50ms granularity.
+_SIGTERM_WAIT_INTERVAL_S = 0.05
+_SIGTERM_WAIT_ITERATIONS = 20
+
+
+def _wait_for_pid_exit(pid: int) -> bool:
+    """Poll os.kill(pid, 0) until ProcessLookupError or budget exhausted.
+
+    Returns True if the process exited within the budget, False otherwise.
+    """
+    for _ in range(_SIGTERM_WAIT_ITERATIONS):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        except PermissionError:
+            # PID was reused by another user — treat as gone.
+            return True
+        time.sleep(_SIGTERM_WAIT_INTERVAL_S)
+    return False
 
 
 def _run_bd(*args: str, beads_dir: Optional[str] = None, cwd: Optional[str] = None) -> subprocess.CompletedProcess:
@@ -150,6 +178,82 @@ def bd_dep_add(issue_id: str, depends_on: str) -> bool:
     """
     result = _run_bd("dep", "add", issue_id, depends_on)
     return result.returncode == 0
+
+
+def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
+    """Stop the bd daemon for the given beads_dir.
+
+    Two-phase stop:
+    1. Run `bd daemon stop` with cwd=beads_dir's parent so bd resolves the
+       worktree's workspace (BEADS_DIR alone is unreliable; bd resolves the
+       "current workspace" from cwd).  Bounded by `timeout` seconds.
+    2. On timeout or non-zero exit, fall back to SIGTERM via daemon.pid.
+       Probes the recorded PID is alive before signalling (PID reuse guard),
+       then polls briefly for exit so callers can rely on FDs being released
+       before they touch the worktree (e.g. git worktree remove).
+
+    All failures are best-effort — logged and swallowed. Returns True if the
+    daemon was stopped (either phase succeeded), False otherwise.
+    """
+    # Phase 1: bd daemon stop, scoped to the worktree via cwd.  We point cwd
+    # at the parent of .beads/ (the workspace root) since `bd` walks up from
+    # cwd to locate the workspace.  Fall back to beads_dir itself if the
+    # parent is missing (defensive — should not happen in practice).
+    workspace_dir = os.path.dirname(beads_dir) or beads_dir
+    if not os.path.isdir(workspace_dir):
+        workspace_dir = beads_dir
+    try:
+        result = subprocess.run(
+            ["bd", "daemon", "stop"],
+            capture_output=True,
+            text=True,
+            env=get_env(BEADS_DIR=beads_dir),
+            cwd=workspace_dir,
+            timeout=timeout,
+        )
+        if result.returncode == 0:
+            return True
+    except subprocess.TimeoutExpired:
+        logger.warning("bd daemon stop timed out for %s, falling back to SIGTERM", beads_dir)
+    except OSError as exc:
+        logger.warning("bd daemon stop OSError for %s: %s", beads_dir, exc)
+
+    # Phase 2: SIGTERM from pidfile.  Probe liveness first so we don't
+    # deliver SIGTERM to an unrelated process that has reused the PID.
+    pidfile = os.path.join(beads_dir, "daemon.pid")
+    try:
+        with open(pidfile) as fh:
+            pid = int(fh.read().strip())
+    except (FileNotFoundError, ValueError):
+        logger.warning("No daemon pidfile at %s", pidfile)
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        logger.warning("bd daemon PID already dead (pidfile: %s)", pidfile)
+        return False
+    except OSError as exc:
+        # Includes PermissionError (PID owned by another user) and other
+        # platform-specific failures.  We cannot signal it; give up.
+        logger.warning(
+            "bd daemon PID %d not signallable (pidfile: %s, err: %s)", pid, pidfile, exc
+        )
+        return False
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        # Race: process exited between liveness probe and SIGTERM.
+        return True
+    except OSError as exc:
+        logger.warning("SIGTERM to bd daemon failed for %s: %s", beads_dir, exc)
+        return False
+    # Wait briefly for the daemon to release its FDs before returning.
+    # Caller (e.g. remove_pipeline_worktree) immediately invokes git worktree
+    # remove --force afterwards; without this poll we race the daemon's
+    # shutdown and may keep deleted-file handles around.
+    if not _wait_for_pid_exit(pid):
+        logger.warning("bd daemon PID %d did not exit within wait budget", pid)
+    return True
 
 
 def bd_init(cwd: Optional[str] = None) -> bool:
