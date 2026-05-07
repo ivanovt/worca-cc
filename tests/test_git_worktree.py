@@ -5,7 +5,7 @@ Uses real temporary git repos to exercise actual worktree creation/removal.
 
 import os
 import subprocess
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
 

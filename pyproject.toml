@@ -8,7 +8,7 @@ version = "0.24.0"
 description = "Autonomous software development pipeline combining orchestration with governance enforcement"
 readme = "src/worca/README.md"
 license = "MIT"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 authors = [{name = "Sinisha Djukic"}, {name = "Ivan Dachev"}]
 keywords = ["autonomous-coding", "ai-agents", "multi-agent", "pipeline", "governance"]
 classifiers = [
@@ -61,5 +61,5 @@ addopts = "-q --tb=short --no-header"
 timeout = 30
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py310"
 line-length = 100

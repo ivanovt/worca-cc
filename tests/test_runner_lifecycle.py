@@ -480,7 +480,7 @@ def _minimal_settings(tmp_path):
     return s
 
 
-def _run_pipeline_minimal(tmp_path, worktree: bool):
+def _run_pipeline_minimal(tmp_path, worktree: bool, *, create_beads_dir: bool = True):
     from worca.orchestrator.runner import run_pipeline
     from worca.orchestrator.work_request import WorkRequest
 
@@ -489,30 +489,35 @@ def _run_pipeline_minimal(tmp_path, worktree: bool):
     settings = _minimal_settings(tmp_path)
     worca_dir = tmp_path / ".worca"
     worca_dir.mkdir(exist_ok=True)
+    # The finally block only calls bd_daemon_stop when the worktree's
+    # `.beads/` directory exists.  Tests that want to exercise that path
+    # must materialize one; tests that want to verify the gate skip it.
+    if create_beads_dir:
+        (tmp_path / ".beads").mkdir(exist_ok=True)
     status_path = str(worca_dir / "status.json")
     wr = WorkRequest(source_type="prompt", title="Daemon stop test")
 
     def _mock_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
         return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
 
-    with patch("worca.orchestrator.runner._ensure_beads_initialized"):
-        with patch("worca.orchestrator.runner.run_stage", side_effect=_mock_stage):
-            with patch("worca.orchestrator.runner.create_branch"):
-                with patch("worca.orchestrator.runner._write_pid"):
-                    with patch("worca.orchestrator.runner._remove_pid"):
-                        with patch("worca.orchestrator.runner.bd_daemon_stop") as mock_stop:
-                            run_pipeline(
-                                wr,
-                                plan_file=str(plan),
-                                settings_path=str(settings),
-                                status_path=status_path,
-                                worktree=worktree,
-                            )
-                            return mock_stop
+    with patch("worca.orchestrator.runner._ensure_beads_initialized"), \
+         patch("worca.orchestrator.runner.run_stage", side_effect=_mock_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"), \
+         patch("worca.orchestrator.runner.bd_daemon_stop") as mock_stop:
+        run_pipeline(
+            wr,
+            plan_file=str(plan),
+            settings_path=str(settings),
+            status_path=status_path,
+            worktree=worktree,
+        )
+        return mock_stop
 
 
 def test_run_pipeline_finally_calls_bd_daemon_stop_in_worktree_mode(tmp_path):
-    """In worktree mode the finally block calls bd_daemon_stop once."""
+    """In worktree mode with a real .beads/, the finally block calls bd_daemon_stop once."""
     mock_stop = _run_pipeline_minimal(tmp_path, worktree=True)
     mock_stop.assert_called_once()
 
@@ -520,6 +525,13 @@ def test_run_pipeline_finally_calls_bd_daemon_stop_in_worktree_mode(tmp_path):
 def test_run_pipeline_finally_does_not_call_bd_daemon_stop_in_place_mode(tmp_path):
     """In in-place mode (worktree=False) bd_daemon_stop is never called."""
     mock_stop = _run_pipeline_minimal(tmp_path, worktree=False)
+    mock_stop.assert_not_called()
+
+
+def test_run_pipeline_finally_skips_bd_daemon_stop_when_beads_dir_absent(tmp_path):
+    """Gate: even in worktree mode, if .beads/ does not exist (e.g. WORCA_SKIP_BEADS
+    runs), the finally block must not invoke bd_daemon_stop."""
+    mock_stop = _run_pipeline_minimal(tmp_path, worktree=True, create_beads_dir=False)
     mock_stop.assert_not_called()
 
 

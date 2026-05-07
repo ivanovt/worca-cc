@@ -1355,7 +1355,8 @@ def _clear_stale_daemon_lock(beads_dir: str) -> None:
     pid_path = os.path.join(beads_dir, "daemon.pid")
     lock_path = os.path.join(beads_dir, "daemon.lock")
     try:
-        pid_text = open(pid_path).read().strip()
+        with open(pid_path) as fh:
+            pid_text = fh.read().strip()
         pid = int(pid_text)
     except (FileNotFoundError, ValueError):
         return
@@ -3246,7 +3247,8 @@ def run_pipeline(
                 beads_dir = os.path.normpath(
                     os.path.join(os.path.abspath(worca_dir), "..", ".beads")
                 )
-                bd_daemon_stop(beads_dir)
+                if os.path.isdir(beads_dir):
+                    bd_daemon_stop(beads_dir)
         except Exception:
             pass
         _restore_signal_handlers()

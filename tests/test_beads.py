@@ -1,11 +1,13 @@
 """Tests for worca.utils.beads - bd CLI wrapper."""
 
-import os
 import signal
 import subprocess
 from unittest.mock import patch, MagicMock, mock_open
 
-from worca.utils.beads import bd_create, bd_ready, bd_show, bd_close, bd_update, bd_dep_add, bd_daemon_stop
+from worca.utils.beads import (
+    bd_create, bd_ready, bd_show, bd_close, bd_update, bd_dep_add,
+    bd_daemon_stop, _wait_for_pid_exit,
+)
 
 
 # --- bd_create ---
@@ -216,59 +218,85 @@ def test_bd_dep_add_failure():
 
 # --- bd_daemon_stop ---
 
-def test_bd_daemon_stop_success():
-    """bd daemon stop succeeds within timeout — returns True, no pidfile needed."""
+
+def test_bd_daemon_stop_success_passes_cwd_for_workspace_resolution():
+    """bd daemon stop succeeds within timeout and is invoked with cwd set to
+    the workspace root so bd resolves the worktree's daemon (not the parent
+    repo's).  Returns True without consulting the pidfile."""
     mock_result = MagicMock()
     mock_result.returncode = 0
-    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result) as mock_run:
         result = bd_daemon_stop("/tmp/beads")
     assert result is True
+    kwargs = mock_run.call_args.kwargs
+    assert kwargs["cwd"] == "/tmp", (
+        "phase 1 must run with cwd=workspace root so bd resolves the right daemon"
+    )
+    assert kwargs["env"]["BEADS_DIR"] == "/tmp/beads"
 
 
 def test_bd_daemon_stop_timeout_sigterm_fallback():
-    """subprocess times out → falls back to SIGTERM from pidfile → returns True."""
-    with (
-        patch("worca.utils.beads.subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="bd", timeout=2.0)),
-        patch("builtins.open", mock_open(read_data="9999\n")),
-        patch("worca.utils.beads.os.kill") as mock_kill,
-    ):
+    """subprocess times out → liveness probe + SIGTERM via pidfile → True."""
+    # os.kill is called twice in the fallback path: liveness probe (sig=0)
+    # and the actual SIGTERM.  Bypass the post-SIGTERM wait helper so the
+    # test doesn't sleep for ~1s.
+    with patch("worca.utils.beads.subprocess.run",
+               side_effect=subprocess.TimeoutExpired(cmd="bd", timeout=2.0)), \
+         patch("builtins.open", mock_open(read_data="9999\n")), \
+         patch("worca.utils.beads.os.kill") as mock_kill, \
+         patch("worca.utils.beads._wait_for_pid_exit", return_value=True):
         result = bd_daemon_stop("/tmp/beads")
     assert result is True
-    mock_kill.assert_called_once_with(9999, signal.SIGTERM)
+    assert mock_kill.call_args_list == [
+        ((9999, 0),),                # liveness probe
+        ((9999, signal.SIGTERM),),   # actual signal
+    ]
 
 
 def test_bd_daemon_stop_no_pidfile():
     """subprocess fails, pidfile absent — returns False, error is swallowed."""
     mock_result = MagicMock()
     mock_result.returncode = 1
-    with (
-        patch("worca.utils.beads.subprocess.run", return_value=mock_result),
-        patch("builtins.open", side_effect=FileNotFoundError),
-    ):
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result), \
+         patch("builtins.open", side_effect=FileNotFoundError):
         result = bd_daemon_stop("/tmp/beads")
     assert result is False
 
 
-def test_bd_daemon_stop_dead_pid():
-    """subprocess fails, pidfile has a dead PID — os.kill raises ProcessLookupError, returns False."""
+def test_bd_daemon_stop_dead_pid_skips_sigterm():
+    """When the recorded PID is dead, the liveness probe short-circuits and
+    SIGTERM is NEVER delivered (PID-reuse guard)."""
     mock_result = MagicMock()
     mock_result.returncode = 1
-    with (
-        patch("worca.utils.beads.subprocess.run", return_value=mock_result),
-        patch("builtins.open", mock_open(read_data="12345\n")),
-        patch("worca.utils.beads.os.kill", side_effect=ProcessLookupError),
-    ):
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result), \
+         patch("builtins.open", mock_open(read_data="12345\n")), \
+         patch("worca.utils.beads.os.kill", side_effect=ProcessLookupError) as mock_kill:
         result = bd_daemon_stop("/tmp/beads")
     assert result is False
+    # Only the liveness probe runs; no SIGTERM delivered to a possibly
+    # reused PID.
+    mock_kill.assert_called_once_with(12345, 0)
+
+
+def test_bd_daemon_stop_permission_error_skips_sigterm():
+    """When the PID is alive but owned by another user (PermissionError on
+    the liveness probe), give up rather than blindly SIGTERM."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result), \
+         patch("builtins.open", mock_open(read_data="42\n")), \
+         patch("worca.utils.beads.os.kill", side_effect=PermissionError) as mock_kill:
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is False
+    mock_kill.assert_called_once_with(42, 0)
 
 
 def test_bd_daemon_stop_oserror_swallowed():
-    """subprocess raises OSError (e.g. bd not on PATH), pidfile SIGTERM also fails — returns False."""
-    with (
-        patch("worca.utils.beads.subprocess.run", side_effect=OSError("bd not found")),
-        patch("builtins.open", mock_open(read_data="7777\n")),
-        patch("worca.utils.beads.os.kill", side_effect=OSError("permission denied")),
-    ):
+    """Phase 1 raises OSError (bd not on PATH), liveness probe also raises
+    OSError — function returns False without crashing."""
+    with patch("worca.utils.beads.subprocess.run", side_effect=OSError("bd not found")), \
+         patch("builtins.open", mock_open(read_data="7777\n")), \
+         patch("worca.utils.beads.os.kill", side_effect=OSError("operation not permitted")):
         result = bd_daemon_stop("/tmp/beads")
     assert result is False
 
@@ -277,11 +305,48 @@ def test_bd_daemon_stop_corrupt_pidfile():
     """subprocess fails, pidfile has non-integer content — ValueError swallowed, returns False."""
     mock_result = MagicMock()
     mock_result.returncode = 1
-    with (
-        patch("worca.utils.beads.subprocess.run", return_value=mock_result),
-        patch("builtins.open", mock_open(read_data="not-a-pid\n")),
-        patch("worca.utils.beads.os.kill") as mock_kill,
-    ):
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result), \
+         patch("builtins.open", mock_open(read_data="not-a-pid\n")), \
+         patch("worca.utils.beads.os.kill") as mock_kill:
         result = bd_daemon_stop("/tmp/beads")
     assert result is False
     mock_kill.assert_not_called()
+
+
+def test_bd_daemon_stop_waits_for_exit_after_sigterm():
+    """After SIGTERM, the helper polls for the daemon to actually exit so
+    the caller (e.g. remove_pipeline_worktree) doesn't race FD release."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1  # phase 1 fails → fall through to SIGTERM
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result), \
+         patch("builtins.open", mock_open(read_data="5555\n")), \
+         patch("worca.utils.beads.os.kill"), \
+         patch("worca.utils.beads._wait_for_pid_exit", return_value=True) as mock_wait:
+        result = bd_daemon_stop("/tmp/beads")
+    assert result is True
+    mock_wait.assert_called_once_with(5555)
+
+
+# --- _wait_for_pid_exit ---
+
+
+def test_wait_for_pid_exit_returns_true_when_process_dies():
+    """ProcessLookupError on probe → process exited → True."""
+    with patch("worca.utils.beads.os.kill", side_effect=ProcessLookupError), \
+         patch("worca.utils.beads.time.sleep"):
+        assert _wait_for_pid_exit(123) is True
+
+
+def test_wait_for_pid_exit_returns_false_when_process_persists():
+    """Probe always succeeds → process never exits within budget → False."""
+    with patch("worca.utils.beads.os.kill", return_value=None), \
+         patch("worca.utils.beads.time.sleep"):
+        assert _wait_for_pid_exit(123) is False
+
+
+def test_wait_for_pid_exit_treats_permission_error_as_exited():
+    """If the PID is reused mid-poll and we lose permission to probe it,
+    treat it as gone (the daemon we cared about is no longer there)."""
+    with patch("worca.utils.beads.os.kill", side_effect=PermissionError), \
+         patch("worca.utils.beads.time.sleep"):
+        assert _wait_for_pid_exit(123) is True
