@@ -19,6 +19,8 @@ node_modules/
 # Runtime copy created by `worca init .` — not tracked (source of truth is src/worca/)
 .claude/worca
 .claude/settings.json
+# Skills installed by `worca init` from src/worca/skills/ (source of truth lives there)
+.claude/skills/worca-analyze/
 
 # Test artifacts
 test-results/

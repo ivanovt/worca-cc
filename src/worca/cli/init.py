@@ -442,17 +442,24 @@ def _cleanup_legacy_files(git_root: Path) -> list[str]:
 
 
 def _copy_worca_source(source: Path, target: Path) -> None:
-    """Copy worca source to target, excluding cli/ and __pycache__/."""
+    """Copy worca source to target, excluding cli/, skills/, and __pycache__/.
+
+    skills/ ships in the wheel as package data but is installed separately
+    into the project's top-level .claude/skills/ (not under .claude/worca/),
+    since Claude Code only auto-discovers skills at .claude/skills/.
+    """
     if target.exists():
         shutil.rmtree(target)
 
     def ignore_patterns(directory, contents):
         ignored = set()
         rel = os.path.relpath(directory, source)
-        # Skip cli/ at the top level
+        # Skip cli/ and skills/ at the top level
         if rel == ".":
             if "cli" in contents:
                 ignored.add("cli")
+            if "skills" in contents:
+                ignored.add("skills")
         # Skip __pycache__ everywhere
         if "__pycache__" in contents:
             ignored.add("__pycache__")
@@ -462,6 +469,39 @@ def _copy_worca_source(source: Path, target: Path) -> None:
         return ignored
 
     shutil.copytree(str(source), str(target), ignore=ignore_patterns)
+
+
+def _install_skills(source: Path, git_root: Path) -> list[str]:
+    """Install worca-owned skills into <project>/.claude/skills/.
+
+    Each subdirectory of source/skills/ contains a SKILL.md. We mirror that
+    layout into git_root/.claude/skills/<name>/SKILL.md, overwriting any
+    existing copy (the package version is the source of truth). Unrelated
+    user-authored skills under .claude/skills/ are left untouched.
+
+    Returns a list of human-readable change descriptions.
+    """
+    changes: list[str] = []
+    skills_src = source / "skills"
+    if not skills_src.is_dir():
+        return changes
+
+    skills_dst = git_root / ".claude" / "skills"
+    skills_dst.mkdir(parents=True, exist_ok=True)
+
+    for skill_dir in sorted(skills_src.iterdir()):
+        if not skill_dir.is_dir():
+            continue
+        skill_md = skill_dir / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        dst_dir = skills_dst / skill_dir.name
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        dst_md = dst_dir / "SKILL.md"
+        shutil.copy2(str(skill_md), str(dst_md))
+        changes.append(f"  Installed .claude/skills/{skill_dir.name}/SKILL.md")
+
+    return changes
 
 
 def _ensure_gitignore(git_root: Path) -> list[str]:
@@ -694,6 +734,13 @@ def run_init(
     # --- Copy worca source ---
     _copy_worca_source(worca_source, target)
     print("Copied worca to .claude/worca/")
+
+    # --- Install worca-owned skills into .claude/skills/ ---
+    skill_changes = _install_skills(worca_source, git_root)
+    if skill_changes:
+        print("Skills:")
+        for change in skill_changes:
+            print(change)
 
     # --- Create .claude/templates/ for project templates ---
     project_templates_dir = git_root / ".claude" / "templates"

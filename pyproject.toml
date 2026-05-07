@@ -52,6 +52,7 @@ worca = [
     "settings.json",
     "templates/*/template.json",
     "templates/*/agents/*.md",
+    "skills/*/SKILL.md",
 ]
 
 [tool.pytest.ini_options]
