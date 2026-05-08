@@ -327,6 +327,25 @@ The UI's settings editor handles migration automatically. When you open project 
 - PR-approval gate: when `worca.milestones.pr_approval` is `true`, the pipeline pauses before PR creation and waits for user approval via the run-detail UI.
 - Server-enforced `max_concurrent_pipelines` cap with launch mutex (returns 409 when at capacity).
 
+### 0.19.0 → 0.24.0
+
+Additive features only — no breaking changes. The one required user action is the Python floor bump.
+
+**Required action:**
+
+- **Python 3.10+** — the package floor was raised from 3.8 to 3.10. Ensure your environment matches before upgrading; the package will refuse to install on older interpreters.
+
+**New features:**
+
+- **`/worca-analyze` skill** — end-to-end issue triage (analysis → decisions → issue update → template recommendation → optional worktree launch). Auto-installed into `.claude/skills/worca-analyze/` by `worca init --upgrade`. See the [Issue Triage section in CONTRIBUTING.md](./CONTRIBUTING.md#issue-triage).
+- **`worca run --worktree`** — first-class CLI flag to launch a pipeline into an isolated git worktree (parallel-safe). Mirrors the UI's "New Pipeline" path; falls back to in-place if `run_worktree.py` is missing in the project runtime. New companion flags: `--branch` (worktree base branch) and `--guide` (reference guides for the planner, repeatable, requires W-040).
+- **`worca templates list --json`** — machine-readable enumeration of all resolvable templates (id, name, description, tier, tags, builtin, created_at) with user > project > built-in tier resolution applied. Used by `/worca-analyze` and external tooling.
+- **Multi-host PR metadata (W-051)** — the `pr.json` schema gained `commit_sha`, `source_branch`, `target_branch`, `provider`, and `is_draft` fields. The `pr_url.py` parser detects GitHub, GitLab, Bitbucket, Azure DevOps, and Gitea URL patterns. UI surfaces a collapsible "PR details" subsection on the PR stage card. Webhook subscribers receive the richer `GIT_PR_CREATED` payload automatically — no breaking change to event names.
+- **`investigate` template now publishes its plan as a PR (W-046)** — the PR stage is enabled in this template so investigation outputs land as reviewable PRs instead of staying local-only.
+- **Coverage runner: `--include-unit-tests`** — opt-in flag on `scripts/coverage.py ci` that wraps the pytest invocation itself with `coverage run --parallel-mode` so unit-test in-process calls are measured alongside integration subprocess fragments. Default off (doubles wall time but produces accurate per-module numbers when needed).
+
+**No automatic migration steps required** — `worca init --upgrade` handles the new skill placement and continues to be idempotent. All settings.json changes are additive.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

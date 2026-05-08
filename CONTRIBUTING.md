@@ -135,12 +135,19 @@ cd worca-ui && npm run lint:fix
 # Python tests
 pytest tests/
 
+# Pipeline integration tests (full pipeline against a mock Claude CLI)
+pytest tests/integration/
+
 # UI server tests
 npx vitest run worca-ui/server/
 
 # Browser e2e tests (must run serially)
 cd worca-ui && npx playwright test --workers=1
 ```
+
+`tests/integration/` (W-044) runs the full pipeline state machine against a mock Claude CLI at `tests/mock_claude/mock_claude.py` — no API calls, no real LLM cost. Each test spins up a temp git repo + worca runtime, so the suite is slower (~30-60s end to end). Requires the editable install (`pip install -e ".[dev]"`); signal-handling tests are skipped on Windows.
+
+For coverage, use the centralized runner described in [CLAUDE.md](./CLAUDE.md#testing) — `python scripts/coverage.py ci` produces both terminal text and `coverage-out/coverage.json` for downstream tooling. Add `--include-unit-tests` when you need accurate per-module numbers for code exercised only by unit tests.
 
 ## Claude Code Skills
 
@@ -174,6 +181,31 @@ cd ~/dev/worca-cc && claude
 # 4. Or jump to a specific commit to compare behavior
 /worca-sync-commit ~/dev/worca-cc-review abc1234
 ```
+
+### Issue Triage
+
+| Skill | What it does |
+|---|---|
+| `/worca-analyze <issue>` | End-to-end issue triage: analyze a GitHub issue, surface open design decisions with a recommended option for each, optionally append a `## Decisions` section to the issue body, recommend the most appropriate pipeline template, and optionally launch a worktree-based pipeline. |
+
+Pass either a bare issue number (uses the current repo) or a full URL:
+
+```bash
+/worca-analyze 127
+/worca-analyze https://github.com/SinishaDjukic/worca-cc/issues/127
+```
+
+What it does in order:
+
+1. **Analyze** the issue body (and any files it references) into a structured report — TL;DR, scope, risk, open questions — anchored with `path:line` references.
+2. **Decide** — for each open question, present 2-3 options with one marked **Recommended** and short rationale; you answer in one shot.
+3. **Update the issue** — drafts a `## Decisions` section, shows the diff, and only writes via `gh issue edit` after explicit "yes". Never touches the `## Plan` section.
+4. **Pick a template** — resolves user > project > built-in templates via `worca templates list --json` and recommends one (or surfaces top-2 for ambiguous cases) with a one-line config delta.
+5. **Launch** — always worktree-based and detached, only after explicit confirmation. The skill prints the run ID and worktree path so you can tail it.
+
+Analyses are cached at `.worca/analyses/issue-<N>.md` keyed by a SHA-256 of the issue body — re-running on an unchanged issue reuses the cached analysis but still re-prompts for decisions and template selection.
+
+This complements the worca-ui "New Pipeline" flow described in [step 3 of the dogfooding flow](#3-implement-via-the-pipeline) — use the UI for click-driven setup, use `/worca-analyze` when you want a CLI-driven triage pass that also captures design decisions back into the issue.
 
 ### Releasing
 

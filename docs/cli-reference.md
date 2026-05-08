@@ -2,12 +2,13 @@
 
 ## `worca run`
 
-Run a full pipeline from a prompt, spec file, or GitHub issue.
+Run a full pipeline from a prompt, spec file, or GitHub issue. By default the run lands in the current working tree; pass `--worktree` to spawn it in an isolated git worktree (parallel-safe; same path the UI's "New Pipeline" button uses).
 
 ```bash
 worca run --prompt "Add user authentication"
 worca run --spec spec.md --plan plan.md
 worca run --source gh:issue:42
+worca run --worktree --source gh:issue:42 --template feature
 ```
 
 ### Flags
@@ -18,15 +19,44 @@ worca run --source gh:issue:42
 | `--spec FILE` | Path to spec/requirements file |
 | `--source TEXT` | Source reference (`gh:issue:42`, `bd:bd-abc`, or issue URL) |
 | `--plan FILE` | Pre-made plan file (skips Plan stage) |
+| `--template ID` | Pipeline template to apply (`feature`, `bugfix`, `quick-fix`, `refactor`, `investigate`, `test-only`, or any project/user template — see `worca templates list`) |
+| `--param KEY=VALUE` | Override a template parameter (repeatable) |
 | `--resume` | Resume a previous run from status.json |
-| `--branch NAME` | Use an existing branch instead of creating one |
-| `--model MODEL` | Override the default model for all agents |
+| `--worktree` | Launch in an isolated git worktree (parallel-safe). Falls back to in-place if `run_worktree.py` is missing in the project runtime |
+| `--branch NAME` | Base branch to fork the worktree from (`--worktree` only; default: HEAD) |
+| `--guide PATH` | Reference guide injected into the planner prompt (`--worktree` only, repeatable) |
 | `--msize [1-10]` | Task size multiplier — scales max_turns per stage |
 | `--mloops [1-10]` | Loop multiplier — scales max loop iterations |
-| `--settings FILE` | Path to settings.json (default: `.claude/settings.json`) |
-| `--status-dir DIR` | Directory for pipeline status files (default: `.worca`) |
 
 `--prompt`, `--spec`, and `--source` are mutually exclusive — provide one.
+
+## `worca templates`
+
+Manage pipeline templates. Templates are resolved across three tiers — user (`~/.worca/templates/`) > project (`.claude/templates/`) > built-in (`.claude/worca/templates/`) — and the highest tier wins on ID collision.
+
+```bash
+worca templates list                    # tabular output
+worca templates list --json             # machine-readable JSON (id, name, description, tier, tags, builtin, created_at)
+worca templates show <id>               # pretty-print template.json (resolved tier marked)
+worca templates save <id> [--global]    # snapshot current settings as a project (default) or user template
+worca templates delete <id> [--global]  # remove a project or user template (built-ins are protected)
+```
+
+`worca templates list --json` is the canonical enumeration used by the `/worca-analyze` skill and any external tooling.
+
+## `worca cleanup`
+
+Remove completed or failed pipeline worktrees from disk and from the `.worca/multi/pipelines.d/` registry. Running worktrees are never eligible.
+
+```bash
+worca cleanup                    # interactive: list completed worktrees, prompt to remove
+worca cleanup --all              # remove all completed/failed worktrees without prompting
+worca cleanup --run-id <id>      # remove a specific worktree by run ID
+worca cleanup --dry-run          # preview without removing
+worca cleanup --older-than 7d   # remove worktrees started more than 7 days ago
+```
+
+Use `git worktree list` to see all worktrees regardless of pipeline state.
 
 ## `worca multi`
 

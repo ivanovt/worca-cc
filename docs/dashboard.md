@@ -22,6 +22,17 @@ The header shows lifecycle controls — pause, resume, and stop buttons with rea
 
 ![Lifecycle controls — Failed status badge with Resume and Stop buttons](screenshots/lifecycle-controls.png)
 
+### PR Details
+
+When the PR stage completes, the stage card exposes a collapsible **PR details** subsection with the metadata captured by the guardian agent (W-051):
+
+- Provider badge — GitHub, GitLab, Bitbucket, Azure DevOps, or Gitea (auto-detected from the PR URL)
+- Linked short commit SHA
+- Source → target branch flow
+- Draft and review status (when surfaced by the host)
+
+This works across all five supported hosts, so non-GitHub remotes get the same one-glance PR summary.
+
 ## Learnings
 
 After a run completes, the LEARN stage produces ranked observations and actionable suggestions. Copy-to-clipboard buttons let you feed insights directly into future runs or agent prompts.
@@ -70,9 +81,18 @@ Per-run cost breakdown with a stage-proportional bar chart. Detailed table showi
 
 ## Settings
 
-Configure agent models and max turns, pipeline stages, governance rules, pricing, webhooks, and preflight checks — all saved to `.claude/settings.json` and effective immediately without restarting.
+Configure agent models and max turns, pipeline stages, governance rules, pricing, webhooks, integrations, and preflight checks — all saved to `.claude/settings.json` and effective immediately without restarting. Saves are locked while a pipeline is running to prevent mid-run config drift.
 
 ![Settings](screenshots/settings.png)
+
+W-049 added four subpanels for previously JSON-only knobs:
+
+- **Execution & Parallelism** — worktree base directory, default PR base branch, max concurrent pipelines, cleanup policy
+- **Approval Gates** — plan and PR approval gates (gate the run pre-PR-creation when enabled)
+- **Circuit Breaker** — max failures before halting, classifier model selection
+- **Preferences** (global, `~/.worca/settings.json`) — cross-project keys: cleanup policy, concurrency cap, worktree disk warning threshold, classifier model
+
+When a project's `.claude/settings.json` still contains misplaced global keys or template-default milestone values, an inline banner offers one-click migration; saving any settings change triggers the same auto-migration on the server side.
 
 Preflight checks validate the environment before spending tokens — catching git state issues, missing dependencies, and configuration problems. Each check can be toggled independently.
 
@@ -81,3 +101,9 @@ Preflight checks validate the environment before spending tokens — catching gi
 The webhooks panel configures event subscriptions, budget limits, and HMAC-SHA256 signing for pipeline event delivery.
 
 ![Webhooks settings — event system toggles, budget limits, and webhook configuration](screenshots/webhooks-settings.png)
+
+### Integrations
+
+A card-catalog UI for chat integrations (Telegram, Discord, Slack, generic webhook). Each card shows real connection-health badges (polled every 10s while the tab is open), an enable/disable toggle, and a Configure button for credentials. Adding or updating a project auto-configures its outbound webhook so events route correctly without manual setup.
+
+See the [Chat Integrations Setup Guide](spec/integrations/README.md) for the full configuration model and security details.

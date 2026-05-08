@@ -21,6 +21,8 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 - **Multiple input modes** — prompt, spec file, GitHub issue (`gh:issue:42`), beads task (`bd:bd-abc`), or issue URL
 - **GitHub issue lifecycle** — start from issues with `--source gh:issue:N`, auto-post progress comments, link PRs, close issues on completion
+- **Guided issue triage** (`/worca-analyze`) — Claude Code skill that analyzes a GitHub issue, surfaces open design decisions with recommended options, optionally writes a `## Decisions` section back to the issue body, recommends the right pipeline template, and offers to launch a worktree-based pipeline — all in one pass
+- **Multi-host PR metadata** (W-051) — provider detection across GitHub, GitLab, Bitbucket, Azure DevOps, and Gitea; PR stage records commit SHA, source/target branch flow, and draft/review status; UI surfaces a collapsible "PR details" panel on the PR stage card
 - **Smart title generation** — `--prompt` is optional; when omitted, the title is generated from the spec or plan file and sanitized for branch names
 - **Pipeline events & webhooks** — 52 structured event types emitted as a real-time JSONL stream; subscribe via configurable webhooks with HMAC-SHA256 signing, retry logic, and secret management; control webhooks can pause or abort the pipeline
 
@@ -33,7 +35,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ### Pipeline Templates
 
-- **Built-in templates** — `feature`, `bugfix`, `quick-fix`, `incident-analysis`, `refactor` — each with tailored stage flows, agent selection, and governance rules for different work types
+- **Built-in templates** — `feature`, `bugfix`, `quick-fix`, `refactor`, `investigate`, `test-only` — each with tailored stage flows, agent selection, and governance rules for different work types. `investigate` publishes its plan as a PR (W-046); `test-only` runs tests and coverage analysis without code changes
 - **Template selection UI** — styled dropdown on the new-run page with group headers, descriptions, and indentation; also selectable via CLI
 - **Agent prompt overrides** — templates wire their own agent prompt overrides through the overlay resolver, so each work type gets purpose-built instructions
 
@@ -50,18 +52,20 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Add-project dialog** — register projects via the UI with path validation and duplicate detection
 - **Batch registration** — `worca-ui migrate --scan ~/dev` discovers and registers all worca-enabled projects in one command
 - **Rich bead tooltips** — hover over any bead in Kanban, dependency graph, or list views for structured details with copy button and interactive content
+- **Settings UI** (W-049) — edit execution & parallelism, approval gates, circuit breaker thresholds, worktree disk warning, and the new global Preferences tab (`~/.worca/settings.json`) without hand-editing JSON; settings save handler auto-migrates legacy keys
 
 ### Parallel Pipelines
 
-- **`run_multi.py`** — run N pipelines concurrently, each isolated in its own git worktree with independent `.worca/` state, `.beads/` database, and git branch
+- **Worktree-isolated runs** — `worca run --worktree` (or the UI's "New Pipeline" button) launches each pipeline into its own git worktree with independent `.worca/` state, `.beads/` database, and git branch
+- **Concurrency cap** — server-enforced `max_concurrent_pipelines` with launch mutex (returns 409 when at capacity); configurable in the global Preferences tab
 - **Three-level UI** — projects → pipelines → stages, with per-pipeline pause/stop/resume controls
-- **Configurable cleanup** — `on-success` (remove successful worktrees), `always`, or `never`
+- **Configurable cleanup** — `on-success` (remove successful worktrees), `always`, or `never`; default is `never` to preserve worktrees for inspection. Use `worca cleanup` to prune on demand
 - **Registry tracking** — all running pipelines are tracked in `.worca/multi/pipelines.d/` for monitoring and stale process recovery
 
 ## Architecture
 
 ```
-Preflight → Planner → Plan Reviewer → Coordinator → Implementer(s) → Tester → Guardian → Learner
+Preflight → Planner → Plan Reviewer → Coordinator → Implementer(s) → Tester → Reviewer → Guardian → Learner
 ```
 
 Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
@@ -92,7 +96,7 @@ After `worca init`, your project gets:
 
 ## Prerequisites
 
-- Python 3.8+
+- Python 3.10+
 - Node.js 22+ (for dashboard)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` command)
 - Git
@@ -134,13 +138,22 @@ worca run --spec spec.md --plan plan.md
 # From GitHub issue
 worca run --source gh:issue:42
 
+# Same, but isolated in a git worktree (parallel-safe; same path the UI uses)
+worca run --worktree --source gh:issue:42 --template feature
+
+# Guided triage from a Claude session — analyze the issue, capture design
+# decisions back into the issue body, recommend a template, and offer to
+# start a new pipeline for it
+claude
+/worca-analyze 42
+
 # From the dashboard — click "New Pipeline" in worca-ui
 worca-ui                         # monitor all projects (default)
 worca-ui --project /path         # monitor single project
 worca-ui --help                  # show all commands and options
 ```
 
-See [CLI Reference](docs/cli-reference.md) for all flags and commands.
+See [CLI Reference](docs/cli-reference.md) for all flags and commands, and the [Issue Triage skill](CONTRIBUTING.md#issue-triage) for what `/worca-analyze` does end to end.
 
 ## Dashboard (worca-ui)
 
