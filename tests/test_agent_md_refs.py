@@ -96,6 +96,13 @@ def test_implementer_has_retry_rules_section():
     assert "## Retry Rules" in content
 
 
+def test_implementer_has_stage_key_nudge():
+    content = _read("implementer.md")
+    assert "stages.guardian" in content, (
+        "implementer.md must warn that stages is keyed by stage name, never agent name"
+    )
+
+
 # ---------------------------------------------------------------------------
 # tester.md
 # ---------------------------------------------------------------------------
@@ -148,6 +155,13 @@ def test_guardian_example_json_contains_commit_sha():
 def test_reviewer_does_not_embed_block_review():
     content = _read("reviewer.md")
     assert "{{block:review}}" not in content
+
+
+def test_reviewer_has_stage_key_nudge():
+    content = _read("reviewer.md")
+    assert "stages.guardian" in content, (
+        "reviewer.md must warn that stages is keyed by stage name, never agent name"
+    )
 
 
 # ---------------------------------------------------------------------------

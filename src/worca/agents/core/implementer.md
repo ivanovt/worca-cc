@@ -47,6 +47,8 @@ When your prompt says "Fix All Issues" or "Fix Test Failures" or "Fix Review Iss
 Produce a structured result following the `implement.json` schema.
 In fix mode, set `bead_id` to `"fix"` (sentinel value).
 
+> When reading `status.json`, `stages` is keyed by stage name (`preflight`, `plan`, …, `pr`, `learn`), never by agent name. The `pr` stage is run by the `guardian` agent — `guardian` will never appear as a stage key. Writing `stages.guardian` will silently no-op in production while passing tests.
+
 ## Rules
 
 <!-- governance -->

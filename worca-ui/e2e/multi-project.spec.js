@@ -123,8 +123,8 @@ test.describe('multi-project', () => {
   test('run status endpoint works within project scope', async ({ page }) => {
     seedRun(ctx.worcaDirB, 'status-run-beta', {
       pipeline_status: 'completed',
-      stage: 'guardian',
-      stages: { guardian: { status: 'completed', iteration: 1 } },
+      stage: 'pr',
+      stages: { pr: { status: 'completed', iteration: 1 } },
     });
 
     const statusRes = await page.request.get(
@@ -133,7 +133,7 @@ test.describe('multi-project', () => {
     const body = await statusRes.json();
     expect(body.ok).toBe(true);
     expect(body.pipeline_status).toBe('completed');
-    expect(body.stage).toBe('guardian');
+    expect(body.stage).toBe('pr');
 
     // Same run should NOT be found in alpha
     const notFound = await page.request.get(

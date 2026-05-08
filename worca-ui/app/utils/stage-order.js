@@ -14,6 +14,8 @@ export const STAGE_ORDER = [
   'learn',
 ];
 
+export const STAGE_VALUES = new Set(STAGE_ORDER);
+
 /** Stage order with orchestrator prepended (for log display). */
 export const STAGE_ORDER_WITH_ORCHESTRATOR = ['orchestrator', ...STAGE_ORDER];
 
