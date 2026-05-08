@@ -47,13 +47,13 @@ In global mode (the default), the sidebar shows a project picker with all regist
 
 The sidebar project picker shows all registered projects with live status dots (green = healthy, red = errors) and run count badges.
 
-![Sidebar project picker with status dots and 20 registered projects](screenshots/sidebar-projects.png)
+![Sidebar project picker with all registered projects and live status dots](screenshots/sidebar-projects.png)
 
 ## Add Project
 
-Click the **+** button next to the project picker to register a new project. The dialog validates the project path and auto-generates a slug for the project name.
+Click the **+** button next to the project picker to register a new project or workspace. Pick **Single project** for a normal directory or **Workspace** to register a folder that groups multiple project clones; the dialog validates the path and auto-generates a slug for the project name.
 
-![Add project dialog](screenshots/add-project-dialog.png)
+![Add project dialog with Single project and Workspace modes](screenshots/add-project-dialog.png)
 
 ## Run History
 
@@ -67,11 +67,11 @@ Start a run from a prompt, GitHub issue, or spec file. Advanced options for size
 
 ![New Pipeline](screenshots/new-pipeline.png)
 
-## Beads Task Board
+## Beads Issues
 
-Kanban view of tasks created by the Coordinator, filtered by run. Shows priority badges, dependency chains, and status across Open/In Progress/Closed columns. Badge shows closed/total count (e.g., "3/5 beads").
+Browse runs filtered to those that produced beads. Each card shows the run's branch, template, timing, cost, stage badges, and a closed/total bead count badge (e.g. `7/7 Beads`). Drilling into a run reveals the per-run beads list and dependency graph in the run detail view.
 
-![Beads Kanban](screenshots/beads-kanban.png)
+![Beads Issues view — runs with bead counts and stage badges](screenshots/beads-kanban.png)
 
 ## Token & Cost Dashboard
 
@@ -83,7 +83,7 @@ Per-run cost breakdown with a stage-proportional bar chart. Detailed table showi
 
 Configure agent models and max turns, pipeline stages, governance rules, pricing, webhooks, integrations, and preflight checks — all saved to `.claude/settings.json` and effective immediately without restarting. Saves are locked while a pipeline is running to prevent mid-run config drift.
 
-![Settings](screenshots/settings.png)
+![Project Settings — Approval Gates, Circuit Breaker, and Execution & Parallelism subpanels (W-049)](screenshots/settings.png)
 
 W-049 added four subpanels for previously JSON-only knobs:
 
@@ -104,6 +104,8 @@ The webhooks panel configures event subscriptions, budget limits, and HMAC-SHA25
 
 ### Integrations
 
-A card-catalog UI for chat integrations (Telegram, Discord, Slack, generic webhook). Each card shows real connection-health badges (polled every 10s while the tab is open), an enable/disable toggle, and a Configure button for credentials. Adding or updating a project auto-configures its outbound webhook so events route correctly without manual setup.
+A card-catalog UI for chat integrations (Telegram, Discord, Slack, generic webhook). Each card shows real connection-health badges (polled every 10s while the tab is open), an enable/disable toggle, and Edit/Remove buttons. Adding or updating a project auto-configures its outbound webhook so events route correctly without manual setup.
+
+![Integrations card catalog — Telegram connected and enabled, Discord and Slack configured but disabled](screenshots/integrations.png)
 
 See the [Chat Integrations Setup Guide](spec/integrations/README.md) for the full configuration model and security details.

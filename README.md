@@ -4,7 +4,7 @@ Autonomous software development pipeline with governance enforcement.
 
 worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, reviews, and learns from code changes autonomously. It runs as a `.claude/` folder you drop into any project — fully configurable, with safety hooks at every stage.
 
-![Pipeline stages — Preflight through PR with per-stage cost, turns, and duration](docs/screenshots/pipeline-stages.png)
+![Pipeline stages — Preflight through Learn with per-stage cost, turns, and duration](docs/screenshots/pipeline-stages.png)
 
 ## Features
 
@@ -163,7 +163,7 @@ A real-time web dashboard for monitoring and controlling the pipeline. All updat
 
 ![Global dashboard — project-scoped history view with sidebar navigation](docs/screenshots/global-dashboard.png)
 
-![Beads Kanban](docs/screenshots/beads-kanban.png)
+![Beads Issues — runs with bead counts and stage badges](docs/screenshots/beads-kanban.png)
 
 See [Dashboard Guide](docs/dashboard.md) for the full screenshot walkthrough.
 
