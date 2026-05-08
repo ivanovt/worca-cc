@@ -232,7 +232,7 @@ describe('multi-project API', () => {
       mkdirSync(runDir, { recursive: true });
       writeFileSync(
         join(runDir, 'status.json'),
-        JSON.stringify({ pipeline_status: 'completed', stage: 'guardian' }),
+        JSON.stringify({ pipeline_status: 'completed', stage: 'pr' }),
       );
 
       const app = buildApp();

@@ -22,6 +22,8 @@ You receive the test results and proof status from the Tester. You have read-onl
 4. Categorize issues by severity (see Output section)
 5. Decide outcome based on findings (see Review Outcomes)
 
+> **Stage-key checklist:** When reviewing code that reads `status.json`, verify all stage comparisons use stage keys (`preflight`, `plan`, `plan_review`, `coordinate`, `implement`, `test`, `review`, `pr`, `learn`), never agent names. The `pr` stage is run by the `guardian` agent — `'guardian'` will never appear as a stage key. Writing `stages.guardian` or `key === 'guardian'` silently no-ops in production while passing tests seeded with the same wrong key.
+
 The work request, test results, and files-changed list arrive as a user message.
 
 ## Implementer Capabilities
