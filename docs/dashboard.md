@@ -31,6 +31,8 @@ When the PR stage completes, the stage card exposes a collapsible **PR details**
 - Source → target branch flow
 - Draft and review status (when surfaced by the host)
 
+![PR details panel — guardian's PR stage card expanded with provider badge and linked PR number](screenshots/pr-details-panel.png)
+
 This works across all five supported hosts, so non-GitHub remotes get the same one-glance PR summary.
 
 ## Learnings
