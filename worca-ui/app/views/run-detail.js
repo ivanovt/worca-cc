@@ -883,10 +883,10 @@ export function runDetailView(run, settings = {}, options = {}) {
                       : nothing
                   }
                 </span>
+                ${key === 'pr' ? _prTitleBadge(run) : nothing}
                 <sl-badge variant="${_badgeVariant(stageStatus)}" pill>
                   ${stageStatus.replace(/_/g, ' ')}
                 </sl-badge>
-                ${key === 'pr' ? _prTitleBadge(run) : nothing}
               </div>
               ${(() => {
                 const promptData =

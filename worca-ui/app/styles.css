@@ -3471,7 +3471,7 @@ sl-details.learnings-panel::part(content) {
 }
 
 .pr-title-badge {
-  margin-left: 6px;
+  /* spacing handled by parent .pipeline-stage-header gap */
 }
 
 .classification-strip {
