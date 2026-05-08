@@ -17,19 +17,6 @@ async function openRunDetail(page, baseUrl, runId) {
   await expect(page.locator('.run-detail .stage-panels')).toBeVisible({ timeout: 8000 });
 }
 
-/**
- * Open an sl-details element and wait for its animation to finish
- * (sl-after-show fires once content is fully visible).
- */
-async function expandDetails(detailsLocator) {
-  await detailsLocator.evaluate((el) => {
-    return new Promise((resolve) => {
-      el.addEventListener('sl-after-show', resolve, { once: true });
-      el.show();
-    });
-  });
-}
-
 function seedWithPR(worcaDir, runId, prOverrides = {}) {
   return seedRun(worcaDir, runId, {
     pipeline_status: 'completed',
@@ -44,37 +31,16 @@ function seedWithPR(worcaDir, runId, prOverrides = {}) {
   });
 }
 
-test.describe('PR details panel — collapsible subsection', () => {
-  test('section is collapsed by default', async ({ page }) => {
+test.describe('PR info strip — inline metadata', () => {
+  test('strip is rendered when run.pr is set', async ({ page }) => {
     const serverCtx = await startServer();
     try {
-      const runId = '20260101-pr-closed-default';
+      const runId = '20260101-pr-strip-present';
       seedWithPR(serverCtx.worcaDir, runId);
       await openRunDetail(page, serverCtx.url, runId);
 
-      const details = page.locator('sl-details.pr-details-section');
-      await expect(details).toBeAttached({ timeout: 5000 });
-      await expect(details).not.toHaveAttribute('open');
-    } finally {
-      await serverCtx.close();
-    }
-  });
-
-  test('section expands and collapses', async ({ page }) => {
-    const serverCtx = await startServer();
-    try {
-      const runId = '20260101-pr-toggle';
-      seedWithPR(serverCtx.worcaDir, runId);
-      await openRunDetail(page, serverCtx.url, runId);
-
-      const details = page.locator('sl-details.pr-details-section');
-      await expect(details).not.toHaveAttribute('open');
-
-      await expandDetails(details);
-      await expect(details).toHaveAttribute('open');
-
-      await details.evaluate((el) => el.hide());
-      await expect(details).not.toHaveAttribute('open', { timeout: 3000 });
+      const strip = page.locator('.pr-info-strip');
+      await expect(strip).toBeAttached({ timeout: 5000 });
     } finally {
       await serverCtx.close();
     }
@@ -87,12 +53,9 @@ test.describe('PR details panel — collapsible subsection', () => {
       seedWithPR(serverCtx.worcaDir, runId);
       await openRunDetail(page, serverCtx.url, runId);
 
-      const details = page.locator('sl-details.pr-details-section');
-      await expandDetails(details);
-
-      // The link exists in the DOM inside the expanded section.
-      // toHaveAttribute works regardless of visibility state.
-      const prLink = details.locator('.run-pr-link').first();
+      const strip = page.locator('.pr-info-strip');
+      await expect(strip).toBeAttached();
+      const prLink = strip.locator('.run-pr-link').first();
       await expect(prLink).toHaveAttribute('href', PR_DATA.url, { timeout: 5000 });
       await expect(prLink).toHaveAttribute('target', '_blank');
       await expect(prLink).toHaveAttribute('rel', 'noopener noreferrer');
@@ -108,10 +71,8 @@ test.describe('PR details panel — collapsible subsection', () => {
       seedWithPR(serverCtx.worcaDir, runId);
       await openRunDetail(page, serverCtx.url, runId);
 
-      const details = page.locator('sl-details.pr-details-section');
-      await expandDetails(details);
-
-      const copyButton = details.locator('sl-copy-button');
+      const strip = page.locator('.pr-info-strip');
+      const copyButton = strip.locator('sl-copy-button');
       await expect(copyButton).toBeAttached();
       await expect(copyButton).toHaveAttribute('value', PR_DATA.commit_sha);
     } finally {
@@ -125,8 +86,6 @@ test.describe('PR details panel — collapsible subsection', () => {
       const runId = '20260101-pr-clipboard';
       seedWithPR(serverCtx.worcaDir, runId);
 
-      // Mock clipboard.writeText before navigation so Shoelace's component
-      // uses our spy when handleCopy() is invoked.
       await page.addInitScript(() => {
         window.__lastClipboardWrite = null;
         navigator.clipboard.writeText = (text) => {
@@ -136,12 +95,9 @@ test.describe('PR details panel — collapsible subsection', () => {
       });
 
       await openRunDetail(page, serverCtx.url, runId);
-      const details = page.locator('sl-details.pr-details-section');
-      await expandDetails(details);
+      const strip = page.locator('.pr-info-strip');
 
-      // Call handleCopy() directly — it's a public method on the Shoelace
-      // component and calls navigator.clipboard.writeText(this.value).
-      await details.evaluate((el) => {
+      await strip.evaluate((el) => {
         el.querySelector('sl-copy-button')?.handleCopy();
       });
 
@@ -152,14 +108,14 @@ test.describe('PR details panel — collapsible subsection', () => {
     }
   });
 
-  test('section absent when run has no PR data', async ({ page }) => {
+  test('strip absent when run has no PR data', async ({ page }) => {
     const serverCtx = await startServer();
     try {
       const runId = '20260101-pr-no-data';
       seedRun(serverCtx.worcaDir, runId, {
         pipeline_status: 'completed',
         stages: {
-          guardian: {
+          pr: {
             status: 'completed',
             iterations: [{ number: 1, status: 'completed', outcome: 'success' }],
           },
@@ -167,7 +123,7 @@ test.describe('PR details panel — collapsible subsection', () => {
       });
       await openRunDetail(page, serverCtx.url, runId);
 
-      await expect(page.locator('sl-details.pr-details-section')).not.toBeAttached();
+      await expect(page.locator('.pr-info-strip')).not.toBeAttached();
     } finally {
       await serverCtx.close();
     }

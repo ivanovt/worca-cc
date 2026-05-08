@@ -20,10 +20,12 @@ import Clock from 'lucide/dist/esm/icons/clock';
 import Coins from 'lucide/dist/esm/icons/coins';
 import Cpu from 'lucide/dist/esm/icons/cpu';
 import Database from 'lucide/dist/esm/icons/database';
+import ExternalLink from 'lucide/dist/esm/icons/external-link';
 import FileText from 'lucide/dist/esm/icons/file-text';
 import Flag from 'lucide/dist/esm/icons/flag';
 import FolderOpen from 'lucide/dist/esm/icons/folder-open';
 import GitBranch from 'lucide/dist/esm/icons/git-branch';
+import GitPullRequest from 'lucide/dist/esm/icons/git-pull-request';
 import Hash from 'lucide/dist/esm/icons/hash';
 import Lightbulb from 'lucide/dist/esm/icons/lightbulb';
 import List from 'lucide/dist/esm/icons/list';
@@ -98,7 +100,9 @@ export {
   Play,
   Users,
   Shield,
+  ExternalLink,
   GitBranch,
+  GitPullRequest,
   ChevronRight,
   Save,
   Settings,

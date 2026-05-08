@@ -122,22 +122,14 @@ def test_guardian_no_review_stage_content():
     assert "REVIEW" not in content or "PR" in content  # PR content is fine
 
 
-def test_guardian_output_documents_commit_sha_required():
+def test_guardian_mentions_commit_sha():
+    # commit_sha must appear somewhere in guardian.md (Rules or Process section).
+    # The Output section was intentionally trimmed to a single-sentence
+    # "follow the schema" form (matches planner/coordinator/tester); listing
+    # required fields in the Output section was correlated with the agent
+    # producing prose summaries instead of schema-conformant JSON.
     content = _read("guardian.md")
-    assert "commit_sha" in content, (
-        "guardian.md Output section must list commit_sha as a required field"
-    )
-
-
-def test_guardian_example_json_contains_commit_sha():
-    content = _read("guardian.md")
-    # The example JSON block in the Output section must show commit_sha
-    example_start = content.find("Example final output")
-    assert example_start != -1, "guardian.md must contain 'Example final output'"
-    example_section = content[example_start:]
-    assert "commit_sha" in example_section, (
-        "guardian.md example JSON must include commit_sha"
-    )
+    assert "commit_sha" in content
 
 
 # ---------------------------------------------------------------------------

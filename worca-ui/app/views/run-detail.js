@@ -5,7 +5,10 @@ import {
   ClipboardCopy,
   Clock,
   Coins,
+  ExternalLink,
   FileText,
+  GitBranch,
+  GitPullRequest,
   iconSvg,
   List,
   RefreshCw,
@@ -307,13 +310,12 @@ function _prReviewStatusVariant(status) {
   return 'neutral';
 }
 
-function _prDetailsView(run) {
+function _prInfoStripView(run) {
   const pr = run?.pr;
   const prUrl = pr?.url || run?.pr_url;
   if (!prUrl) return nothing;
 
   const number = pr?.number;
-  const numberLabel = number != null ? `#${number} ↗` : '↗';
   const commitSha = pr?.commit_sha;
   const shortSha = commitSha ? commitSha.slice(0, 7) : null;
   const source = pr?.source_branch;
@@ -322,51 +324,46 @@ function _prDetailsView(run) {
   const reviewStatus = pr?.review_status;
 
   return html`
-    <sl-details class="pr-details-section" summary="PR details">
-      <table class="pr-details-table">
-        <tbody>
-          <tr>
-            <td class="meta-label">PR</td>
-            <td><a class="run-pr-link" href="${prUrl}" target="_blank" rel="noopener noreferrer">${numberLabel}</a></td>
-          </tr>
-          ${
-            provider
-              ? html`<tr>
-            <td class="meta-label">Provider</td>
-            <td><sl-badge class="pr-provider-badge" variant="neutral" pill>${provider.replace(/_/g, ' ')}</sl-badge></td>
-          </tr>`
-              : nothing
-          }
-          ${
-            shortSha
-              ? html`<tr>
-            <td class="meta-label">Commit</td>
-            <td class="pr-commit-cell">
-              <code class="pr-commit-sha">${shortSha}</code>
-              <sl-copy-button value="${commitSha}"></sl-copy-button>
-            </td>
-          </tr>`
-              : nothing
-          }
-          ${
-            source && target
-              ? html`<tr>
-            <td class="meta-label">Branch</td>
-            <td><code class="pr-branch-flow">${source} → ${target}</code></td>
-          </tr>`
-              : nothing
-          }
-          ${
-            reviewStatus
-              ? html`<tr>
-            <td class="meta-label">Status</td>
-            <td><sl-badge class="pr-review-status-badge" variant="${_prReviewStatusVariant(reviewStatus)}" pill>${reviewStatus.replace(/_/g, ' ')}</sl-badge></td>
-          </tr>`
-              : nothing
-          }
-        </tbody>
-      </table>
-    </sl-details>
+    <div class="pr-info-strip">
+      <span class="pr-info-item">
+        ${unsafeHTML(iconSvg(GitPullRequest, 14))}
+        <a class="run-pr-link" href="${prUrl}" target="_blank" rel="noopener noreferrer">
+          PR${number != null ? html` #${number}` : nothing} ${unsafeHTML(iconSvg(ExternalLink, 11))}
+        </a>
+      </span>
+      ${
+        provider
+          ? html`<span class="pr-info-item">
+        <span class="meta-label">Provider:</span>
+        <span class="meta-value">${provider.replace(/_/g, ' ')}</span>
+      </span>`
+          : nothing
+      }
+      ${
+        shortSha
+          ? html`<span class="pr-info-item">
+        <span class="meta-label">Commit:</span>
+        <code class="pr-commit-sha">${shortSha}</code>
+        <sl-copy-button value="${commitSha}"></sl-copy-button>
+      </span>`
+          : nothing
+      }
+      ${
+        source && target
+          ? html`<span class="pr-info-item">
+        ${unsafeHTML(iconSvg(GitBranch, 13))}
+        <span class="meta-value">${source} → ${target}</span>
+      </span>`
+          : nothing
+      }
+      ${
+        reviewStatus
+          ? html`<span class="pr-info-item">
+        <sl-badge class="pr-review-status-badge" variant="${_prReviewStatusVariant(reviewStatus)}" pill>${reviewStatus.replace(/_/g, ' ')}</sl-badge>
+      </span>`
+          : nothing
+      }
+    </div>
   `;
 }
 
@@ -941,7 +938,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                           </div>`;
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
-                      ${key === 'pr' ? _prDetailsView(run) : nothing}
+                      ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -994,7 +991,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
-                      ${key === 'pr' ? _prDetailsView(run) : nothing}
+                      ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
