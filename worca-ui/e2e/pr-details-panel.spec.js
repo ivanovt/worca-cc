@@ -159,7 +159,7 @@ test.describe('PR details panel — collapsible subsection', () => {
       seedRun(serverCtx.worcaDir, runId, {
         pipeline_status: 'completed',
         stages: {
-          guardian: {
+          pr: {
             status: 'completed',
             iterations: [{ number: 1, status: 'completed', outcome: 'success' }],
           },

@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { createApp } from '../server/app.js';
 import { attachWsServer } from '../server/ws.js';
 import { createInbox } from '../server/webhook-inbox.js';
+import { assertStageShape } from '../test/helpers/assert-stage-shape.js';
 
 /**
  * Start an isolated worca-ui server on a random port backed by a temp directory.
@@ -87,6 +88,7 @@ export function seedRun(worcaDir, runId, statusOverrides = {}) {
     stages: { plan: { status: 'in_progress' } },
     ...statusOverrides,
   };
+  assertStageShape(status);
   writeFileSync(join(runDir, 'status.json'), JSON.stringify(status, null, 2) + '\n', 'utf8');
   return status;
 }

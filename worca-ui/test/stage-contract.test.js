@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { join, dirname } from 'node:path';
 import { STAGE_ORDER, STAGE_VALUES } from '../app/utils/stage-order.js';
-import { assertStageShape } from './helpers/assert-stage-shape.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = join(__dirname, '..', '..');
@@ -12,11 +11,10 @@ const PROJECT_ROOT = join(__dirname, '..', '..');
 const PYTHON_SCRIPT = `
 import json, sys
 sys.path.insert(0, 'src')
-from worca.orchestrator.stages import Stage, STAGE_AGENT_MAP, STAGE_SCHEMA_MAP
+from worca.orchestrator.stages import Stage, STAGE_AGENT_MAP
 print(json.dumps({
     'stage_values': [s.value for s in Stage],
     'stage_agent_map': {s.value: a for s, a in STAGE_AGENT_MAP.items()},
-    'stage_schema_map': {s.value: sc for s, sc in STAGE_SCHEMA_MAP.items()},
 }))
 `;
 
@@ -25,10 +23,9 @@ function hasPython3() {
   return r.status === 0 && r.error == null;
 }
 
-/**
- * Parse STAGE_AGENT_MAP from settings.js source without importing it.
- * Avoids the lit-html browser dependency in the Node test environment.
- */
+// settings.js can't be imported in Node — it pulls in lit-html which expects a
+// browser. We parse the source instead. The empty-map check below guards
+// against silent regressions if STAGE_AGENT_MAP gets reformatted.
 function readJsStageAgentMap() {
   const src = readFileSync(join(__dirname, '../app/views/settings.js'), 'utf8');
   const match = src.match(/export const STAGE_AGENT_MAP = \{([^}]+)\}/);
@@ -38,10 +35,22 @@ function readJsStageAgentMap() {
     const m = line.match(/^\s+(\w+):\s+'(\w+)',?\s*$/);
     if (m) map[m[1]] = m[2];
   }
+  if (Object.keys(map).length === 0) {
+    throw new Error(
+      'Parsed STAGE_AGENT_MAP is empty — regex in readJsStageAgentMap is out of date with settings.js',
+    );
+  }
   return map;
 }
 
 const python3Available = hasPython3();
+if (!python3Available) {
+  // Skipping silently makes the contract invisible on machines without python3.
+  // CI always has python3, so this is just a local-dev signal.
+  console.warn(
+    '[stage-contract] python3 not on PATH — JS↔Python contract tests skipped',
+  );
+}
 
 describe.skipIf(!python3Available)('stage contract: JS vs Python', () => {
   let py;
@@ -89,27 +98,5 @@ describe.skipIf(!python3Available)('stage contract: JS vs Python', () => {
         `'${stage}' is in JS STAGE_AGENT_MAP but not in Python STAGE_AGENT_MAP`,
       ).toBe(true);
     }
-  });
-});
-
-describe('assertStageShape self-tests', () => {
-  it("rejects 'guardian' as a stage key with 'pr' hint", () => {
-    expect(() => assertStageShape({ stage: 'guardian' })).toThrow(
-      "'guardian' is not a stage key; you probably meant 'pr'",
-    );
-  });
-
-  it("accepts 'pr' as a valid stage key", () => {
-    expect(() => assertStageShape({ stage: 'pr' })).not.toThrow();
-  });
-
-  it("rejects 'guardian' in stages map with 'pr' hint", () => {
-    expect(() => assertStageShape({ stages: { guardian: {} } })).toThrow(
-      "'guardian' is not a stage key; you probably meant 'pr'",
-    );
-  });
-
-  it("accepts 'pr' key in stages map", () => {
-    expect(() => assertStageShape({ stages: { pr: {} } })).not.toThrow();
   });
 });

@@ -25,7 +25,7 @@ test.describe('stage timeline — individual stage statuses', () => {
           coordinate: { status: 'completed' },
           implement: { status: 'completed' },
           test: { status: 'completed' },
-          guardian: { status: 'completed' },
+          pr: { status: 'completed' },
         },
       });
       await openRunDetail(page, ctx.url, runId);
@@ -114,7 +114,7 @@ test.describe('stage timeline — individual stage statuses', () => {
           coordinate: { status: 'in_progress' },
           implement: { status: 'pending' },
           test: { status: 'pending' },
-          guardian: { status: 'pending' },
+          pr: { status: 'pending' },
         },
       });
       await openRunDetail(page, ctx.url, runId);
@@ -164,7 +164,7 @@ test.describe('stage timeline — mixed states', () => {
           coordinate: { status: 'completed' },
           implement: { status: 'running' },
           test: { status: 'pending' },
-          guardian: { status: 'pending' },
+          pr: { status: 'pending' },
           review: { status: 'pending' },
         },
       });
