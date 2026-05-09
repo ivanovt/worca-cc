@@ -150,32 +150,8 @@ class PromptBuilder:
         ctx = dict(self._context)
         ctx["work_request"] = self._work_request_section()
         ctx["assigned_task"] = self._assigned_task_body()
-        ctx["schema_content"] = self._read_schema_for_stage(stage)
         self._apply_stage_context(stage, iteration, ctx)
         return ctx
-
-    @staticmethod
-    def _read_schema_for_stage(stage: str) -> str:
-        """Return the JSON Schema document for the stage's structured output.
-
-        Read verbatim from .claude/worca/schemas/<schema_name> so block files
-        can inject the validation contract directly via {{schema_content}}.
-        Returns empty string if the stage has no schema or the file is missing.
-        """
-        from worca.orchestrator.stages import STAGE_SCHEMA_MAP, Stage
-        try:
-            stage_enum = Stage(stage)
-        except ValueError:
-            return ""
-        schema_name = STAGE_SCHEMA_MAP.get(stage_enum)
-        if not schema_name:
-            return ""
-        schema_path = os.path.join(".claude", "worca", "schemas", schema_name)
-        try:
-            with open(schema_path) as f:
-                return f.read().strip()
-        except OSError:
-            return ""
 
     def _apply_stage_context(self, stage: str, iteration: int, ctx: dict) -> None:
         """Populate stage-specific context keys in-place.
