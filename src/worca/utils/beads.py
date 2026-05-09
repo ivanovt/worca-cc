@@ -6,6 +6,7 @@ import re
 import signal
 import subprocess
 import time
+from pathlib import Path
 from typing import Optional
 
 from worca.utils.env import get_env
@@ -16,6 +17,23 @@ logger = logging.getLogger(__name__)
 # through (or escalating in the future).  ~1s total, 50ms granularity.
 _SIGTERM_WAIT_INTERVAL_S = 0.05
 _SIGTERM_WAIT_ITERATIONS = 20
+
+_DAEMON_STOPPED_SENTINEL = "daemon.stopped"
+
+
+def _write_stop_sentinel(beads_dir: str) -> None:
+    """Best-effort write of the deliberate-stop sentinel."""
+    try:
+        Path(beads_dir, _DAEMON_STOPPED_SENTINEL).touch()
+    except OSError:
+        pass
+
+
+def _resolve_workspace_dir(beads_dir: str) -> str:
+    workspace_dir = os.path.dirname(beads_dir) or beads_dir
+    if not os.path.isdir(workspace_dir):
+        workspace_dir = beads_dir
+    return workspace_dir
 
 
 def _wait_for_pid_exit(pid: int) -> bool:
@@ -199,9 +217,7 @@ def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
     # at the parent of .beads/ (the workspace root) since `bd` walks up from
     # cwd to locate the workspace.  Fall back to beads_dir itself if the
     # parent is missing (defensive — should not happen in practice).
-    workspace_dir = os.path.dirname(beads_dir) or beads_dir
-    if not os.path.isdir(workspace_dir):
-        workspace_dir = beads_dir
+    workspace_dir = _resolve_workspace_dir(beads_dir)
     try:
         result = subprocess.run(
             ["bd", "daemon", "stop"],
@@ -212,6 +228,7 @@ def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
             timeout=timeout,
         )
         if result.returncode == 0:
+            _write_stop_sentinel(beads_dir)
             return True
     except subprocess.TimeoutExpired:
         logger.warning("bd daemon stop timed out for %s, falling back to SIGTERM", beads_dir)
@@ -243,6 +260,7 @@ def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         # Race: process exited between liveness probe and SIGTERM.
+        _write_stop_sentinel(beads_dir)
         return True
     except OSError as exc:
         logger.warning("SIGTERM to bd daemon failed for %s: %s", beads_dir, exc)
@@ -253,7 +271,80 @@ def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
     # shutdown and may keep deleted-file handles around.
     if not _wait_for_pid_exit(pid):
         logger.warning("bd daemon PID %d did not exit within wait budget", pid)
+    _write_stop_sentinel(beads_dir)
     return True
+
+
+def bd_daemon_status(beads_dir: str) -> bool | None:
+    """Check if the bd daemon is running for the given beads_dir.
+
+    Returns True if running, False if not running, None on error.
+    """
+    workspace_dir = _resolve_workspace_dir(beads_dir)
+    try:
+        result = subprocess.run(
+            ["bd", "daemon", "status"],
+            capture_output=True,
+            text=True,
+            env=get_env(BEADS_DIR=beads_dir),
+            cwd=workspace_dir,
+            timeout=5.0,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def bd_daemon_start(beads_dir: str, timeout: float = 5.0) -> bool:
+    """Start the bd daemon for the given beads_dir.
+
+    Clears any deliberate-stop sentinel so bd_daemon_ensure will keep
+    the daemon alive on subsequent calls.
+
+    Returns True on success, False on failure.
+    """
+    sentinel = os.path.join(beads_dir, _DAEMON_STOPPED_SENTINEL)
+    try:
+        os.remove(sentinel)
+    except FileNotFoundError:
+        pass
+
+    workspace_dir = _resolve_workspace_dir(beads_dir)
+    try:
+        result = subprocess.run(
+            ["bd", "daemon", "start"],
+            capture_output=True,
+            text=True,
+            env=get_env(BEADS_DIR=beads_dir),
+            cwd=workspace_dir,
+            timeout=timeout,
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.warning("bd daemon start failed for %s: %s", beads_dir, exc)
+        return False
+
+
+def bd_daemon_ensure(beads_dir: str) -> bool:
+    """Ensure the bd daemon is running, unless it was deliberately stopped.
+
+    If bd_daemon_stop was called previously (sentinel file present), does
+    not restart the daemon — returns False. Call bd_daemon_start explicitly
+    to clear the sentinel and restart.
+
+    Returns True if the daemon is running, False otherwise.
+    """
+    sentinel = os.path.join(beads_dir, _DAEMON_STOPPED_SENTINEL)
+    if os.path.exists(sentinel):
+        return False
+
+    status = bd_daemon_status(beads_dir)
+    if status is True:
+        return True
+    if status is None:
+        return False
+
+    return bd_daemon_start(beads_dir)
 
 
 def bd_init(cwd: Optional[str] = None) -> bool:

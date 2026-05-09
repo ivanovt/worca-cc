@@ -6,7 +6,7 @@
 
 import { existsSync, unwatchFile, watch, watchFile } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { listIssues } from './beads-reader.js';
+import { countIssuesByRunLabel, listIssues } from './beads-reader.js';
 
 const BEADS_DEBOUNCE_MS = 500;
 const BEADS_POLL_MS = 2000;
@@ -26,11 +26,15 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
     BEADS_REFRESH_TIMER = setTimeout(async () => {
       BEADS_REFRESH_TIMER = null;
       try {
-        const issues = await listIssues(beadsDbPath);
+        const [issues, counts] = await Promise.all([
+          listIssues(beadsDbPath),
+          countIssuesByRunLabel(beadsDbPath).catch(() => ({})),
+        ]);
         broadcaster.broadcast(
           'beads-update',
           {
             issues,
+            counts,
             dbExists: true,
             dbPath: beadsDbPath,
           },

@@ -635,14 +635,17 @@ ws.on('beads-update', (payload, msg) => {
         loading: false,
       },
     });
-    // Re-fetch run-specific beads if viewing a run detail
-    if (route.runId && route.section !== 'beads') fetchRunBeads(route.runId);
-    // Re-fetch bead counts for run list
-    fetchBeadsCounts();
-
-    // Re-fetch beads for currently viewed run in beads section
-    if (route.section === 'beads' && route.runId)
+    const prevCounts = beadsCounts;
+    beadsCounts = payload.counts || {};
+    const runCountChanged =
+      route.runId &&
+      JSON.stringify(prevCounts[route.runId]) !==
+        JSON.stringify(beadsCounts[route.runId]);
+    if (runCountChanged && route.section !== 'beads')
+      fetchRunBeads(route.runId);
+    if (runCountChanged && route.section === 'beads')
       fetchBeadsRunIssues(route.runId);
+    rerender();
   }
 });
 

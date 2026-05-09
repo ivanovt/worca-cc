@@ -397,27 +397,40 @@ describe('listUnlinkedIssues', () => {
 });
 
 describe('countIssuesByRunLabel', () => {
-  // Returns {runId: {total, done}}. The first bd call is `label list-all`
-  // (totals); subsequent calls are `list --label-any run:<id>` per run, used
-  // to count closed issues for the "done" tally.
+  // 3-call pattern: bd label list-all → bd list --all → bd show <ids>,
+  // then group by run labels in JS.
   it('returns total + done per run, with done=closed-status count', async () => {
+    // Call 1: bd label list-all → totals per label
     mockBdResult([
       { label: 'run:run-1', count: 5 },
       { label: 'run:run-2', count: 3 },
       { label: 'component:auth', count: 2 },
     ]);
-    // Per-run issue lists. run-1: 2 closed of 5; run-2: 3 closed of 3.
+    // Call 2: bd list --all --limit 0 → all issues
     mockBdResult([
       { id: 1, status: 'closed' },
       { id: 2, status: 'closed' },
       { id: 3, status: 'in_progress' },
       { id: 4, status: 'open' },
       { id: 5, status: 'open' },
-    ]);
-    mockBdResult([
       { id: 6, status: 'closed' },
       { id: 7, status: 'closed' },
       { id: 8, status: 'closed' },
+      { id: 9, status: 'open' },
+      { id: 10, status: 'closed' },
+    ]);
+    // Call 3: bd show <all ids> → issues with labels
+    mockBdResult([
+      { id: 1, status: 'closed', labels: ['run:run-1'] },
+      { id: 2, status: 'closed', labels: ['run:run-1'] },
+      { id: 3, status: 'in_progress', labels: ['run:run-1'] },
+      { id: 4, status: 'open', labels: ['run:run-1'] },
+      { id: 5, status: 'open', labels: ['run:run-1'] },
+      { id: 6, status: 'closed', labels: ['run:run-2'] },
+      { id: 7, status: 'closed', labels: ['run:run-2'] },
+      { id: 8, status: 'closed', labels: ['run:run-2'] },
+      { id: 9, status: 'open', labels: ['component:auth'] },
+      { id: 10, status: 'closed', labels: ['component:auth'] },
     ]);
     expect(await countIssuesByRunLabel(DB)).toEqual({
       'run-1': { total: 5, done: 2 },
@@ -435,11 +448,32 @@ describe('countIssuesByRunLabel', () => {
     expect(await countIssuesByRunLabel(DB)).toEqual({});
   });
 
-  it('per-run query failure leaves done=0 but preserves total', async () => {
+  it('bd list failure leaves done=0 but preserves total', async () => {
     mockBdResult([{ label: 'run:run-x', count: 4 }]);
-    mockBdError('query failed');
+    mockBdError('list failed');
     expect(await countIssuesByRunLabel(DB)).toEqual({
       'run-x': { total: 4, done: 0 },
+    });
+  });
+
+  it('bd show failure leaves done=0 but preserves total', async () => {
+    mockBdResult([{ label: 'run:run-x', count: 4 }]);
+    mockBdResult([
+      { id: 1, status: 'closed' },
+      { id: 2, status: 'open' },
+    ]);
+    mockBdError('show failed');
+    expect(await countIssuesByRunLabel(DB)).toEqual({
+      'run-x': { total: 4, done: 0 },
+    });
+  });
+
+  it('skips bd show when bd list returns no issues', async () => {
+    mockBdResult([{ label: 'run:run-x', count: 0 }]);
+    mockBdResult([]);
+    // No third mock — bd show should not be called
+    expect(await countIssuesByRunLabel(DB)).toEqual({
+      'run-x': { total: 0, done: 0 },
     });
   });
 });
