@@ -24,14 +24,15 @@ The header shows lifecycle controls — pause, resume, and stop buttons with rea
 
 ### PR Details
 
-When the PR stage completes, the stage card exposes a collapsible **PR details** subsection with the metadata captured by the guardian agent (W-051):
+When the PR stage completes, an inline **PR info strip** appears at the bottom of the stage card with the metadata captured by the guardian agent (W-051) — visible the moment the stage is expanded, no second click. Items render only when their data is present:
 
-- Provider badge — GitHub, GitLab, Bitbucket, Azure DevOps, or Gitea (auto-detected from the PR URL)
-- Linked short commit SHA
+- Linked PR number with provider-aware external-link icon
+- Provider — GitHub, GitLab, Bitbucket, Azure DevOps, or Gitea (auto-detected from the PR URL)
+- Short commit SHA with copy-to-clipboard button
 - Source → target branch flow
-- Draft and review status (when surfaced by the host)
+- Review status badge (when surfaced by the host)
 
-![PR details panel — guardian's PR stage card expanded with provider badge and linked PR number](screenshots/pr-details-panel.png)
+![PR info strip — guardian's PR stage card expanded showing the inline PR metadata row](screenshots/pr-details-panel.png)
 
 This works across all five supported hosts, so non-GitHub remotes get the same one-glance PR summary.
 

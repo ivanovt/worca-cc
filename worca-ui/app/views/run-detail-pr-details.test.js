@@ -51,33 +51,36 @@ const baseOptions = {
   onPriorityFilter: () => {},
 };
 
-describe('_prDetailsView via runDetailView — pr stage', () => {
-  it('renders pr-details-section when run.pr is set', () => {
+describe('_prInfoStripView via runDetailView — pr stage', () => {
+  it('renders pr-info-strip when run.pr is set', () => {
     const out = renderToString(runDetailView(baseRun));
-    expect(out).toContain('pr-details-section');
+    expect(out).toContain('pr-info-strip');
   });
 
-  it('renders PR link as "#42 ↗" with target=_blank', () => {
+  it('renders PR link with #number and target=_blank', () => {
     const out = renderToString(runDetailView(baseRun));
+    expect(out).toContain('PR');
     expect(out).toContain('#42');
-    expect(out).toContain('↗');
     expect(out).toContain('target="_blank"');
     expect(out).toContain('rel="noopener noreferrer"');
     expect(out).toContain('https://github.com/owner/repo/pull/42');
+    // (External-link Lucide icon is rendered via unsafeHTML and is not visible
+    // through this renderToString test helper. Verified via Playwright e2e.)
   });
 
-  it('renders provider badge with neutral variant', () => {
+  it('renders provider as plain meta-value text (not a pill badge)', () => {
     const out = renderToString(runDetailView(baseRun));
-    expect(out).toContain('pr-provider-badge');
+    expect(out).toContain('Provider:');
     expect(out).toContain('github');
+    // Old design used a sl-badge with pr-provider-badge class; new design is plain text
+    expect(out).not.toContain('pr-provider-badge');
   });
 
   it('renders short commit SHA (7 chars) in code element', () => {
     const out = renderToString(runDetailView(baseRun));
     expect(out).toContain('pr-commit-sha');
     expect(out).toContain('abc1234');
-    // full SHA in sl-copy-button value; short SHA in code display
-    expect(out).toContain('abc1234567890');
+    expect(out).toContain('abc1234567890'); // full SHA in copy-button value
   });
 
   it('renders copy button for commit SHA', () => {
@@ -85,12 +88,11 @@ describe('_prDetailsView via runDetailView — pr stage', () => {
     expect(out).toContain('sl-copy-button');
   });
 
-  it('renders source → target branch', () => {
+  it('renders source → target branch with GitBranch icon', () => {
     const out = renderToString(runDetailView(baseRun));
     expect(out).toContain('feature/my-feature');
     expect(out).toContain('main');
     expect(out).toContain('→');
-    expect(out).toContain('pr-branch-flow');
   });
 
   it('renders review_status badge when review_status set', () => {
@@ -129,54 +131,55 @@ describe('_prDetailsView via runDetailView — pr stage', () => {
     expect(out).not.toContain('pr-review-status-badge');
   });
 
-  it('skips provider row when provider is absent', () => {
+  it('skips Provider item when provider is absent', () => {
     const run = { ...baseRun, pr: { ...prObject, provider: undefined } };
     const out = renderToString(runDetailView(run));
-    expect(out).not.toContain('pr-provider-badge');
+    expect(out).not.toContain('Provider:');
   });
 
-  it('skips commit row when commit_sha is absent', () => {
+  it('skips commit item when commit_sha is absent', () => {
     const run = { ...baseRun, pr: { ...prObject, commit_sha: undefined } };
     const out = renderToString(runDetailView(run));
     expect(out).not.toContain('pr-commit-sha');
   });
 
-  it('skips branch row when source or target branch is absent', () => {
+  it('skips branch item when source or target branch is absent', () => {
     const run = {
       ...baseRun,
       pr: { ...prObject, source_branch: undefined },
     };
     const out = renderToString(runDetailView(run));
-    expect(out).not.toContain('pr-branch-flow');
+    // The arrow appears only inside the branch item; absence of "feature/my-feature → main"
+    expect(out).not.toContain('feature/my-feature → main');
   });
 
-  it('does not render pr-details-section when run.pr is null', () => {
+  it('does not render pr-info-strip when run.pr is null', () => {
     const run = { ...baseRun, pr: null };
     const out = renderToString(runDetailView(run));
-    expect(out).not.toContain('pr-details-section');
+    expect(out).not.toContain('pr-info-strip');
   });
 
-  it('does not render pr-details-section when run has neither pr nor pr_url', () => {
+  it('does not render pr-info-strip when run has neither pr nor pr_url', () => {
     const run = {
       pipeline_status: 'completed',
       stages: { pr: guardianStage },
     };
     const out = renderToString(runDetailView(run));
-    expect(out).not.toContain('pr-details-section');
+    expect(out).not.toContain('pr-info-strip');
   });
 
-  it('renders pr-details-section using run.pr_url fallback (legacy)', () => {
+  it('renders pr-info-strip using run.pr_url fallback (legacy)', () => {
     const run = {
       pipeline_status: 'completed',
       stages: { pr: guardianStage },
       pr_url: 'https://github.com/owner/repo/pull/7',
     };
     const out = renderToString(runDetailView(run));
-    expect(out).toContain('pr-details-section');
+    expect(out).toContain('pr-info-strip');
     expect(out).toContain('https://github.com/owner/repo/pull/7');
   });
 
-  it('renders pr-details-section only in pr stage, not other stages', () => {
+  it('renders pr-info-strip only in pr stage, not other stages', () => {
     const run = {
       ...baseRun,
       stages: {
@@ -188,7 +191,7 @@ describe('_prDetailsView via runDetailView — pr stage', () => {
       },
     };
     const out = renderToString(runDetailView(run));
-    const count = (out.match(/pr-details-section/g) || []).length;
+    const count = (out.match(/pr-info-strip/g) || []).length;
     expect(count).toBe(1);
   });
 });
