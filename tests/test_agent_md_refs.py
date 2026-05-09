@@ -122,14 +122,12 @@ def test_guardian_no_review_stage_content():
     assert "REVIEW" not in content or "PR" in content  # PR content is fine
 
 
-def test_guardian_mentions_commit_sha():
-    # commit_sha must appear somewhere in guardian.md (Rules or Process section).
-    # The Output section was intentionally trimmed to a single-sentence
-    # "follow the schema" form (matches planner/coordinator/tester); listing
-    # required fields in the Output section was correlated with the agent
-    # producing prose summaries instead of schema-conformant JSON.
+def test_guardian_output_references_pr_schema():
+    # guardian.md's Output section delegates field-level contract (including
+    # commit_sha) to pr.json via the --json-schema flag — matches planner/
+    # coordinator/tester pattern of one-line "follow the schema" Output.
     content = _read("guardian.md")
-    assert "commit_sha" in content
+    assert "pr.json" in content
 
 
 # ---------------------------------------------------------------------------

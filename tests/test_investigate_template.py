@@ -80,10 +80,13 @@ class TestAgentOverlays:
         assert "Guardian Agent — Investigate Mode" in guardian
 
     def test_base_guardian_unaffected(self):
+        # The investigate-template overlay must not bleed into the base
+        # guardian.md. Anchors below are stable lines from the canonical
+        # base (Role + Process); the investigate guardian replaces these.
         base = Path(__file__).parent.parent / "src" / "worca" / "agents" / "core" / "guardian.md"
         content = base.read_text()
-        assert "proof" in content.lower()
-        assert "proof status" in content.lower()
+        assert "You ship the work: commit, push, and open the PR." in content
+        assert "Guardian Agent — Investigate Mode" not in content
 
     def test_investigate_guardian_no_proof_check(self):
         guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
