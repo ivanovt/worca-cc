@@ -5,6 +5,7 @@ import {
   Bell,
   ClipboardCopy,
   Coins,
+  Cpu,
   FolderOpen,
   iconSvg,
   Plus,
@@ -30,6 +31,7 @@ import {
   SUBAGENT_DENYLIST,
 } from './dispatch-tag-state.js';
 import { integrationsTab } from './integrations.js';
+import { openSecretsModal, secretsModalTemplate } from './secrets-modal.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 export const STAGE_AGENT_MAP = {
@@ -55,7 +57,13 @@ export const AGENT_NAMES = [
   'guardian',
   'learner',
 ];
-const MODEL_OPTIONS = ['opus', 'sonnet', 'haiku'];
+const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
+
+export function getModelKeys(worca) {
+  const models = (worca && worca.models) || {};
+  const keys = Object.keys(models);
+  return keys.length > 0 ? keys : DEFAULT_MODEL_KEYS;
+}
 
 const GLOBAL_ONLY_KEY_PATHS = [
   ['parallel', 'cleanup_policy'],
@@ -242,7 +250,7 @@ export async function loadSettings(projectId) {
     }
     if (!settingsData.worca.pricing.models)
       settingsData.worca.pricing.models = {};
-    for (const model of PRICING_MODELS) {
+    for (const model of getModelKeys(settingsData.worca)) {
       settingsData.worca.pricing.models[model] = {
         ...EMPTY_MODEL,
         ...(settingsData.worca.pricing.models[model] || {}),
@@ -621,7 +629,8 @@ export function readPermissionsFromDom() {
 
 export function readPricingFromDom() {
   const models = {};
-  for (const model of PRICING_MODELS) {
+  const pricingModels = getModelKeys(settingsData?.worca);
+  for (const model of pricingModels) {
     models[model] = {};
     for (const field of PRICING_FIELDS) {
       const el = document.getElementById(`pricing-${model}-${field.key}`);
@@ -653,6 +662,7 @@ export function getDefaults() {
 
 function agentsTab(worca, rerender) {
   const agents = worca.agents || {};
+  const modelOptions = getModelKeys(worca);
   return html`
     <div class="settings-tab-content">
       <div class="settings-cards">
@@ -667,7 +677,7 @@ function agentsTab(worca, rerender) {
                 <div class="settings-field">
                   <label class="settings-label">Model</label>
                   <sl-select id="agent-${name}-model" .value="${agent.model || 'sonnet'}" size="small">
-                    ${MODEL_OPTIONS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+                    ${modelOptions.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
                   </sl-select>
                 </div>
                 <div class="settings-field">
@@ -1390,7 +1400,7 @@ function preferencesTab(
         <div class="settings-field">
           <label class="settings-label">Error Classifier Model</label>
           <sl-select id="global-classifier-model" .value="${classifierModel}" size="small" hoist>
-            ${MODEL_OPTIONS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+            ${DEFAULT_MODEL_KEYS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
           </sl-select>
           <span class="settings-field-hint">Model used by the circuit breaker to classify errors</span>
         </div>
@@ -1416,10 +1426,136 @@ function preferencesTab(
   `;
 }
 
+export function modelsTab(worca, rerender) {
+  const modelsConfig = (worca && worca.models) || {};
+  const modelKeys = getModelKeys(worca);
+
+  function normalizeEntry(val) {
+    if (typeof val === 'string') return { id: val, env: {} };
+    if (val && typeof val === 'object') {
+      return { id: val.id || '', env: val.env || {} };
+    }
+    return { id: '', env: {} };
+  }
+
+  function addModel() {
+    const nameEl = document.getElementById('new-model-name');
+    const name = nameEl?.value?.trim();
+    if (!name) return;
+    const idEl = document.getElementById('new-model-id');
+    const id = idEl?.value?.trim() || name;
+    const updated = { ...modelsConfig, [name]: { id, env: {} } };
+    saveSettings({ worca: { models: updated } }, rerender);
+  }
+
+  function deleteModel(name) {
+    const updated = { ...modelsConfig };
+    delete updated[name];
+    saveSettings({ worca: { models: updated } }, rerender);
+  }
+
+  function saveModels() {
+    const updated = {};
+    for (const name of modelKeys) {
+      const idEl = document.getElementById(`model-${name}-id`);
+      const id = idEl?.value?.trim() || name;
+      const envRows = document.querySelectorAll(
+        `.model-env-row[data-model="${name}"]`,
+      );
+      const env = {};
+      for (const row of envRows) {
+        const keyEl = row.querySelector('.model-env-key');
+        const valEl = row.querySelector('.model-env-value');
+        const k = keyEl?.value?.trim();
+        const v = valEl?.value ?? '';
+        if (k) env[k] = v;
+      }
+      if (Object.keys(env).length === 0) {
+        updated[name] = id;
+      } else {
+        updated[name] = { id, env };
+      }
+    }
+    saveSettings({ worca: { models: updated } }, rerender);
+  }
+
+  return html`
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Models</h3>
+      <div class="settings-cards">
+        ${modelKeys.map((name) => {
+          const entry = normalizeEntry(modelsConfig[name]);
+          const envEntries = Object.entries(entry.env);
+          return html`
+            <div class="settings-card model-card" data-model-name="${name}">
+              <div class="settings-card-header">
+                <span class="settings-card-title">${name}</span>
+                <sl-button variant="text" size="small" @click=${() => deleteModel(name)}>
+                  ${unsafeHTML(iconSvg(Trash2, 14))}
+                </sl-button>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-field">
+                  <label class="settings-label">Model ID</label>
+                  <sl-input id="model-${name}-id" value="${entry.id}" size="small"></sl-input>
+                </div>
+                <div class="settings-field">
+                  <label class="settings-label">Environment Variables</label>
+                  ${envEntries.map(
+                    ([k, v]) => html`
+                    <div class="model-env-row" data-model="${name}">
+                      <sl-input class="model-env-key" value="${k}" size="small" placeholder="KEY"></sl-input>
+                      <sl-input class="model-env-value" value="${v}" size="small" placeholder="value"></sl-input>
+                    </div>
+                  `,
+                  )}
+                  ${
+                    envEntries.length === 0
+                      ? html`<span class="settings-muted">No env vars configured</span>`
+                      : nothing
+                  }
+                </div>
+                <sl-button variant="text" size="small"
+                  @click=${() => openSecretsModal(name, _settingsProjectId, rerender)}>
+                  ${unsafeHTML(iconSvg(Shield, 14))} Manage Secrets
+                </sl-button>
+              </div>
+            </div>
+          `;
+        })}
+      </div>
+
+      <div class="settings-field" style="margin-top: var(--sl-spacing-medium)">
+        <label class="settings-label">Add Model</label>
+        <div style="display: flex; gap: var(--sl-spacing-x-small); align-items: flex-end">
+          <sl-input id="new-model-name" size="small" placeholder="shorthand name"></sl-input>
+          <sl-input id="new-model-id" size="small" placeholder="full model ID"></sl-input>
+          <sl-button variant="default" size="small" @click=${addModel}>
+            ${unsafeHTML(iconSvg(Plus, 14))}
+            Add
+          </sl-button>
+        </div>
+      </div>
+
+      <div class="settings-tab-actions">
+        <sl-button variant="primary" size="small" @click=${saveModels}>
+          ${unsafeHTML(iconSvg(Save, 14))}
+          Save
+        </sl-button>
+        <sl-button variant="default" size="small" outline @click=${() => confirmReset('models', rerender)}>
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset
+        </sl-button>
+      </div>
+    </div>
+  `;
+}
+
 function pricingTab(worca, rerender) {
   const pricing = worca.pricing || {};
   const models = pricing.models || {};
   const serverTools = pricing.server_tools || {};
+  const pricingModels = getModelKeys(worca);
 
   return html`
     <div class="settings-tab-content">
@@ -1433,7 +1569,7 @@ function pricingTab(worca, rerender) {
             </tr>
           </thead>
           <tbody>
-            ${PRICING_MODELS.map((model) => {
+            ${pricingModels.map((model) => {
               const costs = models[model] || EMPTY_MODEL;
               return html`
                 <tr>
@@ -2189,11 +2325,16 @@ export function projectSettingsView(
     ${feedbackAlert(rerender)}
     ${migrationBanner(rerender)}
     ${confirmDialogTemplate()}
+    ${secretsModalTemplate(_settingsProjectId, rerender)}
     <div class="settings-page">
       <sl-tab-group>
         <sl-tab slot="nav" panel="agents">
           ${unsafeHTML(iconSvg(Users, 14))}
           Agents
+        </sl-tab>
+        <sl-tab slot="nav" panel="models">
+          ${unsafeHTML(iconSvg(Cpu, 14))}
+          Models
         </sl-tab>
         <sl-tab slot="nav" panel="pipeline">
           ${unsafeHTML(iconSvg(Workflow, 14))}
@@ -2213,6 +2354,7 @@ export function projectSettingsView(
         </sl-tab>
 
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
+        <sl-tab-panel name="models">${modelsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>

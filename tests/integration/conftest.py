@@ -449,6 +449,7 @@ def pipeline_env(tmp_path):
         run_worktree=run_worktree,
         run_parallel=run_parallel,
         run_cli=run_cli,
+        tmp_path=tmp_path,
         add_webhook=add_webhook,
         enable_stages=enable_stages,
         set_governance_agent=set_governance_agent,

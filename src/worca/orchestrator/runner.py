@@ -1054,6 +1054,7 @@ def run_stage(
         output_format="stream-json",
         json_schema=_schema_path(config["schema"]),
         model=config.get("model"),
+        model_env=config.get("model_env"),
         log_path=log_path,
         on_event=on_event,
     )

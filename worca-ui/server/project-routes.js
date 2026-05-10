@@ -39,6 +39,7 @@ import {
   validateProjectEntry,
   writeProject,
 } from './project-registry.js';
+import { createSecretsRouter } from './secrets-routes.js';
 import {
   deepMerge,
   localPathFor,
@@ -430,6 +431,9 @@ export function createProjectScopedRoutes({
     res.json({ ok: true, files });
   });
 
+  // --- Secrets endpoints (settings.local.json) ---
+  router.use('/settings/secrets', createSecretsRouter());
+
   // --- Project-scoped settings endpoints ---
 
   // GET /api/projects/:projectId/settings
@@ -578,6 +582,7 @@ export function createProjectScopedRoutes({
   // DELETE /api/projects/:projectId/settings/:section
   const SECTION_KEYS = {
     agents: { worca: ['agents'] },
+    models: { worca: ['models'] },
     pipeline: { worca: ['stages', 'loops', 'plan_path_template', 'defaults'] },
     governance: { worca: ['governance'], top: ['permissions'] },
     pricing: { worca: ['pricing'] },

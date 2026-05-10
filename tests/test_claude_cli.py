@@ -319,6 +319,45 @@ def test_run_agent_stream_failure_with_clean_exit_still_raises_subprocess_error(
             pass  # Expected: real failure, no result event found.
 
 
+def test_run_agent_merges_model_env_into_subprocess_env():
+    """model_env keys are merged into the subprocess env."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            model_env={"ANTHROPIC_BASE_URL": "http://x", "API_TIMEOUT_MS": "5000"},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert env["ANTHROPIC_BASE_URL"] == "http://x"
+    assert env["API_TIMEOUT_MS"] == "5000"
+
+
+def test_run_agent_filters_reserved_keys_from_model_env(capsys):
+    """Reserved keys in model_env are stripped; non-reserved pass through."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            model_env={"WORCA_FOO": "1", "ANTHROPIC_BASE_URL": "http://x"},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert env["ANTHROPIC_BASE_URL"] == "http://x"
+    assert "WORCA_FOO" not in env
+    captured = capsys.readouterr()
+    assert "WORCA_FOO" in captured.err
+
+
+def test_run_agent_model_env_none_is_safe():
+    """model_env=None (default) does not break anything."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent("prompt", agent="planner", model_env=None)
+    assert result["ok"] is True
+
+
 def test_run_agent_handles_wait_timeout_after_stream_failure():
     """If proc.wait times out (subprocess is wedged after stream failure),
     run_agent must not hang forever — kill and re-wait.

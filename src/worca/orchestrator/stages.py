@@ -1,7 +1,7 @@
 """Pipeline stage definitions and transition validation."""
 from enum import Enum
 
-from worca.utils.settings import load_settings
+from worca.utils.settings import load_settings, resolve_model
 
 
 class Stage(Enum):
@@ -70,21 +70,9 @@ def _read_settings(settings_path: str) -> dict:
     return load_settings(settings_path)
 
 
-_DEFAULT_MODEL_MAP = {
-    "opus": "claude-opus-4-6",
-    "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-haiku-4-5-20251001",
-}
-
-
-def _resolve_model(shorthand: str, model_map: dict) -> str:
-    """Resolve a model shorthand to a full model ID.
-
-    Looks up shorthand in the provided model_map (from settings), then falls
-    back to _DEFAULT_MODEL_MAP.  If neither has an entry, returns the input
-    as-is (assumed to already be a full model ID).
-    """
-    return model_map.get(shorthand, _DEFAULT_MODEL_MAP.get(shorthand, shorthand))
+def _resolve_model(shorthand, model_map):
+    """Resolve a model shorthand to (full_id, env_dict)."""
+    return resolve_model(shorthand, model_map)
 
 
 def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json") -> dict:
@@ -107,14 +95,16 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     agent_name = stage_entry.get("agent") or STAGE_AGENT_MAP.get(stage)
 
     if agent_name is None:
-        return {"agent": None, "model": None, "max_turns": None, "schema": None}
+        return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "schema": None}
 
     agent_config = worca.get("agents", {}).get(agent_name, {})
     model_map = worca.get("models", {})
     raw_model = agent_config.get("model", "sonnet")
+    model_id, model_env = _resolve_model(raw_model, model_map)
     return {
         "agent": agent_name,
-        "model": _resolve_model(raw_model, model_map),
+        "model": model_id,
+        "model_env": model_env,
         "max_turns": agent_config.get("max_turns", 30),
         "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
     }

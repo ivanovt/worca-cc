@@ -106,35 +106,78 @@ Normalization is *on read*, not on save — settings.json keeps whichever form t
 
 ### 3. Resolver — name → (id, env)
 
-**Current state:** the runner currently does `config["model"]` (a shorthand) and threads it directly through to `--model` (`src/worca/orchestrator/runner.py:1056`, `:1855`; `src/worca/orchestrator/work_request.py:71`). Today this works because Claude Code's CLI resolves common shorthands like `opus`/`sonnet`/`haiku` itself.
-
-**Obstacle:** custom names like `alt-fast` will not be recognized by Claude Code's CLI. The runner must resolve the name to the underlying `id` before invoking the subprocess.
-
-**Resolution:** add a single resolver function that the runner consults before each agent invocation.
+**Current state:** `stages.py:80-87` already contains `_resolve_model(shorthand, model_map)` which resolves model shorthands to full IDs. `get_stage_config()` at `stages.py:113-117` calls it:
 
 ```python
-# src/worca/orchestrator/model_resolver.py — new module
-from worca.utils.settings import normalize_model_entry
+model_map = worca.get("models", {})
+raw_model = agent_config.get("model", "sonnet")
+return {
+    "agent": agent_name,
+    "model": _resolve_model(raw_model, model_map),  # already resolved ID
+    ...
+}
+```
 
-def resolve_model(name: str, models_cfg: dict) -> tuple[str, dict[str, str]]:
-    """Look up a model shorthand in worca.models.
+The runner at `runner.py:1039` calls `get_stage_config()` and receives an already-resolved model string at `:1056` via `config.get("model")`. Separately, `work_request.py:71` hard-codes `--model haiku` and calls `subprocess.run` directly (no `get_stage_config()` path).
 
-    Returns (resolved_id, env_dict). When the name is not in worca.models,
-    treats it as an opaque pass-through ID (preserves today's behaviour
-    where users can put a full Anthropic ID in the agent config).
+**Obstacle:** `_resolve_model()` does `model_map.get(shorthand, ...)` which returns the raw value — with the new schema this can be a dict `{"id": "x", "env": {...}}` instead of a string. Custom names like `alt-fast` also won't be recognized by the Claude CLI's own shorthand handling. The function must handle both forms and surface the env dict to callers.
+
+**Resolution:** add a public `resolve_model()` in `settings.py` (alongside `normalize_model_entry`), then update `stages.py:_resolve_model` and `get_stage_config()` to use it and surface `model_env` in the returned config dict.
+
+```python
+# src/worca/utils/settings.py — new public resolver
+_DEFAULT_MODEL_MAP = {
+    "opus": "claude-opus-4-6",
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+def resolve_model(name, models_cfg):
+    """Look up a model shorthand in a worca.models config dict.
+
+    Returns (resolved_id, env_dict). When the name is not in models_cfg,
+    falls back to _DEFAULT_MODEL_MAP, then treats it as an opaque
+    pass-through ID (preserves today's behaviour where users can put
+    a full Anthropic ID in the agent config).
     """
-    raw = models_cfg.get(name)
+    if name is None:
+        return None, {}
+    raw = models_cfg.get(name, _DEFAULT_MODEL_MAP.get(name))
     if raw is None:
         return name, {}
     entry = normalize_model_entry(raw)
     return entry["id"], entry["env"]
 ```
 
-Call sites (sequential changes):
+```python
+# src/worca/orchestrator/stages.py — update _resolve_model + get_stage_config
+from worca.utils.settings import resolve_model
 
-- `runner.py:1056` (`run_stage`): `model_id, model_env = resolve_model(config.get("model"), settings["worca"]["models"])`. Pass `model_id` to `--model`, `model_env` to subprocess env.
-- `runner.py:1855` (`run_iteration` stage launch path): same.
-- `work_request.py:71` (`extract_work_request`): hard-codes `--model haiku`. Resolve `"haiku"` through the same path so a user who customized the haiku entry still gets the right routing for work-request extraction.
+def _resolve_model(shorthand, model_map):
+    """Resolve a model shorthand to (full_id, env_dict)."""
+    return resolve_model(shorthand, model_map)
+
+def get_stage_config(stage, settings_path=".claude/settings.json"):
+    ...
+    model_map = worca.get("models", {})
+    raw_model = agent_config.get("model", "sonnet")
+    model_id, model_env = _resolve_model(raw_model, model_map)
+    return {
+        "agent": agent_name,
+        "model": model_id,
+        "model_env": model_env,       # NEW — env dict for subprocess injection
+        "max_turns": agent_config.get("max_turns", 30),
+        "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
+    }
+```
+
+The `_DEFAULT_MODEL_MAP` currently defined at `stages.py:73-77` is moved into `settings.py` alongside `resolve_model`, and `stages.py` no longer needs its own copy (it delegates entirely). This keeps fallback logic in one place.
+
+Call sites:
+
+- `runner.py:1056` (`run_stage`): `config` already comes from `get_stage_config()` — add `model_env=config.get("model_env")` to the `run_agent()` call. No duplicate resolution needed.
+- `runner.py:1834` (`run_iteration` stage launch path): same — `stage_config` already comes from `get_stage_config()`, thread `model_env`.
+- `work_request.py:71` (`generate_smart_title`): hard-codes `--model haiku`. Import `resolve_model` from `settings.py`, resolve `"haiku"` through it, and use the returned `(id, env)` in the `subprocess.run` call. This is the only call site that needs to call `resolve_model` directly because it bypasses `get_stage_config()`.
 
 ### 4. Subprocess env injection + reserved-key denylist
 
@@ -213,6 +256,52 @@ The `dict.update()` order in `get_env()` already guarantees that explicit kwargs
 ### 5. CLI `--model` value
 
 `build_command()` (`claude_cli.py:89-159`) takes `model` and emits `--model <model>`. With resolution moved upstream (§3), this argument is now always the resolved ID — no behavioural change in `build_command` itself. Documenting it: the contract becomes "the model arg passed here is the value the CLI receives verbatim", which is what `build_command`'s callers already assume.
+
+### 5a. Settings validator — dynamic model validation
+
+**Current state:** `worca-ui/server/settings-validator.js:16` hardcodes `VALID_MODELS = ['opus', 'sonnet', 'haiku']` and `:30` hardcodes `VALID_PRICING_MODELS = ['opus', 'sonnet']`. The `validateSettingsPayload(body)` function rejects any `worca.agents.<name>.model` value not in `VALID_MODELS` (`:66`), any `worca.pricing.models.<name>` key not in `VALID_PRICING_MODELS` (`:204`), and any `worca.circuit_breaker.classifier_model` value not in `VALID_MODELS` (`:868-869`).
+
+**Obstacle:** with user-defined models (e.g. `alt-fast`), a `PUT /api/settings` request containing `worca.agents.implementer.model = "alt-fast"` would be rejected with HTTP 400, even though the same payload includes `worca.models.alt-fast`. The UI Models tab would let users create models that can never be assigned to agents.
+
+**Resolution:** make the valid model list dynamic within `validateSettingsPayload()`. Derive it from the incoming payload's `worca.models` keys (since the UI sends the full `worca` object on each PUT), unioned with the three built-in defaults.
+
+```js
+// settings-validator.js — replace hardcoded constants with a dynamic derivation
+const DEFAULT_MODELS = ['opus', 'sonnet', 'haiku'];
+const DEFAULT_PRICING_MODELS = ['opus', 'sonnet'];
+
+export function validateSettingsPayload(body) {
+  const details = [];
+  if (body.worca !== undefined) {
+    ...
+    const w = body.worca;
+
+    // Derive valid models from the payload's worca.models keys + defaults
+    const configuredModels = w.models && typeof w.models === 'object' && !Array.isArray(w.models)
+      ? Object.keys(w.models)
+      : [];
+    const validModels = [...new Set([...DEFAULT_MODELS, ...configuredModels])];
+    const validPricingModels = [...new Set([...DEFAULT_PRICING_MODELS, ...configuredModels])];
+
+    // agents — use validModels instead of VALID_MODELS
+    ...
+    if (cfg.model !== undefined && !validModels.includes(cfg.model)) { ... }
+
+    // pricing — use validPricingModels instead of VALID_PRICING_MODELS
+    ...
+    if (!validPricingModels.includes(model)) { ... }
+
+    // circuit_breaker.classifier_model — use validModels
+    ...
+    if (w.circuit_breaker?.classifier_model !== undefined &&
+        !validModels.includes(w.circuit_breaker.classifier_model)) { ... }
+  }
+}
+```
+
+The exported `VALID_MODELS` constant is kept for backward compatibility with any test that imports it, but it becomes `DEFAULT_MODELS` semantically — the validator no longer uses it as the sole source of truth. Alternatively, remove the export and update tests to use the dynamic derivation.
+
+**Second validation path:** `worca-ui/server/preferences-routes.js:6` independently hardcodes `const VALID_MODELS = ['opus', 'sonnet', 'haiku']` and uses it at `:75-76` to validate `worca.circuit_breaker.classifier_model` in the global preferences endpoint (`validateGlobalSettingsPayload`). This is a separate code path from `settings-validator.js` and must also be updated, or custom models will be rejected when set through the global preferences UI. Both validators are refactored to share a `deriveValidModels(worcaObj)` helper from `worca-ui/server/model-validation.js` to prevent drift.
 
 ### 6. UI — Models tab (new) and dynamic model dropdown
 
@@ -324,24 +413,26 @@ Validation: reject keys matching `RESERVED_ENV_KEYS` or `RESERVED_PREFIXES` (mir
 
 ## Implementation Plan
 
-### Phase 1 — schema + loader normalization
+### Phase 1 — schema + loader normalization + resolver
 
-**Files:** `src/worca/utils/settings.py`, `tests/test_settings_normalize.py` (new)
-
-**Tasks:**
-1. Add `normalize_model_entry()` and unit tests covering: string form, full object form, missing `id`, non-dict env, extra keys.
-
-### Phase 2 — resolver + subprocess env injection
-
-**Files:** `src/worca/orchestrator/model_resolver.py` (new), `src/worca/utils/env.py`, `src/worca/utils/claude_cli.py`, `src/worca/orchestrator/runner.py`, `src/worca/orchestrator/work_request.py`
+**Files:** `src/worca/utils/settings.py`, `src/worca/orchestrator/stages.py`, `tests/test_settings_normalize.py` (new), `tests/test_model_resolver.py` (new)
 
 **Tasks:**
-1. Add `resolve_model()` in a new module (keeps `runner.py` from growing further).
-2. Add `RESERVED_ENV_KEYS`, `RESERVED_PREFIXES`, `filter_model_env()` to `env.py`.
-3. Add `model_env` parameter to `claude_cli.run_agent()`; thread through `subprocess.Popen` env. Log dropped reserved keys to stderr.
-4. Update `runner.py` call sites at `:1056` and `:1855` to resolve and pass `model_env`.
-5. Update `work_request.py:71` (`extract_work_request`) and `:211`, `:234` to use `get_env_for_model()`.
-6. Unit tests for `filter_model_env` (every reserved key, every prefix match, valid pass-through).
+1. Add `normalize_model_entry()` to `settings.py` and unit tests covering: string form, full object form, missing `id`, non-dict env, extra keys.
+2. Move `_DEFAULT_MODEL_MAP` from `stages.py:73-77` into `settings.py`. Add `resolve_model(name, models_cfg)` to `settings.py` (public function, returns `(id, env)` tuple).
+3. Update `stages.py:_resolve_model` to delegate to `settings.resolve_model`. Update `get_stage_config()` to return `model_env` in its result dict.
+4. Unit tests for `resolve_model` (known string, known object, unknown passthrough, None name, normalize errors).
+
+### Phase 2 — subprocess env injection + runner/work_request wiring
+
+**Files:** `src/worca/utils/env.py`, `src/worca/utils/claude_cli.py`, `src/worca/orchestrator/runner.py`, `src/worca/orchestrator/work_request.py`
+
+**Tasks:**
+1. Add `RESERVED_ENV_KEYS`, `RESERVED_PREFIXES`, `filter_model_env()` to `env.py`.
+2. Add `model_env` parameter to `claude_cli.run_agent()`; thread through `subprocess.Popen` env. Log dropped reserved keys to stderr.
+3. Update `runner.py` call site at `:1056` to pass `model_env=config.get("model_env")` to `run_agent()`. Update `:1834` similarly.
+4. Update `work_request.py:71` (`generate_smart_title`) to import `resolve_model` from `settings.py`, resolve `"haiku"` through it, and pass the resolved ID + env to `subprocess.run`.
+5. Unit tests for `filter_model_env` (every reserved key, every prefix match, valid pass-through).
 
 ### Phase 3 — worktree propagation
 
@@ -351,22 +442,25 @@ Validation: reject keys matching `RESERVED_ENV_KEYS` or `RESERVED_PREFIXES` (mir
 1. Add `"models"` to `PROPAGATED_LOCAL_WORCA_KEYS`.
 2. Test: parent has `settings.local.json` with `worca.models.foo.env.SECRET = "x"`, worktree's `settings.json` after `copy_claude_config()` contains the merged value.
 
-### Phase 4 — UI: dynamic model list + Models tab
+### Phase 4 — UI: dynamic model list + Models tab + validators
 
-**Files:** `worca-ui/app/views/settings.js`, `worca-ui/app/views/settings-models.test.js` (new)
+**Files:** `worca-ui/app/views/settings.js`, `worca-ui/server/settings-validator.js`, `worca-ui/server/preferences-routes.js`, `worca-ui/app/views/settings-models.test.js` (new), `worca-ui/server/settings-validator.test.js` (update), `worca-ui/server/preferences-routes.test.js` (update)
 
 **Tasks:**
 1. Replace `MODEL_OPTIONS` and `PRICING_MODELS` constants with `getModelKeys(worca)`. Update `agentsTab`, `pricingTab`, `readAgentsFromDom`, `readPricingFromDom` accordingly.
-2. Add `modelsTab(worca, rerender)` rendering one card per model with id + env-rows + actions.
-3. Wire the new tab into `settingsView`'s `<sl-tab-group>` (`settings.js:2194`).
-4. Save handler writes back via existing `PUT /api/settings`.
+2. Make `settings-validator.js` model validation dynamic: derive valid models from incoming `body.worca.models` keys + the three defaults, replacing the hardcoded `VALID_MODELS` at `:16` and `VALID_PRICING_MODELS` at `:30`. Update all three validation sites: `agents.<name>.model` (`:66`), `pricing.models.<name>` (`:204`), and `circuit_breaker.classifier_model` (`:868-869`).
+3. Update `preferences-routes.js` to use the same dynamic model derivation. `preferences-routes.js:6` hardcodes `VALID_MODELS = ['opus', 'sonnet', 'haiku']` and uses it at `:75-76` to validate `worca.circuit_breaker.classifier_model` in the global preferences endpoint (`validateGlobalSettingsPayload`). Extract a shared helper `deriveValidModels(worcaObj)` into a new `worca-ui/server/model-validation.js` utility (returns `[...new Set([...DEFAULT_MODELS, ...Object.keys(worcaObj?.models || {})])]`) and use it from both `settings-validator.js` and `preferences-routes.js`. This prevents the two validators from drifting.
+4. Add `modelsTab(worca, rerender)` rendering one card per model with id + env-rows + actions.
+5. Wire the new tab into `settingsView`'s `<sl-tab-group>` (`settings.js:2194`).
+6. Save handler writes back via existing `PUT /api/settings`.
+7. Add validator tests: custom model accepted when included in `worca.models`; custom model rejected when `worca.models` is absent or doesn't include it; pricing accepts custom models; circuit_breaker.classifier_model accepts custom models. Add preferences-routes tests: custom model accepted for `classifier_model` when present in `worca.models`; rejected when absent.
 
 ### Phase 5 — UI: Secrets panel + endpoints
 
-**Files:** `worca-ui/server/secrets-routes.js` (new), `worca-ui/server/server.js`, `worca-ui/app/views/secrets-modal.js` (new), `worca-ui/server/secrets-routes.test.js` (new)
+**Files:** `worca-ui/server/secrets-routes.js` (new), `worca-ui/server/app.js`, `worca-ui/app/views/secrets-modal.js` (new), `worca-ui/server/secrets-routes.test.js` (new)
 
 **Tasks:**
-1. Implement `GET /api/settings/secrets` and `PUT /api/settings/secrets` per §10. Mount via `server.js`.
+1. Implement `GET /api/settings/secrets` and `PUT /api/settings/secrets` per §10. Mount inside the `createApp()` function in `worca-ui/server/app.js` — import the secrets router and add it via `app.use('/api/settings/secrets', createSecretsRouter({ ... }))` alongside the existing project-scoped routes.
 2. Add a JSON file `worca-ui/server/reserved-env-keys.json` containing the same denylist used by Python; both languages read it.
 3. Build the modal component (single-model scope, opened from the Models tab).
 4. Vitest tests for the routes (write to a tmp `settings.local.json`, assert atomic rename, assert reserved-key rejection).
@@ -383,23 +477,29 @@ Validation: reject keys matching `RESERVED_ENV_KEYS` or `RESERVED_PREFIXES` (mir
 
 | File | Change |
 |------|--------|
-| `src/worca/utils/settings.py` | Add `normalize_model_entry()` |
+| `src/worca/utils/settings.py` | Add `normalize_model_entry()`, `resolve_model()`, `_DEFAULT_MODEL_MAP` |
+| `src/worca/orchestrator/stages.py` | Update `_resolve_model` to delegate to `settings.resolve_model`; `get_stage_config()` returns `model_env` |
 | `src/worca/utils/env.py` | Add `RESERVED_ENV_KEYS`, `RESERVED_PREFIXES`, `filter_model_env()` |
 | `src/worca/utils/claude_cli.py` | Add `model_env` param to `run_agent()`, merge into Popen env |
-| `src/worca/orchestrator/model_resolver.py` | **NEW** — `resolve_model(name, models_cfg) -> (id, env)` |
-| `src/worca/orchestrator/runner.py` | Resolve model + thread `model_env` at stage launch sites |
-| `src/worca/orchestrator/work_request.py` | Same for the work-request subprocess |
+| `src/worca/orchestrator/runner.py` | Thread `config["model_env"]` through to `run_agent()` at stage launch sites |
+| `src/worca/orchestrator/work_request.py` | Resolve `"haiku"` via `settings.resolve_model` for the work-request subprocess |
 | `src/worca/utils/runtime.py` | Add `"models"` to `PROPAGATED_LOCAL_WORCA_KEYS` |
 | `worca-ui/app/views/settings.js` | Dynamic model list; new Models tab |
+| `worca-ui/server/settings-validator.js` | Dynamic model validation: derive valid models from payload's `worca.models` keys + defaults |
 | `worca-ui/app/views/secrets-modal.js` | **NEW** — secrets modal component |
 | `worca-ui/server/secrets-routes.js` | **NEW** — `/api/settings/secrets` GET+PUT |
-| `worca-ui/server/server.js` | Mount the new route |
+| `worca-ui/server/app.js` | Mount the new secrets route inside `createApp()` |
+| `worca-ui/server/model-validation.js` | **NEW** — shared `deriveValidModels(worcaObj)` helper used by both validators |
+| `worca-ui/server/preferences-routes.js` | Replace hardcoded `VALID_MODELS` with dynamic derivation via `model-validation.js` |
 | `worca-ui/server/reserved-env-keys.json` | **NEW** — shared denylist |
 | `tests/test_settings_normalize.py` | **NEW** |
+| `tests/test_model_resolver.py` | **NEW** |
 | `tests/test_filter_model_env.py` | **NEW** |
 | `tests/test_runtime_propagate.py` | Extend with models-allowlist test |
 | `worca-ui/app/views/settings-models.test.js` | **NEW** |
 | `worca-ui/server/secrets-routes.test.js` | **NEW** |
+| `worca-ui/server/settings-validator.test.js` | Extend with dynamic model validation tests |
+| `worca-ui/server/preferences-routes.test.js` | Extend with dynamic model validation tests for global preferences |
 | `CLAUDE.md` | Configuration subsection |
 | `MIGRATION.md` | One-line entry |
 
@@ -420,7 +520,7 @@ The test pyramid mirrors the implementation phases: phase-1/2/3 are covered by P
 
 ### Unit Tests (Python)
 
-All new tests follow the existing `tests/test_<module>.py` naming. New files: `tests/test_settings_normalize.py`, `tests/test_filter_model_env.py`, `tests/test_model_resolver.py`. `test_runtime_propagate.py` already exists and gains one new case.
+All new tests follow the existing `tests/test_<module>.py` naming. New files: `tests/test_settings_normalize.py`, `tests/test_filter_model_env.py`, `tests/test_model_resolver.py`. `test_runtime_propagate.py` already exists and gains one new case. `tests/test_stages.py` (if it exists) gains cases for the updated `get_stage_config()` return shape.
 
 #### `tests/test_settings_normalize.py` — `worca.utils.settings.normalize_model_entry`
 
@@ -448,15 +548,24 @@ All new tests follow the existing `tests/test_<module>.py` naming. New files: `t
 | `test_filter_empty_input` | `filter_model_env({})` | Returns `({}, [])` |
 | `test_reserved_keys_match_shared_json_file` | Loads `worca-ui/server/reserved-env-keys.json` | `RESERVED_ENV_KEYS == set(json["keys"])` and `RESERVED_PREFIXES == tuple(json["prefixes"])` — guards against drift |
 
-#### `tests/test_model_resolver.py` — `worca.orchestrator.model_resolver.resolve_model`
+#### `tests/test_model_resolver.py` — `worca.utils.settings.resolve_model`
 
 | Test | Setup | Assertion |
 |------|-------|-----------|
 | `test_resolve_known_string` | `resolve_model("opus", {"opus": "claude-opus-4-6"})` | Returns `("claude-opus-4-6", {})` |
 | `test_resolve_known_object` | `resolve_model("alt", {"alt": {"id": "x", "env": {"A": "1"}}})` | Returns `("x", {"A": "1"})` |
 | `test_resolve_unknown_passthrough` | `resolve_model("custom-id", {})` | Returns `("custom-id", {})` — preserves today's "full-ID-as-shorthand" behavior |
+| `test_resolve_falls_back_to_default_map` | `resolve_model("opus", {})` | Returns `("claude-opus-4-6", {})` — falls back to `_DEFAULT_MODEL_MAP` when not in `models_cfg` |
 | `test_resolve_none_name` | `resolve_model(None, {})` | Returns `(None, {})` (covers `config.get("model")` returning None) |
 | `test_resolve_propagates_normalize_errors` | `resolve_model("bad", {"bad": {"env": {}}})` (no id) | `ValueError` from `normalize_model_entry` bubbles up |
+
+#### `tests/test_stages.py` — `get_stage_config` returns `model_env`
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_stage_config_returns_model_env_for_object_model` | Settings with `worca.models.custom = {id: "x", env: {K: "v"}}`, `worca.agents.planner.model = "custom"` | `get_stage_config(Stage.PLAN)["model_env"] == {"K": "v"}` |
+| `test_stage_config_returns_empty_env_for_string_model` | Settings with `worca.models.opus = "claude-opus-4-6"` | `get_stage_config(Stage.PLAN)["model_env"] == {}` |
+| `test_stage_config_model_still_resolved_to_id` | Settings with `worca.models.custom = {id: "full-id", env: {}}` | `get_stage_config(...)["model"] == "full-id"` (not the shorthand) |
 
 #### `tests/test_runtime_propagate.py` — extend existing file
 
@@ -513,6 +622,24 @@ All new tests live next to their source (`worca-ui/app/views/*.test.js` or `worc
 | `test_modal_clear_secret_sends_null_value` | Click "Clear" on a secret row | PUT body has `value: null` |
 | `test_modal_focused_input_unmasked_then_masked_on_blur` | Focus a secret row's input | While focused, value shows plain; on blur, dots return — DOM-level assertion via `:focus` simulation |
 
+#### `worca-ui/server/settings-validator.test.js` (extend existing)
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_custom_model_accepted_when_in_models` | Payload has `worca.models["alt-fast"] = {id: "x"}` and `worca.agents.implementer.model = "alt-fast"` | Validation passes — no details for the model |
+| `test_custom_model_rejected_when_not_in_models` | Payload has `worca.agents.implementer.model = "alt-fast"` but no `worca.models` | Validation fails with `Invalid model "alt-fast"` |
+| `test_custom_pricing_model_accepted` | Payload has `worca.models["alt-fast"]` and `worca.pricing.models["alt-fast"]` | Validation passes |
+| `test_circuit_breaker_custom_model_accepted` | Payload has `worca.models["alt-fast"]` and `worca.circuit_breaker.classifier_model = "alt-fast"` | Validation passes |
+| `test_default_models_always_valid` | Payload with no `worca.models` but `worca.agents.planner.model = "opus"` | Validation passes — defaults are always accepted |
+
+#### `worca-ui/server/preferences-routes.test.js` (extend existing)
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_global_prefs_custom_classifier_model_accepted` | Payload has `worca.models["alt-fast"] = {id: "x"}` and `worca.circuit_breaker.classifier_model = "alt-fast"` | Validation passes |
+| `test_global_prefs_custom_classifier_model_rejected_when_not_in_models` | Payload has `worca.circuit_breaker.classifier_model = "alt-fast"` but no `worca.models` | Validation fails |
+| `test_global_prefs_default_models_always_valid` | Payload with `worca.circuit_breaker.classifier_model = "opus"`, no `worca.models` | Validation passes |
+
 #### `worca-ui/server/secrets-routes.test.js` (new)
 
 Pattern follows existing `worca-ui/server/*.test.js` (tmpdir + supertest). Each test creates a tmp `.claude/` with a fresh `settings.json` and `settings.local.json`.
@@ -537,59 +664,80 @@ This validates the end-to-end path: agent stage → resolver → subprocess env 
 
 The mock claude already supports a `run_command` directive (`tests/mock_claude/mock_claude.py:144-145`) that runs an arbitrary shell command before emitting its result. Use this to dump the subprocess env to a tmpfile — **no mock_claude changes needed**.
 
+The `pipeline_env` fixture (defined in `tests/integration/conftest.py`) exposes `pipeline_env.run(scenario, prompt)` — settings are written to `project/.claude/settings.json` at fixture setup time. To inject custom settings for these tests, write directly to the fixture's settings file before calling `run()`.
+
 ```python
+import json
+
 def test_model_env_reaches_subprocess(pipeline_env):
     env_dump = pipeline_env.tmp_path / "planner-env.txt"
-    pipeline_env.set_settings({
-        "worca": {
-            "models": {
-                "opus": "claude-opus-4-6",
-                "custom-fast": {
-                    "id": "claude-haiku-4-5-20251001",
-                    "env": {"WORCA_TEST_MARKER": "hello-from-models-env"},
-                },
-            },
-            "agents": {"planner": {"model": "custom-fast", "max_turns": 10}},
-        }
-    })
-    pipeline_env.set_scenario({
+
+    # Patch settings.json on disk before running the pipeline.
+    # pipeline_env.project is the project root; settings live at .claude/settings.json.
+    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text())
+    settings.setdefault("worca", {})["models"] = {
+        "opus": "claude-opus-4-6",
+        "custom-fast": {
+            "id": "claude-haiku-4-5-20251001",
+            "env": {"PIPELINE_TEST_MARKER": "hello-from-models-env"},
+        },
+    }
+    settings["worca"].setdefault("agents", {})["planner"] = {
+        "model": "custom-fast", "max_turns": 10
+    }
+    settings_path.write_text(json.dumps(settings))
+
+    scenario = {
         "agents": {
             "planner": {
                 "action": "succeed",
                 "run_command": f"env > {env_dump}",
-                "structured_output": {...},
             },
             "default": {"action": "succeed"},
         }
-    })
-    pipeline_env.run_pipeline(["--prompt", "smoke"])
+    }
+    pipeline_env.run(scenario, "smoke")
 
-    # Assertions:
     dump = env_dump.read_text()
-    assert "WORCA_TEST_MARKER=hello-from-models-env" in dump  # env reached subprocess
-    # Reserved keys not leaked from a hypothetical bad config:
-    assert "WORCA_AGENT=planner" in dump  # the legitimate one survives
+    assert "PIPELINE_TEST_MARKER=hello-from-models-env" in dump  # env reached subprocess
+    assert "WORCA_AGENT=planner" in dump  # the legitimate reserved key survives
 ```
 
-Note: `WORCA_TEST_MARKER` deliberately does NOT match the `WORCA_` reserved prefix because the prefix only protects keys worca itself sets. We need a *different* marker name for this test — use `MOCK_TEST_MARKER` or `PIPELINE_TEST_MARKER` (any non-reserved name). Update accordingly.
+Note: `PIPELINE_TEST_MARKER` does not match the `WORCA_*` reserved prefix, so it passes through `filter_model_env` and reaches the subprocess. This validates the happy path for non-reserved model env vars.
 
 Add a second test in the same file:
 
 ```python
 def test_reserved_key_in_model_env_is_stripped_with_warning(pipeline_env):
-    pipeline_env.set_settings({
-        "worca": {
-            "models": {"custom": {"id": "claude-haiku-4-5-20251001",
-                                  "env": {"PATH": "/tmp/should-be-stripped",
-                                          "ANTHROPIC_BASE_URL": "http://localhost:1"}}},
-            "agents": {"planner": {"model": "custom", "max_turns": 10}},
-        }
-    })
     env_dump = pipeline_env.tmp_path / "planner-env.txt"
-    pipeline_env.set_scenario({"agents": {"planner": {
-        "action": "succeed", "run_command": f"env > {env_dump}",
-    }}, "default": {"action": "succeed"}})
-    result = pipeline_env.run_pipeline(["--prompt", "x"])
+
+    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text())
+    settings.setdefault("worca", {})["models"] = {
+        "custom": {
+            "id": "claude-haiku-4-5-20251001",
+            "env": {
+                "PATH": "/tmp/should-be-stripped",
+                "ANTHROPIC_BASE_URL": "http://localhost:1",
+            },
+        },
+    }
+    settings["worca"].setdefault("agents", {})["planner"] = {
+        "model": "custom", "max_turns": 10
+    }
+    settings_path.write_text(json.dumps(settings))
+
+    scenario = {
+        "agents": {
+            "planner": {
+                "action": "succeed",
+                "run_command": f"env > {env_dump}",
+            },
+            "default": {"action": "succeed"},
+        }
+    }
+    result = pipeline_env.run(scenario, "x")
 
     dump = env_dump.read_text()
     assert "PATH=/tmp/should-be-stripped" not in dump  # silent-strip in effect (decision #3a)
@@ -601,10 +749,10 @@ def test_reserved_key_in_model_env_is_stripped_with_warning(pipeline_env):
 
 #### `tests/integration/test_work_request_routing.py` (new)
 
-Validates **decision #2** (work_request routes through the resolver). Smaller scope than full pipeline — exercises only `extract_work_request`.
+Validates **decision #2** (work_request routes through the resolver). Smaller scope than full pipeline — exercises only `generate_smart_title` (`work_request.py:54`), the function that hard-codes `--model haiku`.
 
 ```python
-def test_extract_work_request_uses_resolver_for_haiku(monkeypatch, tmp_path):
+def test_generate_smart_title_uses_resolver_for_haiku(monkeypatch, tmp_path):
     settings = {"worca": {"models": {
         "haiku": {"id": "custom-haiku-id",
                   "env": {"ANTHROPIC_BASE_URL": "http://custom"}}}}}
@@ -615,7 +763,7 @@ def test_extract_work_request_uses_resolver_for_haiku(monkeypatch, tmp_path):
         return R()
     monkeypatch.setattr("worca.orchestrator.work_request.subprocess.run", fake_run)
     monkeypatch.setattr("worca.orchestrator.work_request.load_settings", lambda *a, **kw: settings)
-    extract_work_request(...)  # invoke
+    generate_smart_title("Some content to title")
     assert "--model" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--model") + 1] == "custom-haiku-id"
     assert captured["env"]["ANTHROPIC_BASE_URL"] == "http://custom"
@@ -623,8 +771,10 @@ def test_extract_work_request_uses_resolver_for_haiku(monkeypatch, tmp_path):
 
 ### Existing Tests to Update
 
+- `tests/test_stages.py` (if existing) — update any test that asserts on `get_stage_config()` return keys, since the dict now includes `model_env`. Existing tests that destructure only `agent`, `model`, `max_turns`, `schema` should continue to work (extra key is harmless with dict access).
 - `worca-ui/app/views/settings-pricing-haiku.test.js` and any test asserting exactly three pricing rows — drive the assertion off `getModelKeys(worca)` instead of a hardcoded count.
 - `worca-ui/app/views/settings-form-roundtrip.test.js` — add a case where input `worca.models = {opus: "x", alt: {id: "y", env: {K: "v"}}}` round-trips through render→read unchanged.
+- `worca-ui/server/settings-validator.test.js` — existing tests that use `VALID_MODELS` export may need updating if the export is removed or renamed. Grep before starting: `cd worca-ui && grep -rn "VALID_MODELS" app/ server/`.
 - Any test importing the `MOCK_CLAUDE_OPTIONS` / `MODEL_OPTIONS` constant — switch to the new helper. Grep before starting: `cd worca-ui && grep -rn "MODEL_OPTIONS" app/ server/`.
 - `tests/test_claude_cli.py` (existing) — extend the `build_command` test set with a case asserting `--model` always receives the resolved id, never the shorthand, when the runner has done its job (this is a contract test, not a behavioral change).
 
@@ -637,7 +787,7 @@ All of these must be green before opening the PR:
 3. `cd worca-ui && npx vitest run` — all UI unit tests pass.
 4. `cd worca-ui && npm run lint` — biome is strict in CI, fix before commit.
 5. `cd worca-ui && npm pack --dry-run | grep secrets-routes && npm pack --dry-run | grep secrets-modal` — verify the new files ship in the npm package (per CLAUDE.md's "files allowlist" guidance).
-6. `python scripts/coverage.py ci --include-unit-tests` — coverage of new modules (`model_resolver.py`, the `filter_model_env` helper, the secrets routes) is ≥ 90%.
+6. `python scripts/coverage.py ci --include-unit-tests` — coverage of new code in `settings.py` (`normalize_model_entry`, `resolve_model`), the `filter_model_env` helper, and the secrets routes is ≥ 90%.
 7. **Manual smoke (cannot be automated):** configure a model with `env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9999"` (deliberately unreachable), assign it to the planner, run `worca run --prompt "smoke"`, and verify the planner stage's logged subprocess error references the configured base URL — proves end-to-end that the env reaches the real `claude` subprocess, not just the mock.
 8. **Manual UI smoke:** in the UI, add a new model in the Models tab, set a public env var, save; open Secrets modal, set a token, save; reload page; verify (a) settings.json contains only the public env, (b) settings.local.json contains only the secret, (c) the Models tab shows the secret as masked + override-tagged.
 

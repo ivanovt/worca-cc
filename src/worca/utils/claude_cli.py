@@ -15,7 +15,7 @@ import tempfile
 import threading
 from typing import Optional, Callable
 
-from worca.utils.env import get_env
+from worca.utils.env import get_env, filter_model_env
 
 # Linux ARG_MAX is typically 2 MiB but total argv+envp must fit.
 # Use a conservative 128 KiB threshold for the prompt argument.
@@ -298,6 +298,7 @@ def run_agent(
     output_format: str = "stream-json",
     json_schema: Optional[str] = None,
     model: Optional[str] = None,
+    model_env: Optional[dict] = None,
     log_path: Optional[str] = None,
     on_event: Optional[Callable[[dict], None]] = None,
 ) -> dict:
@@ -329,9 +330,16 @@ def run_agent(
     # Extract agent name from path so hooks can enforce role-based restrictions
     agent_name = os.path.splitext(os.path.basename(agent))[0]
 
+    safe_env, dropped = filter_model_env(model_env or {})
+    if dropped:
+        print(
+            f"[worca] model env keys dropped (reserved): {sorted(dropped)}",
+            file=sys.stderr,
+        )
+
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=get_env(WORCA_AGENT=agent_name), start_new_session=True,
+        text=True, env=get_env(WORCA_AGENT=agent_name, **safe_env), start_new_session=True,
     )
 
     with _proc_lock:

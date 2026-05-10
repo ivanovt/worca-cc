@@ -11,7 +11,7 @@ import sys
 # Allowlist of worca-namespace keys that are derived from the parent's
 # runtime (host:port of the local UI, etc.) but must follow the run into
 # the worktree. Everything else in settings.local.json stays parent-only.
-PROPAGATED_LOCAL_WORCA_KEYS = ("webhooks", "events")
+PROPAGATED_LOCAL_WORCA_KEYS = ("webhooks", "events", "models")
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -89,8 +89,8 @@ def copy_claude_config(src_dir: str, dst_dir: str) -> None:
     - Never clobber files git has already placed in the worktree. Tracked
       files win.
     - Narrow exception to the local-skip rule: a small allowlist of
-      worca-namespace runtime keys (webhooks, events) is merged from the
-      parent's settings.local.json into the worktree's settings.json.
+      worca-namespace runtime keys (webhooks, events, models) is merged from
+      the parent's settings.local.json into the worktree's settings.json.
     """
     skip_top_level = {"settings.local.json"}
     if not os.path.isdir(src_dir):

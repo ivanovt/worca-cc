@@ -23,6 +23,37 @@ for _tool in _TOOLS:
             _extra_dirs.append(_dir)
 
 
+RESERVED_ENV_KEYS = frozenset({
+    "PATH",
+    "CLAUDECODE",
+    "WORCA_AGENT",
+    "WORCA_PROJECT_ROOT",
+    "WORCA_RUN_ID",
+    "WORCA_RUN_DIR",
+    "WORCA_PLAN_FILE",
+    "WORCA_EVENTS_PATH",
+    "WORCA_TARGET_BRANCH",
+    "WORCA_COVERAGE",
+    "WORCA_SKIP_BEADS",
+    "WORCA_CLAUDE_BIN",
+})
+RESERVED_PREFIXES = ("WORCA_",)
+
+
+def filter_model_env(model_env: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Strip reserved keys from a model env dict.
+
+    Returns (safe_env, dropped_keys).
+    """
+    safe, dropped = {}, []
+    for k, v in model_env.items():
+        if k in RESERVED_ENV_KEYS or any(k.startswith(p) for p in RESERVED_PREFIXES):
+            dropped.append(k)
+            continue
+        safe[k] = str(v)
+    return safe, dropped
+
+
 def get_env(**overrides: str) -> dict[str, str]:
     """Return os.environ copy with tool directories prepended to PATH.
 

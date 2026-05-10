@@ -56,12 +56,13 @@ class TestGenerateSmartTitle:
         )
         result = generate_smart_title("# Auth\n\nImplement login and signup...")
         assert result == "Add user authentication flow"
-        # Verify claude was called with haiku model
+        # Verify claude was called with resolved haiku model
         args = mock_run.call_args
         cmd = args[0][0]
         assert "claude" in cmd
         assert "--model" in cmd
-        assert "haiku" in cmd
+        idx = cmd.index("--model")
+        assert "haiku" in cmd[idx + 1]
 
     @patch("worca.orchestrator.work_request.subprocess.run")
     def test_truncates_content_to_10k(self, mock_run):
@@ -128,6 +129,39 @@ class TestGenerateSmartTitle:
         cmd = mock_run.call_args[0][0]
         prompt_arg_idx = cmd.index("-p") + 1
         assert "auth.md" in cmd[prompt_arg_idx]
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    @patch("worca.orchestrator.work_request.load_settings")
+    def test_resolves_haiku_through_model_resolver(self, mock_load, mock_run):
+        mock_load.return_value = {
+            "worca": {
+                "models": {
+                    "haiku": {
+                        "id": "custom-haiku-id",
+                        "env": {"ANTHROPIC_BASE_URL": "http://custom"},
+                    }
+                }
+            }
+        }
+        mock_run.return_value = MagicMock(returncode=0, stdout="Title\n")
+        generate_smart_title("some content")
+        cmd = mock_run.call_args[0][0]
+        assert "--model" in cmd
+        idx = cmd.index("--model")
+        assert cmd[idx + 1] == "custom-haiku-id"
+        env = mock_run.call_args[1]["env"]
+        assert env["ANTHROPIC_BASE_URL"] == "http://custom"
+
+    @patch("worca.orchestrator.work_request.subprocess.run")
+    @patch("worca.orchestrator.work_request.load_settings")
+    def test_resolves_haiku_default_when_no_custom(self, mock_load, mock_run):
+        mock_load.return_value = {}
+        mock_run.return_value = MagicMock(returncode=0, stdout="Title\n")
+        generate_smart_title("some content")
+        cmd = mock_run.call_args[0][0]
+        assert "--model" in cmd
+        idx = cmd.index("--model")
+        assert cmd[idx + 1] == "claude-haiku-4-5-20251001"
 
 
 # --- normalize_plan_file ---

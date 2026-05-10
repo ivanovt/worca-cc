@@ -537,22 +537,24 @@ class TestModelResolution:
 
     def test_resolve_model_from_settings_map(self):
         model_map = {"sonnet": "my-custom-sonnet-id"}
-        assert _resolve_model("sonnet", model_map) == "my-custom-sonnet-id"
+        model_id, model_env = _resolve_model("sonnet", model_map)
+        assert model_id == "my-custom-sonnet-id"
+        assert model_env == {}
 
     def test_resolve_model_falls_back_to_default_map(self):
-        assert _resolve_model("opus", {}) == "claude-opus-4-6"
-        assert _resolve_model("sonnet", {}) == "claude-sonnet-4-6"
-        assert _resolve_model("haiku", {}) == "claude-haiku-4-5-20251001"
+        assert _resolve_model("opus", {})[0] == "claude-opus-4-6"
+        assert _resolve_model("sonnet", {})[0] == "claude-sonnet-4-6"
+        assert _resolve_model("haiku", {})[0] == "claude-haiku-4-5-20251001"
 
     def test_resolve_model_settings_overrides_default(self):
         model_map = {"opus": "claude-opus-4-99-custom"}
-        assert _resolve_model("opus", model_map) == "claude-opus-4-99-custom"
+        assert _resolve_model("opus", model_map)[0] == "claude-opus-4-99-custom"
 
     def test_resolve_model_passthrough_full_id(self):
-        assert _resolve_model("claude-sonnet-4-6", {}) == "claude-sonnet-4-6"
+        assert _resolve_model("claude-sonnet-4-6", {})[0] == "claude-sonnet-4-6"
 
     def test_resolve_model_unknown_shorthand_passthrough(self):
-        assert _resolve_model("gpt-4o", {}) == "gpt-4o"
+        assert _resolve_model("gpt-4o", {})[0] == "gpt-4o"
 
     def test_get_stage_config_uses_settings_model_map(self, tmp_path):
         settings = {
@@ -582,3 +584,49 @@ class TestModelResolution:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.IMPLEMENT, settings_path=str(settings_file))
         assert config["model"] == "claude-sonnet-4-6"
+
+
+class TestStageConfigModelEnv:
+    """Tests for model_env in get_stage_config return value."""
+
+    def test_stage_config_returns_model_env_for_object_model(self, tmp_path):
+        settings = {
+            "worca": {
+                "models": {
+                    "custom": {"id": "x", "env": {"K": "v"}}
+                },
+                "agents": {
+                    "planner": {"model": "custom"}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model_env"] == {"K": "v"}
+
+    def test_stage_config_returns_empty_env_for_string_model(self, tmp_path):
+        settings = {
+            "worca": {
+                "models": {"opus": "claude-opus-4-6"},
+                "agents": {"planner": {"model": "opus"}}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model_env"] == {}
+
+    def test_stage_config_model_still_resolved_to_id(self, tmp_path):
+        settings = {
+            "worca": {
+                "models": {
+                    "custom": {"id": "full-id", "env": {}}
+                },
+                "agents": {"planner": {"model": "custom"}}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model"] == "full-id"

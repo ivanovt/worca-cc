@@ -70,6 +70,7 @@ class PipelineEnv:
     run_parallel: Callable = None  # type: ignore[assignment]
     # W-050 coverage helper — drives a worca.cli.main subcommand as a subprocess.
     run_cli: Callable = None  # type: ignore[assignment]
+    tmp_path: Optional[Path] = None
     stubs_dir: Optional[Path] = None
     stub_log_path: Optional[Path] = None
     stub_response_files: dict = field(default_factory=dict)

@@ -1097,3 +1097,101 @@ describe('VALID_MODELS superset assertion', () => {
     }
   });
 });
+
+describe('validateSettingsPayload — dynamic model validation', () => {
+  it('accepts custom model for agent when present in worca.models', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        models: { 'alt-fast': { id: 'x' } },
+        agents: { implementer: { model: 'alt-fast' } },
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects custom model for agent when not present in worca.models', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        agents: { implementer: { model: 'alt-fast' } },
+      },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('Invalid model "alt-fast"'),
+    );
+  });
+
+  it('accepts custom pricing model when present in worca.models', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        models: { 'alt-fast': { id: 'x' } },
+        pricing: { models: { 'alt-fast': { input_per_mtok: 1 } } },
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects custom pricing model when not present in worca.models', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        pricing: { models: { 'alt-fast': { input_per_mtok: 1 } } },
+      },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('Unknown pricing model'),
+    );
+  });
+
+  it('default models are always valid without explicit worca.models', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        agents: { planner: { model: 'opus' } },
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('accepts custom model as string form in worca.models', () => {
+    const result = validateSettingsPayload({
+      worca: {
+        models: { 'my-model': 'some-full-id' },
+        agents: { tester: { model: 'my-model' } },
+      },
+    });
+    expect(result.valid).toBe(true);
+  });
+});
+
+describe('validateGlobalSettings — dynamic model validation', () => {
+  it('accepts custom classifier_model when present in worca.models', () => {
+    const result = validateGlobalSettings({
+      worca: {
+        models: { 'alt-fast': { id: 'x' } },
+        circuit_breaker: { classifier_model: 'alt-fast' },
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects custom classifier_model when not present in worca.models', () => {
+    const result = validateGlobalSettings({
+      worca: {
+        circuit_breaker: { classifier_model: 'alt-fast' },
+      },
+    });
+    expect(result.ok).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('classifier_model'),
+    );
+  });
+
+  it('default models always pass for classifier_model', () => {
+    for (const model of ['opus', 'sonnet', 'haiku']) {
+      const result = validateGlobalSettings({
+        worca: { circuit_breaker: { classifier_model: model } },
+      });
+      expect(result.ok).toBe(true);
+    }
+  });
+});
