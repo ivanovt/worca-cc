@@ -2,7 +2,15 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
+
+vi.mock('./bd-daemon.js', () => ({
+  ensureBdDaemon: vi.fn(() => Promise.resolve(false)),
+}));
+
+const { ensureBdDaemon } = await import('./bd-daemon.js');
+const { TIER_FULL, TIER_POLLING, WatcherSet } = await import(
+  './watcher-set.js'
+);
 
 /** Minimal mock watcher factory returning an object with destroy(). */
 function _mockWatcherFactory(name) {
@@ -318,6 +326,30 @@ describe('WatcherSet', () => {
     ws.setTier(TIER_POLLING);
     expect(ws.getWatcherCount()).toBe(1);
 
+    ws.destroy();
+  });
+
+  // --- bd daemon integration ---
+
+  it('calls ensureBdDaemon when creating beads watcher', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ws.create();
+
+    ensureBdDaemon.mockClear();
+    ws.setTier(TIER_FULL);
+
+    expect(ensureBdDaemon).toHaveBeenCalledWith(worcaDir);
+    ws.destroy();
+  });
+
+  it('does not call ensureBdDaemon in polling tier', () => {
+    const deps = makeDeps();
+    const ws = new WatcherSet('test-project', worcaDir, deps);
+    ensureBdDaemon.mockClear();
+    ws.create();
+
+    expect(ensureBdDaemon).not.toHaveBeenCalled();
     ws.destroy();
   });
 });

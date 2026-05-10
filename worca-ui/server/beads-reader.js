@@ -49,7 +49,10 @@ export function dbExists(beadsDb) {
 export async function listIssues(beadsDb) {
   try {
     const issues = await runBd(['list', '--limit', '0'], beadsDb);
-    return enrichWithDeps(issues, beadsDb);
+    // Must await here — without it, an enrichWithDeps rejection (e.g. bd show
+    // SIGTERM under daemon contention) escapes the try/catch and propagates
+    // to the WS handler as an unhandled rejection, crashing Node.
+    return await enrichWithDeps(issues, beadsDb);
   } catch {
     return [];
   }
@@ -61,7 +64,7 @@ export async function listIssuesByLabel(beadsDb, label) {
       ['list', '--label-any', label, '--all', '--limit', '0'],
       beadsDb,
     );
-    return enrichWithDeps(issues, beadsDb);
+    return await enrichWithDeps(issues, beadsDb);
   } catch {
     return [];
   }
@@ -92,37 +95,48 @@ export async function listUnlinkedIssues(beadsDb) {
 /**
  * Returns { runId: { total, done } } for every run:<id> label in the beads db.
  *
- * `total` comes from the cheap `bd label list-all` count. `done` requires
- * looking at issue status, so we query `bd list --label-any run:<id>` per
- * run and count statuses === "closed". N+1 queries, but N is bounded by
- * the number of pipeline runs and this endpoint is called on app load /
- * project switch only, not on every render.
+ * Single-pass: bd label list-all (totals) + bd list --all (ids) +
+ * bd show <all-ids> (labels + statuses), then group by run labels in JS.
+ * Always 3 bd calls regardless of run-label count.
+ *
+ * Called by the beads watcher on every db change (counts are included in the
+ * broadcast payload) and by the list-beads-counts endpoint for initial load
+ * and project switch.
  */
 export async function countIssuesByRunLabel(beadsDb) {
   try {
     const rows = await runBd(['label', 'list-all'], beadsDb);
     const counts = {};
     const runLabels = rows.filter((r) => r.label.startsWith('run:'));
+    if (runLabels.length === 0) return counts;
     for (const row of runLabels) {
       counts[row.label.replace('run:', '')] = { total: row.count, done: 0 };
     }
-    // Count closed issues per label in parallel.
-    await Promise.all(
-      runLabels.map(async (row) => {
-        const runId = row.label.replace('run:', '');
-        try {
-          const issues = await runBd(
-            ['list', '--label-any', row.label, '--all', '--limit', '0'],
-            beadsDb,
-          );
-          counts[runId].done = issues.filter(
-            (i) => i.status === 'closed',
-          ).length;
-        } catch {
-          /* leave done at 0 on per-run failure */
+    try {
+      const issues = await runBd(['list', '--all', '--limit', '0'], beadsDb);
+      if (issues.length === 0) return counts;
+      const detailed = await runBd(
+        ['show', ...issues.map((i) => i.id)],
+        beadsDb,
+      );
+      for (const issue of detailed) {
+        if (issue.status !== 'closed') continue;
+        for (const label of issue.labels || []) {
+          if (label.startsWith('run:')) {
+            const runId = label.replace('run:', '');
+            if (counts[runId]) counts[runId].done++;
+          }
         }
-      }),
-    );
+      }
+    } catch (err) {
+      // Leave done=0 for all runs on list/show failure. Logged so a stale
+      // "0/N" badge can be traced back to bd subprocess timeout (typically
+      // daemon contention) rather than mistaken for "no closed issues."
+      // The next watcher tick recomputes and corrects.
+      console.warn(
+        `[countIssuesByRunLabel] bd list/show failed; counts.done left at 0: ${err?.message || err}`,
+      );
+    }
     return counts;
   } catch {
     return {};

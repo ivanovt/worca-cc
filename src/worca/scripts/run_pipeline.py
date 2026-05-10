@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from worca.orchestrator.work_request import normalize, WorkRequest
 from worca.orchestrator.runner import run_pipeline, LoopExhaustedError, PipelineError, _find_active_runs
 from worca.state.status import load_status
+from worca.utils.beads import bd_daemon_ensure
 from worca.utils.gh_issues import gh_issue_fail
 from worca.utils.settings import load_settings
 
@@ -137,9 +138,25 @@ def build_work_request(args):
     return work_request
 
 
+def _ensure_bd_daemon_at_cwd():
+    """Best-effort: start the bd daemon for the workspace's .beads/ if present.
+
+    Subsequent bd subprocess calls then go through the Unix-socket RPC
+    instead of cold-starting bd each time (~2x faster). All errors swallowed
+    — the pipeline must run regardless of daemon state.
+    """
+    beads_dir = os.path.join(os.getcwd(), ".beads")
+    if os.path.isdir(beads_dir):
+        try:
+            bd_daemon_ensure(beads_dir)
+        except Exception:
+            pass
+
+
 def main():
     parser = create_parser()
     args = parser.parse_args()
+    _ensure_bd_daemon_at_cwd()
 
     # --prompt-file: read prompt from file and delete it
     if args.prompt_file:

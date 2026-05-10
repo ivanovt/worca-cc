@@ -635,14 +635,15 @@ ws.on('beads-update', (payload, msg) => {
         loading: false,
       },
     });
-    // Re-fetch run-specific beads if viewing a run detail
+    beadsCounts = payload.counts || {};
+    // Refetch the viewed run on every beads update so non-count edits
+    // (title, description, notes, priority) still render live. The N+1
+    // we eliminated was the server-side per-run-label cost; one
+    // viewed-run refetch per WAL tick is a single bd call and bounded.
     if (route.runId && route.section !== 'beads') fetchRunBeads(route.runId);
-    // Re-fetch bead counts for run list
-    fetchBeadsCounts();
-
-    // Re-fetch beads for currently viewed run in beads section
-    if (route.section === 'beads' && route.runId)
+    if (route.runId && route.section === 'beads')
       fetchBeadsRunIssues(route.runId);
+    rerender();
   }
 });
 
@@ -656,6 +657,9 @@ function fetchAndUpdateRuns() {
 
 ws.on('run-started', () => {
   pipelineAction = null;
+  // Pull the new run into the store so sidebar counters and run lists
+  // (Worktrees, Beads, Active Runs) reflect it without manual navigation.
+  fetchAndUpdateRuns().catch(() => {});
   rerender();
 });
 

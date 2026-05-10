@@ -10,6 +10,7 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { ensureBdDaemon } from './bd-daemon.js';
 import { resolveRunDir } from './run-dir-resolver.js';
 import { createBeadsWatcher } from './ws-beads-watcher.js';
 import { createEventWatcher } from './ws-event-watcher.js';
@@ -146,6 +147,7 @@ export class WatcherSet {
 
     // Beads watcher
     if (!this.beadsWatcher) {
+      ensureBdDaemon(worcaDir).catch(() => {});
       try {
         this.beadsWatcher = this._factories.createBeadsWatcher({
           worcaDir,
