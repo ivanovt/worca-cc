@@ -100,7 +100,7 @@ After `worca init`, your project gets:
 - Node.js 22+ (for dashboard)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) (`claude` command)
 - Git
-- [beads](https://github.com/nightconcept/beads) CLI for task management and work coordination
+- [beads](https://github.com/gastownhall/beads) CLI for task management and work coordination
   ```bash
   npm install -g @beads/bd@0.49.0
   ```
