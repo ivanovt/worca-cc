@@ -416,48 +416,230 @@ Validation: reject keys matching `RESERVED_ENV_KEYS` or `RESERVED_PREFIXES` (mir
 
 ## Test Plan
 
+The test pyramid mirrors the implementation phases: phase-1/2/3 are covered by Python unit + integration tests, phase-4/5 by Vitest, and phase-6 (docs) is covered by a single fixture round-trip plus manual smoke. Each test below names the file to put it in, the public API it exercises, and the precise assertion — implementer should not need to invent shape.
+
 ### Unit Tests (Python)
 
-| Layer | Test | Validates |
-|-------|------|-----------|
-| `utils/settings` | `test_normalize_string_form` | String value returns `{id, env: {}}` |
-| `utils/settings` | `test_normalize_object_form` | Full object preserved |
-| `utils/settings` | `test_normalize_missing_id_raises` | Object without `id` raises ValueError |
-| `utils/settings` | `test_normalize_bad_env_raises` | Non-dict env raises ValueError |
-| `utils/env` | `test_filter_model_env_strips_path` | `PATH` is dropped |
-| `utils/env` | `test_filter_model_env_strips_worca_prefix` | `WORCA_FOO` is dropped |
-| `utils/env` | `test_filter_model_env_passes_anthropic_keys` | `ANTHROPIC_BASE_URL` passes through |
-| `orchestrator/model_resolver` | `test_resolve_known_string` | Returns `(id, {})` for string entry |
-| `orchestrator/model_resolver` | `test_resolve_known_object` | Returns `(id, env_dict)` for object entry |
-| `orchestrator/model_resolver` | `test_resolve_unknown_passthrough` | Unknown name returns `(name, {})` |
-| `utils/runtime` | `test_propagate_models_into_worktree` | Parent local env reaches worktree settings.json |
+All new tests follow the existing `tests/test_<module>.py` naming. New files: `tests/test_settings_normalize.py`, `tests/test_filter_model_env.py`, `tests/test_model_resolver.py`. `test_runtime_propagate.py` already exists and gains one new case.
+
+#### `tests/test_settings_normalize.py` — `worca.utils.settings.normalize_model_entry`
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_normalize_string_form` | `normalize_model_entry("claude-opus-4-6")` | Returns `{"id": "claude-opus-4-6", "env": {}}` |
+| `test_normalize_full_object` | `normalize_model_entry({"id": "x", "env": {"K": "v"}})` | Returns `{"id": "x", "env": {"K": "v"}}` (env is a copy, not the same object) |
+| `test_normalize_object_no_env` | `normalize_model_entry({"id": "x"})` | `env` defaults to `{}` |
+| `test_normalize_extra_keys_ignored` | `normalize_model_entry({"id": "x", "env": {}, "future_field": 42})` | No raise; extras dropped silently — keeps schema forward-compatible |
+| `test_normalize_missing_id_raises` | `normalize_model_entry({"env": {}})` | `ValueError` whose message names the offending shape |
+| `test_normalize_id_not_string_raises` | `normalize_model_entry({"id": 42})` | `ValueError` |
+| `test_normalize_env_not_dict_raises` | `normalize_model_entry({"id": "x", "env": "not-a-dict"})` | `ValueError` mentioning `dict` |
+| `test_normalize_unknown_type_raises` | `normalize_model_entry(42)` | `ValueError` |
+
+#### `tests/test_filter_model_env.py` — `worca.utils.env.filter_model_env`
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_filter_passes_through_anthropic_keys` | `filter_model_env({"ANTHROPIC_BASE_URL": "u", "API_TIMEOUT_MS": "5000"})` | Both keys preserved; `dropped == []` |
+| `test_filter_strips_path` | `filter_model_env({"PATH": "/tmp"})` | Returns `({}, ["PATH"])` |
+| `test_filter_strips_claudecode` | `filter_model_env({"CLAUDECODE": "1"})` | Returns `({}, ["CLAUDECODE"])` |
+| `test_filter_strips_worca_prefix` | `filter_model_env({"WORCA_FOO": "x", "WORCA_RUN_ID": "y"})` | Both dropped |
+| `test_filter_mixed_pass_and_strip` | `{"ANTHROPIC_AUTH_TOKEN": "sk", "PATH": "/tmp", "WORCA_X": "v"}` | Safe = `{"ANTHROPIC_AUTH_TOKEN": "sk"}`, dropped sorted = `["PATH", "WORCA_X"]` |
+| `test_filter_coerces_values_to_str` | `filter_model_env({"ANTHROPIC_BASE_URL": 42})` | Value becomes `"42"` (`subprocess.Popen` requires str env values) |
+| `test_filter_empty_input` | `filter_model_env({})` | Returns `({}, [])` |
+| `test_reserved_keys_match_shared_json_file` | Loads `worca-ui/server/reserved-env-keys.json` | `RESERVED_ENV_KEYS == set(json["keys"])` and `RESERVED_PREFIXES == tuple(json["prefixes"])` — guards against drift |
+
+#### `tests/test_model_resolver.py` — `worca.orchestrator.model_resolver.resolve_model`
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_resolve_known_string` | `resolve_model("opus", {"opus": "claude-opus-4-6"})` | Returns `("claude-opus-4-6", {})` |
+| `test_resolve_known_object` | `resolve_model("alt", {"alt": {"id": "x", "env": {"A": "1"}}})` | Returns `("x", {"A": "1"})` |
+| `test_resolve_unknown_passthrough` | `resolve_model("custom-id", {})` | Returns `("custom-id", {})` — preserves today's "full-ID-as-shorthand" behavior |
+| `test_resolve_none_name` | `resolve_model(None, {})` | Returns `(None, {})` (covers `config.get("model")` returning None) |
+| `test_resolve_propagates_normalize_errors` | `resolve_model("bad", {"bad": {"env": {}}})` (no id) | `ValueError` from `normalize_model_entry` bubbles up |
+
+#### `tests/test_runtime_propagate.py` — extend existing file
+
+Add `test_propagate_models_into_worktree`:
+
+```python
+def test_propagate_models_into_worktree(tmp_path):
+    # Parent: settings.local.json has worca.models.alt.env.SECRET = "s"
+    src = tmp_path / "src"; src.mkdir()
+    (src / "settings.local.json").write_text(json.dumps({
+        "worca": {"models": {"alt": {"env": {"SECRET": "s"}}}}
+    }))
+    # Worktree: settings.json with worca.models.alt.id only
+    dst = tmp_path / "dst"; dst.mkdir()
+    (dst / "settings.json").write_text(json.dumps({
+        "worca": {"models": {"alt": {"id": "x", "env": {"PUBLIC": "p"}}}}
+    }))
+    propagate_runtime_local_keys(str(src), str(dst))
+    merged = json.loads((dst / "settings.json").read_text())
+    assert merged["worca"]["models"]["alt"]["env"] == {"PUBLIC": "p", "SECRET": "s"}
+    assert merged["worca"]["models"]["alt"]["id"] == "x"
+```
+
+Plus a negative case `test_propagate_models_when_models_not_in_allowlist` is N/A (this PR adds it). Keep the existing webhooks/events tests untouched.
+
+#### Existing Python tests to update
+
+- `tests/test_settings.py` (loader smoke tests) — assert that an object-form entry survives `load_settings` deep-merge unchanged when both files agree, and that `settings.local.json` `env` keys merge into the parent's `env` map (verifies deep_merge handles the nested case).
+- `tests/test_claude_cli.py` — add a test for `run_agent(..., model_env={"WORCA_FOO": "1", "ANTHROPIC_BASE_URL": "http://x"})` that monkeypatches `subprocess.Popen` and asserts the captured `env` kwarg contains `ANTHROPIC_BASE_URL` but not `WORCA_FOO`, and that the stderr capture mentions the dropped key.
+- `tests/test_work_request.py` (or add one if absent) — verify `extract_work_request` resolves `"haiku"` through `resolve_model` (decision #2: routing through the resolver). Mock the settings to map `haiku` to a custom id+env, monkeypatch `subprocess.run`, assert the captured `--model` arg matches the custom id and the captured env contains the custom env.
 
 ### Unit Tests (JS / Vitest)
 
-| Layer | Test | Validates |
-|-------|------|-----------|
-| `views/settings` | `test_get_model_keys_uses_worca_models` | Dynamic list reflects config |
-| `views/settings` | `test_models_tab_renders_each_model_card` | One card per entry |
-| `views/settings` | `test_models_tab_save_writes_string_form_when_no_env` | Minimal JSON for env-less models |
-| `server/secrets-routes` | `test_put_writes_to_local_only` | settings.json untouched |
-| `server/secrets-routes` | `test_put_rejects_reserved_key` | Returns 400 for `PATH` |
-| `server/secrets-routes` | `test_get_marks_overrides` | `source` field correctly tagged |
+All new tests live next to their source (`worca-ui/app/views/*.test.js` or `worca-ui/server/*.test.js`) per the existing convention. Vitest config already auto-discovers them.
+
+#### `worca-ui/app/views/settings-models.test.js` (new)
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_get_model_keys_returns_configured_keys` | `getModelKeys({models: {opus: "x", "alt-fast": {id: "y"}}})` | `["opus", "alt-fast"]` (insertion order preserved) |
+| `test_get_model_keys_falls_back_to_defaults` | `getModelKeys({})` and `getModelKeys(undefined)` | `["opus", "sonnet", "haiku"]` |
+| `test_models_tab_renders_card_per_model` | Render `modelsTab(worca)` with two entries | Two `.model-card` nodes; ids in DOM match config |
+| `test_models_tab_save_strips_object_form_when_env_empty` | Save handler with `{id: "x", env: {}}` row | Outgoing PUT body has `models.x = "x"` (string form), not the object form |
+| `test_models_tab_save_keeps_object_form_when_env_present` | Env row with `{ANTHROPIC_BASE_URL: "u"}` | Outgoing body has `models.x = {id: "x", env: {ANTHROPIC_BASE_URL: "u"}}` |
+| `test_models_tab_secret_keys_render_masked_readonly` | Render with secrets-API response marking key as `secret` | Input shows `••••••••` and is `disabled` |
+| `test_models_tab_delete_model_removes_card` | Click "Delete model" on second card | Card removed from DOM; agents-tab dropdown reactively shrinks |
+
+#### `worca-ui/app/views/secrets-modal.test.js` (new)
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_modal_lists_keys_with_source_tags` | Mount modal with API response containing `public`, `secret`, `override` keys | Each row carries the right badge label |
+| `test_modal_set_secret_calls_put_local_only` | Type new secret, click Save | Captures `PUT /api/settings/secrets` with `{model, key, value}`; no `PUT /api/settings` |
+| `test_modal_clear_secret_sends_null_value` | Click "Clear" on a secret row | PUT body has `value: null` |
+| `test_modal_focused_input_unmasked_then_masked_on_blur` | Focus a secret row's input | While focused, value shows plain; on blur, dots return — DOM-level assertion via `:focus` simulation |
+
+#### `worca-ui/server/secrets-routes.test.js` (new)
+
+Pattern follows existing `worca-ui/server/*.test.js` (tmpdir + supertest). Each test creates a tmp `.claude/` with a fresh `settings.json` and `settings.local.json`.
+
+| Test | Setup | Assertion |
+|------|-------|-----------|
+| `test_put_writes_to_local_only` | `PUT /api/settings/secrets` with `{model: "alt", key: "TOKEN", value: "sk"}` | `settings.local.json` updated; `settings.json` byte-identical to before |
+| `test_put_atomic_via_temp_rename` | Mock `fs.rename` to throw; PUT | No partial write — `settings.local.json` unchanged on disk |
+| `test_put_rejects_reserved_key` | PUT with `{key: "PATH"}` | Status 400; body mentions `PATH`; no file write |
+| `test_put_rejects_reserved_prefix` | PUT with `{key: "WORCA_FOO"}` | Status 400 |
+| `test_put_null_value_deletes_key` | Seed local with the key, then PUT with `value: null` | Key removed; if `env` becomes empty, `env` key removed too (keep JSON minimal) |
+| `test_put_rejects_empty_model_name` | PUT with `model: ""` | Status 400 |
+| `test_get_marks_public_secret_override` | Local has `{TOKEN: "sk"}`, public has `{BASE_URL: "u", TOKEN: "old"}` | Response: `BASE_URL` source `public`, `TOKEN` source `override`, value masked for both `secret` and `override` |
+| `test_get_returns_empty_for_unconfigured_model` | Empty config | Returns `{ok: true, models: {}}` |
+| `test_reserved_keys_loaded_from_shared_json` | At server boot | Module reads `worca-ui/server/reserved-env-keys.json` and uses it for validation; deleting the file at startup raises a clear error (mirror Python source-of-truth test) |
 
 ### Integration Tests
 
-- A new pipeline integration test (`tests/integration/test_model_env_injection.py`) configures a model entry with a benign env var (e.g. `WORCA_TEST_MARKER=hello`), runs the mock claude CLI, and asserts the marker reaches the subprocess. The mock claude in `tests/mock_claude/mock_claude.py` already echoes its env on demand — extend it minimally if needed.
+#### `tests/integration/test_model_env_injection.py` (new)
+
+This validates the end-to-end path: agent stage → resolver → subprocess env → mock claude → result. Uses the existing `pipeline_env` fixture in `tests/integration/conftest.py`.
+
+The mock claude already supports a `run_command` directive (`tests/mock_claude/mock_claude.py:144-145`) that runs an arbitrary shell command before emitting its result. Use this to dump the subprocess env to a tmpfile — **no mock_claude changes needed**.
+
+```python
+def test_model_env_reaches_subprocess(pipeline_env):
+    env_dump = pipeline_env.tmp_path / "planner-env.txt"
+    pipeline_env.set_settings({
+        "worca": {
+            "models": {
+                "opus": "claude-opus-4-6",
+                "custom-fast": {
+                    "id": "claude-haiku-4-5-20251001",
+                    "env": {"WORCA_TEST_MARKER": "hello-from-models-env"},
+                },
+            },
+            "agents": {"planner": {"model": "custom-fast", "max_turns": 10}},
+        }
+    })
+    pipeline_env.set_scenario({
+        "agents": {
+            "planner": {
+                "action": "succeed",
+                "run_command": f"env > {env_dump}",
+                "structured_output": {...},
+            },
+            "default": {"action": "succeed"},
+        }
+    })
+    pipeline_env.run_pipeline(["--prompt", "smoke"])
+
+    # Assertions:
+    dump = env_dump.read_text()
+    assert "WORCA_TEST_MARKER=hello-from-models-env" in dump  # env reached subprocess
+    # Reserved keys not leaked from a hypothetical bad config:
+    assert "WORCA_AGENT=planner" in dump  # the legitimate one survives
+```
+
+Note: `WORCA_TEST_MARKER` deliberately does NOT match the `WORCA_` reserved prefix because the prefix only protects keys worca itself sets. We need a *different* marker name for this test — use `MOCK_TEST_MARKER` or `PIPELINE_TEST_MARKER` (any non-reserved name). Update accordingly.
+
+Add a second test in the same file:
+
+```python
+def test_reserved_key_in_model_env_is_stripped_with_warning(pipeline_env):
+    pipeline_env.set_settings({
+        "worca": {
+            "models": {"custom": {"id": "claude-haiku-4-5-20251001",
+                                  "env": {"PATH": "/tmp/should-be-stripped",
+                                          "ANTHROPIC_BASE_URL": "http://localhost:1"}}},
+            "agents": {"planner": {"model": "custom", "max_turns": 10}},
+        }
+    })
+    env_dump = pipeline_env.tmp_path / "planner-env.txt"
+    pipeline_env.set_scenario({"agents": {"planner": {
+        "action": "succeed", "run_command": f"env > {env_dump}",
+    }}, "default": {"action": "succeed"}})
+    result = pipeline_env.run_pipeline(["--prompt", "x"])
+
+    dump = env_dump.read_text()
+    assert "PATH=/tmp/should-be-stripped" not in dump  # silent-strip in effect (decision #3a)
+    assert "ANTHROPIC_BASE_URL=http://localhost:1" in dump  # non-reserved passes through
+    # Stderr warning surfaced (decision #3a — visibility via stderr)
+    assert "model env keys dropped (reserved)" in result.stderr
+    assert "PATH" in result.stderr
+```
+
+#### `tests/integration/test_work_request_routing.py` (new)
+
+Validates **decision #2** (work_request routes through the resolver). Smaller scope than full pipeline — exercises only `extract_work_request`.
+
+```python
+def test_extract_work_request_uses_resolver_for_haiku(monkeypatch, tmp_path):
+    settings = {"worca": {"models": {
+        "haiku": {"id": "custom-haiku-id",
+                  "env": {"ANTHROPIC_BASE_URL": "http://custom"}}}}}
+    captured = {}
+    def fake_run(cmd, **kw):
+        captured["cmd"] = cmd; captured["env"] = kw["env"]
+        class R: returncode = 0; stdout = "Title"; stderr = ""
+        return R()
+    monkeypatch.setattr("worca.orchestrator.work_request.subprocess.run", fake_run)
+    monkeypatch.setattr("worca.orchestrator.work_request.load_settings", lambda *a, **kw: settings)
+    extract_work_request(...)  # invoke
+    assert "--model" in captured["cmd"]
+    assert captured["cmd"][captured["cmd"].index("--model") + 1] == "custom-haiku-id"
+    assert captured["env"]["ANTHROPIC_BASE_URL"] == "http://custom"
+```
 
 ### Existing Tests to Update
 
-- `worca-ui/app/views/settings-pricing-haiku.test.js` and other tests that assert exactly three pricing rows — update to drive the assertion off `getModelKeys(worca)` rather than a hardcoded count.
-- `worca-ui/app/views/settings-form-roundtrip.test.js` — add a case where `worca.models` contains an object-form entry; assert the round-trip preserves it.
-- Any test depending on the constant value of `MODEL_OPTIONS` will need to read from the new helper.
+- `worca-ui/app/views/settings-pricing-haiku.test.js` and any test asserting exactly three pricing rows — drive the assertion off `getModelKeys(worca)` instead of a hardcoded count.
+- `worca-ui/app/views/settings-form-roundtrip.test.js` — add a case where input `worca.models = {opus: "x", alt: {id: "y", env: {K: "v"}}}` round-trips through render→read unchanged.
+- Any test importing the `MOCK_CLAUDE_OPTIONS` / `MODEL_OPTIONS` constant — switch to the new helper. Grep before starting: `cd worca-ui && grep -rn "MODEL_OPTIONS" app/ server/`.
+- `tests/test_claude_cli.py` (existing) — extend the `build_command` test set with a case asserting `--model` always receives the resolved id, never the shorthand, when the runner has done its job (this is a contract test, not a behavioral change).
 
 ### Done criteria
 
-- All new and updated tests pass.
-- `pytest tests/`, `cd worca-ui && npx vitest run`, `cd worca-ui && npm run lint` are green.
-- Manual smoke: configure a model with `env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9999"` (a deliberately unreachable endpoint), assign it to the planner, run `worca run-pipeline --prompt …`, and verify the planner stage's logged subprocess error references the configured base URL.
+All of these must be green before opening the PR:
+
+1. `pytest tests/` — all unit + integration tests pass on a clean checkout.
+2. `pytest tests/integration/test_model_env_injection.py tests/integration/test_work_request_routing.py` specifically — these are the new behavior-validating tests.
+3. `cd worca-ui && npx vitest run` — all UI unit tests pass.
+4. `cd worca-ui && npm run lint` — biome is strict in CI, fix before commit.
+5. `cd worca-ui && npm pack --dry-run | grep secrets-routes && npm pack --dry-run | grep secrets-modal` — verify the new files ship in the npm package (per CLAUDE.md's "files allowlist" guidance).
+6. `python scripts/coverage.py ci --include-unit-tests` — coverage of new modules (`model_resolver.py`, the `filter_model_env` helper, the secrets routes) is ≥ 90%.
+7. **Manual smoke (cannot be automated):** configure a model with `env.ANTHROPIC_BASE_URL = "http://127.0.0.1:9999"` (deliberately unreachable), assign it to the planner, run `worca run --prompt "smoke"`, and verify the planner stage's logged subprocess error references the configured base URL — proves end-to-end that the env reaches the real `claude` subprocess, not just the mock.
+8. **Manual UI smoke:** in the UI, add a new model in the Models tab, set a public env var, save; open Secrets modal, set a token, save; reload page; verify (a) settings.json contains only the public env, (b) settings.local.json contains only the secret, (c) the Models tab shows the secret as masked + override-tagged.
 
 ## Files to Create/Modify
 
