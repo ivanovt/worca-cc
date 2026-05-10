@@ -657,6 +657,9 @@ function fetchAndUpdateRuns() {
 
 ws.on('run-started', () => {
   pipelineAction = null;
+  // Pull the new run into the store so sidebar counters and run lists
+  // (Worktrees, Beads, Active Runs) reflect it without manual navigation.
+  fetchAndUpdateRuns().catch(() => {});
   rerender();
 });
 

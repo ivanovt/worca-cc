@@ -49,7 +49,10 @@ export function dbExists(beadsDb) {
 export async function listIssues(beadsDb) {
   try {
     const issues = await runBd(['list', '--limit', '0'], beadsDb);
-    return enrichWithDeps(issues, beadsDb);
+    // Must await here — without it, an enrichWithDeps rejection (e.g. bd show
+    // SIGTERM under daemon contention) escapes the try/catch and propagates
+    // to the WS handler as an unhandled rejection, crashing Node.
+    return await enrichWithDeps(issues, beadsDb);
   } catch {
     return [];
   }
@@ -61,7 +64,7 @@ export async function listIssuesByLabel(beadsDb, label) {
       ['list', '--label-any', label, '--all', '--limit', '0'],
       beadsDb,
     );
-    return enrichWithDeps(issues, beadsDb);
+    return await enrichWithDeps(issues, beadsDb);
   } catch {
     return [];
   }
@@ -125,8 +128,14 @@ export async function countIssuesByRunLabel(beadsDb) {
           }
         }
       }
-    } catch {
-      /* leave done at 0 for all runs on list/show failure */
+    } catch (err) {
+      // Leave done=0 for all runs on list/show failure. Logged so a stale
+      // "0/N" badge can be traced back to bd subprocess timeout (typically
+      // daemon contention) rather than mistaken for "no closed issues."
+      // The next watcher tick recomputes and corrects.
+      console.warn(
+        `[countIssuesByRunLabel] bd list/show failed; counts.done left at 0: ${err?.message || err}`,
+      );
     }
     return counts;
   } catch {

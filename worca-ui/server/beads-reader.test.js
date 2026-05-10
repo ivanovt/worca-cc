@@ -501,3 +501,39 @@ describe('listDistinctRunLabels', () => {
     expect(await listDistinctRunLabels(DB)).toEqual([]);
   });
 });
+
+// Regression: a SIGTERM'd `bd show` rejection in enrichWithDeps used to
+// escape these functions' try/catch (because the inner `enrichWithDeps(...)`
+// promise was returned without await). The unhandled rejection then
+// propagated to the WS handler and crashed Node. Both functions now
+// `return await` so the catch covers the full chain.
+describe('enrichWithDeps rejection handling', () => {
+  it('listIssues returns [] when bd show (deps) rejects', async () => {
+    mockBdResult([
+      { id: '1', title: 'A', status: 'open', priority: 2, dependency_count: 1 },
+    ]);
+    mockBdError('SIGTERM');
+    expect(await listIssues(DB)).toEqual([]);
+  });
+
+  it('listIssuesByLabel returns [] when bd show (deps) rejects', async () => {
+    mockBdResult([
+      { id: '1', title: 'A', status: 'open', priority: 2, dependency_count: 1 },
+    ]);
+    mockBdError('SIGTERM');
+    expect(await listIssuesByLabel(DB, 'run:foo')).toEqual([]);
+  });
+});
+
+describe('countIssuesByRunLabel observability', () => {
+  it('logs a warning when bd list/show fails so stale 0/N is debuggable', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockBdResult([{ label: 'run:abc', count: 4 }]);
+    mockBdError('SIGTERM');
+    const result = await countIssuesByRunLabel(DB);
+    expect(result).toEqual({ abc: { total: 4, done: 0 } });
+    expect(warn).toHaveBeenCalled();
+    expect(warn.mock.calls[0][0]).toMatch(/countIssuesByRunLabel/);
+    warn.mockRestore();
+  });
+});
