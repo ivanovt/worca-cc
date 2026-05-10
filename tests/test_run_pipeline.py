@@ -789,3 +789,45 @@ class TestGuideFlag:
 
         mock_run_pipeline.assert_not_called()
         assert "attach_guide" in str(exc_info.value)
+
+
+class TestEnsureBdDaemonAtCwd:
+    """Verify run_pipeline starts the bd daemon up-front so subsequent bd
+    subprocess calls go through the Unix-socket RPC."""
+
+    def test_calls_bd_daemon_ensure_when_beads_dir_present(self, tmp_path, monkeypatch):
+        from worca.scripts.run_pipeline import _ensure_bd_daemon_at_cwd
+
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        with patch("worca.scripts.run_pipeline.bd_daemon_ensure") as mock_ensure:
+            _ensure_bd_daemon_at_cwd()
+
+        mock_ensure.assert_called_once_with(str(beads_dir))
+
+    def test_no_op_when_beads_dir_absent(self, tmp_path, monkeypatch):
+        from worca.scripts.run_pipeline import _ensure_bd_daemon_at_cwd
+
+        monkeypatch.chdir(tmp_path)
+
+        with patch("worca.scripts.run_pipeline.bd_daemon_ensure") as mock_ensure:
+            _ensure_bd_daemon_at_cwd()
+
+        mock_ensure.assert_not_called()
+
+    def test_swallows_exceptions(self, tmp_path, monkeypatch):
+        """Daemon-ensure failures must not block pipeline startup."""
+        from worca.scripts.run_pipeline import _ensure_bd_daemon_at_cwd
+
+        beads_dir = tmp_path / ".beads"
+        beads_dir.mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        with patch(
+            "worca.scripts.run_pipeline.bd_daemon_ensure",
+            side_effect=RuntimeError("bd missing"),
+        ):
+            # Must not raise.
+            _ensure_bd_daemon_at_cwd()

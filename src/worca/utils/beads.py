@@ -328,20 +328,21 @@ def bd_daemon_start(beads_dir: str, timeout: float = 5.0) -> bool:
 def bd_daemon_ensure(beads_dir: str) -> bool:
     """Ensure the bd daemon is running, unless it was deliberately stopped.
 
-    If bd_daemon_stop was called previously (sentinel file present), does
-    not restart the daemon — returns False. Call bd_daemon_start explicitly
-    to clear the sentinel and restart.
+    Probes `bd daemon status` first. The sentinel file written by
+    bd_daemon_stop only blocks auto-start; if the daemon is already running
+    (e.g. started manually outside worca after a previous stop), this
+    reports it as up regardless of the sentinel.
 
     Returns True if the daemon is running, False otherwise.
     """
-    sentinel = os.path.join(beads_dir, _DAEMON_STOPPED_SENTINEL)
-    if os.path.exists(sentinel):
-        return False
-
     status = bd_daemon_status(beads_dir)
     if status is True:
         return True
     if status is None:
+        return False
+
+    sentinel = os.path.join(beads_dir, _DAEMON_STOPPED_SENTINEL)
+    if os.path.exists(sentinel):
         return False
 
     return bd_daemon_start(beads_dir)

@@ -1,7 +1,8 @@
 /**
  * Tests that the beads-update WS handler reads counts from the broadcast
- * payload instead of re-fetching them, and only refreshes run-specific beads
- * when the viewed run's counts actually changed.
+ * payload instead of re-fetching them, and refreshes run-specific beads
+ * for the currently viewed run on every update so non-count edits (title,
+ * description, notes) render live.
  */
 
 import { readFileSync } from 'node:fs';
@@ -62,25 +63,32 @@ describe('beads-update handler: counts from payload', () => {
   });
 });
 
-describe('beads-update handler: selective refresh', () => {
+describe('beads-update handler: viewed-run refresh', () => {
   const source = readFileSync(join(__dirname, 'main.js'), 'utf8');
   const handler = extractHandler(source, 'beads-update');
 
-  it('compares previous counts before calling fetchRunBeads', () => {
-    const fetchRunBeadsPos = handler.indexOf('fetchRunBeads');
-    expect(fetchRunBeadsPos).toBeGreaterThan(-1);
-    const beforeFetch = handler.slice(0, fetchRunBeadsPos);
-    expect(beforeFetch).toMatch(/prev|changed|runCountChanged/i);
+  it('calls fetchRunBeads when viewing a run outside the beads section', () => {
+    expect(handler).toMatch(/fetchRunBeads\(route\.runId\)/);
   });
 
-  it('compares previous counts before calling fetchBeadsRunIssues', () => {
-    const fetchIssuesPos = handler.indexOf('fetchBeadsRunIssues');
-    expect(fetchIssuesPos).toBeGreaterThan(-1);
-    const beforeFetch = handler.slice(0, fetchIssuesPos);
-    expect(beforeFetch).toMatch(/prev|changed|runCountChanged/i);
+  it('calls fetchBeadsRunIssues when viewing a run in the beads section', () => {
+    expect(handler).toMatch(/fetchBeadsRunIssues\(route\.runId\)/);
   });
 
-  it('stores previous counts for comparison', () => {
-    expect(handler).toMatch(/prev|old/i);
+  it('does not gate fetchRunBeads on a count-comparison variable', () => {
+    // Option C: refetch on every tick, no prev/changed gating.
+    // Issue edits that don't change counts (title/description/notes)
+    // must still render live in the viewed run.
+    const fetchPos = handler.indexOf('fetchRunBeads(route.runId)');
+    expect(fetchPos).toBeGreaterThan(-1);
+    const before = handler.slice(0, fetchPos);
+    expect(before).not.toMatch(/runCountChanged|prevCounts/);
+  });
+
+  it('does not gate fetchBeadsRunIssues on a count-comparison variable', () => {
+    const fetchPos = handler.indexOf('fetchBeadsRunIssues(route.runId)');
+    expect(fetchPos).toBeGreaterThan(-1);
+    const before = handler.slice(0, fetchPos);
+    expect(before).not.toMatch(/runCountChanged|prevCounts/);
   });
 });

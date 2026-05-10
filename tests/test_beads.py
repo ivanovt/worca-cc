@@ -520,17 +520,39 @@ def test_bd_daemon_ensure_starts_when_not_running(tmp_path):
 
 
 def test_bd_daemon_ensure_respects_deliberate_stop(tmp_path):
-    """When sentinel exists (deliberate stop), ensure does NOT restart."""
+    """When sentinel exists AND daemon is not running, ensure does NOT auto-start.
+
+    The sentinel only blocks auto-start, not auto-detect — status is still
+    probed first to handle the manually-restarted-after-stop case.
+    """
     beads_dir = str(tmp_path / ".beads")
     os.makedirs(beads_dir)
     with open(os.path.join(beads_dir, _DAEMON_STOPPED_SENTINEL), "w") as f:
         f.write("")
 
-    with patch("worca.utils.beads.bd_daemon_status") as mock_status, \
+    with patch("worca.utils.beads.bd_daemon_status", return_value=False) as mock_status, \
          patch("worca.utils.beads.bd_daemon_start") as mock_start:
         result = bd_daemon_ensure(beads_dir)
     assert result is False
-    mock_status.assert_not_called()
+    mock_status.assert_called_once_with(beads_dir)
+    mock_start.assert_not_called()
+
+
+def test_bd_daemon_ensure_ignores_sentinel_when_daemon_running(tmp_path):
+    """When daemon is running, sentinel is irrelevant — return True.
+
+    Covers the case where a user (or another tool) ran `bd daemon start`
+    after a deliberate stop but the sentinel was never cleared.
+    """
+    beads_dir = str(tmp_path / ".beads")
+    os.makedirs(beads_dir)
+    with open(os.path.join(beads_dir, _DAEMON_STOPPED_SENTINEL), "w") as f:
+        f.write("")
+
+    with patch("worca.utils.beads.bd_daemon_status", return_value=True), \
+         patch("worca.utils.beads.bd_daemon_start") as mock_start:
+        result = bd_daemon_ensure(beads_dir)
+    assert result is True
     mock_start.assert_not_called()
 
 
@@ -565,6 +587,7 @@ def test_bd_daemon_ensure_does_not_restart_after_deliberate_stop(tmp_path):
     trickiest behavior and most likely to silently regress.
 
     Sequence: stop (succeeds) → ensure → daemon must NOT be restarted.
+    Status is probed first (one subprocess call), then sentinel blocks start.
     """
     beads_dir = str(tmp_path / ".beads")
     os.makedirs(beads_dir)
@@ -579,11 +602,15 @@ def test_bd_daemon_ensure_does_not_restart_after_deliberate_stop(tmp_path):
     sentinel = os.path.join(beads_dir, _DAEMON_STOPPED_SENTINEL)
     assert os.path.exists(sentinel), "bd_daemon_stop must write sentinel"
 
-    # Step 2: Ensure must NOT restart — no subprocess calls at all
-    with patch("worca.utils.beads.subprocess.run") as mock_run:
+    # Step 2: Ensure must NOT restart. Status probe runs (returncode=1 since
+    # daemon is down); sentinel then blocks the start subprocess.
+    mock_status_down = MagicMock(returncode=1)
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_status_down) as mock_run:
         result = bd_daemon_ensure(beads_dir)
     assert result is False, "ensure must not restart after deliberate stop"
-    mock_run.assert_not_called()
+    # Exactly one call: bd daemon status. No bd daemon start.
+    assert mock_run.call_count == 1
+    assert mock_run.call_args.args[0] == ["bd", "daemon", "status"]
 
 
 def test_bd_daemon_start_after_stop_reenables_ensure(tmp_path):
@@ -602,10 +629,12 @@ def test_bd_daemon_start_after_stop_reenables_ensure(tmp_path):
         bd_daemon_stop(beads_dir)
     assert os.path.exists(sentinel)
 
-    # Ensure → blocked by sentinel
-    with patch("worca.utils.beads.subprocess.run") as mock_run:
+    # Ensure → status probe runs (daemon down), sentinel blocks start
+    mock_status_down = MagicMock(returncode=1)
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_status_down) as mock_run:
         assert bd_daemon_ensure(beads_dir) is False
-    mock_run.assert_not_called()
+    assert mock_run.call_count == 1
+    assert mock_run.call_args.args[0] == ["bd", "daemon", "status"]
 
     # Explicit start → clears sentinel
     with patch("worca.utils.beads.subprocess.run", return_value=mock_ok):

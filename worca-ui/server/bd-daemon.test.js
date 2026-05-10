@@ -78,11 +78,26 @@ describe('ensureBdDaemon', () => {
     expect(execFile).not.toHaveBeenCalled();
   });
 
-  it('returns false when daemon.stopped sentinel exists', async () => {
+  it('returns false when daemon is not running and sentinel blocks auto-start', async () => {
+    // Sentinel exists AND daemon is not running → ensure must not auto-start.
     existsSync.mockReturnValue(true);
+    mockBdFailure();
     const result = await ensureBdDaemon('/project/.worca');
     expect(result).toBe(false);
-    expect(execFile).not.toHaveBeenCalled();
+    // Status probe ran; start did not.
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile.mock.calls[0][1]).toEqual(['daemon', 'status']);
+  });
+
+  it('returns true when sentinel exists but daemon is already running', async () => {
+    // Sentinel must only block auto-start, not auto-detect. If a user
+    // started the daemon manually after a deliberate stop, we report it.
+    existsSync.mockReturnValue(true);
+    mockBdSuccess();
+    const result = await ensureBdDaemon('/project/.worca');
+    expect(result).toBe(true);
+    expect(execFile).toHaveBeenCalledTimes(1);
+    expect(execFile.mock.calls[0][1]).toEqual(['daemon', 'status']);
   });
 
   it('returns false when both status and start fail', async () => {

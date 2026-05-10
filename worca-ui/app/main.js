@@ -635,15 +635,13 @@ ws.on('beads-update', (payload, msg) => {
         loading: false,
       },
     });
-    const prevCounts = beadsCounts;
     beadsCounts = payload.counts || {};
-    const runCountChanged =
-      route.runId &&
-      JSON.stringify(prevCounts[route.runId]) !==
-        JSON.stringify(beadsCounts[route.runId]);
-    if (runCountChanged && route.section !== 'beads')
-      fetchRunBeads(route.runId);
-    if (runCountChanged && route.section === 'beads')
+    // Refetch the viewed run on every beads update so non-count edits
+    // (title, description, notes, priority) still render live. The N+1
+    // we eliminated was the server-side per-run-label cost; one
+    // viewed-run refetch per WAL tick is a single bd call and bounded.
+    if (route.runId && route.section !== 'beads') fetchRunBeads(route.runId);
+    if (route.runId && route.section === 'beads')
       fetchBeadsRunIssues(route.runId);
     rerender();
   }
