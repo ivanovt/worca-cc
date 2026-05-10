@@ -24,7 +24,6 @@ import pytest
 
 from tests.integration.helpers import (
     _find_latest_run_id,
-    _find_latest_status,
     run_and_act,
     send_sigkill,
 )

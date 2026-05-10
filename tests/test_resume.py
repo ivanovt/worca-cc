@@ -618,6 +618,7 @@ def test_stage_context_map_implement_entries():
     keys = dict(_STAGE_CONTEXT_MAP["implement"])
     assert keys.get("files_changed") == "files_changed"
     assert keys.get("tests_added") == "tests_added"
+    assert keys.get("bead_id") == "assigned_bead_id"
 
 
 def test_stage_context_map_test_entries():
@@ -625,11 +626,15 @@ def test_stage_context_map_test_entries():
     assert keys.get("passed") == "test_passed"
     assert keys.get("coverage_pct") == "test_coverage"
     assert keys.get("proof_artifacts") == "proof_artifacts"
+    assert keys.get("failures") == "test_failures"
 
 
 def test_stage_context_map_review_entries():
     keys = dict(_STAGE_CONTEXT_MAP["review"])
     assert keys.get("issues") == "review_issues"
+    # `review_history` is runner-accumulated, not a stage-output field — must
+    # not be in the map (would cause silent no-op lookups).
+    assert "review_history" not in keys
 
 
 def test_stage_context_map_plan_entries():
@@ -717,6 +722,37 @@ def test_backfill_populates_plan_stage_with_field_renames(tmp_path):
     assert pb.get_context("plan_tasks_outline") == [{"title": "T1"}]
     assert "plan_approach" in filled
     assert "plan_tasks_outline" in filled
+
+
+def test_backfill_populates_test_failures(tmp_path):
+    """`failures` field on a failed test iter restores `test_failures` context key."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "test"))
+    failures = [{"test_name": "t_smoke", "error": "AssertionError"}]
+    with open(os.path.join(logs_dir, "test", "iter-1.json"), "w") as f:
+        json.dump({"passed": False, "failures": failures}, f)
+
+    status = {"stages": {"test": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("test_failures") == failures
+    assert "test_failures" in filled
+
+
+def test_backfill_populates_assigned_bead_id_from_implement(tmp_path):
+    """`bead_id` field on an implement iter restores `assigned_bead_id` context key."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "implement"))
+    with open(os.path.join(logs_dir, "implement", "iter-1.json"), "w") as f:
+        json.dump({"bead_id": "beads-aaa", "files_changed": ["a.py"], "tests_added": []}, f)
+
+    status = {"stages": {"implement": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("assigned_bead_id") == "beads-aaa"
+    assert "assigned_bead_id" in filled
 
 
 def test_backfill_populates_review_stage_issues(tmp_path):

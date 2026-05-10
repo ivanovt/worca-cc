@@ -144,14 +144,15 @@ _STAGE_CONTEXT_MAP: dict[str, list[tuple[str, str]]] = {
     "implement": [
         ("files_changed", "files_changed"),
         ("tests_added", "tests_added"),
+        ("bead_id", "assigned_bead_id"),
     ],
     "test": [
         ("passed", "test_passed"),
         ("coverage_pct", "test_coverage"),
         ("proof_artifacts", "proof_artifacts"),
+        ("failures", "test_failures"),
     ],
     "review": [
-        ("review_history", "review_history"),
         ("issues", "review_issues"),
     ],
     "plan": [

@@ -2625,9 +2625,9 @@ def run_pipeline(
                     if next_bead and Stage.IMPLEMENT in stage_order:
                         if loop_counters["bead_iteration"] < max_beads:
                             # Keep stage in_progress between beads so resume works
-                            save_status(status, actual_status_path)
                             if prompt_context_path:
                                 prompt_builder.save_context(prompt_context_path)
+                            save_status(status, actual_status_path)
                             _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters['bead_iteration']})", "ok")
                             _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
                             stage_idx = stage_order.index(Stage.IMPLEMENT)
