@@ -1327,6 +1327,8 @@ def _query_ready_bead(allowed_ids: list[str] | None = None, run_id: str | None =
                 beads from this run are returned. Without this, the 10-item
                 display limit in bd ready can be filled by unrelated beads.
     """
+    if os.environ.get("WORCA_SKIP_BEADS"):
+        return None
     try:
         label = f"run:{run_id}" if run_id else None
         items = bd_ready(label=label)
@@ -1498,7 +1500,7 @@ def run_pipeline(
     _branch_just_created = False
     if resume and existing and _is_same_work_request(existing.get("work_request", {}), work_request):
         # Explicit resume requested and same work request found
-        from worca.orchestrator.resume import find_resume_point, check_git_divergence, restore_loop_counters
+        from worca.orchestrator.resume import find_resume_point, check_git_divergence, restore_loop_counters, backfill_prompt_context
         resume_stage = find_resume_point(existing)
         if resume_stage is not None:
             # Git divergence guard: warn if HEAD changed since pipeline start
@@ -1683,6 +1685,9 @@ def run_pipeline(
         )
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
+            _backfilled = backfill_prompt_context(prompt_builder, status, logs_dir)
+            if _backfilled:
+                _log(f"Resume backfill: populated {len(_backfilled)} missing context key(s): {', '.join(_backfilled)}")
             # Restore max_beads from persisted context — the COORDINATE stage
             # that originally set it will be skipped on resume.
             resumed_beads = prompt_builder.get_context("beads_ids")
@@ -2621,6 +2626,8 @@ def run_pipeline(
                         if loop_counters["bead_iteration"] < max_beads:
                             # Keep stage in_progress between beads so resume works
                             save_status(status, actual_status_path)
+                            if prompt_context_path:
+                                prompt_builder.save_context(prompt_context_path)
                             _log(f"Next bead available — looping back to IMPLEMENT (bead {loop_counters['bead_iteration']})", "ok")
                             _next_trigger[Stage.IMPLEMENT.value] = "next_bead"
                             stage_idx = stage_order.index(Stage.IMPLEMENT)
@@ -2730,6 +2737,9 @@ def run_pipeline(
                                         _handle_pause(ctx, "implement_test loop.triggered")
                                     elif _action == "abort":
                                         raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
+                            if prompt_context_path:
+                                prompt_builder.save_context(prompt_context_path)
+                            save_status(status, actual_status_path)
                             _next_trigger[Stage.IMPLEMENT.value] = "test_failure"
                             stage_idx = stage_order.index(Stage.IMPLEMENT)
                             continue
@@ -2853,6 +2863,9 @@ def run_pipeline(
                                             _handle_pause(ctx, "pr_changes loop.triggered")
                                         elif _action == "abort":
                                             raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
+                                if prompt_context_path:
+                                    prompt_builder.save_context(prompt_context_path)
+                                save_status(status, actual_status_path)
                                 _next_trigger[Stage.IMPLEMENT.value] = "review_changes"
                                 stage_idx = stage_order.index(Stage.IMPLEMENT)
                                 continue

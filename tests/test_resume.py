@@ -11,6 +11,8 @@ from worca.orchestrator.resume import (
     get_resume_iteration,
     restore_loop_counters,
     check_git_divergence,
+    backfill_prompt_context,
+    _STAGE_CONTEXT_MAP,
 )
 from worca.orchestrator.stages import Stage
 
@@ -593,3 +595,198 @@ def test_reconstruct_context_plan_review_completed_plan_pending(tmp_path):
     assert "plan" not in ctx
     assert ctx["plan_review"]["outcome"] == "revise"
     assert ctx["plan_review"]["summary"] == "Plan is incomplete"
+
+
+# ---------------------------------------------------------------------------
+# _STAGE_CONTEXT_MAP
+# ---------------------------------------------------------------------------
+
+def test_stage_context_map_covers_expected_stages():
+    expected_stages = {"coordinate", "implement", "test", "review", "plan"}
+    assert expected_stages <= set(_STAGE_CONTEXT_MAP.keys())
+
+
+def test_stage_context_map_coordinate_entries():
+    keys = dict(_STAGE_CONTEXT_MAP["coordinate"])
+    assert "beads_ids" in keys
+    assert "dependency_graph" in keys
+    assert keys["beads_ids"] == "beads_ids"
+    assert keys["dependency_graph"] == "dependency_graph"
+
+
+def test_stage_context_map_implement_entries():
+    keys = dict(_STAGE_CONTEXT_MAP["implement"])
+    assert keys.get("files_changed") == "files_changed"
+    assert keys.get("tests_added") == "tests_added"
+
+
+def test_stage_context_map_test_entries():
+    keys = dict(_STAGE_CONTEXT_MAP["test"])
+    assert keys.get("passed") == "test_passed"
+    assert keys.get("coverage_pct") == "test_coverage"
+    assert keys.get("proof_artifacts") == "proof_artifacts"
+
+
+def test_stage_context_map_review_entries():
+    keys = dict(_STAGE_CONTEXT_MAP["review"])
+    assert keys.get("issues") == "review_issues"
+
+
+def test_stage_context_map_plan_entries():
+    keys = dict(_STAGE_CONTEXT_MAP["plan"])
+    assert keys.get("approach") == "plan_approach"
+    assert keys.get("tasks_outline") == "plan_tasks_outline"
+
+
+# ---------------------------------------------------------------------------
+# backfill_prompt_context
+# ---------------------------------------------------------------------------
+
+class _FakePromptBuilder:
+    """Minimal stand-in for PromptBuilder for backfill tests."""
+
+    def __init__(self, initial=None):
+        self._context = dict(initial or {})
+
+    def get_context(self, key, default=None):
+        return self._context.get(key, default)
+
+    def update_context(self, key, value):
+        self._context[key] = value
+
+
+def test_backfill_populates_missing_keys_from_coordinate_log(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "coordinate"))
+    with open(os.path.join(logs_dir, "coordinate", "iter-1.json"), "w") as f:
+        json.dump({"beads_ids": ["b1", "b2"], "dependency_graph": {"b2": ["b1"]}}, f)
+
+    status = {"stages": {"coordinate": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("beads_ids") == ["b1", "b2"]
+    assert pb.get_context("dependency_graph") == {"b2": ["b1"]}
+    assert "beads_ids" in filled
+    assert "dependency_graph" in filled
+
+
+def test_backfill_does_not_overwrite_existing_keys(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "coordinate"))
+    with open(os.path.join(logs_dir, "coordinate", "iter-1.json"), "w") as f:
+        json.dump({"beads_ids": ["b-from-log"], "dependency_graph": {}}, f)
+
+    status = {"stages": {"coordinate": {"status": "completed"}}}
+    pb = _FakePromptBuilder({"beads_ids": ["b-already-set"]})
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("beads_ids") == ["b-already-set"], "must not overwrite existing key"
+    assert "beads_ids" not in filled, "already-present key must not appear in filled list"
+
+
+def test_backfill_populates_test_stage_with_field_renames(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "test"))
+    with open(os.path.join(logs_dir, "test", "iter-1.json"), "w") as f:
+        json.dump({"passed": True, "coverage_pct": 85.0, "proof_artifacts": ["proof.txt"]}, f)
+
+    status = {"stages": {"test": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("test_passed") is True
+    assert pb.get_context("test_coverage") == 85.0
+    assert pb.get_context("proof_artifacts") == ["proof.txt"]
+    assert "test_passed" in filled
+    assert "test_coverage" in filled
+    assert "proof_artifacts" in filled
+
+
+def test_backfill_populates_plan_stage_with_field_renames(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "plan"))
+    with open(os.path.join(logs_dir, "plan", "iter-1.json"), "w") as f:
+        json.dump({"approach": "incremental", "tasks_outline": [{"title": "T1"}]}, f)
+
+    status = {"stages": {"plan": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("plan_approach") == "incremental"
+    assert pb.get_context("plan_tasks_outline") == [{"title": "T1"}]
+    assert "plan_approach" in filled
+    assert "plan_tasks_outline" in filled
+
+
+def test_backfill_populates_review_stage_issues(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "review"))
+    issues = [{"severity": "critical", "description": "null deref"}]
+    with open(os.path.join(logs_dir, "review", "iter-1.json"), "w") as f:
+        json.dump({"outcome": "request_changes", "issues": issues}, f)
+
+    status = {"stages": {"review": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("review_issues") == issues
+    assert "review_issues" in filled
+
+
+def test_backfill_skips_absent_output_fields(tmp_path):
+    """Stage output missing a mapped field does not set that context key."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "test"))
+    with open(os.path.join(logs_dir, "test", "iter-1.json"), "w") as f:
+        json.dump({"passed": False}, f)  # coverage_pct and proof_artifacts absent
+
+    status = {"stages": {"test": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert pb.get_context("test_passed") is False
+    assert pb.get_context("test_coverage") is None, "absent field must not set key"
+    assert pb.get_context("proof_artifacts") is None
+    assert "test_coverage" not in filled
+    assert "proof_artifacts" not in filled
+
+
+def test_backfill_returns_list_of_filled_key_names(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "implement"))
+    with open(os.path.join(logs_dir, "implement", "iter-1.json"), "w") as f:
+        json.dump({"files_changed": ["a.py"], "tests_added": ["test_a.py"]}, f)
+
+    status = {"stages": {"implement": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert isinstance(filled, list)
+    assert set(filled) == {"files_changed", "tests_added"}
+
+
+def test_backfill_no_logs_returns_empty_list(tmp_path):
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(logs_dir)  # empty directory
+
+    status = {"stages": {"implement": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert filled == []
+    assert pb.get_context("files_changed") is None
+
+
+def test_backfill_ignores_stages_not_in_map(tmp_path):
+    """Stages not in _STAGE_CONTEXT_MAP (e.g. preflight) are silently skipped."""
+    logs_dir = str(tmp_path / "logs")
+    os.makedirs(os.path.join(logs_dir, "preflight"))
+    with open(os.path.join(logs_dir, "preflight", "iter-1.json"), "w") as f:
+        json.dump({"ok": True}, f)
+
+    status = {"stages": {"preflight": {"status": "completed"}}}
+    pb = _FakePromptBuilder()
+    filled = backfill_prompt_context(pb, status, logs_dir)
+
+    assert filled == []
