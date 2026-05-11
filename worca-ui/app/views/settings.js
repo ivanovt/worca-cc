@@ -6,6 +6,7 @@ import {
   Bell,
   ClipboardCopy,
   Coins,
+  Copy,
   Cpu,
   FolderOpen,
   iconSvg,
@@ -1629,6 +1630,71 @@ async function _saveModelEnv(name, rerender) {
   }
 }
 
+function _nextDuplicateName(sourceName, existingNames) {
+  // Strip a trailing -NN[N] suffix so duplicating "glm-ds-01" yields
+  // "glm-ds-02" rather than "glm-ds-01-01".
+  const stripped = sourceName.replace(/-\d{2,3}$/, '');
+  for (let i = 1; i <= 999; i++) {
+    const suffix = i < 100 ? String(i).padStart(2, '0') : String(i);
+    const candidate = `${stripped}-${suffix}`;
+    if (!existingNames.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function _duplicateModel(name, modelsConfig, rerender) {
+  const existing = new Set(Object.keys(modelsConfig));
+  const nextName = _nextDuplicateName(name, existing);
+  if (!nextName) {
+    saveStatus = 'error';
+    saveMessage = `Cannot duplicate "${name}" — no free numeric suffix slot.`;
+    rerender();
+    return;
+  }
+  const source = _normalizeModelEntry(modelsConfig[name]);
+  // Drop any local edit buffer for the new name so the next render reads
+  // the freshly-saved server state.
+  _modelsEditState.delete(nextName);
+
+  const url = _settingsProjectId
+    ? `/api/projects/${_settingsProjectId}/settings/model-env`
+    : '/api/settings/model-env';
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: nextName,
+        id: source.id,
+        env: { ...source.env },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    saveStatus = 'success';
+    saveMessage = `Duplicated ${name} → ${nextName}`;
+    await loadSettings(_settingsProjectId);
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to duplicate ${name}: ${err.message}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
 function _promptDeleteModel(name, modelsConfig, rerender) {
   showConfirm(
     {
@@ -1823,6 +1889,17 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
       </div>
 
       <div class="model-card-actions">
+        <sl-tooltip content="Duplicate this model with all its env vars">
+          <sl-button
+            variant="default"
+            size="small"
+            class="model-duplicate-btn"
+            @click=${() => _duplicateModel(name, modelsConfig, rerender)}
+          >
+            ${unsafeHTML(iconSvg(Copy, 12))}
+            Duplicate
+          </sl-button>
+        </sl-tooltip>
         <sl-button
           variant="danger"
           size="small"
