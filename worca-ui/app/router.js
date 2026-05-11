@@ -3,10 +3,13 @@ export function parseHash(hash) {
   const [path, query] = clean.split('?');
   const parts = path.split('/').filter(Boolean);
 
-  // New path-segment format: project/{slug}/{section}[/{runId}]
-  if (parts[0] === 'project' && parts.length >= 3) {
+  // New path-segment format: project/{slug}[/{section}[/{runId}]]
+  // A bare `#/project/{slug}` is treated as `#/project/{slug}/active` so the
+  // bootstrap can resolve projectId and avoid fanning worktree fetches across
+  // every registered project.
+  if (parts[0] === 'project' && parts.length >= 2) {
     return {
-      section: parts[2],
+      section: parts[2] || 'active',
       runId: parts[3] || null,
       projectId: parts[1],
     };
