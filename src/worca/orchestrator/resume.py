@@ -136,6 +136,60 @@ def reconstruct_context(status: dict, logs_dir: str = None) -> dict:
     return context
 
 
+_STAGE_CONTEXT_MAP: dict[str, list[tuple[str, str]]] = {
+    "coordinate": [
+        ("beads_ids", "beads_ids"),
+        ("dependency_graph", "dependency_graph"),
+    ],
+    "implement": [
+        ("files_changed", "files_changed"),
+        ("tests_added", "tests_added"),
+        ("bead_id", "assigned_bead_id"),
+    ],
+    "test": [
+        ("passed", "test_passed"),
+        ("coverage_pct", "test_coverage"),
+        ("proof_artifacts", "proof_artifacts"),
+        ("failures", "test_failures"),
+    ],
+    "review": [
+        ("issues", "review_issues"),
+    ],
+    "plan": [
+        ("approach", "plan_approach"),
+        ("tasks_outline", "plan_tasks_outline"),
+    ],
+}
+
+
+_ABSENT = object()
+
+
+def backfill_prompt_context(prompt_builder, status: dict, logs_dir: str = None) -> list[str]:
+    """Populate missing PromptBuilder context keys from saved stage output logs.
+
+    Calls reconstruct_context() to read stage log files, then for each stage
+    in _STAGE_CONTEXT_MAP, maps output fields to context keys using
+    write-only-if-absent semantics (never overwrites keys already present).
+
+    Returns a list of the context key names that were actually set.
+    """
+    stage_outputs = reconstruct_context(status, logs_dir)
+    filled: list[str] = []
+    for stage_name, field_mappings in _STAGE_CONTEXT_MAP.items():
+        output = stage_outputs.get(stage_name)
+        if not output:
+            continue
+        for output_field, context_key in field_mappings:
+            if prompt_builder.get_context(context_key, _ABSENT) is not _ABSENT:
+                continue
+            if output_field not in output:
+                continue
+            prompt_builder.update_context(context_key, output[output_field])
+            filled.append(context_key)
+    return filled
+
+
 def check_git_divergence(status: dict, current_head: str = None) -> dict:
     """Check if git HEAD has diverged from the stored git_head in status.
 
