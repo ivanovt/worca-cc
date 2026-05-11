@@ -3,14 +3,48 @@
  *
  * GET  /worktrees          — list worktree entries enriched with disk/age/group data
  * DELETE /worktrees/:run_id — remove a worktree (409 if running, 412 if resumable/grouped without ?force=1)
+ * POST /worktrees/cleanup  — batch remove (always returns 200 with `{ok, results, failed_count}`)
  *
  * Expects req.project.worcaDir to be set by projectResolver middleware.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import { join } from 'node:path';
 import { Router } from 'express';
-import { removeWorktree } from './worktree-ops.js';
+import { pruneWorktrees, removeWorktree } from './worktree-ops.js';
+
+const CLEANUP_CONCURRENCY = 4;
+
+/**
+ * Run an array of `{run_id, fn}` tasks with bounded concurrency.
+ * Tasks are expected to return a result object — but if one throws,
+ * the limiter converts the throw into an attributable failure result
+ * so a single bad task can't halt the rest of the batch.
+ */
+async function runWithConcurrencyLimit(tasks, limit) {
+  const results = new Array(tasks.length);
+  let nextIdx = 0;
+  async function worker() {
+    while (nextIdx < tasks.length) {
+      const idx = nextIdx++;
+      const { run_id, fn } = tasks[idx];
+      try {
+        results[idx] = await fn();
+      } catch (err) {
+        results[idx] = {
+          run_id,
+          ok: false,
+          error: err?.message || String(err),
+        };
+      }
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(limit, tasks.length) }, worker),
+  );
+  return results;
+}
 
 const RESUMABLE_STATUSES = new Set(['failed', 'paused', 'cancelled']);
 
@@ -25,54 +59,71 @@ const DISK_CACHE_TTL_MS = 30_000;
  *
  * Skips symlinks (don't follow into other trees) and is bounded by
  * MAX_WALK_FILES so a runaway directory can't hang the request.
+ * Override the cap with WORCA_DISK_WALK_MAX (positive integer); the
+ * raised default of 1M handles node_modules-heavy worktrees, but very
+ * large monorepos may still want a higher ceiling.
  * Errors on individual entries are swallowed so a transiently-locked
  * file doesn't poison the whole sum.
  */
-const MAX_WALK_FILES = 100_000;
-function _walkDirSize(rootPath) {
-  let total = 0;
+function _resolveWalkCap() {
+  const raw = process.env.WORCA_DISK_WALK_MAX;
+  if (raw) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 1_000_000;
+}
+const MAX_WALK_FILES = _resolveWalkCap();
+export async function walkDirSize(rootPath, maxFiles = MAX_WALK_FILES) {
+  let bytes = 0;
   let count = 0;
   const stack = [rootPath];
-  while (stack.length > 0 && count < MAX_WALK_FILES) {
+  while (stack.length > 0 && count < maxFiles) {
     const cur = stack.pop();
-    let entries;
+    let dir;
     try {
-      entries = readdirSync(cur, { withFileTypes: true });
+      dir = await fsp.opendir(cur);
     } catch {
       continue;
     }
-    for (const e of entries) {
+    for await (const e of dir) {
       count++;
-      if (count >= MAX_WALK_FILES) break;
+      if (count >= maxFiles) break;
       const child = join(cur, e.name);
       if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
         stack.push(child);
       } else if (e.isFile()) {
         try {
-          total += statSync(child).size;
+          const st = await fsp.stat(child);
+          bytes += st.size;
         } catch {
           /* ignore — file vanished mid-walk */
         }
       }
     }
   }
-  return total;
+  return { bytes, truncated: count >= maxFiles };
 }
 
-function _getDiskBytes(worktreePath) {
+async function _getDiskBytes(worktreePath) {
   const now = Date.now();
   const hit = _diskCache.get(worktreePath);
-  if (hit && hit.expiry > now) return hit.bytes;
+  if (hit && hit.expiry > now)
+    return { bytes: hit.bytes, truncated: hit.truncated };
 
-  let bytes = 0;
+  let result = { bytes: 0, truncated: false };
   try {
-    bytes = _walkDirSize(worktreePath);
+    result = await walkDirSize(worktreePath);
   } catch {
-    bytes = 0;
+    result = { bytes: 0, truncated: false };
   }
-  _diskCache.set(worktreePath, { bytes, expiry: now + DISK_CACHE_TTL_MS });
-  return bytes;
+  _diskCache.set(worktreePath, {
+    bytes: result.bytes,
+    truncated: result.truncated,
+    expiry: now + DISK_CACHE_TTL_MS,
+  });
+  return result;
 }
 
 /**
@@ -108,7 +159,7 @@ function _readWorktreeStatus(worktreePath) {
   return null;
 }
 
-function _listWorktrees(worcaDir) {
+async function _listWorktrees(worcaDir) {
   const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
   if (!existsSync(pipelinesDir)) return [];
 
@@ -142,12 +193,18 @@ function _listWorktrees(worcaDir) {
       }
     }
 
+    let diskInfo = { bytes: 0, truncated: false };
+    if (worktreeExists) {
+      diskInfo = await _getDiskBytes(worktreePath);
+    }
+
     entries.push({
       run_id: reg.run_id || '',
       title: reg.title || '',
       branch: reg.branch || '',
       worktree_path: worktreePath,
-      disk_bytes: worktreeExists ? _getDiskBytes(worktreePath) : 0,
+      disk_bytes: diskInfo.bytes,
+      truncated: diskInfo.truncated,
       age_seconds: ageSeconds,
       // started_at lets the client sort with the same sortByStartDesc helper
       // used by run-list, keeping ordering consistent across views.
@@ -182,7 +239,7 @@ export function createWorktreesRouter() {
   const router = Router({ mergeParams: true });
 
   // GET /worktrees
-  router.get('/', (req, res) => {
+  router.get('/', async (req, res) => {
     const worcaDir = req.project?.worcaDir;
     if (!worcaDir) {
       return res
@@ -190,7 +247,7 @@ export function createWorktreesRouter() {
         .json({ ok: false, error: 'worcaDir not configured' });
     }
     try {
-      const worktrees = _listWorktrees(worcaDir);
+      const worktrees = await _listWorktrees(worcaDir);
       res.json({ ok: true, worktrees });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
@@ -198,7 +255,7 @@ export function createWorktreesRouter() {
   });
 
   // DELETE /worktrees/:run_id
-  router.delete('/:run_id', (req, res) => {
+  router.delete('/:run_id', async (req, res) => {
     const worcaDir = req.project?.worcaDir;
     if (!worcaDir) {
       return res
@@ -261,11 +318,124 @@ export function createWorktreesRouter() {
         });
       }
 
-      removeWorktree(worcaDir, run_id);
+      await removeWorktree(worcaDir, run_id);
+      if (reg.worktree_path) _diskCache.delete(reg.worktree_path);
       res.json({ ok: true, run_id });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
+  });
+
+  // POST /worktrees/cleanup
+  //
+  // Batch worktree removal. Always responds with HTTP 200 and a JSON body of
+  // shape `{ ok, results, failed_count }`, where `ok` is the AND of per-id
+  // outcomes and `failed_count` is the number of entries with `ok: false`.
+  // Per-entry errors carry a `code` field (`running`, `resumable_or_grouped`)
+  // when actionable. Clients must inspect `results[]` — a single bad id never
+  // aborts the batch, and partial failures are not signalled via HTTP status.
+  router.post('/cleanup', async (req, res) => {
+    const worcaDir = req.project?.worcaDir;
+    if (!worcaDir) {
+      return res
+        .status(501)
+        .json({ ok: false, error: 'worcaDir not configured' });
+    }
+
+    const { run_ids, force = false } = req.body || {};
+    if (!Array.isArray(run_ids) || run_ids.length === 0) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'run_ids must be a non-empty array' });
+    }
+    for (const id of run_ids) {
+      if (!_validateRunId(id)) {
+        return res
+          .status(400)
+          .json({ ok: false, error: `Invalid run ID: ${id}` });
+      }
+    }
+
+    const tasks = run_ids.map((run_id) => ({
+      run_id,
+      fn: async () => {
+        const regFile = join(
+          worcaDir,
+          'multi',
+          'pipelines.d',
+          `${run_id}.json`,
+        );
+        if (!existsSync(regFile)) {
+          return {
+            run_id,
+            ok: false,
+            error: `Worktree "${run_id}" not found`,
+          };
+        }
+
+        let reg;
+        try {
+          reg = JSON.parse(readFileSync(regFile, 'utf8'));
+        } catch {
+          return {
+            run_id,
+            ok: false,
+            error: 'Failed to read registry entry',
+          };
+        }
+
+        let status = reg.status || 'unknown';
+        if (reg.worktree_path && existsSync(reg.worktree_path)) {
+          const actual = _readWorktreeStatus(reg.worktree_path);
+          if (actual) status = actual;
+        }
+
+        if (status === 'running') {
+          return {
+            run_id,
+            ok: false,
+            error: 'Cannot remove a running worktree',
+            code: 'running',
+          };
+        }
+
+        const isResumable = RESUMABLE_STATUSES.has(status);
+        const isGrouped = !!(reg.fleet_id || reg.workspace_id);
+        if (!force && (isResumable || isGrouped)) {
+          return {
+            run_id,
+            ok: false,
+            error:
+              'Removing this worktree prevents resuming the run. Pass force=true to confirm.',
+            code: 'resumable_or_grouped',
+          };
+        }
+
+        try {
+          await removeWorktree(worcaDir, run_id, { skipPrune: true });
+          if (reg.worktree_path) _diskCache.delete(reg.worktree_path);
+          return { run_id, ok: true };
+        } catch (err) {
+          return { run_id, ok: false, error: err.message };
+        }
+      },
+    }));
+
+    let results;
+    try {
+      results = await runWithConcurrencyLimit(tasks, CLEANUP_CONCURRENCY);
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+
+    try {
+      await pruneWorktrees(worcaDir);
+    } catch {
+      /* non-fatal */
+    }
+
+    const failed_count = results.reduce((n, r) => (r.ok ? n : n + 1), 0);
+    res.json({ ok: failed_count === 0, failed_count, results });
   });
 
   return router;

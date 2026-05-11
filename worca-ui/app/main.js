@@ -1456,21 +1456,40 @@ async function deleteWorktree(runId, force) {
 }
 
 async function confirmWorktreeCleanup(runId, force) {
-  // Bulk path: runId is null, delete every completed worktree.
+  // Bulk path: runId is null, delete every completed worktree via one POST.
   if (runId === null) {
     const completed = (store.getState().worktrees || []).filter(
       (w) => w.status === 'completed',
     );
     closeWorktreeCleanupDialog();
-    const failures = [];
-    for (const wt of completed) {
+    const runIds = completed.map((w) => w.run_id);
+    // Optimistic removal — drop targeted cards from state before response settles
+    // so the UI redraws immediately and the user sees progress.
+    store.setState({
+      worktrees: (store.getState().worktrees || []).filter(
+        (w) => !runIds.includes(w.run_id),
+      ),
+    });
+    const url = projectUrl('/worktrees/cleanup');
+    let data = null;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ run_ids: runIds, force: true }),
+      });
       try {
-        await deleteWorktree(wt.run_id, false);
-      } catch (err) {
-        failures.push(`${wt.title || wt.run_id}: ${err.message}`);
+        data = await res.json();
+      } catch {
+        /* ignore parse errors */
       }
+    } catch {
+      /* network error — fetchWorktrees will reconcile */
     }
     fetchWorktrees();
+    const failures = (data?.results || [])
+      .filter((r) => !r.ok)
+      .map((r) => `${r.run_id}: ${r.error || 'failed'}`);
     if (failures.length > 0) {
       showActionError(
         `Cleanup completed with ${failures.length} failure(s):\n${failures.join('\n')}`,

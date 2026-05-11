@@ -124,7 +124,7 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
         </span>
         <span class="run-card-meta-item">
           <span class="meta-label">Disk:</span>
-          <span class="meta-value">${_formatBytes(wt.disk_bytes)}</span>
+          <span class="meta-value">${wt.truncated ? html`≥ ${_formatBytes(wt.disk_bytes)}` : _formatBytes(wt.disk_bytes)}</span>
         </span>
         <span class="run-card-meta-item">
           <span class="meta-label">Age:</span>
@@ -269,6 +269,8 @@ function _bulkDialogView(
     ),
   ].filter(Boolean);
 
+  const groupedCount = completed.filter((w) => w.group_type).length;
+
   return html`
     <sl-dialog
       label="Cleanup all completed worktrees"
@@ -287,6 +289,11 @@ function _bulkDialogView(
                 ${groupLines.map((line) => html`<li>${line}</li>`)}
               </ul>
             `
+          : nothing
+      }
+      ${
+        groupedCount > 0
+          ? html`<p class="bulk-grouped-caveat">Includes ${groupedCount} grouped — resume will be unavailable.</p>`
           : nothing
       }
       <div slot="footer" class="dialog-actions">

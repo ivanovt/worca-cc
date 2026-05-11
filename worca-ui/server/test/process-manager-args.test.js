@@ -26,6 +26,7 @@ vi.mock('node:child_process', () => ({
     // Simulate a child that stays alive (timeout resolves the promise)
     return fakeChild;
   }),
+  execFile: vi.fn(),
   execFileSync: vi.fn(),
 }));
 
