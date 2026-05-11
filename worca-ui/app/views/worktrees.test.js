@@ -322,6 +322,58 @@ describe('worktreesView - cleanup button disabled when running', () => {
   });
 });
 
+describe('worktreesView - cleanup_state rendering', () => {
+  const cleaningWorktree = {
+    run_id: 'r-cleaning',
+    title: 'Mid-cleanup',
+    branch: 'cleanup',
+    worktree_path: '/p/x',
+    disk_bytes: 1_000_000,
+    age_seconds: 60,
+    started_at: '2026-05-01T00:00:00Z',
+    status: 'completed',
+    cleanup_state: 'cleaning',
+  };
+  const pendingWorktree = {
+    ...cleaningWorktree,
+    run_id: 'r-pending',
+    cleanup_state: 'pending',
+  };
+  const erroredWorktree = {
+    ...cleaningWorktree,
+    run_id: 'r-error',
+    cleanup_state: null,
+    cleanup_error: 'permission denied',
+  };
+
+  it('disables Cleanup button while cleanup_state is set', () => {
+    const output = renderToString(worktreesView([cleaningWorktree]));
+    expect(output).toContain('btn-cleanup-disabled');
+  });
+
+  it('disables Cleanup button while cleanup_state is pending', () => {
+    const output = renderToString(worktreesView([pendingWorktree]));
+    expect(output).toContain('btn-cleanup-disabled');
+  });
+
+  it('shows the worktree-card-cleaning class on the card', () => {
+    const output = renderToString(worktreesView([cleaningWorktree]));
+    expect(output).toContain('worktree-card-cleaning');
+  });
+
+  it('renders cleanup error banner when cleanup_error is set', () => {
+    const output = renderToString(worktreesView([erroredWorktree]));
+    expect(output).toContain('worktree-card-cleanup-error');
+    expect(output).toContain('permission denied');
+  });
+
+  it('does not show cleaning class or disable button when cleanup_state is null', () => {
+    const output = renderToString(worktreesView([completedWorktree]));
+    expect(output).not.toContain('worktree-card-cleaning');
+    expect(output).not.toContain('btn-cleanup-disabled');
+  });
+});
+
 describe('worktreesView - filter input narrows rows', () => {
   it('shows all rows when filter is empty', () => {
     const worktrees = [completedWorktree, runningWorktree, failedWorktree];

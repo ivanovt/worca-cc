@@ -51,18 +51,23 @@ describe('confirmWorktreeCleanup — bulk path structure', () => {
     expect(fnBody).toContain('force: true');
   });
 
-  it('bulk path optimistically removes completed cards from store before response settles', () => {
-    // The optimistic removal must happen synchronously BEFORE the await on fetch.
-    // We check that setState (removing cards) appears before the await fetch call
-    // in the bulk branch of confirmWorktreeCleanup.
+  it('bulk path does NOT optimistically remove cards (server-side cleanup_state drives UX)', () => {
+    // The previous behaviour cleared the local worktrees list before the
+    // POST returned. That caused a UX glitch where a page reload mid-
+    // cleanup showed partial state. The server now stamps `cleanup_state`
+    // per registry entry, so the bulk branch should NOT touch local state
+    // before the POST — the only state-write in the bulk branch should
+    // be the closeWorktreeCleanupDialog call (which sets dialog-only state).
     const bulkBranchStart = fnBody.indexOf('runId === null');
     expect(bulkBranchStart).toBeGreaterThan(-1);
-    const bulkBranch = fnBody.slice(bulkBranchStart);
-    const setStateIdx = bulkBranch.indexOf('setState');
-    const awaitFetchIdx = bulkBranch.indexOf('await fetch');
-    expect(setStateIdx).toBeGreaterThan(-1);
-    expect(awaitFetchIdx).toBeGreaterThan(-1);
-    expect(setStateIdx).toBeLessThan(awaitFetchIdx);
+    const fetchIdx = fnBody.indexOf('await fetch');
+    const bulkBranch = fnBody.slice(bulkBranchStart, fetchIdx);
+    expect(bulkBranch).not.toContain('store.setState');
+    expect(bulkBranch).not.toContain('worktrees: (store.getState');
+  });
+
+  it('bulk path starts cleanup polling after kicking off the POST', () => {
+    expect(fnBody).toContain('startCleanupPolling');
   });
 
   it('bulk path includes run_ids array in the POST body', () => {

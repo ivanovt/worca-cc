@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   unlinkSync,
   writeFileSync,
@@ -163,6 +164,38 @@ describe('GET /api/worktrees', () => {
       // started_at is needed by the client to sort newest-first.
       expect(typeof wt.started_at).toBe('string');
       expect(wt.started_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('GET_surfaces_cleanup_state_and_error: registry cleanup_state and cleanup_error appear on the response entry', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'wt-cleanup-state-'));
+    writeWorktreeStatus(worktreePath, 'completed');
+    writePipelineEntry(tmpDir, 'run-mid-cleanup', {
+      run_id: 'run-mid-cleanup',
+      worktree_path: worktreePath,
+      cleanup_state: 'cleaning',
+    });
+    writePipelineEntry(tmpDir, 'run-failed-cleanup', {
+      run_id: 'run-failed-cleanup',
+      worktree_path: '/nonexistent/failed',
+      cleanup_error: 'disk on fire',
+    });
+
+    try {
+      const res = await fetch(`${base}/api/worktrees`);
+      const data = await res.json();
+
+      const mid = data.worktrees.find((w) => w.run_id === 'run-mid-cleanup');
+      expect(mid.cleanup_state).toBe('cleaning');
+      expect(mid.cleanup_error).toBeNull();
+
+      const failed = data.worktrees.find(
+        (w) => w.run_id === 'run-failed-cleanup',
+      );
+      expect(failed.cleanup_state).toBeNull();
+      expect(failed.cleanup_error).toBe('disk on fire');
     } finally {
       rmSync(worktreePath, { recursive: true, force: true });
     }
@@ -428,6 +461,34 @@ describe('POST /api/worktrees/cleanup', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  // Wait until no registry file for the given run_ids has a `cleanup_state` set
+  // — either the file is gone (success) or the field has been cleared after a
+  // recorded failure. Polls every 5 ms up to `timeoutMs`.
+  async function waitForCleanupToSettle(worcaDir, runIds, timeoutMs = 2000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      let pending = false;
+      for (const id of runIds) {
+        const f = join(worcaDir, 'multi', 'pipelines.d', `${id}.json`);
+        if (!existsSync(f)) continue;
+        try {
+          const reg = JSON.parse(readFileSync(f, 'utf8'));
+          if (reg.cleanup_state) {
+            pending = true;
+            break;
+          }
+        } catch {
+          /* unreadable mid-write — treat as pending */
+          pending = true;
+          break;
+        }
+      }
+      if (!pending) return;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error('cleanup did not settle within timeout');
+  }
+
   it('POST_cleanup_parallelises_prune_once: runs ≤4 concurrent removes and prunes exactly once', async () => {
     for (let i = 1; i <= 6; i++) {
       writePipelineEntry(tmpDir, `run-bulk-${i}`, {
@@ -440,40 +501,46 @@ describe('POST /api/worktrees/cleanup', () => {
     let concurrent = 0;
     let maxConcurrent = 0;
 
-    mockRemoveWorktree.mockImplementation(async () => {
+    mockRemoveWorktree.mockImplementation(async (worcaDir, runId) => {
       concurrent++;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
       await new Promise((r) => setTimeout(r, 20));
       concurrent--;
+      // Match real removeWorktree: delete the registry entry on success
+      try {
+        unlinkSync(join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`));
+      } catch {
+        /* ignore */
+      }
     });
 
+    const runIds = [
+      'run-bulk-1',
+      'run-bulk-2',
+      'run-bulk-3',
+      'run-bulk-4',
+      'run-bulk-5',
+      'run-bulk-6',
+    ];
     const res = await fetch(`${base}/api/worktrees/cleanup`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        run_ids: [
-          'run-bulk-1',
-          'run-bulk-2',
-          'run-bulk-3',
-          'run-bulk-4',
-          'run-bulk-5',
-          'run-bulk-6',
-        ],
-      }),
+      body: JSON.stringify({ run_ids: runIds }),
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const data = await res.json();
     expect(data.ok).toBe(true);
-    expect(data.failed_count).toBe(0);
-    expect(data.results).toHaveLength(6);
-    expect(data.results.every((r) => r.ok)).toBe(true);
+    expect(data.accepted).toHaveLength(6);
+    expect(data.rejected).toHaveLength(0);
+
+    await waitForCleanupToSettle(tmpDir, runIds);
     expect(maxConcurrent).toBeGreaterThan(1);
     expect(maxConcurrent).toBeLessThanOrEqual(4);
     expect(mockPruneWorktrees).toHaveBeenCalledTimes(1);
   });
 
-  it('POST_cleanup_per_id_success_failure: returns per-id error for missing/running, ok for completed', async () => {
+  it('POST_cleanup_per_id_success_failure: rejects missing/running synchronously, processes completed in background', async () => {
     const worktreeRunning = mkdtempSync(join(tmpdir(), 'wt-cleanup-running-'));
     writeWorktreeStatus(worktreeRunning, 'running');
     writePipelineEntry(tmpDir, 'run-running-c', {
@@ -495,22 +562,26 @@ describe('POST /api/worktrees/cleanup', () => {
         }),
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(202);
       const data = await res.json();
-      expect(data.results).toHaveLength(3);
       expect(data.ok).toBe(false);
-      expect(data.failed_count).toBe(2);
+      expect(data.accepted).toEqual(['run-ok-c']);
+      expect(data.rejected).toHaveLength(2);
 
-      const missing = data.results.find((r) => r.run_id === 'run-missing-c');
+      const missing = data.rejected.find((r) => r.run_id === 'run-missing-c');
       expect(missing.ok).toBe(false);
       expect(missing.error).toMatch(/not found/i);
 
-      const running = data.results.find((r) => r.run_id === 'run-running-c');
+      const running = data.rejected.find((r) => r.run_id === 'run-running-c');
       expect(running.ok).toBe(false);
       expect(running.code).toBe('running');
 
-      const ok = data.results.find((r) => r.run_id === 'run-ok-c');
-      expect(ok.ok).toBe(true);
+      // The accepted entry is processed in the background — the registry
+      // entry should be gone once that finishes.
+      await waitForCleanupToSettle(tmpDir, ['run-ok-c']);
+      expect(
+        existsSync(join(tmpDir, 'multi', 'pipelines.d', 'run-ok-c.json')),
+      ).toBe(false);
     } finally {
       rmSync(worktreeRunning, { recursive: true, force: true });
     }
@@ -537,15 +608,54 @@ describe('POST /api/worktrees/cleanup', () => {
         body: JSON.stringify({ run_ids: ['run-fleet-c'], force: true }),
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(202);
       const data = await res.json();
       expect(data.ok).toBe(true);
-      expect(data.results[0].run_id).toBe('run-fleet-c');
-      expect(data.results[0].ok).toBe(true);
+      expect(data.accepted).toEqual(['run-fleet-c']);
+      await waitForCleanupToSettle(tmpDir, ['run-fleet-c']);
       expect(existsSync(regFile)).toBe(false);
     } finally {
       rmSync(worktreePath, { recursive: true, force: true });
     }
+  });
+
+  it('POST_cleanup_stamps_pending_and_persists_error: pending visible mid-cleanup, error visible on failure', async () => {
+    writePipelineEntry(tmpDir, 'run-fail-c', {
+      run_id: 'run-fail-c',
+      worktree_path: '/nonexistent/fail',
+      status: 'completed',
+    });
+
+    let pendingObservedDuringRemoval = false;
+    mockRemoveWorktree.mockImplementation(async () => {
+      const reg = JSON.parse(
+        readFileSync(
+          join(tmpDir, 'multi', 'pipelines.d', 'run-fail-c.json'),
+          'utf8',
+        ),
+      );
+      pendingObservedDuringRemoval =
+        reg.cleanup_state === 'pending' || reg.cleanup_state === 'cleaning';
+      throw new Error('disk on fire');
+    });
+
+    const res = await fetch(`${base}/api/worktrees/cleanup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ run_ids: ['run-fail-c'] }),
+    });
+    expect(res.status).toBe(202);
+    await waitForCleanupToSettle(tmpDir, ['run-fail-c']);
+
+    expect(pendingObservedDuringRemoval).toBe(true);
+    const reg = JSON.parse(
+      readFileSync(
+        join(tmpDir, 'multi', 'pipelines.d', 'run-fail-c.json'),
+        'utf8',
+      ),
+    );
+    expect(reg.cleanup_state).toBeUndefined();
+    expect(reg.cleanup_error).toMatch(/disk on fire/);
   });
 
   it('DELETE_cache_evicted_on_delete: stale disk cache is cleared after single DELETE', async () => {

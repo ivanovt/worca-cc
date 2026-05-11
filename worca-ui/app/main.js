@@ -847,7 +847,7 @@ function fetchWorktrees() {
       : [];
 
   if (targets.length === 0) {
-    store.setState({ worktrees: [] });
+    store.setState({ worktrees: [], worktreesLoaded: true });
     return;
   }
 
@@ -861,7 +861,10 @@ function fetchWorktrees() {
   );
 
   Promise.all(requests).then((lists) => {
-    store.setState({ worktrees: lists.flat() });
+    store.setState({ worktrees: lists.flat(), worktreesLoaded: true });
+    // Reload during cleanup or a freshly-stamped pending — keep polling
+    // until the server confirms everything has settled.
+    if (anyCleanupInFlight()) startCleanupPolling();
   });
 }
 
@@ -949,6 +952,7 @@ function handleProjectSwitch(newProjectId) {
     activeRunId: null,
     runsLoaded: false,
     worktrees: [],
+    worktreesLoaded: false,
   });
   worktreesFilter = '';
   worktreesDialogItem = null;
@@ -1416,6 +1420,36 @@ const { archiveRun, unarchiveRun } = createArchiveActions({
   rerender,
 });
 
+// --- Worktrees: cleanup polling ---
+//
+// While any worktree carries cleanup_state ('pending' or 'cleaning'), poll
+// GET /worktrees every 2s so the spinner cards reflect server-side progress
+// across reloads and multiple tabs. Stops when no worktree is mid-cleanup.
+
+let _cleanupPollTimer = null;
+const CLEANUP_POLL_MS = 2000;
+
+function anyCleanupInFlight() {
+  return (store.getState().worktrees || []).some(
+    (w) => w.cleanup_state === 'pending' || w.cleanup_state === 'cleaning',
+  );
+}
+
+function startCleanupPolling() {
+  if (_cleanupPollTimer) return;
+  const tick = () => {
+    _cleanupPollTimer = null;
+    fetchWorktrees();
+    // fetchWorktrees mutates state asynchronously; re-check on next tick.
+    setTimeout(() => {
+      if (anyCleanupInFlight()) {
+        _cleanupPollTimer = setTimeout(tick, CLEANUP_POLL_MS);
+      }
+    }, 50);
+  };
+  _cleanupPollTimer = setTimeout(tick, CLEANUP_POLL_MS);
+}
+
 // --- Worktrees: cleanup actions ---
 
 function openWorktreeCleanupDialog(wt) {
@@ -1457,19 +1491,16 @@ async function deleteWorktree(runId, force) {
 
 async function confirmWorktreeCleanup(runId, force) {
   // Bulk path: runId is null, delete every completed worktree via one POST.
+  // No optimistic removal — the server stamps `cleanup_state: 'pending'` on
+  // each registry entry; we surface that via a spinner per card and poll
+  // GET /worktrees until everything settles. A page reload during cleanup
+  // sees the same intermediate state.
   if (runId === null) {
     const completed = (store.getState().worktrees || []).filter(
       (w) => w.status === 'completed',
     );
     closeWorktreeCleanupDialog();
     const runIds = completed.map((w) => w.run_id);
-    // Optimistic removal — drop targeted cards from state before response settles
-    // so the UI redraws immediately and the user sees progress.
-    store.setState({
-      worktrees: (store.getState().worktrees || []).filter(
-        (w) => !runIds.includes(w.run_id),
-      ),
-    });
     const url = projectUrl('/worktrees/cleanup');
     let data = null;
     try {
@@ -1484,21 +1515,23 @@ async function confirmWorktreeCleanup(runId, force) {
         /* ignore parse errors */
       }
     } catch {
-      /* network error — fetchWorktrees will reconcile */
+      /* network error — startCleanupPolling will reconcile on next tick */
     }
     fetchWorktrees();
-    const failures = (data?.results || [])
-      .filter((r) => !r.ok)
-      .map((r) => `${r.run_id}: ${r.error || 'failed'}`);
-    if (failures.length > 0) {
+    startCleanupPolling();
+    const rejected = data?.rejected || [];
+    if (rejected.length > 0) {
       showActionError(
-        `Cleanup completed with ${failures.length} failure(s):\n${failures.join('\n')}`,
+        `Cleanup rejected ${rejected.length} item(s):\n${rejected
+          .map((r) => `${r.run_id}: ${r.error || 'failed'}`)
+          .join('\n')}`,
       );
     }
     return;
   }
 
-  // Single-row path
+  // Single-row path — server-side single-target DELETE is still synchronous,
+  // so this path doesn't go through cleanup_state; just refresh.
   closeWorktreeCleanupDialog();
   try {
     await deleteWorktree(runId, !!force);

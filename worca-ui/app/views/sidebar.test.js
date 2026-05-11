@@ -42,13 +42,15 @@ const route = { section: 'active' };
 const defaultOpts = () => ({ onNavigate: vi.fn() });
 
 describe('sidebar - Worktrees nav entry visibility', () => {
-  it('hides Worktrees entry when worktrees is empty', async () => {
+  it('shows Worktrees entry with no badge when loaded and empty', async () => {
     const { sidebarView } = await import('./sidebar.js');
-    const state = makeState({ worktrees: [] });
+    const state = makeState({ worktrees: [], worktreesLoaded: true });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).not.toContain('>Worktrees<');
+    expect(output).toContain('>Worktrees<');
+    expect(output).not.toContain('worktrees-count-badge');
+    expect(output).not.toContain('sidebar-worktrees-loading');
   });
 
   it('shows Worktrees entry when worktrees array is non-empty', async () => {
@@ -57,6 +59,7 @@ describe('sidebar - Worktrees nav entry visibility', () => {
       worktrees: [
         { run_id: 'r1', disk_bytes: 100_000_000, status: 'completed' },
       ],
+      worktreesLoaded: true,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -71,6 +74,7 @@ describe('sidebar - Worktrees nav entry visibility', () => {
         { run_id: 'r1', disk_bytes: 100_000_000, status: 'completed' },
         { run_id: 'r2', disk_bytes: 200_000_000, status: 'running' },
       ],
+      worktreesLoaded: true,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -83,12 +87,55 @@ describe('sidebar - Worktrees nav entry visibility', () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       worktrees: [{ run_id: 'r1', disk_bytes: 100_000_000, status: 'running' }],
+      worktreesLoaded: true,
     });
     const activeRoute = { section: 'worktrees' };
     const output = renderToString(
       sidebarView(state, activeRoute, 'open', defaultOpts()),
     );
     expect(output).toContain('sidebar-item active');
+  });
+});
+
+describe('sidebar - loading spinners', () => {
+  it('shows spinner for Running/History when runs not yet loaded', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      runsLoaded: false,
+      worktreesLoaded: true,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-running-loading');
+    expect(output).toContain('sidebar-history-loading');
+    expect(output).not.toContain('sidebar-worktrees-loading');
+  });
+
+  it('shows spinner for Worktrees when worktrees not yet loaded', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      runsLoaded: true,
+      worktreesLoaded: false,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).not.toContain('sidebar-running-loading');
+    expect(output).not.toContain('sidebar-history-loading');
+    expect(output).toContain('sidebar-worktrees-loading');
+  });
+
+  it('shows no spinners once everything is loaded', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      runsLoaded: true,
+      worktreesLoaded: true,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).not.toContain('sidebar-loading');
   });
 });
 
@@ -100,6 +147,7 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
       worktrees: [
         { run_id: 'r1', disk_bytes: 1_000_000_000, status: 'completed' },
       ],
+      worktreesLoaded: true,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -117,6 +165,7 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
         { run_id: 'r1', disk_bytes: 1_500_000_000, status: 'completed' },
         { run_id: 'r2', disk_bytes: 700_000_000, status: 'running' },
       ],
+      worktreesLoaded: true,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -132,6 +181,7 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
         { run_id: 'r1', disk_bytes: 500_000_000, status: 'completed' },
       ],
       worktreeDiskWarningBytes: 400_000_000,
+      worktreesLoaded: true,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -147,6 +197,7 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
         { run_id: 'r1', disk_bytes: 300_000_000, status: 'completed' },
       ],
       worktreeDiskWarningBytes: 400_000_000,
+      worktreesLoaded: true,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
