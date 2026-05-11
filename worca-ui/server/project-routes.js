@@ -27,6 +27,7 @@ import { dispatchExternal } from './dispatch-external.js';
 import { ensureWebhookForUi } from './ensure-webhook.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
+import { createModelEnvRouter } from './model-env-routes.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import { countRunningPipelinesAcrossProjects } from './process-registry.js';
@@ -39,7 +40,6 @@ import {
   validateProjectEntry,
   writeProject,
 } from './project-registry.js';
-import { createSecretsRouter } from './secrets-routes.js';
 import {
   deepMerge,
   localPathFor,
@@ -431,8 +431,8 @@ export function createProjectScopedRoutes({
     res.json({ ok: true, files });
   });
 
-  // --- Secrets endpoints (settings.local.json) ---
-  router.use('/settings/secrets', createSecretsRouter());
+  // --- Model env endpoints (writes wholesale to settings.local.json) ---
+  router.use('/settings/model-env', createModelEnvRouter());
 
   // --- Project-scoped settings endpoints ---
 
