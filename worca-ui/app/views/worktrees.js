@@ -55,6 +55,10 @@ function _diskSummaryView(worktrees, diskWarningBytes = 2_000_000_000) {
   const resumableBytes = resumable.reduce((s, w) => s + (w.disk_bytes || 0), 0);
   const over2gb = total > diskWarningBytes;
 
+  // Documents the server-side WALK_SKIP_DIRS exclusion so users aren't
+  // surprised when `du -sh` reports a larger number.
+  const caveat = html`<div class="worktrees-disk-caveat">Excludes node_modules, .git, and build/cache dirs</div>`;
+
   // Warning banner only when over the threshold; otherwise a quiet meta line.
   if (over2gb) {
     return html`
@@ -68,6 +72,7 @@ function _diskSummaryView(worktrees, diskWarningBytes = 2_000_000_000) {
             : nothing
         }).
       </sl-alert>
+      ${caveat}
     `;
   }
 
@@ -88,6 +93,7 @@ function _diskSummaryView(worktrees, diskWarningBytes = 2_000_000_000) {
           : nothing
       }
     </div>
+    ${caveat}
   `;
 }
 

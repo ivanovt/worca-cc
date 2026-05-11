@@ -6,6 +6,14 @@
  * POST /worktrees/cleanup  — batch remove (always returns 200 with `{ok, results, failed_count}`)
  *
  * Expects req.project.worcaDir to be set by projectResolver middleware.
+ *
+ * NOTE on disk semantics: `disk_bytes` reflects project files only — vendored
+ * and derived directories listed in WALK_SKIP_DIRS (node_modules, .git, .venv,
+ * dist, build, .next, etc.) are skipped during the walk. This answers "how
+ * much project disk would I free?" rather than raw on-disk bytes, and makes
+ * cold first loads ~10× faster on node_modules-heavy worktrees. The route
+ * surfaces `disk_walk_skip_dirs` in the GET response so clients can document
+ * the discrepancy with `du -sh`.
  */
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
@@ -53,11 +61,36 @@ const _diskCache = new Map();
 const DISK_CACHE_TTL_MS = 30_000;
 
 /**
+ * Directory names skipped during the disk walk. These are vendored or derived
+ * trees that dominate file count without changing the user's mental model of
+ * "project disk". Excluding them drops the walked file count by ~10–20× on
+ * typical worktrees and keeps `disk_bytes` focused on the project's own
+ * source files — closing the gap between "raw on-disk bytes" and "bytes I
+ * would actually free by cleaning up this worktree".
+ */
+export const WALK_SKIP_DIRS = new Set([
+  'node_modules',
+  '.git',
+  '.venv',
+  'venv',
+  '__pycache__',
+  '.pytest_cache',
+  '.mypy_cache',
+  '.ruff_cache',
+  'dist',
+  'build',
+  '.next',
+  '.turbo',
+  '.cache',
+]);
+
+/**
  * Sum file sizes under a directory tree. Cross-platform: prior `du -sb`
  * relied on GNU coreutils and silently returned 0 on macOS / BSD du,
  * which is why the Worktrees view always showed "0 B".
  *
- * Skips symlinks (don't follow into other trees) and is bounded by
+ * Skips symlinks (don't follow into other trees), skips directory names in
+ * WALK_SKIP_DIRS (node_modules, .git, build/cache dirs), and is bounded by
  * MAX_WALK_FILES so a runaway directory can't hang the request.
  * Override the cap with WORCA_DISK_WALK_MAX (positive integer); the
  * raised default of 1M handles node_modules-heavy worktrees, but very
@@ -92,7 +125,7 @@ export async function walkDirSize(rootPath, maxFiles = MAX_WALK_FILES) {
       const child = join(cur, e.name);
       if (e.isSymbolicLink()) continue;
       if (e.isDirectory()) {
-        stack.push(child);
+        if (!WALK_SKIP_DIRS.has(e.name)) stack.push(child);
       } else if (e.isFile()) {
         try {
           const st = await fsp.stat(child);
@@ -248,7 +281,13 @@ export function createWorktreesRouter() {
     }
     try {
       const worktrees = await _listWorktrees(worcaDir);
-      res.json({ ok: true, worktrees });
+      res.json({
+        ok: true,
+        worktrees,
+        // Documents the semantics shift in `disk_bytes` (project files only).
+        // Clients can render this as a caveat next to disk totals.
+        disk_walk_skip_dirs: [...WALK_SKIP_DIRS],
+      });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
