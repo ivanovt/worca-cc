@@ -196,7 +196,10 @@ async function _listWorktrees(worcaDir) {
   const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
   if (!existsSync(pipelinesDir)) return [];
 
-  const entries = [];
+  // Phase 1: cheap synchronous metadata (registry parse, status read).
+  // Phase 2: disk walks in parallel — without this, 13 worktrees serialize
+  // ~3s of awaits even when most results would have been disk-cache hits.
+  const metas = [];
   for (const file of readdirSync(pipelinesDir)) {
     if (!file.endsWith('.json')) continue;
 
@@ -211,7 +214,6 @@ async function _listWorktrees(worcaDir) {
     const worktreePath = reg.worktree_path;
     const worktreeExists = existsSync(worktreePath);
 
-    // Prefer actual status.json; fall back to registry field
     let status = reg.status || 'unknown';
     if (worktreeExists) {
       const actual = _readWorktreeStatus(worktreePath);
@@ -226,32 +228,34 @@ async function _listWorktrees(worcaDir) {
       }
     }
 
-    let diskInfo = { bytes: 0, truncated: false };
-    if (worktreeExists) {
-      diskInfo = await _getDiskBytes(worktreePath);
-    }
-
-    entries.push({
-      run_id: reg.run_id || '',
-      title: reg.title || '',
-      branch: reg.branch || '',
-      worktree_path: worktreePath,
-      disk_bytes: diskInfo.bytes,
-      truncated: diskInfo.truncated,
-      age_seconds: ageSeconds,
-      // started_at lets the client sort with the same sortByStartDesc helper
-      // used by run-list, keeping ordering consistent across views.
-      started_at: reg.started_at || null,
-      status,
-      removable: status !== 'running',
-      fleet_id: reg.fleet_id || null,
-      workspace_id: reg.workspace_id || null,
-      group_type: reg.group_type || null,
-      group_status: null, // populated by W-040 / W-047
-      resumable: RESUMABLE_STATUSES.has(status),
-    });
+    metas.push({ reg, worktreePath, worktreeExists, status, ageSeconds });
   }
-  return entries;
+
+  const disks = await Promise.all(
+    metas.map((m) =>
+      m.worktreeExists
+        ? _getDiskBytes(m.worktreePath)
+        : Promise.resolve({ bytes: 0, truncated: false }),
+    ),
+  );
+
+  return metas.map((m, i) => ({
+    run_id: m.reg.run_id || '',
+    title: m.reg.title || '',
+    branch: m.reg.branch || '',
+    worktree_path: m.worktreePath,
+    disk_bytes: disks[i].bytes,
+    truncated: disks[i].truncated,
+    age_seconds: m.ageSeconds,
+    started_at: m.reg.started_at || null,
+    status: m.status,
+    removable: m.status !== 'running',
+    fleet_id: m.reg.fleet_id || null,
+    workspace_id: m.reg.workspace_id || null,
+    group_type: m.reg.group_type || null,
+    group_status: null,
+    resumable: RESUMABLE_STATUSES.has(m.status),
+  }));
 }
 
 const RUN_ID_RE = /^[a-zA-Z0-9_-]+$/;

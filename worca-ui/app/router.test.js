@@ -36,6 +36,14 @@ describe('router', () => {
     });
   });
 
+  it('parseHash defaults section to active for bare #/project/<id>', () => {
+    expect(parseHash('#/project/my-proj')).toEqual({
+      section: 'active',
+      runId: null,
+      projectId: 'my-proj',
+    });
+  });
+
   it('parseHash extracts projectId, section, and runId', () => {
     expect(parseHash('#/project/proj-a/active/run-1')).toEqual({
       section: 'active',
