@@ -4,7 +4,7 @@
 **Priority:** P3
 **Area:** cc + ui
 **Date:** 2026-04-26
-**Depends on:** W-048 / #82 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `active_run` removal), W-040 / #101 (fleet runs — cross-repository fan-out, `fleet_id` grouping, manifest, circuit breaker, `--resume`, guide injection)
+**Depends on:** W-040 / #101 (fleet runs — cross-repository fan-out, `fleet_id` grouping, manifest, circuit breaker, `--resume`, guide injection) — **open, remaining blocker**. Builds on W-048 / #82 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `register_pipeline()` mutual exclusion of `fleet_id`/`workspace_id`, `target_branch`, `group_type`) — **shipped**.
 
 ## Problem
 
