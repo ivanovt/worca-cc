@@ -99,7 +99,21 @@ class TestReservedConstants:
         assert isinstance(RESERVED_ENV_KEYS, frozenset)
 
     def test_reserved_keys_match_shared_json_file(self):
+        # Guard against drift: env.py and worca-ui/server/reserved-env-keys.json
+        # must list the same denied keys/prefixes. Any divergence is a bug
+        # because the JS server enforces from JSON while the Python runtime
+        # enforces from the frozenset.
         json_path = Path(__file__).resolve().parent.parent / "worca-ui" / "server" / "reserved-env-keys.json"
         data = json.loads(json_path.read_text())
-        assert RESERVED_ENV_KEYS == set(data["keys"])
-        assert RESERVED_PREFIXES == tuple(data["prefixes"])
+        json_keys = set(data["keys"])
+        only_in_python = RESERVED_ENV_KEYS - json_keys
+        only_in_json = json_keys - RESERVED_ENV_KEYS
+        assert not only_in_python and not only_in_json, (
+            f"reserved-env-keys.json out of sync with RESERVED_ENV_KEYS: "
+            f"only in Python={sorted(only_in_python)}, "
+            f"only in JSON={sorted(only_in_json)}"
+        )
+        assert RESERVED_PREFIXES == tuple(data["prefixes"]), (
+            f"prefixes out of sync: Python={RESERVED_PREFIXES} "
+            f"vs JSON={tuple(data['prefixes'])}"
+        )

@@ -77,30 +77,59 @@ export function createModelEnvRouter({ settingsPath: staticPath } = {}) {
         .json({ ok: false, error: 'settingsPath not configured' });
     }
 
+    // Storage split (deliberate after the W-051 simplification):
+    //   settings.json       — public model entry: string id or { id }, NEVER env
+    //   settings.local.json — { env } only, NEVER id
+    //
+    // Writing env to local while leaving env behind in settings.json would
+    // let deep-merge resurrect deleted keys (a key removed in the UI but
+    // still present in settings.json would reappear on next load). So PUT
+    // actively strips env from the settings.json entry whenever it writes
+    // env to local, and conversely never lets id leak into local.
     const localPath = localPathFor(settingsPath);
     const local = readJsonOr(localPath, {});
     if (!local.worca) local.worca = {};
     if (!local.worca.models) local.worca.models = {};
 
-    const entry = local.worca.models[model];
-    const nextEntry =
-      entry && typeof entry === 'object' && !Array.isArray(entry)
-        ? { ...entry }
-        : {};
-
-    if (id != null) nextEntry.id = id;
-    nextEntry.env = { ...envIn };
-
-    // Drop empty entries — if the model has no id and no env vars in local,
-    // remove it entirely so the JSON stays minimal.
-    if (!nextEntry.id && Object.keys(nextEntry.env).length === 0) {
+    if (Object.keys(envIn).length === 0) {
       delete local.worca.models[model];
     } else {
-      local.worca.models[model] = nextEntry;
+      local.worca.models[model] = { env: { ...envIn } };
+    }
+    atomicWriteSync(localPath, `${JSON.stringify(local, null, 2)}\n`);
+
+    // settings.json: keep/update id, drop env entirely. If the model
+    // doesn't exist there and no id was supplied, skip the file. If id is
+    // explicitly an empty string, treat it as "no id" and drop the entry.
+    const base = readJsonOr(settingsPath, {});
+    if (!base.worca) base.worca = {};
+    if (!base.worca.models) base.worca.models = {};
+
+    const baseEntry = base.worca.models[model];
+    let resolvedId = id;
+    if (resolvedId == null) {
+      if (typeof baseEntry === 'string') resolvedId = baseEntry;
+      else if (baseEntry && typeof baseEntry === 'object')
+        resolvedId = baseEntry.id;
     }
 
-    atomicWriteSync(localPath, `${JSON.stringify(local, null, 2)}\n`);
-    res.json({ ok: true, model, env: nextEntry.env });
+    let baseChanged = false;
+    if (resolvedId) {
+      // Prefer string form when there's no other metadata — keeps JSON minimal.
+      const nextBaseEntry = resolvedId;
+      if (JSON.stringify(baseEntry) !== JSON.stringify(nextBaseEntry)) {
+        base.worca.models[model] = nextBaseEntry;
+        baseChanged = true;
+      }
+    } else if (baseEntry !== undefined) {
+      delete base.worca.models[model];
+      baseChanged = true;
+    }
+    if (baseChanged) {
+      atomicWriteSync(settingsPath, `${JSON.stringify(base, null, 2)}\n`);
+    }
+
+    res.json({ ok: true, model, id: resolvedId || null, env: { ...envIn } });
   });
 
   router.delete('/', (req, res) => {

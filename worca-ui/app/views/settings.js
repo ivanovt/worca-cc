@@ -1481,14 +1481,14 @@ function preferencesTab(
 //   Map<name, { id: string, env: Array<{ k: string, v: string, _id: string }>,
 //               dirty: boolean }>
 //
-const _modelsEditState = new Map();
+export const _modelsEditState = new Map();
 
 const RESERVED_KEYS = new Set(reservedEnvKeysData.keys || []);
 const RESERVED_PREFIXES = reservedEnvKeysData.prefixes || [];
 
 const BUILTIN_MODEL_NAMES = new Set(['opus', 'sonnet', 'haiku']);
 
-function _envKeyValidationError(rawKey) {
+export function _envKeyValidationError(rawKey) {
   const k = String(rawKey || '').trim();
   if (!k) return null; // empty draft row — ignored on save, not flagged
   if (RESERVED_KEYS.has(k)) return `Reserved key: ${k}`;
@@ -1498,7 +1498,7 @@ function _envKeyValidationError(rawKey) {
   return null;
 }
 
-function _normalizeModelEntry(val) {
+export function _normalizeModelEntry(val) {
   if (typeof val === 'string') return { id: val, env: {} };
   if (val && typeof val === 'object') {
     return { id: val.id || '', env: val.env || {} };
@@ -1510,7 +1510,7 @@ function _envRowId(name, key, idx) {
   return `${name}-${key || 'new'}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function _getOrInitModelState(name, serverEntry) {
+export function _getOrInitModelState(name, serverEntry) {
   // Re-sync from server every render when the buffer is clean. Without this,
   // the buffer captures whatever state the server had on first render — if
   // settings were still loading, the buffer is stuck with empty values for
@@ -1630,7 +1630,7 @@ async function _saveModelEnv(name, rerender) {
   }
 }
 
-function _nextDuplicateName(sourceName, existingNames) {
+export function _nextDuplicateName(sourceName, existingNames) {
   // Strip a trailing -NN[N] suffix so duplicating "glm-ds-01" yields
   // "glm-ds-02" rather than "glm-ds-01-01".
   const stripped = sourceName.replace(/-\d{2,3}$/, '');
@@ -1696,6 +1696,13 @@ async function _duplicateModel(name, modelsConfig, rerender) {
 }
 
 function _promptDeleteModel(name, modelsConfig, rerender) {
+  // After the W-051 storage split, any model with an id lives (at least
+  // partially) in committed settings.json — deleting it means a write to
+  // a tracked file.  Surface that explicitly instead of burying it in a
+  // generic bullet list.
+  const normalized = _normalizeModelEntry(modelsConfig[name]);
+  const touchesCommittedFile = Boolean(normalized.id);
+
   showConfirm(
     {
       label: `Delete model "${name}"?`,
@@ -1704,8 +1711,11 @@ function _promptDeleteModel(name, modelsConfig, rerender) {
         <ul style="margin: 0.5rem 0; padding-left: 1.2rem; line-height: 1.5">
           <li>
             Remove the model entry from
-            <code>.claude/settings.json</code> (committed) and
-            <code>.claude/settings.local.json</code> (gitignored).
+            <code>.claude/settings.local.json</code> (gitignored)${
+              touchesCommittedFile
+                ? html` and <code>.claude/settings.json</code> (committed)`
+                : ''
+            }.
           </li>
           <li>
             Discard the Model ID and all environment variables configured
@@ -1718,6 +1728,20 @@ function _promptDeleteModel(name, modelsConfig, rerender) {
             doesn't recognize the name.
           </li>
         </ul>
+        ${
+          touchesCommittedFile
+            ? html`<p class="confirm-warning">
+                <span aria-hidden="true">⚠</span>
+                <span>
+                  This <strong>modifies your committed
+                  <code>.claude/settings.json</code></strong> on disk —
+                  <code>${name}</code> will be removed without going through
+                  git staging. Review with <code>git diff</code> before
+                  committing.
+                </span>
+              </p>`
+            : ''
+        }
         <p class="confirm-warning">
           <span aria-hidden="true">⚠</span>
           <span>
