@@ -1,3 +1,3 @@
 """worca-cc: Autonomous software development pipeline with governance enforcement."""
 
-__version__ = "0.26.0"
+__version__ = "0.27.0"
