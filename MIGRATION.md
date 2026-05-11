@@ -346,6 +346,12 @@ Additive features only — no breaking changes. The one required user action is 
 
 **No automatic migration steps required** — `worca init --upgrade` handles the new skill placement and continues to be idempotent. All settings.json changes are additive.
 
+### 0.24.x → 0.25.0
+
+W-051: Configurable model profiles with per-model environment variables.
+
+- **`worca.models` entries now accept an object form** `{ "id": "model-id", "env": { "KEY": "value" } }` in addition to the existing plain string. Env vars are injected into the subprocess environment when the corresponding agent stage runs. Secrets belong in `settings.local.json` (gitignored). No migration required — purely additive; existing string-form configs continue to work unchanged.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

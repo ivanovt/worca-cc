@@ -18,6 +18,7 @@ import CircleSlash from 'lucide/dist/esm/icons/circle-slash';
 import ClipboardCopy from 'lucide/dist/esm/icons/clipboard-copy';
 import Clock from 'lucide/dist/esm/icons/clock';
 import Coins from 'lucide/dist/esm/icons/coins';
+import Copy from 'lucide/dist/esm/icons/copy';
 import Cpu from 'lucide/dist/esm/icons/cpu';
 import Database from 'lucide/dist/esm/icons/database';
 import ExternalLink from 'lucide/dist/esm/icons/external-link';
@@ -112,6 +113,7 @@ export {
   Star,
   FileText,
   ClipboardCopy,
+  Copy,
   Coins,
   Bell,
   Plus,

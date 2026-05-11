@@ -25,6 +25,7 @@
     "bin/worca-ui.js",
     "server/**/*.js",
     "server/schemas/keys.json",
+    "server/reserved-env-keys.json",
     "!server/**/*.test.js",
     "!server/test/**",
     "!server/**/test/**",

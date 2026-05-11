@@ -72,10 +72,49 @@ Tests import from the package directly (`from worca.xxx import yyy`), so they us
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
 - `worca.stages` — enable/disable stages, override agents
 - `worca.agents` — model and max_turns per agent
-- `worca.models` — shorthand→full model ID mapping
+- `worca.models` — shorthand→full model ID mapping (supports per-model env vars)
 - `worca.loops` — max iterations for test/review/planning retry loops
 - `worca.circuit_breaker` — error classification and halt thresholds
 - `worca.governance` — hook guards and dispatch rules
+
+### Model Profiles (`worca.models`)
+
+Each entry in `worca.models` is either a plain string (model ID) or an object with `id` and optional `env`:
+
+```jsonc
+"worca": {
+  "models": {
+    "opus":   "claude-opus-4-6",              // string form — no env vars
+    "sonnet": "claude-sonnet-4-6",
+    "alt-fast": {                             // object form — per-model env vars
+      "id": "some-fast-model-id",
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://api.example.com/v1",
+        "API_TIMEOUT_MS": "3000000"
+      }
+    }
+  }
+}
+```
+
+When a stage runs using a model that has an `env` map, those variables are merged into the subprocess environment. This allows routing individual agents through alternative endpoints or tuning per-stage settings like `CLAUDE_CODE_MAX_OUTPUT_TOKENS`.
+
+**Secrets** belong in `settings.local.json` (gitignored, deep-merged over `settings.json` by `load_settings()`). The UI Secrets panel writes exclusively to this file:
+
+```jsonc
+// settings.local.json
+"worca": {
+  "models": {
+    "alt-fast": { "env": { "ANTHROPIC_AUTH_TOKEN": "sk-..." } }
+  }
+}
+```
+
+**Reserved keys:** env vars matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped (with a stderr warning) to prevent misconfiguration from breaking pipeline internals. The denylist is shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
+
+**Worktree materialization:** when a pipeline runs in a worktree, secrets from the parent's `settings.local.json` are materialized into the worktree's `settings.json` (which is gitignored). This is the same on-disk plaintext exposure model as `~/.aws/credentials`.
+
+**`work_request.py` haiku coupling:** the `extract_work_request` helper resolves its hardcoded `--model haiku` through the same `resolve_model()` path as agent stages. A user who customizes their `haiku` entry also retargets work-request title generation — this is intentional for consistent routing.
 
 ## Code Hosting
 

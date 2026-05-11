@@ -1,9 +1,9 @@
 import { join } from 'node:path';
 import { Router } from 'express';
+import { deriveValidModels } from './model-validation.js';
 import { readGlobalSettings, writeGlobalSettings } from './settings-reader.js';
 
 const VALID_CLEANUP_POLICIES = ['never', 'on-success', 'manual-only'];
-const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
 const MIN_DISK_BYTES = 500_000_000;
 const MAX_DISK_BYTES = 50_000_000_000;
 
@@ -73,9 +73,10 @@ export function validateGlobalSettingsPayload(body) {
       ) {
         details.push('worca.circuit_breaker must be an object');
       } else if (w.circuit_breaker.classifier_model !== undefined) {
-        if (!VALID_MODELS.includes(w.circuit_breaker.classifier_model)) {
+        const validModels = deriveValidModels(w);
+        if (!validModels.includes(w.circuit_breaker.classifier_model)) {
           details.push(
-            `classifier_model must be one of: ${VALID_MODELS.join(', ')}`,
+            `classifier_model must be one of: ${validModels.join(', ')}`,
           );
         }
       }

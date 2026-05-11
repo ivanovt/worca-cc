@@ -1,10 +1,13 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import reservedEnvKeysData from '../../server/reserved-env-keys.json';
 import { confirmDialogTemplate, showConfirm } from '../utils/confirm-dialog.js';
 import {
   Bell,
   ClipboardCopy,
   Coins,
+  Copy,
+  Cpu,
   FolderOpen,
   iconSvg,
   Plus,
@@ -55,7 +58,13 @@ export const AGENT_NAMES = [
   'guardian',
   'learner',
 ];
-const MODEL_OPTIONS = ['opus', 'sonnet', 'haiku'];
+const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
+
+export function getModelKeys(worca) {
+  const models = (worca && worca.models) || {};
+  const keys = Object.keys(models);
+  return keys.length > 0 ? keys : DEFAULT_MODEL_KEYS;
+}
 
 const GLOBAL_ONLY_KEY_PATHS = [
   ['parallel', 'cleanup_policy'],
@@ -242,7 +251,7 @@ export async function loadSettings(projectId) {
     }
     if (!settingsData.worca.pricing.models)
       settingsData.worca.pricing.models = {};
-    for (const model of PRICING_MODELS) {
+    for (const model of getModelKeys(settingsData.worca)) {
       settingsData.worca.pricing.models[model] = {
         ...EMPTY_MODEL,
         ...(settingsData.worca.pricing.models[model] || {}),
@@ -407,12 +416,53 @@ async function resetSection(section, rerender, projectId) {
   }
 }
 
+// Per-section detail bodies for the Reset confirmation dialog. Sections not
+// listed here fall back to the generic "Are you sure?" prompt.
+const _RESET_DETAIL_MESSAGES = {
+  models: html`
+    <p>Resetting will:</p>
+    <ul style="margin: 0.5rem 0; padding-left: 1.2rem; line-height: 1.5">
+      <li>
+        Remove the entire <code>worca.models</code> key from
+        <code>.claude/settings.json</code> (committed) and
+        <code>.claude/settings.local.json</code> (gitignored).
+      </li>
+      <li>
+        Restore the three built-in entries
+        (<code>opus</code>, <code>sonnet</code>, <code>haiku</code>) from the
+        worca template defaults — back to their factory model IDs and no env
+        vars.
+      </li>
+      <li>
+        Discard <strong>all custom models</strong> you've added (e.g.
+        <code>glm-ds</code>, <code>alt-fast</code>).
+      </li>
+      <li>
+        Discard <strong>all environment-variable overrides</strong> on the
+        built-in models.
+      </li>
+      <li>
+        Cause any agent referencing a deleted custom model to fall back to
+        opaque pass-through, which may fail if the underlying CLI doesn't
+        recognize the name.
+      </li>
+    </ul>
+    <p class="confirm-warning">
+      <span aria-hidden="true">⚠</span>
+      <span>This action cannot be undone.</span>
+    </p>
+  `,
+};
+
 function confirmReset(section, rerender) {
   const label = section.charAt(0).toUpperCase() + section.slice(1);
+  const detail = _RESET_DETAIL_MESSAGES[section];
   showConfirm(
     {
       label: `Reset ${label}`,
-      message: html`Are you sure you want to reset <strong>${label}</strong> settings to their defaults?`,
+      message:
+        detail ||
+        html`Are you sure you want to reset <strong>${label}</strong> settings to their defaults?`,
       confirmLabel: 'Reset',
       confirmVariant: 'danger',
       onConfirm: () => resetSection(section, rerender),
@@ -621,7 +671,8 @@ export function readPermissionsFromDom() {
 
 export function readPricingFromDom() {
   const models = {};
-  for (const model of PRICING_MODELS) {
+  const pricingModels = getModelKeys(settingsData?.worca);
+  for (const model of pricingModels) {
     models[model] = {};
     for (const field of PRICING_FIELDS) {
       const el = document.getElementById(`pricing-${model}-${field.key}`);
@@ -653,6 +704,7 @@ export function getDefaults() {
 
 function agentsTab(worca, rerender) {
   const agents = worca.agents || {};
+  const modelOptions = getModelKeys(worca);
   return html`
     <div class="settings-tab-content">
       <div class="settings-cards">
@@ -667,7 +719,7 @@ function agentsTab(worca, rerender) {
                 <div class="settings-field">
                   <label class="settings-label">Model</label>
                   <sl-select id="agent-${name}-model" .value="${agent.model || 'sonnet'}" size="small">
-                    ${MODEL_OPTIONS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+                    ${modelOptions.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
                   </sl-select>
                 </div>
                 <div class="settings-field">
@@ -1390,7 +1442,7 @@ function preferencesTab(
         <div class="settings-field">
           <label class="settings-label">Error Classifier Model</label>
           <sl-select id="global-classifier-model" .value="${classifierModel}" size="small" hoist>
-            ${MODEL_OPTIONS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+            ${DEFAULT_MODEL_KEYS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
           </sl-select>
           <span class="settings-field-hint">Model used by the circuit breaker to classify errors</span>
         </div>
@@ -1416,10 +1468,561 @@ function preferencesTab(
   `;
 }
 
+// ─── Models tab — local edit state ───────────────────────────────────────
+//
+// Each card has its own edit buffer keyed by model name. The buffer is
+// lazily initialized from the server's worca config on first render after
+// a load. Save flushes the buffer to the server (PUT /settings/model-env)
+// and clears it; the next render then reads the fresh server state.
+//
+// Discard clears the buffer immediately, reverting the card to server state.
+//
+// Buffer shape:
+//   Map<name, { id: string, env: Array<{ k: string, v: string, _id: string }>,
+//               dirty: boolean }>
+//
+export const _modelsEditState = new Map();
+
+const RESERVED_KEYS = new Set(reservedEnvKeysData.keys || []);
+const RESERVED_PREFIXES = reservedEnvKeysData.prefixes || [];
+
+const BUILTIN_MODEL_NAMES = new Set(['opus', 'sonnet', 'haiku']);
+
+export function _envKeyValidationError(rawKey) {
+  const k = String(rawKey || '').trim();
+  if (!k) return null; // empty draft row — ignored on save, not flagged
+  if (RESERVED_KEYS.has(k)) return `Reserved key: ${k}`;
+  if (RESERVED_PREFIXES.some((p) => k.startsWith(p))) {
+    return `Reserved prefix matches ${k}`;
+  }
+  return null;
+}
+
+export function _normalizeModelEntry(val) {
+  if (typeof val === 'string') return { id: val, env: {} };
+  if (val && typeof val === 'object') {
+    return { id: val.id || '', env: val.env || {} };
+  }
+  return { id: '', env: {} };
+}
+
+function _envRowId(name, key, idx) {
+  return `${name}-${key || 'new'}-${idx}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+export function _getOrInitModelState(name, serverEntry) {
+  // Re-sync from server every render when the buffer is clean. Without this,
+  // the buffer captures whatever state the server had on first render — if
+  // settings were still loading, the buffer is stuck with empty values for
+  // the rest of the page lifetime.
+  const existing = _modelsEditState.get(name);
+  if (existing && existing.dirty) return existing;
+  const fresh = {
+    id: serverEntry.id,
+    env: Object.entries(serverEntry.env).map(([k, v], i) => ({
+      k,
+      v: String(v),
+      _id: _envRowId(name, k, i),
+    })),
+    dirty: false,
+  };
+  _modelsEditState.set(name, fresh);
+  return fresh;
+}
+
+function _cardIsValid(name) {
+  const s = _modelsEditState.get(name);
+  if (!s) return true;
+  return s.env.every((row) => _envKeyValidationError(row.k) === null);
+}
+
+function _updateEnvField(name, rowId, field, value, rerender) {
+  const s = _modelsEditState.get(name);
+  if (!s) return;
+  const row = s.env.find((r) => r._id === rowId);
+  if (!row) return;
+  row[field] = value;
+  s.dirty = true;
+  // Rerender so the validation pill / Save-disabled state flips for key edits.
+  // For value edits, the input is the source of truth and there's nothing
+  // visual to change — skip rerender to avoid input flicker during typing.
+  if (field === 'k') rerender();
+}
+
+function _updateModelId(name, value) {
+  const s = _modelsEditState.get(name);
+  if (!s) return;
+  s.id = value;
+  s.dirty = true;
+}
+
+function _addEnvRow(name, rerender) {
+  const s = _modelsEditState.get(name);
+  if (!s) return;
+  s.env.push({ k: '', v: '', _id: _envRowId(name, '', s.env.length) });
+  s.dirty = true;
+  rerender();
+  requestAnimationFrame(() => {
+    const rows = document.querySelectorAll(
+      `[data-model-card="${name}"] .model-env-row`,
+    );
+    const last = rows[rows.length - 1];
+    last?.querySelector('.model-env-key')?.focus?.();
+  });
+}
+
+function _removeEnvRow(name, rowId, rerender) {
+  const s = _modelsEditState.get(name);
+  if (!s) return;
+  s.env = s.env.filter((r) => r._id !== rowId);
+  s.dirty = true;
+  rerender();
+}
+
+function _discardModelEdits(name, rerender) {
+  _modelsEditState.delete(name);
+  rerender();
+}
+
+async function _saveModelEnv(name, rerender) {
+  const s = _modelsEditState.get(name);
+  if (!s) return;
+  const env = {};
+  for (const row of s.env) {
+    const k = row.k.trim();
+    if (!k) continue; // skip empty draft rows
+    if (_envKeyValidationError(k) !== null) continue; // validation already disables Save
+    env[k] = row.v;
+  }
+  const url = _settingsProjectId
+    ? `/api/projects/${_settingsProjectId}/settings/model-env`
+    : '/api/settings/model-env';
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: name, id: s.id, env }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    _modelsEditState.delete(name); // next render initializes from server
+    saveStatus = 'success';
+    saveMessage = `Saved ${name}`;
+    await loadSettings(_settingsProjectId);
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to save ${name}: ${err.message}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
+export function _nextDuplicateName(sourceName, existingNames) {
+  // Strip a trailing -NN[N] suffix so duplicating "glm-ds-01" yields
+  // "glm-ds-02" rather than "glm-ds-01-01".
+  const stripped = sourceName.replace(/-\d{2,3}$/, '');
+  for (let i = 1; i <= 999; i++) {
+    const suffix = i < 100 ? String(i).padStart(2, '0') : String(i);
+    const candidate = `${stripped}-${suffix}`;
+    if (!existingNames.has(candidate)) return candidate;
+  }
+  return null;
+}
+
+async function _duplicateModel(name, modelsConfig, rerender) {
+  const existing = new Set(Object.keys(modelsConfig));
+  const nextName = _nextDuplicateName(name, existing);
+  if (!nextName) {
+    saveStatus = 'error';
+    saveMessage = `Cannot duplicate "${name}" — no free numeric suffix slot.`;
+    rerender();
+    return;
+  }
+  const source = _normalizeModelEntry(modelsConfig[name]);
+  // Drop any local edit buffer for the new name so the next render reads
+  // the freshly-saved server state.
+  _modelsEditState.delete(nextName);
+
+  const url = _settingsProjectId
+    ? `/api/projects/${_settingsProjectId}/settings/model-env`
+    : '/api/settings/model-env';
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: nextName,
+        id: source.id,
+        env: { ...source.env },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    saveStatus = 'success';
+    saveMessage = `Duplicated ${name} → ${nextName}`;
+    await loadSettings(_settingsProjectId);
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to duplicate ${name}: ${err.message}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
+function _promptDeleteModel(name, modelsConfig, rerender) {
+  // After the W-051 storage split, any model with an id lives (at least
+  // partially) in committed settings.json — deleting it means a write to
+  // a tracked file.  Surface that explicitly instead of burying it in a
+  // generic bullet list.
+  const normalized = _normalizeModelEntry(modelsConfig[name]);
+  const touchesCommittedFile = Boolean(normalized.id);
+
+  showConfirm(
+    {
+      label: `Delete model "${name}"?`,
+      message: html`
+        <p>Deleting <strong>${name}</strong> will:</p>
+        <ul style="margin: 0.5rem 0; padding-left: 1.2rem; line-height: 1.5">
+          <li>
+            Remove the model entry from
+            <code>.claude/settings.local.json</code> (gitignored)${
+              touchesCommittedFile
+                ? html` and <code>.claude/settings.json</code> (committed)`
+                : ''
+            }.
+          </li>
+          <li>
+            Discard the Model ID and all environment variables configured
+            for this model.
+          </li>
+          <li>
+            Cause any agent set to use <code>${name}</code> to fall back to
+            opaque pass-through — the shorthand will be sent verbatim to
+            <code>claude --model</code>, which may fail if the underlying CLI
+            doesn't recognize the name.
+          </li>
+        </ul>
+        ${
+          touchesCommittedFile
+            ? html`<p class="confirm-warning">
+                <span aria-hidden="true">⚠</span>
+                <span>
+                  This <strong>modifies your committed
+                  <code>.claude/settings.json</code></strong> on disk —
+                  <code>${name}</code> will be removed without going through
+                  git staging. Review with <code>git diff</code> before
+                  committing.
+                </span>
+              </p>`
+            : ''
+        }
+        <p class="confirm-warning">
+          <span aria-hidden="true">⚠</span>
+          <span>
+            This action cannot be undone. You can re-add the model manually
+            afterwards.
+          </span>
+        </p>
+      `,
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: () => _deleteModel(name, modelsConfig, rerender),
+    },
+    rerender,
+  );
+}
+
+async function _deleteModel(name, _modelsConfig, rerender) {
+  // The server DELETE handler removes the model from BOTH settings.json
+  // and settings.local.json. We then reload to refresh the merged view.
+  _modelsEditState.delete(name);
+  const url = _settingsProjectId
+    ? `/api/projects/${_settingsProjectId}/settings/model-env?model=${encodeURIComponent(name)}`
+    : `/api/settings/model-env?model=${encodeURIComponent(name)}`;
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch(url, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    saveStatus = 'success';
+    saveMessage = `Deleted ${name}`;
+    await loadSettings(_settingsProjectId);
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to delete ${name}: ${err.message}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
+function _addModel(modelsConfig, rerender) {
+  const nameEl = document.getElementById('new-model-name');
+  const name = nameEl?.value?.trim();
+  if (!name) return;
+  if (modelsConfig[name]) {
+    saveStatus = 'error';
+    saveMessage = `Model "${name}" already exists`;
+    rerender();
+    return;
+  }
+  const idEl = document.getElementById('new-model-id');
+  const id = idEl?.value?.trim() || name;
+  const updated = { ...modelsConfig, [name]: { id, env: {} } };
+  if (nameEl) nameEl.value = '';
+  if (idEl) idEl.value = '';
+  saveSettings({ worca: { models: updated } }, rerender);
+}
+
+function _modelEnvRowView(name, row, rerender) {
+  const validationError = _envKeyValidationError(row.k);
+  return html`
+    <div class="model-env-row" data-row-id="${row._id}">
+      <sl-input
+        class="model-env-key ${validationError ? 'is-invalid' : ''}"
+        title="${validationError || row.k || ''}"
+        value="${row.k}"
+        size="small"
+        spellcheck="false"
+        placeholder="KEY"
+        @sl-input=${(e) => _updateEnvField(name, row._id, 'k', e.target.value, rerender)}
+      ></sl-input>
+      <sl-input
+        class="model-env-value"
+        value="${row.v}"
+        size="small"
+        spellcheck="false"
+        placeholder="value"
+        @sl-input=${(e) => _updateEnvField(name, row._id, 'v', e.target.value, rerender)}
+      ></sl-input>
+      ${
+        validationError
+          ? html`<sl-tooltip content="${validationError}">
+              <span class="model-env-warn" aria-label="${validationError}">⚠</span>
+            </sl-tooltip>`
+          : html`<span class="model-env-warn-spacer"></span>`
+      }
+      <sl-tooltip content="Remove variable">
+        <sl-button
+          variant="text"
+          size="small"
+          class="model-env-remove"
+          @click=${() => _removeEnvRow(name, row._id, rerender)}
+        >
+          ${unsafeHTML(iconSvg(Trash2, 13))}
+        </sl-button>
+      </sl-tooltip>
+    </div>
+  `;
+}
+
+function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
+  const entry = _normalizeModelEntry(serverEntryRaw);
+  const state = _getOrInitModelState(name, entry);
+  const isBuiltin = BUILTIN_MODEL_NAMES.has(name);
+  const valid = _cardIsValid(name);
+  const envCount = state.env.filter((r) => r.k.trim() !== '').length;
+
+  return html`
+    <div
+      class="settings-card model-card ${state.dirty ? 'is-dirty' : ''}"
+      data-model-card="${name}"
+    >
+      <div class="settings-card-header">
+        <span class="settings-card-title">${name}</span>
+        <sl-badge variant="${isBuiltin ? 'neutral' : 'primary'}" pill>
+          ${isBuiltin ? 'built-in' : 'custom'}
+        </sl-badge>
+      </div>
+      <div class="settings-card-body">
+        <div class="settings-field">
+          <label class="settings-label">Model ID</label>
+          <sl-input
+            class="model-id-input"
+            value="${state.id}"
+            size="small"
+            spellcheck="false"
+            placeholder="full model ID"
+            @sl-input=${(e) => _updateModelId(name, e.target.value)}
+          ></sl-input>
+        </div>
+
+        <div class="settings-field">
+          <div class="settings-label-row">
+            <label class="settings-label">Environment Variables</label>
+            <span class="settings-muted-small"
+              >${envCount} ${envCount === 1 ? 'var' : 'vars'}</span
+            >
+          </div>
+
+          ${
+            state.env.length > 0
+              ? html`<div class="model-env-table">
+                  ${state.env.map((row) => _modelEnvRowView(name, row, rerender))}
+                </div>`
+              : nothing
+          }
+
+          <sl-button
+            variant="text"
+            size="small"
+            class="model-env-add-btn"
+            @click=${() => _addEnvRow(name, rerender)}
+          >
+            ${unsafeHTML(iconSvg(Plus, 12))}
+            Add variable
+          </sl-button>
+        </div>
+      </div>
+
+      <div class="model-card-actions">
+        <sl-tooltip content="Duplicate this model with all its env vars">
+          <sl-button
+            variant="default"
+            size="small"
+            class="model-duplicate-btn"
+            @click=${() => _duplicateModel(name, modelsConfig, rerender)}
+          >
+            ${unsafeHTML(iconSvg(Copy, 12))}
+            Duplicate
+          </sl-button>
+        </sl-tooltip>
+        <sl-button
+          variant="danger"
+          size="small"
+          class="model-delete-btn"
+          @click=${() => _promptDeleteModel(name, modelsConfig, rerender)}
+        >
+          ${unsafeHTML(iconSvg(Trash2, 12))}
+          Delete
+        </sl-button>
+        <span class="model-card-status">
+          ${state.dirty ? 'Unsaved changes' : ''}
+        </span>
+        <sl-button
+          variant="default"
+          size="small"
+          ?disabled=${!state.dirty}
+          @click=${() => _discardModelEdits(name, rerender)}
+        >
+          Discard
+        </sl-button>
+        <sl-button
+          variant="primary"
+          size="small"
+          ?disabled=${!state.dirty || !valid}
+          @click=${() => _saveModelEnv(name, rerender)}
+        >
+          ${unsafeHTML(iconSvg(Save, 12))}
+          Save
+        </sl-button>
+      </div>
+    </div>
+  `;
+}
+
+export function modelsTab(worca, rerender) {
+  const modelsConfig = (worca && worca.models) || {};
+  const modelKeys = getModelKeys(worca);
+
+  return html`
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Models</h3>
+      <p class="settings-tab-description">
+        Per-model environment variables are stored in
+        <code>.claude/settings.local.json</code> (gitignored). Use them to route
+        a single agent through an alternative endpoint, tune timeouts, or set
+        provider-specific overrides. The built-in <code>opus</code>,
+        <code>sonnet</code>, and <code>haiku</code> entries are always surfaced
+        as defaults — deleting all of them simply restores them on the next load.
+      </p>
+      <div class="settings-cards models-cards">
+        ${modelKeys.map((name) =>
+          _modelCardView(name, modelsConfig[name], modelsConfig, rerender),
+        )}
+      </div>
+
+      <div class="settings-field models-add-row">
+        <label class="settings-label">Add Model</label>
+        <div class="models-add-controls">
+          <sl-input
+            id="new-model-name"
+            size="small"
+            placeholder="shorthand (e.g. alt-fast)"
+          ></sl-input>
+          <sl-input
+            id="new-model-id"
+            size="small"
+            placeholder="full model ID"
+          ></sl-input>
+          <sl-button
+            variant="default"
+            size="small"
+            @click=${() => _addModel(modelsConfig, rerender)}
+          >
+            ${unsafeHTML(iconSvg(Plus, 14))}
+            Add
+          </sl-button>
+        </div>
+      </div>
+
+      <div class="settings-tab-actions">
+        <sl-button
+          variant="default"
+          size="small"
+          outline
+          @click=${() => confirmReset('models', rerender)}
+        >
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset all
+        </sl-button>
+      </div>
+    </div>
+  `;
+}
+
 function pricingTab(worca, rerender) {
   const pricing = worca.pricing || {};
   const models = pricing.models || {};
   const serverTools = pricing.server_tools || {};
+  const pricingModels = getModelKeys(worca);
 
   return html`
     <div class="settings-tab-content">
@@ -1433,7 +2036,7 @@ function pricingTab(worca, rerender) {
             </tr>
           </thead>
           <tbody>
-            ${PRICING_MODELS.map((model) => {
+            ${pricingModels.map((model) => {
               const costs = models[model] || EMPTY_MODEL;
               return html`
                 <tr>
@@ -2195,6 +2798,10 @@ export function projectSettingsView(
           ${unsafeHTML(iconSvg(Users, 14))}
           Agents
         </sl-tab>
+        <sl-tab slot="nav" panel="models">
+          ${unsafeHTML(iconSvg(Cpu, 14))}
+          Models
+        </sl-tab>
         <sl-tab slot="nav" panel="pipeline">
           ${unsafeHTML(iconSvg(Workflow, 14))}
           Pipeline
@@ -2213,6 +2820,7 @@ export function projectSettingsView(
         </sl-tab>
 
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
+        <sl-tab-panel name="models">${modelsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>

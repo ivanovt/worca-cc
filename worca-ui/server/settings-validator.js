@@ -1,6 +1,7 @@
 // server/settings-validator.js
 import { STAGE_ORDER } from '../app/utils/stage-order.js';
 import { GLOBAL_ONLY_KEYS } from './keys-schema.js';
+import { DEFAULT_MODELS, deriveValidModels } from './model-validation.js';
 
 const VALID_AGENTS = [
   'planner',
@@ -13,7 +14,7 @@ const VALID_AGENTS = [
   'learner',
 ];
 const VALID_STAGES = STAGE_ORDER;
-export const VALID_MODELS = ['opus', 'sonnet', 'haiku'];
+export const VALID_MODELS = DEFAULT_MODELS;
 const VALID_LOOPS = [
   'implement_test',
   'pr_changes',
@@ -27,7 +28,7 @@ const VALID_GUARDS = [
   'block_force_push',
   'restrict_git_commit',
 ];
-const VALID_PRICING_MODELS = ['opus', 'sonnet'];
+const DEFAULT_PRICING_MODELS = ['opus', 'sonnet'];
 const VALID_PRICING_FIELDS = [
   'input_per_mtok',
   'output_per_mtok',
@@ -48,6 +49,7 @@ export function validateSettingsPayload(body) {
       return { valid: false, details };
     }
     const w = body.worca;
+    const validModels = deriveValidModels(w);
 
     // agents
     if (w.agents !== undefined) {
@@ -63,7 +65,7 @@ export function validateSettingsPayload(body) {
             details.push(`Unknown agent name: "${name}"`);
             continue;
           }
-          if (cfg.model !== undefined && !VALID_MODELS.includes(cfg.model)) {
+          if (cfg.model !== undefined && !validModels.includes(cfg.model)) {
             details.push(`Invalid model "${cfg.model}" for agent "${name}"`);
           }
           if (cfg.max_turns !== undefined) {
@@ -192,6 +194,9 @@ export function validateSettingsPayload(body) {
         details.push('pricing must be an object');
       } else {
         const p = w.pricing;
+        const validPricingModels = [
+          ...new Set([...DEFAULT_PRICING_MODELS, ...validModels]),
+        ];
         if (p.models !== undefined) {
           if (
             typeof p.models !== 'object' ||
@@ -201,7 +206,7 @@ export function validateSettingsPayload(body) {
             details.push('pricing.models must be an object');
           } else {
             for (const [model, costs] of Object.entries(p.models)) {
-              if (!VALID_PRICING_MODELS.includes(model)) {
+              if (!validPricingModels.includes(model)) {
                 details.push(`Unknown pricing model: "${model}"`);
                 continue;
               }
@@ -864,12 +869,13 @@ export function validateGlobalSettings(prefs) {
     }
   }
 
+  const globalValidModels = deriveValidModels(w);
   if (
     w.circuit_breaker?.classifier_model !== undefined &&
-    !VALID_MODELS.includes(w.circuit_breaker.classifier_model)
+    !globalValidModels.includes(w.circuit_breaker.classifier_model)
   ) {
     details.push(
-      `circuit_breaker.classifier_model must be one of: ${VALID_MODELS.join(', ')}`,
+      `circuit_breaker.classifier_model must be one of: ${globalValidModels.join(', ')}`,
     );
   }
 

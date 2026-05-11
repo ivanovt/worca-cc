@@ -6,7 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from typing import Optional
 
-from worca.utils.env import get_env
+from worca.utils.env import get_env, filter_model_env
+from worca.utils.settings import load_settings, resolve_model
 
 _DEFAULT_PLAN_PATH_TEMPLATE = "docs/plans/{timestamp}-{title_slug}.md"
 # Matches GitHub issue URLs: https://github.com/owner/repo/issues/42
@@ -66,13 +67,18 @@ def generate_smart_title(content: str, source_hint: str = "") -> str:
         prompt += f"\n\nSource: {source_hint}"
     prompt += f"\n\nContent:\n{truncated}"
 
+    settings = load_settings(".claude/settings.json")
+    models_cfg = settings.get("worca", {}).get("models", {})
+    model_id, model_env = resolve_model("haiku", models_cfg)
+    safe_env, _ = filter_model_env(model_env)
+
     try:
         result = subprocess.run(
-            ["claude", "-p", prompt, "--output-format", "text", "--model", "haiku"],
+            ["claude", "-p", prompt, "--output-format", "text", "--model", model_id],
             capture_output=True,
             text=True,
             timeout=30,
-            env=get_env(),
+            env=get_env(**safe_env),
         )
     except (subprocess.TimeoutExpired, OSError):
         return ""

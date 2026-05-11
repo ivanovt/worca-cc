@@ -74,6 +74,46 @@ def load_settings(settings_path: str) -> dict:
     return deep_merge(base, local)
 
 
+_DEFAULT_MODEL_MAP = {
+    "opus": "claude-opus-4-6",
+    "sonnet": "claude-sonnet-4-6",
+    "haiku": "claude-haiku-4-5-20251001",
+}
+
+
+def normalize_model_entry(value):
+    """Canonicalize a worca.models entry to {id, env} form.
+
+    - String value -> {"id": value, "env": {}}
+    - Dict value -> must contain "id" (str); "env" defaults to {}; extra keys ignored.
+    - Anything else -> raise ValueError.
+    """
+    if isinstance(value, str):
+        return {"id": value, "env": {}}
+    if isinstance(value, dict) and isinstance(value.get("id"), str):
+        env = value.get("env") or {}
+        if not isinstance(env, dict):
+            raise ValueError(f"model env must be a dict, got {type(env).__name__}")
+        return {"id": value["id"], "env": dict(env)}
+    raise ValueError("model entry must be a string ID or {id, env} object")
+
+
+def resolve_model(name, models_cfg):
+    """Look up a model shorthand in a worca.models config dict.
+
+    Returns (resolved_id, env_dict).  When the name is not in models_cfg,
+    falls back to _DEFAULT_MODEL_MAP, then treats it as an opaque
+    pass-through ID.
+    """
+    if name is None:
+        return None, {}
+    raw = models_cfg.get(name, _DEFAULT_MODEL_MAP.get(name))
+    if raw is None:
+        return name, {}
+    entry = normalize_model_entry(raw)
+    return entry["id"], entry["env"]
+
+
 def _default_global_path() -> str:
     return os.path.expanduser("~/.worca/settings.json")
 

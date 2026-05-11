@@ -27,6 +27,7 @@ import { dispatchExternal } from './dispatch-external.js';
 import { ensureWebhookForUi } from './ensure-webhook.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
+import { createModelEnvRouter } from './model-env-routes.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import { countRunningPipelinesAcrossProjects } from './process-registry.js';
@@ -430,6 +431,9 @@ export function createProjectScopedRoutes({
     res.json({ ok: true, files });
   });
 
+  // --- Model env endpoints (writes wholesale to settings.local.json) ---
+  router.use('/settings/model-env', createModelEnvRouter());
+
   // --- Project-scoped settings endpoints ---
 
   // GET /api/projects/:projectId/settings
@@ -578,6 +582,7 @@ export function createProjectScopedRoutes({
   // DELETE /api/projects/:projectId/settings/:section
   const SECTION_KEYS = {
     agents: { worca: ['agents'] },
+    models: { worca: ['models'] },
     pipeline: { worca: ['stages', 'loops', 'plan_path_template', 'defaults'] },
     governance: { worca: ['governance'], top: ['permissions'] },
     pricing: { worca: ['pricing'] },

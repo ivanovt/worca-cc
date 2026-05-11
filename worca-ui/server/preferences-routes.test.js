@@ -222,4 +222,36 @@ describe('PUT /api/preferences', () => {
     expect(data.preferences.worca.parallel.cleanup_policy).toBe('never');
     expect(data.preferences.worca.parallel.max_concurrent_pipelines).toBe(10);
   });
+
+  it('accepts custom classifier_model when present in worca.models', async () => {
+    const res = await put({
+      worca: {
+        models: { 'alt-fast': { id: 'x' } },
+        circuit_breaker: { classifier_model: 'alt-fast' },
+      },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects custom classifier_model when not in worca.models', async () => {
+    const res = await put({
+      worca: {
+        circuit_breaker: { classifier_model: 'alt-fast' },
+      },
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error.details).toContainEqual(
+      expect.stringContaining('classifier_model'),
+    );
+  });
+
+  it('accepts default model names without explicit worca.models', async () => {
+    for (const model of ['opus', 'sonnet', 'haiku']) {
+      const res = await put({
+        worca: { circuit_breaker: { classifier_model: model } },
+      });
+      expect(res.status).toBe(200);
+    }
+  });
 });

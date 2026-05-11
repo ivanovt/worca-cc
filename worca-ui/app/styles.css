@@ -4650,3 +4650,167 @@ sl-tooltip.bead-tooltip::part(body) {
   justify-content: flex-end;
   width: 100%;
 }
+
+/* ─── Models tab — model cards + env rows ──────────────────────────── */
+.models-cards {
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+}
+
+.model-card {
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.model-card.is-dirty {
+  border-color: var(--status-running, #3b82f6);
+  box-shadow: 0 0 0 1px var(--status-running, #3b82f6);
+}
+
+.model-delete-btn {
+  /* Aligned left in the footer action row via the flex layout (the status
+     span between it and Discard/Save has flex:1 and grows). */
+}
+
+.model-id-input::part(input) {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+}
+
+.settings-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-muted-small {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.model-env-table {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 240px) minmax(0, 1fr) 18px 30px;
+  gap: 6px;
+  align-items: center;
+}
+
+.model-env-key::part(input) {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+}
+
+.model-env-key.is-invalid::part(base) {
+  border-color: var(--status-failed, #ef4444);
+}
+
+.model-env-value::part(input) {
+  font-size: 12px;
+}
+
+.model-env-warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--status-failed, #ef4444);
+  font-size: 14px;
+  line-height: 1;
+  cursor: help;
+}
+
+.model-env-warn-spacer {
+  display: inline-block;
+  width: 18px;
+}
+
+.model-env-remove {
+  color: var(--muted);
+  --sl-spacing-medium: 0;
+}
+
+.model-env-add-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+
+.model-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.model-card-status {
+  flex: 1;
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  text-align: center;
+}
+
+.settings-tab-description {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 16px 0;
+  line-height: 1.5;
+}
+
+.settings-tab-description code {
+  background: var(--bg-tertiary);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: var(--sl-font-mono);
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.models-add-row {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.models-add-controls {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.models-add-controls sl-input {
+  flex: 1;
+}
+
+/* ─── Confirmation dialog — "cannot be undone" warning row ────────── */
+.confirm-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0.75rem 0 0;
+  padding: 8px 10px;
+  background: rgba(245, 158, 11, 0.08);
+  border-left: 3px solid var(--status-paused, #f59e0b);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.confirm-warning > span:first-child {
+  color: var(--status-paused, #f59e0b);
+  font-size: 15px;
+  line-height: 1.2;
+  flex: 0 0 auto;
+}
