@@ -482,4 +482,57 @@ describe('worktreesView - bulk cleanup', () => {
     const output = renderToString(worktreesView([runningWorktree]));
     expect(output).not.toContain('btn-bulk-cleanup');
   });
+
+  it('bulk dialog shows grouped caveat when grouped completed are included', () => {
+    const groupedCompleted = {
+      ...completedWorktree,
+      run_id: 'run-grouped-c',
+      fleet_id: 'f_abc',
+      group_type: 'fleet',
+    };
+    const output = renderToString(
+      worktreesView([completedWorktree, groupedCompleted], {
+        dialogBulk: true,
+      }),
+    );
+    expect(output).toContain('grouped');
+    expect(output).toContain('resume will be unavailable');
+  });
+
+  it('bulk dialog grouped caveat is absent when no grouped completed worktrees', () => {
+    const output = renderToString(
+      worktreesView([completedWorktree], { dialogBulk: true }),
+    );
+    // completedWorktree has no group_type — no caveat
+    expect(output).not.toContain('resume will be unavailable');
+  });
+});
+
+describe('worktreesView - truncated disk display', () => {
+  it('shows >= prefix for card disk value when truncated flag is set', () => {
+    const truncatedWt = {
+      ...completedWorktree,
+      disk_bytes: 100_000_000,
+      truncated: true,
+    };
+    const output = renderToString(worktreesView([truncatedWt]));
+    expect(output).toContain('≥ 100.0 MB');
+  });
+
+  it('does not show >= prefix when truncated flag is absent', () => {
+    const normalWt = { ...completedWorktree, disk_bytes: 100_000_000 };
+    const output = renderToString(worktreesView([normalWt]));
+    expect(output).toContain('100.0 MB');
+    expect(output).not.toContain('≥');
+  });
+
+  it('does not show >= prefix when truncated is false', () => {
+    const normalWt = {
+      ...completedWorktree,
+      disk_bytes: 100_000_000,
+      truncated: false,
+    };
+    const output = renderToString(worktreesView([normalWt]));
+    expect(output).not.toContain('≥');
+  });
 });

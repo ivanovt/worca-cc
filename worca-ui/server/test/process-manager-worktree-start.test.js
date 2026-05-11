@@ -16,6 +16,7 @@ vi.mock('node:child_process', () => ({
     spawnCalls.push(args);
     return fakeChild;
   }),
+  execFile: vi.fn(),
   execFileSync: vi.fn(),
 }));
 
