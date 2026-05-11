@@ -279,6 +279,25 @@ describe('worktreesView - disk summary', () => {
     );
     expect(output).not.toContain('worktrees-disk-alert');
   });
+
+  it('shows disk caveat in normal summary path', () => {
+    const output = renderToString(worktreesView([completedWorktree]));
+    expect(output).toContain('worktrees-disk-caveat');
+    expect(output).toContain(
+      'Excludes node_modules, .git, and build/cache dirs',
+    );
+  });
+
+  it('shows disk caveat in warning-banner path', () => {
+    const big = {
+      ...completedWorktree,
+      run_id: 'r2',
+      disk_bytes: 1_200_000_000,
+    };
+    const output = renderToString(worktreesView([completedWorktree, big]));
+    expect(output).toContain('worktrees-disk-alert');
+    expect(output).toContain('worktrees-disk-caveat');
+  });
 });
 
 describe('worktreesView - cleanup button disabled when running', () => {

@@ -49,7 +49,7 @@ vi.mock('./process-manager.js', () => {
 });
 
 const { createApp } = await import('./app.js');
-const { walkDirSize } = await import('./worktrees-routes.js');
+const { walkDirSize, WALK_SKIP_DIRS } = await import('./worktrees-routes.js');
 
 // Default mock behaviour: mirror the registry-file deletion that real removeWorktree does.
 // Tests that need different behaviour override mockImplementation inline.
@@ -234,6 +234,38 @@ describe('GET /api/worktrees', () => {
     const res = await fetch(`${base}/api/worktrees`);
     const data = await res.json();
     expect(data.worktrees).toHaveLength(0);
+  });
+
+  it('GET_disk_bytes_excludes_vendored: route-level disk_bytes excludes node_modules subtrees and response surfaces disk_walk_skip_dirs', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'wt-excl-'));
+    const projectFileSize = 123;
+    writeFileSync(join(worktreePath, 'app.js'), 'x'.repeat(projectFileSize));
+    const nmDir = join(worktreePath, 'node_modules');
+    mkdirSync(nmDir);
+    for (let i = 0; i < 20; i++) {
+      writeFileSync(join(nmDir, `pkg${i}.js`), 'x'.repeat(5_000));
+    }
+    writePipelineEntry(tmpDir, 'run-excl', {
+      run_id: 'run-excl',
+      worktree_path: worktreePath,
+    });
+
+    try {
+      const res = await fetch(`${base}/api/worktrees`);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      const wt = data.worktrees.find((w) => w.run_id === 'run-excl');
+      expect(wt).toBeDefined();
+      // node_modules (20 × 5 000 = 100 000 B) must not be counted
+      expect(wt.disk_bytes).toBe(projectFileSize);
+      // Response must surface the skip-dirs list so clients can document the
+      // semantics shift in `disk_bytes` next to disk totals.
+      expect(Array.isArray(data.disk_walk_skip_dirs)).toBe(true);
+      expect(data.disk_walk_skip_dirs).toContain('node_modules');
+      expect(data.disk_walk_skip_dirs).toContain('.git');
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+    }
   });
 });
 
@@ -588,6 +620,61 @@ describe('walkDirSize (async walker)', () => {
     try {
       const result = await walkDirSize(dir, 5);
       expect(result.truncated).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('WALK_SKIP_DIRS_constant: exported Set contains expected vendored/derived dirs', () => {
+    expect(WALK_SKIP_DIRS).toBeInstanceOf(Set);
+    for (const name of [
+      'node_modules',
+      '.git',
+      '.venv',
+      'venv',
+      '__pycache__',
+      '.pytest_cache',
+      '.mypy_cache',
+      '.ruff_cache',
+      'dist',
+      'build',
+      '.next',
+      '.turbo',
+      '.cache',
+    ]) {
+      expect(WALK_SKIP_DIRS.has(name)).toBe(true);
+    }
+  });
+
+  it('WALKER_skips_node_modules: excludes files inside node_modules', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-walker-nm-'));
+    const projectFileSize = 50;
+    writeFileSync(join(dir, 'src.js'), 'x'.repeat(projectFileSize));
+    const nm = join(dir, 'node_modules');
+    mkdirSync(nm);
+    for (let i = 0; i < 20; i++) {
+      writeFileSync(join(nm, `pkg${i}.js`), 'x'.repeat(5_000));
+    }
+    try {
+      const result = await walkDirSize(dir);
+      expect(result.bytes).toBe(projectFileSize);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('WALKER_skips_all_vendored: every entry in WALK_SKIP_DIRS is skipped', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wt-walker-skipall-'));
+    const rootSize = 10;
+    writeFileSync(join(dir, 'root.txt'), 'x'.repeat(rootSize));
+    for (const name of WALK_SKIP_DIRS) {
+      const skipPath = join(dir, name);
+      mkdirSync(skipPath, { recursive: true });
+      writeFileSync(join(skipPath, 'hidden.txt'), 'x'.repeat(1_000));
+    }
+    try {
+      const result = await walkDirSize(dir);
+      expect(result.bytes).toBe(rootSize);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
