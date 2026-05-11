@@ -82,6 +82,8 @@ export function sidebarView(
     worktreeDiskWarningBytes = 2_000_000_000,
     totalRunning = 0,
     maxConcurrentPipelines = 10,
+    runsLoaded = false,
+    worktreesLoaded = false,
   } = state;
   const atCapacity = totalRunning >= maxConcurrentPipelines;
   const allRunList = Object.values(runs);
@@ -191,7 +193,13 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(Activity, 16))}
             <span>Running</span>
           </span>
-          ${activeCount > 0 ? html`<sl-badge variant="primary" pill>${activeCount}</sl-badge>` : ''}
+          ${
+            !runsLoaded
+              ? html`<sl-spinner class="sidebar-loading-spinner" data-testid="sidebar-running-loading"></sl-spinner>`
+              : activeCount > 0
+                ? html`<sl-badge variant="primary" pill>${activeCount}</sl-badge>`
+                : ''
+          }
         </div>
         <div class="sidebar-item ${route.section === 'history' ? 'active' : ''}"
              @click=${() => onNavigate('history')}>
@@ -199,21 +207,28 @@ export function sidebarView(
             ${unsafeHTML(iconSvg(Archive, 16))}
             <span>History</span>
           </span>
-          ${historyCount > 0 ? html`<sl-badge variant="neutral" pill>${historyCount}</sl-badge>` : ''}
+          ${
+            !runsLoaded
+              ? html`<sl-spinner class="sidebar-loading-spinner" data-testid="sidebar-history-loading"></sl-spinner>`
+              : historyCount > 0
+                ? html`<sl-badge variant="neutral" pill>${historyCount}</sl-badge>`
+                : ''
+          }
         </div>
-        ${
-          worktreeCount > 0
-            ? html`
         <div class="sidebar-item ${route.section === 'worktrees' ? 'active' : ''}"
              @click=${() => onNavigate('worktrees')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(GitBranch, 16))}
             <span>Worktrees</span>
           </span>
-          <sl-badge variant="${worktreeDiskWarning ? 'warning' : 'neutral'}" pill class="worktrees-count-badge">${worktreeCount}</sl-badge>
-        </div>`
-            : ''
-        }
+          ${
+            !worktreesLoaded
+              ? html`<sl-spinner class="sidebar-loading-spinner" data-testid="sidebar-worktrees-loading"></sl-spinner>`
+              : worktreeCount > 0
+                ? html`<sl-badge variant="${worktreeDiskWarning ? 'warning' : 'neutral'}" pill class="worktrees-count-badge">${worktreeCount}</sl-badge>`
+                : ''
+          }
+        </div>
       </div>
 
       <div class="sidebar-section">

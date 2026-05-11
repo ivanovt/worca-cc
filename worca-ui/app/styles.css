@@ -221,6 +221,19 @@ h1, h2, h3, h4, h5, h6 {
   opacity: 1;
 }
 
+/* Loading spinner shown in sidebar nav items while underlying data is still
+   being fetched. Delayed fade-in avoids a noisy flash on fast loads. */
+.sidebar-loading-spinner {
+  font-size: 14px;
+  --indicator-color: var(--text-secondary, currentColor);
+  opacity: 0;
+  animation: sidebar-spinner-fade 200ms ease-out 150ms forwards;
+}
+
+@keyframes sidebar-spinner-fade {
+  to { opacity: 0.7; }
+}
+
 .sidebar-item.active sl-badge {
   --sl-color-primary-600: #ffffff;
   --sl-color-neutral-600: #ffffff;
@@ -4635,6 +4648,33 @@ sl-tooltip.bead-tooltip::part(body) {
   color: var(--muted);
   word-break: break-all;
 }
+/* Worktree card mid-cleanup state — surfaces server-side cleanup_state
+   so a reload during a long bulk cleanup shows the same progress. */
+.worktree-card-cleaning {
+  opacity: 0.72;
+  pointer-events: none;
+}
+.worktree-card-cleaning .btn-cleanup {
+  pointer-events: none;
+}
+.status-badge-cleaning {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.badge-spinner,
+.btn-cleanup-spinner {
+  font-size: 12px;
+}
+.worktree-card-cleanup-error {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--sl-color-danger-50, #fef2f2);
+  color: var(--sl-color-danger-700, #b91c1c);
+  font-size: 12px;
+}
+
 .worktrees-bulk-groups {
   margin: 8px 0 0;
   padding-left: 18px;

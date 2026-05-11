@@ -16,7 +16,7 @@
  * the discrepancy with `du -sh`.
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import { join } from 'node:path';
 import { Router } from 'express';
@@ -192,6 +192,76 @@ function _readWorktreeStatus(worktreePath) {
   return null;
 }
 
+/**
+ * Run a pre-validated cleanup batch in the background. Each task stamps
+ * `cleanup_state: 'cleaning'`, calls `removeWorktree` (which deletes the
+ * registry entry on success), and on failure stamps `cleanup_error` while
+ * clearing `cleanup_state` so the UI can render the error and let the user
+ * retry. Concurrency is bounded by `CLEANUP_CONCURRENCY`.
+ */
+async function _runCleanupBatch(worcaDir, accepted) {
+  const tasks = accepted.map(({ run_id, reg }) => ({
+    run_id,
+    fn: async () => {
+      _patchRegistry(worcaDir, run_id, { cleanup_state: 'cleaning' });
+      try {
+        await removeWorktree(worcaDir, run_id, { skipPrune: true });
+        if (reg.worktree_path) _diskCache.delete(reg.worktree_path);
+        return { run_id, ok: true };
+      } catch (err) {
+        _patchRegistry(worcaDir, run_id, {
+          cleanup_state: undefined,
+          cleanup_error: err?.message || String(err),
+        });
+        return { run_id, ok: false, error: err?.message || String(err) };
+      }
+    },
+  }));
+
+  try {
+    await runWithConcurrencyLimit(tasks, CLEANUP_CONCURRENCY);
+  } catch {
+    /* per-task failures already persisted into the registry */
+  }
+
+  try {
+    await pruneWorktrees(worcaDir);
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Atomically patch fields on a pipelines.d/<run>.json entry.
+ * Set a field to `undefined` to delete it. Returns `false` if the file is
+ * gone (the worktree was already cleaned up) or unreadable.
+ *
+ * Note: write is not strictly atomic — for a single-writer-per-id model
+ * (the cleanup background task owns its registry entry for the lifetime
+ * of the cleanup), read-modify-write is fine. A multi-writer scenario
+ * would need rename-into-place; we don't have that here.
+ */
+function _patchRegistry(worcaDir, runId, patch) {
+  const regFile = join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`);
+  if (!existsSync(regFile)) return false;
+  let reg;
+  try {
+    reg = JSON.parse(readFileSync(regFile, 'utf8'));
+  } catch {
+    return false;
+  }
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete reg[k];
+    else reg[k] = v;
+  }
+  try {
+    writeFileSync(regFile, JSON.stringify(reg, null, 2), 'utf8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function _listWorktrees(worcaDir) {
   const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
   if (!existsSync(pipelinesDir)) return [];
@@ -228,7 +298,15 @@ async function _listWorktrees(worcaDir) {
       }
     }
 
-    metas.push({ reg, worktreePath, worktreeExists, status, ageSeconds });
+    metas.push({
+      reg,
+      worktreePath,
+      worktreeExists,
+      status,
+      ageSeconds,
+      cleanup_state: reg.cleanup_state || null,
+      cleanup_error: reg.cleanup_error || null,
+    });
   }
 
   const disks = await Promise.all(
@@ -255,6 +333,8 @@ async function _listWorktrees(worcaDir) {
     group_type: m.reg.group_type || null,
     group_status: null,
     resumable: RESUMABLE_STATUSES.has(m.status),
+    cleanup_state: m.cleanup_state,
+    cleanup_error: m.cleanup_error,
   }));
 }
 
@@ -371,13 +451,19 @@ export function createWorktreesRouter() {
 
   // POST /worktrees/cleanup
   //
-  // Batch worktree removal. Always responds with HTTP 200 and a JSON body of
-  // shape `{ ok, results, failed_count }`, where `ok` is the AND of per-id
-  // outcomes and `failed_count` is the number of entries with `ok: false`.
-  // Per-entry errors carry a `code` field (`running`, `resumable_or_grouped`)
-  // when actionable. Clients must inspect `results[]` — a single bad id never
-  // aborts the batch, and partial failures are not signalled via HTTP status.
-  router.post('/cleanup', async (req, res) => {
+  // Batch worktree removal — async. Synchronously validates each id and
+  // stamps `cleanup_state: 'pending'` on the registry entries that pass
+  // pre-flight checks, then returns 202. The actual removal happens in
+  // the background with bounded concurrency. Clients poll GET /worktrees
+  // and observe `cleanup_state` per entry; on success the entry vanishes,
+  // on failure `cleanup_error` is set and `cleanup_state` is cleared.
+  //
+  // Response shape `{ ok, accepted, rejected }` where `rejected[]` carries
+  // entries that failed pre-flight (running, resumable without force, etc).
+  // A single bad id never blocks the rest of the batch; this stays
+  // compatible with the legacy synchronous shape's promise that partial
+  // failures are not signalled via HTTP status.
+  router.post('/cleanup', (req, res) => {
     const worcaDir = req.project?.worcaDir;
     if (!worcaDir) {
       return res
@@ -399,86 +485,82 @@ export function createWorktreesRouter() {
       }
     }
 
-    const tasks = run_ids.map((run_id) => ({
-      run_id,
-      fn: async () => {
-        const regFile = join(
-          worcaDir,
-          'multi',
-          'pipelines.d',
-          `${run_id}.json`,
-        );
-        if (!existsSync(regFile)) {
-          return {
-            run_id,
-            ok: false,
-            error: `Worktree "${run_id}" not found`,
-          };
-        }
+    // Pre-flight: read each registry entry, decide pending vs reject. We do
+    // this synchronously so the HTTP response can carry the rejection list
+    // — clients shouldn't have to poll to learn that a 'running' worktree
+    // was refused.
+    const accepted = [];
+    const rejected = [];
+    for (const run_id of run_ids) {
+      const regFile = join(worcaDir, 'multi', 'pipelines.d', `${run_id}.json`);
+      if (!existsSync(regFile)) {
+        rejected.push({
+          run_id,
+          ok: false,
+          error: `Worktree "${run_id}" not found`,
+        });
+        continue;
+      }
+      let reg;
+      try {
+        reg = JSON.parse(readFileSync(regFile, 'utf8'));
+      } catch {
+        rejected.push({
+          run_id,
+          ok: false,
+          error: 'Failed to read registry entry',
+        });
+        continue;
+      }
 
-        let reg;
-        try {
-          reg = JSON.parse(readFileSync(regFile, 'utf8'));
-        } catch {
-          return {
-            run_id,
-            ok: false,
-            error: 'Failed to read registry entry',
-          };
-        }
+      let status = reg.status || 'unknown';
+      if (reg.worktree_path && existsSync(reg.worktree_path)) {
+        const actual = _readWorktreeStatus(reg.worktree_path);
+        if (actual) status = actual;
+      }
 
-        let status = reg.status || 'unknown';
-        if (reg.worktree_path && existsSync(reg.worktree_path)) {
-          const actual = _readWorktreeStatus(reg.worktree_path);
-          if (actual) status = actual;
-        }
+      if (status === 'running') {
+        rejected.push({
+          run_id,
+          ok: false,
+          error: 'Cannot remove a running worktree',
+          code: 'running',
+        });
+        continue;
+      }
 
-        if (status === 'running') {
-          return {
-            run_id,
-            ok: false,
-            error: 'Cannot remove a running worktree',
-            code: 'running',
-          };
-        }
+      const isResumable = RESUMABLE_STATUSES.has(status);
+      const isGrouped = !!(reg.fleet_id || reg.workspace_id);
+      if (!force && (isResumable || isGrouped)) {
+        rejected.push({
+          run_id,
+          ok: false,
+          error:
+            'Removing this worktree prevents resuming the run. Pass force=true to confirm.',
+          code: 'resumable_or_grouped',
+        });
+        continue;
+      }
 
-        const isResumable = RESUMABLE_STATUSES.has(status);
-        const isGrouped = !!(reg.fleet_id || reg.workspace_id);
-        if (!force && (isResumable || isGrouped)) {
-          return {
-            run_id,
-            ok: false,
-            error:
-              'Removing this worktree prevents resuming the run. Pass force=true to confirm.',
-            code: 'resumable_or_grouped',
-          };
-        }
-
-        try {
-          await removeWorktree(worcaDir, run_id, { skipPrune: true });
-          if (reg.worktree_path) _diskCache.delete(reg.worktree_path);
-          return { run_id, ok: true };
-        } catch (err) {
-          return { run_id, ok: false, error: err.message };
-        }
-      },
-    }));
-
-    let results;
-    try {
-      results = await runWithConcurrencyLimit(tasks, CLEANUP_CONCURRENCY);
-    } catch (err) {
-      return res.status(500).json({ ok: false, error: err.message });
+      // Stamp pending so a reload mid-cleanup shows the same state.
+      _patchRegistry(worcaDir, run_id, {
+        cleanup_state: 'pending',
+        cleanup_error: undefined,
+      });
+      accepted.push({ run_id, reg });
     }
 
-    try {
-      await pruneWorktrees(worcaDir);
-    } catch {
-      /* non-fatal */
-    }
+    // Respond immediately — the client polls GET /worktrees to observe progress.
+    res.status(202).json({
+      ok: rejected.length === 0,
+      accepted: accepted.map((a) => a.run_id),
+      rejected,
+    });
 
-    const failed_count = results.reduce((n, r) => (r.ok ? n : n + 1), 0);
-    res.json({ ok: failed_count === 0, failed_count, results });
+    // Fire-and-forget background removal. Errors are persisted into the
+    // registry so the client can render them; nothing here is awaited by
+    // the HTTP request.
+    void _runCleanupBatch(worcaDir, accepted);
   });
 
   return router;

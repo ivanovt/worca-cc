@@ -43,6 +43,7 @@ export function createStore(initial = {}) {
     runsLoaded: initial.runsLoaded ?? false,
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
     worktrees: initial.worktrees ?? [],
+    worktreesLoaded: initial.worktreesLoaded ?? false,
     worktreeDiskWarningBytes: initial.worktreeDiskWarningBytes ?? 2_000_000_000,
     classifierModel: initial.classifierModel ?? 'haiku',
     cleanupPolicy: initial.cleanupPolicy ?? 'never',

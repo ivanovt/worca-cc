@@ -99,15 +99,19 @@ function _diskSummaryView(worktrees, diskWarningBytes = 2_000_000_000) {
 
 function _cardView(wt, { onSelectRun, onCleanup } = {}) {
   const isRunning = wt.status === 'running';
+  const cleanupState = wt.cleanup_state || null; // 'pending' | 'cleaning' | null
+  const isCleaning = !!cleanupState;
+  const cleanupError = wt.cleanup_error || null;
   const groupLabel = _groupLabel(wt);
   const status = wt.status || 'unknown';
   // Whole card is the click target — matches run-card behaviour. The
   // Cleanup button stops propagation so it doesn't trigger navigation.
   const cardClick = onSelectRun ? () => onSelectRun(wt.run_id) : null;
+  const cleanupDisabled = isRunning || isCleaning;
 
   return html`
     <div
-      class="run-card worktree-card ${statusClass(status)}"
+      class="run-card worktree-card ${statusClass(status)}${isCleaning ? ' worktree-card-cleaning' : ''}"
       @click=${cardClick}
     >
       <div class="run-card-top">
@@ -115,13 +119,17 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
           ${unsafeHTML(statusIcon(status, 16))}
         </span>
         <span class="run-card-title">${wt.title || wt.run_id}</span>
-        <sl-badge
-          variant="${_statusBadgeVariant(status)}"
-          pill
-          class="status-badge-${status}"
-        >
-          ${status}
-        </sl-badge>
+        ${
+          isCleaning
+            ? html`<sl-badge variant="warning" pill class="status-badge-cleaning"><sl-spinner class="badge-spinner"></sl-spinner> ${cleanupState}</sl-badge>`
+            : html`<sl-badge
+                variant="${_statusBadgeVariant(status)}"
+                pill
+                class="status-badge-${status}"
+              >
+                ${status}
+              </sl-badge>`
+        }
       </div>
       <div class="run-card-meta">
         <span class="run-card-meta-item">
@@ -151,20 +159,37 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
         <span class="meta-label">Path:</span>
         <code class="worktree-path-mono">${wt.worktree_path}</code>
       </div>
+      ${
+        cleanupError
+          ? html`<div class="worktree-card-cleanup-error">
+              <strong>Cleanup failed:</strong> ${cleanupError}
+            </div>`
+          : nothing
+      }
       <div class="run-card-actions">
         <sl-button
           size="small"
           variant="danger"
           outline
-          class="btn-cleanup${isRunning ? ' btn-cleanup-disabled' : ''}"
-          ?disabled=${isRunning}
-          title=${isRunning ? 'Cannot cleanup a running worktree' : nothing}
+          class="btn-cleanup${cleanupDisabled ? ' btn-cleanup-disabled' : ''}"
+          ?disabled=${cleanupDisabled}
+          title=${
+            isRunning
+              ? 'Cannot cleanup a running worktree'
+              : isCleaning
+                ? 'Cleanup already in progress'
+                : nothing
+          }
           @click=${(e) => {
             e.stopPropagation();
-            if (!isRunning && onCleanup) onCleanup(wt);
+            if (!cleanupDisabled && onCleanup) onCleanup(wt);
           }}
         >
-          ${unsafeHTML(iconSvg(Trash2, 12))} Cleanup
+          ${
+            isCleaning
+              ? html`<sl-spinner class="btn-cleanup-spinner"></sl-spinner> ${cleanupState}`
+              : html`${unsafeHTML(iconSvg(Trash2, 12))} Cleanup`
+          }
         </sl-button>
       </div>
     </div>
