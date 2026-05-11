@@ -1945,7 +1945,9 @@ export function modelsTab(worca, rerender) {
         Per-model environment variables are stored in
         <code>.claude/settings.local.json</code> (gitignored). Use them to route
         a single agent through an alternative endpoint, tune timeouts, or set
-        provider-specific overrides.
+        provider-specific overrides. The built-in <code>opus</code>,
+        <code>sonnet</code>, and <code>haiku</code> entries are always surfaced
+        as defaults — deleting all of them simply restores them on the next load.
       </p>
       <div class="settings-cards models-cards">
         ${modelKeys.map((name) =>
