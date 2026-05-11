@@ -49,7 +49,7 @@ vi.mock('./process-manager.js', () => {
 });
 
 const { createApp } = await import('./app.js');
-const { _walkDirSize } = await import('./worktrees-routes.js');
+const { walkDirSize } = await import('./worktrees-routes.js');
 
 // Default mock behaviour: mirror the registry-file deletion that real removeWorktree does.
 // Tests that need different behaviour override mockImplementation inline.
@@ -433,6 +433,7 @@ describe('POST /api/worktrees/cleanup', () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.ok).toBe(true);
+    expect(data.failed_count).toBe(0);
     expect(data.results).toHaveLength(6);
     expect(data.results.every((r) => r.ok)).toBe(true);
     expect(maxConcurrent).toBeGreaterThan(1);
@@ -465,6 +466,8 @@ describe('POST /api/worktrees/cleanup', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.results).toHaveLength(3);
+      expect(data.ok).toBe(false);
+      expect(data.failed_count).toBe(2);
 
       const missing = data.results.find((r) => r.run_id === 'run-missing-c');
       expect(missing.ok).toBe(false);
@@ -562,13 +565,13 @@ describe('POST /api/worktrees/cleanup', () => {
 
 // ─── Async disk walker ────────────────────────────────────────────────────────
 
-describe('_walkDirSize (async walker)', () => {
+describe('walkDirSize (async walker)', () => {
   it('WALKER_accurate_bytes: returns accurate bytes and truncated=false for normal trees', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wt-walker-bytes-'));
     writeFileSync(join(dir, 'a.bin'), Buffer.alloc(10_000));
     writeFileSync(join(dir, 'b.bin'), Buffer.alloc(20_000));
     try {
-      const result = await _walkDirSize(dir);
+      const result = await walkDirSize(dir);
       expect(result.bytes).toBeGreaterThanOrEqual(30_000);
       expect(result.truncated).toBe(false);
     } finally {
@@ -583,7 +586,7 @@ describe('_walkDirSize (async walker)', () => {
       writeFileSync(join(dir, `f${i}.txt`), 'x');
     }
     try {
-      const result = await _walkDirSize(dir, 5);
+      const result = await walkDirSize(dir, 5);
       expect(result.truncated).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });

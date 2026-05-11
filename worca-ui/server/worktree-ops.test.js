@@ -46,6 +46,15 @@ describe('worktree-ops', () => {
   }
 
   it('event loop is unblocked during parallel removeWorktree calls', async () => {
+    // Make the mocked git invocation deliberately slow so the test actually
+    // exercises liveness — a sync execFileSync impl would block the timer
+    // and ticks would stay near zero. With async execFile the ticker should
+    // accumulate well into the double digits over the ~100ms total.
+    mockExecFile.mockImplementation((...args) => {
+      const cb = args[args.length - 1];
+      setTimeout(() => cb(null, '', ''), 50);
+    });
+
     let ticks = 0;
     let running = true;
     function ticker() {
@@ -69,7 +78,11 @@ describe('worktree-ops', () => {
     // Flush one more round so the last ticker setImmediate can fire
     await new Promise((r) => setImmediate(r));
 
-    expect(ticks).toBeGreaterThan(0);
+    // Each remove issues 2 sequential git calls (remove + prune), each 50ms.
+    // Two parallel removes ⇒ ~100ms of awaiting, which is plenty of headroom
+    // for setImmediate to fire many times. Anything below 10 means the loop
+    // was being blocked.
+    expect(ticks).toBeGreaterThanOrEqual(10);
   });
 
   it('skipPrune=true skips git worktree prune', async () => {

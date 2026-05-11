@@ -3,6 +3,7 @@
  *
  * GET  /worktrees          — list worktree entries enriched with disk/age/group data
  * DELETE /worktrees/:run_id — remove a worktree (409 if running, 412 if resumable/grouped without ?force=1)
+ * POST /worktrees/cleanup  — batch remove (always returns 200 with `{ok, results, failed_count}`)
  *
  * Expects req.project.worcaDir to be set by projectResolver middleware.
  */
@@ -15,13 +16,28 @@ import { pruneWorktrees, removeWorktree } from './worktree-ops.js';
 
 const CLEANUP_CONCURRENCY = 4;
 
+/**
+ * Run an array of `{run_id, fn}` tasks with bounded concurrency.
+ * Tasks are expected to return a result object — but if one throws,
+ * the limiter converts the throw into an attributable failure result
+ * so a single bad task can't halt the rest of the batch.
+ */
 async function runWithConcurrencyLimit(tasks, limit) {
   const results = new Array(tasks.length);
   let nextIdx = 0;
   async function worker() {
     while (nextIdx < tasks.length) {
       const idx = nextIdx++;
-      results[idx] = await tasks[idx]();
+      const { run_id, fn } = tasks[idx];
+      try {
+        results[idx] = await fn();
+      } catch (err) {
+        results[idx] = {
+          run_id,
+          ok: false,
+          error: err?.message || String(err),
+        };
+      }
     }
   }
   await Promise.all(
@@ -43,11 +59,22 @@ const DISK_CACHE_TTL_MS = 30_000;
  *
  * Skips symlinks (don't follow into other trees) and is bounded by
  * MAX_WALK_FILES so a runaway directory can't hang the request.
+ * Override the cap with WORCA_DISK_WALK_MAX (positive integer); the
+ * raised default of 1M handles node_modules-heavy worktrees, but very
+ * large monorepos may still want a higher ceiling.
  * Errors on individual entries are swallowed so a transiently-locked
  * file doesn't poison the whole sum.
  */
-const MAX_WALK_FILES = 1_000_000;
-export async function _walkDirSize(rootPath, maxFiles = MAX_WALK_FILES) {
+function _resolveWalkCap() {
+  const raw = process.env.WORCA_DISK_WALK_MAX;
+  if (raw) {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 1_000_000;
+}
+const MAX_WALK_FILES = _resolveWalkCap();
+export async function walkDirSize(rootPath, maxFiles = MAX_WALK_FILES) {
   let bytes = 0;
   let count = 0;
   const stack = [rootPath];
@@ -87,7 +114,7 @@ async function _getDiskBytes(worktreePath) {
 
   let result = { bytes: 0, truncated: false };
   try {
-    result = await _walkDirSize(worktreePath);
+    result = await walkDirSize(worktreePath);
   } catch {
     result = { bytes: 0, truncated: false };
   }
@@ -300,6 +327,13 @@ export function createWorktreesRouter() {
   });
 
   // POST /worktrees/cleanup
+  //
+  // Batch worktree removal. Always responds with HTTP 200 and a JSON body of
+  // shape `{ ok, results, failed_count }`, where `ok` is the AND of per-id
+  // outcomes and `failed_count` is the number of entries with `ok: false`.
+  // Per-entry errors carry a `code` field (`running`, `resumable_or_grouped`)
+  // when actionable. Clients must inspect `results[]` — a single bad id never
+  // aborts the batch, and partial failures are not signalled via HTTP status.
   router.post('/cleanup', async (req, res) => {
     const worcaDir = req.project?.worcaDir;
     if (!worcaDir) {
@@ -322,54 +356,70 @@ export function createWorktreesRouter() {
       }
     }
 
-    const tasks = run_ids.map((run_id) => async () => {
-      const regFile = join(worcaDir, 'multi', 'pipelines.d', `${run_id}.json`);
-      if (!existsSync(regFile)) {
-        return { run_id, ok: false, error: `Worktree "${run_id}" not found` };
-      }
+    const tasks = run_ids.map((run_id) => ({
+      run_id,
+      fn: async () => {
+        const regFile = join(
+          worcaDir,
+          'multi',
+          'pipelines.d',
+          `${run_id}.json`,
+        );
+        if (!existsSync(regFile)) {
+          return {
+            run_id,
+            ok: false,
+            error: `Worktree "${run_id}" not found`,
+          };
+        }
 
-      let reg;
-      try {
-        reg = JSON.parse(readFileSync(regFile, 'utf8'));
-      } catch {
-        return { run_id, ok: false, error: 'Failed to read registry entry' };
-      }
+        let reg;
+        try {
+          reg = JSON.parse(readFileSync(regFile, 'utf8'));
+        } catch {
+          return {
+            run_id,
+            ok: false,
+            error: 'Failed to read registry entry',
+          };
+        }
 
-      let status = reg.status || 'unknown';
-      if (reg.worktree_path && existsSync(reg.worktree_path)) {
-        const actual = _readWorktreeStatus(reg.worktree_path);
-        if (actual) status = actual;
-      }
+        let status = reg.status || 'unknown';
+        if (reg.worktree_path && existsSync(reg.worktree_path)) {
+          const actual = _readWorktreeStatus(reg.worktree_path);
+          if (actual) status = actual;
+        }
 
-      if (status === 'running') {
-        return {
-          run_id,
-          ok: false,
-          error: 'Cannot remove a running worktree',
-          code: 'running',
-        };
-      }
+        if (status === 'running') {
+          return {
+            run_id,
+            ok: false,
+            error: 'Cannot remove a running worktree',
+            code: 'running',
+          };
+        }
 
-      const isResumable = RESUMABLE_STATUSES.has(status);
-      const isGrouped = !!(reg.fleet_id || reg.workspace_id);
-      if (!force && (isResumable || isGrouped)) {
-        return {
-          run_id,
-          ok: false,
-          error:
-            'Removing this worktree prevents resuming the run. Pass force=true to confirm.',
-          code: 'resumable_or_grouped',
-        };
-      }
+        const isResumable = RESUMABLE_STATUSES.has(status);
+        const isGrouped = !!(reg.fleet_id || reg.workspace_id);
+        if (!force && (isResumable || isGrouped)) {
+          return {
+            run_id,
+            ok: false,
+            error:
+              'Removing this worktree prevents resuming the run. Pass force=true to confirm.',
+            code: 'resumable_or_grouped',
+          };
+        }
 
-      try {
-        await removeWorktree(worcaDir, run_id, { skipPrune: true });
-        if (reg.worktree_path) _diskCache.delete(reg.worktree_path);
-        return { run_id, ok: true };
-      } catch (err) {
-        return { run_id, ok: false, error: err.message };
-      }
-    });
+        try {
+          await removeWorktree(worcaDir, run_id, { skipPrune: true });
+          if (reg.worktree_path) _diskCache.delete(reg.worktree_path);
+          return { run_id, ok: true };
+        } catch (err) {
+          return { run_id, ok: false, error: err.message };
+        }
+      },
+    }));
 
     let results;
     try {
@@ -384,7 +434,8 @@ export function createWorktreesRouter() {
       /* non-fatal */
     }
 
-    res.json({ ok: results.every((r) => r.ok), results });
+    const failed_count = results.reduce((n, r) => (r.ok ? n : n + 1), 0);
+    res.json({ ok: failed_count === 0, failed_count, results });
   });
 
   return router;
