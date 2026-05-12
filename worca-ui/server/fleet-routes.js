@@ -425,7 +425,12 @@ export function createFleetRouter({
 
       if (dispatchFleet) {
         try {
-          await dispatchFleet({ fleet_id, manifest, manifest_path });
+          await dispatchFleet({
+            fleet_id,
+            manifest,
+            manifest_path,
+            projects,
+          });
         } catch (err) {
           manifest.status = 'failed';
           saveManifest(fleetRunsDir, manifest);

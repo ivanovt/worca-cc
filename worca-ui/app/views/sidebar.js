@@ -178,9 +178,6 @@ export function sidebarView(
           : ''
       }
 
-      ${
-        currentProjectId || (projects || []).length <= 1
-          ? html`
       <div class="sidebar-new-run">
         <sl-dropdown class="sidebar-new-run-dropdown">
           <button
@@ -193,7 +190,14 @@ export function sidebarView(
             <span>New</span>
           </button>
           <sl-menu>
-            <sl-menu-item class="menu-item-new-pipeline" @click=${() => onNavigate('new-run')}>New Pipeline</sl-menu-item>
+            ${
+              // New Pipeline requires a current project (single-project pipelines
+              // can't target "All Projects"). New Fleet is the opposite — it
+              // needs global mode with multiple projects, so it's always shown.
+              currentProjectId || (projects || []).length <= 1
+                ? html`<sl-menu-item class="menu-item-new-pipeline" @click=${() => onNavigate('new-run')}>New Pipeline</sl-menu-item>`
+                : ''
+            }
             <sl-menu-item class="menu-item-new-fleet" @click=${() => onNavigate('fleet-runs/new')}>New Fleet</sl-menu-item>
           </sl-menu>
         </sl-dropdown>
@@ -304,9 +308,6 @@ export function sidebarView(
           </span>
         </div>
       </div>
-      `
-          : ''
-      }
 
       <div class="sidebar-footer">
         <div class="connection-indicator ${connClass}">

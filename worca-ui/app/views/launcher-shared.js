@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 
-const DEFAULT_GUIDE_CAP = 64 * 1024;
+const DEFAULT_GUIDE_CAP = 128 * 1024; // matches worca.guide.max_bytes default in src/worca/settings.json
 const DEFAULT_TOKEN_THRESHOLD = 1_000_000;
 
 function _formatBytes(bytes) {

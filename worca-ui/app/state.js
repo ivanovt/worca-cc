@@ -90,6 +90,7 @@ export function createStore(initial = {}) {
         next.webhookInbox === state.webhookInbox &&
         next.addProjectDialogOpen === state.addProjectDialogOpen &&
         next.worktrees === state.worktrees &&
+        next.fleets === state.fleets &&
         next.runsLoaded === state.runsLoaded &&
         next.worktreeDiskWarningBytes === state.worktreeDiskWarningBytes &&
         next.classifierModel === state.classifierModel &&

@@ -550,6 +550,15 @@ def create_parser() -> argparse.ArgumentParser:
         help="Resume a previously halted/failed fleet by re-launching failed/pending children",
     )
 
+    # Pre-generated fleet id (used by the worca-ui POST /api/fleet-runs route
+    # so the manifest path is known before dispatch). When provided, manifest
+    # creation uses this id verbatim — no random generation.
+    parser.add_argument(
+        "--fleet-id",
+        metavar="ID",
+        help="Use this pre-generated fleet id instead of generating one (UI integration)",
+    )
+
     # Provisioning (§2)
     parser.add_argument(
         "--init-timeout",
@@ -620,7 +629,15 @@ def main(argv=None) -> int:
         from worca.orchestrator.fleet_manifest import generate_fleet_id, write_fleet_manifest
         from datetime import datetime, timezone
 
-        fleet_id, fleet_id_short = generate_fleet_id()
+        if args.fleet_id:
+            # UI-integration path: caller supplied the id so the manifest
+            # filename is known before dispatch. Derive fleet_id_short from
+            # the trailing hex segment (matches generate_fleet_id() format
+            # f_<yyyymmddhhmm>_<rand>).
+            fleet_id = args.fleet_id
+            fleet_id_short = fleet_id.rsplit("_", 1)[-1]
+        else:
+            fleet_id, fleet_id_short = generate_fleet_id()
         guide_paths = [os.path.abspath(g) for g in (args.guide or [])]
         guide_bytes = sum(
             os.path.getsize(p) for p in guide_paths if os.path.isfile(p)

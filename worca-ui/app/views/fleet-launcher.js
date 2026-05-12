@@ -6,7 +6,13 @@ import {
   tokenOverheadGate,
 } from './launcher-shared.js';
 
-const GUIDE_CAP_BYTES = 64 * 1024;
+const GUIDE_CAP_BYTES_DEFAULT = 128 * 1024; // matches src/worca/settings.json + GUIDE_MAX_BYTES_DEFAULT in work_request.py
+
+function resolveGuideCap(appState) {
+  return (
+    appState?.preferences?.worca?.guide?.max_bytes ?? GUIDE_CAP_BYTES_DEFAULT
+  );
+}
 const TOKEN_THRESHOLD = 1_000_000;
 
 // ── module-level form state ─────────────────────────────────────────────────
@@ -137,13 +143,19 @@ function _projectSelectView(appProjects, { rerender } = {}) {
         class="fleet-launcher-projects"
         multiple
         clearable
-        value="${selectedProjects.join(' ')}"
+        .value=${selectedProjects}
         @sl-change=${
           rerender
             ? (e) => {
-                selectedProjects = e.target.value
-                  ? e.target.value.split(' ').filter(Boolean)
-                  : [];
+                const v = e.target.value;
+                // sl-select[multiple] exposes value as an Array; older Shoelace
+                // versions used a space-separated string. Handle both, but
+                // splitting on space would break on paths with whitespace.
+                selectedProjects = Array.isArray(v)
+                  ? v.filter(Boolean)
+                  : typeof v === 'string' && v
+                    ? v.split(' ').filter(Boolean)
+                    : [];
                 rerender();
               }
             : null
@@ -225,14 +237,14 @@ function _workRequestView({ rerender } = {}) {
   `;
 }
 
-function _guideSection({ rerender } = {}) {
+function _guideSection({ rerender, guideCapBytes } = {}) {
   return html`
     <div class="fleet-launcher-section">
       <label class="fleet-launcher-label">Guide (optional)</label>
       ${guideUploadWidget(
         { guides },
         {
-          maxBytes: GUIDE_CAP_BYTES,
+          maxBytes: guideCapBytes,
           onChange: rerender
             ? (ev) => {
                 if (ev.type === 'add-files') {
@@ -410,9 +422,10 @@ function _advancedSection({ rerender } = {}) {
 
 export function fleetLauncherView(appState, { rerender, onNavigate } = {}) {
   const appProjects = appState?.projects || [];
+  const guideCapBytes = resolveGuideCap(appState);
 
   const guidesTotalBytes = guides.reduce((s, g) => s + (g.size || 0), 0);
-  const overGuideCap = guidesTotalBytes > GUIDE_CAP_BYTES;
+  const overGuideCap = guidesTotalBytes > guideCapBytes;
   const hasPrompt =
     promptTab === 'prompt'
       ? prompt.trim().length > 0
@@ -489,7 +502,9 @@ export function fleetLauncherView(appState, { rerender, onNavigate } = {}) {
 
       if (data.ok && data.fleet_id) {
         submitStatus = null;
-        if (onNavigate) onNavigate(`#/fleet-runs/${data.fleet_id}`);
+        // onNavigate is the (section, runId, projectId?) wrapper; it builds
+        // the hash itself, so don't prepend "#/".
+        if (onNavigate) onNavigate('fleet-runs', data.fleet_id);
       } else {
         submitStatus = 'error';
         submitError = data.error || 'Launch failed';
@@ -508,7 +523,7 @@ export function fleetLauncherView(appState, { rerender, onNavigate } = {}) {
 
       ${_projectSelectView(appProjects, { rerender })}
       ${_workRequestView({ rerender })}
-      ${_guideSection({ rerender })}
+      ${_guideSection({ rerender, guideCapBytes })}
       ${_branchSection({ rerender })}
       ${_planSection({ rerender })}
       ${_advancedSection({ rerender })}

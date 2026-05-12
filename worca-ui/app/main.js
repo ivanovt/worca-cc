@@ -28,6 +28,8 @@ import {
 } from './views/add-project-dialog.js';
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { dashboardView } from './views/dashboard.js';
+import { fleetDetailView } from './views/fleet-detail.js';
+import { fleetLauncherView } from './views/fleet-launcher.js';
 import { learningsSectionView } from './views/learnings-panel.js';
 import {
   clearLiveTerminal,
@@ -123,6 +125,61 @@ let pipelineAction = null; // null | 'stopping' | 'resuming' | 'pausing'
 let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
 let restartStageKey = null;
+
+// -- Fleet views --
+const _fleetDetailCache = {}; // { fleetId: manifest }
+let _fleetDetailFetching = null; // currently-fetching fleet id (single in-flight)
+let _fleetListCache = null; // last GET /api/fleet-runs result
+let _fleetListFetching = false;
+
+function _fleetListView(rerender) {
+  if (_fleetListCache === null && !_fleetListFetching) {
+    _fleetListFetching = true;
+    fetch('/api/fleet-runs')
+      .then((r) => r.json())
+      .then((data) => {
+        _fleetListFetching = false;
+        _fleetListCache = data?.fleets || [];
+        rerender();
+      })
+      .catch(() => {
+        _fleetListFetching = false;
+        _fleetListCache = [];
+        rerender();
+      });
+    return html`<div class="fleet-list-loading"><sl-spinner></sl-spinner> Loading fleets…</div>`;
+  }
+  const fleets = _fleetListCache || [];
+  if (fleets.length === 0) {
+    return html`
+      <div class="fleet-list-empty">
+        <p>No fleet runs yet.</p>
+        <sl-button variant="primary" @click=${() => navigate('fleet-runs', 'new', null)}>
+          + New Fleet
+        </sl-button>
+      </div>
+    `;
+  }
+  return html`
+    <h3 class="dashboard-section-title">Fleets</h3>
+    <div class="fleet-list">
+      ${fleets.map(
+        (f) => html`
+        <div class="fleet-list-row" style="padding:12px;border-bottom:1px solid var(--sl-color-neutral-200);cursor:pointer"
+             @click=${() => navigate('fleet-runs', f.fleet_id, null)}>
+          <strong>${f.work_request?.title || f.fleet_id}</strong>
+          <sl-badge variant=${f.status === 'running' ? 'primary' : f.status === 'completed' ? 'success' : f.status === 'failed' ? 'danger' : 'warning'} pill style="margin-left:8px">
+            ${f.status}
+          </sl-badge>
+          <span style="margin-left:12px;color:var(--sl-color-neutral-500)">
+            ${f.children_count ?? 0} children · ${f.fleet_id}
+          </span>
+        </div>
+      `,
+      )}
+    </div>
+  `;
+}
 
 // -- Worktrees view --
 let worktreesFilter = '';
@@ -623,6 +680,22 @@ ws.on('preferences', (payload) => {
   }
 });
 
+// Fleet manifest watcher pushes fleet-update events when ~/.worca/fleet-runs/<id>.json
+// changes. Refresh the list so the sidebar count badge and any open fleet
+// detail view stay current.
+ws.on('fleet-update', () => {
+  fetch('/api/fleet-runs')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ fleets: data?.fleets || [] });
+      // Invalidate cached detail manifests so the next view fetch is fresh.
+      for (const k of Object.keys(_fleetDetailCache)) {
+        delete _fleetDetailCache[k];
+      }
+    })
+    .catch(() => {});
+});
+
 ws.on('beads-update', (payload, msg) => {
   const currentProject = store.getState().currentProjectId;
   if (msg?.project && currentProject && msg.project !== currentProject) return;
@@ -770,6 +843,14 @@ function handleHello(_payload) {
     fetchProjectScopedData();
     return;
   }
+
+  // Fetch fleets list (used by sidebar's Fleets entry + count badge). Best-effort.
+  fetch('/api/fleet-runs')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ fleets: data?.fleets || [] });
+    })
+    .catch(() => {});
 
   // Multi-project mode: fetch projects and send hello-ack
   fetch('/api/projects')
@@ -1817,6 +1898,14 @@ function contentHeaderView() {
     if (dbPath) {
       actionButton = html`<span class="beads-db-path">${unsafeHTML(iconSvg(Database, 12))} Beads DB<br><code>${dbPath}</code></span>`;
     }
+  } else if (route.section === 'fleet-runs') {
+    title =
+      route.runId === 'new'
+        ? 'New Fleet'
+        : route.runId
+          ? `Fleet ${route.runId.split('_').pop() || route.runId}`
+          : 'Fleets';
+    showBack = true;
   } else if (route.runId) {
     const run = store.getRunById(route.runId);
     const raw = run?.work_request?.title || 'Pipeline Details';
@@ -2074,7 +2163,9 @@ function mainContentView() {
     });
   }
 
-  if (route.runId) {
+  // The runId catch-all renders the per-run pipeline detail view. Exclude
+  // sections that own their own :id sub-route (fleet-runs).
+  if (route.runId && route.section !== 'fleet-runs') {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
     // switch), redirect to the section root instead of showing a stale view.
@@ -2173,6 +2264,44 @@ function mainContentView() {
 
   if (route.section === 'new-run') {
     return newRunView(viewState, { rerender });
+  }
+
+  if (route.section === 'fleet-runs') {
+    // /fleet-runs/new → launcher
+    if (route.runId === 'new') {
+      return fleetLauncherView(viewState, {
+        rerender,
+        onNavigate: (s, id) => navigate(s, id, null),
+      });
+    }
+    // /fleet-runs/:id → detail (fetch on demand, cache result)
+    if (route.runId) {
+      const fleet = _fleetDetailCache[route.runId];
+      if (!fleet) {
+        // Trigger fetch — only re-render on success/error
+        if (_fleetDetailFetching !== route.runId) {
+          _fleetDetailFetching = route.runId;
+          fetch(`/api/fleet-runs/${route.runId}`)
+            .then((r) => r.json())
+            .then((data) => {
+              _fleetDetailFetching = null;
+              if (data?.ok && data.fleet) {
+                _fleetDetailCache[route.runId] = data.fleet;
+                rerender();
+              }
+            })
+            .catch(() => {
+              _fleetDetailFetching = null;
+            });
+        }
+      }
+      return fleetDetailView(fleet || null, {
+        rerender,
+        onNavigate: (s, id) => navigate(s, id, null),
+      });
+    }
+    // /fleet-runs → list of fleets
+    return _fleetListView(rerender);
   }
 
   if (route.section === 'project-settings') {

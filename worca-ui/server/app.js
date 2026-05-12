@@ -1,6 +1,6 @@
 // server/app.js
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -555,6 +555,52 @@ export function createApp(options = {}) {
       '/api/fleet-runs',
       createFleetRouter({
         fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
+        // Spawn run_fleet.py in a detached subprocess so the route can return
+        // immediately. We pass the pre-generated fleet_id so the in-flight
+        // manifest path matches what the route just wrote.
+        dispatchFleet: async ({ fleet_id, projects, manifest }) => {
+          if (!projects || projects.length === 0) return;
+          const args = [
+            '-m',
+            'worca.scripts.run_fleet',
+            '--fleet-id',
+            fleet_id,
+            '--projects',
+            ...projects,
+          ];
+          if (manifest.work_request?.source) {
+            args.push('--source', manifest.work_request.source);
+          } else {
+            args.push('--prompt', manifest.work_request?.description ?? '');
+          }
+          if (manifest.head_template) {
+            args.push('--head-template', manifest.head_template);
+          }
+          if (manifest.base_branch) {
+            args.push('--base', manifest.base_branch);
+          }
+          if (manifest.plan?.path) {
+            args.push('--plan', manifest.plan.path);
+          }
+          for (const p of manifest.guide?.paths || []) {
+            args.push('--guide', p);
+          }
+          if (manifest.max_parallel) {
+            args.push('--max-parallel', String(manifest.max_parallel));
+          }
+          if (manifest.fleet_failure_threshold != null) {
+            args.push(
+              '--fleet-failure-threshold',
+              String(manifest.fleet_failure_threshold),
+            );
+          }
+          const child = spawn('python3', args, {
+            detached: true,
+            stdio: 'ignore',
+            env: { ...process.env },
+          });
+          child.unref();
+        },
       }),
     );
   }
