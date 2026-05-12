@@ -16,7 +16,20 @@ import sys
 import time
 
 from worca.orchestrator.fleet_manifest import read_fleet_manifest, update_fleet_status
-from worca.utils.env import RESERVED_ENV_KEYS, RESERVED_PREFIXES
+
+# Per W-040 §5: the fleet scrub list is fleet-specific. It is NOT the same as
+# `worca.utils.env.RESERVED_ENV_KEYS` (which is the denylist for per-model env
+# settings in settings.json and includes PATH so users can't silently override
+# the shell PATH per stage). For subprocess dispatch we MUST keep PATH so that
+# children can find `bd`, `claude`, `gh`, etc., on disk.
+_FLEET_SCRUB_KEYS = frozenset({
+    "WORCA_AGENT",
+    "WORCA_STAGE",
+    "WORCA_RUN_ID",
+    "WORCA_PROJECT_ROOT",
+    "CLAUDECODE",
+})
+_FLEET_SCRUB_PREFIXES = ("WORCA_",)
 
 _FLEET_RUNS_DEFAULT = os.path.expanduser("~/.worca/fleet-runs")
 
@@ -80,22 +93,24 @@ def _resolve_init_timeout(timeout_flag, settings: dict) -> int:
 
 
 def build_child_env(base_env: dict, *, fleet_id: str | None = None) -> dict:
-    """Return a copy of *base_env* with all reserved pipeline keys stripped.
+    """Return a copy of *base_env* with fleet-internal keys stripped.
 
-    Uses RESERVED_ENV_KEYS and RESERVED_PREFIXES from worca.utils.env as the
-    single source of truth — no hand-maintained scrub list here.
+    Scrubs the W-040 §5 list: ``WORCA_AGENT``, ``WORCA_STAGE``, ``WORCA_RUN_ID``,
+    ``WORCA_PROJECT_ROOT``, ``CLAUDECODE``, plus anything else starting with
+    ``WORCA_``. PATH is intentionally inherited so children can find on-disk
+    binaries (``bd``, ``claude``, ``gh``, …). The per-model env-settings
+    denylist in ``worca.utils.env`` is a different concern and is NOT reused
+    here.
 
     When *fleet_id* is supplied, ``WORCA_FLEET_ID`` is re-injected AFTER the
     scrub so the Guardian agent in the child pipeline can detect fleet
     membership and apply the ``[fleet:<short>]`` PR-title prefix (W-040 §11).
-    The scrub strips it first (per §5) to drop any stale value inherited
-    from the parent shell.
     """
     result = {}
     for key, value in base_env.items():
-        if key in RESERVED_ENV_KEYS:
+        if key in _FLEET_SCRUB_KEYS:
             continue
-        if any(key.startswith(prefix) for prefix in RESERVED_PREFIXES):
+        if any(key.startswith(prefix) for prefix in _FLEET_SCRUB_PREFIXES):
             continue
         result[key] = value
 

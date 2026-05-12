@@ -54,14 +54,13 @@ class _FakePopen:
 class TestBuildChildEnv:
     """build_child_env() must strip reserved keys from os.environ."""
 
-    def test_strips_reserved_env_keys(self):
-        from worca.scripts.run_fleet import build_child_env
-        from worca.utils.env import RESERVED_ENV_KEYS
+    def test_strips_fleet_scrub_keys(self):
+        from worca.scripts.run_fleet import _FLEET_SCRUB_KEYS, build_child_env
 
-        base = {k: "x" for k in RESERVED_ENV_KEYS}
+        base = {k: "x" for k in _FLEET_SCRUB_KEYS}
         base["SAFE_VAR"] = "keep"
         result = build_child_env(base)
-        for key in RESERVED_ENV_KEYS:
+        for key in _FLEET_SCRUB_KEYS:
             assert key not in result
 
     def test_keeps_safe_keys(self):
@@ -88,21 +87,26 @@ class TestBuildChildEnv:
         result = build_child_env(base)
         assert "CLAUDECODE" not in result
 
-    def test_strips_path(self):
+    def test_keeps_path(self):
+        """PATH must be inherited so children can find bd/claude/gh on disk."""
         from worca.scripts.run_fleet import build_child_env
 
         base = {"PATH": "/usr/bin:/bin", "HOME": "/root"}
         result = build_child_env(base)
-        assert "PATH" not in result
+        assert result["PATH"] == "/usr/bin:/bin"
 
-    def test_uses_env_py_reserved_keys_not_hardcoded(self):
-        """Verify run_fleet imports RESERVED_ENV_KEYS from worca.utils.env."""
-        import importlib
-        src = importlib.util.find_spec("worca.scripts.run_fleet").origin
-        with open(src) as f:
-            source = f.read()
-        assert "RESERVED_ENV_KEYS" in source
-        assert "from worca.utils.env import" in source or "worca.utils.env" in source
+    def test_fleet_scrub_list_matches_plan_section_5(self):
+        """Per W-040 §5 the fleet scrub list is the explicit fleet-internal keys
+        (WORCA_*, CLAUDECODE) — not the broader RESERVED_ENV_KEYS denylist that
+        also includes PATH (which is meant only for the per-model env-settings
+        denylist in worca.utils.env)."""
+        from worca.scripts.run_fleet import _FLEET_SCRUB_KEYS
+
+        assert "WORCA_AGENT" in _FLEET_SCRUB_KEYS
+        assert "WORCA_RUN_ID" in _FLEET_SCRUB_KEYS
+        assert "WORCA_PROJECT_ROOT" in _FLEET_SCRUB_KEYS
+        assert "CLAUDECODE" in _FLEET_SCRUB_KEYS
+        assert "PATH" not in _FLEET_SCRUB_KEYS
 
     def test_strips_worca_run_id(self):
         from worca.scripts.run_fleet import build_child_env
