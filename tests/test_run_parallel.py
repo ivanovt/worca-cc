@@ -215,3 +215,174 @@ class TestMainCopyClaudeConfig:
         src, dst = copy_calls[0]
         assert src == ".claude"
         assert dst == wt_path + "/.claude"
+
+
+# --- --guide flag ---
+
+class TestGuideFlag:
+    """main() accepts --guide PATH (repeatable) and calls attach_guide on each WorkRequest."""
+
+    def test_guide_flag_accepted_by_parser(self, monkeypatch, tmp_path):
+        """--guide PATH should be accepted without error."""
+        guide = tmp_path / "guide.md"
+        guide.write_text("# Guide\nSome content")
+        from concurrent.futures import ThreadPoolExecutor
+        wt_dir = tmp_path / "worktrees"
+        wt_dir.mkdir()
+        wt_path = str(wt_dir / "add-auth")
+        monkeypatch.setattr(sys, "argv", [
+            "run_parallel.py", "--prompts", "Add auth",
+            "--guide", str(guide),
+            "--worktree-dir", str(wt_dir),
+        ])
+
+        def fake_run(worktree_path, prompt, msize, mloops, settings):
+            return {"worktree": worktree_path, "prompt": prompt,
+                    "returncode": 0, "stdout": "", "stderr": ""}
+
+        with patch("worca.scripts.run_parallel.validate_runtime"), \
+             patch("worca.scripts.run_parallel.copy_claude_config"), \
+             patch("worca.scripts.run_parallel._create_worktree", return_value=wt_path), \
+             patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
+             patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
+             pytest.raises(SystemExit):
+            from worca.scripts.run_parallel import main
+            main()
+
+    def test_guide_calls_attach_guide(self, monkeypatch, tmp_path):
+        """When --guide is provided, attach_guide is called for each work request."""
+        guide = tmp_path / "guide.md"
+        guide.write_text("# Guide\nSome content")
+        from concurrent.futures import ThreadPoolExecutor
+        wt_dir = tmp_path / "worktrees"
+        wt_dir.mkdir()
+        wt_path = str(wt_dir / "add-auth")
+        monkeypatch.setattr(sys, "argv", [
+            "run_parallel.py", "--prompts", "Add auth",
+            "--guide", str(guide),
+            "--worktree-dir", str(wt_dir),
+        ])
+        attach_calls = []
+
+        def fake_attach(wr, paths):
+            attach_calls.append(paths)
+            return wr
+
+        def fake_run(worktree_path, prompt, msize, mloops, settings):
+            return {"worktree": worktree_path, "prompt": prompt,
+                    "returncode": 0, "stdout": "", "stderr": ""}
+
+        with patch("worca.scripts.run_parallel.validate_runtime"), \
+             patch("worca.scripts.run_parallel.copy_claude_config"), \
+             patch("worca.scripts.run_parallel._create_worktree", return_value=wt_path), \
+             patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
+             patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
+             patch("worca.scripts.run_parallel.attach_guide", side_effect=fake_attach), \
+             pytest.raises(SystemExit):
+            from worca.scripts.run_parallel import main
+            main()
+
+        assert len(attach_calls) == 1
+        assert attach_calls[0] == [str(guide)]
+
+    def test_guide_not_called_when_omitted(self, monkeypatch, tmp_path):
+        """When --guide is not provided, attach_guide is not called."""
+        from concurrent.futures import ThreadPoolExecutor
+        wt_dir = tmp_path / "worktrees"
+        wt_dir.mkdir()
+        wt_path = str(wt_dir / "add-auth")
+        monkeypatch.setattr(sys, "argv", [
+            "run_parallel.py", "--prompts", "Add auth",
+            "--worktree-dir", str(wt_dir),
+        ])
+        attach_calls = []
+
+        def fake_run(worktree_path, prompt, msize, mloops, settings):
+            return {"worktree": worktree_path, "prompt": prompt,
+                    "returncode": 0, "stdout": "", "stderr": ""}
+
+        with patch("worca.scripts.run_parallel.validate_runtime"), \
+             patch("worca.scripts.run_parallel.copy_claude_config"), \
+             patch("worca.scripts.run_parallel._create_worktree", return_value=wt_path), \
+             patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
+             patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
+             patch("worca.scripts.run_parallel.attach_guide",
+                   side_effect=lambda wr, paths: attach_calls.append(paths) or wr), \
+             pytest.raises(SystemExit):
+            from worca.scripts.run_parallel import main
+            main()
+
+        assert attach_calls == []
+
+    def test_multiple_guides_passed_through(self, monkeypatch, tmp_path):
+        """Multiple --guide flags are all passed to attach_guide."""
+        guide_a = tmp_path / "guide_a.md"
+        guide_b = tmp_path / "guide_b.md"
+        guide_a.write_text("# Guide A")
+        guide_b.write_text("# Guide B")
+        from concurrent.futures import ThreadPoolExecutor
+        wt_dir = tmp_path / "worktrees"
+        wt_dir.mkdir()
+        wt_path = str(wt_dir / "add-auth")
+        monkeypatch.setattr(sys, "argv", [
+            "run_parallel.py", "--prompts", "Add auth",
+            "--guide", str(guide_a),
+            "--guide", str(guide_b),
+            "--worktree-dir", str(wt_dir),
+        ])
+        attach_calls = []
+
+        def fake_run(worktree_path, prompt, msize, mloops, settings):
+            return {"worktree": worktree_path, "prompt": prompt,
+                    "returncode": 0, "stdout": "", "stderr": ""}
+
+        with patch("worca.scripts.run_parallel.validate_runtime"), \
+             patch("worca.scripts.run_parallel.copy_claude_config"), \
+             patch("worca.scripts.run_parallel._create_worktree", return_value=wt_path), \
+             patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
+             patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
+             patch("worca.scripts.run_parallel.attach_guide",
+                   side_effect=lambda wr, paths: attach_calls.append(paths) or wr), \
+             pytest.raises(SystemExit):
+            from worca.scripts.run_parallel import main
+            main()
+
+        assert len(attach_calls) == 1
+        assert attach_calls[0] == [str(guide_a), str(guide_b)]
+
+    def test_guide_applied_to_all_prompts(self, monkeypatch, tmp_path):
+        """When multiple prompts, attach_guide is called for each."""
+        guide = tmp_path / "guide.md"
+        guide.write_text("# Guide")
+        from concurrent.futures import ThreadPoolExecutor
+        wt_dir = tmp_path / "worktrees"
+        wt_dir.mkdir()
+        wt_paths = [str(wt_dir / "add-auth"), str(wt_dir / "fix-bug")]
+        monkeypatch.setattr(sys, "argv", [
+            "run_parallel.py", "--prompts", "Add auth", "Fix bug",
+            "--guide", str(guide),
+            "--worktree-dir", str(wt_dir),
+        ])
+        attach_calls = []
+        create_iter = iter(wt_paths)
+
+        def fake_create(base_dir, slug, branch):
+            return next(create_iter)
+
+        def fake_run(worktree_path, prompt, msize, mloops, settings):
+            return {"worktree": worktree_path, "prompt": prompt,
+                    "returncode": 0, "stdout": "", "stderr": ""}
+
+        with patch("worca.scripts.run_parallel.validate_runtime"), \
+             patch("worca.scripts.run_parallel.copy_claude_config"), \
+             patch("worca.scripts.run_parallel._create_worktree", side_effect=fake_create), \
+             patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
+             patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
+             patch("worca.scripts.run_parallel.attach_guide",
+                   side_effect=lambda wr, paths: attach_calls.append(paths) or wr), \
+             pytest.raises(SystemExit):
+            from worca.scripts.run_parallel import main
+            main()
+
+        assert len(attach_calls) == 2
+        assert all(paths == [str(guide)] for paths in attach_calls)

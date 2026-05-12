@@ -4,6 +4,7 @@ import { formatDuration } from '../utils/duration.js';
 import { iconSvg, Trash2 } from '../utils/icons.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
+import { groupByFleet } from './group-rendering.js';
 
 function _formatBytes(bytes) {
   if (!bytes || bytes < 0) return '0 B';
@@ -277,18 +278,16 @@ function _bulkDialogView(
   if (completed.length === 0) return nothing;
   const totalBytes = completed.reduce((s, w) => s + (w.disk_bytes || 0), 0);
 
-  const standalone = completed.filter((w) => !w.group_type);
-  const byFleet = {};
+  const { fleetGroups: byFleet, standalone: fleetStandalone } =
+    groupByFleet(completed);
   const byWorkspace = {};
-  for (const w of completed) {
-    if (w.group_type === 'fleet' && w.fleet_id) {
-      if (!byFleet[w.fleet_id]) byFleet[w.fleet_id] = [];
-      byFleet[w.fleet_id].push(w);
-    } else if (w.group_type === 'workspace' && w.workspace_id) {
+  for (const w of fleetStandalone) {
+    if (w.group_type === 'workspace' && w.workspace_id) {
       if (!byWorkspace[w.workspace_id]) byWorkspace[w.workspace_id] = [];
       byWorkspace[w.workspace_id].push(w);
     }
   }
+  const standalone = fleetStandalone.filter((w) => !w.group_type);
 
   const groupLines = [
     standalone.length > 0 ? `${standalone.length} standalone` : null,

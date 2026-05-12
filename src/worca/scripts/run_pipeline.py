@@ -216,16 +216,7 @@ def main():
         work_request = build_work_request(args)
 
         if args.guide:
-            try:
-                from worca.orchestrator.work_request import attach_guide
-            except ImportError:
-                raise argparse.ArgumentError(
-                    None,
-                    "--guide requires worca-cc with attach_guide() (W-040 / #101). "
-                    "The flag was accepted by W-048 plumbing but content injection is "
-                    "not yet implemented in this version. Upgrade worca-cc to a version "
-                    "that ships W-040, or remove --guide from your invocation.",
-                )
+            from worca.orchestrator.work_request import attach_guide
             work_request = attach_guide(work_request, args.guide)
 
         # Resolve plan: explicit --plan wins, then auto-detected from issue body

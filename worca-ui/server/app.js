@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
+import { createFleetRouter } from './fleet-routes.js';
 import { RAW_BODY } from './integrations/index.js';
 import { verify } from './integrations/verify.js';
 import { LaunchLock } from './launch-lock.js';
@@ -548,6 +549,12 @@ export function createApp(options = {}) {
         serverHost,
         serverPort,
         launchLock,
+      }),
+    );
+    app.use(
+      '/api/fleet-runs',
+      createFleetRouter({
+        fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
       }),
     );
   }

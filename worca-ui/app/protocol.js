@@ -2,7 +2,7 @@
  * Protocol definitions for worca-ui WebSocket communication.
  */
 
-/** @typedef {'subscribe-run'|'unsubscribe-run'|'subscribe-log'|'unsubscribe-log'|'list-runs'|'get-agent-prompt'|'get-preferences'|'set-preferences'|'stop-run'|'resume-run'|'list-beads-issues'|'start-beads-issue'|'list-beads-counts'|'list-beads-refs'|'list-beads-unlinked'|'run-snapshot'|'run-update'|'runs-list'|'log-line'|'log-bulk'|'preferences'|'run-started'|'run-stopped'|'stage-restarted'|'beads-update'|'hello'|'hello-ack'} MessageType */
+/** @typedef {'subscribe-run'|'unsubscribe-run'|'subscribe-log'|'unsubscribe-log'|'list-runs'|'get-agent-prompt'|'get-preferences'|'set-preferences'|'stop-run'|'resume-run'|'list-beads-issues'|'start-beads-issue'|'list-beads-counts'|'list-beads-refs'|'list-beads-unlinked'|'run-snapshot'|'run-update'|'runs-list'|'log-line'|'log-bulk'|'preferences'|'run-started'|'run-stopped'|'stage-restarted'|'beads-update'|'fleet-update'|'hello'|'hello-ack'} MessageType */
 
 /** @type {MessageType[]} */
 export const MESSAGE_TYPES = [
@@ -40,6 +40,7 @@ export const MESSAGE_TYPES = [
   'run-stopped',
   'stage-restarted',
   'beads-update',
+  'fleet-update',
   'webhook-inbox-event',
   'webhook-control-changed',
   'webhook-inbox-cleared',

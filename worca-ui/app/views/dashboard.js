@@ -9,6 +9,11 @@ import {
   Zap,
 } from '../utils/icons.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
+import {
+  fleetExpandedFromStorage,
+  fleetHeaderView,
+  groupByFleet,
+} from './group-rendering.js';
 import { runCardView } from './run-card.js';
 
 function _computeTotalCost(runs) {
@@ -31,6 +36,75 @@ function _formatCost(usd) {
 
 function _activeGroup(runs, statuses) {
   return runs.filter((r) => statuses.includes(r.pipeline_status));
+}
+
+function _renderRunList(
+  runs,
+  {
+    onSelectRun,
+    onPause,
+    onResume,
+    onStop,
+    onCancel,
+    onArchive,
+    onNavigate,
+    onToggleFleet,
+  } = {},
+) {
+  const { fleetGroups, standalone } = groupByFleet(runs);
+  const fleetEntries = Object.entries(fleetGroups);
+
+  if (fleetEntries.length === 0) {
+    return runs.map((run) =>
+      runCardView(run, {
+        onClick: onSelectRun,
+        onPause,
+        onResume,
+        onStop,
+        onCancel,
+        onArchive,
+      }),
+    );
+  }
+
+  const renderChild = (run) =>
+    runCardView(run, {
+      onClick: onSelectRun,
+      onPause,
+      onResume,
+      onStop,
+      onCancel,
+      onArchive,
+    });
+
+  return [
+    ...fleetEntries.map(([fleetId, children]) => {
+      const status = children.some((r) => r.pipeline_status === 'running')
+        ? 'running'
+        : children.some((r) => r.pipeline_status === 'paused')
+          ? 'paused'
+          : children.every((r) => r.pipeline_status === 'completed')
+            ? 'completed'
+            : 'failed';
+      const expanded = fleetExpandedFromStorage(fleetId, status);
+      return fleetHeaderView(fleetId, children, {
+        expanded,
+        onToggle: onToggleFleet,
+        onNavigate,
+        renderChild,
+      });
+    }),
+    ...standalone.map((run) =>
+      runCardView(run, {
+        onClick: onSelectRun,
+        onPause,
+        onResume,
+        onStop,
+        onCancel,
+        onArchive,
+      }),
+    ),
+  ];
 }
 
 function _projectCards(projects, runs, onNavigate) {
@@ -85,6 +159,7 @@ export function dashboardView(
     onStop,
     onCancel,
     onArchive,
+    onToggleFleet,
   } = {},
 ) {
   const runs = Object.values(state.runs);
@@ -157,7 +232,7 @@ export function dashboardView(
           ? html`
         <div class="active-group">
           <div class="run-list">
-            ${activeGroup.map((run) => runCardView(run, { onClick: onSelectRun, onPause, onResume, onStop, onCancel }))}
+            ${_renderRunList(activeGroup, { onSelectRun, onPause, onResume, onStop, onCancel, onNavigate, onToggleFleet })}
           </div>
         </div>
       `
@@ -173,7 +248,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-paused">
           <div class="run-list">
-            ${allPaused.map((run) => runCardView(run, { onClick: onSelectRun, onResume, onCancel }))}
+            ${_renderRunList(allPaused, { onSelectRun, onResume, onCancel, onNavigate, onToggleFleet })}
           </div>
         </div>
       `
@@ -195,7 +270,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-failed">
           <div class="run-list">
-            ${failedPreview.map((run) => runCardView(run, { onClick: onSelectRun, onResume, onCancel, onArchive }))}
+            ${_renderRunList(failedPreview, { onSelectRun, onResume, onCancel, onArchive, onNavigate, onToggleFleet })}
           </div>
         </div>
       `
@@ -217,7 +292,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-completed">
           <div class="run-list">
-            ${completedPreview.map((run) => runCardView(run, { onClick: onSelectRun }))}
+            ${_renderRunList(completedPreview, { onSelectRun, onNavigate, onToggleFleet })}
           </div>
         </div>
       `

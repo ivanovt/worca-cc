@@ -4,7 +4,9 @@
 **Priority:** P2
 **Area:** cc + ui
 **Date:** 2026-04-14 (revised 2026-04-25, refreshed 2026-05-11)
-**Depends on:** W-032 (global multi-project worca-ui — `~/.worca/projects.d/` semantics, **shipped**), W-039 (workspace batch add projects — prerequisite registration path for fleet launches from the UI), W-048 / #82 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `active_run` removal, **shipped 2026-04 — see commit cd0edc0**)
+**Depends on:** W-032 (global multi-project worca-ui — `~/.worca/projects.d/` semantics, **shipped**), W-039 (workspace batch add projects — **soft dependency**, see note below), W-048 / #82 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `active_run` removal, **shipped 2026-04 — see commit cd0edc0**)
+
+> **W-039 soft dependency.** The fleet launcher's project multi-select (§13.4) is populated from `GET /api/projects` (registered projects in `~/.worca/projects.d/`), which is a W-032 feature (**shipped**). W-039 adds *batch* project registration (scan a parent folder, register N subfolders at once) — a UX convenience that makes fleet launches more practical for users with many repos, but not a functional prerequisite. The fleet launcher works with whatever projects are already registered via the existing single-project "Add Project" flow. If W-039 has shipped by Phase 4, the launcher benefits automatically; if not, no code changes are blocked.
 
 ## Current Implementation Snapshot (2026-05-11)
 
@@ -27,7 +29,7 @@ Anchor every section's "Current state" claim against this snapshot — earlier d
 - `src/worca/scripts/run_fleet.py` — does not exist; the core fleet runner is unimplemented.
 - `src/worca/agents/core/{planner,reviewer,tester,guardian}.md` — no guide-precedence or fleet-PR instructions yet.
 - `.claude/worca/settings.json` (and the bundled template) — no `worca.guide.max_bytes` or `worca.fleet.*` keys yet.
-- UI: `fleet-routes.js`, `fleet-launcher.js`, `fleet-detail.js`, `launcher-shared.js` — none exist; `dashboard.js` has no fleet-grouping branch; `protocol.js` allowlist does not include `fleet-update`.
+- UI: `fleet-routes.js`, `fleet-launcher.js`, `fleet-detail.js`, `launcher-shared.js` — none exist; `dashboard.js` has no fleet-grouping branch; `protocol.js` allowlist does not include `fleet-update`. `sidebar.js:177-185` renders the "New Pipeline" CTA as a plain `<button>` — not a dropdown; Phase 4 must convert it to `sl-dropdown` + `sl-menu` before adding the "New Fleet" option (§13.1).
 
 This snapshot is normative for the rest of the document — when a §N "Current state" paragraph conflicts with it, this snapshot wins.
 
@@ -165,9 +167,13 @@ Because `prompt_builder.py` already routes `wr.description` into every stage, no
 
 ### 5. Environment Isolation for Fleet Children
 
-- **Current state:** Stage execution in `src/worca/orchestrator/runner.py` and the agent templates in `src/worca/agents/core/*.md` (planner.md, coordinator.md, implementer.md, tester.md, reviewer.md, guardian.md, learner.md, plan_reviewer.md) depend on `WORCA_AGENT` / `WORCA_STAGE` / `WORCA_RUN_ID` being set per-stage. The hook side enforces this in `src/worca/claude_hooks/pre_tool_use.py:65`. Children spawn as `subprocess.Popen`.
+- **Current state:** Stage execution in `src/worca/orchestrator/runner.py` and the agent templates in `src/worca/agents/core/*.md` (planner.md, coordinator.md, implementer.md, tester.md, reviewer.md, guardian.md, learner.md, plan_reviewer.md) depend on `WORCA_AGENT` / `WORCA_RUN_ID` being set per-stage. The hook side enforces this in `src/worca/claude_hooks/pre_tool_use.py:65`. Children spawn as `subprocess.Popen`.
 - **Obstacle:** Stale env vars from the parent (e.g., `WORCA_AGENT` from a launcher, or `CLAUDECODE=1` when launched from inside Claude Code) leak in and cause hooks to misclassify the child.
-- **Resolution:** `run_fleet.py` builds a per-child env from `os.environ.copy()` then `env.pop()` on an explicit scrub list: `WORCA_AGENT`, `WORCA_STAGE`, `WORCA_RUN_ID`, `WORCA_PROJECT_ROOT`, `CLAUDECODE`. `WORCA_PROJECT_ROOT` must be scrubbed because the CWD-lock hook in `pre_tool_use.py:35` reads it to prefix all Bash commands with `cd $root &&` — if it inherits the fleet launcher's directory instead of the child's worktree path, every hook invocation in every child will misfire. Children set these vars themselves as stages fire.
+- **Resolution:** `run_fleet.py` uses the authoritative `RESERVED_ENV_KEYS` frozenset and `RESERVED_PREFIXES` tuple from `src/worca/utils/env.py` to scrub per-child environments — **not a hand-maintained parallel list**. Concretely: `run_fleet.py` imports `RESERVED_ENV_KEYS` and `RESERVED_PREFIXES` from `worca.utils.env`, builds a per-child env from `os.environ.copy()`, then strips any key that is in `RESERVED_ENV_KEYS` or matches any `RESERVED_PREFIXES` entry (currently `WORCA_*`). This covers all pipeline-internal keys: `WORCA_AGENT`, `WORCA_RUN_ID`, `WORCA_PROJECT_ROOT`, `WORCA_RUN_DIR`, `WORCA_PLAN_FILE`, `WORCA_EVENTS_PATH`, `WORCA_TARGET_BRANCH`, `WORCA_COVERAGE`, `WORCA_SKIP_BEADS`, `WORCA_CLAUDE_BIN`, `CLAUDECODE`, and `PATH` (which `get_env()` rebuilds per-child anyway). Children set these vars themselves as stages fire via `get_env()`.
+
+  **Why a single source of truth matters:** `env.py` already maintains `RESERVED_ENV_KEYS` for `filter_model_env()` (used to sanitize per-model env overrides from `settings.json`). Maintaining a parallel scrub list in `run_fleet.py` would invite drift — the plan's original list of 5 keys was already missing 7 keys that `env.py` covers (e.g., `WORCA_RUN_DIR`, `WORCA_PLAN_FILE`, `WORCA_EVENTS_PATH`). By importing from `env.py`, any future key additions automatically apply to fleet child scrubbing.
+
+  **`WORCA_PROJECT_ROOT` specifically** must be scrubbed because the CWD-lock hook in `pre_tool_use.py:35` reads it to prefix all Bash commands with `cd $root &&` — if it inherits the fleet launcher's directory instead of the child's worktree path, every hook invocation in every child will misfire.
 
 ### 6. Plan Stage Modes
 
@@ -280,7 +286,7 @@ W-040 introduces three first-class UX surfaces: a **fleet-aware dashboard** that
 - **Layout follows W-048 §13.7** (binding contract): flat siblings under the existing "Pipeline" section. W-040 adds a "Fleets" entry between `Worktrees` (added by W-048) and the future `Workspaces` slot (added by W-047).
 - **Conditional visibility:** Hidden when `GET /api/fleet-runs` returns `[]`; revealed automatically when the first fleet is created. Same pattern as W-048's "Worktrees" entry.
 - **Count badge:** `<sl-badge variant="primary" pill>` showing active fleet count (status `running`); flips to `warning` variant when at least one fleet is `halted`. Matches existing convention for Pipeline > Running.
-- **"+ New Pipeline" CTA evolution:** W-048 §13.7 scaffolds the dropdown. This plan adds the **"+ New Fleet"** option, routing to `#/fleet-runs/new`.
+- **"+ New Pipeline" CTA → dropdown conversion.** The current sidebar (`sidebar.js:177-185`) renders a plain `<button class="sidebar-new-run-btn">` with a single `@click` handler — there is no dropdown, no `sl-menu`, and no option-insertion point. W-048 §13.7 planned but did not ship a dropdown. **Phase 4 must first convert this button into an `<sl-dropdown>` + `<sl-menu>` with "New Pipeline" (existing behavior) and "New Fleet" (routes to `#/fleet-runs/new`) as menu items** before the fleet option can be added. The dropdown trigger retains the existing `.sidebar-new-run-btn` class and `Plus` icon for visual continuity; the menu appears on click. W-047 later adds "New Workspace" as a third item — the dropdown structure accommodates this without further refactoring.
 - **No nesting** — flat siblings only. The earlier W-047 "Multi-Repo > Workspaces" nesting proposal is superseded by W-048 §13.7.
 - **Active-state styling** matches existing sidebar entries (Shoelace's selected variant + accent border).
 
@@ -415,8 +421,17 @@ Per-child status (in fleet detail view's children grid) uses the existing pipeli
    - `halted`: allows `resume`, `cancel`, `archive`, `delete`, `learn`. Disallows `pause`, `stop` (already halted), `unarchive`.
    - `setup_failed`: allows `cancel`, `archive`, `delete`. Disallows resume — `worca init` failed before the pipeline started, so there's nothing to resume; user must re-launch the fleet.
    - `pending`: allows `cancel`, `delete`. Disallows everything else (no PID exists yet).
-2. `worca-ui/app/views/dashboard.js` — extend `pipelineStatusClass()` (or equivalent status→class resolver in the post-W-048 unified dashboard) with `case 'halted': return 'pipeline-halted';` etc. `multi-dashboard.js` no longer exists.
-3. `worca-ui/app/styles.css` — add `.pipeline-halted { border-left-color: var(--status-paused); }`, `.pipeline-setup-failed { border-left-color: var(--status-failed); }`, `.pipeline-pending { border-left-color: var(--status-paused); /* or unset */ }`. **No new CSS variables** — reuse existing color variables to match the badge variants above.
+2. `worca-ui/app/utils/status-badge.js` — extend `CLASS_MAP` and `ICON_DATA` with the new statuses. `CLASS_MAP` maps status strings to CSS class names using the existing `status-*` convention:
+   - `halted: 'status-halted'`
+   - `setup_failed: 'status-setup-failed'`
+   - `unrecoverable: 'status-unrecoverable'`
+   (`pending` is already present in `CLASS_MAP`.)
+   `ICON_DATA` gets matching icon entries (e.g., `halted` → `CircleSlash`, `setup_failed` → `CircleAlert`, `unrecoverable` → `CircleAlert`).
+3. `worca-ui/app/styles.css` — add entries following the existing `status-*` convention (both badge colors and run-card border styling):
+   - `.status-halted { color: var(--status-paused); }` + `.run-card.status-halted { border-left: 3px solid var(--status-paused); }`
+   - `.status-setup-failed { color: var(--status-failed); }` + `.run-card.status-setup-failed { border-left: 3px solid var(--status-failed); }`
+   - `.status-unrecoverable { color: var(--status-failed); }` + `.run-card.status-unrecoverable { border-left: 3px solid var(--status-failed); }`
+   **No new CSS variables** — reuse existing color variables to match the badge variants above. The `status-*` prefix is the codebase's established convention (see `CLASS_MAP` in `status-badge.js` and the existing `.status-running`, `.status-failed`, etc. rules in `styles.css`). Do **not** introduce a parallel `pipeline-*` naming system.
 
 The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 
@@ -429,10 +444,10 @@ The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 | `worca-ui/app/views/fleet-launcher.test.js` (new) | Project multi-select; tab switching prompt/source; guide upload tags + size readout; **head template AND base branch are separate inputs** (§4); head-template live preview + collision detection disables submit; **base branch pre-flight (`POST /api/fleet-runs/validate-base`) gating submit when missing in some repos**; plan-mode radio reveals correct sub-inputs; token-overhead gate requires "I understand" check above threshold. |
 | `worca-ui/server/fleet-routes.test.js` (new) | All endpoints listed in 13.6 — contract + error paths (404, 409 on resume of running fleet, 400 on guide cap exceeded, 412 on cleanup of resumable fleet without `?force=1`, 410 on resume after worktree cleanup, `validate-base` returns missing-in list). |
 | `worca-ui/server/fleet-routes-guide-upload.test.js` (new) | Multipart upload lands files under `~/.worca/fleet-runs/<id>/guides/` per §3.5; filename sanitization (path separators stripped); collision dedup (`-1`, `-2`); size cap enforced before dispatch; manifest `guide.uploaded === true` for UI uploads, `false` for CLI paths. |
-| `worca-ui/app/views/sidebar.test.js` (extend) | "Fleets" entry hidden when zero fleets, visible when fleets exist (per W-048 §13.7 layout); count badge shows active count; badge variant flips to warning when any fleet halted; "+ New Fleet" option appears in the New Pipeline dropdown. |
+| `worca-ui/app/views/sidebar.test.js` (extend) | "Fleets" entry hidden when zero fleets, visible when fleets exist (per W-048 §13.7 layout); count badge shows active count; badge variant flips to warning when any fleet halted; "New Pipeline" button converted to `sl-dropdown` + `sl-menu`; "+ New Fleet" menu item present and routes to `#/fleet-runs/new`; existing "New Pipeline" item retains original behavior. |
 | `worca-ui/app/views/sidebar-status-badges.test.js` (extend) | New `halted` and `setup_failed` badge color cases; `halted` + `halt_reason: "user"` renders neutral, `halted` + `halt_reason: "circuit_breaker"` renders warning. |
 | `worca-ui/app/utils/state-actions.test.js` (extend, new if absent) | `actionAllowed('resume', 'halted') === true`; `actionAllowed('pause', 'halted') === false`; `setup_failed` only allows `cancel`/`archive`/`delete`; `pending` only allows `cancel`/`delete`. Enforces W-048 §13.4 binding contract. |
-| `worca-ui/app/views/dashboard.test.js` (extend) — formerly the `multi-dashboard.test.js` slot before W-048 unified the views | `pipelineStatusClass('halted')` returns `pipeline-halted`; `pipelineStatusClass('setup_failed')` returns `pipeline-setup-failed`; new statuses no longer fall through to `pipeline-unknown`. |
+| `worca-ui/app/utils/status-badge.test.js` (extend, new if absent) | `statusClass('halted')` returns `status-halted`; `statusClass('setup_failed')` returns `status-setup-failed`; `statusClass('unrecoverable')` returns `status-unrecoverable`; new statuses no longer fall through to `status-unknown`. |
 | `worca-ui/app/views/launcher-shared.test.js` (new) | Each extracted subcomponent (guide upload, head-template input, plan-mode radio shell, token-overhead gate) in isolation; verified the API surface W-047 will compose against. |
 | `worca-ui/test/ws-integration.test.js` (extend) | `fleet-update` event subscription and dashboard re-render; **`workspace-update` is a separate event type and never carries fleet payloads** (negative test ensuring multiplexing isn't reintroduced). |
 | `worca-ui/e2e/fleet-runs.spec.js` (new, Playwright `--workers=1`) | End-to-end: launch fleet (via UI multipart upload), observe halted state, resume from UI, see PR aggregation, see aggregate cost panel, "Re-run fleet" creates a new fleet with same definition. |
@@ -441,14 +456,16 @@ The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 
 | File | Change |
 |------|--------|
-| `worca-ui/app/views/sidebar.js` | "Fleet Runs" nav entry (conditional visibility) |
+| `worca-ui/app/views/sidebar.js` | Convert "New Pipeline" button → `sl-dropdown` + `sl-menu`; "Fleet Runs" nav entry (conditional visibility) |
 | `worca-ui/app/views/dashboard.js` | Fleet grouping renderer with expand/collapse |
 | `worca-ui/app/views/fleet-detail.js` | **New** — manifest, guide, children, actions |
 | `worca-ui/app/views/fleet-launcher.js` | **New** — guided launch form with token gate |
 | `worca-ui/app/protocol.js` | Add `'fleet-update'` to allowlist |
 | `worca-ui/server/fleet-routes.js` | **New** — REST endpoints from 13.6 |
 | `worca-ui/server/ws-modular.js` | Fleet manifest watcher; emits `fleet-update` |
-| `worca-ui/app/styles.css` | Fleet group + launcher styles; halted/setup_failed CSS vars if needed |
+| `worca-ui/app/utils/state-actions.js` | Extend `STATES` + `ACTION_MATRIX` with `halted`, `setup_failed`, `unrecoverable` (§13.7 triple-update) |
+| `worca-ui/app/utils/status-badge.js` | Extend `CLASS_MAP` + `ICON_DATA` with new status values (§13.7 triple-update) |
+| `worca-ui/app/styles.css` | Fleet group + launcher styles; `.status-halted`, `.status-setup-failed`, `.status-unrecoverable` rules (§13.7 triple-update) |
 | Tests above | **New / extended** |
 
 ## Implementation Plan
@@ -465,21 +482,31 @@ The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 5. Document precedence **guide > plan > description** in `CLAUDE.md`. The guide is the highest-authority normative material (matching the "treat any conflict between the guide and the task description as a bug" wording in the normative header). The plan is derived from the guide and the description; if the plan diverges from the guide, the guide wins. The description is task scope, expanded by both. When all three are present, agents must surface plan-vs-guide conflicts rather than silently resolving them.
 6. Reinforce the precedence in the agent templates: add a "Guide precedence" instruction block to `planner.md`, `reviewer.md`, and `tester.md` that tells the agent (a) to conform to the guide, (b) to surface plan-vs-guide divergence rather than silently resolving it, (c) to treat description requests that conflict with the guide as bugs to flag.
 
-### Phase 2: Fleet runner (core)
+### Phase 2a: Fleet runner skeleton (plumbing)
 
 **Files:** `src/worca/scripts/run_fleet.py` (new), `src/worca/utils/branch_naming.py` (new), `src/worca/scripts/run_worktree.py`, `src/worca/scripts/run_parallel.py`
 
+This phase delivers the runner's argument parser, branch naming utilities, init provisioning, and the `group_type` wiring — all unit-testable in isolation without the dispatch loop or manifest storage.
+
 **Tasks:**
-1. Add `src/worca/scripts/run_fleet.py` with arg parsing for `--projects` / `--projects-file`, `--head-template` (canonical), `--base` (PR base branch — see §4), `--guide`, `--plan`, `--plan-first`, `--max-parallel`, `--fleet-failure-threshold`, `--resume`. **`--branch` is explicitly rejected** with the §4 error message — no deprecation alias exists.
+1. Add `src/worca/scripts/run_fleet.py` with arg parsing for `--projects` / `--projects-file`, `--head-template` (canonical), `--base` (PR base branch — see §4), `--guide`, `--plan`, `--plan-first`, `--max-parallel`, `--fleet-failure-threshold`, `--resume`. **`--branch` is explicitly rejected** with the §4 error message — no deprecation alias exists. The dispatch loop and manifest logic are stubs at this point — Phase 2b fills them in.
 2. Extract `_slugify` + `_resolve_branch_template` into `src/worca/utils/branch_naming.py`; update `run_parallel.py:35` AND `run_worktree.py:76` to import from there (both files currently duplicate the helper).
 3. Add collision detection on post-substitution **head** branch names. **Base branch pre-flight:** when `--base` is set, verify it exists in every selected project via `git -C <target> branch --list <base>`; abort with the missing-in list if any are absent.
 4. Invoke `worca init --upgrade` per target; capture failures as `setup_failed` (per-target subprocess timeout from §2).
 5. Patch `run_worktree.py` to pass `group_type="fleet"` to `register_pipeline()` when `--fleet-id` is set. **The `--fleet-id` flag itself, `register_pipeline()`'s `fleet_id`/`workspace_id`/`group_type`/`target_branch` keyword args, and the mutual-exclusion check are already shipped** — no signature changes needed; just the one missing `group_type="fleet"` pass-through call at `run_worktree.py:253`.
-6. Write fleet manifest to `~/.worca/fleet-runs/<fleet_id>.json` (manifest schema §10 includes `head_template`, `base_branch`, `fleet_id_short`, `guide.uploaded`); update fleet-level status on child transitions (polled from `pipelines.d/`).
-7. Manual dispatch loop with `--max-parallel` (default 5) — **not `ThreadPoolExecutor.map`** (see §7 dispatch-strategy note: eagerly queued futures can't be reliably cancelled). Each child calls `run_worktree.py` with `cwd=project_dir`, `--fleet-id`, and `--branch <base>` (W-048 §10 = base branch).
-8. Fleet-level circuit breaker (`fleet_failure_threshold`, default 30%).
-9. Extend `reconcile_orphan_groups()` (registry.py:215 — currently a no-op stub returning `[]`) to read `~/.worca/fleet-runs/<id>.json` existence and strip dead `fleet_id` / `group_type` from registry entries whose manifest no longer exists. The skeleton is in place; this task adds the manifest-lookup body.
-10. Replace the commented-out `FleetSource` stub in `src/worca/cli/cleanup.py:196-202` with a real implementation: `list_eligible(filters)` enumerates `~/.worca/fleet-runs/*.json`; `remove(entry)` removes child worktrees (via the existing `WorktreeSource` path), deregisters their `pipelines.d/` entries, and removes the `~/.worca/fleet-runs/<fleet_id>/` directory (manifest + `guides/`). Wire it into `_build_sources()` (line 213).
+
+### Phase 2b: Fleet runner orchestration (stateful)
+
+**Files:** `src/worca/scripts/run_fleet.py`, `src/worca/orchestrator/registry.py`, `src/worca/cli/cleanup.py`
+
+This phase builds the manifest, dispatch loop, circuit breaker, orphan reconciliation, and cleanup source on top of Phase 2a's skeleton.
+
+**Tasks:**
+1. Write fleet manifest to `~/.worca/fleet-runs/<fleet_id>.json` (manifest schema §10 includes `head_template`, `base_branch`, `fleet_id_short`, `guide.uploaded`); update fleet-level status on child transitions (polled from `pipelines.d/`).
+2. Manual dispatch loop with `--max-parallel` (default 5) — **not `ThreadPoolExecutor.map`** (see §7 dispatch-strategy note: eagerly queued futures can't be reliably cancelled). Each child calls `run_worktree.py` with `cwd=project_dir`, `--fleet-id`, and `--branch <base>` (W-048 §10 = base branch). Environment scrubbing uses `RESERVED_ENV_KEYS` and `RESERVED_PREFIXES` imported from `worca.utils.env` (§5) — no hand-maintained scrub list.
+3. Fleet-level circuit breaker (`fleet_failure_threshold`, default 30%).
+4. Extend `reconcile_orphan_groups()` (registry.py:215 — currently a no-op stub returning `[]`) to read `~/.worca/fleet-runs/<id>.json` existence and strip dead `fleet_id` / `group_type` from registry entries whose manifest no longer exists. The skeleton is in place; this task adds the manifest-lookup body.
+5. Replace the commented-out `FleetSource` stub in `src/worca/cli/cleanup.py:196-202` with a real implementation: `list_eligible(filters)` enumerates `~/.worca/fleet-runs/*.json`; `remove(entry)` removes child worktrees (via the existing `WorktreeSource` path), deregisters their `pipelines.d/` entries, and removes the `~/.worca/fleet-runs/<fleet_id>/` directory (manifest + `guides/`). Wire it into `_build_sources()` (line 213).
 
 ### Phase 3: Plan modes
 
@@ -499,8 +526,12 @@ The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 3. Fleet-grouping renderer in `dashboard.js` (cross-project rendering already lives here post-W-048) — group `runs-list` entries by `fleet_id` AND `group_type === "fleet"` (W-048 §5 rule — never derive from `fleet_id` presence alone), render collapsible header with aggregate progress + aggregate cost, persist expand state in localStorage. Reuse helpers from the new `group-rendering.js` module (shared with `worktrees.js`).
 4. Build `fleet-launcher.js` per §13.4 — project multi-select, multipart guide upload, **separate head-template + base-branch inputs** with collision/missing-base validation, plan-mode toggle, token-overhead gate.
 5. Build `fleet-detail.js` per §13.3 — manifest panel, guide opt-in viewer (with not-retrievable fallback), children grid with PR aggregation, **aggregate cost panel**, halt/resume/cleanup/re-run actions with resume-loss confirmation.
-6. Add conditional "Fleets" entry in `sidebar.js` per W-048 §13.7 layout (flat sibling under Pipeline section); add "+ New Fleet" option to the New Pipeline dropdown.
-7. Wire badge color mapping for `halted`, `setup_failed`, `pending` (§13.7).
+6. **Sidebar: convert "New Pipeline" button to dropdown + add "Fleets" nav entry.** The current `sidebar.js:177-185` is a plain `<button>` — convert it to `<sl-dropdown>` + `<sl-menu>` with "New Pipeline" and "New Fleet" items (see §13.1). Add conditional "Fleets" entry per W-048 §13.7 layout (flat sibling under Pipeline section).
+7. **Status system triple-update (§13.7 binding contract).** Add `halted`, `setup_failed`, and `unrecoverable` to all three render call sites in lockstep — this is a single atomic task, not three independent changes:
+   - `state-actions.js`: extend `STATES` array with `halted`, `setup_failed`, `unrecoverable`; extend `ACTION_MATRIX` with the allowed actions per §13.7 (e.g., `halted` allows `resume`/`cancel`/`archive`/`delete`/`learn`; `setup_failed` allows `cancel`/`archive`/`delete`; `pending` already exists in `STATES`).
+   - `status-badge.js`: extend `CLASS_MAP` with `halted: 'status-halted'`, `setup_failed: 'status-setup-failed'`, `unrecoverable: 'status-unrecoverable'`; extend `ICON_DATA` with matching icons.
+   - `styles.css`: add `.status-halted`, `.status-setup-failed`, `.status-unrecoverable` rules (both badge colors and run-card border styling) using existing `--status-*` CSS variables per §13.7.
+8. Wire fleet-specific badge color mapping: `halted` + `halt_reason` variant resolution (§13.7 fleet status table), fleet header badge label/tooltip by `halt_reason`.
 
 ### Phase 5: Guardian PR grouping and resumability
 
@@ -536,12 +567,14 @@ The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 | `worca-ui/server/ws-modular.js` | Fleet manifest file watcher + `fleet-update` event (workspace events stay separate per §13.5) |
 | `worca-ui/app/views/dashboard.js` | Fleet grouping renderer (collapsible header, aggregate progress, aggregate cost). Cross-project rendering lives here post-W-048 — `multi-dashboard.js` no longer exists. Groups by `fleet_id` when `group_type === "fleet"`. |
 | `worca-ui/app/views/group-rendering.js` | **New** — extracted shared helpers (`groupByFleet`, `fleetHeaderView`) consumed by both `dashboard.js` and `worktrees.js` (which already implements the pattern; refactor to import from the new module). |
-| `worca-ui/app/views/sidebar.js` | "Fleets" nav entry per W-048 §13.7 layout (flat sibling under Pipeline section); "+ New Fleet" option in the New Pipeline dropdown |
+| `worca-ui/app/views/sidebar.js` | Convert "New Pipeline" button to `sl-dropdown` + `sl-menu` (prerequisite — §13.1); add "New Fleet" menu item; add conditional "Fleets" nav entry per W-048 §13.7 layout (flat sibling under Pipeline section) |
 | `worca-ui/app/views/launcher-shared.js` | **New** — extracted subcomponents (guide upload, head-template input, plan-mode radio shell, token-overhead gate). Established here, **not in W-047**, to avoid refactoring just-shipped W-040 code when W-047 lands (§13.4 binding architectural decision) |
 | `worca-ui/app/views/fleet-launcher.js` | **New** — guided launch form composing `launcher-shared.js`; token gate, separate head-template + base-branch inputs, multipart guide upload, per-target init progress strip + Cancel button (§13.4) |
 | `worca-ui/app/views/fleet-detail.js` | **New** — manifest, guide (with not-retrievable fallback), children grid, aggregate cost panel, actions (§13.3) |
+| `worca-ui/app/utils/state-actions.js` | Extend `STATES` + `ACTION_MATRIX` with `halted`, `setup_failed`, `unrecoverable` (§13.7 triple-update) |
+| `worca-ui/app/utils/status-badge.js` | Extend `CLASS_MAP` + `ICON_DATA` with new status values (§13.7 triple-update) |
 | `worca-ui/app/protocol.js` | Add `'fleet-update'` to event allowlist |
-| `worca-ui/app/styles.css` | Fleet group + launcher styles; status color additions if needed |
+| `worca-ui/app/styles.css` | Fleet group + launcher styles; `.status-halted`, `.status-setup-failed`, `.status-unrecoverable` rules (§13.7 triple-update) |
 | `CLAUDE.md` | Fleet Runs section + guide precedence note |
 | `MIGRATION.md` | Release note |
 | `docs/fleet-runs.md` | **New** — user-facing walkthrough |
@@ -557,7 +590,7 @@ The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 - **Worktree isolation for fleet children.** By dispatching via `run_worktree.py`, each fleet child gets a git worktree within its target repo. The user's working tree is not dirtied — important when fleet-targeting repos where the user may have uncommitted work.
 - **In-flight children finish on fleet halt.** The fleet-level circuit breaker only cancels unstarted children — killing mid-flight subprocesses risks half-written repos.
 - **Single source of truth for per-child state.** Per-child pipeline status lives in `pipelines.d/` entries and `status.json`, not duplicated in the fleet manifest. The manifest only stores fleet-level concerns. This avoids state drift between two tracking systems.
-- **Env scrubbing is an allowlist negation.** If future stages add new `WORCA_*` env vars, the scrub list in `run_fleet.py` must be updated; add a regression test that fails when the scrub list drifts from the set declared in `claude_hooks/`.
+- **Env scrubbing uses a single source of truth.** `run_fleet.py` imports `RESERVED_ENV_KEYS` and `RESERVED_PREFIXES` from `src/worca/utils/env.py` rather than maintaining its own scrub list. If future stages add new `WORCA_*` env vars, adding them to `env.py` automatically covers fleet child scrubbing. No regression test for list drift is needed — there is only one list.
 - **Guide cost visibility.** Users must see token overhead before launching; the `--yes` short-circuit should be reserved for CI/automation.
 - **Breaking changes:** **None.** `fleet_id` is an optional field in `pipelines.d/` entries. All existing callers continue to work (omit it or pass `None`). `runs-list` WS event gains `fleet_id` per run; older UI clients ignore it.
 - **Migration:** None required for existing pipelines. `worca init --upgrade` already handles the new `worca.guide.*` / `worca.fleet.*` settings additions non-destructively.
@@ -578,7 +611,7 @@ The same triple is enforced in W-047 §10.7 for workspace-specific statuses.
 | Python | `tests/test_branch_naming.py::test_auto_append_project` | Template without placeholders gets `/{project}` appended |
 | Python | `tests/test_branch_naming.py::test_collision_detection` | Duplicate post-substitution names fail fast with colliding pair reported |
 | Python | `tests/test_run_fleet.py::test_dry_run_manifest` | `--dry-run` writes a manifest with expected children, no subprocess spawn |
-| Python | `tests/test_fleet_env_isolation.py::test_scrub_list` | Child subprocess env has none of `WORCA_AGENT` / `WORCA_STAGE` / `WORCA_RUN_ID` / `WORCA_PROJECT_ROOT` / `CLAUDECODE` |
+| Python | `tests/test_fleet_env_isolation.py::test_scrub_uses_env_py` | Child subprocess env has none of the keys in `RESERVED_ENV_KEYS` from `worca.utils.env` (including `WORCA_AGENT`, `WORCA_RUN_ID`, `WORCA_PROJECT_ROOT`, `CLAUDECODE`, etc.); verifies `run_fleet.py` imports from `env.py` rather than maintaining a parallel list |
 | Python | `tests/test_attach_guide.py::test_path_resolution` | Relative `--guide` paths resolved to absolute before child dispatch |
 | Python | `tests/test_fleet_plan_modes.py::test_plan_explicit` | `--plan <path>` attaches same plan to every child; Planner skipped |
 | Python | `tests/test_fleet_plan_modes.py::test_plan_first` | Reference child's Planner output is reused by N−1 others; failure halts fan-out |

@@ -2,6 +2,7 @@
 import json
 import subprocess
 from unittest.mock import patch, MagicMock, ANY
+import pytest
 
 from worca.orchestrator.work_request import (
     WorkRequest,
@@ -779,3 +780,115 @@ class TestNormalizeDispatcherPlanPathTemplate:
         )
         assert wr.source_type == "prompt"
         assert wr.title == "Just a prompt"
+
+
+# --- attach_guide ---
+
+class TestAttachGuide:
+    """Tests for attach_guide(wr, guide_paths) -> WorkRequest."""
+
+    def test_single_guide_prepended(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "migration.md"
+        guide.write_text("# Migration Steps\n\nStep 1: do this.")
+
+        wr = WorkRequest(source_type="prompt", title="Fix bug", description="Original task.")
+        result = attach_guide(wr, [str(guide)])
+
+        assert "## Reference Guide (normative)" in result.description
+        assert "migration.md" in result.description
+        assert "Migration Steps" in result.description
+        assert "Step 1: do this." in result.description
+        assert "## Task" in result.description
+        assert "Original task." in result.description
+
+    def test_guide_appears_before_task(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "spec.md"
+        guide.write_text("Normative content here.")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="Task content.")
+        result = attach_guide(wr, [str(guide)])
+
+        guide_pos = result.description.index("Normative content here.")
+        task_pos = result.description.index("Task content.")
+        assert guide_pos < task_pos
+
+    def test_normative_header_text(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "guide.md"
+        guide.write_text("content")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_guide(wr, [str(guide)])
+
+        assert "authoritative for this work-request" in result.description
+        assert "Treat any" in result.description
+
+    def test_multiple_guides_all_included(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide_a = tmp_path / "alpha.md"
+        guide_a.write_text("Alpha content.")
+        guide_b = tmp_path / "beta.md"
+        guide_b.write_text("Beta content.")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="Task.")
+        result = attach_guide(wr, [str(guide_a), str(guide_b)])
+
+        assert "alpha.md" in result.description
+        assert "Alpha content." in result.description
+        assert "beta.md" in result.description
+        assert "Beta content." in result.description
+        assert "Task." in result.description
+
+    def test_empty_guide_list_returns_unchanged_description(self):
+        from worca.orchestrator.work_request import attach_guide
+
+        wr = WorkRequest(source_type="prompt", title="t", description="Original.")
+        result = attach_guide(wr, [])
+
+        assert result.description == "Original."
+
+    def test_returns_new_instance(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "g.md"
+        guide.write_text("guide")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_guide(wr, [str(guide)])
+
+        assert result is not wr
+
+    def test_metadata_preserved(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "g.md"
+        guide.write_text("guide")
+
+        wr = WorkRequest(
+            source_type="github_issue",
+            title="My Title",
+            description="d",
+            source_ref="gh:42",
+            priority=1,
+            plan_path="docs/plans/foo.md",
+        )
+        result = attach_guide(wr, [str(guide)])
+
+        assert result.source_type == "github_issue"
+        assert result.title == "My Title"
+        assert result.source_ref == "gh:42"
+        assert result.priority == 1
+        assert result.plan_path == "docs/plans/foo.md"
+
+    def test_missing_file_raises(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        with pytest.raises((FileNotFoundError, OSError)):
+            attach_guide(wr, [str(tmp_path / "nonexistent.md")])

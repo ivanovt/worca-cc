@@ -17,7 +17,6 @@ Usage:
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -26,18 +25,11 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from worca.orchestrator.work_request import normalize
+from worca.orchestrator.work_request import normalize, attach_guide
+from worca.utils.branch_naming import slugify as _slugify
 from worca.utils.claude_cli import _ARG_INLINE_LIMIT
 from worca.utils.runtime import copy_claude_config, validate_runtime
 from worca.utils.settings import load_settings
-
-
-def _slugify(title: str) -> str:
-    """Convert a title to a filesystem-safe slug."""
-    name = title.lower().strip()
-    name = re.sub(r'[^a-z0-9\-]', '-', name)
-    name = re.sub(r'-+', '-', name)
-    return name.strip('-')[:30]
 
 
 def _create_worktree(base_dir: str, slug: str, branch: str) -> str:
@@ -146,12 +138,15 @@ def main():
                         help="Max concurrent pipelines (default: 5)")
     parser.add_argument("--cleanup", action="store_true",
                         help="Remove worktrees after completion")
+    parser.add_argument("--guide", action="append", metavar="PATH",
+                        help="Path to a reference guide (repeatable)")
 
     args = parser.parse_args()
 
     validate_runtime()
 
     # Build work request list
+    guide_paths = args.guide or []
     if args.prompts:
         items = [(p, normalize("prompt", p)) for p in args.prompts]
     else:
@@ -162,6 +157,9 @@ def main():
             (s, normalize("source", s, plan_path_template=plan_template))
             for s in args.sources
         ]
+
+    if guide_paths:
+        items = [(raw, attach_guide(wr, guide_paths)) for raw, wr in items]
 
     print(f"Launching {len(items)} parallel pipelines (max {args.max_parallel} concurrent)")
     if args.msize > 1:

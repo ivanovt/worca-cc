@@ -17,11 +17,12 @@ W-047 (WorkspaceSource) are stubs — add them to CLEANUP_SOURCES when ready.
 import argparse
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 
 from worca.cli.main import _find_git_root
-from worca.orchestrator.registry import deregister_pipeline, list_pipelines
+from worca.orchestrator.registry import deregister_pipeline, get_pipeline, list_pipelines
 from worca.utils.git import remove_pipeline_worktree
 
 
@@ -193,14 +194,127 @@ class WorktreeSource:
         return True
 
 
-# FleetSource and WorkspaceSource are stubs for W-040 and W-047.
-# Uncomment and implement when those plans ship.
-#
-# class FleetSource:
-#     """W-040: cleanup fleet manifests and their child worktrees."""
-#     def list_eligible(self, filters): return []
-#     def remove(self, entry): return True
-#
+_FLEET_RUNNING_STATUSES = frozenset({"running", "resuming", "paused"})
+
+
+class FleetSource:
+    """Cleanup source for fleet manifests and their child worktrees (W-040)."""
+
+    def __init__(self, fleet_runs_dir: str = None):
+        if fleet_runs_dir is None:
+            from worca.orchestrator.fleet_manifest import _FLEET_RUNS_DIR
+            fleet_runs_dir = _FLEET_RUNS_DIR
+        self.fleet_runs_dir = fleet_runs_dir
+
+    def list_eligible(self, filters: dict) -> list[dict]:
+        """Return fleet manifest entries eligible for cleanup.
+
+        Enumerates fleet_runs_dir/*.json and returns one entry per manifest.
+        Skips running/paused/resuming fleets.
+
+        Filter keys (all optional):
+          fleet_id   — only include this specific fleet
+          older_than — timedelta; only include fleets started before now - delta
+
+        When run_id is present in filters but fleet_id is not, returns [] so that
+        --run-id targeted worktree cleanup does not inadvertently trigger fleet removal.
+        """
+        if "run_id" in filters and "fleet_id" not in filters:
+            return []
+
+        if not os.path.isdir(self.fleet_runs_dir):
+            return []
+
+        eligible = []
+        for fname in sorted(os.listdir(self.fleet_runs_dir)):
+            if not fname.endswith(".json"):
+                continue
+            fleet_id = fname[:-5]
+
+            if "fleet_id" in filters and filters["fleet_id"] != fleet_id:
+                continue
+
+            manifest_path = os.path.join(self.fleet_runs_dir, fname)
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            if manifest.get("status") in _FLEET_RUNNING_STATUSES:
+                continue
+
+            if "older_than" in filters and filters["older_than"] is not None:
+                started_at = manifest.get("started_at")
+                if started_at:
+                    started = datetime.fromisoformat(started_at)
+                    if started.tzinfo is None:
+                        started = started.replace(tzinfo=timezone.utc)
+                    cutoff = datetime.now(timezone.utc) - filters["older_than"]
+                    if started >= cutoff:
+                        continue
+
+            fleet_dir = os.path.join(self.fleet_runs_dir, fleet_id)
+            eligible.append({
+                "fleet_id": fleet_id,
+                "run_id": fleet_id,
+                "title": manifest.get("title", fleet_id),
+                "worktree_path": fleet_dir,
+                "manifest_path": manifest_path,
+                "children": manifest.get("children", []),
+            })
+
+        return eligible
+
+    def remove(self, entry: dict) -> bool:
+        """Remove fleet: child worktrees, pipelines.d/ entries, fleet-runs dir + manifest.
+
+        Returns True if all steps succeeded. Returns False if any child worktree
+        removal fails (manifest and guides dir are still removed on partial failure).
+        """
+        fleet_id = entry["fleet_id"]
+        children = entry.get("children", [])
+        all_ok = True
+
+        for child in children:
+            project_path = child.get("project_path")
+            run_id = child.get("run_id")
+            if not project_path or not run_id:
+                continue
+
+            child_base = os.path.join(project_path, ".worca")
+            reg = get_pipeline(run_id, base=child_base)
+            if reg:
+                child_source = WorktreeSource(base=child_base)
+                child_entry = {
+                    "run_id": run_id,
+                    "worktree_path": reg.get("worktree_path", ""),
+                }
+                if not child_source.remove(child_entry):
+                    all_ok = False
+            else:
+                deregister_pipeline(run_id, base=child_base)
+
+        fleet_dir = os.path.join(self.fleet_runs_dir, fleet_id)
+        if os.path.isdir(fleet_dir):
+            try:
+                shutil.rmtree(fleet_dir)
+            except OSError:
+                all_ok = False
+
+        manifest_path = entry.get("manifest_path") or os.path.join(
+            self.fleet_runs_dir, f"{fleet_id}.json"
+        )
+        if os.path.isfile(manifest_path):
+            try:
+                os.unlink(manifest_path)
+            except OSError:
+                all_ok = False
+
+        return all_ok
+
+
+# WorkspaceSource is a stub for W-047.
 # class WorkspaceSource:
 #     """W-047: cleanup workspace run directories."""
 #     def list_eligible(self, filters): return []
@@ -208,7 +322,7 @@ class WorktreeSource:
 
 
 def _build_sources(base: str) -> list:
-    return [WorktreeSource(base=base)]
+    return [WorktreeSource(base=base), FleetSource()]
 
 
 def cmd_cleanup(args: argparse.Namespace) -> None:
@@ -219,6 +333,8 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
     filters: dict = {}
     if getattr(args, "run_id", None):
         filters["run_id"] = args.run_id
+    if getattr(args, "fleet_id", None):
+        filters["fleet_id"] = args.fleet_id
     if getattr(args, "older_than", None) is not None:
         filters["older_than"] = args.older_than
 
@@ -240,7 +356,7 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
             print(f"  {entry['run_id']}  {entry['title']}  ({_format_bytes(size)})")
         return
 
-    proceed = args.all or bool(getattr(args, "run_id", None))
+    proceed = args.all or bool(getattr(args, "run_id", None)) or bool(getattr(args, "fleet_id", None))
     if not proceed:
         print(f"Found {len(eligible)} eligible worktree(s):")
         for _, entry in eligible:
@@ -285,6 +401,12 @@ def register_subcommand(sub) -> None:
         default=None,
         metavar="ID",
         help="Remove a specific worktree by run ID",
+    )
+    p.add_argument(
+        "--fleet-id",
+        default=None,
+        metavar="ID",
+        help="Remove a specific fleet and all its child worktrees by fleet ID",
     )
     p.add_argument(
         "--dry-run",

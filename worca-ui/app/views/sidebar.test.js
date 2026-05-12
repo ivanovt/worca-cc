@@ -221,25 +221,134 @@ describe('sidebar - New Pipeline button capacity gating', () => {
   });
 });
 
-describe('sidebar - New Pipeline CTA', () => {
-  it('renders a single-action button for New Pipeline CTA', async () => {
+describe('sidebar - New Pipeline CTA (dropdown)', () => {
+  it('CTA renders as sl-dropdown wrapper (not a plain button)', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
+    expect(output).toContain('sl-dropdown');
     expect(output).toContain('sidebar-new-run-btn');
-    // No dropdown wrapper, no menu item — just a plain button.
-    expect(output).not.toContain('sl-dropdown');
-    expect(output).not.toContain('sl-menu-item');
   });
 
-  it('button label contains "New Pipeline"', async () => {
+  it('dropdown contains sl-menu with New Pipeline and New Fleet items', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sl-menu');
+    expect(output).toContain('sl-menu-item');
+    expect(output).toContain('>New Pipeline<');
+    expect(output).toContain('>New Fleet<');
+  });
+
+  it('New Pipeline menu item is present', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('New Pipeline');
+  });
+
+  it('New Fleet menu item routes to fleet-runs/new via class marker', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('menu-item-new-fleet');
+    expect(output).toContain('menu-item-new-pipeline');
+  });
+});
+
+describe('sidebar - Fleets nav entry', () => {
+  it('Fleets entry hidden when state.fleets is absent', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).not.toContain('>Fleets<');
+  });
+
+  it('Fleets entry hidden when state.fleets is empty', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({ fleets: [] });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).not.toContain('>Fleets<');
+  });
+
+  it('Fleets entry visible when fleets array is non-empty', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [{ fleet_id: 'f1', status: 'completed' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('>Fleets<');
+  });
+
+  it('Fleets badge shows running fleet count', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'running' },
+        { fleet_id: 'f2', status: 'running' },
+        { fleet_id: 'f3', status: 'completed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('fleets-count-badge');
+    expect(output).toContain('>2<');
+  });
+
+  it('Fleets badge variant is primary when no fleets halted', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'running' },
+        { fleet_id: 'f2', status: 'completed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('class="fleets-count-badge"');
+    expect(output).not.toContain('variant="warning"');
+  });
+
+  it('Fleets badge variant flips to warning when any fleet halted', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'halted' },
+        { fleet_id: 'f2', status: 'running' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('fleets-count-badge');
+    expect(output).toContain('variant="warning"');
+  });
+
+  it('Fleets entry is active when route section is fleet-runs', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [{ fleet_id: 'f1', status: 'running' }],
+    });
+    const fleetsRoute = { section: 'fleet-runs' };
+    const output = renderToString(
+      sidebarView(state, fleetsRoute, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-item active');
   });
 });

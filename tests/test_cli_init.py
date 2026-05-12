@@ -247,6 +247,50 @@ class TestUpgradePreservesUserValues:
 
 
 # ---------------------------------------------------------------------------
+# Guide settings template
+# ---------------------------------------------------------------------------
+
+class TestGuideMaxBytesInTemplate:
+    """worca.guide.max_bytes must be present in src/worca/settings.json so that
+    worca init / worca init --upgrade propagate the key to project settings."""
+
+    def test_guide_max_bytes_default_in_template(self):
+        from pathlib import Path
+
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path) as f:
+            template = json.load(f)
+
+        assert template["worca"]["guide"]["max_bytes"] == 65536
+
+    def test_guide_max_bytes_propagates_on_upgrade(self):
+        """Deep-merge adds guide.max_bytes to existing settings that lack it."""
+        from pathlib import Path
+
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path) as f:
+            template = json.load(f)
+
+        current = {"worca": {"stages": {"plan": {"agent": "planner"}}}}
+        merged = _deep_merge(current, template)
+
+        assert merged["worca"]["guide"]["max_bytes"] == 65536
+
+    def test_guide_max_bytes_not_clobbered_on_upgrade(self):
+        """User override of guide.max_bytes is preserved during --upgrade."""
+        from pathlib import Path
+
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path) as f:
+            template = json.load(f)
+
+        current = {"worca": {"guide": {"max_bytes": 32768}}}
+        merged = _deep_merge(current, template)
+
+        assert merged["worca"]["guide"]["max_bytes"] == 32768
+
+
+# ---------------------------------------------------------------------------
 # Agent override migration
 # ---------------------------------------------------------------------------
 

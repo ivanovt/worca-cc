@@ -16,6 +16,9 @@ const CLASS_MAP = {
   failed: 'status-failed',
   skipped: 'status-skipped',
   cancelled: 'status-cancelled',
+  halted: 'status-halted',
+  setup_failed: 'status-setup-failed',
+  unrecoverable: 'status-unrecoverable',
   // legacy aliases
   in_progress: 'status-in-progress',
   error: 'status-error',
@@ -30,6 +33,9 @@ const ICON_DATA = {
   failed: CircleAlert,
   skipped: CircleSlash,
   cancelled: CircleSlash,
+  halted: CircleSlash,
+  setup_failed: CircleAlert,
+  unrecoverable: CircleAlert,
   // legacy aliases
   in_progress: Loader,
   error: CircleAlert,

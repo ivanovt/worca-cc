@@ -260,6 +260,50 @@ def normalize_beads_task(ref: str) -> WorkRequest:
     )
 
 
+_GUIDE_HEADER = (
+    "## Reference Guide (normative)\n\n"
+    "The following guidance is authoritative for this work-request. Treat any\n"
+    "conflict between the guide and the task description as a bug in the task\n"
+    "description, and surface it rather than silently resolving it."
+)
+
+
+def attach_guide(wr: WorkRequest, guide_paths: "list[str]") -> WorkRequest:
+    """Return a new WorkRequest with guide content prepended under a normative header.
+
+    Each guide file is read and included under its filename as a subsection.
+    The original description is preserved under a '## Task' heading.
+    """
+    if not guide_paths:
+        return WorkRequest(
+            source_type=wr.source_type,
+            title=wr.title,
+            description=wr.description,
+            source_ref=wr.source_ref,
+            priority=wr.priority,
+            plan_path=wr.plan_path,
+        )
+
+    sections = [_GUIDE_HEADER]
+    for path in guide_paths:
+        with open(path, "r") as f:
+            content = f.read()
+        filename = os.path.basename(path)
+        sections.append(f"\n### {filename}\n\n{content}")
+
+    sections.append("\n---\n\n## Task\n\n" + wr.description)
+    new_description = "\n".join(sections)
+
+    return WorkRequest(
+        source_type=wr.source_type,
+        title=wr.title,
+        description=new_description,
+        source_ref=wr.source_ref,
+        priority=wr.priority,
+        plan_path=wr.plan_path,
+    )
+
+
 def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
     """Dispatch to the appropriate normalize_* function.
 

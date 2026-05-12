@@ -22,6 +22,14 @@ The work request and implementation summary arrive as a user message.
 
 Produce a structured result following the `test_result.json` schema.
 
+## Guide precedence
+
+When the work request includes a `## Reference Guide (normative)` section:
+
+- **Guide > plan > description.** The guide is authoritative. If the plan directs you to verify behavior the guide forbids, flag it in your proof output rather than executing the plan blindly.
+- **Description conflicts with the guide are bugs to flag.** If the task description asks for something the guide contradicts, record this as a test failure note in your proof artifacts — the description is the bug, not the guide.
+- **Surface divergence, do not resolve it.** Report the conflict with the specific guide rule and the conflicting instruction. The Implementer or Reviewer resolves it; you surface it.
+
 ## Rules
 
 <!-- governance -->

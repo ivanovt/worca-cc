@@ -86,4 +86,35 @@ describe('status-badge', () => {
   it('statusIcon does NOT add icon-spin for cancelled', () => {
     expect(statusIcon('cancelled')).not.toContain('icon-spin');
   });
+
+  // fleet child states: halted, setup_failed, unrecoverable
+  it('maps halted to status-halted', () => {
+    expect(statusClass('halted')).toBe('status-halted');
+  });
+  it('statusIcon returns SVG for halted', () => {
+    expect(statusIcon('halted')).toContain('<svg');
+  });
+  it('statusIcon does NOT add icon-spin for halted', () => {
+    expect(statusIcon('halted')).not.toContain('icon-spin');
+  });
+
+  it('maps setup_failed to status-setup-failed', () => {
+    expect(statusClass('setup_failed')).toBe('status-setup-failed');
+  });
+  it('statusIcon returns SVG for setup_failed', () => {
+    expect(statusIcon('setup_failed')).toContain('<svg');
+  });
+  it('statusIcon does NOT add icon-spin for setup_failed', () => {
+    expect(statusIcon('setup_failed')).not.toContain('icon-spin');
+  });
+
+  it('maps unrecoverable to status-unrecoverable', () => {
+    expect(statusClass('unrecoverable')).toBe('status-unrecoverable');
+  });
+  it('statusIcon returns SVG for unrecoverable', () => {
+    expect(statusIcon('unrecoverable')).toContain('<svg');
+  });
+  it('statusIcon does NOT add icon-spin for unrecoverable', () => {
+    expect(statusIcon('unrecoverable')).not.toContain('icon-spin');
+  });
 });

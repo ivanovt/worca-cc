@@ -195,9 +195,12 @@ def _patches(worktree_path=_WORKTREE_PATH):
 class TestCreatesWorktree:
     def test_creates_worktree(self):
         from worca.scripts.run_worktree import main
+        from unittest.mock import patch as _patch
         plist = _patches()
         with plist[0], plist[1] as mock_norm, plist[2] as mock_create, \
-             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], plist[9]:
+             plist[3], plist[4], plist[5], plist[6], plist[7], plist[8], plist[9], \
+             _patch("worca.scripts.run_worktree.load_settings",
+                    return_value={"worca": {"parallel": {}}}):
             mock_norm.return_value = _wr("Add auth")
             rc = main(["--prompt", "Add auth"])
         assert rc == 0
@@ -289,6 +292,28 @@ class TestFleetIdPassthrough:
         assert rc == 0
         kwargs = mock_reg.call_args[1]
         assert kwargs["fleet_id"] is None
+
+    def test_group_type_fleet_when_fleet_id_set(self):
+        from worca.scripts.run_worktree import main
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2], \
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8], plist[9]:
+            mock_norm.return_value = _wr("Add auth")
+            rc = main(["--prompt", "Add auth", "--fleet-id", "fleet-xyz"])
+        assert rc == 0
+        kwargs = mock_reg.call_args[1]
+        assert kwargs["group_type"] == "fleet"
+
+    def test_group_type_none_when_fleet_id_absent(self):
+        from worca.scripts.run_worktree import main
+        plist = _patches()
+        with plist[0], plist[1] as mock_norm, plist[2], \
+             plist[3], plist[4] as mock_reg, plist[5], plist[6], plist[7], plist[8], plist[9]:
+            mock_norm.return_value = _wr("Add auth")
+            rc = main(["--prompt", "Add auth"])
+        assert rc == 0
+        kwargs = mock_reg.call_args[1]
+        assert kwargs.get("group_type") is None
 
 
 class TestTargetBranchPassthrough:

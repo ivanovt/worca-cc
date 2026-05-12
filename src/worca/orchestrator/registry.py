@@ -212,10 +212,28 @@ def reconcile_stale(base=_DEFAULT_BASE):
     return stale_ids
 
 
-def reconcile_orphan_groups(base=_DEFAULT_BASE):
-    """Stub: find pipeline registry entries whose group (fleet/workspace) no longer exists.
+def reconcile_orphan_groups(base=_DEFAULT_BASE, *, fleet_manifest_base_dir=None):
+    """Strip fleet_id/group_type from registry entries whose fleet manifest is gone.
 
-    Returns a list of run_ids whose group context is orphaned. W-040/W-047 wire
-    actual group lookups; this no-op skeleton always returns [] for W-048.
+    For each entry with a fleet_id, checks whether
+    ~/.worca/fleet-runs/<fleet_id>.json exists. If the manifest is missing,
+    removes fleet_id and group_type from the entry and writes it back atomically.
+
+    Returns a list of run_ids whose group context was stripped.
     """
-    return []
+    from worca.orchestrator.fleet_manifest import fleet_manifest_path  # local import avoids circular-import risk
+
+    orphaned_ids = []
+    for entry in list_pipelines(base=base):
+        fleet_id = entry.get("fleet_id")
+        if not fleet_id:
+            continue
+        if os.path.exists(fleet_manifest_path(fleet_id, base_dir=fleet_manifest_base_dir)):
+            continue
+        run_id = entry["run_id"]
+        entry.pop("fleet_id", None)
+        entry.pop("group_type", None)
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _atomic_write(_pipeline_path(run_id, base=base), entry)
+        orphaned_ids.append(run_id)
+    return orphaned_ids

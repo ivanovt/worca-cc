@@ -282,6 +282,12 @@
     "parallel": {
       "default_base_branch": "main",
       "worktree_base_dir": ".worktrees"
+    },
+    "guide": {
+      "max_bytes": 65536
+    },
+    "fleet": {
+      "init_timeout_seconds": 60
     }
   }
 }

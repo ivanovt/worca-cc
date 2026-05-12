@@ -61,6 +61,14 @@ Only `critical` and `major` issues should trigger `"request_changes"`. `minor` a
 
 Maximum 5 review iterations before escalating to `reject`.
 
+## Guide precedence
+
+When the work request includes a `## Reference Guide (normative)` section:
+
+- **Guide > plan > description.** If the plan tells you to do something the guide forbids or contradicts, flag it as a `critical` issue rather than silently accepting the plan.
+- **Surface plan-vs-guide divergence explicitly.** Call out the specific guide rule and the conflicting plan instruction in your review output. Do not resolve the conflict yourself.
+- **Description requests that conflict with the guide are bugs.** If the work request description asks for something the guide forbids, treat this as a `major` issue to flag — the description is wrong, not the guide.
+
 ## Rules
 
 <!-- governance -->

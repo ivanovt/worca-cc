@@ -51,6 +51,11 @@ describe('protocol', () => {
     expect(MESSAGE_TYPES).toContain('list-beads-unlinked');
   });
 
+  it('MESSAGE_TYPES includes fleet-update event', () => {
+    expect(MESSAGE_TYPES).toContain('fleet-update');
+    expect(isMessageType('fleet-update')).toBe(true);
+  });
+
   it('isRequest validates envelope shape', () => {
     expect(isRequest({ id: '1', type: 'list-runs' })).toBe(true);
     expect(isRequest({ id: '1' })).toBe(false);

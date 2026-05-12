@@ -16,7 +16,6 @@ Usage:
 """
 import argparse
 import os
-import re
 import secrets
 import subprocess
 import sys
@@ -27,6 +26,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from worca.orchestrator.registry import register_pipeline
 from worca.orchestrator.work_request import normalize
 
+from worca.utils.branch_naming import slugify as _slugify
 from worca.utils.git import (
     branch_exists,
     create_pipeline_worktree,
@@ -71,14 +71,6 @@ def _generate_run_id() -> str:
     millis = now.microsecond // 1000
     suffix = secrets.token_hex(2)
     return f"{now.strftime('%Y%m%d-%H%M%S')}-{millis:03d}-{suffix}"
-
-
-def _slugify(title: str) -> str:
-    """Convert a title to a filesystem-safe slug (max 30 chars)."""
-    name = title.lower().strip()
-    name = re.sub(r"[^a-z0-9\-]", "-", name)
-    name = re.sub(r"-+", "-", name)
-    return name.strip("-")[:30]
 
 
 def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
@@ -251,6 +243,7 @@ def main(argv=None) -> int:
         pid=os.getpid(),
         branch=f"worca/{slug}-{run_id}",
         fleet_id=args.fleet_id,
+        group_type="fleet" if args.fleet_id else None,
         target_branch=args.branch,
     )
 

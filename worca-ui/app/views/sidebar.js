@@ -10,6 +10,7 @@ import {
   Plus,
   Settings,
   SlidersHorizontal,
+  Workflow,
   Zap,
 } from '../utils/icons.js';
 
@@ -79,6 +80,7 @@ export function sidebarView(
     projects,
     currentProjectId,
     worktrees = [],
+    fleets = [],
     worktreeDiskWarningBytes = 2_000_000_000,
     totalRunning = 0,
     maxConcurrentPipelines = 10,
@@ -113,6 +115,12 @@ export function sidebarView(
     0,
   );
   const worktreeDiskWarning = totalWorktreeDisk > diskWarningThreshold;
+
+  const fleetCount = fleets.length;
+  const runningFleetCount = fleets.filter((f) => f.status === 'running').length;
+  const anyFleetHalted = fleets.some((f) => f.status === 'halted');
+  const fleetBadgeCount = runningFleetCount;
+  const showFleetBadge = runningFleetCount > 0 || anyFleetHalted;
 
   const connClass =
     connectionState === 'open'
@@ -174,15 +182,21 @@ export function sidebarView(
         currentProjectId || (projects || []).length <= 1
           ? html`
       <div class="sidebar-new-run">
-        <button
-          type="button"
-          class="sidebar-new-run-btn"
-          ?disabled=${atCapacity}
-          @click=${() => onNavigate('new-run')}
-        >
-          ${unsafeHTML(iconSvg(Plus, 14))}
-          <span>New Pipeline</span>
-        </button>
+        <sl-dropdown class="sidebar-new-run-dropdown">
+          <button
+            slot="trigger"
+            type="button"
+            class="sidebar-new-run-btn"
+            ?disabled=${atCapacity}
+          >
+            ${unsafeHTML(iconSvg(Plus, 14))}
+            <span>New</span>
+          </button>
+          <sl-menu>
+            <sl-menu-item class="menu-item-new-pipeline" @click=${() => onNavigate('new-run')}>New Pipeline</sl-menu-item>
+            <sl-menu-item class="menu-item-new-fleet" @click=${() => onNavigate('fleet-runs/new')}>New Fleet</sl-menu-item>
+          </sl-menu>
+        </sl-dropdown>
       </div>
 
       <div class="sidebar-section">
@@ -229,6 +243,24 @@ export function sidebarView(
                 : ''
           }
         </div>
+        ${
+          fleetCount > 0
+            ? html`
+              <div class="sidebar-item ${route.section === 'fleet-runs' ? 'active' : ''}"
+                   @click=${() => onNavigate('fleet-runs')}>
+                <span class="sidebar-item-left">
+                  ${unsafeHTML(iconSvg(Workflow, 16))}
+                  <span>Fleets</span>
+                </span>
+                ${
+                  showFleetBadge
+                    ? html`<sl-badge variant="${anyFleetHalted ? 'warning' : 'primary'}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
+                    : ''
+                }
+              </div>
+            `
+            : ''
+        }
       </div>
 
       <div class="sidebar-section">
