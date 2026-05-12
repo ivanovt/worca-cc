@@ -1,6 +1,6 @@
 # W-052: Adaptive Effort Levels for Pipeline Agents
 
-**Status:** Draft
+**Status:** Draft (decisions locked 2026-05-12)
 **Priority:** P2
 **Area:** cc + ui
 **Date:** 2026-05-12
@@ -21,14 +21,24 @@ User-facing impact: pipeline operators cannot calibrate intelligence-vs-cost per
 
 ## Proposal
 
-Add a per-agent `effort` field to `worca.agents.<agent>` accepting any of `low | medium | high | xhigh | max | auto`. Explicit levels pass through verbatim via `CLAUDE_CODE_EFFORT_LEVEL` on the per-stage env dict (reusing the existing `worca.models.*.env` merge path). Omitted means "use Claude Code's model default."
+Add a per-agent `effort` field to `worca.agents.<agent>` accepting `low | medium | high | xhigh | max`. Values pass through via `CLAUDE_CODE_EFFORT_LEVEL` on the per-stage env dict (reusing the existing `worca.models.*.env` merge path). Omitted means "use Claude Code's model default."
 
-`auto` triggers orchestrator-driven adaptive selection, governed by a new `worca.effort` block with two settings:
+A new `worca.effort` block governs **how** the per-agent value is consumed and whether the runtime adapts:
 
 - `auto_mode`: `disabled` | `reactive` | `adaptive` (default).
-- `auto_cap`: ceiling for `auto`-resolved levels (default `xhigh`). Does not clamp explicit levels.
+- `auto_cap`: ceiling for runtime-resolved levels (default `xhigh`).
 
-Adaptive mode adds a new `effort_classifier` agent (Haiku, fixed effort) that runs at coordinate-time, inspects each bead, and writes a `worca-effort:<level>` label plus a reasoning note on the bead. Implementer iterations read the label as their base level and escalate on loopbacks (`test_failure` +1, `review_changes` +2). The planner gets a simpler escalation ladder per `plan_review_changes` bounce. Resolved effort is persisted per-iteration in `status.json` and surfaced in the UI as a `Effort: auto->high` badge with a tooltip carrying the classifier reasoning or escalation chain.
+The three modes encode two orthogonal axes — **starting point** (template-author's intent vs LLM judgment per bead) and **escalation** (do loopbacks bump effort):
+
+| Mode | Starting point | Escalation on loopbacks |
+|---|---|---|
+| `disabled` | per-agent `effort` value (if set) else model default | NO |
+| `reactive` | per-agent `effort` value (if set) else model default | YES |
+| `adaptive` | per-agent `effort` value if explicitly set (wins), else coordinator-set bead label | YES |
+
+**The coordinator owns per-bead effort classification.** During its normal `bd create` pass (Opus, full plan + scope in context), it attaches `--labels worca-effort:<level>` and writes a reasoning note via `bd update --notes`. No separate classifier agent. The coordinator emits labels **regardless of `auto_mode`** — under `reactive` / `disabled` the labels are informational and used for forensic comparison ("would `adaptive` have run this differently?").
+
+Implementer loopback escalation: `test_failure` +1 rung, `review_changes` +2 rungs, stacked across iterations. Planner: +1 per `plan_review_changes` bounce. Resolved effort + the coordinator's verdict + a `skip_reason` (when divergent) are persisted per-iteration in `status.json` and surfaced in the UI as tight badges/chips.
 
 ## Design
 
@@ -50,7 +60,9 @@ return {
 }
 ```
 
-**Resolution:** add `effort` to the returned dict, sourced from `agent_config.get("effort")`. `None` means "omitted, use model default". Resolution into a concrete level happens later in the runner (see §3).
+**Resolution:** add `effort` to the returned dict, sourced from `agent_config.get("effort")`. `None` means "omitted — use model default" (under `disabled`/`reactive`) or "fall back to coordinator-set bead label" (under `adaptive` for the implementer). Resolution into a concrete level happens in the runner (see §3).
+
+The per-agent `effort` field accepts only literal rungs: `low | medium | high | xhigh | max`. There is **no `auto` value** — the mode field (`worca.effort.auto_mode`) decides whether explicit values, model defaults, or per-bead LLM judgment are used as the starting point. This collapses the plan's earlier "explicit values never escalate; only `auto` escalates" complexity into a single rule: mode controls escalation, the per-agent field is just the starting point (and acts as an override under `adaptive`).
 
 ```jsonc
 // settings.json (committed)
@@ -62,67 +74,85 @@ return {
   "agents": {
     "planner":     { "model": "opus",   "effort": "xhigh" },
     "coordinator": { "model": "opus",   "effort": "medium" },
-    "implementer": { "model": "sonnet", "effort": "auto"  },
+    "implementer": { "model": "sonnet" },                   // omitted — coordinator label drives base under adaptive
     "tester":      { "model": "sonnet" },                   // omitted — model default
-    "reviewer":    { "model": "opus",   "effort": "auto"  },
-    "guardian":    { "model": "opus",   "effort": "high"  },
-
-    "effort_classifier": {                                  // new agent
-      "model":     "haiku",
-      "effort":    "low",
-      "max_turns": 5
-    }
+    "reviewer":    { "model": "opus"   },                   // omitted — model default
+    "guardian":    { "model": "opus",   "effort": "high"  }
   }
 }
 ```
 
-**Validation:** at pipeline start, if any agent has `effort: auto` but `worca.effort.auto_mode == "disabled"`, log an info-level message (`Effort: agent <name> set to auto, but auto_mode is disabled — using model default`) and resolve as if the field were omitted. Do not error.
+**No new agent entries.** The coordinator handles effort labeling itself; no `effort_classifier` agent is needed.
+
+**Validation:** at pipeline start, log an info line reporting effective `auto_mode` + `auto_cap`. No error conditions — invalid `effort` values fall back to model default with a stderr warning.
 
 ### 2. Data model — bead labels and notes
 
-The classifier persists its decision on the bead itself so the cache survives across resumes, worktrees, and re-runs of the same plan:
+The coordinator persists its effort verdict on the bead itself so the cache survives across resumes, worktrees, and re-runs of the same plan:
 
 - **Label**: `worca-effort:<level>` (e.g. `worca-effort:high`). Namespaced to mirror the existing `run:{run_id}` convention (CLAUDE.md "Plans & Roadmap"). One value per bead.
-- **Notes**: classifier reasoning appended via `bd update <id> --notes "Effort classifier: <level> — <reasoning>"`. Visible in `bd show` and the UI bead detail panel.
+- **Notes**: coordinator reasoning appended via `bd update <id> --notes "Effort: <level> — <reasoning>"`. Visible in `bd show` and the UI bead detail panel.
 
-**User precedence**: if a `worca-effort:*` label already exists when the classifier would run, classification is skipped entirely. The user's value is authoritative; there is no "auto-set vs human-set" distinction. A user who wants to re-classify deletes the label manually.
+**User precedence**: if a `worca-effort:*` label already exists on a bead the coordinator is creating or updating, the coordinator must preserve the existing value (do not overwrite). A user who wants to re-classify deletes the label manually.
+
+**Mode-independent emission**: the coordinator emits labels and notes under all `auto_mode` settings (decision §4 below). Under `reactive` / `disabled` the label is informational and used for forensic comparison — it does **not** drive the implementer's starting point.
 
 ### 3. Resolution algorithm
 
 The runner resolves effort once per stage invocation, after `get_stage_config()` and before `claude_cli` is called. Inputs: agent config's `effort` value, `auto_mode`, `auto_cap`, current trigger, current iteration number, and (for implementer only) the assigned bead.
 
-```
-resolve_effort(agent, agent_effort, auto_mode, auto_cap, trigger, iter_num, bead) -> (level, source)
+```python
+def resolve_effort(agent, agent_effort, auto_mode, auto_cap, trigger, iter_num, bead):
+    """
+    Returns (level, source, base, bead_classified) where:
+      level            -- value sent to CLAUDE_CODE_EFFORT_LEVEL (or None to omit)
+      source           -- one of: explicit, model_default,
+                          adaptive:llm, reactive, disabled
+      base             -- starting point before escalation
+      bead_classified  -- {level, applied, skip_reason} or None for non-bead stages
+    """
+    # --- Determine bead-classified record (always populated when bead exists) ---
+    bead_label = read_bead_effort_label(bead) if bead else None
+    bead_classified = None
+    if bead is not None:
+        bead_classified = {
+            "level": bead_label,
+            "applied": False,
+            "skip_reason": None,  # filled in below
+        }
 
-if agent_effort is None:
-    return (None, "model_default")                       # omit env var entirely
+    # --- Determine starting point ---
+    if agent_effort is not None:
+        base = agent_effort
+        source_base = "explicit"
+        if bead_classified is not None:
+            bead_classified["skip_reason"] = "explicit_override"
+    elif auto_mode == "adaptive" and agent == "implementer" and bead_label:
+        base = bead_label
+        source_base = "adaptive:llm"
+        bead_classified["applied"] = True
+    else:
+        base = MODEL_DEFAULT
+        source_base = "model_default"
+        if bead_classified is not None:
+            if auto_mode == "disabled":
+                bead_classified["skip_reason"] = "mode_disabled"
+            elif auto_mode == "reactive":
+                bead_classified["skip_reason"] = "mode_reactive"
+            elif agent != "implementer":
+                bead_classified["skip_reason"] = "non_classified_agent"
 
-if agent_effort != "auto":
-    return (agent_effort, "explicit")                    # passthrough, cap does not apply
+    # --- Apply escalation (only under reactive / adaptive) ---
+    if auto_mode == "disabled":
+        return (base, "disabled" if base else None, base, bead_classified)
 
-# agent_effort == "auto"
-if auto_mode == "disabled":
-    log_info(f"Effort: agent {agent} auto resolved to model default (auto_mode=disabled)")
-    return (None, "auto_disabled")
-
-if auto_mode == "reactive":
-    base = MODEL_DEFAULT
     escalated = apply_escalation(base, agent, trigger, iter_num)
-    return (clamp(escalated, auto_cap), f"auto:reactive:{trigger}")
-
-# auto_mode == "adaptive"
-if agent == "implementer" and bead is not None:
-    base = read_bead_effort_label(bead) or MODEL_DEFAULT  # classifier guaranteed to have run at coordinate
-elif agent == "planner":
-    base = MODEL_DEFAULT
-else:
-    return (None, "auto:adaptive:non_classified")        # all other agents: model default, no escalation
-
-escalated = apply_escalation(base, agent, trigger, iter_num)
-return (clamp(escalated, auto_cap), f"auto:adaptive:{trigger}")
+    final = clamp(escalated, auto_cap)
+    source = source_base if source_base == "adaptive:llm" else auto_mode
+    return (final, source, base, bead_classified)
 ```
 
-The `(level, source)` tuple is both persisted and used in logs (see §6).
+The `(level, source, base, bead_classified)` tuple is persisted in `status.json` (see §6) and emitted as a log line.
 
 **Escalation rules** (`apply_escalation`):
 
@@ -133,17 +163,19 @@ The `(level, source)` tuple is both persisted and used in logs (see §6).
 | implementer | `review_changes` | +2 per loop (stacks across iters) |
 | planner | `initial` | +0 |
 | planner | `plan_review_changes` | +1 per re-run (stacks within run) |
-| all others (`auto`, adaptive) | any | +0 (no escalation; non-classified agents stay at model default) |
+| coordinator / tester / reviewer / guardian | any | +0 (no escalation; non-implementer-non-planner agents do not escalate on loopback) |
 
 Only the agent re-running on a loopback escalates. Tester does not escalate when re-run after an implementer fix; only the implementer does. Reviewer does not escalate when re-run after another loop; only the originating agent does.
 
-`clamp(level, cap)` rounds the level *down* to the cap if it exceeds it, and logs `Effort: auto->xhigh (capped from max)`.
+`clamp(level, cap)` rounds the level *down* to the cap if it exceeds it, and records `capped_from` in the iteration record.
 
-### 4. Effort classifier agent
+**Note on disabled mode and per-agent values:** under `disabled`, an explicit per-agent `effort` is still applied as the env var (no escalation). The plan's earlier "explicit = never escalate" semantic now lives at the mode level — set `auto_mode: disabled` to pin every agent to its template value (or model default) and freeze escalation.
 
-New first-class worca agent. Same affordances as planner/coordinator: a markdown template, a JSON schema, configurable model and max_turns.
+### 4. Coordinator-owned effort labeling
 
-**Template:** `src/worca/agents/core/effort_classifier.md` (and matching `effort_classifier.block.md` if the block pattern is needed). The template encodes the rubric:
+The coordinator (`src/worca/agents/core/coordinator.md`, Opus, `max_turns=300`) already reasons about every bead's scope as part of its decomposition pass. It owns effort classification — attaching `--labels worca-effort:<level>` during each `bd create` and writing a reasoning note via `bd update --notes`. No separate `effort_classifier` agent.
+
+**Rubric** (added to `coordinator.md`):
 
 | Level | When to pick |
 |---|---|
@@ -153,42 +185,39 @@ New first-class worca agent. Same affordances as planner/coordinator: a markdown
 | `xhigh` | Schema/migration work, concurrency, security-sensitive paths, multi-stage refactors with subtle invariants. |
 | `max` | Never pick autonomously — reserved for explicit human or template signal. |
 
-The template also instructs the classifier to consider:
-- Bead title + description
-- Bead labels: `type:*`, `priority:*`, `area:*`
-- Dependency count (proxy for coupling)
-- Plan section sliced from the linked plan file at the bead's `## W-NNN` heading (if present)
-- File-path hits regexed from the description (`\b[\w/]+\.(py|js|ts|md|json)\b`)
+**Coordinator prompt addition** (concatenated to `coordinator.md` after the "Process" section):
 
-**Schema:** `src/worca/schemas/effort_classify.json`
+```markdown
+## Effort Labeling
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "type": "object",
-  "required": ["level", "reasoning"],
-  "additionalProperties": false,
-  "properties": {
-    "level": {
-      "type": "string",
-      "enum": ["low", "medium", "high", "xhigh"]
-    },
-    "reasoning": {
-      "type": "string",
-      "minLength": 10,
-      "maxLength": 500
-    }
-  }
-}
+For each Beads task you create, attach a `worca-effort:<level>` label reflecting
+the task's complexity per the rubric below. Use the `--labels` flag on `bd create`:
+
+  bd create --title="..." --type=task \
+            --labels "run:{{run_id}},worca-effort:medium"
+
+Immediately after creation, write a concise reasoning note (1-2 sentences):
+
+  bd update <bead-id> --notes "Effort: medium — localized refactor in single file"
+
+This is required regardless of pipeline `auto_mode` — labels under `reactive`/
+`disabled` are informational and used for forensic comparison.
+
+Never pick `max`. That rung is reserved for explicit human or template signal.
+If an existing bead already has a `worca-effort:*` label, preserve it (do not
+overwrite).
 ```
 
-`max` is intentionally absent from the enum — the classifier cannot pick it.
+**Coordinator schema (`src/worca/schemas/coordinate.json`):** unchanged. Effort labels flow through the existing `bd create` shell-call path; no new structured output field needed.
 
-**Invocation site:** classifier runs from the runner's `Stage.COORDINATE` post-processing block, after the coordinator has created beads but before the run advances to `Stage.IMPLEMENT`. For each bead in the run's bead set that lacks a `worca-effort:*` label, call the classifier sequentially (Haiku is cheap; parallelism not worth the complexity).
+**Coordinator template instructions** must also remind the agent to: (a) consider bead title + description + dependency count + plan section sliced from the linked plan file, (b) preserve any pre-existing `worca-effort:*` label.
 
-**Failure mode:** if classification fails (network error, schema-invalid output after retries, classifier returns non-JSON), halt the entire pipeline with a `classifier_failure` stop reason. The pipeline is resumable: on resume, the orchestrator detects beads still missing the label and re-runs the classifier for those only.
+**Failure modes:**
+- **Missing label after coordinator finishes:** the runner detects unlabeled beads (`bd list --json` filter for `run:<id>` without `worca-effort:*`) and logs a warning. Resolution algorithm in §3 already handles this — base falls back to model default with `bead_classified.level = null`.
+- **Invalid label value:** rejected by `resolve_effort()` (treated as null), warning logged. Pipeline does not halt.
+- **No `classifier_failure` stop reason needed** — coordinator labeling is best-effort; the runtime never blocks on it.
 
-**Beads created mid-run** (e.g. coordinator splits a bead during a loop) are not classified at creation. They are classified lazily on entry to `IMPLEMENT` if they reach that stage without a label. This keeps the coordinate-time batch the common path.
+**Beads created mid-run** (e.g. coordinator splits a bead during a loop): the coordinator is also the agent doing the splitting, so labels are attached at creation time by the same prompt logic. No lazy-classification path on IMPLEMENT entry.
 
 ### 5. Implementation seam — `CLAUDE_CODE_EFFORT_LEVEL`
 
@@ -244,67 +273,92 @@ if effort_level is not None:
   "model": "claude-sonnet-4-6",
   "trigger": "test_failure",
   "effort": {
-    "level":  "xhigh",
-    "source": "auto:adaptive:test_failure",
-    "base":   "high",
+    "level":  "xhigh",                // sent to CLAUDE_CODE_EFFORT_LEVEL (null = omitted)
+    "source": "adaptive",             // explicit | model_default | adaptive:llm | reactive | disabled
+    "base":   "high",                 // starting point before escalation
     "escalations": ["test_failure"],
-    "capped_from": null               // or "max" if clamp fired
+    "capped_from": null,              // or "max" if clamp fired
+    "bead_classified": {              // null for non-bead stages (planner, etc.)
+      "level":  "high",               // coordinator's verdict for the assigned bead
+      "applied": true,                // was this level used as the base?
+      "skip_reason": null             // null when applied; else mode_reactive | mode_disabled | explicit_override | non_classified_agent
+    }
   }
 }
 ```
 
-`level` is the value sent to `CLAUDE_CODE_EFFORT_LEVEL` (or `null` when omitted entirely). `source` is the resolution path. `base`, `escalations`, `capped_from` are present only when `source` starts with `auto:`.
+`bead_classified` is the forensic block — it answers "what did the coordinator think, and why was/wasn't that what the iteration ran at?" `skip_reason` enum: `"mode_reactive" | "mode_disabled" | "explicit_override" | "non_classified_agent" | null`. When `applied = true`, `skip_reason = null`.
 
-**Pipeline log format:**
+**Pipeline log format** (terse `key=value` style, divergence-aware):
 
-| Source | Log line |
+| Scenario | Log line |
 |---|---|
-| `explicit` | `IMPLEMENT (iter 1) starting... Effort: high` |
-| `model_default` | `IMPLEMENT (iter 1) starting... Effort: (model default)` |
-| `auto:adaptive:initial` | `IMPLEMENT (iter 1) starting... Effort: auto->high` |
-| `auto:reactive:test_failure` | `IMPLEMENT (iter 2) starting... Effort: auto->xhigh (escalated from high after test_failure)` |
-| `auto:*` with cap firing | `IMPLEMENT (iter 3) starting... Effort: auto->xhigh (capped from max)` |
-| `auto_disabled` | `IMPLEMENT (iter 1) starting... Effort: (model default; auto disabled)` |
+| `adaptive`, bead label used | `IMPLEMENT iter 1: effort=high source=adaptive bead=high` |
+| `adaptive`, explicit per-agent override | `IMPLEMENT iter 1: effort=xhigh source=explicit bead=medium(overridden)` |
+| `reactive`, bead label informational | `IMPLEMENT iter 1: effort=high source=reactive bead=medium(ignored)` |
+| `disabled`, bead label informational | `IMPLEMENT iter 1: effort=high source=disabled bead=medium(ignored)` |
+| Loopback escalation | `IMPLEMENT iter 2: effort=xhigh source=adaptive bead=high +test_failure` |
+| Cap fired | `IMPLEMENT iter 3: effort=xhigh source=adaptive bead=high +test_failure +test_failure capped` |
+| Non-bead stage (e.g. planner) | `PLAN iter 1: effort=xhigh source=explicit` |
+| Model default fallback | `TEST iter 1: effort=- source=model_default` |
 
-These are emitted from the existing stage-start log in `runner.py:1887-1889`.
+Emitted from the existing stage-start log in `runner.py:1887-1889`.
 
 ### 7. UI surfaces
 
+All effort surfaces use **tight indicators** — short badges and chips, no prose. Reasoning text (from the coordinator's `bd update --notes`) is **not** rendered in tooltips; it appears only in `bd show` and the bead-detail panel's notes section.
+
 #### 7.1 Per-iteration badge (`worca-ui/app/views/run-detail.js`)
 
-A new badge in the iteration metadata row labeled `Effort:`, following the badge-color rules in `worca-ui/docs/badge-color-language.md`.
+Iteration metadata row gets a two-chip display: the effective effort + the source qualifier, plus a `bead=` chip when the iteration ran with a bead and the bead's classified level disagrees.
 
-| Resolved level | Variant | Rationale |
-|---|---|---|
-| `low` | `neutral` | Informational — not a state |
-| `medium` | `neutral` | Informational |
-| `high` | `primary` | Active, default-ish |
-| `xhigh` | `warning` | Caution — non-default, costly |
-| `max` | `danger` | Highest cost, opt-in only |
-| `(model default)` | `neutral` | Omitted |
+```
+Effort: [xhigh] [explicit]   Bead: [medium] [overridden]
+Effort: [high]  [adaptive]   Bead: [high]
+Effort: [xhigh] [+test_failure]
+Effort: [high]  [reactive]   Bead: [medium] [ignored]
+Effort: [-]     [model default]
+```
 
-**Display text:**
+Badge-variant mapping per `worca-ui/docs/badge-color-language.md`:
 
-- Explicit / model default: `Effort: high` (or `Effort: default`)
-- Auto-resolved: `Effort: auto->high`
+| Resolved level | Variant |
+|---|---|
+| `low` | `neutral` |
+| `medium` | `neutral` |
+| `high` | `primary` |
+| `xhigh` | `warning` |
+| `max` | `danger` |
+| `(model default)` | `neutral` |
 
-**Tooltip** (`title=""` attribute, same approach as other badges per badge-color-language.md §6):
+Source/qualifier chips (`[explicit]`, `[adaptive]`, `[reactive]`, `[disabled]`, `[model default]`, `[+test_failure]`, `[+review_changes]`, `[capped]`) use `neutral` variant. Divergence chips (`[overridden]`, `[ignored]`) use `warning`.
 
-- `source = "explicit"` → `Set by pipeline template.`
-- `source = "model_default"` → `Using Claude Code model default.`
-- `source = "auto:adaptive:initial"` → classifier reasoning from the bead's notes (truncated to 200 chars).
-- `source = "auto:*:test_failure"` etc. → escalation chain: `Escalated from high to xhigh after test_failure (iter 1).`
-- `capped_from != null` → append ` Capped from max.`
+**Tooltip** (concise — single short line, no prose):
+- `source = explicit` → `template value`
+- `source = model_default` → `Claude Code default for this model`
+- `source = adaptive` → `coordinator label: <level>`
+- `source = reactive` / `disabled` + `bead.applied=false` → `coordinator labeled <level>; not applied under <mode>`
+- `capped_from != null` → append ` · capped from <level>`
+- Escalation present → append ` · escalated +<delta> from <base>`
 
 #### 7.2 Run-header chip
 
-A small chip in the run header showing the effective effort mode for the run: `Effort: adaptive · cap xhigh`. Lets users see at a glance which mode is in play without opening settings.
+Small chip in the run header: `Effort: adaptive · cap xhigh` (or `reactive` / `disabled`). Click-through reveals the per-agent table from the Settings panel scoped to this run.
 
-#### 7.3 Bead detail panel
+#### 7.3 Bead detail panel — **read-only**
 
-- Render the `worca-effort:*` label as a badge alongside other bead labels, with the same color scale as §7.1.
-- Surface the classifier reasoning from the bead notes in the detail view.
-- Provide an inline dropdown to edit the label (writes via the same beads API as other bead-edit affordances). Values: `(unset)` / `low` / `medium` / `high` / `xhigh` / `max`. Editing while a run is in progress only affects future iterations on that bead.
+- Render the `worca-effort:*` label as a badge alongside other bead labels, with the §7.1 color scale.
+- Render `[ignored: <mode>]` chip next to the badge when the active run's `auto_mode` is `reactive` or `disabled` (the label is informational under those modes).
+- Surface the coordinator's reasoning note in a dedicated notes section.
+- **No inline editor.** Mid-run effort overrides are not supported in the UI (decision §4 of the analysis). Operators who want to override edit settings.json per-agent or use a different `auto_mode`.
+
+Per-iteration mini-table on bead detail (shows how each iteration actually ran):
+
+```
+iter 1  [xhigh] [explicit]
+iter 2  [max]   [+test_failure] [capped]
+iter 3  [high]  [adaptive]
+```
 
 #### 7.4 Settings panel (`worca-ui/app/views/settings.js`)
 
@@ -324,17 +378,18 @@ New "Effort" section, sibling to "Models" and "Secrets":
 │ ├─────────────┼──────────┼─────────────────────────────┤ │
 │ │ planner     │ [xhigh▾] │                             │ │
 │ │ coordinator │ [medium▾]│                             │ │
-│ │ implementer │ [auto ▾] │                             │ │
+│ │ implementer │ [(def)▾] │ adaptive: coordinator label │ │
 │ │ tester      │ [(def)▾] │ inherits Claude Code default│ │
-│ │ reviewer    │ [auto ▾] │                             │ │
+│ │ reviewer    │ [(def)▾] │ adaptive: coordinator label │ │
 │ │ guardian    │ [high ▾] │                             │ │
 │ └─────────────┴──────────┴─────────────────────────────┘ │
 └───────────────────────────────────────────────────────────┘
 ```
 
+- Per-agent dropdown values: `(unset)`, `low`, `medium`, `high`, `xhigh`, `max`. **No `auto` value** — leave unset to get the mode-dependent fallback.
+- Selecting `max` triggers a confirmation modal: `"max effort is the highest-cost rung. Confirm setting <agent> to max?"` with `Cancel` / `Set to max` buttons. Required for both per-agent settings and `auto_cap`.
 - Writes to `settings.json` (non-secret).
 - Project settings deep-merge over global; inherited global values render as placeholder text ("inheriting `adaptive` from global") following the existing models-panel inheritance pattern.
-- `auto` is selectable in the per-agent dropdown even when `auto_mode = disabled`, but a small inline note appears: "auto_mode is disabled — this agent will use model default."
 
 #### 7.5 Pipeline template editor
 
@@ -354,24 +409,23 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 
 **Tasks:**
 1. Add `worca.effort` block to `src/worca/settings.json` with `auto_mode: "adaptive"`, `auto_cap: "xhigh"`.
-2. Add `effort` field to default agent entries in `settings.json` (omit on tester/guardian to preserve defaults; pre-populate `implementer: "auto"`, `reviewer: "auto"`).
-3. Create `src/worca/orchestrator/effort.py` with `resolve_effort()`, `apply_escalation()`, `clamp()`, and the `EFFORT_LEVELS` ordered tuple.
+2. Add `effort` field to default agent entries in `settings.json` (omit on implementer/tester/reviewer to inherit mode-dependent fallback; keep planner/coordinator/guardian explicit).
+3. Create `src/worca/orchestrator/effort.py` with `resolve_effort()`, `apply_escalation()`, `clamp()`, `read_bead_effort_label()`, and the `EFFORT_LEVELS` ordered tuple.
 4. Extend `get_stage_config()` in `stages.py:78-110` to include `effort: agent_config.get("effort")` in the returned dict.
 5. In `runner.py` at the stage-invocation site (~`runner.py:1839-1864`), call `resolve_effort()` with `trigger`, `iter_num`, and the assigned bead (None for non-implementer), and merge the result into `env_overrides` before `run_agent()`.
-6. Persist `effort` block in `start_iteration()` (`status.py:75-110`) as a new optional kwarg.
+6. Persist `effort` block (including `bead_classified` sub-block) in `start_iteration()` (`status.py:75-110`) as a new optional kwarg.
 
-### Phase 2: Effort classifier agent
+### Phase 2: Coordinator-owned effort labeling
 
-**Files:** `src/worca/agents/core/effort_classifier.md` (new), `src/worca/agents/core/effort_classify.block.md` (new), `src/worca/schemas/effort_classify.json` (new), `src/worca/orchestrator/runner.py`, `src/worca/utils/beads.py`.
+**Files:** `src/worca/agents/core/coordinator.md`, `src/worca/utils/beads.py` (read helper only — no new write path).
 
 **Tasks:**
-1. Write the classifier template with the rubric in §4.
-2. Write `effort_classify.json` schema (level enum without `max`, reasoning min/max length).
-3. Add `effort_classifier` to default `worca.agents` in `settings.json` with `model: "haiku"`, `effort: "low"`, `max_turns: 5`.
-4. Add a post-coordinate classifier loop in `runner.py`: for each bead in `prompt_builder.get_context("beads_ids")` that lacks a `worca-effort:*` label, invoke the classifier via `run_agent()` with bead context, persist label + notes.
-5. Add `bd_labels_for(bead_id)` helper in `utils/beads.py` if not already present; verify `bd_label_add()` (line 181) is suitable.
-6. Add lazy-classification call at the start of `IMPLEMENT` (`runner.py:1906-1932`) for beads created mid-run.
-7. Wire halt-on-classifier-failure: raise a `PipelineInterrupted` with `stop_reason="classifier_failure"`. Verify resume path picks up missing-label beads.
+1. Append the "Effort Labeling" section (rubric + `bd create --labels` + `bd update --notes` instructions) to `coordinator.md` per §4.
+2. Add `bd_get_effort_label(bead_id) -> Optional[str]` helper in `utils/beads.py` — parses `worca-effort:*` from the bead's label list. Used by `resolve_effort()`.
+3. Add a runner-side warning emitter: after COORDINATE completes, scan `prompt_builder.get_context("beads_ids")` and log a warning for any bead missing a `worca-effort:*` label. No halt, no retry — best-effort.
+4. Verify existing `bd_label_add()` (`utils/beads.py:181`) is suitable for any runtime label preservation (e.g. when an external tool seeds labels). No new write path needed for the coordinator — it uses `bd create --labels` directly.
+
+**No new agent, no schema, no post-coordinate classification loop, no `classifier_failure` stop reason, no lazy classification on IMPLEMENT entry.**
 
 ### Phase 3: Logging and status integration
 
@@ -382,24 +436,26 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 2. Extend the `STAGE_STARTED` event payload with `effort: {...}` so the UI receives it via SSE.
 3. Update `stage_started_payload()` to accept and forward the effort dict.
 
-### Phase 4: UI — per-iteration badge and tooltip
+### Phase 4: UI — per-iteration badges and tooltips
 
 **Files:** `worca-ui/app/views/run-detail.js`, `worca-ui/app/styles.css`.
 
 **Tasks:**
-1. Add an `Effort:` row to the iteration metadata renderer, following the existing trigger-badge pattern.
-2. Map levels to Shoelace variants per §7.1.
-3. Render `auto->` prefix when `source` starts with `auto:`.
-4. Wire tooltip per §7.1 from classifier reasoning (fetched from bead notes via existing beads API) or escalation chain.
+1. Add an `Effort:` row to the iteration metadata renderer with the two-chip layout per §7.1 (level + source qualifier).
+2. Render a separate `Bead:` row when the iteration ran with a bead — show the coordinator's classified level + a divergence chip (`[overridden]` / `[ignored]`) when `bead_classified.applied = false`.
+3. Map levels to Shoelace variants per §7.1.
+4. Wire short-line tooltips per §7.1 — no prose, just `template value` / `coordinator label: <level>` / `escalated +N from <base>` etc.
 
-### Phase 5: UI — run-header chip and bead detail
+### Phase 5: UI — run-header chip and bead detail (read-only)
 
 **Files:** `worca-ui/app/views/run-detail.js`, `worca-ui/app/views/beads-panel.js`.
 
 **Tasks:**
 1. Add the `Effort: <mode> · cap <cap>` chip to the run-header strip.
-2. Render `worca-effort:*` label as a badge in bead detail.
-3. Add inline edit dropdown for the bead's effort label, calling beads write API.
+2. Render `worca-effort:*` label as a badge in bead detail (read-only — no editor).
+3. Render `[ignored: <mode>]` chip next to the label when the active run's mode is `reactive`/`disabled`.
+4. Surface coordinator reasoning note in a dedicated notes section (not in tooltips).
+5. Add the per-iteration mini-table showing how each iteration actually ran (§7.3).
 
 ### Phase 6: UI — settings panel
 
@@ -408,8 +464,10 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 **Tasks:**
 1. Add "Effort" section to settings.js, between Models and Secrets.
 2. Implement `auto_mode` dropdown, `auto_cap` dropdown, per-agent table.
-3. Wire writes to `settings.json` via existing settings PUT endpoint.
-4. Implement inheritance placeholder rendering using the models-panel pattern.
+3. Per-agent dropdown values: `(unset)`, `low`, `medium`, `high`, `xhigh`, `max`. **No `auto` value.**
+4. Wire writes to `settings.json` via existing settings PUT endpoint.
+5. Implement inheritance placeholder rendering using the models-panel pattern.
+6. Add confirmation modal triggered when selecting `max` (for per-agent fields and `auto_cap`).
 
 ### Phase 7: Documentation
 
@@ -418,41 +476,42 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 **Tasks:**
 1. Add a "Effort Levels" section to CLAUDE.md alongside "Model Profiles".
 2. Document older-model fallback behavior in MIGRATION.md.
-3. Write `docs/effort.md` with the resolution algorithm, classifier rubric, and per-agent override examples.
+3. Write `docs/effort.md` with the resolution algorithm, coordinator rubric, mode semantics table, and per-agent override examples.
 
 ### Files Changed Summary
 
 | File | Change |
 |---|---|
-| `src/worca/settings.json` | Add `worca.effort` block; add `effort` to default agents; add `effort_classifier` agent entry |
+| `src/worca/settings.json` | Add `worca.effort` block; add `effort` to default agents (planner/coordinator/guardian only) |
 | `src/worca/orchestrator/stages.py` | Add `effort` to `get_stage_config()` return value |
-| `src/worca/orchestrator/effort.py` | **New.** `resolve_effort()`, `apply_escalation()`, `clamp()`, `EFFORT_LEVELS` |
-| `src/worca/orchestrator/runner.py` | Wire `resolve_effort()` at stage invocation; classifier loop post-coordinate; lazy classification on IMPLEMENT entry; log line emit; SSE payload |
-| `src/worca/state/status.py` | Persist `effort` dict in iteration record |
-| `src/worca/utils/beads.py` | Add `bd_labels_for()` helper if missing; reuse `bd_label_add()` |
+| `src/worca/orchestrator/effort.py` | **New.** `resolve_effort()`, `apply_escalation()`, `clamp()`, `read_bead_effort_label()`, `EFFORT_LEVELS` |
+| `src/worca/orchestrator/runner.py` | Wire `resolve_effort()` at stage invocation; post-COORDINATE warning for unlabeled beads; log line emit; SSE payload |
+| `src/worca/state/status.py` | Persist `effort` dict (with `bead_classified` sub-block) in iteration record |
+| `src/worca/utils/beads.py` | Add `bd_get_effort_label()` read helper; reuse `bd_label_add()` |
 | `src/worca/utils/claude_cli.py` | (No code change — env-var path already works) |
-| `src/worca/agents/core/effort_classifier.md` | **New.** Classifier prompt template |
-| `src/worca/agents/core/effort_classify.block.md` | **New.** Block-template variant if needed |
-| `src/worca/schemas/effort_classify.json` | **New.** Output schema (level + reasoning) |
-| `worca-ui/app/views/run-detail.js` | Per-iteration `Effort:` badge + tooltip; run-header chip |
-| `worca-ui/app/views/beads-panel.js` | Bead detail label + inline edit |
-| `worca-ui/app/views/settings.js` | "Effort" section (auto_mode, auto_cap, per-agent table) |
+| `src/worca/agents/core/coordinator.md` | Append "Effort Labeling" section with rubric + `bd create --labels` + `bd update --notes` instructions |
+| `worca-ui/app/views/run-detail.js` | Per-iteration `Effort:` + `Bead:` chips with divergence indicators; run-header chip |
+| `worca-ui/app/views/beads-panel.js` | Bead detail label (read-only) + `[ignored: <mode>]` chip + per-iteration mini-table |
+| `worca-ui/app/views/settings.js` | "Effort" section (auto_mode, auto_cap, per-agent table); `max`-confirmation modal |
 | `worca-ui/app/styles.css` | Effort-badge color CSS vars if not subsumed by existing variants |
 | `worca-ui/server/settings-routes.js` | Accept `worca.effort.*` writes |
 | `CLAUDE.md` | "Effort Levels" section |
 | `MIGRATION.md` | Older-model fallback note |
 | `docs/effort.md` | **New.** Feature documentation |
 
+**Removed from earlier plan revision** (no longer needed under coordinator-owned classification): `src/worca/agents/core/effort_classifier.md`, `src/worca/agents/core/effort_classify.block.md`, `src/worca/schemas/effort_classify.json`, post-COORDINATE classifier loop in `runner.py`, lazy classification on IMPLEMENT entry, `classifier_failure` stop reason.
+
 ## Considerations
 
-- **Determinism.** Adaptive effort makes runs less reproducible — the same bead set may resolve to different effort levels depending on what the classifier returned that day. Mitigated by persisting `effort.source`, `effort.base`, and `effort.escalations` per iteration so runs are explainable post-hoc.
-- **Cost ceiling.** Classification adds N Haiku calls per pipeline (one per bead in the initial coordinate batch). Cheap, but observable in cost reports. The `auto_mode: reactive` setting is the kill switch — same escalation behavior, no classifier calls.
+- **Determinism.** Adaptive effort makes runs less reproducible — the same bead set may resolve to different effort levels depending on what the coordinator returned that day. Mitigated by persisting `effort.source`, `effort.base`, `effort.escalations`, and `effort.bead_classified` per iteration so runs are explainable post-hoc.
+- **Cost ceiling.** No separate classifier calls — effort labeling rides on the coordinator's existing Opus pass. The marginal cost is one extra `--labels` flag and a short `bd update --notes` per bead. Sub-percent of the coordinator's existing per-bead spend.
 - **Cache freshness.** The `worca-effort:*` label persists on the bead forever. If a bead's scope changes after classification (rare — beads are typically atomic and short-lived), the cached level may be stale. Mitigation: user can delete the label manually; we do not auto-invalidate.
 - **Effort and `max_turns` interaction.** Effort controls reasoning per step; `max_turns` caps the number of agent turns. They are orthogonal but compound: a high-effort agent may need more turns to express its reasoning. The current `msize` multiplier is uniform and may need per-effort calibration in a follow-up — out of scope here.
-- **Governance.** No new governance hooks. The classifier writes via the same `bd` CLI path as the coordinator; existing tool-restriction hooks apply unchanged.
-- **Subagent dispatch.** The classifier is invoked from the orchestrator as a top-level `claude -p` call, not as a subagent dispatched from another worca agent. It does not appear in the `worca.governance.dispatch.allowed` map.
+- **Coordinator concern coupling.** The coordinator now does two jobs: decomposition + effort classification. Risk: prompt growth degrades decomposition quality. Mitigation: keep the effort-labeling instructions to a single appended section in `coordinator.md` (short rubric + `bd create --labels` + `bd update --notes` directives); revisit if decomposition quality regresses in integration tests.
+- **Governance.** No new governance hooks. Effort labels are attached via existing `bd create --labels` / `bd update --notes` calls; existing tool-restriction hooks apply unchanged.
 - **Breaking changes:** None. Omitted `effort` field preserves current behavior; existing pipelines run identically.
-- **Migration:** No required migration. The new `worca.effort` block has safe defaults (`adaptive` / `xhigh`) baked into `settings.json` so a freshly-pulled worca-cc starts using adaptive effort on `auto`-marked agents. Existing user pipelines without `effort: auto` on any agent see no behavior change.
+- **Migration:** No required migration. The new `worca.effort` block has safe defaults (`adaptive` / `xhigh`) baked into `settings.json` so a freshly-pulled worca-cc starts using adaptive effort with the coordinator labeling beads. Existing user pipelines without any `effort` configuration see no behavior change beyond the new bead labels.
+- **Older-rev coordinators.** If a user pins an older `coordinator.md` override (in `.claude/agents/`) that lacks the effort-labeling section, the coordinator simply won't emit labels and `resolve_effort()` falls back to model default with a warning. No halt.
 
 ## Test Plan
 
@@ -460,38 +519,40 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 
 | Layer | Test | Validates |
 |---|---|---|
-| Python | `test_resolve_effort_omitted_returns_none` | `effort=None` → `(None, "model_default")` |
-| Python | `test_resolve_effort_explicit_passthrough` | `effort="high"` → `("high", "explicit")`; cap does not clamp |
-| Python | `test_resolve_effort_auto_disabled` | `auto_mode="disabled"` + `effort="auto"` → `(None, "auto_disabled")` |
-| Python | `test_resolve_effort_auto_reactive_initial` | implementer + reactive + initial → model default |
-| Python | `test_resolve_effort_auto_reactive_test_failure_escalates` | reactive + test_failure → +1 rung |
-| Python | `test_resolve_effort_auto_reactive_review_changes_escalates` | reactive + review_changes → +2 rungs |
-| Python | `test_resolve_effort_auto_adaptive_reads_bead_label` | adaptive + label `worca-effort:high` → base `high` |
-| Python | `test_resolve_effort_auto_adaptive_no_label_falls_back_to_default` | adaptive + no label → model default + escalation applies on loopback |
+| Python | `test_resolve_effort_omitted_disabled_returns_model_default` | `effort=None`, `auto_mode=disabled` → `(None, "model_default")` with no escalation |
+| Python | `test_resolve_effort_explicit_disabled_no_escalation` | `effort="high"`, `auto_mode=disabled` → `("high", "disabled")`; no escalation even on test_failure |
+| Python | `test_resolve_effort_reactive_explicit_escalates` | `effort="high"`, `auto_mode=reactive`, trigger=`test_failure` → `("xhigh", "reactive")` with `base=high`, `escalations=["test_failure"]` |
+| Python | `test_resolve_effort_reactive_omitted_starts_at_model_default` | `effort=None`, `auto_mode=reactive`, trigger=`initial` → `(None, "reactive")` with `base=null` |
+| Python | `test_resolve_effort_adaptive_reads_bead_label` | adaptive + bead `worca-effort:high` + no per-agent explicit → `("high", "adaptive:llm")` with `bead_classified.applied=true` |
+| Python | `test_resolve_effort_adaptive_explicit_overrides_bead` | adaptive + bead `worca-effort:medium` + per-agent `effort="xhigh"` → `("xhigh", "explicit")` with `bead_classified.applied=false`, `skip_reason="explicit_override"` |
+| Python | `test_resolve_effort_reactive_records_bead_skip_reason` | reactive + bead `worca-effort:medium` → `bead_classified.applied=false`, `skip_reason="mode_reactive"` |
+| Python | `test_resolve_effort_disabled_records_bead_skip_reason` | disabled + bead `worca-effort:medium` → `bead_classified.applied=false`, `skip_reason="mode_disabled"` |
+| Python | `test_resolve_effort_non_implementer_skip_reason` | adaptive + reviewer agent + bead `worca-effort:high` → `bead_classified.applied=false`, `skip_reason="non_classified_agent"` |
+| Python | `test_resolve_effort_review_changes_plus_two` | adaptive + test_failure × 1 then review_changes × 1 → +1+2 = base+3 (clamped to cap) |
+| Python | `test_resolve_effort_planner_stacks_on_replan` | planner + adaptive + 3× plan_review_changes → +3 rungs from model default |
 | Python | `test_resolve_effort_auto_cap_clamps` | escalation past `auto_cap` clamps and sets `capped_from` |
-| Python | `test_resolve_effort_planner_auto_stacks_on_replan` | planner + adaptive + 3 plan_review_changes → +3 rungs (clamped) |
-| Python | `test_resolve_effort_non_classified_agent_uses_default` | coordinator/tester/reviewer (non-planner, non-implementer) under adaptive `auto` → model default, no escalation |
 | Python | `test_get_stage_config_includes_effort` | `get_stage_config()` returns `effort` key |
-| Python | `test_classifier_schema_rejects_max` | `effort_classify.json` rejects `level: "max"` |
-| Python | `test_classifier_writes_label_and_notes` | mock `bd_label_add` + `bd_update --notes` are called with correct values |
-| Python | `test_classifier_skips_if_label_exists` | bead with existing `worca-effort:*` label → no classifier invocation |
+| Python | `test_bd_get_effort_label_parses_label` | `bd_get_effort_label()` returns `"high"` for bead with `worca-effort:high` label |
+| Python | `test_bd_get_effort_label_invalid_returns_none` | `bd_get_effort_label()` returns `None` for `worca-effort:bogus` |
 | Python | `test_reserved_env_keys_excludes_claude_effort` | `CLAUDE_CODE_EFFORT_LEVEL` is not denied by `utils/env.py` denylist |
-| Python | `test_iteration_record_persists_effort` | `start_iteration(effort={...})` stores the dict in `status.json` |
-| JS | `effort-badge.test.js` | Badge renders correct variant per level; `auto->` prefix appears only when source starts with `auto:` |
-| JS | `effort-tooltip.test.js` | Tooltip text matches resolution-source mapping (§7.1) |
-| JS | `settings-effort.test.js` | Auto-mode + cap dropdowns write to `settings.json`; per-agent table renders inherited placeholders |
+| Python | `test_iteration_record_persists_effort_with_bead_classified` | `start_iteration(effort={..., bead_classified: {...}})` round-trips through `status.json` |
+| JS | `effort-badge.test.js` | Level badge + source qualifier chip render correctly; divergence chip appears only when `bead_classified.applied=false` |
+| JS | `effort-tooltip.test.js` | Tooltip text matches the short-line mapping in §7.1 (no prose) |
+| JS | `settings-effort.test.js` | auto_mode + cap dropdowns write to `settings.json`; per-agent table renders inherited placeholders; selecting `max` triggers confirm modal |
 
 ### Integration / E2E Tests
 
 | Scenario | Validates |
 |---|---|
-| `auto_mode=adaptive`, single bead, mock classifier returns `high` | Bead acquires `worca-effort:high` label; first IMPLEMENT iter runs with `CLAUDE_CODE_EFFORT_LEVEL=high` in subprocess env |
+| `auto_mode=adaptive`, coordinator labels single bead `high` | Bead acquires `worca-effort:high` label + reasoning note; first IMPLEMENT iter runs with `CLAUDE_CODE_EFFORT_LEVEL=high`; status records `source=adaptive`, `bead_classified.applied=true` |
 | `auto_mode=adaptive`, test_failure loopback | Iter 1 = base, iter 2 = base+1; verified via mock claude env capture and `status.json` `effort.escalations` |
-| `auto_mode=reactive`, test_failure loopback | Iter 1 = model default (no env var set), iter 2 = model_default+1 |
-| `auto_mode=disabled` + agent `effort: auto` | Info log emitted; subprocess env lacks `CLAUDE_CODE_EFFORT_LEVEL`; status records `source: auto_disabled` |
-| Classifier failure (mock claude returns non-JSON) | Pipeline halts with `stop_reason=classifier_failure`; resume re-runs classifier for unlabeled beads only |
-| Pre-set `worca-effort:xhigh` on bead before run start | Classifier skips that bead; `auto`-resolved level honors `xhigh` |
-| `auto_cap: high` with classifier returning `xhigh` | Resolved level clamped to `high`; `capped_from: "xhigh"` in iteration record |
+| `auto_mode=adaptive`, implementer has explicit `effort: "xhigh"` | iter 1 runs at `xhigh` (explicit wins), `bead_classified.applied=false`, `skip_reason=explicit_override` |
+| `auto_mode=reactive`, test_failure loopback | Iter 1 = model default (no env var when implementer has no explicit), iter 2 = +1 rung; bead label present but `applied=false`, `skip_reason=mode_reactive` |
+| `auto_mode=disabled`, agent has explicit `effort: "high"` | Subprocess env carries `CLAUDE_CODE_EFFORT_LEVEL=high`; status records `source=disabled`; no escalation on subsequent loopback |
+| Coordinator emits labels under all modes | Run with `disabled` still has bead labels + notes attached; coordinator prompt updates verified via mock claude trace |
+| Pre-set `worca-effort:xhigh` on bead before run start | Coordinator preserves the label; under adaptive, iter 1 runs at `xhigh` |
+| `auto_cap: high` with bead labeled `xhigh` | Resolved level clamped to `high`; `capped_from: "xhigh"` in iteration record |
+| Bead missing `worca-effort:*` label after COORDINATE | Warning logged; resolve_effort falls back to model default; pipeline does not halt |
 
 ### Existing Tests to Update
 
@@ -511,9 +572,9 @@ See "Files Changed Summary" under §Implementation Plan above.
 
 - **Per-effort-level `max_turns` tuning.** A future follow-up may calibrate turn budgets per effort level (xhigh probably needs more turns); for now `max_turns` and `effort` remain independently configured.
 - **Token-usage charts by effort level.** The `status.json.iterations[].effort` field makes this possible, but the chart UI is deferred.
-- **Classifier model swap to a learned heuristic.** First version uses Haiku; if classification quality is insufficient, a follow-up may experiment with a fine-tuned classifier or a rule-based heuristic.
+- **Dedicated classifier agent swap-in.** If coordinator-owned classification quality proves insufficient in production, a follow-up may add an optional `effort_classifier` agent gated behind a config flag. Not pursued in this revision.
 - **Per-agent `auto_cap`.** Pipeline-level cap only. Per-agent caps add config surface without a clear use case so far.
-- **`effort` on `effort_classifier` itself being `auto`.** The classifier is always explicit; not configurable to `auto`.
+- **Mid-run UI override of bead effort labels.** Operators who need to change effort behavior mid-run edit `settings.json` or change `auto_mode`; no inline editor on the bead-detail panel.
 - **Pipeline template editor UI.** Templates ship the same `effort` field structure; the editor itself is out of scope here (tracked separately).
 - **Frontmatter `effort:` in worca templates.** Single source of truth is the env var; templates do not set frontmatter effort.
 - **Auto-invalidation of stale `worca-effort:*` labels.** Bead scope rarely changes; manual deletion is the supported invalidation path.
