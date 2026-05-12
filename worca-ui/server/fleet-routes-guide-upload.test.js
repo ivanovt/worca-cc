@@ -200,6 +200,39 @@ describe('Fleet guide upload (multipart)', () => {
     expect(dispatchFleet).not.toHaveBeenCalled();
   });
 
+  it('writes no files to disk when cap is exceeded mid-batch', async () => {
+    // Two files: first under cap, second pushes total over.
+    // The fix-up sums BEFORE any write — neither should land on disk.
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const form = new FormData();
+    form.append('prompt', 'test');
+    form.append(
+      'guide_files',
+      new Blob(['a'.repeat(400)], { type: 'text/plain' }),
+      'small.md',
+    );
+    form.append(
+      'guide_files',
+      new Blob(['b'.repeat(400)], { type: 'text/plain' }),
+      'medium.md',
+    );
+
+    const res = await postFleetMultipart(form);
+    expect(res.status).toBe(400);
+
+    // Assert: no orphan fleet-runs/<id>/guides/ directory written for a
+    // fleet that never got past validation.
+    const entries = fs.existsSync(fleetRunsDir)
+      ? fs.readdirSync(fleetRunsDir)
+      : [];
+    const fleetDirs = entries.filter((e) => {
+      const p = path.join(fleetRunsDir, e);
+      return fs.statSync(p).isDirectory();
+    });
+    expect(fleetDirs).toHaveLength(0);
+  });
+
   it('saves file contents correctly (binary-safe)', async () => {
     const form = new FormData();
     form.append('prompt', 'test');

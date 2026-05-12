@@ -26,9 +26,11 @@ class PromptBuilder:
                  claude_md_path: str = "CLAUDE.md", context_path: str = None,
                  master_plan_path: str = "MASTER_PLAN.md",
                  resolver=None, core_dir: str = None,
-                 template_agents_dir: str = None, run_dir: str = None):
+                 template_agents_dir: str = None, run_dir: str = None,
+                 work_request_guide_content: str = ""):
         self._title = work_request_title
         self._description = work_request_description or work_request_title
+        self._guide_content = work_request_guide_content
         self._context: dict = {}
         self._context_path = context_path
         self._claude_md_content = self._read_claude_md(claude_md_path)
@@ -150,6 +152,8 @@ class PromptBuilder:
         ctx = dict(self._context)
         ctx["work_request"] = self._work_request_section()
         ctx["assigned_task"] = self._assigned_task_body()
+        ctx["guide_content"] = self._guide_content
+        ctx["has_guide"] = bool(self._guide_content)
         self._apply_stage_context(stage, iteration, ctx)
         return ctx
 

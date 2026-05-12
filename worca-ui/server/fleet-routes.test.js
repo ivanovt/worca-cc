@@ -376,29 +376,59 @@ describe('Fleet Routes', () => {
       expect(data).toHaveProperty('halted_count');
     });
 
-    it('returns 412 when fleet is halted and ?force=1 not set', async () => {
+    it('plain DELETE on halted fleet is idempotent (200, no-op)', async () => {
       writeManifest(fleetRunsDir, baseManifest({ status: 'halted' }));
       const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`, {
         method: 'DELETE',
       });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.already_halted).toBe(true);
+      expect(data.halted_count).toBe(0);
+    });
+
+    it('plain DELETE on failed fleet is idempotent (200, no-op)', async () => {
+      writeManifest(fleetRunsDir, baseManifest({ status: 'failed' }));
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`, {
+        method: 'DELETE',
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.already_halted).toBe(true);
+    });
+
+    it('returns 412 on cleanup of halted fleet without ?force=1', async () => {
+      // The 412 gate is scoped to ?cleanup=1 (resume-loss warning).
+      writeManifest(fleetRunsDir, baseManifest({ status: 'halted' }));
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}?cleanup=1`,
+        { method: 'DELETE' },
+      );
       expect(res.status).toBe(412);
       const data = await res.json();
       expect(data.ok).toBe(false);
       expect(data.current_status).toBe('halted');
     });
 
-    it('returns 412 when fleet is failed and ?force=1 not set', async () => {
+    it('returns 412 on cleanup of failed fleet without ?force=1', async () => {
       writeManifest(fleetRunsDir, baseManifest({ status: 'failed' }));
-      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`, {
-        method: 'DELETE',
-      });
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}?cleanup=1`,
+        { method: 'DELETE' },
+      );
       expect(res.status).toBe(412);
     });
 
-    it('succeeds on halted fleet when ?force=1 is set', async () => {
+    it('cleanup succeeds on halted fleet when ?force=1 is set', async () => {
+      const runCleanup = vi
+        .fn()
+        .mockResolvedValue({ cleaned_worktrees: 0, freed_bytes: 0 });
+      await stopServer(server);
+      ({ server, base } = await createTestServer({ fleetRunsDir, runCleanup }));
       writeManifest(fleetRunsDir, baseManifest({ status: 'halted' }));
       const res = await fetch(
-        `${base}/api/fleet-runs/${VALID_FLEET_ID}?force=1`,
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}?cleanup=1&force=1`,
         { method: 'DELETE' },
       );
       expect(res.status).toBe(200);

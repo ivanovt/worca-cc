@@ -1,8 +1,7 @@
 """Tests for W-040 §12: run_fleet.py --resume <fleet_id>."""
 import json
 import os
-import pytest
-from unittest.mock import patch, call
+from unittest.mock import patch
 
 
 # ---------------------------------------------------------------------------

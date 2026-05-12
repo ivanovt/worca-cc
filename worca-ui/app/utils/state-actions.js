@@ -25,7 +25,6 @@ const ACTION_MATRIX = {
     setup_failed: true,
   },
   archive: {
-    pending: true,
     paused: true,
     completed: true,
     failed: true,

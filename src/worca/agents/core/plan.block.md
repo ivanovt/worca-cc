@@ -6,6 +6,20 @@ Revise the existing plan — do NOT start from scratch.
 
 ## Work Request
 
+{{#if has_guide}}
+## Reference Guide (normative)
+
+The following guidance is authoritative for this work-request. Treat any
+conflict between the guide and the task description as a bug in the task
+description, and surface it rather than silently resolving it.
+
+{{guide_content}}
+
+---
+
+## Task
+
+{{/if}}
 {{work_request}}
 
 {{#if plan_content}}
@@ -37,6 +51,20 @@ Write the plan to `{{plan_file|MASTER_PLAN.md}}`.
 
 ## Work Request
 
+{{#if has_guide}}
+## Reference Guide (normative)
+
+The following guidance is authoritative for this work-request. Treat any
+conflict between the guide and the task description as a bug in the task
+description, and surface it rather than silently resolving it.
+
+{{guide_content}}
+
+---
+
+## Task
+
+{{/if}}
 {{work_request}}
 
 {{#if claude_md}}

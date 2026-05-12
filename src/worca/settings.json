@@ -284,10 +284,12 @@
       "worktree_base_dir": ".worktrees"
     },
     "guide": {
-      "max_bytes": 65536
+      "max_bytes": 131072
     },
     "fleet": {
-      "init_timeout_seconds": 60
+      "init_timeout_seconds": 60,
+      "max_parallel": 5,
+      "failure_threshold": 0.30
     }
   }
 }

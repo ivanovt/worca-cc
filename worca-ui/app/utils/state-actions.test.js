@@ -15,7 +15,6 @@ const EXPECTED = {
     setup_failed: true,
   },
   archive: {
-    pending: true,
     paused: true,
     completed: true,
     failed: true,
@@ -86,6 +85,22 @@ describe('state-actions', () => {
   it('returns false for unknown state', () => {
     expect(actionAllowed('stop', 'exploding')).toBe(false);
   });
+
+  // pending: only cancel/delete allowed (per W-040 §13.7 — no PID exists yet)
+  it('pending allows cancel', () =>
+    expect(actionAllowed('cancel', 'pending')).toBe(true));
+  it('pending allows delete', () =>
+    expect(actionAllowed('delete', 'pending')).toBe(true));
+  it('pending does NOT allow archive', () =>
+    expect(actionAllowed('archive', 'pending')).toBe(false));
+  it('pending does NOT allow resume', () =>
+    expect(actionAllowed('resume', 'pending')).toBe(false));
+  it('pending does NOT allow stop', () =>
+    expect(actionAllowed('stop', 'pending')).toBe(false));
+  it('pending does NOT allow pause', () =>
+    expect(actionAllowed('pause', 'pending')).toBe(false));
+  it('pending does NOT allow learn', () =>
+    expect(actionAllowed('learn', 'pending')).toBe(false));
 
   // halted: resume/cancel/archive/delete/learn allowed; stop/pause/unarchive not
   it('halted allows resume', () =>

@@ -1,9 +1,49 @@
 """Tests for W-040 Phase 2b task 2: fleet dispatch loop + env scrubbing."""
-import os
-import subprocess
-from unittest.mock import call, patch, MagicMock
+from unittest.mock import patch
 
 import pytest
+
+
+class _FakePopen:
+    """Test substitute for ``subprocess.Popen``.
+
+    Each instance records itself in the class-level ``_active`` list at
+    construction and is removed when ``poll()`` first returns its ``rc``.
+    By varying ``polls_until_done`` per construction we can simulate
+    long-running children for max-parallel assertions.
+    """
+
+    _active: list = []
+    _peak: int = 0
+    _total_constructed: int = 0
+    _rcs: list = []  # iterator of return codes, popped per construction
+    _polls_until_done: int = 1
+
+    def __init__(self, *args, **kwargs):
+        type(self)._total_constructed += 1
+        if type(self)._rcs:
+            self.rc = type(self)._rcs.pop(0)
+        else:
+            self.rc = 0
+        self._remaining_polls = type(self)._polls_until_done
+        type(self)._active.append(self)
+        type(self)._peak = max(type(self)._peak, len(type(self)._active))
+
+    def poll(self):
+        self._remaining_polls -= 1
+        if self._remaining_polls <= 0:
+            if self in type(self)._active:
+                type(self)._active.remove(self)
+            return self.rc
+        return None
+
+    @classmethod
+    def reset(cls, *, rcs=None, polls_until_done=1):
+        cls._active = []
+        cls._peak = 0
+        cls._total_constructed = 0
+        cls._rcs = list(rcs) if rcs is not None else []
+        cls._polls_until_done = polls_until_done
 
 
 # ---------------------------------------------------------------------------
@@ -58,7 +98,6 @@ class TestBuildChildEnv:
     def test_uses_env_py_reserved_keys_not_hardcoded(self):
         """Verify run_fleet imports RESERVED_ENV_KEYS from worca.utils.env."""
         import importlib
-        import worca.scripts.run_fleet as fleet_mod
         src = importlib.util.find_spec("worca.scripts.run_fleet").origin
         with open(src) as f:
             source = f.read()
@@ -93,6 +132,29 @@ class TestBuildChildEnv:
         result = build_child_env({})
         assert result == {}
 
+    def test_injects_worca_fleet_id_when_supplied(self):
+        """fleet_id kwarg re-adds WORCA_FLEET_ID after the WORCA_* scrub."""
+        from worca.scripts.run_fleet import build_child_env
+
+        base = {"HOME": "/root", "WORCA_FLEET_ID": "stale-parent-value"}
+        result = build_child_env(base, fleet_id="f_202601011200_a1b2c3d4")
+        assert result["WORCA_FLEET_ID"] == "f_202601011200_a1b2c3d4"
+
+    def test_no_fleet_id_injection_when_kwarg_absent(self):
+        """Without fleet_id kwarg, WORCA_FLEET_ID stays stripped."""
+        from worca.scripts.run_fleet import build_child_env
+
+        base = {"HOME": "/root", "WORCA_FLEET_ID": "stale"}
+        result = build_child_env(base)
+        assert "WORCA_FLEET_ID" not in result
+
+    def test_fleet_id_none_is_same_as_absent(self):
+        from worca.scripts.run_fleet import build_child_env
+
+        base = {"HOME": "/root", "WORCA_FLEET_ID": "stale"}
+        result = build_child_env(base, fleet_id=None)
+        assert "WORCA_FLEET_ID" not in result
+
 
 # ---------------------------------------------------------------------------
 # Build child command
@@ -117,7 +179,6 @@ class TestBuildChildCmd:
 
     def test_includes_run_worktree_py(self):
         cmd = self._call("/repo/a", "f_abc", prompt="x")
-        script = cmd[-1] if cmd[-1].endswith("run_worktree.py") else None
         assert any("run_worktree.py" in c for c in cmd)
 
     def test_includes_fleet_id(self):
@@ -187,11 +248,9 @@ class TestDispatchFleet:
               child_returncode=0):
         from worca.scripts.run_fleet import dispatch_fleet
 
-        completed = subprocess.CompletedProcess(
-            args=[], returncode=child_returncode, stdout="", stderr=""
-        )
+        _FakePopen.reset(rcs=[child_returncode] * len(targets))
 
-        with patch("worca.scripts.run_fleet.subprocess.run", return_value=completed) as mock_run, \
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _FakePopen) as mock_popen, \
              patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}):
             result = dispatch_fleet(
                 targets=targets,
@@ -204,54 +263,63 @@ class TestDispatchFleet:
                 max_parallel=max_parallel,
                 fleet_failure_threshold=threshold,
             )
-            return result, mock_run
+            return result, mock_popen
 
     def test_dispatches_each_target(self):
         targets = [
             self._make_target("/repo/a"),
             self._make_target("/repo/b"),
         ]
-        result, mock_run = self._call(targets, "f_abc")
-        assert mock_run.call_count == 2
+        self._call(targets, "f_abc")
+        assert _FakePopen._total_constructed == 2
 
     def test_dispatches_single_target(self):
         targets = [self._make_target("/repo/a")]
-        result, mock_run = self._call(targets, "f_abc")
-        assert mock_run.call_count == 1
+        self._call(targets, "f_abc")
+        assert _FakePopen._total_constructed == 1
 
     def test_empty_targets_returns_immediately(self):
-        result, mock_run = self._call([], "f_abc")
-        assert mock_run.call_count == 0
+        self._call([], "f_abc")
+        assert _FakePopen._total_constructed == 0
 
     def test_passes_cwd_as_project_dir(self):
         targets = [self._make_target("/repo/a")]
-        _, mock_run = self._call(targets, "f_abc")
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("cwd") == "/repo/a"
+        _FakePopen.reset(rcs=[0])
+        cwds = []
+
+        class _Spy(_FakePopen):
+            def __init__(self, *args, **kwargs):
+                cwds.append(kwargs.get("cwd"))
+                super().__init__(*args, **kwargs)
+
+        from worca.scripts.run_fleet import dispatch_fleet
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _Spy), \
+             patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}):
+            dispatch_fleet(
+                targets=targets, fleet_id="f", prompt="x", source=None, base=None,
+                guide=[], plan=None, max_parallel=5, fleet_failure_threshold=0.30,
+            )
+        assert cwds == ["/repo/a"]
 
     def test_passes_scrubbed_env_to_subprocess(self):
         targets = [self._make_target("/repo/a")]
-        from worca.scripts.run_fleet import dispatch_fleet
-        import subprocess as sp
+        _FakePopen.reset(rcs=[0])
+        envs = []
 
-        completed = sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        class _Spy(_FakePopen):
+            def __init__(self, *args, **kwargs):
+                envs.append(kwargs.get("env"))
+                super().__init__(*args, **kwargs)
+
         scrubbed = {"HOME": "/root", "CUSTOM": "yes"}
-
-        with patch("worca.scripts.run_fleet.subprocess.run", return_value=completed) as mock_run, \
+        from worca.scripts.run_fleet import dispatch_fleet
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _Spy), \
              patch("worca.scripts.run_fleet.build_child_env", return_value=scrubbed):
             dispatch_fleet(
-                targets=targets,
-                fleet_id="f_abc",
-                prompt="x",
-                source=None,
-                base=None,
-                guide=[],
-                plan=None,
-                max_parallel=5,
-                fleet_failure_threshold=0.30,
+                targets=targets, fleet_id="f_abc", prompt="x", source=None, base=None,
+                guide=[], plan=None, max_parallel=5, fleet_failure_threshold=0.30,
             )
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("env") == scrubbed
+        assert envs == [scrubbed]
 
     def test_returns_dict_with_child_results(self):
         targets = [self._make_target("/repo/a")]
@@ -272,80 +340,44 @@ class TestDispatchFleet:
     def test_circuit_breaker_halts_unstarted_children(self):
         """When failed/terminal >= threshold and terminal >= min(3,total), remaining
         unstarted children are skipped (§7 formula)."""
-        # 5 targets: first 3 fail → terminal=3 >= min(3,5)=3, 3/3=1.0 >= 0.30 → fire
-        # Targets 3 and 4 should be skipped (halted)
-        targets = [
-            self._make_target(f"/repo/{i}") for i in range(5)
-        ]
+        # 5 targets, max_parallel=1 → strictly sequential. First 3 fail →
+        # terminal=3 >= min(3,5)=3, 3/3=1.0 >= 0.30 → fire. Children 4 and 5
+        # must be marked halted without ever calling Popen.
+        targets = [self._make_target(f"/repo/{i}") for i in range(5)]
+        _FakePopen.reset(rcs=[1, 1, 1, 0, 0])
         from worca.scripts.run_fleet import dispatch_fleet
-        import subprocess as sp
 
-        call_count = 0
-
-        def fake_run(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            # First 3 fail
-            rc = 1 if call_count <= 3 else 0
-            return sp.CompletedProcess(args=[], returncode=rc, stdout="", stderr="")
-
-        with patch("worca.scripts.run_fleet.subprocess.run", side_effect=fake_run), \
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _FakePopen), \
              patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}), \
              patch("worca.scripts.run_fleet.update_fleet_status"):
             result = dispatch_fleet(
-                targets=targets,
-                fleet_id="f_abc",
-                prompt="x",
-                source=None,
-                base=None,
-                guide=[],
-                plan=None,
-                max_parallel=1,
-                fleet_failure_threshold=0.30,
+                targets=targets, fleet_id="f_abc", prompt="x", source=None, base=None,
+                guide=[], plan=None, max_parallel=1, fleet_failure_threshold=0.30,
             )
-
-        # Circuit breaker fires after 3 failures; fewer than 5 were run
-        assert call_count < 5
+        assert _FakePopen._total_constructed < 5
+        halted = [k for k, v in result.items() if v["status"] == "halted"]
+        assert len(halted) >= 1
 
     def test_circuit_breaker_does_not_kill_in_flight(self):
-        """Children already running are not killed when breaker fires."""
-        # With max_parallel=2, and threshold such that after 1 failure the breaker
-        # fires, the already-dispatched second child must still complete.
-        # With a sequential (max_parallel=1) loop, in-flight == current child,
-        # which already has its result. We verify the result dict still has it.
-        targets = [
-            self._make_target("/repo/a"),
-            self._make_target("/repo/b"),
-        ]
+        """Children already in flight when breaker fires must finish naturally."""
+        targets = [self._make_target("/repo/a"), self._make_target("/repo/b")]
+        # All fail — breaker would fire after first if not for in-flight children.
+        # With max_parallel=2 both get spawned BEFORE the first finishes.
+        # We need both to complete (neither killed). polls_until_done=2 makes
+        # each child stay in-flight for one extra poll tick.
+        _FakePopen.reset(rcs=[1, 1], polls_until_done=2)
         from worca.scripts.run_fleet import dispatch_fleet
-        import subprocess as sp
 
-        call_idx = 0
-
-        def fake_run(*args, **kwargs):
-            nonlocal call_idx
-            call_idx += 1
-            # All fail — breaker will trip after first
-            return sp.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
-
-        with patch("worca.scripts.run_fleet.subprocess.run", side_effect=fake_run), \
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _FakePopen), \
              patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}), \
              patch("worca.scripts.run_fleet.update_fleet_status"):
             result = dispatch_fleet(
-                targets=targets,
-                fleet_id="f_abc",
-                prompt="x",
-                source=None,
-                base=None,
-                guide=[],
-                plan=None,
-                max_parallel=1,
-                fleet_failure_threshold=0.10,  # very low — fires after min(3,2)=2 terminal
+                targets=targets, fleet_id="f_abc", prompt="x", source=None, base=None,
+                guide=[], plan=None, max_parallel=2, fleet_failure_threshold=0.10,
             )
-
-        # The first child already ran and its result is in the dict
-        completed_or_failed = [v for v in result.values() if v["status"] in ("completed", "failed")]
-        assert len(completed_or_failed) >= 1
+        # Both spawned children must have a non-halted (final) status
+        assert result["/repo/a"]["status"] == "failed"
+        assert result["/repo/b"]["status"] == "failed"
 
     def test_no_threadpoolexecutor_import(self):
         """run_fleet.py must not use ThreadPoolExecutor (manual loop required)."""
@@ -357,56 +389,43 @@ class TestDispatchFleet:
 
     def test_max_parallel_limits_concurrent_children(self):
         """At most --max-parallel children run simultaneously."""
-        # With 6 targets and max_parallel=2, subprocess.run is called serially
-        # at most 2 at a time. We track concurrent calls via a counter.
+        # With 6 targets and max_parallel=2, peak concurrent Popen instances
+        # must never exceed 2. _FakePopen tracks peak via _peak class var.
         targets = [self._make_target(f"/repo/{i}") for i in range(6)]
+        _FakePopen.reset(rcs=[0] * 6, polls_until_done=2)
         from worca.scripts.run_fleet import dispatch_fleet
-        import subprocess as sp
 
-        concurrent = {"current": 0, "peak": 0}
-
-        def fake_run(*args, **kwargs):
-            concurrent["current"] += 1
-            concurrent["peak"] = max(concurrent["peak"], concurrent["current"])
-            result = sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-            concurrent["current"] -= 1
-            return result
-
-        with patch("worca.scripts.run_fleet.subprocess.run", side_effect=fake_run), \
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _FakePopen), \
              patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}):
             dispatch_fleet(
-                targets=targets,
-                fleet_id="f_abc",
-                prompt="x",
-                source=None,
-                base=None,
-                guide=[],
-                plan=None,
-                max_parallel=2,
-                fleet_failure_threshold=0.30,
+                targets=targets, fleet_id="f_abc", prompt="x", source=None, base=None,
+                guide=[], plan=None, max_parallel=2, fleet_failure_threshold=0.30,
             )
+        assert _FakePopen._peak <= 2
+        assert _FakePopen._peak == 2  # actually saturates with 6 targets
 
-        assert concurrent["peak"] <= 2
+    def test_real_parallelism_uses_popen_not_run(self):
+        """Sanity: dispatch_fleet must use subprocess.Popen (non-blocking)."""
+        import importlib.util
+        src = importlib.util.find_spec("worca.scripts.run_fleet").origin
+        with open(src) as f:
+            source = f.read()
+        assert "subprocess.Popen(" in source, (
+            "dispatch_fleet must spawn children via Popen for real parallelism"
+        )
 
     def test_halted_targets_get_halted_status(self):
-        """Targets not dispatched due to circuit breaker get status=halted.
-
-        Uses 4 targets so that after 3 failures (terminal=3 >= min(3,4)=3)
-        the breaker fires and the 4th target is marked halted rather than run.
-        """
+        """Targets not dispatched due to circuit breaker get status=halted."""
         targets = [
             self._make_target("/repo/a"),
             self._make_target("/repo/b"),
             self._make_target("/repo/c"),
             self._make_target("/repo/d"),
         ]
+        _FakePopen.reset(rcs=[1, 1, 1, 1])
         from worca.scripts.run_fleet import dispatch_fleet
-        import subprocess as sp
 
-        def fake_run(*args, **kwargs):
-            return sp.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
-
-        with patch("worca.scripts.run_fleet.subprocess.run", side_effect=fake_run), \
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _FakePopen), \
              patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}), \
              patch("worca.scripts.run_fleet.update_fleet_status"):
             result = dispatch_fleet(

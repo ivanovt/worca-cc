@@ -264,7 +264,7 @@ class TestGuideFlag:
         ])
         attach_calls = []
 
-        def fake_attach(wr, paths):
+        def fake_attach(wr, paths, *, max_bytes=None):
             attach_calls.append(paths)
             return wr
 
@@ -307,7 +307,7 @@ class TestGuideFlag:
              patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
              patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
              patch("worca.scripts.run_parallel.attach_guide",
-                   side_effect=lambda wr, paths: attach_calls.append(paths) or wr), \
+                   side_effect=lambda wr, paths, **_: attach_calls.append(paths) or wr), \
              pytest.raises(SystemExit):
             from worca.scripts.run_parallel import main
             main()
@@ -342,7 +342,7 @@ class TestGuideFlag:
              patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
              patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
              patch("worca.scripts.run_parallel.attach_guide",
-                   side_effect=lambda wr, paths: attach_calls.append(paths) or wr), \
+                   side_effect=lambda wr, paths, **_: attach_calls.append(paths) or wr), \
              pytest.raises(SystemExit):
             from worca.scripts.run_parallel import main
             main()
@@ -379,7 +379,7 @@ class TestGuideFlag:
              patch("worca.scripts.run_parallel._run_pipeline_in_worktree", side_effect=fake_run), \
              patch("worca.scripts.run_parallel.ProcessPoolExecutor", ThreadPoolExecutor), \
              patch("worca.scripts.run_parallel.attach_guide",
-                   side_effect=lambda wr, paths: attach_calls.append(paths) or wr), \
+                   side_effect=lambda wr, paths, **_: attach_calls.append(paths) or wr), \
              pytest.raises(SystemExit):
             from worca.scripts.run_parallel import main
             main()

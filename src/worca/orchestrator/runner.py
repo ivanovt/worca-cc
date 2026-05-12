@@ -1683,6 +1683,7 @@ def run_pipeline(
             core_dir=_pb_core_dir,
             template_agents_dir=_pb_template_agents_dir,
             run_dir=run_dir,
+            work_request_guide_content=work_request.guide_content,
         )
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)

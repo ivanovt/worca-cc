@@ -798,7 +798,7 @@ class TestFleetSourceRemove:
 
 class TestBuildSourcesIncludesFleetSource:
     def test_build_sources_includes_fleet_source(self, tmp_path):
-        from worca.cli.cleanup import _build_sources, FleetSource
+        from worca.cli.cleanup import _build_sources
         sources = _build_sources(str(tmp_path / ".worca"))
         source_types = [type(s).__name__ for s in sources]
         assert "FleetSource" in source_types

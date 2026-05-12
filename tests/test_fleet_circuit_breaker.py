@@ -5,10 +5,26 @@ Verifies the §7 formula in dispatch_fleet():
                     AND terminal_count >= min(3, total)
   - manifest write: halt_reason='circuit_breaker' on trip
 """
-import subprocess
 from unittest.mock import patch
 
-import pytest
+
+class _FakePopen:
+    """Test substitute for subprocess.Popen. Each instance returns its rc on poll()."""
+
+    _rcs: list = []
+
+    def __init__(self, *args, **kwargs):
+        if type(self)._rcs:
+            self.rc = type(self)._rcs.pop(0)
+        else:
+            self.rc = 0
+
+    def poll(self):
+        return self.rc
+
+    @classmethod
+    def reset(cls, rcs):
+        cls._rcs = list(rcs)
 
 
 def _make_target(project_dir):
@@ -18,12 +34,10 @@ def _make_target(project_dir):
 def _run_dispatch(targets, threshold=0.30, max_parallel=1, returncodes=None):
     from worca.scripts.run_fleet import dispatch_fleet
 
-    rc_iter = iter(returncodes or [0] * len(targets))
+    rcs = list(returncodes or [0] * len(targets))
+    _FakePopen.reset(rcs)
 
-    def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args=[], returncode=next(rc_iter, 0))
-
-    with patch("worca.scripts.run_fleet.subprocess.run", side_effect=fake_run), \
+    with patch("worca.scripts.run_fleet.subprocess.Popen", _FakePopen), \
          patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}), \
          patch("worca.scripts.run_fleet.update_fleet_status"):
         return dispatch_fleet(
@@ -165,12 +179,10 @@ class TestCircuitBreakerManifestWrite:
     def _run_dispatch_with_spy(self, targets, threshold=0.30, returncodes=None):
         from worca.scripts.run_fleet import dispatch_fleet
 
-        rc_iter = iter(returncodes or [0] * len(targets))
+        rcs = list(returncodes or [0] * len(targets))
+        _FakePopen.reset(rcs)
 
-        def fake_run(*args, **kwargs):
-            return subprocess.CompletedProcess(args=[], returncode=next(rc_iter, 0))
-
-        with patch("worca.scripts.run_fleet.subprocess.run", side_effect=fake_run), \
+        with patch("worca.scripts.run_fleet.subprocess.Popen", _FakePopen), \
              patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}), \
              patch("worca.scripts.run_fleet.update_fleet_status") as mock_update:
             result = dispatch_fleet(

@@ -9,9 +9,8 @@
 """
 import os
 import subprocess
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
-import pytest
 
 
 def _make_target(project_dir):
@@ -19,16 +18,24 @@ def _make_target(project_dir):
 
 
 def _dispatch_capture_cmds(targets, plan, guide=None):
-    """Run dispatch_fleet and capture every child subprocess command."""
+    """Run dispatch_fleet and capture every child subprocess command.
+
+    dispatch_fleet now uses subprocess.Popen (non-blocking) for real parallelism;
+    the spy below mimics the Popen interface — records the cmd at __init__ and
+    returns rc=0 on poll().
+    """
     from worca.scripts.run_fleet import dispatch_fleet
 
     captured = []
 
-    def fake_run(cmd, *args, **kwargs):
-        captured.append(list(cmd))
-        return subprocess.CompletedProcess(args=[], returncode=0)
+    class _Spy:
+        def __init__(self, cmd, *args, **kwargs):
+            captured.append(list(cmd))
 
-    with patch("worca.scripts.run_fleet.subprocess.run", side_effect=fake_run), \
+        def poll(self):
+            return 0
+
+    with patch("worca.scripts.run_fleet.subprocess.Popen", _Spy), \
          patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}):
         dispatch_fleet(
             targets=targets,

@@ -347,20 +347,29 @@ export function createFleetRouter({
 
       const { fleet_id, fleet_id_short } = generateFleetId();
 
-      // Save uploaded guide files
+      // Save uploaded guide files.
+      // Validate total size BEFORE writing anything to disk — partial writes
+      // would leave orphan files under <fleet_id>/guides/ that no manifest
+      // points at (cleanup wouldn't find them).
       let guideEntry = null;
       if (guideFiles.length > 0) {
-        const guidesDir = join(fleetRunsDir, fleet_id, 'guides');
-        mkdirSync(guidesDir, { recursive: true });
+        const totalBytes = guideFiles.reduce(
+          (sum, f) => sum + f.content.length,
+          0,
+        );
+        if (totalBytes > guideCapBytes) {
+          return res.status(400).json({
+            ok: false,
+            error: `Guide files exceed size cap of ${guideCapBytes} bytes`,
+            guide_bytes: totalBytes,
+            cap_bytes: guideCapBytes,
+          });
+        }
 
+        // Resolve every filename to a unique sanitized name first — no I/O yet.
         const usedNames = new Set();
-        const savedPaths = [];
-        const savedFilenames = [];
-        let totalBytes = 0;
-
-        for (const { filename, content } of guideFiles) {
+        const planned = guideFiles.map(({ filename, content }) => {
           let safe = sanitizeFilename(filename);
-
           if (usedNames.has(safe)) {
             const dot = safe.lastIndexOf('.');
             const nameBase = dot !== -1 ? safe.slice(0, dot) : safe;
@@ -370,17 +379,15 @@ export function createFleetRouter({
             safe = `${nameBase}-${counter}${ext}`;
           }
           usedNames.add(safe);
+          return { safe, content };
+        });
 
-          totalBytes += content.length;
-          if (totalBytes > guideCapBytes) {
-            return res.status(400).json({
-              ok: false,
-              error: `Guide files exceed size cap of ${guideCapBytes} bytes`,
-              guide_bytes: totalBytes,
-              cap_bytes: guideCapBytes,
-            });
-          }
-
+        // Now write — total size is validated, no orphan files possible.
+        const guidesDir = join(fleetRunsDir, fleet_id, 'guides');
+        mkdirSync(guidesDir, { recursive: true });
+        const savedPaths = [];
+        const savedFilenames = [];
+        for (const { safe, content } of planned) {
           writeFileSync(join(guidesDir, safe), content);
           savedPaths.push(join(guidesDir, safe));
           savedFilenames.push(safe);
@@ -469,17 +476,28 @@ export function createFleetRouter({
 
     const { cleanup, force } = req.query;
     const currentStatus = manifest.status;
+    const alreadyHalted =
+      currentStatus === 'halted' || currentStatus === 'failed';
 
-    // Resume-loss gate: 412 when halted/failed without ?force=1
-    if (
-      (currentStatus === 'halted' || currentStatus === 'failed') &&
-      force !== '1'
-    ) {
+    // Resume-loss gate (412) applies ONLY to the cleanup path. Plain DELETE
+    // on a running fleet halts unstarted children; plain DELETE on an
+    // already-halted fleet is an idempotent no-op (no worktree deletion,
+    // no resume-loss to warn about). See W-040 §13.6.
+    if (cleanup === '1' && alreadyHalted && force !== '1') {
       return res.status(412).json({
         ok: false,
         error:
           'Fleet is in a resumable state. Pass ?force=1 to confirm cleanup will block future --resume attempts.',
         current_status: currentStatus,
+      });
+    }
+
+    // Plain DELETE on already-halted/failed fleet: no-op (200).
+    if (cleanup !== '1' && alreadyHalted) {
+      return res.json({
+        ok: true,
+        halted_count: 0,
+        already_halted: true,
       });
     }
 

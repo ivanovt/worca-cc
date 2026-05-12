@@ -526,6 +526,21 @@ export function readPipelineFromDom() {
       'main',
   };
 
+  const guide = {
+    max_bytes:
+      parseInt(document.getElementById('guide-max-bytes')?.value, 10) || 131072,
+  };
+
+  const fleet = {
+    max_parallel:
+      parseInt(document.getElementById('fleet-max-parallel')?.value, 10) || 5,
+    failure_threshold:
+      parseFloat(document.getElementById('fleet-failure-threshold')?.value) ||
+      0.3,
+    init_timeout_seconds:
+      parseInt(document.getElementById('fleet-init-timeout')?.value, 10) || 60,
+  };
+
   return {
     loops,
     plan_path_template,
@@ -533,6 +548,8 @@ export function readPipelineFromDom() {
     milestones,
     circuit_breaker,
     parallel,
+    guide,
+    fleet,
   };
 }
 
@@ -754,6 +771,8 @@ function pipelineTab(worca, rerender) {
   const milestones = worca.milestones || {};
   const cb = worca.circuit_breaker || {};
   const parallel = worca.parallel || {};
+  const guide = worca.guide || {};
+  const fleet = worca.fleet || {};
 
   const preflight = stages.preflight || {
     enabled: true,
@@ -902,6 +921,30 @@ function pipelineTab(worca, rerender) {
         </div>
       </div>
 
+      <h3 class="settings-section-title">Fleet & Guide</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Guide Max Bytes</label>
+          <sl-input id="guide-max-bytes" type="number" value="${guide.max_bytes ?? 131072}" size="small" min="1024" max="10485760"></sl-input>
+          <span class="settings-field-hint">Combined size cap (bytes) for --guide files attached to a run. Default 131072 (128 KiB) — fits ~15–25 pages of dense markdown. Pipeline raises a hard error if exceeded.</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Fleet Max Parallel</label>
+          <sl-input id="fleet-max-parallel" type="number" value="${fleet.max_parallel ?? 5}" size="small" min="1" max="50"></sl-input>
+          <span class="settings-field-hint">Maximum concurrent child pipelines per fleet run. Per-launch overrides via CLI --max-parallel or the launcher form.</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Fleet Failure Threshold</label>
+          <sl-input id="fleet-failure-threshold" type="number" step="0.05" value="${fleet.failure_threshold ?? 0.3}" size="small" min="0" max="1"></sl-input>
+          <span class="settings-field-hint">Failure ratio that trips the fleet circuit breaker and halts unstarted children. Default 0.30 (30%).</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Fleet Init Timeout (seconds)</label>
+          <sl-input id="fleet-init-timeout" type="number" value="${fleet.init_timeout_seconds ?? 60}" size="small" min="10" max="600"></sl-input>
+          <span class="settings-field-hint">Per-target worca init --upgrade timeout. Hung targets are marked setup_failed and the fleet continues.</span>
+        </div>
+      </div>
+
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
           const {
@@ -911,6 +954,8 @@ function pipelineTab(worca, rerender) {
             milestones,
             circuit_breaker,
             parallel,
+            guide,
+            fleet,
           } = readPipelineFromDom();
           const stages = readStagesFromDom();
           stages.preflight = readPreflightFromDom();
@@ -923,6 +968,8 @@ function pipelineTab(worca, rerender) {
               milestones,
               circuit_breaker,
               parallel,
+              guide,
+              fleet,
             },
           };
           saveSettings(payload, rerender);

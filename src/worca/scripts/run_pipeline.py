@@ -206,6 +206,7 @@ def main():
                 source_ref=wr.get("source_ref"),
                 priority=wr.get("priority", 2),
                 plan_path=wr.get("plan_path"),
+                guide_content=wr.get("guide_content", ""),
             )
         else:
             print(f"error: cannot resume — status file not found: {status_file}", file=sys.stderr)
@@ -216,8 +217,13 @@ def main():
         work_request = build_work_request(args)
 
         if args.guide:
-            from worca.orchestrator.work_request import attach_guide
-            work_request = attach_guide(work_request, args.guide)
+            from worca.orchestrator.work_request import attach_guide, resolve_guide_max_bytes
+            _guide_settings = load_settings(args.settings)
+            work_request = attach_guide(
+                work_request,
+                args.guide,
+                max_bytes=resolve_guide_max_bytes(_guide_settings),
+            )
 
         # Resolve plan: explicit --plan wins, then auto-detected from issue body
         plan_file = args.plan or work_request.plan_path

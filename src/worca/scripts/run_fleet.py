@@ -79,11 +79,17 @@ def _resolve_init_timeout(timeout_flag, settings: dict) -> int:
     return settings.get("worca", {}).get("fleet", {}).get("init_timeout_seconds", 60)
 
 
-def build_child_env(base_env: dict) -> dict:
+def build_child_env(base_env: dict, *, fleet_id: str | None = None) -> dict:
     """Return a copy of *base_env* with all reserved pipeline keys stripped.
 
     Uses RESERVED_ENV_KEYS and RESERVED_PREFIXES from worca.utils.env as the
     single source of truth — no hand-maintained scrub list here.
+
+    When *fleet_id* is supplied, ``WORCA_FLEET_ID`` is re-injected AFTER the
+    scrub so the Guardian agent in the child pipeline can detect fleet
+    membership and apply the ``[fleet:<short>]`` PR-title prefix (W-040 §11).
+    The scrub strips it first (per §5) to drop any stale value inherited
+    from the parent shell.
     """
     result = {}
     for key, value in base_env.items():
@@ -92,6 +98,10 @@ def build_child_env(base_env: dict) -> dict:
         if any(key.startswith(prefix) for prefix in RESERVED_PREFIXES):
             continue
         result[key] = value
+
+    if fleet_id:
+        result["WORCA_FLEET_ID"] = fleet_id
+
     return result
 
 
@@ -166,7 +176,7 @@ def run_plan_first(
     The reference child runs its full pipeline independently; only the plan file
     is extracted early to unblock the remaining N-1 children (§6).
     """
-    child_env = build_child_env(os.environ.copy())
+    child_env = build_child_env(os.environ.copy(), fleet_id=fleet_id)
     cmd = build_child_cmd(
         project_dir=reference_project,
         fleet_id=fleet_id,
@@ -223,6 +233,9 @@ def run_plan_first(
     return shared_plan
 
 
+_DISPATCH_POLL_INTERVAL_SECONDS = 0.2
+
+
 def dispatch_fleet(
     targets: list,
     fleet_id: str,
@@ -234,10 +247,15 @@ def dispatch_fleet(
     max_parallel: int,
     fleet_failure_threshold: float,
 ) -> dict:
-    """Run fleet children with a manual dispatch loop and circuit breaker.
+    """Run fleet children in parallel with a semaphore-gated dispatch loop.
 
-    Manual loop — not a thread-pool map — so the circuit breaker can prevent
-    unstarted children from launching. In-flight children are never killed.
+    Up to ``max_parallel`` children run concurrently. Each child is spawned as
+    a ``subprocess.Popen`` (non-blocking) and the loop polls for completion
+    every ``_DISPATCH_POLL_INTERVAL_SECONDS``. When the failure ratio crosses
+    ``fleet_failure_threshold`` (and at least ``min(3, total)`` children have
+    completed), the circuit breaker fires: no further children are spawned,
+    but already-in-flight children are NEVER killed — they finish naturally
+    so the fleet does not leave half-written repos behind (W-040 §7).
 
     Returns a dict mapping project_dir -> {"status": "completed"|"failed"|"halted"}.
     """
@@ -246,34 +264,25 @@ def dispatch_fleet(
     if total == 0:
         return results
 
+    pending = [t["project_dir"] for t in targets]
+    in_flight = {}  # project_dir -> Popen
     failed_count = 0
     halted = False
 
-    # Process targets in batches of max_parallel using a sequential approach.
-    # Each batch runs one child at a time (no actual threads); the circuit
-    # breaker check fires between children so unstarted ones can be skipped.
+    def _check_breaker() -> bool:
+        """Has the failure threshold been crossed?"""
+        terminal_count = len(results)
+        min_terminal = min(3, total)
+        return (
+            terminal_count >= min_terminal
+            and failed_count / terminal_count >= fleet_failure_threshold
+        )
 
-    # Process in batches of max_parallel
-    pending = [t["project_dir"] for t in targets]
-    idx = 0
-
-    while idx < len(pending):
-        if halted:
-            # Mark remaining targets as halted
-            for project_dir in pending[idx:]:
-                results[project_dir] = {"status": "halted"}
-            break
-
-        # Take up to max_parallel targets for this batch
-        batch = pending[idx:idx + max_parallel]
-        idx += max_parallel
-
-        for project_dir in batch:
-            if halted:
-                results[project_dir] = {"status": "halted"}
-                continue
-
-            child_env = build_child_env(os.environ.copy())
+    while pending or in_flight:
+        # Spawn up to max_parallel children. Stops adding new ones once halted.
+        while pending and len(in_flight) < max_parallel and not halted:
+            project_dir = pending.pop(0)
+            child_env = build_child_env(os.environ.copy(), fleet_id=fleet_id)
             cmd = build_child_cmd(
                 project_dir=project_dir,
                 fleet_id=fleet_id,
@@ -283,26 +292,40 @@ def dispatch_fleet(
                 guide=guide,
                 plan=plan,
             )
-            proc = subprocess.run(cmd, cwd=project_dir, env=child_env)
+            in_flight[project_dir] = subprocess.Popen(
+                cmd, cwd=project_dir, env=child_env,
+            )
 
-            if proc.returncode != 0:
+        if not in_flight:
+            break
+
+        # Poll all in-flight children. Collect any that finished this tick.
+        finished = []
+        for project_dir, proc in in_flight.items():
+            rc = proc.poll()
+            if rc is not None:
+                finished.append((project_dir, rc))
+
+        if not finished:
+            time.sleep(_DISPATCH_POLL_INTERVAL_SECONDS)
+            continue
+
+        for project_dir, rc in finished:
+            del in_flight[project_dir]
+            if rc != 0:
                 results[project_dir] = {"status": "failed"}
                 failed_count += 1
-                # §7 circuit-breaker: trip when failed/terminal >= threshold
-                # AND terminal >= min(3, total). In-flight child (current) is
-                # already counted in terminal_count — do not kill it.
-                terminal_count = len(results)
-                min_terminal = min(3, total)
-                if (
-                    terminal_count >= min_terminal
-                    and failed_count / terminal_count >= fleet_failure_threshold
-                ):
+                if not halted and _check_breaker():
                     halted = True
                     update_fleet_status(
                         fleet_id, "halted", halt_reason="circuit_breaker"
                     )
             else:
                 results[project_dir] = {"status": "completed"}
+
+    # After the loop, any children still in `pending` were never launched.
+    for project_dir in pending:
+        results[project_dir] = {"status": "halted"}
 
     return results
 

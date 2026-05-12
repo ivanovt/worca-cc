@@ -261,7 +261,10 @@ class TestGuideMaxBytesInTemplate:
         with open(template_path) as f:
             template = json.load(f)
 
-        assert template["worca"]["guide"]["max_bytes"] == 65536
+        # Default raised from 64 KiB → 128 KiB in the W-040 fix-up commit so
+        # typical migration specs (15–25 pages of markdown) fit without
+        # users needing to bump the cap manually.
+        assert template["worca"]["guide"]["max_bytes"] == 131072
 
     def test_guide_max_bytes_propagates_on_upgrade(self):
         """Deep-merge adds guide.max_bytes to existing settings that lack it."""
@@ -274,7 +277,7 @@ class TestGuideMaxBytesInTemplate:
         current = {"worca": {"stages": {"plan": {"agent": "planner"}}}}
         merged = _deep_merge(current, template)
 
-        assert merged["worca"]["guide"]["max_bytes"] == 65536
+        assert merged["worca"]["guide"]["max_bytes"] == 131072
 
     def test_guide_max_bytes_not_clobbered_on_upgrade(self):
         """User override of guide.max_bytes is preserved during --upgrade."""

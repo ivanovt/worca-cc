@@ -159,7 +159,12 @@ def main():
         ]
 
     if guide_paths:
-        items = [(raw, attach_guide(wr, guide_paths)) for raw, wr in items]
+        from worca.orchestrator.work_request import resolve_guide_max_bytes
+        _guide_max_bytes = resolve_guide_max_bytes(load_settings(args.settings))
+        items = [
+            (raw, attach_guide(wr, guide_paths, max_bytes=_guide_max_bytes))
+            for raw, wr in items
+        ]
 
     print(f"Launching {len(items)} parallel pipelines (max {args.max_parallel} concurrent)")
     if args.msize > 1:
