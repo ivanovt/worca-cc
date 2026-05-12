@@ -81,7 +81,6 @@ function _detectCollision(template, projects) {
     branch = branch.replace(/\{project\}/g, slug);
     branch = branch.replace(/\{fleet_id\}/g, 'f_preview');
     branch = branch.replace(/\{slug\}/g, 'slug');
-    // simplified date fill for collision check
     branch = branch.replace(/\{yyyymmddhhmm\}/g, '202605120900');
     branch = branch.replace(/\{yyyymmdd\}/g, '20260512');
     if (seen.has(branch)) return true;
@@ -92,7 +91,7 @@ function _detectCollision(template, projects) {
 
 // ── sub-views ────────────────────────────────────────────────────────────────
 
-function _projectSelectView(appProjects, { rerender } = {}) {
+function _projectsSection(appProjects, { rerender } = {}) {
   const filtered = appProjects.filter((p) => {
     if (!projectFilter) return true;
     const q = projectFilter.toLowerCase();
@@ -103,105 +102,95 @@ function _projectSelectView(appProjects, { rerender } = {}) {
   });
 
   return html`
-    <div class="fleet-launcher-section">
-      <label class="fleet-launcher-label">Projects</label>
-      <div class="project-select-controls">
-        <sl-input
-          class="input-project-filter"
-          size="small"
-          placeholder="Filter projects…"
-          value="${projectFilter}"
-          @sl-input=${
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Projects</h3>
+      <div class="settings-field">
+        <label class="settings-label">Targets</label>
+        <div class="fleet-launcher-projects-controls">
+          <sl-input
+            class="input-project-filter"
+            size="small"
+            placeholder="Filter projects…"
+            value="${projectFilter}"
+            @sl-input=${
+              rerender
+                ? (e) => {
+                    projectFilter = e.target.value;
+                    rerender();
+                  }
+                : null
+            }
+          ></sl-input>
+          <sl-button
+            size="small"
+            variant="default"
+            class="btn-select-all-projects"
+            @click=${
+              rerender
+                ? () => {
+                    selectedProjects =
+                      selectedProjects.length === appProjects.length
+                        ? []
+                        : appProjects.map((p) => p.path);
+                    rerender();
+                  }
+                : null
+            }
+          >
+            ${selectedProjects.length === appProjects.length ? 'Deselect all' : 'Select all'}
+          </sl-button>
+        </div>
+        <sl-select
+          class="fleet-launcher-projects"
+          multiple
+          clearable
+          .value=${selectedProjects}
+          @sl-change=${
             rerender
               ? (e) => {
-                  projectFilter = e.target.value;
-                  rerender();
-                }
-              : null
-          }
-        ></sl-input>
-        <sl-button
-          size="small"
-          variant="default"
-          class="btn-select-all-projects"
-          @click=${
-            rerender
-              ? () => {
-                  selectedProjects =
-                    selectedProjects.length === appProjects.length
-                      ? []
-                      : appProjects.map((p) => p.path);
+                  const v = e.target.value;
+                  selectedProjects = Array.isArray(v)
+                    ? v.filter(Boolean)
+                    : typeof v === 'string' && v
+                      ? v.split(' ').filter(Boolean)
+                      : [];
                   rerender();
                 }
               : null
           }
         >
-          ${selectedProjects.length === appProjects.length ? 'Deselect all' : 'Select all'}
-        </sl-button>
+          ${filtered.map(
+            (p) => html`
+              <sl-option value="${p.path}">${p.name || p.path.split('/').pop()} — ${p.path}</sl-option>
+            `,
+          )}
+        </sl-select>
+        <span class="settings-field-hint">Choose 2+ registered projects. Fleet runs apply one work-request to each, isolated per repo.</span>
       </div>
-      <sl-select
-        class="fleet-launcher-projects"
-        multiple
-        clearable
-        .value=${selectedProjects}
-        @sl-change=${
+    </div>
+  `;
+}
+
+function _workRequestSection({ rerender } = {}) {
+  return html`
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Work Request</h3>
+      <sl-tab-group
+        class="fleet-launcher-wr-tabs"
+        @sl-tab-show=${
           rerender
             ? (e) => {
-                const v = e.target.value;
-                // sl-select[multiple] exposes value as an Array; older Shoelace
-                // versions used a space-separated string. Handle both, but
-                // splitting on space would break on paths with whitespace.
-                selectedProjects = Array.isArray(v)
-                  ? v.filter(Boolean)
-                  : typeof v === 'string' && v
-                    ? v.split(' ').filter(Boolean)
-                    : [];
+                promptTab = e.detail.name;
                 rerender();
               }
             : null
         }
       >
-        ${filtered.map(
-          (p) => html`
-            <sl-option value="${p.path}">${p.name || p.path.split('/').pop()} — ${p.path}</sl-option>
-          `,
-        )}
-      </sl-select>
-    </div>
-  `;
-}
-
-function _workRequestView({ rerender } = {}) {
-  return html`
-    <div class="fleet-launcher-section">
-      <label class="fleet-launcher-label">Work Request</label>
-      <div class="work-request-tabs">
-        <button
-          class="tab-btn tab-prompt${promptTab === 'prompt' ? ' active' : ''}"
-          @click=${
-            rerender
-              ? () => {
-                  promptTab = 'prompt';
-                  rerender();
-                }
-              : null
-          }
-        >Prompt</button>
-        <button
-          class="tab-btn tab-source${promptTab === 'source' ? ' active' : ''}"
-          @click=${
-            rerender
-              ? () => {
-                  promptTab = 'source';
-                  rerender();
-                }
-              : null
-          }
-        >Source</button>
-      </div>
-      ${
-        promptTab === 'prompt'
-          ? html`
+        <sl-tab slot="nav" panel="prompt" ?active=${promptTab === 'prompt'}>Prompt</sl-tab>
+        <sl-tab slot="nav" panel="source" ?active=${promptTab === 'source'}>Source</sl-tab>
+        <sl-tab-panel name="prompt">
+          <div class="settings-field">
+            <label class="settings-label">Prompt</label>
             <sl-textarea
               class="textarea-fleet-prompt"
               rows="6"
@@ -216,8 +205,12 @@ function _workRequestView({ rerender } = {}) {
                   : null
               }
             ></sl-textarea>
-          `
-          : html`
+            <span class="settings-field-hint">Plain-text description sent to every child's Planner / Coordinator / Implementer.</span>
+          </div>
+        </sl-tab-panel>
+        <sl-tab-panel name="source">
+          <div class="settings-field">
+            <label class="settings-label">Source reference</label>
             <sl-input
               class="input-fleet-source"
               placeholder="gh:issue:123 or path/to/spec.md"
@@ -231,122 +224,133 @@ function _workRequestView({ rerender } = {}) {
                   : null
               }
             ></sl-input>
-          `
-      }
+            <span class="settings-field-hint">GitHub issue reference (gh:issue:N) or spec file path resolved relative to each project root.</span>
+          </div>
+        </sl-tab-panel>
+      </sl-tab-group>
     </div>
   `;
 }
 
 function _guideSection({ rerender, guideCapBytes } = {}) {
   return html`
-    <div class="fleet-launcher-section">
-      <label class="fleet-launcher-label">Guide (optional)</label>
-      ${guideUploadWidget(
-        { guides },
-        {
-          maxBytes: guideCapBytes,
-          onChange: rerender
-            ? (ev) => {
-                if (ev.type === 'add-files') {
-                  for (const f of ev.files) {
-                    guides = [
-                      ...guides,
-                      { name: f.name, size: f.size, file: f },
-                    ];
-                  }
-                } else if (ev.type === 'remove-file') {
-                  guides = guides.filter((_, i) => i !== ev.index);
-                }
-                rerender();
-              }
-            : undefined,
-        },
-      )}
-    </div>
-  `;
-}
-
-function _branchSection({ rerender } = {}) {
-  return html`
-    <div class="fleet-launcher-section fleet-launcher-branches">
-      <div class="branch-field">
-        ${headTemplateInput(
-          { headTemplate },
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Reference Guide</h3>
+      <div class="settings-field">
+        <label class="settings-label">Optional normative material</label>
+        ${guideUploadWidget(
+          { guides },
           {
-            selectedProjects,
+            maxBytes: guideCapBytes,
             onChange: rerender
               ? (ev) => {
-                  if (ev.type === 'set-head-template') headTemplate = ev.value;
+                  if (ev.type === 'add-files') {
+                    for (const f of ev.files) {
+                      guides = [
+                        ...guides,
+                        { name: f.name, size: f.size, file: f },
+                      ];
+                    }
+                  } else if (ev.type === 'remove-file') {
+                    guides = guides.filter((_, i) => i !== ev.index);
+                  }
                   rerender();
                 }
               : undefined,
           },
         )}
+        <span class="settings-field-hint">Attached guides are pinned to every stage's user message and treated as authoritative over the prompt.</span>
       </div>
-      <div class="branch-field">
-        <sl-input
-          class="input-base-branch"
-          label="PR base branch"
-          value="${baseBranch}"
-          placeholder="main"
-          help-text="Branch the worktrees fork from and PRs target. Leave blank to use each repo's default branch."
-          @sl-change=${
-            rerender
-              ? async (e) => {
-                  baseBranch = e.target.value.trim();
-                  baseBranchError = null;
-                  if (baseBranch && selectedProjects.length > 0) {
-                    baseBranchValidating = true;
-                    rerender();
-                    try {
-                      const resp = await fetch(
-                        '/api/fleet-runs/validate-base',
-                        {
-                          method: 'POST',
-                          headers: { 'Content-Type': 'application/json' },
-                          body: JSON.stringify({
-                            projects: selectedProjects,
-                            base_branch: baseBranch,
-                          }),
-                        },
-                      );
-                      const data = await resp.json();
-                      baseBranchError =
-                        !data.ok && data.missing_in?.length
-                          ? { missing_in: data.missing_in }
-                          : null;
-                    } catch {
-                      // ignore network errors — non-blocking
-                    } finally {
-                      baseBranchValidating = false;
-                      rerender();
-                    }
-                  } else {
+    </div>
+  `;
+}
+
+function _branchesSection({ rerender } = {}) {
+  return html`
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Branches</h3>
+      <div class="new-run-grid">
+        <div class="settings-field">
+          <label class="settings-label">Head branch template</label>
+          ${headTemplateInput(
+            { headTemplate },
+            {
+              selectedProjects,
+              onChange: rerender
+                ? (ev) => {
+                    if (ev.type === 'set-head-template') headTemplate = ev.value;
                     rerender();
                   }
-                }
-              : null
+                : undefined,
+            },
+          )}
+          <span class="settings-field-hint">Placeholders: <code>{project}</code>, <code>{fleet_id}</code>, <code>{slug}</code>, <code>{yyyymmdd}</code>, <code>{yyyymmddhhmm}</code>.</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">PR base branch</label>
+          <sl-input
+            class="input-base-branch"
+            placeholder="main"
+            value="${baseBranch}"
+            @sl-change=${
+              rerender
+                ? async (e) => {
+                    baseBranch = e.target.value.trim();
+                    baseBranchError = null;
+                    if (baseBranch && selectedProjects.length > 0) {
+                      baseBranchValidating = true;
+                      rerender();
+                      try {
+                        const resp = await fetch(
+                          '/api/fleet-runs/validate-base',
+                          {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              projects: selectedProjects,
+                              base_branch: baseBranch,
+                            }),
+                          },
+                        );
+                        const data = await resp.json();
+                        baseBranchError =
+                          !data.ok && data.missing_in?.length
+                            ? { missing_in: data.missing_in }
+                            : null;
+                      } catch {
+                        // ignore network errors — non-blocking
+                      } finally {
+                        baseBranchValidating = false;
+                        rerender();
+                      }
+                    } else {
+                      rerender();
+                    }
+                  }
+                : null
+            }
+          ></sl-input>
+          <span class="settings-field-hint">Branch the worktrees fork from and PRs target. Leave blank to use each repo's default.</span>
+          ${
+            baseBranchValidating
+              ? html`<div class="base-branch-validating"><sl-spinner></sl-spinner> Checking…</div>`
+              : nothing
           }
-        ></sl-input>
-        ${
-          baseBranchValidating
-            ? html`<div class="base-branch-validating"><sl-spinner></sl-spinner> Checking…</div>`
-            : nothing
-        }
-        ${
-          baseBranchError?.missing_in?.length
-            ? html`
-              <div class="base-branch-error">
-                Branch not found in:
-                <ul class="base-branch-missing-list">
-                  ${baseBranchError.missing_in.map(
-                    (p) => html`<li>${p.split('/').pop() || p}</li>`,
-                  )}
-                </ul>
-              </div>
-            `
-            : nothing
-        }
+          ${
+            baseBranchError?.missing_in?.length
+              ? html`
+                <div class="base-branch-error">
+                  Branch not found in:
+                  <ul class="base-branch-missing-list">
+                    ${baseBranchError.missing_in.map(
+                      (p) => html`<li>${p.split('/').pop() || p}</li>`,
+                    )}
+                  </ul>
+                </div>
+              `
+              : nothing
+          }
+        </div>
       </div>
     </div>
   `;
@@ -354,67 +358,79 @@ function _branchSection({ rerender } = {}) {
 
 function _planSection({ rerender } = {}) {
   return html`
-    <div class="fleet-launcher-section">
-      <label class="fleet-launcher-label">Plan mode</label>
-      ${planModeRadio(
-        { planMode, planPath, planFirstProject, selectedProjects },
-        {
-          onChange: rerender
-            ? (ev) => {
-                if (ev.type === 'set-plan-mode') planMode = ev.value;
-                else if (ev.type === 'set-plan-path') planPath = ev.value;
-                else if (ev.type === 'set-plan-first-project')
-                  planFirstProject = ev.value;
-                rerender();
-              }
-            : undefined,
-        },
-      )}
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Plan Mode</h3>
+      <div class="settings-field">
+        <label class="settings-label">Planning strategy</label>
+        ${planModeRadio(
+          { planMode, planPath, planFirstProject, selectedProjects },
+          {
+            onChange: rerender
+              ? (ev) => {
+                  if (ev.type === 'set-plan-mode') planMode = ev.value;
+                  else if (ev.type === 'set-plan-path') planPath = ev.value;
+                  else if (ev.type === 'set-plan-first-project')
+                    planFirstProject = ev.value;
+                  rerender();
+                }
+              : undefined,
+          },
+        )}
+        <span class="settings-field-hint">Independent: each project runs its own Planner. Use existing plan: every child skips planning. Plan-first: one reference project plans, others adopt it.</span>
+      </div>
     </div>
   `;
 }
 
 function _advancedSection({ rerender } = {}) {
   return html`
-    <sl-details class="fleet-launcher-advanced">
-      <span slot="summary">Advanced options</span>
-      <div class="advanced-fields">
-        <sl-input
-          class="input-max-parallel"
-          label="Max parallel runs"
-          type="number"
-          min="1"
-          max="20"
-          value="${maxParallel}"
-          @sl-input=${
-            rerender
-              ? (e) => {
-                  maxParallel = Number(e.target.value) || 5;
-                  rerender();
-                }
-              : null
-          }
-        ></sl-input>
-        <div class="advanced-field-group">
-          <label class="field-label">Circuit-breaker threshold: ${Math.round(failureThreshold * 100)}%</label>
-          <sl-range
-            class="input-failure-threshold"
-            min="0"
-            max="1"
-            step="0.05"
-            value="${failureThreshold}"
-            @sl-input=${
-              rerender
-                ? (e) => {
-                    failureThreshold = Number(e.target.value);
-                    rerender();
-                  }
-                : null
-            }
-          ></sl-range>
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Advanced</h3>
+      <sl-details class="fleet-launcher-advanced">
+        <span slot="summary">Concurrency &amp; failure handling</span>
+        <div class="new-run-grid">
+          <div class="settings-field">
+            <label class="settings-label">Max parallel runs</label>
+            <sl-input
+              class="input-max-parallel"
+              size="small"
+              type="number"
+              min="1"
+              max="20"
+              value="${maxParallel}"
+              @sl-input=${
+                rerender
+                  ? (e) => {
+                      maxParallel = Number(e.target.value) || 5;
+                      rerender();
+                    }
+                  : null
+              }
+            ></sl-input>
+            <span class="settings-field-hint">Maximum concurrent child pipelines. Higher = faster but more API spend.</span>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label">Circuit-breaker threshold: ${Math.round(failureThreshold * 100)}%</label>
+            <sl-range
+              class="input-failure-threshold"
+              min="0"
+              max="1"
+              step="0.05"
+              value="${failureThreshold}"
+              @sl-input=${
+                rerender
+                  ? (e) => {
+                      failureThreshold = Number(e.target.value);
+                      rerender();
+                    }
+                  : null
+              }
+            ></sl-range>
+            <span class="settings-field-hint">Failure ratio that halts unstarted children after at least 3 have completed.</span>
+          </div>
         </div>
-      </div>
-    </sl-details>
+      </sl-details>
+    </div>
   `;
 }
 
@@ -502,8 +518,6 @@ export function fleetLauncherView(appState, { rerender, onNavigate } = {}) {
 
       if (data.ok && data.fleet_id) {
         submitStatus = null;
-        // onNavigate is the (section, runId, projectId?) wrapper; it builds
-        // the hash itself, so don't prepend "#/".
         if (onNavigate) onNavigate('fleet-runs', data.fleet_id);
       } else {
         submitStatus = 'error';
@@ -518,35 +532,33 @@ export function fleetLauncherView(appState, { rerender, onNavigate } = {}) {
   }
 
   return html`
-    <div class="fleet-launcher-view">
-      <h2 class="fleet-launcher-heading">New Fleet Run</h2>
-
-      ${_projectSelectView(appProjects, { rerender })}
-      ${_workRequestView({ rerender })}
-      ${_guideSection({ rerender, guideCapBytes })}
-      ${_branchSection({ rerender })}
-      ${_planSection({ rerender })}
-      ${_advancedSection({ rerender })}
-
+    <div class="new-run-page fleet-launcher-page">
       ${
         submitStatus === 'error'
-          ? html`
-            <sl-alert variant="danger" open class="fleet-launch-error">
-              ${submitError}
-            </sl-alert>
-          `
+          ? html`<div class="new-run-error">${submitError}</div>`
           : nothing
       }
+      <div class="new-run-form">
+        ${_projectsSection(appProjects, { rerender })}
+        ${_workRequestSection({ rerender })}
+        ${_guideSection({ rerender, guideCapBytes })}
+        ${_branchesSection({ rerender })}
+        ${_planSection({ rerender })}
+        ${_advancedSection({ rerender })}
 
-      ${tokenOverheadGate(
-        { tokenEstimate, tokenEstimating, tokenConfirmed },
-        {
-          onEstimate: handleEstimate,
-          onLaunch: handleLaunch,
-          threshold: TOKEN_THRESHOLD,
-          canLaunch,
-        },
-      )}
+        <div class="new-run-section fleet-launcher-launch-section">
+          <h3 class="new-run-section-title">Launch</h3>
+          ${tokenOverheadGate(
+            { tokenEstimate, tokenEstimating, tokenConfirmed },
+            {
+              onEstimate: handleEstimate,
+              onLaunch: handleLaunch,
+              threshold: TOKEN_THRESHOLD,
+              canLaunch,
+            },
+          )}
+        </div>
+      </div>
     </div>
   `;
 }

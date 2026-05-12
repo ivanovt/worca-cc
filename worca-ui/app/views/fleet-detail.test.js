@@ -65,19 +65,24 @@ const BASE_FLEET = {
 // ─── header strip ─────────────────────────────────────────────────────────────
 
 describe('fleetDetailView — header strip', () => {
-  it('renders fleet-detail-header', () => {
+  it('renders fleet-detail status row', () => {
+    // Page-level header (back button + title) is now rendered by main.js's
+    // contentHeaderView; the view itself surfaces a status row with the
+    // fleet status badge + fleet_id chip.
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-detail-header');
+    expect(out).toContain('fleet-detail-status-row');
+    expect(out).toContain('fleet-status-badge');
   });
 
-  it('renders back button to dashboard', () => {
+  it('shows the full fleet_id chip', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('btn-back-to-dashboard');
+    expect(out).toContain('fleet-id-chip');
+    expect(out).toContain(BASE_FLEET.fleet_id);
   });
 
-  it('renders fleet title from work_request.title', () => {
+  it('renders fleet title (work_request.title) somewhere on the page', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
     expect(out).toContain('Migrate to v2 API');
@@ -181,10 +186,11 @@ describe('fleetDetailView — header strip', () => {
 // ─── manifest panel ───────────────────────────────────────────────────────────
 
 describe('fleetDetailView — manifest panel', () => {
-  it('renders fleet-manifest-panel', () => {
+  it('renders manifest section with canonical grid', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-manifest-panel');
+    expect(out).toContain('fleet-manifest-grid');
+    expect(out).toContain('Manifest');
   });
 
   it('shows branch template', () => {
@@ -211,20 +217,22 @@ describe('fleetDetailView — manifest panel', () => {
     expect(out).toContain('30%');
   });
 
-  it('shows created-at timestamp', () => {
+  it('shows created-at timestamp (some locale-formatted form of the ISO date)', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('2026-05-12');
+    // _formatDate uses toLocaleString; assert on the year as a stable token.
+    expect(out).toContain('2026');
   });
 });
 
 // ─── work request panel ───────────────────────────────────────────────────────
 
 describe('fleetDetailView — work request panel', () => {
-  it('renders fleet-work-request-panel', () => {
+  it('renders work request section', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-work-request-panel');
+    expect(out).toContain('fleet-wr-title');
+    expect(out).toContain('Work Request');
   });
 
   it('shows work request title', () => {
@@ -243,12 +251,12 @@ describe('fleetDetailView — work request panel', () => {
 // ─── guide panel ──────────────────────────────────────────────────────────────
 
 describe('fleetDetailView — guide panel — no guide', () => {
-  it('renders fleet-guide-panel even without a guide', () => {
+  it('renders guide section even without a guide', () => {
     resetFleetDetailState();
     const out = renderToString(
       fleetDetailView({ ...BASE_FLEET, guide: null }, {}),
     );
-    expect(out).toContain('fleet-guide-panel');
+    expect(out).toContain('Reference Guide');
   });
 
   it('does not show view guide button when no guide attached', () => {
@@ -259,12 +267,12 @@ describe('fleetDetailView — guide panel — no guide', () => {
     expect(out).not.toContain('btn-view-guide');
   });
 
-  it('shows no-guide message when guide is null', () => {
+  it('shows the "no guide attached" hint when guide is null', () => {
     resetFleetDetailState();
     const out = renderToString(
       fleetDetailView({ ...BASE_FLEET, guide: null }, {}),
     );
-    expect(out).toContain('no-guide');
+    expect(out).toContain('No guide attached');
   });
 });
 
@@ -285,10 +293,11 @@ describe('fleetDetailView — guide panel — with guide', () => {
     expect(out).toContain('spec.md');
   });
 
-  it('shows guide size in bytes', () => {
+  it('shows guide size (formatted human-readable)', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(fleetWithGuide, {}));
-    expect(out).toContain('2048');
+    // 2048 bytes = 2.0 KB via _formatBytes
+    expect(out).toContain('2.0 KB');
   });
 
   it('renders View guide content button', () => {
@@ -392,18 +401,18 @@ describe('fleetDetailView — guide panel — content loaded', () => {
 // ─── children grid ────────────────────────────────────────────────────────────
 
 describe('fleetDetailView — children grid', () => {
-  it('renders fleet-children-grid', () => {
+  it('renders children section with the canonical run-list shell', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-children-grid');
+    expect(out).toContain('fleet-children-section');
+    expect(out).toContain('fleet-children-list');
   });
 
-  it('renders one row per child', () => {
+  it('renders one run-card per child', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-child-row');
-    // Two children = two rows
-    const count = (out.match(/fleet-child-row/g) || []).length;
+    expect(out).toContain('fleet-child-card');
+    const count = (out.match(/fleet-child-card/g) || []).length;
     expect(count).toBeGreaterThanOrEqual(2);
   });
 
@@ -414,10 +423,11 @@ describe('fleetDetailView — children grid', () => {
     expect(out).toContain('beta');
   });
 
-  it('shows child status badge', () => {
+  it('shows child status badge inside the run-card', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-child-status');
+    // The status badge is rendered via <sl-badge ... class="status-badge-<status>">
+    expect(out).toContain('status-badge-');
   });
 
   it('shows head branch for each child', () => {
@@ -457,12 +467,12 @@ describe('fleetDetailView — children grid', () => {
     expect(out).toContain('$0.15');
   });
 
-  it('renders empty children message when no children', () => {
+  it('renders empty-state hint when no children dispatched', () => {
     resetFleetDetailState();
     const out = renderToString(
       fleetDetailView({ ...BASE_FLEET, children: [] }, {}),
     );
-    expect(out).toContain('no-children');
+    expect(out).toContain('No child runs dispatched yet');
   });
 });
 
@@ -637,7 +647,8 @@ describe('fleetDetailView — halt action', () => {
       fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
     );
     // The dialog should explain in-flight children won't be killed
-    expect(out).toContain('in-flight');
+    // (text begins with capital I in the refactored copy)
+    expect(out.toLowerCase()).toContain('in-flight');
   });
 });
 

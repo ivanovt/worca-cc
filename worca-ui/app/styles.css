@@ -4942,3 +4942,171 @@ sl-tooltip.bead-tooltip::part(body) {
   gap: 8px;
   background: var(--bg-primary);
 }
+
+/* ── Fleet launcher (page) ─────────────────────────────────────────────── */
+
+.fleet-launcher-page,
+.fleet-detail-page {
+  max-width: 760px;
+}
+
+.fleet-launcher-projects-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.fleet-launcher-projects-controls .input-project-filter {
+  flex: 1 1 auto;
+}
+
+.fleet-launcher-wr-tabs::part(nav) {
+  margin-bottom: 12px;
+}
+
+.fleet-launcher-advanced::part(base) {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-primary);
+}
+
+.fleet-launcher-launch-section {
+  border-top: 2px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.fleet-launcher-launch-section .new-run-section-title {
+  color: var(--accent);
+}
+
+/* ── Fleet detail (page) ────────────────────────────────────────────────── */
+
+.fleet-detail-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.fleet-detail-status-row .fleet-status-badge::part(base) {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.fleet-id-chip {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+
+.fleet-detail-body {
+  margin-top: 4px;
+}
+
+.fleet-manifest-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.fleet-meta-mono {
+  font-family: var(--sl-font-mono);
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  word-break: break-all;
+}
+
+.fleet-meta-value {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.fleet-wr-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.fleet-wr-description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+
+.fleet-guide-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.fleet-guide-tag::part(base) {
+  font-family: var(--sl-font-mono);
+}
+
+.fleet-guide-actions {
+  border-top: none;
+  padding-top: 4px;
+}
+
+.fleet-children-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fleet-children-list {
+  margin-top: 4px;
+}
+
+.fleet-child-card {
+  border-left-width: 3px;
+}
+
+.fleet-child-card .run-card-meta code.fleet-meta-mono {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+}
+
+.fleet-aggregate-cost-section .fleet-total-cost {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-circuit-breaker-alert,
+.fleet-user-halt-alert {
+  display: block;
+}
+
+.fleet-circuit-breaker-alert .cb-trip-reason,
+.fleet-circuit-breaker-alert .cb-unstarted-count {
+  display: block;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--fg);
+  opacity: 0.85;
+}
+
+.fleet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}

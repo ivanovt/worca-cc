@@ -56,16 +56,17 @@ describe('fleetLauncherView — project multi-select', () => {
 // ── work request tabs ───────────────────────────────────────────────────────
 
 describe('fleetLauncherView — work request tabs', () => {
-  it('renders prompt tab button', () => {
+  it('renders prompt tab', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('tab-prompt');
+    // sl-tab-group renders <sl-tab panel="prompt">
+    expect(out).toMatch(/panel="prompt"/);
   });
 
-  it('renders source tab button', () => {
+  it('renders source tab', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('tab-source');
+    expect(out).toMatch(/panel="source"/);
   });
 
   it('shows prompt textarea when prompt tab is active', () => {
@@ -133,7 +134,7 @@ describe('fleetLauncherView — branch inputs', () => {
   it('base branch input has helper text about default branch', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('default branch');
+    expect(out).toContain("each repo's default");
   });
 });
 
@@ -246,7 +247,9 @@ describe('fleetLauncherView — advanced options', () => {
   it('renders advanced options in a collapsed sl-details section', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('Advanced options');
+    // The section is wrapped in .new-run-section labelled "Advanced", with
+    // an sl-details inside (summary: "Concurrency & failure handling").
+    expect(out).toContain('fleet-launcher-advanced');
     expect(out).toContain('input-max-parallel');
     expect(out).toContain('input-failure-threshold');
   });
