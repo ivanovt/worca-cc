@@ -305,15 +305,20 @@ describe('fleetHeaderView - expand/collapse', () => {
 });
 
 describe('fleetHeaderView - navigation', () => {
-  it('renders fleet-detail-btn when onNavigate provided', () => {
+  it('marks the header clickable when onNavigate is provided', () => {
+    // The whole header row is the click target now — no separate Details
+    // button. The .fleet-header-clickable class signals the affordance
+    // (cursor:pointer + hover background).
     const output = renderToString(
       fleetHeaderView('f_001', fleetChildren, { onNavigate: () => {} }),
     );
-    expect(output).toContain('fleet-detail-btn');
+    expect(output).toContain('fleet-header-clickable');
+    expect(output).not.toContain('fleet-detail-btn');
   });
 
-  it('does not render fleet-detail-btn when onNavigate not provided', () => {
+  it('header is not marked clickable when onNavigate is omitted', () => {
     const output = renderToString(fleetHeaderView('f_001', fleetChildren));
+    expect(output).not.toContain('fleet-header-clickable');
     expect(output).not.toContain('fleet-detail-btn');
   });
 });

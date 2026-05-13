@@ -238,18 +238,6 @@ export function fleetHeaderView(
           class="fleet-progress-bar"
         ></sl-progress-bar>
         ${costText ? html`<span class="fleet-cost">${costText}</span>` : nothing}
-        ${
-          onNavigate
-            ? html`<sl-button
-                size="small"
-                class="fleet-detail-btn"
-                @click=${(e) => {
-                  e.stopPropagation();
-                  onNavigate('fleet-runs', fleetId);
-                }}
-              >Details</sl-button>`
-            : nothing
-        }
       </div>
       ${
         isExpanded
