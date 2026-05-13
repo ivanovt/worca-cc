@@ -29,7 +29,11 @@ import {
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { dashboardView } from './views/dashboard.js';
 import { fleetDetailView } from './views/fleet-detail.js';
-import { fleetLauncherView } from './views/fleet-launcher.js';
+import {
+  fleetLauncherView,
+  getFleetLauncherSubmitState,
+  submitFleetLauncher,
+} from './views/fleet-launcher.js';
 import { learningsSectionView } from './views/learnings-panel.js';
 import {
   clearLiveTerminal,
@@ -1919,6 +1923,20 @@ function contentHeaderView() {
           ? `Fleet ${route.runId.split('_').pop() || route.runId}`
           : 'Fleets';
     showBack = true;
+    if (route.runId === 'new') {
+      const fls = getFleetLauncherSubmitState();
+      const capReached = isAtCapacity(state);
+      actionButton = html`
+        <button class="action-btn action-btn--primary" ?disabled=${fls.isSubmitting || !fls.canLaunch || capReached}
+          @click=${() =>
+            submitFleetLauncher({
+              rerender,
+              onStarted: (fleetId) => navigate('fleet-runs', fleetId, null),
+            })}>
+          ${unsafeHTML(iconSvg(Play, 14))}
+          ${fls.isSubmitting ? 'Launching…' : 'Launch'}
+        </button>`;
+    }
   } else if (route.runId) {
     const run = store.getRunById(route.runId);
     const raw = run?.work_request?.title || 'Pipeline Details';
@@ -2298,12 +2316,10 @@ function mainContentView() {
   }
 
   if (route.section === 'fleet-runs') {
-    // /fleet-runs/new → launcher
+    // /fleet-runs/new → launcher (Launch button lives in the page header,
+    // wired to submitFleetLauncher above).
     if (route.runId === 'new') {
-      return fleetLauncherView(viewState, {
-        rerender,
-        onNavigate: (s, id) => navigate(s, id, null),
-      });
+      return fleetLauncherView(viewState, { rerender });
     }
     // /fleet-runs/:id → detail (fetch on demand, cache result)
     if (route.runId) {

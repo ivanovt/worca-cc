@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { fleetLauncherView, resetLauncherState } from './fleet-launcher.js';
+import {
+  fleetLauncherView,
+  getFleetLauncherSubmitState,
+  resetLauncherState,
+} from './fleet-launcher.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -53,32 +57,47 @@ describe('fleetLauncherView — project multi-select', () => {
   });
 });
 
-// ── work request tabs ───────────────────────────────────────────────────────
+// ── work source (mirrors new-run.js Source Type select pattern) ─────────────
 
-describe('fleetLauncherView — work request tabs', () => {
-  it('renders prompt tab', () => {
+describe('fleetLauncherView — work source', () => {
+  it('renders the Source Type select with default None', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    // sl-tab-group renders <sl-tab panel="prompt">
-    expect(out).toMatch(/panel="prompt"/);
+    expect(out).toContain('select-fleet-source-type');
+    expect(out).toContain('>None<');
+    expect(out).toContain('>GitHub Issue<');
+    expect(out).toContain('>Spec File<');
   });
 
-  it('renders source tab', () => {
-    resetLauncherState();
+  it('does not show source value input when type is None', () => {
+    resetLauncherState({ sourceType: 'none' });
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toMatch(/panel="source"/);
+    expect(out).not.toContain('input-fleet-source');
   });
 
-  it('shows prompt textarea when prompt tab is active', () => {
-    resetLauncherState({ promptTab: 'prompt' });
+  it('shows source value input when type is GitHub Issue', () => {
+    resetLauncherState({ sourceType: 'source' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('input-fleet-source');
+  });
+
+  it('shows source value input when type is Spec File', () => {
+    resetLauncherState({ sourceType: 'spec' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('input-fleet-source');
+  });
+
+  it('always renders the prompt textarea', () => {
+    resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
     expect(out).toContain('textarea-fleet-prompt');
   });
 
-  it('shows source input when source tab is active', () => {
-    resetLauncherState({ promptTab: 'source' });
+  it('always renders the Plan File input alongside the source picker', () => {
+    resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('input-fleet-source');
+    expect(out).toContain('input-fleet-plan-file');
+    expect(out).toContain('Plan File (optional)');
   });
 });
 
@@ -150,19 +169,13 @@ describe('fleetLauncherView — collision detection', () => {
     expect(out).toContain('collision');
   });
 
-  it('marks submit as disabled when collision exists', () => {
+  it('reports canLaunch=false on getFleetLauncherSubmitState when collision exists', () => {
     resetLauncherState({
       headTemplate: 'migration/fixed',
       selectedProjects: ['/path/repo-a', '/path/repo-b'],
-      tokenEstimate: {
-        guide_tokens_est: 100,
-        total_overhead_est: 700,
-        fleet_size: 2,
-        prompt_stages: 7,
-      },
+      prompt: 'do the thing',
     });
-    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('btn-launch-disabled');
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(false);
   });
 
   it('no collision when template differentiates projects', () => {
@@ -188,19 +201,14 @@ describe('fleetLauncherView — base branch validation', () => {
     expect(out).toContain('repo-b');
   });
 
-  it('marks submit disabled when base branch is missing in some repos', () => {
+  it('reports canLaunch=false when base branch is missing in some repos', () => {
     resetLauncherState({
       baseBranch: 'develop',
       baseBranchError: { missing_in: ['/path/repo-b'] },
-      tokenEstimate: {
-        guide_tokens_est: 100,
-        total_overhead_est: 700,
-        fleet_size: 2,
-        prompt_stages: 7,
-      },
+      selectedProjects: ['/path/repo-a', '/path/repo-b'],
+      prompt: 'do the thing',
     });
-    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('btn-launch-disabled');
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(false);
   });
 
   it('no error shown when base branch is empty (use default branch)', () => {
@@ -210,22 +218,26 @@ describe('fleetLauncherView — base branch validation', () => {
   });
 });
 
-// ── plan mode ───────────────────────────────────────────────────────────────
+// ── plan strategy ──────────────────────────────────────────────────────────
 
-describe('fleetLauncherView — plan mode', () => {
-  it('renders plan mode radio group', () => {
+describe('fleetLauncherView — plan strategy', () => {
+  it('renders the per-project planning strategy radio when no Plan File is set', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
     expect(out).toContain('plan-mode-group');
+    expect(out).toContain('Per-project planning strategy');
   });
 
-  it('reveals path input when plan mode is explicit', () => {
-    resetLauncherState({ planMode: 'explicit' });
+  it('hides the per-project planning radio when a Plan File is set', () => {
+    // A Plan File overrides the per-child strategy with `explicit` at submit
+    // time, so the radio is suppressed to avoid a misleading control.
+    resetLauncherState({ planFile: 'docs/plans/W-040.md' });
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('input-plan-path');
+    expect(out).not.toContain('Per-project planning strategy');
+    expect(out).not.toContain('plan-mode-group');
   });
 
-  it('reveals reference project select when plan mode is plan-first', () => {
+  it('reveals reference project select when plan-first is chosen', () => {
     resetLauncherState({
       planMode: 'plan-first',
       selectedProjects: ['/repos/app-a'],
@@ -234,7 +246,7 @@ describe('fleetLauncherView — plan mode', () => {
     expect(out).toContain('select-plan-first-project');
   });
 
-  it('shows divergence warning when plan mode is independent', () => {
+  it('shows divergence warning when independent (none) is chosen', () => {
     resetLauncherState({ planMode: 'none' });
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
     expect(out).toContain('plan-mode-independent-warning');
@@ -244,14 +256,17 @@ describe('fleetLauncherView — plan mode', () => {
 // ── advanced options ────────────────────────────────────────────────────────
 
 describe('fleetLauncherView — advanced options', () => {
-  it('renders advanced options in a collapsed sl-details section', () => {
+  it('renders the Advanced Options section always-shown (no sl-details collapse)', () => {
+    // The Pipeline launcher always shows Advanced Options inline; the fleet
+    // launcher mirrors that pattern for consistency.
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    // The section is wrapped in .new-run-section labelled "Advanced", with
-    // an sl-details inside (summary: "Concurrency & failure handling").
-    expect(out).toContain('fleet-launcher-advanced');
+    expect(out).toContain('Advanced Options');
+    expect(out).not.toContain('fleet-launcher-advanced');
     expect(out).toContain('input-max-parallel');
     expect(out).toContain('input-failure-threshold');
+    expect(out).toContain('input-base-branch');
+    expect(out).toContain('input-head-template');
   });
 });
 
@@ -266,6 +281,9 @@ describe('fleetLauncherView — token overhead gate', () => {
   });
 
   it('requires I-understand checkbox when estimate is above threshold', () => {
+    // The inline launch button is removed (submit is in the page header
+    // now), so we assert on the confirmation checkbox itself rather than
+    // a button-disabled marker.
     resetLauncherState({
       tokenEstimate: {
         guide_tokens_est: 200_000,
@@ -278,22 +296,43 @@ describe('fleetLauncherView — token overhead gate', () => {
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
     expect(out).toContain('token-confirm-checkbox');
     expect(out).toContain('I understand the cost');
-    expect(out).toContain('btn-launch-disabled');
+    // Inline launch button must not render — the page-header button owns submit.
+    expect(out).not.toContain('btn-launch');
+  });
+});
+
+// ── header submit-state (powers the page-header Launch button) ──────────────
+
+describe('fleetLauncherView — getFleetLauncherSubmitState', () => {
+  it('canLaunch=false when no projects are selected', () => {
+    resetLauncherState({ prompt: 'do the thing' });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(false);
   });
 
-  it('enables launch button when above-threshold estimate is confirmed', () => {
+  it('canLaunch=false when neither prompt nor source is provided', () => {
+    resetLauncherState({ selectedProjects: ['/path/repo-a'] });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(false);
+  });
+
+  it('canLaunch=true when projects + prompt are present', () => {
     resetLauncherState({
-      tokenEstimate: {
-        guide_tokens_est: 200_000,
-        total_overhead_est: 2_000_000,
-        fleet_size: 10,
-        prompt_stages: 7,
-      },
-      tokenConfirmed: true,
       selectedProjects: ['/path/repo-a'],
       prompt: 'migrate to v2',
     });
-    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).not.toContain('btn-launch-disabled');
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(true);
+  });
+
+  it('canLaunch=true when projects + Source are present (no prompt)', () => {
+    resetLauncherState({
+      selectedProjects: ['/path/repo-a'],
+      sourceType: 'source',
+      sourceValue: 'gh:issue:42',
+    });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(true);
+  });
+
+  it('isSubmitting reflects an in-flight submit (initially false)', () => {
+    resetLauncherState();
+    expect(getFleetLauncherSubmitState().isSubmitting).toBe(false);
   });
 });

@@ -144,10 +144,8 @@ export function headTemplateInput(
     <div class="head-template-input">
       <sl-input
         class="input-head-template"
-        label="Head branch template"
         value="${template}"
         placeholder="migration/v2/{project}"
-        help-text="Placeholders: {project}, {fleet_id}, {slug}, {yyyymmdd}, {yyyymmddhhmm}"
         @sl-input=${
           onChange
             ? (e) =>
@@ -223,7 +221,6 @@ export function planModeRadio(state, { options, onChange } = {}) {
           ? html`
             <sl-input
               class="input-plan-path"
-              label="Plan file path"
               value="${state.planPath || ''}"
               placeholder="docs/plans/W-040-migration.md"
               @sl-input=${
@@ -241,7 +238,6 @@ export function planModeRadio(state, { options, onChange } = {}) {
           ? html`
             <sl-select
               class="select-plan-first-project"
-              label="Reference project"
               value="${state.planFirstProject || ''}"
               @sl-change=${
                 onChange
@@ -287,7 +283,11 @@ export function planModeRadio(state, { options, onChange } = {}) {
  *   onLaunch?: function,
  *   threshold?: number,
  *   canLaunch?: boolean,
+ *   inlineLaunch?: boolean,
  * }} opts
+ *
+ * `inlineLaunch: false` hides the inline "Launch fleet" button — use when
+ * the primary action is rendered elsewhere (e.g. the page header).
  */
 export function tokenOverheadGate(
   state,
@@ -296,6 +296,7 @@ export function tokenOverheadGate(
     onLaunch,
     threshold = DEFAULT_TOKEN_THRESHOLD,
     canLaunch = true,
+    inlineLaunch = true,
   } = {},
 ) {
   const estimate = state.tokenEstimate;
@@ -363,14 +364,20 @@ export function tokenOverheadGate(
           `
           : nothing
       }
-      <sl-button
-        class="btn-launch${launchBlocked ? ' btn-launch-disabled' : ''}"
-        variant="primary"
-        ?disabled=${launchBlocked}
-        @click=${!launchBlocked && onLaunch ? () => onLaunch({ type: 'launch' }) : null}
-      >
-        Launch fleet
-      </sl-button>
+      ${
+        inlineLaunch
+          ? html`
+            <sl-button
+              class="btn-launch${launchBlocked ? ' btn-launch-disabled' : ''}"
+              variant="primary"
+              ?disabled=${launchBlocked}
+              @click=${!launchBlocked && onLaunch ? () => onLaunch({ type: 'launch' }) : null}
+            >
+              Launch fleet
+            </sl-button>
+          `
+          : nothing
+      }
     </div>
   `;
 }
