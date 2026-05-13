@@ -5118,25 +5118,41 @@ sl-tooltip.bead-tooltip::part(body) {
   align-items: center;
 }
 
-/* Run-detail "Fleet:" / "Workspace:" group link above the Branch line.
-   No margin-bottom — sibling .run-branch / .run-template already supply
-   their own row spacing inside .run-info-section. */
+/* Run-detail "Fleet:" / "Workspace:" group line above the Branch row.
+   Mirrors .run-branch exactly: same font-size, gap, and value weight.
+   The only visual difference is the accent-colored anchor + underline-
+   on-hover affordance signalling it's clickable. */
 .run-group {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  font-size: 13px;
 }
 
-.run-group-link,
-.run-card-group-link {
+.run-group-link {
+  /* Inherits font-family + font-size from .run-group → matches the plain
+     <span class="meta-value"> on the Branch line, just colored and
+     underlined-on-hover to read as a link. */
   color: var(--accent);
-  font-family: var(--sl-font-mono);
-  font-size: 12.5px;
+  font-weight: 600;
   text-decoration: none;
   word-break: break-all;
 }
 
-.run-group-link:hover,
+.run-group-link:hover {
+  text-decoration: underline;
+}
+
+/* Run-card "Fleet:" / "Workspace:" meta-item — sized by parent
+   .run-card-meta (12px). Same coloring as .run-group-link but no
+   monospace. */
+.run-card-group-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-all;
+}
+
 .run-card-group-link:hover {
   text-decoration: underline;
 }
