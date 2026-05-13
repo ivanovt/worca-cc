@@ -201,12 +201,25 @@ export function fleetHeaderView(
       }
     : null;
 
+  // Navigate to /#/fleet-runs/<fleetId>. Section is "fleet-runs", id is the
+  // string fleetId — main.js's handleNavigate forwards both into buildHash.
+  // (The earlier call onNavigate('fleet-detail', { fleetId }) produced a
+  // broken URL "#/fleet-detail/[object Object]" because the runId arg was
+  // an object and the section name didn't match any route.)
+  const handleHeaderClick = onNavigate
+    ? () => onNavigate('fleet-runs', fleetId)
+    : null;
+
   return html`
     <div
       class="fleet-group ${groupClass}"
       data-fleet-id="${fleetId}"
     >
-      <div class="fleet-header">
+      <div
+        class="fleet-header ${handleHeaderClick ? 'fleet-header-clickable' : ''}"
+        @click=${handleHeaderClick}
+        style="${handleHeaderClick ? 'cursor:pointer' : ''}"
+      >
         <sl-icon
           name="${toggleIcon}"
           class="fleet-toggle"
@@ -232,7 +245,7 @@ export function fleetHeaderView(
                 class="fleet-detail-btn"
                 @click=${(e) => {
                   e.stopPropagation();
-                  onNavigate('fleet-detail', { fleetId });
+                  onNavigate('fleet-runs', fleetId);
                 }}
               >Details</sl-button>`
             : nothing

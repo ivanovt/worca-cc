@@ -5110,3 +5110,32 @@ sl-tooltip.bead-tooltip::part(body) {
   gap: 10px;
   align-items: center;
 }
+
+/* Run-detail "Fleet:" / "Workspace:" group link above the Branch line */
+.run-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.run-group-link {
+  color: var(--accent);
+  font-family: var(--sl-font-mono);
+  font-size: 12.5px;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.run-group-link:hover {
+  text-decoration: underline;
+}
+
+/* Sidebar fleet-header clickable feedback */
+.fleet-header-clickable {
+  transition: background-color var(--transition-fast);
+}
+
+.fleet-header-clickable:hover {
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+}

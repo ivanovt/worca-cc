@@ -1179,8 +1179,11 @@ onHashChange((newRoute) => {
 
 // --- Actions ---
 
-function handleNavigate(section) {
-  navigate(section, null, route.projectId);
+function handleNavigate(section, runId) {
+  // runId is forwarded so callers can deep-link (e.g. fleet header → fleet
+  // detail at /fleet-runs/<id>). Most invocations pass only `section`, which
+  // leaves runId === undefined and navigates to the section root.
+  navigate(section, runId ?? null, route.projectId);
 }
 
 function handleSelectRun(runId) {

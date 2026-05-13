@@ -118,9 +118,16 @@ export function sidebarView(
 
   const fleetCount = fleets.length;
   const runningFleetCount = fleets.filter((f) => f.status === 'running').length;
-  const anyFleetHalted = fleets.some((f) => f.status === 'halted');
-  const fleetBadgeCount = runningFleetCount;
-  const showFleetBadge = runningFleetCount > 0 || anyFleetHalted;
+  const haltedFleetCount = fleets.filter((f) => f.status === 'halted').length;
+  // Badge surfaces fleets that need operator attention: running (active work)
+  // + halted (awaiting resume/cleanup decision). Completed/failed fleets are
+  // terminal — they don't add to the count.
+  const fleetBadgeCount = runningFleetCount + haltedFleetCount;
+  const showFleetBadge = fleetBadgeCount > 0;
+  // Variant: primary (blue) if any fleet is running, warning (orange) only
+  // when the badge is entirely halted fleets — matches the §13.7 binding
+  // contract.
+  const fleetBadgeVariant = runningFleetCount > 0 ? 'primary' : 'warning';
 
   const connClass =
     connectionState === 'open'
@@ -258,7 +265,7 @@ export function sidebarView(
                 </span>
                 ${
                   showFleetBadge
-                    ? html`<sl-badge variant="${anyFleetHalted ? 'warning' : 'primary'}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
+                    ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
                     : ''
                 }
               </div>

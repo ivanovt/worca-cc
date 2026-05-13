@@ -727,6 +727,34 @@ export function runDetailView(run, settings = {}, options = {}) {
 
       <div class="run-info-section">
         ${
+          run.fleet_id && run.group_type === 'fleet'
+            ? html`
+          <div class="run-group">
+            <span class="meta-label">Fleet:</span>
+            <a
+              class="meta-value run-group-link"
+              href="#/fleet-runs/${run.fleet_id}"
+              title="Open fleet detail"
+            >${run.fleet_id}</a>
+          </div>
+        `
+            : nothing
+        }
+        ${
+          run.workspace_id && run.group_type === 'workspace'
+            ? html`
+          <div class="run-group">
+            <span class="meta-label">Workspace:</span>
+            <a
+              class="meta-value run-group-link"
+              href="#/workspace-runs/${run.workspace_id}"
+              title="Open workspace detail"
+            >${run.workspace_id}</a>
+          </div>
+        `
+            : nothing
+        }
+        ${
           branch
             ? html`
           <div class="run-branch">

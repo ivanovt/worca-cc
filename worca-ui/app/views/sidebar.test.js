@@ -294,43 +294,51 @@ describe('sidebar - Fleets nav entry', () => {
     expect(output).toContain('>Fleets<');
   });
 
-  it('Fleets badge shows running fleet count', async () => {
+  it('Fleets badge counts running + halted (the attention set)', async () => {
+    // Terminal fleets (completed/failed) don't add to the count.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'running' },
         { fleet_id: 'f2', status: 'running' },
-        { fleet_id: 'f3', status: 'completed' },
+        { fleet_id: 'f3', status: 'halted' },
+        { fleet_id: 'f4', status: 'completed' },
       ],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('fleets-count-badge');
-    expect(output).toContain('>2<');
+    // 2 running + 1 halted = 3, completed excluded
+    expect(output).toContain('>3<');
   });
 
-  it('Fleets badge variant is primary when no fleets halted', async () => {
+  it('Fleets badge variant is primary when any fleet is running', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'running' },
-        { fleet_id: 'f2', status: 'completed' },
+        { fleet_id: 'f2', status: 'halted' },
       ],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('class="fleets-count-badge"');
+    // Running takes precedence — primary (blue), not warning. The halted
+    // fleet still contributes to the count but does not change the variant.
+    expect(output).toContain('variant="primary"');
     expect(output).not.toContain('variant="warning"');
   });
 
-  it('Fleets badge variant flips to warning when any fleet halted', async () => {
+  it('Fleets badge variant is warning only when entirely halted', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'halted' },
-        { fleet_id: 'f2', status: 'running' },
+        // a completed fleet is terminal and excluded from the badge count,
+        // but its presence must not change the variant logic
+        { fleet_id: 'f2', status: 'completed' },
       ],
     });
     const output = renderToString(
@@ -338,6 +346,25 @@ describe('sidebar - Fleets nav entry', () => {
     );
     expect(output).toContain('fleets-count-badge');
     expect(output).toContain('variant="warning"');
+    // halted = 1 fleet that needs attention
+    expect(output).toContain('>1<');
+  });
+
+  it('Fleets badge hidden when only terminal fleets exist', async () => {
+    // The entry itself is shown (any fleet exists) but the count badge is
+    // not — neither running nor halted needs operator action.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'completed' },
+        { fleet_id: 'f2', status: 'failed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('>Fleets<');
+    expect(output).not.toContain('fleets-count-badge');
   });
 
   it('Fleets entry is active when route section is fleet-runs', async () => {
