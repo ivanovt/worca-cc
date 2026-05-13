@@ -12,6 +12,106 @@ python .claude/scripts/run_fleet.py \
 
 This provisions each target (runs `worca init --upgrade`), then fans out the pipeline in parallel. Progress appears in the worca-ui dashboard under a single fleet group.
 
+## Lifecycle
+
+A fleet is a fan-out **launcher + state machine** wrapping N independent single-project pipelines. The launcher itself runs no agents — it spawns and polls children. Fleet-level status is **derived** from child statuses and re-computed every poll; it is not stored independently except for the sticky `halted` flag.
+
+### Phases
+
+| # | Phase | Where | What happens |
+|---|---|---|---|
+| 1 | **Submit** | `POST /api/fleet-runs` (UI) or `run_fleet.py` (CLI) | Fleet ID generated as `f_<yyyymmddhhmm>_<hex>`. UI uploads any guide files to `~/.worca/fleet-runs/<fleet_id>/guides/`. Server spawns `run_fleet.py` detached and returns immediately. |
+| 2 | **Pre-flight** | `run_fleet.py:main` | `--base` branch existence validated across every target (any missing → abort). Each target gets `worca init --upgrade` (default 60 s timeout). Targets that fail init are marked `setup_failed` and excluded from dispatch; the rest of the fleet still launches. |
+| 3 | **Manifest write** | `~/.worca/fleet-runs/<fleet_id>.json` | Initial manifest captures launch params + `status: "running"` + empty `children: []`. From here the fleet is observable to the UI. |
+| 4 | **Plan-first (optional)** | `run_plan_first` | Only when `--plan-first` was passed. Synchronous, single child — runs the Planner on a reference project, polls its worktree for `MASTER_PLAN.md` (1 h timeout), copies the plan to the fleet dir for the remaining children. If the reference Planner fails: fleet is marked `halted` with `halt_reason: "plan_first_failed"` and never fans out. |
+| 5 | **Dispatch** | `dispatch_fleet` | Semaphore loop maintains up to `max_parallel` `subprocess.Popen` children, each running `run_worktree.py --fleet-id <fid> [...]` in its own worktree. Polls every 200 ms. Free slots get the next pending project. |
+| 6 | **Terminal** | derived | When every child has reached a terminal state (`completed` / `failed` / `setup_failed` / `unrecoverable`) the fleet settles into `completed` or `failed`. |
+
+See also: [Target provisioning](#target-provisioning), [Plan modes](#plan-modes), [Max-parallel](#max-parallel).
+
+### Child runs
+
+Each child is a **full single-project pipeline** running the standard 9 stages (Preflight → Planner → … → Guardian → Learner) — fleet doesn't override stage behaviour, it only injects `--fleet-id` and the shared guide/plan/base flags. Each child writes its status to its own project's `.worca/multi/pipelines.d/<run_id>.json`; the fleet reads those files to derive fleet status.
+
+### Status derivation
+
+`derive_fleet_status` (in [`src/worca/orchestrator/fleet_manifest.py`](../src/worca/orchestrator/fleet_manifest.py)) is pure and re-runs every UI poll:
+
+| Children state | Fleet status |
+|---|---|
+| Any in `{running, resuming, paused}`, breaker not tripped | `running` |
+| Any in `{running, resuming, paused}`, breaker tripped | `halted` (`halt_reason: "circuit_breaker"`) |
+| All terminal AND all `completed` | `completed` |
+| All terminal AND ≥1 failure | `failed` |
+| No children registered yet | `running` |
+
+A user-initiated halt (`halt_reason: "user"`) is **sticky** — re-derivation never overrides it. The same applies to `halt_reason: "circuit_breaker"`; both stay halted until explicit [resume](#resume).
+
+### Circuit breaker
+
+When ≥ `min(3, total)` children have completed AND `failed / terminal ≥ fleet_failure_threshold` (default 30 %), the breaker trips:
+
+- `manifest.status = "halted"`, `halt_reason = "circuit_breaker"`
+- **No new children are spawned** — pending projects stay `pending`
+- **In-flight children are never killed** — they finish naturally so no half-written repos are left behind
+- Once the in-flight set drains, any still-unstarted children settle to `halted`
+
+See [Fleet-level circuit breaker](#fleet-level-circuit-breaker) for tuning.
+
+### Resume
+
+Halted / failed fleets resume via `run_fleet.py --resume <fleet_id>`. The resume handler:
+
+- Reads each child's current pipeline-status file
+- Re-dispatches only children in `{pending, failed, setup_failed}`
+- Skips `{completed, running, resuming, paused, unrecoverable}`
+- For `failed` children whose worktree was cleaned up, marks them `unrecoverable` (nothing left to retry)
+- Sets fleet `status: "resuming"`, then re-enters the same `dispatch_fleet` loop with the resumable subset
+
+Circuit-breaker rules apply on the resumed dispatch too.
+
+### State diagram
+
+```
+                ┌───────────────┐
+                │   submitted   │  POST /api/fleet-runs (or CLI)
+                └───────┬───────┘
+                        │ pre-flight + manifest write
+                        ▼
+                ┌───────────────┐
+   ┌────────────│    running    │◀──────────┐
+   │            └───────┬───────┘           │
+   │                    │                   │
+   │       ┌────────────┼─────────────┐     │
+   │       │            │             │     │
+   │       ▼            ▼             ▼     │
+   │   breaker      all OK       user STOP  │
+   │       │            │             │     │
+   │       ▼            │             ▼     │
+   │    halted          │          halted   │
+   │ (circuit_breaker)  │          (user)   │
+   │       │            │             │     │
+   │       └─── resume ─┤             │     │
+   │                    │             │     │
+   │                    ▼             │     │
+   │     ┌───────────────────────┐    │     │
+   │     │ all children terminal?│    │     │
+   │     └─────┬─────────────┬───┘    │     │
+   │           │             │        │     │
+   │     all completed   any failed   │     │
+   │           │             │        │     │
+   │           ▼             ▼        │     │
+   │      ┌──────────┐  ┌────────┐    │     │
+   └─▶    │completed │  │ failed │ ───┴─────┘ resume
+          └──────────┘  └────────┘
+```
+
+### Process model
+
+- The fleet runner is a single Python process; it spawns each child as an independent `subprocess.Popen` with its own pgid.
+- **Killing the fleet runner (e.g. `kill -9`) does not kill in-flight children** — they continue, finish, and write their status normally. The fleet manifest, however, won't update until something re-polls it.
+- The fleet runner does not go through the UI's `LaunchLock`, so a fleet running with `max_parallel > worca.parallel.max_concurrent_pipelines` will exceed the host cap while running. The UI Launch button does check capacity at submit time.
+
 ## Launching a fleet
 
 ### Specifying targets
