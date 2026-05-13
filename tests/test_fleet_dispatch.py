@@ -37,6 +37,13 @@ class _FakePopen:
             return self.rc
         return None
 
+    def communicate(self):
+        # dispatch_fleet reads stdout to extract the child's run_id from
+        # run_worktree.py output. Tests don't exercise the registration
+        # path, so empty output is fine — `_parse_run_id_from_stdout`
+        # returns None and the registration is skipped.
+        return ("", "")
+
     @classmethod
     def reset(cls, *, rcs=None, polls_until_done=1):
         cls._active = []
@@ -459,7 +466,7 @@ class TestMainDispatchWiring:
     def test_main_calls_dispatch_fleet(self, tmp_path):
         from worca.scripts.run_fleet import main
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch, \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             mock_dispatch.return_value = {}
@@ -469,7 +476,7 @@ class TestMainDispatchWiring:
     def test_main_passes_max_parallel(self, tmp_path):
         from worca.scripts.run_fleet import main
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch, \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             mock_dispatch.return_value = {}
@@ -484,7 +491,7 @@ class TestMainDispatchWiring:
     def test_main_passes_fleet_failure_threshold(self, tmp_path):
         from worca.scripts.run_fleet import main
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch, \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             mock_dispatch.return_value = {}
@@ -503,8 +510,13 @@ class TestMainDispatchWiring:
             main(["--resume", "f_20260512_abc"])
         mock_dispatch.assert_not_called()
 
-    def test_main_skips_provisioned_failures_from_dispatch(self, tmp_path):
-        """Targets that failed provisioning are not passed to dispatch_fleet."""
+    def test_main_aborts_when_any_target_is_not_ready(self, tmp_path):
+        """Per the readiness-check contract, ANY unready target aborts
+        the whole fleet — we do NOT silently auto-init or skip targets.
+        Replaces the prior provision-then-skip-failures behaviour: that
+        invited the orchestrator to silently mutate user repos. See
+        run_fleet.main() readiness-check block.
+        """
         from worca.scripts.run_fleet import main
 
         proj_a = tmp_path / "a"
@@ -512,7 +524,7 @@ class TestMainDispatchWiring:
         proj_a.mkdir()
         proj_b.mkdir()
 
-        with patch("worca.scripts.run_fleet.provision_target") as mock_prov, \
+        with patch("worca.scripts.run_fleet.check_target_readiness") as mock_prov, \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch, \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             mock_prov.side_effect = [
@@ -525,9 +537,5 @@ class TestMainDispatchWiring:
                 "--prompt", "x",
             ])
 
-        # dispatch_fleet should only receive the successfully provisioned target
-        mock_dispatch.assert_called_once()
-        kwargs = mock_dispatch.call_args[1]
-        targets = kwargs.get("targets", [])
-        assert len(targets) == 1
-        assert targets[0]["project_dir"] == str(proj_b)
+        # No dispatch happens when any target is unready — even the ready one.
+        mock_dispatch.assert_not_called()

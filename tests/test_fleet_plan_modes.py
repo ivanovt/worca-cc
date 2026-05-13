@@ -35,6 +35,9 @@ def _dispatch_capture_cmds(targets, plan, guide=None):
         def poll(self):
             return 0
 
+        def communicate(self):
+            return ("", "")
+
     with patch("worca.scripts.run_fleet.subprocess.Popen", _Spy), \
          patch("worca.scripts.run_fleet.build_child_env", return_value={"HOME": "/root"}):
         dispatch_fleet(
@@ -123,7 +126,7 @@ class TestPlanExplicitMainWiring:
 
         plan_file = str(tmp_path / "plan.md")
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch, \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             mock_dispatch.return_value = {}
@@ -139,7 +142,7 @@ class TestPlanExplicitMainWiring:
         plan_file = str(tmp_path / "plan.md")
         abs_plan = os.path.abspath(plan_file)
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch, \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             mock_dispatch.return_value = {}
@@ -152,7 +155,7 @@ class TestPlanExplicitMainWiring:
         """When --plan is not given, dispatch_fleet receives plan=None."""
         from worca.scripts.run_fleet import main
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch, \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             mock_dispatch.return_value = {}
@@ -172,7 +175,7 @@ class TestPlanExplicitMainWiring:
         def capture(manifest, **kw):
             written.update(manifest)
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest", side_effect=capture), \
              patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}):
             main(["--projects", str(tmp_path), "--prompt", "x", "--plan", plan_file])
@@ -188,7 +191,7 @@ class TestPlanExplicitMainWiring:
         def capture(manifest, **kw):
             written.update(manifest)
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest", side_effect=capture), \
              patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}):
             main(["--projects", str(tmp_path), "--prompt", "x"])
@@ -204,7 +207,7 @@ class TestPlanExplicitMainWiring:
         def capture(manifest, **kw):
             written.update(manifest)
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest", side_effect=capture), \
              patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}):
             main(["--projects", str(tmp_path), "--prompt", "x"])
@@ -503,7 +506,7 @@ def _main_plan_first(tmp_path, extra_argv=None, mock_run_plan_first=None, mock_d
     if mock_dispatch is None:
         mock_dispatch = MagicMock(return_value={})
 
-    with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+    with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
          patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"), \
          patch("worca.scripts.run_fleet.run_plan_first", mock_run_plan_first), \
          patch("worca.scripts.run_fleet.dispatch_fleet", mock_dispatch):
@@ -542,7 +545,7 @@ class TestPlanFirstMainWiring:
         def capture_halt(fleet_id, status, **kwargs):
             halt_calls.append({"status": status, "reason": kwargs.get("halt_reason")})
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"), \
              patch("worca.scripts.run_fleet.run_plan_first", return_value=None), \
              patch("worca.scripts.run_fleet.update_fleet_status", side_effect=capture_halt):
@@ -556,7 +559,7 @@ class TestPlanFirstMainWiring:
         """dispatch_fleet is not called when run_plan_first returns None."""
         from worca.scripts.run_fleet import main
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"), \
              patch("worca.scripts.run_fleet.run_plan_first", return_value=None), \
              patch("worca.scripts.run_fleet.update_fleet_status"), \
@@ -602,7 +605,7 @@ class TestPlanFirstMainWiring:
         p2 = str(tmp_path / "proj2")
         shared_plan = str(tmp_path / "shared-plan.md")
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"), \
              patch("worca.scripts.run_fleet.run_plan_first", return_value=shared_plan), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch:
@@ -620,7 +623,7 @@ class TestPlanFirstMainWiring:
         p1 = str(tmp_path)
         shared_plan = str(tmp_path / "shared-plan.md")
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"), \
              patch("worca.scripts.run_fleet.run_plan_first", return_value=shared_plan), \
              patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch:
@@ -639,7 +642,7 @@ class TestPlanFirstMainWiring:
         def capture_manifest(manifest, **kw):
             written.update(manifest)
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest",
                    side_effect=capture_manifest), \
              patch("worca.scripts.run_fleet.run_plan_first", return_value=None), \
@@ -654,7 +657,7 @@ class TestPlanFirstMainWiring:
 
         plan_file = str(tmp_path / "plan.md")
 
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)), \
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)), \
              patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"):
             exit_code = main(
                 ["--projects", str(tmp_path), "--prompt", "x",
