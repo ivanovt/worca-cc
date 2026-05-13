@@ -22,6 +22,12 @@ class _FakePopen:
     def poll(self):
         return self.rc
 
+    def communicate(self):
+        # dispatch_fleet reads run_worktree.py's stdout to extract the
+        # child run_id for register_fleet_child(); empty output makes
+        # the registration step a no-op.
+        return ("", "")
+
     @classmethod
     def reset(cls, rcs):
         cls._rcs = list(rcs)
