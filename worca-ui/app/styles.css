@@ -4061,11 +4061,8 @@ sl-details.learnings-panel::part(content) {
 .project-status-paused { background: var(--status-paused, #eab308); }
 
 /* --- Dashboard Project Cards --- */
-.project-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
-.project-card { background: var(--surface); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: var(--transition-fast); border: 1px solid var(--border); }
-.project-card:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
-.project-card-name { font-weight: 600; margin-bottom: 4px; }
-.project-card-stats { font-size: 0.85rem; color: var(--text-secondary); }
+/* .project-cards / .project-card-* removed — see app/views/dashboard.js
+   for the rationale (sidebar dropdown replaces them). */
 
 /* --- Settings Projects List --- */
 .projects-list-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }

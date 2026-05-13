@@ -107,47 +107,11 @@ function _renderRunList(
   ];
 }
 
-function _projectCards(projects, runs, onNavigate) {
-  // Count active runs per project (best-effort by projectId on run)
-  const activeByProject = {};
-  const latestByProject = {};
-  for (const proj of projects) {
-    activeByProject[proj.name] = 0;
-    latestByProject[proj.name] = null;
-  }
-  for (const run of runs) {
-    const pid = run.projectId || projects[0]?.name;
-    if (pid && activeByProject[pid] !== undefined) {
-      if (run.active) activeByProject[pid]++;
-      if (
-        !latestByProject[pid] ||
-        (run.started_at || '') > (latestByProject[pid].started_at || '')
-      ) {
-        latestByProject[pid] = run;
-      }
-    }
-  }
-
-  return html`
-    <div class="project-cards">
-      ${projects.map((p) => {
-        const activeCount = activeByProject[p.name] || 0;
-        const latest = latestByProject[p.name];
-        const statusText = latest
-          ? latest.pipeline_status || 'unknown'
-          : 'no runs';
-        return html`
-          <div class="project-card" @click=${() => onNavigate?.('active', null, p.name)}>
-            <div class="project-card-name">${p.name}</div>
-            <div class="project-card-stats">
-              ${activeCount} active &middot; ${statusText}
-            </div>
-          </div>
-        `;
-      })}
-    </div>
-  `;
-}
+// Project cards (per-project summary tiles) were removed: the sidebar's
+// always-visible project dropdown is the single source of truth for project
+// switching, and the cards' run-to-project attribution relied on a
+// `run.projectId` field that isn't populated reliably across modes. The
+// function and its CSS (.project-cards / .project-card-*) are gone with it.
 
 export function dashboardView(
   state,
@@ -181,13 +145,12 @@ export function dashboardView(
   const allCompleted = sortByStartDesc(_activeGroup(runs, ['completed']));
   const completedPreview = allCompleted.slice(0, MAX_RECENT);
 
-  const projects = state.projects || [];
-  const currentProjectId = state.currentProjectId;
-  const showProjectCards = projects.length > 1 && !currentProjectId;
-
+  // Project cards used to appear here in global mode as a grid of
+  // per-project summary tiles. Removed: the sidebar's project dropdown
+  // already provides project switching, and the cards' "no runs"
+  // attribution was unreliable when runs lacked a projectId field.
   return html`
     <div class="dashboard">
-      ${showProjectCards ? _projectCards(projects, runs, onNavigate) : nothing}
       <div class="dashboard-stats">
         <div class="stat-card stat-total">
           <div class="stat-icon-ring">${unsafeHTML(iconSvg(Zap, 20))}</div>

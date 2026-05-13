@@ -124,10 +124,11 @@ export function sidebarView(
   // terminal — they don't add to the count.
   const fleetBadgeCount = runningFleetCount + haltedFleetCount;
   const showFleetBadge = fleetBadgeCount > 0;
-  // Variant: primary (blue) if any fleet is running, warning (orange) only
-  // when the badge is entirely halted fleets — matches the §13.7 binding
-  // contract.
-  const fleetBadgeVariant = runningFleetCount > 0 ? 'primary' : 'warning';
+  // Variant follows the convention used by History/Worktrees: neutral grey
+  // by default, escalates to warning only when there's a "needs attention"
+  // condition. For Fleets the trigger is any halted fleet (matches the
+  // Worktrees disk-threshold warning shape).
+  const fleetBadgeVariant = haltedFleetCount > 0 ? 'warning' : 'neutral';
 
   const connClass =
     connectionState === 'open'

@@ -313,25 +313,30 @@ describe('sidebar - Fleets nav entry', () => {
     expect(output).toContain('>3<');
   });
 
-  it('Fleets badge variant is primary when any fleet is running', async () => {
+  it('Fleets badge variant is neutral when only running fleets exist', async () => {
+    // Sidebar count badges follow the History/Worktrees convention: neutral
+    // grey by default, escalates only on the "needs attention" trigger.
+    // Running fleets are normal active work — no escalation.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'running' },
-        { fleet_id: 'f2', status: 'halted' },
+        { fleet_id: 'f2', status: 'running' },
+        { fleet_id: 'f3', status: 'completed' },
       ],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('class="fleets-count-badge"');
-    // Running takes precedence — primary (blue), not warning. The halted
-    // fleet still contributes to the count but does not change the variant.
-    expect(output).toContain('variant="primary"');
+    expect(output).toContain('variant="neutral"');
     expect(output).not.toContain('variant="warning"');
+    expect(output).not.toContain(
+      'variant="primary" pill class="fleets-count-badge"',
+    );
   });
 
-  it('Fleets badge variant is warning only when entirely halted', async () => {
+  it('Fleets badge variant flips to warning when any fleet is halted', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
