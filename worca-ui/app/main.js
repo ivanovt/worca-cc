@@ -129,27 +129,17 @@ let restartStageKey = null;
 // -- Fleet views --
 const _fleetDetailCache = {}; // { fleetId: manifest }
 let _fleetDetailFetching = null; // currently-fetching fleet id (single in-flight)
-let _fleetListCache = null; // last GET /api/fleet-runs result
-let _fleetListFetching = false;
-
-function _fleetListView(rerender) {
-  if (_fleetListCache === null && !_fleetListFetching) {
-    _fleetListFetching = true;
-    fetch('/api/fleet-runs')
-      .then((r) => r.json())
-      .then((data) => {
-        _fleetListFetching = false;
-        _fleetListCache = data?.fleets || [];
-        rerender();
-      })
-      .catch(() => {
-        _fleetListFetching = false;
-        _fleetListCache = [];
-        rerender();
-      });
+function _fleetListView() {
+  // state.fleets is the single source of truth: populated on bootstrap and
+  // refreshed by the fleet-update WS handler. Reading the module-level
+  // cache used to drop refreshed entries on the floor (the list never
+  // updated after halt / cleanup events). Switch to a state-driven read so
+  // the list view stays consistent with the sidebar Fleets count.
+  const fleets = store.getState().fleets;
+  if (fleets === undefined) {
+    // Bootstrap hasn't completed yet (no /api/fleet-runs fetch returned).
     return html`<div class="fleet-list-loading"><sl-spinner></sl-spinner> Loading fleets…</div>`;
   }
-  const fleets = _fleetListCache || [];
   if (fleets.length === 0) {
     return html`
       <div class="fleet-list-empty">
@@ -165,15 +155,18 @@ function _fleetListView(rerender) {
     <div class="fleet-list">
       ${fleets.map(
         (f) => html`
-        <div class="fleet-list-row" style="padding:12px;border-bottom:1px solid var(--sl-color-neutral-200);cursor:pointer"
+        <div class="fleet-list-row"
              @click=${() => navigate('fleet-runs', f.fleet_id, null)}>
-          <strong>${f.work_request?.title || f.fleet_id}</strong>
-          <sl-badge variant=${f.status === 'running' ? 'primary' : f.status === 'completed' ? 'success' : f.status === 'failed' ? 'danger' : 'warning'} pill style="margin-left:8px">
-            ${f.status}
-          </sl-badge>
-          <span style="margin-left:12px;color:var(--sl-color-neutral-500)">
-            ${f.children_count ?? 0} children · ${f.fleet_id}
+          <strong class="fleet-list-row-title">${f.work_request?.title || f.fleet_id}</strong>
+          <sl-badge
+            variant=${f.status === 'running' ? 'primary' : f.status === 'completed' ? 'success' : f.status === 'failed' ? 'danger' : f.status === 'halted' ? 'warning' : 'neutral'}
+            pill
+            class="fleet-list-row-badge"
+          >${f.status}</sl-badge>
+          <span class="fleet-list-row-meta">
+            ${f.children_count ?? 0} children
           </span>
+          <code class="fleet-list-row-id">${f.fleet_id}</code>
         </div>
       `,
       )}
