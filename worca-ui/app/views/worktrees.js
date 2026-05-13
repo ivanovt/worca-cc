@@ -19,18 +19,25 @@ function _formatAge(ageSeconds) {
 }
 
 function _groupLabel(wt) {
-  if (wt.group_type === 'fleet' && wt.fleet_id) return `fleet:${wt.fleet_id}`;
+  // Returns { kind, id } so consumers can pick separate labels ("Fleet:" /
+  // "Workspace:") and route to the right detail page. The previous
+  // "fleet:<id>" / "workspace:<id>" prefix-string form is kept by callers
+  // that still want a single token for filtering.
+  if (wt.group_type === 'fleet' && wt.fleet_id)
+    return { kind: 'fleet', id: wt.fleet_id };
   if (wt.group_type === 'workspace' && wt.workspace_id)
-    return `workspace:${wt.workspace_id}`;
+    return { kind: 'workspace', id: wt.workspace_id };
   return null;
 }
 
 function _matchesFilter(wt, filter) {
   const q = filter.toLowerCase();
+  const g = _groupLabel(wt);
+  const groupHaystack = g ? `${g.kind} ${g.id}` : '';
   return (
     (wt.title || '').toLowerCase().includes(q) ||
     (wt.branch || '').toLowerCase().includes(q) ||
-    (_groupLabel(wt) || '').toLowerCase().includes(q) ||
+    groupHaystack.toLowerCase().includes(q) ||
     (wt.worktree_path || '').toLowerCase().includes(q)
   );
 }
@@ -149,8 +156,12 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
           groupLabel
             ? html`
                 <span class="run-card-meta-item">
-                  <span class="meta-label">Group:</span>
-                  <span class="meta-value">${groupLabel}</span>
+                  <span class="meta-label">${groupLabel.kind === 'fleet' ? 'Fleet:' : 'Workspace:'}</span>
+                  <a
+                    class="meta-value run-card-group-link"
+                    href="#/${groupLabel.kind === 'fleet' ? 'fleet-runs' : 'workspace-runs'}/${groupLabel.id}"
+                    @click=${(e) => e.stopPropagation()}
+                  >${groupLabel.id}</a>
                 </span>
               `
             : nothing
@@ -221,13 +232,17 @@ function _cleanupDialogView(
       </p>
       ${
         isGrouped
-          ? html`
-              <sl-alert variant="warning" open class="group-warning">
-                This worktree belongs to
-                <strong>${_groupLabel(dialogItem)}</strong> — removing it will
-                block the group's <code>--resume</code> for this child.
-              </sl-alert>
-            `
+          ? (() => {
+              const g = _groupLabel(dialogItem);
+              const kindLabel = g?.kind === 'fleet' ? 'fleet' : 'workspace';
+              return html`
+                <sl-alert variant="warning" open class="group-warning">
+                  This worktree belongs to ${kindLabel}
+                  <strong>${g?.id ?? ''}</strong> — removing it will
+                  block the ${kindLabel}'s <code>--resume</code> for this child.
+                </sl-alert>
+              `;
+            })()
           : nothing
       }
       ${

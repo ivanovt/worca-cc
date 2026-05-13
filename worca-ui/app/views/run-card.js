@@ -229,6 +229,17 @@ export function runCardView(
         <span class="run-card-title">${title}</span>
         ${run.is_worktree_run ? html`<sl-icon name="folder-symlink" class="run-card-worktree-icon" title=${`Isolated worktree at ${run.worktree_path || ''}`}></sl-icon>` : nothing}
       </div>
+      ${
+        run.fleet_id && run.group_type === 'fleet'
+          ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Fleet:</span>
+              <a class="meta-value run-card-group-link" href="#/fleet-runs/${run.fleet_id}" @click=${(e) => e.stopPropagation()}>${run.fleet_id}</a>
+            </span></div>`
+          : run.workspace_id && run.group_type === 'workspace'
+            ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Workspace:</span>
+                <a class="meta-value run-card-group-link" href="#/workspace-runs/${run.workspace_id}" @click=${(e) => e.stopPropagation()}>${run.workspace_id}</a>
+              </span></div>`
+            : nothing
+      }
       ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> <span class="meta-value">${branch}</span></span></div>` : nothing}
       ${pipelineTemplate ? html`<div class="run-card-template"><span class="meta-label">Pipeline:</span> <span class="meta-value">${pipelineTemplate}</span></div>` : nothing}
       <div class="run-card-meta">

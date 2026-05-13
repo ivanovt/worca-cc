@@ -416,22 +416,23 @@ describe('worktreesView - filter input narrows rows', () => {
 
 describe('worktreesView - group label', () => {
   it('omits the group meta item for standalone worktrees', () => {
-    // The card no longer renders a "Group: —" line for standalone worktrees;
-    // the meta item is just left out.
     const output = renderToString(worktreesView([completedWorktree]));
-    expect(output).not.toContain('Group:');
+    expect(output).not.toContain('Fleet:');
+    expect(output).not.toContain('Workspace:');
   });
 
-  it('shows fleet ID in the group meta item for fleet worktrees', () => {
+  it('renders a Fleet: meta item linking to the fleet detail page', () => {
     const output = renderToString(worktreesView([fleetWorktree]));
-    expect(output).toContain('Group:');
-    expect(output).toContain('fleet:f_abc123');
+    expect(output).toContain('Fleet:');
+    expect(output).toContain('f_abc123');
+    expect(output).toContain('href="#/fleet-runs/f_abc123"');
   });
 
-  it('shows workspace ID in the group meta item for workspace worktrees', () => {
+  it('renders a Workspace: meta item linking to the workspace detail page', () => {
     const output = renderToString(worktreesView([workspaceWorktree]));
-    expect(output).toContain('Group:');
-    expect(output).toContain('workspace:ws_xyz789');
+    expect(output).toContain('Workspace:');
+    expect(output).toContain('ws_xyz789');
+    expect(output).toContain('href="#/workspace-runs/ws_xyz789"');
   });
 });
 
@@ -468,14 +469,16 @@ describe('worktreesView - resume-aware confirmation dialog', () => {
       worktreesView([fleetWorktree], { dialogItem: fleetWorktree }),
     );
     expect(output).toContain('group-warning');
-    expect(output).toContain('fleet:f_abc123');
+    expect(output).toContain('fleet');
+    expect(output).toContain('f_abc123');
   });
 
   it('shows group warning when dialogItem is part of a workspace', () => {
     const wt = { ...workspaceWorktree, resumable: true };
     const output = renderToString(worktreesView([wt], { dialogItem: wt }));
     expect(output).toContain('group-warning');
-    expect(output).toContain('workspace:ws_xyz789');
+    expect(output).toContain('workspace');
+    expect(output).toContain('ws_xyz789');
   });
 
   it('does not show group warning for standalone worktrees', () => {

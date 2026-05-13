@@ -5121,15 +5121,17 @@ sl-tooltip.bead-tooltip::part(body) {
   align-items: center;
 }
 
-/* Run-detail "Fleet:" / "Workspace:" group link above the Branch line */
+/* Run-detail "Fleet:" / "Workspace:" group link above the Branch line.
+   No margin-bottom — sibling .run-branch / .run-template already supply
+   their own row spacing inside .run-info-section. */
 .run-group {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 4px;
 }
 
-.run-group-link {
+.run-group-link,
+.run-card-group-link {
   color: var(--accent);
   font-family: var(--sl-font-mono);
   font-size: 12.5px;
@@ -5137,7 +5139,8 @@ sl-tooltip.bead-tooltip::part(body) {
   word-break: break-all;
 }
 
-.run-group-link:hover {
+.run-group-link:hover,
+.run-card-group-link:hover {
   text-decoration: underline;
 }
 
