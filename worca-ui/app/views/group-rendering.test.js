@@ -42,7 +42,7 @@ describe('groupByFleet', () => {
       standalone,
     ]);
     expect(Object.keys(fleetGroups)).toContain('f_001');
-    expect(fleetGroups['f_001']).toHaveLength(1);
+    expect(fleetGroups.f_001).toHaveLength(1);
     expect(standaloneRuns).toHaveLength(1);
   });
 
@@ -51,8 +51,8 @@ describe('groupByFleet', () => {
     const r2 = { id: 'r2', fleet_id: 'f_001', group_type: 'fleet' };
     const r3 = { id: 'r3', fleet_id: 'f_002', group_type: 'fleet' };
     const { fleetGroups } = groupByFleet([r1, r2, r3]);
-    expect(fleetGroups['f_001']).toHaveLength(2);
-    expect(fleetGroups['f_002']).toHaveLength(1);
+    expect(fleetGroups.f_001).toHaveLength(2);
+    expect(fleetGroups.f_002).toHaveLength(1);
   });
 
   it('does not group runs with fleet_id but wrong group_type', () => {

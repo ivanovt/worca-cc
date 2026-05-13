@@ -61,7 +61,7 @@ export const AGENT_NAMES = [
 const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
 
 export function getModelKeys(worca) {
-  const models = (worca && worca.models) || {};
+  const models = worca?.models || {};
   const keys = Object.keys(models);
   return keys.length > 0 ? keys : DEFAULT_MODEL_KEYS;
 }
@@ -1563,7 +1563,7 @@ export function _getOrInitModelState(name, serverEntry) {
   // settings were still loading, the buffer is stuck with empty values for
   // the rest of the page lifetime.
   const existing = _modelsEditState.get(name);
-  if (existing && existing.dirty) return existing;
+  if (existing?.dirty) return existing;
   const fresh = {
     id: serverEntry.id,
     env: Object.entries(serverEntry.env).map(([k, v], i) => ({
@@ -2006,7 +2006,7 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
 }
 
 export function modelsTab(worca, rerender) {
-  const modelsConfig = (worca && worca.models) || {};
+  const modelsConfig = worca?.models || {};
   const modelKeys = getModelKeys(worca);
 
   return html`

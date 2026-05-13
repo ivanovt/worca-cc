@@ -278,7 +278,8 @@ function _branchesSection({ rerender } = {}) {
               selectedProjects,
               onChange: rerender
                 ? (ev) => {
-                    if (ev.type === 'set-head-template') headTemplate = ev.value;
+                    if (ev.type === 'set-head-template')
+                      headTemplate = ev.value;
                     rerender();
                   }
                 : undefined,

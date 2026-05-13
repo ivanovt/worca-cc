@@ -232,7 +232,8 @@ function _guideSection(fleet, { rerender } = {}) {
         <label class="settings-label">Attached files</label>
         <div class="fleet-guide-files">
           ${(guide.filenames || []).map(
-            (n) => html`<sl-tag pill size="small" class="fleet-guide-tag">${n}</sl-tag>`,
+            (n) =>
+              html`<sl-tag pill size="small" class="fleet-guide-tag">${n}</sl-tag>`,
           )}
         </div>
         <span class="settings-field-hint">Total size: ${_formatBytes(guide.bytes)}.</span>
@@ -559,9 +560,7 @@ function _actionsSection(fleet, { onNavigate, rerender } = {}) {
               outline
               class="btn-rerun-fleet"
               @click=${
-                onNavigate
-                  ? () => onNavigate('fleet-runs', 'new')
-                  : null
+                onNavigate ? () => onNavigate('fleet-runs', 'new') : null
               }
             >Re-run fleet</sl-button>
           `

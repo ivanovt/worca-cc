@@ -232,17 +232,19 @@ function _cleanupDialogView(
       </p>
       ${
         isGrouped
-          ? (() => {
-              const g = _groupLabel(dialogItem);
-              const kindLabel = g?.kind === 'fleet' ? 'fleet' : 'workspace';
-              return html`
+          ? (
+              () => {
+                const g = _groupLabel(dialogItem);
+                const kindLabel = g?.kind === 'fleet' ? 'fleet' : 'workspace';
+                return html`
                 <sl-alert variant="warning" open class="group-warning">
                   This worktree belongs to ${kindLabel}
                   <strong>${g?.id ?? ''}</strong> — removing it will
                   block the ${kindLabel}'s <code>--resume</code> for this child.
                 </sl-alert>
               `;
-            })()
+              }
+            )()
           : nothing
       }
       ${

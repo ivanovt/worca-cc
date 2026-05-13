@@ -1,11 +1,9 @@
 import {
   existsSync,
-  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
-  writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
