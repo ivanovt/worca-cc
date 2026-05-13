@@ -2509,12 +2509,14 @@ sl-option.template-grouped:focus::part(suffix) {
 
 .sidebar-new-run-split {
   display: flex;
+  align-items: stretch;
   width: 100%;
+  min-height: 36px;
   border: 2px dashed var(--accent);
   border-radius: var(--radius);
   overflow: hidden;
   background: transparent;
-  transition: background var(--transition-fast);
+  transition: background var(--transition-fast), border-color var(--transition-fast);
 }
 
 .sidebar-new-run-btn-primary {
@@ -2524,7 +2526,7 @@ sl-option.template-grouped:focus::part(suffix) {
   justify-content: center;
   gap: 8px;
   min-width: 0;
-  padding: 8px 12px;
+  padding: 6px 12px;
   border: 0;
   border-right: 2px dashed var(--accent);
   background: transparent;
@@ -2533,7 +2535,8 @@ sl-option.template-grouped:focus::part(suffix) {
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
 .sidebar-new-run-btn-primary:hover:not(:disabled) {
@@ -2541,21 +2544,31 @@ sl-option.template-grouped:focus::part(suffix) {
   color: #ffffff;
 }
 
+/* Disabled state: muted (not ghosted) so it reads as "waiting on something"
+   rather than a broken control. Pairs with the title tooltip explaining
+   why it's inactive (e.g., "Select a project first…"). */
 .sidebar-new-run-btn-primary:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  color: var(--muted);
+  border-right-color: var(--muted);
 }
 
+/* sl-dropdown defaults to inline-block; force it to fill the cross-axis
+   so the slotted chevron button can stretch to the full split height. */
 .sidebar-new-run-chevron-dropdown {
   display: flex;
   flex: 0 0 auto;
+  align-self: stretch;
 }
 
 .sidebar-new-run-btn-chevron {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 10px;
+  align-self: stretch;
+  height: 100%;
+  min-height: 32px;
+  padding: 0 12px;
   border: 0;
   background: transparent;
   color: var(--accent);
@@ -2570,7 +2583,7 @@ sl-option.template-grouped:focus::part(suffix) {
 
 .sidebar-new-run-btn-chevron:disabled {
   cursor: not-allowed;
-  opacity: 0.5;
+  color: var(--muted);
 }
 
 /* Menu items: icon + label, slight indent under their icon */
