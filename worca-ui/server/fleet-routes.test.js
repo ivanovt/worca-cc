@@ -246,38 +246,6 @@ describe('Fleet Routes', () => {
     });
   });
 
-  // ─── POST /api/fleet-runs/estimate ───────────────────────────────────────
-
-  describe('POST /api/fleet-runs/estimate', () => {
-    it('returns token estimate for given guide_bytes and fleet size', async () => {
-      const res = await fetch(`${base}/api/fleet-runs/estimate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          guide_bytes: 4000,
-          projects: ['/p1', '/p2'],
-        }),
-      });
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.ok).toBe(true);
-      expect(data.guide_bytes).toBe(4000);
-      expect(data.guide_tokens_est).toBe(1000); // 4000/4
-      expect(data.fleet_size).toBe(2);
-      expect(data.total_overhead_est).toBeGreaterThan(0);
-    });
-
-    it('handles zero guide bytes gracefully', async () => {
-      const res = await fetch(`${base}/api/fleet-runs/estimate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ guide_bytes: 0, projects: ['/p1'] }),
-      });
-      const data = await res.json();
-      expect(data.total_overhead_est).toBe(0);
-    });
-  });
-
   // ─── POST /api/fleet-runs ─────────────────────────────────────────────────
 
   describe('POST /api/fleet-runs (JSON)', () => {

@@ -5122,51 +5122,6 @@ sl-tooltip.bead-tooltip::part(body) {
   gap: 4px;
 }
 
-/* Token Overhead Estimate widget: padded box with the header and panel
-   stacked. */
-.token-overhead-gate {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.token-gate-header {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-.token-gate-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--muted);
-}
-.token-estimate-panel {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  column-gap: 12px;
-  row-gap: 4px;
-  padding: 10px 12px;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  font-size: 12px;
-}
-.token-estimate-label {
-  color: var(--muted);
-}
-.token-estimate-value {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  color: var(--text);
-}
-.token-estimate-value.token-total {
-  font-weight: 600;
-}
-.token-estimate-detail {
-  grid-column: 1 / -1;
-  color: var(--muted);
-  font-size: 11px;
-  padding-top: 2px;
-}
-
 /* Base-branch validation states */
 .base-branch-validating {
   display: flex;

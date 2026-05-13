@@ -3,7 +3,6 @@ import {
   guideUploadWidget,
   headTemplateInput,
   planModeRadio,
-  tokenOverheadGate,
 } from './launcher-shared.js';
 import { isAtCapacity } from './new-run.js';
 
@@ -14,7 +13,6 @@ function resolveGuideCap(appState) {
     appState?.preferences?.worca?.guide?.max_bytes ?? GUIDE_CAP_BYTES_DEFAULT
   );
 }
-const TOKEN_THRESHOLD = 1_000_000;
 
 // ── module-level form state ─────────────────────────────────────────────────
 //
@@ -43,9 +41,6 @@ let planMode = 'none';
 let planFirstProject = '';
 let maxParallel = 5;
 let failureThreshold = 0.3;
-let tokenEstimate = null;
-let tokenEstimating = false;
-let tokenConfirmed = false;
 let submitStatus = null;
 let submitError = '';
 
@@ -65,9 +60,6 @@ export function resetLauncherState(overrides = {}) {
   planFirstProject = overrides.planFirstProject ?? '';
   maxParallel = overrides.maxParallel ?? 5;
   failureThreshold = overrides.failureThreshold ?? 0.3;
-  tokenEstimate = overrides.tokenEstimate ?? null;
-  tokenEstimating = overrides.tokenEstimating ?? false;
-  tokenConfirmed = overrides.tokenConfirmed ?? false;
   submitStatus = null;
   submitError = '';
 }
@@ -133,32 +125,6 @@ export function getFleetLauncherSubmitState() {
   };
 }
 
-export async function estimateFleetTokens({ rerender } = {}) {
-  const guidesTotalBytes = guides.reduce((s, g) => s + (g.size || 0), 0);
-  tokenEstimating = true;
-  rerender?.();
-  try {
-    const resp = await fetch('/api/fleet-runs/estimate', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        guide_bytes: guidesTotalBytes,
-        projects: selectedProjects,
-      }),
-    });
-    const data = await resp.json();
-    if (data.ok) {
-      tokenEstimate = data;
-      tokenConfirmed = false;
-    }
-  } catch {
-    // non-blocking
-  } finally {
-    tokenEstimating = false;
-    rerender?.();
-  }
-}
-
 export async function submitFleetLauncher({ rerender, onStarted } = {}) {
   // Validation parity with new-run.js: a Source Type other than "None"
   // requires a value; otherwise prompt or source is required.
@@ -184,19 +150,6 @@ export async function submitFleetLauncher({ rerender, onStarted } = {}) {
     submitStatus = 'error';
     submitError =
       'Head branch template resolves to the same name across projects. Add {project} for uniqueness.';
-    rerender?.();
-    return;
-  }
-
-  // Above-threshold launches require a confirmation checkbox tick.
-  if (
-    tokenEstimate &&
-    tokenEstimate.total_overhead_est > TOKEN_THRESHOLD &&
-    !tokenConfirmed
-  ) {
-    submitStatus = 'error';
-    submitError =
-      'Estimated overhead exceeds the threshold — tick the confirmation in the Token Overhead Estimate section, or rerun the estimate after reducing scope.';
     rerender?.();
     return;
   }
@@ -641,30 +594,6 @@ function _advancedSection({ rerender } = {}) {
   `;
 }
 
-function _tokenEstimateSection({ rerender } = {}) {
-  // Inline Launch button is suppressed — submit lives in the page header
-  // (mirrors the new-run page's "Start" pattern).
-  return html`
-    <div class="new-run-section fleet-launcher-token-section">
-      <h3 class="new-run-section-title">Token Overhead Estimate</h3>
-      ${tokenOverheadGate(
-        { tokenEstimate, tokenEstimating, tokenConfirmed },
-        {
-          onEstimate: () => estimateFleetTokens({ rerender }),
-          onLaunch: (ev) => {
-            if (ev?.type === 'confirm') {
-              tokenConfirmed = ev.confirmed;
-              rerender?.();
-            }
-          },
-          threshold: TOKEN_THRESHOLD,
-          inlineLaunch: false,
-        },
-      )}
-    </div>
-  `;
-}
-
 // ── main view ────────────────────────────────────────────────────────────────
 
 export function fleetLauncherView(appState, { rerender } = {}) {
@@ -694,7 +623,6 @@ export function fleetLauncherView(appState, { rerender } = {}) {
         ${_promptSection({ rerender })}
         ${_guideSection({ rerender, guideCapBytes })}
         ${_advancedSection({ rerender })}
-        ${_tokenEstimateSection({ rerender })}
       </div>
     </div>
   `;

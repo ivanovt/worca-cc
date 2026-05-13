@@ -270,37 +270,6 @@ describe('fleetLauncherView — advanced options', () => {
   });
 });
 
-// ── token overhead gate ─────────────────────────────────────────────────────
-
-describe('fleetLauncherView — token overhead gate', () => {
-  it('renders the token overhead gate section', () => {
-    resetLauncherState();
-    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('token-overhead-gate');
-    expect(out).toContain('Estimate cost');
-  });
-
-  it('requires I-understand checkbox when estimate is above threshold', () => {
-    // The inline launch button is removed (submit is in the page header
-    // now), so we assert on the confirmation checkbox itself rather than
-    // a button-disabled marker.
-    resetLauncherState({
-      tokenEstimate: {
-        guide_tokens_est: 200_000,
-        total_overhead_est: 2_000_000,
-        fleet_size: 10,
-        prompt_stages: 7,
-      },
-      tokenConfirmed: false,
-    });
-    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('token-confirm-checkbox');
-    expect(out).toContain('I understand the cost');
-    // Inline launch button must not render — the page-header button owns submit.
-    expect(out).not.toContain('btn-launch');
-  });
-});
-
 // ── header submit-state (powers the page-header Launch button) ──────────────
 
 describe('fleetLauncherView — getFleetLauncherSubmitState', () => {

@@ -1,7 +1,6 @@
 import { html, nothing } from 'lit-html';
 
 const DEFAULT_GUIDE_CAP = 128 * 1024; // matches worca.guide.max_bytes default in src/worca/settings.json
-const DEFAULT_TOKEN_THRESHOLD = 1_000_000;
 
 function _formatBytes(bytes) {
   if (!bytes || bytes < 0) return '0 B';
@@ -264,116 +263,6 @@ export function planModeRadio(state, { options, onChange } = {}) {
               Each project runs its own Planner independently. Strategies may diverge across
               projects.
             </sl-alert>
-          `
-          : nothing
-      }
-    </div>
-  `;
-}
-
-/**
- * @param {{
- *   tokenEstimate: null | { guide_tokens_est, total_overhead_est, fleet_size, prompt_stages },
- *   tokenEstimating?: boolean,
- *   tokenConfirmed?: boolean,
- * }} state
- * @param {{
- *   onEstimate?: function,
- *   onLaunch?: function,
- *   threshold?: number,
- *   canLaunch?: boolean,
- *   inlineLaunch?: boolean,
- * }} opts
- *
- * `inlineLaunch: false` hides the inline "Launch fleet" button — use when
- * the primary action is rendered elsewhere (e.g. the page header).
- */
-export function tokenOverheadGate(
-  state,
-  {
-    onEstimate,
-    onLaunch,
-    threshold = DEFAULT_TOKEN_THRESHOLD,
-    canLaunch = true,
-    inlineLaunch = true,
-  } = {},
-) {
-  const estimate = state.tokenEstimate;
-  const estimating = state.tokenEstimating || false;
-  const confirmed = state.tokenConfirmed || false;
-
-  if (!estimate) {
-    return html`
-      <div class="token-overhead-gate">
-        <div class="token-gate-header">Token Overhead Estimate</div>
-        <p class="token-gate-hint">
-          Click to estimate guide token overhead before launching.
-        </p>
-        <sl-button
-          class="btn-estimate${estimating ? ' btn-estimating' : ''}"
-          variant="default"
-          ?disabled=${estimating}
-          @click=${onEstimate ? () => onEstimate() : null}
-        >
-          ${estimating ? 'Estimating…' : 'Estimate cost'}
-        </sl-button>
-      </div>
-    `;
-  }
-
-  const aboveThreshold = estimate.total_overhead_est > threshold;
-  const launchBlocked = !canLaunch || (aboveThreshold && !confirmed);
-
-  return html`
-    <div class="token-overhead-gate">
-      <div class="token-gate-header">Token Overhead Estimate</div>
-      <div class="token-estimate-panel">
-        <span class="token-estimate-label">Guide tokens:</span>
-        <span class="token-estimate-value">${estimate.guide_tokens_est.toLocaleString()}</span>
-        <span class="token-estimate-label">Total overhead:</span>
-        <span class="token-estimate-value token-total">${estimate.total_overhead_est.toLocaleString()}</span>
-        <span class="token-estimate-detail">
-          (${estimate.guide_tokens_est.toLocaleString()} tokens ×
-          ${estimate.prompt_stages || 7} stages ×
-          ${estimate.fleet_size || 0} projects)
-        </span>
-      </div>
-      ${
-        aboveThreshold
-          ? html`
-            <sl-alert variant="warning" open class="token-threshold-warning">
-              Estimated input overhead exceeds
-              ${(threshold / 1_000_000).toFixed(1)}M tokens.
-            </sl-alert>
-            <sl-checkbox
-              class="token-confirm-checkbox"
-              ?checked=${confirmed}
-              @sl-change=${
-                onLaunch
-                  ? (e) => {
-                      state.tokenConfirmed = e.target.checked;
-                      onLaunch({
-                        type: 'confirm',
-                        confirmed: e.target.checked,
-                      });
-                    }
-                  : null
-              }
-            >I understand the cost</sl-checkbox>
-          `
-          : nothing
-      }
-      ${
-        inlineLaunch
-          ? html`
-            <sl-button
-              class="btn-launch${launchBlocked ? ' btn-launch-disabled' : ''}"
-              variant="primary"
-              ?disabled=${launchBlocked}
-              @click=${!launchBlocked && onLaunch ? () => onLaunch({ type: 'launch' }) : null}
-            >
-              Launch fleet
-            </sl-button>
           `
           : nothing
       }

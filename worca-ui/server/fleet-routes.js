@@ -20,9 +20,6 @@ import { Router } from 'express';
 const DEFAULT_FLEET_RUNS_DIR = join(homedir(), '.worca', 'fleet-runs');
 const GUIDE_CAP_BYTES_DEFAULT = 64 * 1024; // 64 KB
 
-// Number of pipeline stages that inject description into their prompt.
-const PROMPT_STAGES = 7;
-
 // Fleet IDs have the form f_<12 digits>_<hex>  — enforces no path traversal.
 const FLEET_ID_RE = /^f_\d{12}_[0-9a-f]{1,32}$/;
 
@@ -272,22 +269,6 @@ export function createFleetRouter({
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
-  });
-
-  // ── POST /api/fleet-runs/estimate ───────────────────────────────────────
-  router.post('/estimate', (req, res) => {
-    const { guide_bytes = 0, projects = [] } = req.body ?? {};
-    const fleet_size = Array.isArray(projects) ? projects.length : 0;
-    const guide_tokens_est = Math.ceil(guide_bytes / 4);
-    const total_overhead_est = guide_tokens_est * PROMPT_STAGES * fleet_size;
-    res.json({
-      ok: true,
-      guide_bytes,
-      guide_tokens_est,
-      total_overhead_est,
-      fleet_size,
-      prompt_stages: PROMPT_STAGES,
-    });
   });
 
   // ── POST /api/fleet-runs ────────────────────────────────────────────────
