@@ -201,7 +201,7 @@ class TestMainStub:
     def test_main_returns_int(self, tmp_path):
         """main() must return an integer exit code."""
         from worca.scripts.run_fleet import main
-        with patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)):
+        with patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)):
             result = main(["--projects", str(tmp_path), "--prompt", "x"])
         assert isinstance(result, int)
 
@@ -284,7 +284,7 @@ class TestMainBaseBranchValidation:
         from worca.scripts.run_fleet import main
         with (
             patch("worca.scripts.run_fleet.validate_base_branch", return_value=[]),
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
             patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
         ):
@@ -296,7 +296,7 @@ class TestMainBaseBranchValidation:
         from worca.scripts.run_fleet import main
         with (
             patch("worca.scripts.run_fleet.validate_base_branch") as mock_vbv,
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
             patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
         ):
@@ -332,202 +332,160 @@ class TestMainBaseBranchValidation:
 
 
 # ---------------------------------------------------------------------------
-# Phase 2a task 4 — Per-target worca init --upgrade provisioning (§2)
+# Per-target readiness check (§2, post-W-040): the fleet is non-mutating —
+# users must run `worca init` / `worca init --upgrade` themselves before
+# launching. The fleet aborts on any unready target.
 # ---------------------------------------------------------------------------
 
 
-class TestProvisionTarget:
-    """Unit tests for provision_target() — mocked subprocess, no real worca."""
+class TestCheckTargetReadiness:
+    """Unit tests for check_target_readiness() — read-only, no subprocess."""
 
-    def _call(self, project_dir, timeout, side_effect):
-        from worca.scripts.run_fleet import provision_target
-        with patch("worca.scripts.run_fleet.subprocess.run", side_effect=side_effect):
-            return provision_target(project_dir, timeout)
+    def test_ready_when_versions_match(self, tmp_path):
+        from worca.scripts.run_fleet import check_target_readiness
+        worca_dir = tmp_path / ".claude" / "worca"
+        worca_dir.mkdir(parents=True)
+        (worca_dir / "__init__.py").write_text('__version__ = "9.9.9"\n')
+        with patch("worca.__version__", "9.9.9"):
+            ready, reason = check_target_readiness(str(tmp_path))
+        assert ready is True
+        assert reason is None
 
-    def test_success_returns_true_no_error(self):
-        success, error = self._call("/repo/a", 60, [_completed()])
-        assert success is True
-        assert error is None
+    def test_unready_when_no_worca_dir(self, tmp_path):
+        from worca.scripts.run_fleet import check_target_readiness
+        with patch("worca.__version__", "9.9.9"):
+            ready, reason = check_target_readiness(str(tmp_path))
+        assert ready is False
+        assert "worca init" in reason
+        assert "no .claude/worca" in reason
 
-    def test_nonzero_exit_returns_false(self):
-        success, error = self._call(
-            "/repo/a", 60, [_completed(stderr="bad config", returncode=1)]
-        )
-        assert success is False
-        assert error is not None
+    def test_unready_when_versions_differ(self, tmp_path):
+        from worca.scripts.run_fleet import check_target_readiness
+        worca_dir = tmp_path / ".claude" / "worca"
+        worca_dir.mkdir(parents=True)
+        (worca_dir / "__init__.py").write_text('__version__ = "0.27.0"\n')
+        with patch("worca.__version__", "0.28.0"):
+            ready, reason = check_target_readiness(str(tmp_path))
+        assert ready is False
+        assert "0.27.0" in reason
+        assert "0.28.0" in reason
+        assert "worca init --upgrade" in reason
 
-    def test_nonzero_includes_stderr_in_error(self):
-        success, error = self._call(
-            "/repo/a", 60, [_completed(stderr="permission denied", returncode=2)]
-        )
-        assert success is False
-        assert "permission denied" in error
-
-    def test_timeout_returns_false(self):
-        from worca.scripts.run_fleet import provision_target
-        with patch(
-            "worca.scripts.run_fleet.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="worca", timeout=60),
-        ):
-            success, error = provision_target("/repo/a", 60)
-        assert success is False
-        assert error is not None
-
-    def test_timeout_message_mentions_seconds(self):
-        from worca.scripts.run_fleet import provision_target
-        with patch(
-            "worca.scripts.run_fleet.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="worca", timeout=30),
-        ):
-            _, error = provision_target("/repo/a", 30)
-        assert "30" in error
-
-    def test_timeout_message_mentions_unreachable(self):
-        from worca.scripts.run_fleet import provision_target
-        with patch(
-            "worca.scripts.run_fleet.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="worca", timeout=60),
-        ):
-            _, error = provision_target("/repo/a", 60)
-        assert "unreachable" in error
-
-    def test_calls_worca_init_upgrade(self):
-        from worca.scripts.run_fleet import provision_target
-        with patch("worca.scripts.run_fleet.subprocess.run") as mock_run:
-            mock_run.return_value = _completed()
-            provision_target("/repo/a", 60)
-        cmd = mock_run.call_args[0][0]
-        assert cmd == ["worca", "init", "--upgrade"]
-
-    def test_calls_with_project_as_cwd(self):
-        from worca.scripts.run_fleet import provision_target
-        with patch("worca.scripts.run_fleet.subprocess.run") as mock_run:
-            mock_run.return_value = _completed()
-            provision_target("/repo/a", 60)
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("cwd") == "/repo/a"
-
-    def test_uses_timeout_parameter(self):
-        from worca.scripts.run_fleet import provision_target
-        with patch("worca.scripts.run_fleet.subprocess.run") as mock_run:
-            mock_run.return_value = _completed()
-            provision_target("/repo/a", 45)
-        kwargs = mock_run.call_args[1]
-        assert kwargs.get("timeout") == 45
+    def test_does_not_mutate_target(self, tmp_path):
+        from worca.scripts.run_fleet import check_target_readiness
+        worca_dir = tmp_path / ".claude" / "worca"
+        worca_dir.mkdir(parents=True)
+        init_file = worca_dir / "__init__.py"
+        init_file.write_text('__version__ = "0.27.0"\n')
+        original_mtime = init_file.stat().st_mtime
+        original_contents = init_file.read_text()
+        with patch("worca.__version__", "0.28.0"):
+            check_target_readiness(str(tmp_path))
+        # The target file is untouched by the check — the whole point of the
+        # post-W-040 redesign is that fleet launches do NOT mutate targets.
+        assert init_file.read_text() == original_contents
+        assert init_file.stat().st_mtime == original_mtime
 
 
-class TestInitTimeoutFlag:
-    """--init-timeout flag for per-fleet init timeout."""
+class TestMainReadinessCheck:
+    """main() pre-flights every target before writing the manifest. Any
+    unready target aborts the whole fleet with exit code 1 — no dispatch,
+    no manifest write (or, when --fleet-id is set, the UI-pre-written
+    manifest is updated to halted with halt_reason='targets_not_ready')."""
 
-    def _parse(self, argv):
-        from worca.scripts.run_fleet import create_parser
-        return create_parser().parse_args(argv)
-
-    def test_init_timeout_flag(self):
-        args = self._parse([
-            "--projects", "/repo/a", "--prompt", "x",
-            "--init-timeout", "30",
-        ])
-        assert args.init_timeout == 30
-
-    def test_init_timeout_absent_default_is_none(self):
-        args = self._parse(["--projects", "/repo/a", "--prompt", "x"])
-        assert args.init_timeout is None
-
-
-class TestResolveInitTimeout:
-    """Unit tests for _resolve_init_timeout() — pure function, no I/O."""
-
-    def test_flag_takes_precedence_over_settings(self):
-        from worca.scripts.run_fleet import _resolve_init_timeout
-        result = _resolve_init_timeout(
-            30, {"worca": {"fleet": {"init_timeout_seconds": 90}}}
-        )
-        assert result == 30
-
-    def test_settings_used_when_flag_is_none(self):
-        from worca.scripts.run_fleet import _resolve_init_timeout
-        result = _resolve_init_timeout(
-            None, {"worca": {"fleet": {"init_timeout_seconds": 90}}}
-        )
-        assert result == 90
-
-    def test_default_60_when_settings_empty(self):
-        from worca.scripts.run_fleet import _resolve_init_timeout
-        result = _resolve_init_timeout(None, {})
-        assert result == 60
-
-    def test_default_60_when_fleet_key_absent(self):
-        from worca.scripts.run_fleet import _resolve_init_timeout
-        result = _resolve_init_timeout(None, {"worca": {"guide": {"max_bytes": 65536}}})
-        assert result == 60
-
-
-class TestMainProvisioning:
-    """main() provisions each target with worca init --upgrade before dispatch."""
-
-    def test_provision_called_for_each_project(self):
+    def test_check_called_for_each_project(self):
         from worca.scripts.run_fleet import main
         with (
-            patch("worca.scripts.run_fleet.provision_target") as mock_prov,
+            patch("worca.scripts.run_fleet.check_target_readiness") as mock_check,
             patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
             patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
         ):
-            mock_prov.return_value = (True, None)
+            mock_check.return_value = (True, None)
             result = main(["--projects", "/repo/a", "/repo/b", "--prompt", "x"])
-        assert mock_prov.call_count == 2
+        assert mock_check.call_count == 2
         assert result == 0
 
-    def test_provision_uses_init_timeout_flag(self):
+    def test_unready_target_aborts_with_nonzero_exit(self):
         from worca.scripts.run_fleet import main
         with (
-            patch("worca.scripts.run_fleet.provision_target") as mock_prov,
-            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
-            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+            patch("worca.scripts.run_fleet.check_target_readiness") as mock_check,
+            patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch,
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest") as mock_write,
         ):
-            mock_prov.return_value = (True, None)
-            main(["--projects", "/repo/a", "--prompt", "x", "--init-timeout", "30"])
-        assert mock_prov.call_args[0][1] == 30
+            mock_check.return_value = (False, "no .claude/worca/ found")
+            result = main(["--projects", "/repo/a", "--prompt", "x"])
+        assert result == 1
+        # Critical: nothing got written and nothing got dispatched.
+        mock_write.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    def test_provision_uses_default_timeout_60(self):
+    def test_one_unready_aborts_whole_fleet(self):
         from worca.scripts.run_fleet import main
         with (
-            patch("worca.scripts.run_fleet.provision_target") as mock_prov,
-            patch("worca.scripts.run_fleet._load_global_settings", return_value={}),
-            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
-            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+            patch("worca.scripts.run_fleet.check_target_readiness") as mock_check,
+            patch("worca.scripts.run_fleet.dispatch_fleet") as mock_dispatch,
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest") as mock_write,
         ):
-            mock_prov.return_value = (True, None)
-            main(["--projects", "/repo/a", "--prompt", "x"])
-        assert mock_prov.call_args[0][1] == 60
-
-    def test_setup_failed_does_not_halt_fleet(self):
-        from worca.scripts.run_fleet import main
-        with (
-            patch("worca.scripts.run_fleet.provision_target") as mock_prov,
-            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
-            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
-        ):
-            mock_prov.side_effect = [
-                (False, "init exceeded 60s — target may be unreachable"),
+            mock_check.side_effect = [
                 (True, None),
+                (False, "no .claude/worca/ found"),
             ]
             result = main(["--projects", "/repo/a", "/repo/b", "--prompt", "x"])
-        assert result == 0
-        assert mock_prov.call_count == 2
+        assert result == 1
+        mock_write.assert_not_called()
+        mock_dispatch.assert_not_called()
 
-    def test_setup_failed_prints_to_stderr(self, capsys):
+    def test_unready_prints_per_target_reason(self, capsys):
         from worca.scripts.run_fleet import main
         with (
-            patch("worca.scripts.run_fleet.provision_target") as mock_prov,
-            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
+            patch("worca.scripts.run_fleet.check_target_readiness") as mock_check,
+            patch("worca.scripts.run_fleet.dispatch_fleet"),
             patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
         ):
-            mock_prov.return_value = (False, "some init error")
+            mock_check.return_value = (False, "version 0.27.0 mismatch")
             main(["--projects", "/repo/a", "--prompt", "x"])
-        captured = capsys.readouterr()
-        output = captured.err + captured.out
-        assert "setup_failed" in output or "some init error" in output
+        err = capsys.readouterr().err
+        assert "/repo/a" in err
+        assert "version 0.27.0 mismatch" in err
+        # The error message should also point at the manual fix.
+        assert "fleet aborted" in err.lower()
+
+    def test_unready_with_fleet_id_marks_manifest_halted(self):
+        # When the UI invokes run_fleet.py with --fleet-id, the manifest is
+        # already written and the dashboard is watching. We must update it
+        # so the user sees a clear halt reason instead of a stuck-on-running
+        # record.
+        from worca.scripts.run_fleet import main
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness") as mock_check,
+            patch("worca.scripts.run_fleet.update_fleet_status") as mock_update,
+            patch("worca.scripts.run_fleet.dispatch_fleet"),
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+        ):
+            mock_check.return_value = (False, "no .claude/worca/ found")
+            result = main([
+                "--projects", "/repo/a",
+                "--prompt", "x",
+                "--fleet-id", "f_202601011200_abc12345",
+            ])
+        assert result == 1
+        mock_update.assert_called_once_with(
+            "f_202601011200_abc12345",
+            "halted",
+            halt_reason="targets_not_ready",
+        )
+
+    def test_unready_without_fleet_id_does_not_call_update_status(self):
+        from worca.scripts.run_fleet import main
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness") as mock_check,
+            patch("worca.scripts.run_fleet.update_fleet_status") as mock_update,
+            patch("worca.scripts.run_fleet.dispatch_fleet"),
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+        ):
+            mock_check.return_value = (False, "no .claude/worca/ found")
+            main(["--projects", "/repo/a", "--prompt", "x"])
+        mock_update.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -541,7 +499,7 @@ class TestMainWritesFleetManifest:
     def test_manifest_written_when_projects_provided(self, tmp_path):
         from worca.scripts.run_fleet import main
         with (
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest"
             ) as mock_write,
@@ -557,7 +515,7 @@ class TestMainWritesFleetManifest:
             written.update(manifest)
 
         with (
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest",
                 side_effect=capture,
@@ -575,7 +533,7 @@ class TestMainWritesFleetManifest:
             written.update(manifest)
 
         with (
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest",
                 side_effect=capture,
@@ -593,7 +551,7 @@ class TestMainWritesFleetManifest:
             written.update(manifest)
 
         with (
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest",
                 side_effect=capture,
@@ -613,7 +571,7 @@ class TestMainWritesFleetManifest:
             written.update(manifest)
 
         with (
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest",
                 side_effect=capture,
@@ -635,7 +593,7 @@ class TestMainWritesFleetManifest:
             written.update(manifest)
 
         with (
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest",
                 side_effect=capture,
@@ -656,7 +614,7 @@ class TestMainWritesFleetManifest:
             written.update(manifest)
 
         with (
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest",
                 side_effect=capture,
@@ -678,7 +636,7 @@ class TestMainWritesFleetManifest:
 
         with (
             patch("worca.scripts.run_fleet.validate_base_branch", return_value=[]),
-            patch("worca.scripts.run_fleet.provision_target", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
             patch(
                 "worca.orchestrator.fleet_manifest.write_fleet_manifest",
                 side_effect=capture,

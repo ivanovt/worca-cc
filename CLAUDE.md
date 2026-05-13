@@ -336,7 +336,6 @@ python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
 | `--max-parallel N` | Maximum concurrent child pipelines (default: 5) |
 | `--fleet-failure-threshold RATIO` | Failure ratio that trips the circuit breaker and halts unstarted children (default: 0.30) |
 | `--resume FLEET_ID` | Resume a halted/failed fleet by re-launching failed/pending children |
-| `--init-timeout SECONDS` | Per-target `worca init --upgrade` timeout (default: 60) |
 
 `--branch` is explicitly rejected — use `--base` for the PR base branch and `--head-template` for the per-child head branch name.
 

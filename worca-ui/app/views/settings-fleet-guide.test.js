@@ -49,18 +49,17 @@ describe('Fleet & Guide section', () => {
       expect(result.fleet.failure_threshold).toBeCloseTo(0.5);
     });
 
-    it('reads fleet.init_timeout_seconds', () => {
-      const elements = { 'fleet-init-timeout': { value: '120' } };
+    it('does not emit init_timeout_seconds (removed — no auto-init in fleets)', () => {
+      const elements = { 'fleet-max-parallel': { value: '5' } };
       globalThis.document.getElementById = (id) => elements[id] || null;
       const result = readPipelineFromDom();
-      expect(result.fleet.init_timeout_seconds).toBe(120);
+      expect(result.fleet).not.toHaveProperty('init_timeout_seconds');
     });
 
-    it('defaults: max_parallel=5, failure_threshold=0.30, init_timeout=60', () => {
+    it('defaults: max_parallel=5, failure_threshold=0.30', () => {
       const result = readPipelineFromDom();
       expect(result.fleet.max_parallel).toBe(5);
       expect(result.fleet.failure_threshold).toBeCloseTo(0.3);
-      expect(result.fleet.init_timeout_seconds).toBe(60);
     });
   });
 });

@@ -287,7 +287,6 @@
       "max_bytes": 131072
     },
     "fleet": {
-      "init_timeout_seconds": 60,
       "max_parallel": 5,
       "failure_threshold": 0.30
     }

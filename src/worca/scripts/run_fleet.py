@@ -60,36 +60,50 @@ def validate_base_branch(projects: list, base: str) -> list:
     return missing
 
 
-def provision_target(project_dir: str, timeout: int) -> tuple:
-    """Run ``worca init --upgrade`` in *project_dir* with the given timeout.
+def check_target_readiness(project_dir: str) -> tuple[bool, str | None]:
+    """Verify *project_dir* is worca-ready for fleet dispatch (read-only).
 
-    Returns ``(True, None)`` on success, or ``(False, error_message)`` on any
-    failure including subprocess timeout. The fleet continues regardless — the
-    caller is responsible for tracking setup_failed targets.
+    Replaces the prior ``provision_target`` step which silently ran
+    ``worca init --upgrade`` in every target. The fleet runner no longer
+    mutates target projects on launch — users must initialise / upgrade
+    each project explicitly. This function only checks that:
+
+      1. ``<project_dir>/.claude/worca/__init__.py`` exists
+      2. Its ``__version__`` matches the fleet runner's installed
+         ``worca`` package version
+
+    Returns ``(True, None)`` when both hold, or ``(False, reason)`` with a
+    human-readable explanation that points the user at the fix command.
     """
-    try:
-        result = subprocess.run(
-            ["worca", "init", "--upgrade"],
-            cwd=project_dir,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        return False, f"init exceeded {timeout}s — target may be unreachable"
+    # Late import: cli.init is heavy and only needed for pre-flight.
+    from pathlib import Path
+    from worca.cli.init import read_version
 
-    if result.returncode != 0:
-        error = result.stderr.strip() or f"worca init exited with code {result.returncode}"
-        return False, error
+    target = Path(project_dir) / ".claude" / "worca"
+    project_version = read_version(target) if target.exists() else None
+
+    try:
+        import worca as _worca_pkg
+        installed_version = _worca_pkg.__version__
+    except (ImportError, AttributeError):
+        # No installed worca package — we can't compute the expected version,
+        # so the only way to be definitive is to say the host is misconfigured.
+        return False, "worca-cc not installed on the fleet host"
+
+    if project_version is None:
+        return False, (
+            "no .claude/worca/ found — run `worca init` in this project "
+            "before launching the fleet"
+        )
+
+    if project_version != installed_version:
+        return False, (
+            f".claude/worca/ is on {project_version}, fleet host has "
+            f"{installed_version} — run `worca init --upgrade` in this "
+            f"project before launching the fleet"
+        )
 
     return True, None
-
-
-def _resolve_init_timeout(timeout_flag, settings: dict) -> int:
-    """Resolve effective init timeout: --init-timeout > settings > 60."""
-    if timeout_flag is not None:
-        return timeout_flag
-    return settings.get("worca", {}).get("fleet", {}).get("init_timeout_seconds", 60)
 
 
 def build_child_env(base_env: dict, *, fleet_id: str | None = None) -> dict:
@@ -443,12 +457,6 @@ def resume_fleet(fleet_id: str) -> int:
     return 0
 
 
-def _load_global_settings() -> dict:
-    """Load fleet-level settings from ~/.worca/settings.json."""
-    from worca.utils.settings import load_settings
-    return load_settings(os.path.expanduser("~/.worca/settings.json"))
-
-
 class _RejectBranch(argparse.Action):
     """Custom action that immediately errors when --branch is supplied."""
 
@@ -574,18 +582,6 @@ def create_parser() -> argparse.ArgumentParser:
         help="Use this pre-generated fleet id instead of generating one (UI integration)",
     )
 
-    # Provisioning (§2)
-    parser.add_argument(
-        "--init-timeout",
-        type=int,
-        default=None,
-        metavar="SECONDS",
-        help=(
-            "Per-target worca init --upgrade timeout in seconds "
-            "(overrides worca.fleet.init_timeout_seconds; default: 60)"
-        ),
-    )
-
     return parser
 
 
@@ -624,20 +620,39 @@ def main(argv=None) -> int:
                 )
                 return 1
 
-    # Per-target provisioning: worca init --upgrade (§2)
+    # Per-target readiness check (§2, post-W-040): the fleet must NOT mutate
+    # target projects. We verify every selected project has a `.claude/worca/`
+    # that matches the fleet host's installed worca version, and abort the
+    # whole fleet if any target is unready. Users run `worca init` /
+    # `worca init --upgrade` manually before launching.
     projects = list(args.projects or [])
-    setup_failed = []
     if projects:
-        settings = _load_global_settings()
-        init_timeout = _resolve_init_timeout(args.init_timeout, settings)
+        unready: list[tuple[str, str]] = []
         for project in projects:
-            success, error = provision_target(project, init_timeout)
-            if not success:
-                print(
-                    f"setup_failed: {project}: {error}",
-                    file=sys.stderr,
+            ready, reason = check_target_readiness(project)
+            if not ready:
+                unready.append((project, reason))
+
+        if unready:
+            print(
+                "error: fleet aborted — some targets are not worca-ready:",
+                file=sys.stderr,
+            )
+            for project, reason in unready:
+                print(f"  {project}: {reason}", file=sys.stderr)
+
+            # If the UI pre-wrote a manifest (because it owns the fleet_id),
+            # mark it halted so the dashboard surfaces a clear failure state
+            # rather than a stuck-on-running record. CLI launches with no
+            # prior manifest just exit non-zero.
+            if args.fleet_id:
+                update_fleet_status(
+                    args.fleet_id,
+                    "halted",
+                    halt_reason="targets_not_ready",
                 )
-                setup_failed.append(project)
+            return 1
+    setup_failed: list[str] = []
 
     # Write initial fleet manifest (§10)
     if projects and not args.resume:

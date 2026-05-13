@@ -21,7 +21,7 @@ A fleet is a fan-out **launcher + state machine** wrapping N independent single-
 | # | Phase | Where | What happens |
 |---|---|---|---|
 | 1 | **Submit** | `POST /api/fleet-runs` (UI) or `run_fleet.py` (CLI) | Fleet ID generated as `f_<yyyymmddhhmm>_<hex>`. UI uploads any guide files to `~/.worca/fleet-runs/<fleet_id>/guides/`. Server spawns `run_fleet.py` detached and returns immediately. |
-| 2 | **Pre-flight** | `run_fleet.py:main` | `--base` branch existence validated across every target (any missing → abort). Each target gets `worca init --upgrade` (default 60 s timeout). Targets that fail init are marked `setup_failed` and excluded from dispatch; the rest of the fleet still launches. |
+| 2 | **Pre-flight** | `run_fleet.py:main` | `--base` branch existence validated across every target (any missing → abort). Each target's `.claude/worca/__init__.py` is read and its version is compared to the fleet host's installed `worca` package; **any mismatched or missing target aborts the entire fleet** (no manifest written, no dispatch). Users run `worca init` / `worca init --upgrade` manually before launching — the fleet runner never mutates target projects. |
 | 3 | **Manifest write** | `~/.worca/fleet-runs/<fleet_id>.json` | Initial manifest captures launch params + `status: "running"` + empty `children: []`. From here the fleet is observable to the UI. |
 | 4 | **Plan-first (optional)** | `run_plan_first` | Only when `--plan-first` was passed. Synchronous, single child — runs the Planner on a reference project, polls its worktree for `MASTER_PLAN.md` (1 h timeout), copies the plan to the fleet dir for the remaining children. If the reference Planner fails: fleet is marked `halted` with `halt_reason: "plan_first_failed"` and never fans out. |
 | 5 | **Dispatch** | `dispatch_fleet` | Semaphore loop maintains up to `max_parallel` `subprocess.Popen` children, each running `run_worktree.py --fleet-id <fid> [...]` in its own worktree. Polls every 200 ms. Free slots get the next pending project. |
@@ -275,13 +275,37 @@ When the breaker trips, the fleet manifest is marked `halted` with `halt_reason:
 
 The dashboard surfaces a warning badge ("Halted — circuit breaker") and shows how many children were halted before starting. From there you can investigate the failures, fix the issue, and resume.
 
-## Target provisioning
+## Target readiness
 
-Before dispatching each child, `run_fleet.py` runs `worca init --upgrade` in the target project. This is non-destructive (preserves user `settings.json`, updates worca-owned files only) and idempotent.
+Before dispatching, `run_fleet.py` runs a **read-only readiness check** against every selected target:
 
-Targets that fail provisioning are marked `setup_failed` and skipped; the fleet continues with the rest.
+1. Reads `<project>/.claude/worca/__init__.py` and extracts `__version__`
+2. Compares it to the fleet host's installed `worca` package version
+3. Marks the target unready if `.claude/worca/` is missing or the versions don't match
 
-**Per-target init timeout** defaults to 60 seconds. Override with `--init-timeout SECONDS` or `worca.fleet.init_timeout_seconds` in `settings.json`.
+**Any unready target aborts the entire fleet.** No manifest is written, no children are dispatched. The error message lists each unready project with the fix command:
+
+```
+error: fleet aborted — some targets are not worca-ready:
+  /repos/repo-a: no .claude/worca/ found — run `worca init` in this project before launching the fleet
+  /repos/repo-b: .claude/worca/ is on 0.27.0, fleet host has 0.28.0 — run `worca init --upgrade` in this project before launching the fleet
+```
+
+When the launcher invokes `run_fleet.py` with a pre-allocated `--fleet-id` (the UI path), the failed pre-flight updates the manifest to `status: "halted"` with `halt_reason: "targets_not_ready"` so the dashboard surfaces a clear failure state instead of a stuck-on-running record.
+
+### Why no auto-upgrade
+
+Earlier W-040 revisions ran `worca init --upgrade` as part of the fleet pre-flight, which would silently homogenise every selected project to the fleet host's version. That's a load-bearing mutation across N repos triggered from a single click — it can rewrite `settings.json`, migrate file paths, or run agent-override migrations on projects that the user didn't intend to touch in this launch. The current behaviour is the opposite: **the fleet runner never writes to a target project**. Projects must be on the host's worca version explicitly, and the user is responsible for getting them there with whatever cadence and review they want.
+
+To upgrade many projects at once, run a per-project loop yourself:
+
+```bash
+for p in /repos/*; do
+  (cd "$p" && worca init --upgrade)
+done
+```
+
+…or install whatever per-project automation matches your release process.
 
 ## Resume
 

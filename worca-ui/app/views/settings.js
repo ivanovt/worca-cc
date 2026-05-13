@@ -537,8 +537,6 @@ export function readPipelineFromDom() {
     failure_threshold:
       parseFloat(document.getElementById('fleet-failure-threshold')?.value) ||
       0.3,
-    init_timeout_seconds:
-      parseInt(document.getElementById('fleet-init-timeout')?.value, 10) || 60,
   };
 
   return {
@@ -937,11 +935,6 @@ function pipelineTab(worca, rerender) {
           <label class="settings-label">Fleet Failure Threshold</label>
           <sl-input id="fleet-failure-threshold" type="number" step="0.05" value="${fleet.failure_threshold ?? 0.3}" size="small" min="0" max="1"></sl-input>
           <span class="settings-field-hint">Failure ratio that trips the fleet circuit breaker and halts unstarted children. Default 0.30 (30%).</span>
-        </div>
-        <div class="settings-field">
-          <label class="settings-label">Fleet Init Timeout (seconds)</label>
-          <sl-input id="fleet-init-timeout" type="number" value="${fleet.init_timeout_seconds ?? 60}" size="small" min="10" max="600"></sl-input>
-          <span class="settings-field-hint">Per-target worca init --upgrade timeout. Hung targets are marked setup_failed and the fleet continues.</span>
         </div>
       </div>
 
