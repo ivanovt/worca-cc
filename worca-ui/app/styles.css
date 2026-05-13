@@ -2921,6 +2921,16 @@ sl-details.run-beads-panel::part(content) {
   border: 1px solid var(--border-subtle);
 }
 
+/* Default badge layout: when a badge contains an icon + text (e.g. the
+   pipeline-page header status badge "<icon> Completed"), the children
+   sit flush against each other. Give them a small gap. Single-child
+   badges are unaffected because flex+gap only manifests between siblings. */
+sl-badge::part(base) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .run-bead-row sl-badge::part(base) {
   font-size: 0.68rem;
   padding: 0 5px;
