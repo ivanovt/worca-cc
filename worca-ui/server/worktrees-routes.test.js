@@ -258,6 +258,76 @@ describe('GET /api/worktrees', () => {
     }
   });
 
+  it('GET_reconciles_dead_pid_to_interrupted: running entry with dead pid + no status.json → interrupted', async () => {
+    // Reproduces the orphan worktree case observed in the wild: a fleet
+    // child registered itself (status=running, pid=N) but the spawned
+    // run_pipeline.py died before .worca/runs/<id>/ existed. The list
+    // endpoint should detect the dead pid and downgrade to "interrupted",
+    // patching the registry so subsequent reads stay consistent.
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const worktreePath = mkdtempSync(join(tmpdir(), 'wt-orphan-'));
+    // Intentionally do NOT create .worca/runs/<id>/status.json.
+    // PID 1 is alive on every POSIX system, so pick an obviously-dead high
+    // pid that we then verify is absent. 2**22 - 1 is well above the
+    // typical pid_max on macOS (~99999) but well below what node accepts.
+    const deadPid = 2 ** 22 - 1;
+    try {
+      process.kill(deadPid, 0);
+      // unexpectedly alive — pick another. The test is best-effort.
+    } catch {
+      // expected — process is dead, fine.
+    }
+    writePipelineEntry(tmpDir, 'run-orphan', {
+      run_id: 'run-orphan',
+      worktree_path: worktreePath,
+      status: 'running',
+      pid: deadPid,
+    });
+
+    try {
+      const res = await fetch(`${base}/api/worktrees`);
+      const data = await res.json();
+      const wt = data.worktrees.find((w) => w.run_id === 'run-orphan');
+      expect(wt.status).toBe('interrupted');
+      expect(wt.removable).toBe(true);
+
+      // Registry was patched in place
+      const regFile = path.join(
+        tmpDir,
+        'multi',
+        'pipelines.d',
+        'run-orphan.json',
+      );
+      const reg = JSON.parse(fs.readFileSync(regFile, 'utf-8'));
+      expect(reg.status).toBe('interrupted');
+      expect(reg.interrupted_reason).toBe('stale_pid');
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('GET_does_not_reconcile_without_pid: running entry without a pid is left alone', async () => {
+    // A registry entry that lacks a pid is either from a fixture or an
+    // older format; we cannot make liveness claims, so reconciliation
+    // must not fire (it would otherwise flip every pid-less entry to
+    // "interrupted" the first time the worktrees view is opened).
+    const worktreePath = mkdtempSync(join(tmpdir(), 'wt-nopid-'));
+    writePipelineEntry(tmpDir, 'run-nopid', {
+      run_id: 'run-nopid',
+      worktree_path: worktreePath,
+      status: 'running',
+    });
+    try {
+      const res = await fetch(`${base}/api/worktrees`);
+      const data = await res.json();
+      const wt = data.worktrees.find((w) => w.run_id === 'run-nopid');
+      expect(wt.status).toBe('running');
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
+
   it('GET_skips_entries_without_worktree_path: ignores registry entries lacking worktree_path', async () => {
     writePipelineEntry(tmpDir, 'run-no-wt', {
       run_id: 'run-no-wt',

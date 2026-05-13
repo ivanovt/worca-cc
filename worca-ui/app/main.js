@@ -2179,6 +2179,24 @@ function mainContentView() {
       navigate(route.section, null, route.projectId);
       return html``;
     }
+    // Orphan run (e.g. child that died before writing status.json): runs
+    // are loaded but this id isn't there. Show an empty-state instead of
+    // rendering run-detail with run=undefined (which silently breaks).
+    if (!run && state.runsLoaded) {
+      return html`
+        <div class="run-detail run-detail-layout">
+          <div class="run-detail-layout__overview">
+            <sl-alert variant="warning" open>
+              <strong>Run not found.</strong>
+              No <code>status.json</code> exists for
+              <code>${route.runId}</code> — it may have been an orphan worktree
+              whose pipeline died before writing run state. Clean it up from the
+              <a href="#/worktrees" @click=${() => navigate('worktrees')}>Worktrees</a> view.
+            </sl-alert>
+          </div>
+        </div>
+      `;
+    }
     // Compute iteration counts per stage from run status
     const stageIterations = {};
     if (run?.stages) {

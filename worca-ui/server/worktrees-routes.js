@@ -262,6 +262,17 @@ function _patchRegistry(worcaDir, runId, patch) {
   }
 }
 
+function _isPidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    if (err.code === 'EPERM') return true;
+    return false;
+  }
+}
+
 async function _listWorktrees(worcaDir) {
   const pipelinesDir = join(worcaDir, 'multi', 'pipelines.d');
   if (!existsSync(pipelinesDir)) return [];
@@ -288,6 +299,29 @@ async function _listWorktrees(worcaDir) {
     if (worktreeExists) {
       const actual = _readWorktreeStatus(worktreePath);
       if (actual) status = actual;
+    }
+
+    // Stale-registry reconciliation: a child can die before ever writing
+    // status.json (e.g. fleet halt right after dispatch, preflight crash,
+    // SIGKILL). In that case the worktree exists but .worca/runs/ doesn't,
+    // _readWorktreeStatus returns null, and we'd fall back to reg.status
+    // which may still say "running" with a dead pid. Treat that as
+    // "interrupted" and patch the registry so this only happens once.
+    //
+    // Only reconcile when reg.pid is present — a missing pid means the
+    // entry is either from a non-standard registration path (e.g. test
+    // fixtures) or pre-dates the pid-on-registration contract, so we
+    // can't make liveness claims about it.
+    if (
+      status === 'running' &&
+      typeof reg.pid === 'number' &&
+      !_isPidAlive(reg.pid)
+    ) {
+      status = 'interrupted';
+      _patchRegistry(worcaDir, reg.run_id, {
+        status: 'interrupted',
+        interrupted_reason: 'stale_pid',
+      });
     }
 
     let ageSeconds = 0;
