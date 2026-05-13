@@ -69,7 +69,6 @@ export function guideUploadWidget(
             : null
         }
       >
-        <span class="guide-drop-label">Drop guide files here or</span>
         <sl-button
           size="small"
           variant="default"
@@ -88,7 +87,7 @@ export function guideUploadWidget(
                 }
               : null
           }
-        >Browse</sl-button>
+        >Browse files</sl-button>
       </div>
       ${
         guides.length > 0
