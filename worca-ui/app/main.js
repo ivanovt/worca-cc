@@ -95,6 +95,23 @@ import '@shoelace-style/shoelace/dist/components/radio-group/radio-group.js';
 import '@shoelace-style/shoelace/dist/components/radio/radio.js';
 import '@shoelace-style/shoelace/dist/components/checkbox/checkbox.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
+// Dropdown + menu power the sidebar's "+ New" picker. Without these the
+// custom elements stay unregistered and the <sl-menu-item> children bleed
+// inline as plain text (observed: "New Fleet" rendering below the trigger).
+import '@shoelace-style/shoelace/dist/components/dropdown/dropdown.js';
+import '@shoelace-style/shoelace/dist/components/menu/menu.js';
+import '@shoelace-style/shoelace/dist/components/menu-item/menu-item.js';
+// sl-icon / sl-icon-button: status indicators and toggle controls used in
+// fleet detail, group-rendering, settings, run-card.
+import '@shoelace-style/shoelace/dist/components/icon/icon.js';
+import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
+// sl-card: PR approval panel in run-detail.
+import '@shoelace-style/shoelace/dist/components/card/card.js';
+// sl-progress-bar / sl-range / sl-tag: fleet header progress bar, fleet
+// launcher circuit-breaker threshold slider, fleet-detail guide filenames.
+import '@shoelace-style/shoelace/dist/components/progress-bar/progress-bar.js';
+import '@shoelace-style/shoelace/dist/components/range/range.js';
+import '@shoelace-style/shoelace/dist/components/tag/tag.js';
 
 const store = createStore();
 

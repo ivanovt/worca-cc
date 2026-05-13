@@ -2504,6 +2504,16 @@ sl-option.template-grouped:focus::part(suffix) {
   padding: 8px 8px 4px;
 }
 
+/* sl-dropdown is inline-block by default — make the wrapper fill the
+   sidebar column so the dashed-border "+ New" trigger keeps its
+   full-width prominence. (Before the sl-dropdown component was
+   imported, the unregistered <sl-dropdown> element fell back to an
+   anonymous block which let the trigger expand naturally.) */
+.sidebar-new-run-dropdown {
+  display: block;
+  width: 100%;
+}
+
 .sidebar-new-run-btn {
   display: flex;
   align-items: center;
