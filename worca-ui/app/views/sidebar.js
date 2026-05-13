@@ -193,22 +193,20 @@ export function sidebarView(
         // of the time. Right half is a chevron that opens a menu of
         // multi-project alternatives (Fleet now, Workspace once W-047
         // lands). Pattern A from the W-040 UX discussion.
-        const primaryEnabled =
-          !atCapacity && (currentProjectId || (projects || []).length <= 1);
-        const primaryTitle = !primaryEnabled
-          ? atCapacity
-            ? 'Pipeline capacity reached'
-            : 'Select a project first to start a single-project pipeline'
-          : '';
+        //
+        // The primary half is gated only by the global capacity cap; the
+        // launcher itself handles the "no project selected" case (in
+        // global mode it surfaces a project picker before submit).
+        const primaryTitle = atCapacity ? 'Pipeline capacity reached' : '';
         return html`
           <div class="sidebar-new-run">
             <div class="sidebar-new-run-split">
               <button
                 type="button"
                 class="sidebar-new-run-btn-primary"
-                ?disabled=${!primaryEnabled}
+                ?disabled=${atCapacity}
                 title=${primaryTitle}
-                @click=${primaryEnabled ? () => onNavigate('new-run') : null}
+                @click=${atCapacity ? null : () => onNavigate('new-run')}
               >
                 ${unsafeHTML(iconSvg(Plus, 14))}
                 <span>New Pipeline</span>

@@ -249,17 +249,14 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
     expect(output).toContain('New Fleet');
   });
 
-  // Helper: extract the <button> opening tag (everything up to the matching
-  // close `>` that's not inside a quoted attribute) for the given class so
-  // assertions on `disabled`/`title` stay scoped to that one tag.
-  function buttonTag(html, className) {
-    const re = new RegExp(`<button[^>]*class="[^"]*${className}[^"]*"[^>]*>`);
-    return html.match(re)?.[0] ?? '';
-  }
-
-  it('primary "New Pipeline" button is disabled in global mode with multiple projects', async () => {
-    // Without a project context a single-project pipeline can't be
-    // launched; the primary half goes disabled with a tooltip.
+  it('primary "New Pipeline" button stays clickable in global mode with no project selected', async () => {
+    // The primary half is no longer gated on project context — it always
+    // navigates to /new-run, and the launcher view handles the "pick a
+    // project" prompt for global-mode-multi. Only capacity disables it.
+    // We can't reliably assert on the ?disabled boolean binding via the
+    // renderToString string form (lit-html's ?attr= literal stays in the
+    // source); the user-visible signal we *can* check is the project-gate
+    // tooltip — if the gate is gone the tooltip text shouldn't render.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       currentProjectId: null,
@@ -271,9 +268,8 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    const primaryTag = buttonTag(output, 'sidebar-new-run-btn-primary');
-    expect(primaryTag).toContain('disabled');
-    expect(output).toContain('Select a project first');
+    expect(output).toContain('sidebar-new-run-btn-primary');
+    expect(output).not.toContain('Select a project first');
   });
 
   it('chevron is always rendered in global mode (Fleet creation needs no project)', async () => {
