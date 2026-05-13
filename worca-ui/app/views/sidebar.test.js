@@ -296,22 +296,25 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
 });
 
 describe('sidebar - Fleets nav entry', () => {
-  it('Fleets entry hidden when state.fleets is absent', async () => {
+  // The Fleets entry is always-shown for UX consistency with its peer list
+  // entries (Running, History, Worktrees) — the empty-state experience is
+  // owned by the /fleet-runs view, not by hiding the navigation.
+  it('Fleets entry visible when state.fleets is absent', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).not.toContain('>Fleets<');
+    expect(output).toContain('>Fleets<');
   });
 
-  it('Fleets entry hidden when state.fleets is empty', async () => {
+  it('Fleets entry visible when state.fleets is empty', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({ fleets: [] });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).not.toContain('>Fleets<');
+    expect(output).toContain('>Fleets<');
   });
 
   it('Fleets entry visible when fleets array is non-empty', async () => {
@@ -323,6 +326,25 @@ describe('sidebar - Fleets nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('>Fleets<');
+  });
+
+  it('Fleets badge hidden when no running/halted fleets exist', async () => {
+    // Empty / terminal-only fleet sets produce no badge — the entry stays
+    // visible but stays quiet (matches Worktrees/History when at zero).
+    const { sidebarView } = await import('./sidebar.js');
+    const stateEmpty = makeState({ fleets: [] });
+    const out1 = renderToString(
+      sidebarView(stateEmpty, route, 'open', defaultOpts()),
+    );
+    expect(out1).not.toContain('fleets-count-badge');
+
+    const stateTerminal = makeState({
+      fleets: [{ fleet_id: 'f1', status: 'completed' }],
+    });
+    const out2 = renderToString(
+      sidebarView(stateTerminal, route, 'open', defaultOpts()),
+    );
+    expect(out2).not.toContain('fleets-count-badge');
   });
 
   it('Fleets badge counts running + halted (the attention set)', async () => {

@@ -117,7 +117,6 @@ export function sidebarView(
   );
   const worktreeDiskWarning = totalWorktreeDisk > diskWarningThreshold;
 
-  const fleetCount = fleets.length;
   const runningFleetCount = fleets.filter((f) => f.status === 'running').length;
   const haltedFleetCount = fleets.filter((f) => f.status === 'halted').length;
   // Badge surfaces fleets that need operator attention: running (active work)
@@ -287,24 +286,18 @@ export function sidebarView(
                 : ''
           }
         </div>
-        ${
-          fleetCount > 0
-            ? html`
-              <div class="sidebar-item ${route.section === 'fleet-runs' ? 'active' : ''}"
-                   @click=${() => onNavigate('fleet-runs')}>
-                <span class="sidebar-item-left">
-                  ${unsafeHTML(iconSvg(Workflow, 16))}
-                  <span>Fleets</span>
-                </span>
-                ${
-                  showFleetBadge
-                    ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
-                    : ''
-                }
-              </div>
-            `
-            : ''
-        }
+        <div class="sidebar-item ${route.section === 'fleet-runs' ? 'active' : ''}"
+             @click=${() => onNavigate('fleet-runs')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Workflow, 16))}
+            <span>Fleets</span>
+          </span>
+          ${
+            showFleetBadge
+              ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
+              : ''
+          }
+        </div>
       </div>
 
       <div class="sidebar-section">
