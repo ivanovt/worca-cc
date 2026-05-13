@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Activity,
   Archive,
+  ChevronDown,
   Coins,
   GitBranch,
   iconSvg,
@@ -186,30 +187,63 @@ export function sidebarView(
           : ''
       }
 
-      <div class="sidebar-new-run">
-        <sl-dropdown class="sidebar-new-run-dropdown">
-          <button
-            slot="trigger"
-            type="button"
-            class="sidebar-new-run-btn"
-            ?disabled=${atCapacity}
-          >
-            ${unsafeHTML(iconSvg(Plus, 14))}
-            <span>New</span>
-          </button>
-          <sl-menu>
-            ${
-              // New Pipeline requires a current project (single-project pipelines
-              // can't target "All Projects"). New Fleet is the opposite — it
-              // needs global mode with multiple projects, so it's always shown.
-              currentProjectId || (projects || []).length <= 1
-                ? html`<sl-menu-item class="menu-item-new-pipeline" @click=${() => onNavigate('new-run')}>New Pipeline</sl-menu-item>`
-                : ''
-            }
-            <sl-menu-item class="menu-item-new-fleet" @click=${() => onNavigate('fleet-runs/new')}>New Fleet</sl-menu-item>
-          </sl-menu>
-        </sl-dropdown>
-      </div>
+      ${(() => {
+        // Split-button "+ New" affordance. Left half is the primary
+        // action (single-project pipeline) — what most users want most
+        // of the time. Right half is a chevron that opens a menu of
+        // multi-project alternatives (Fleet now, Workspace once W-047
+        // lands). Pattern A from the W-040 UX discussion.
+        const primaryEnabled =
+          !atCapacity && (currentProjectId || (projects || []).length <= 1);
+        const primaryTitle = !primaryEnabled
+          ? atCapacity
+            ? 'Pipeline capacity reached'
+            : 'Select a project first to start a single-project pipeline'
+          : '';
+        return html`
+          <div class="sidebar-new-run">
+            <div class="sidebar-new-run-split">
+              <button
+                type="button"
+                class="sidebar-new-run-btn-primary"
+                ?disabled=${!primaryEnabled}
+                title=${primaryTitle}
+                @click=${primaryEnabled ? () => onNavigate('new-run') : null}
+              >
+                ${unsafeHTML(iconSvg(Plus, 14))}
+                <span>New Pipeline</span>
+              </button>
+              <sl-dropdown
+                class="sidebar-new-run-chevron-dropdown"
+                placement="bottom-end"
+                hoist
+              >
+                <button
+                  slot="trigger"
+                  type="button"
+                  class="sidebar-new-run-btn-chevron"
+                  ?disabled=${atCapacity}
+                  title="More creation options"
+                  aria-label="More creation options"
+                >
+                  ${unsafeHTML(iconSvg(ChevronDown, 14))}
+                </button>
+                <sl-menu>
+                  <sl-menu-item
+                    class="menu-item-new-fleet"
+                    @click=${() => onNavigate('fleet-runs/new')}
+                  >
+                    ${unsafeHTML(iconSvg(Workflow, 14))}
+                    New Fleet
+                  </sl-menu-item>
+                  <!-- W-047 (multi-repo workspace) will add: -->
+                  <!-- <sl-menu-item class="menu-item-new-workspace" @click=...>New Workspace</sl-menu-item> -->
+                </sl-menu>
+              </sl-dropdown>
+            </div>
+          </div>
+        `;
+      })()}
 
       <div class="sidebar-section">
         <div class="sidebar-section-header">Pipeline</div>

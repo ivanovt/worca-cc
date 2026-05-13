@@ -2499,30 +2499,34 @@ sl-option.template-grouped:focus::part(suffix) {
   background: var(--bg-tertiary);
 }
 
-/* Sidebar new run button */
+/* Sidebar new run button (split button pattern: primary + chevron).
+   The split button is the W-040 UX choice — primary "New Pipeline"
+   handles the common case; the chevron drops down to a menu of
+   multi-project alternatives (Fleet, plus Workspace when W-047 ships). */
 .sidebar-new-run {
   padding: 8px 8px 4px;
 }
 
-/* sl-dropdown is inline-block by default — make the wrapper fill the
-   sidebar column so the dashed-border "+ New" trigger keeps its
-   full-width prominence. (Before the sl-dropdown component was
-   imported, the unregistered <sl-dropdown> element fell back to an
-   anonymous block which let the trigger expand naturally.) */
-.sidebar-new-run-dropdown {
-  display: block;
+.sidebar-new-run-split {
+  display: flex;
   width: 100%;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: transparent;
+  transition: background var(--transition-fast);
 }
 
-.sidebar-new-run-btn {
+.sidebar-new-run-btn-primary {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: 100%;
+  min-width: 0;
   padding: 8px 12px;
-  border: 2px dashed var(--accent);
-  border-radius: var(--radius);
+  border: 0;
+  border-right: 2px dashed var(--accent);
   background: transparent;
   color: var(--accent);
   font-size: 13px;
@@ -2532,16 +2536,56 @@ sl-option.template-grouped:focus::part(suffix) {
   transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.sidebar-new-run-btn:hover {
+.sidebar-new-run-btn-primary:hover:not(:disabled) {
   background: var(--accent);
   color: #ffffff;
 }
 
-.sidebar.collapsed .sidebar-new-run-btn span {
+.sidebar-new-run-btn-primary:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.sidebar-new-run-chevron-dropdown {
+  display: flex;
+  flex: 0 0 auto;
+}
+
+.sidebar-new-run-btn-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-new-run-btn-chevron:hover:not(:disabled) {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.sidebar-new-run-btn-chevron:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Menu items: icon + label, slight indent under their icon */
+.sidebar-new-run-chevron-dropdown sl-menu-item::part(base) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.sidebar.collapsed .sidebar-new-run-btn-primary span {
   display: none;
 }
 
-.sidebar.collapsed .sidebar-new-run-btn {
+.sidebar.collapsed .sidebar-new-run-btn-primary {
   padding: 8px;
 }
 

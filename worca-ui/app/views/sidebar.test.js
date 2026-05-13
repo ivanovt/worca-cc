@@ -221,46 +221,81 @@ describe('sidebar - New Pipeline button capacity gating', () => {
   });
 });
 
-describe('sidebar - New Pipeline CTA (dropdown)', () => {
-  it('CTA renders as sl-dropdown wrapper (not a plain button)', async () => {
+describe('sidebar - New Pipeline CTA (split button)', () => {
+  // Pattern A from the W-040 UX discussion: split-button with primary
+  // "New Pipeline" + chevron dropdown for the multi-project alternatives.
+
+  it('renders the primary "New Pipeline" button alongside a chevron dropdown', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-new-run-split');
+    expect(output).toContain('sidebar-new-run-btn-primary');
+    expect(output).toContain('sidebar-new-run-btn-chevron');
+    expect(output).toContain('>New Pipeline<');
+  });
+
+  it('chevron dropdown exposes New Fleet as a menu item', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('sl-dropdown');
-    expect(output).toContain('sidebar-new-run-btn');
-  });
-
-  it('dropdown contains sl-menu with New Pipeline and New Fleet items', async () => {
-    const { sidebarView } = await import('./sidebar.js');
-    const state = makeState();
-    const output = renderToString(
-      sidebarView(state, route, 'open', defaultOpts()),
-    );
     expect(output).toContain('sl-menu');
-    expect(output).toContain('sl-menu-item');
-    expect(output).toContain('>New Pipeline<');
-    expect(output).toContain('>New Fleet<');
-  });
-
-  it('New Pipeline menu item is present', async () => {
-    const { sidebarView } = await import('./sidebar.js');
-    const state = makeState();
-    const output = renderToString(
-      sidebarView(state, route, 'open', defaultOpts()),
-    );
-    expect(output).toContain('New Pipeline');
-  });
-
-  it('New Fleet menu item routes to fleet-runs/new via class marker', async () => {
-    const { sidebarView } = await import('./sidebar.js');
-    const state = makeState();
-    const output = renderToString(
-      sidebarView(state, route, 'open', defaultOpts()),
-    );
     expect(output).toContain('menu-item-new-fleet');
-    expect(output).toContain('menu-item-new-pipeline');
+    expect(output).toContain('New Fleet');
+  });
+
+  // Helper: extract the <button> opening tag (everything up to the matching
+  // close `>` that's not inside a quoted attribute) for the given class so
+  // assertions on `disabled`/`title` stay scoped to that one tag.
+  function buttonTag(html, className) {
+    const re = new RegExp(`<button[^>]*class="[^"]*${className}[^"]*"[^>]*>`);
+    return html.match(re)?.[0] ?? '';
+  }
+
+  it('primary "New Pipeline" button is disabled in global mode with multiple projects', async () => {
+    // Without a project context a single-project pipeline can't be
+    // launched; the primary half goes disabled with a tooltip.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      currentProjectId: null,
+      projects: [
+        { name: 'a', path: '/a' },
+        { name: 'b', path: '/b' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    const primaryTag = buttonTag(output, 'sidebar-new-run-btn-primary');
+    expect(primaryTag).toContain('disabled');
+    expect(output).toContain('Select a project first');
+  });
+
+  it('chevron is always rendered in global mode (Fleet creation needs no project)', async () => {
+    // The chevron must be present regardless of project context so users
+    // can reach Fleet creation from the sidebar. We can't reliably assert
+    // on the boolean disabled state via renderToString (lit-html's
+    // ?attr= syntax doesn't evaluate to a DOM attribute in the string
+    // form), so we settle for presence — the actual disabled-on-capacity
+    // gating is exercised in the existing atCapacity tests.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      currentProjectId: null,
+      projects: [
+        { name: 'a', path: '/a' },
+        { name: 'b', path: '/b' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-new-run-btn-chevron');
+    expect(output).toContain('menu-item-new-fleet');
   });
 });
 
