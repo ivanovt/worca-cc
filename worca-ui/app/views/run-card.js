@@ -218,6 +218,8 @@ export function runCardView(
       : run.pipeline_template
     : null;
 
+  const projectName = run.project || run._project || null;
+
   return html`
     <div class="run-card ${statusClass(overallStatus)}" @click=${onClick ? () => onClick(run.id) : null}>
       <div class="run-card-top">
@@ -229,6 +231,13 @@ export function runCardView(
         <span class="run-card-title">${title}</span>
         ${run.is_worktree_run ? html`<sl-icon name="folder-symlink" class="run-card-worktree-icon" title=${`Isolated worktree at ${run.worktree_path || ''}`}></sl-icon>` : nothing}
       </div>
+      ${
+        projectName
+          ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Project:</span>
+              <span class="meta-value run-card-project">${projectName}</span>
+            </span></div>`
+          : nothing
+      }
       ${
         run.fleet_id && run.group_type === 'fleet'
           ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Fleet:</span>

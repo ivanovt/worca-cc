@@ -727,6 +727,16 @@ export function runDetailView(run, settings = {}, options = {}) {
 
       <div class="run-info-section">
         ${
+          run.project || run._project
+            ? html`
+          <div class="run-project">
+            <span class="meta-label">Project:</span>
+            <span class="meta-value run-project-name">${run.project || run._project}</span>
+          </div>
+        `
+            : nothing
+        }
+        ${
           run.fleet_id && run.group_type === 'fleet'
             ? html`
           <div class="run-group">

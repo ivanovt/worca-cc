@@ -168,7 +168,7 @@ describe('fleetStatusTooltip', () => {
         failedCount: 3,
         totalCount: 10,
       }),
-    ).toBe('Halted automatically: 3 of 10 children failed');
+    ).toBe('Halted automatically: 3 of 10 projects failed');
   });
 
   it('returns null for circuit_breaker without counts', () => {
@@ -182,7 +182,7 @@ describe('fleetStatusTooltip', () => {
   it('returns auto halt text for null/legacy halt_reason with counts', () => {
     expect(
       fleetStatusTooltip('halted', null, { failedCount: 2, totalCount: 5 }),
-    ).toBe('Halted automatically: 2 of 5 children failed');
+    ).toBe('Halted automatically: 2 of 5 projects failed');
   });
 });
 
@@ -256,7 +256,7 @@ describe('fleetHeaderView - structure', () => {
     expect(output).toContain('1/3 completed');
   });
 
-  it('includes failed count in progress text when some children failed', () => {
+  it('includes failed count in progress text when some projects failed', () => {
     const output = renderToString(fleetHeaderView('f_001', fleetChildren));
     expect(output).toContain('1 failed');
   });
@@ -436,7 +436,7 @@ describe('fleetHeaderView - halt reason tooltip', () => {
         haltReason: 'circuit_breaker',
       }),
     );
-    expect(output).toContain('Halted automatically: 2 of 3 children failed');
+    expect(output).toContain('Halted automatically: 2 of 3 projects failed');
   });
 
   it('badge has no halt tooltip when fleet is running', () => {

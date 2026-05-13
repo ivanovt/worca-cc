@@ -177,6 +177,145 @@ describe('Fleet Routes', () => {
     });
   });
 
+  // ─── Reverse lookup: discover children from registry ─────────────────────
+  //
+  // The dispatcher's older path initialized `children: []` and never
+  // updated the manifest, leaving the fleet detail page showing "0
+  // projects / $0" even though child runs existed on disk with
+  // `fleet_id` set. The router now scans every registered project's
+  // pipelines.d/ for matching entries and includes them in the response.
+
+  describe('reverse-lookup of fleet children from registry', () => {
+    function writeProjectEntry(prefsDirArg, name, path) {
+      const dir = join(prefsDirArg, 'projects.d');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, `${name}.json`),
+        JSON.stringify({ name, path }, null, 2),
+      );
+    }
+
+    function writeRegistryEntry(projDir, runId, payload) {
+      const dir = join(projDir, '.worca', 'multi', 'pipelines.d');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, `${runId}.json`),
+        JSON.stringify({ run_id: runId, ...payload }),
+      );
+    }
+
+    let prefsDir;
+    let prefsServer;
+    let prefsBase;
+
+    beforeEach(async () => {
+      prefsDir = join(tmpDir, 'prefs');
+      ({ server: prefsServer, base: prefsBase } = await createTestServer({
+        fleetRunsDir,
+        prefsDir,
+      }));
+    });
+
+    afterEach(async () => {
+      if (prefsServer) await stopServer(prefsServer);
+    });
+
+    it('GET /api/fleet-runs reverse-discovers children when manifest is empty', async () => {
+      const projA = join(tmpDir, 'proj-a');
+      const projB = join(tmpDir, 'proj-b');
+      writeProjectEntry(prefsDir, 'proj-a', projA);
+      writeProjectEntry(prefsDir, 'proj-b', projB);
+      writeRegistryEntry(projA, 'run-aaa', {
+        fleet_id: VALID_FLEET_ID,
+        status: 'running',
+      });
+      writeRegistryEntry(projB, 'run-bbb', {
+        fleet_id: VALID_FLEET_ID,
+        status: 'failed',
+      });
+      writeManifest(fleetRunsDir, baseManifest({ children: [] }));
+
+      const res = await fetch(`${prefsBase}/api/fleet-runs`);
+      const data = await res.json();
+      expect(data.fleets).toHaveLength(1);
+      expect(data.fleets[0].children_count).toBe(2);
+      const runIds = data.fleets[0].children.map((c) => c.run_id).sort();
+      expect(runIds).toEqual(['run-aaa', 'run-bbb']);
+    });
+
+    it('GET /api/fleet-runs/:id reverse-discovers and enriches status', async () => {
+      const projA = join(tmpDir, 'proj-a');
+      writeProjectEntry(prefsDir, 'proj-a', projA);
+      writeRegistryEntry(projA, 'run-aaa', {
+        fleet_id: VALID_FLEET_ID,
+        status: 'completed',
+      });
+      writeManifest(fleetRunsDir, baseManifest({ children: [] }));
+
+      const res = await fetch(`${prefsBase}/api/fleet-runs/${VALID_FLEET_ID}`);
+      const data = await res.json();
+      expect(data.fleet.children).toHaveLength(1);
+      expect(data.fleet.children[0].run_id).toBe('run-aaa');
+      expect(data.fleet.children[0].status).toBe('completed');
+    });
+
+    it('ignores registry entries that reference a different fleet_id', async () => {
+      const projA = join(tmpDir, 'proj-a');
+      writeProjectEntry(prefsDir, 'proj-a', projA);
+      writeRegistryEntry(projA, 'run-aaa', {
+        fleet_id: VALID_FLEET_ID,
+        status: 'running',
+      });
+      writeRegistryEntry(projA, 'run-ccc', {
+        fleet_id: 'f_999999999999_zzzzzzzz',
+        status: 'running',
+      });
+      writeRegistryEntry(projA, 'run-ddd', { status: 'running' });
+      writeManifest(fleetRunsDir, baseManifest({ children: [] }));
+
+      const res = await fetch(`${prefsBase}/api/fleet-runs/${VALID_FLEET_ID}`);
+      const data = await res.json();
+      expect(data.fleet.children).toHaveLength(1);
+      expect(data.fleet.children[0].run_id).toBe('run-aaa');
+    });
+
+    it('does not duplicate when manifest already lists the same (project_path, run_id)', async () => {
+      const projA = join(tmpDir, 'proj-a');
+      writeProjectEntry(prefsDir, 'proj-a', projA);
+      writeRegistryEntry(projA, 'run-aaa', {
+        fleet_id: VALID_FLEET_ID,
+        status: 'running',
+      });
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          children: [{ project_path: projA, run_id: 'run-aaa' }],
+        }),
+      );
+
+      const res = await fetch(`${prefsBase}/api/fleet-runs/${VALID_FLEET_ID}`);
+      const data = await res.json();
+      expect(data.fleet.children).toHaveLength(1);
+    });
+
+    it('aggregates cost_usd across reverse-discovered children', async () => {
+      const projA = join(tmpDir, 'proj-a');
+      writeProjectEntry(prefsDir, 'proj-a', projA);
+      writeRegistryEntry(projA, 'run-aaa', {
+        fleet_id: VALID_FLEET_ID,
+        status: 'running',
+        stages: {
+          planner: { iterations: [{ cost_usd: 0.15 }, { cost_usd: 0.07 }] },
+        },
+      });
+      writeManifest(fleetRunsDir, baseManifest({ children: [] }));
+
+      const res = await fetch(`${prefsBase}/api/fleet-runs`);
+      const data = await res.json();
+      expect(data.fleets[0].cost_usd).toBeCloseTo(0.22, 5);
+    });
+  });
+
   // ─── POST /api/fleet-runs/validate-base ──────────────────────────────────
 
   describe('POST /api/fleet-runs/validate-base', () => {

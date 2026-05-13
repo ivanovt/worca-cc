@@ -205,6 +205,84 @@ class TestReadFleetManifest:
 
 
 # ---------------------------------------------------------------------------
+# register_fleet_child
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterFleetChild:
+    def _create_manifest(self, tmp_path, fleet_id="f_202605120809_abc123"):
+        from worca.orchestrator.fleet_manifest import write_fleet_manifest
+        manifest = {
+            "fleet_id": fleet_id,
+            "fleet_id_short": "abc123",
+            "status": "running",
+            "halt_reason": None,
+            "children": [],
+        }
+        write_fleet_manifest(manifest, base_dir=str(tmp_path))
+        return fleet_id
+
+    def test_appends_child_when_manifest_exists(self, tmp_path):
+        from worca.orchestrator.fleet_manifest import (
+            read_fleet_manifest,
+            register_fleet_child,
+        )
+        fid = self._create_manifest(tmp_path)
+        added = register_fleet_child(fid, "/repo/a", "r_001", base_dir=str(tmp_path))
+        assert added is True
+        manifest = read_fleet_manifest(fid, base_dir=str(tmp_path))
+        assert len(manifest["children"]) == 1
+        assert manifest["children"][0]["project_path"] == "/repo/a"
+        assert manifest["children"][0]["run_id"] == "r_001"
+        assert manifest["children"][0]["status"] == "running"
+
+    def test_returns_false_when_manifest_missing(self, tmp_path):
+        from worca.orchestrator.fleet_manifest import register_fleet_child
+        added = register_fleet_child(
+            "f_does_not_exist", "/repo/a", "r_001", base_dir=str(tmp_path)
+        )
+        assert added is False
+
+    def test_idempotent_on_duplicate(self, tmp_path):
+        from worca.orchestrator.fleet_manifest import (
+            read_fleet_manifest,
+            register_fleet_child,
+        )
+        fid = self._create_manifest(tmp_path)
+        register_fleet_child(fid, "/repo/a", "r_001", base_dir=str(tmp_path))
+        added_again = register_fleet_child(
+            fid, "/repo/a", "r_001", base_dir=str(tmp_path)
+        )
+        assert added_again is False
+        manifest = read_fleet_manifest(fid, base_dir=str(tmp_path))
+        assert len(manifest["children"]) == 1
+
+    def test_appends_multiple_distinct_children(self, tmp_path):
+        from worca.orchestrator.fleet_manifest import (
+            read_fleet_manifest,
+            register_fleet_child,
+        )
+        fid = self._create_manifest(tmp_path)
+        register_fleet_child(fid, "/repo/a", "r_001", base_dir=str(tmp_path))
+        register_fleet_child(fid, "/repo/b", "r_002", base_dir=str(tmp_path))
+        register_fleet_child(fid, "/repo/c", "r_003", base_dir=str(tmp_path))
+        manifest = read_fleet_manifest(fid, base_dir=str(tmp_path))
+        assert len(manifest["children"]) == 3
+        run_ids = sorted(c["run_id"] for c in manifest["children"])
+        assert run_ids == ["r_001", "r_002", "r_003"]
+
+    def test_updates_updated_at_timestamp(self, tmp_path):
+        from worca.orchestrator.fleet_manifest import (
+            read_fleet_manifest,
+            register_fleet_child,
+        )
+        fid = self._create_manifest(tmp_path)
+        register_fleet_child(fid, "/repo/a", "r_001", base_dir=str(tmp_path))
+        manifest = read_fleet_manifest(fid, base_dir=str(tmp_path))
+        assert manifest.get("updated_at") is not None
+
+
+# ---------------------------------------------------------------------------
 # update_fleet_status
 # ---------------------------------------------------------------------------
 

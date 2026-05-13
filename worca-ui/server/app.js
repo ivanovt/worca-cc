@@ -555,6 +555,7 @@ export function createApp(options = {}) {
       '/api/fleet-runs',
       createFleetRouter({
         fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
+        prefsDir,
         // Spawn run_fleet.py in a detached subprocess so the route can return
         // immediately. We pass the pre-generated fleet_id so the in-flight
         // manifest path matches what the route just wrote.

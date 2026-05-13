@@ -15,7 +15,11 @@ import subprocess
 import sys
 import time
 
-from worca.orchestrator.fleet_manifest import read_fleet_manifest, update_fleet_status
+from worca.orchestrator.fleet_manifest import (
+    read_fleet_manifest,
+    register_fleet_child,
+    update_fleet_status,
+)
 
 # Per W-040 §5: the fleet scrub list is fleet-specific. It is NOT the same as
 # `worca.utils.env.RESERVED_ENV_KEYS` (which is the denylist for per-model env
@@ -241,7 +245,17 @@ def run_plan_first(
         )
         return None
 
+    run_id = lines[0].strip()
     worktree_path = lines[1]
+    if run_id:
+        try:
+            register_fleet_child(fleet_id, reference_project, run_id)
+        except Exception as exc:
+            print(
+                f"warning: failed to register plan-first reference child "
+                f"{reference_project}/{run_id}: {exc}",
+                file=sys.stderr,
+            )
 
     plan_in_worktree = _wait_for_plan(worktree_path)
     if plan_in_worktree is None:
@@ -263,6 +277,24 @@ def run_plan_first(
 
 
 _DISPATCH_POLL_INTERVAL_SECONDS = 0.2
+
+
+def _parse_run_id_from_stdout(stdout_str: str) -> str | None:
+    """Extract the run_id printed by run_worktree.py on its first stdout line.
+
+    run_worktree.py prints two lines on success: `<run_id>\\n<worktree_path>\\n`.
+    Returns None if stdout is empty or the first line doesn't look like a
+    run_id (defensive — keeps a malformed launcher from corrupting the
+    manifest).
+    """
+    if not stdout_str:
+        return None
+    first = stdout_str.strip().split("\n", 1)[0].strip()
+    # run_ids are timestamp-prefixed (`YYYYMMDD-HHMMSS-NNN-XXXX`). Reject empty
+    # or path-looking strings without overspecifying the format.
+    if not first or "/" in first or " " in first:
+        return None
+    return first
 
 
 def dispatch_fleet(
@@ -321,8 +353,18 @@ def dispatch_fleet(
                 guide=guide,
                 plan=plan,
             )
+            # Capture stdout so we can read the child's run_id (run_worktree.py
+            # prints `<run_id>\n<worktree_path>\n` then exits). Knowing the
+            # run_id lets us write a back-reference into the fleet manifest's
+            # children array — otherwise the manifest never learns who its
+            # dispatched children are.
             in_flight[project_dir] = subprocess.Popen(
-                cmd, cwd=project_dir, env=child_env,
+                cmd,
+                cwd=project_dir,
+                env=child_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
 
         if not in_flight:
@@ -340,7 +382,8 @@ def dispatch_fleet(
             continue
 
         for project_dir, rc in finished:
-            del in_flight[project_dir]
+            proc = in_flight.pop(project_dir)
+            stdout_str, _ = proc.communicate()
             if rc != 0:
                 results[project_dir] = {"status": "failed"}
                 failed_count += 1
@@ -351,6 +394,16 @@ def dispatch_fleet(
                     )
             else:
                 results[project_dir] = {"status": "completed"}
+                run_id = _parse_run_id_from_stdout(stdout_str)
+                if run_id:
+                    try:
+                        register_fleet_child(fleet_id, project_dir, run_id)
+                    except Exception as exc:
+                        print(
+                            f"warning: failed to register fleet child "
+                            f"{project_dir}/{run_id}: {exc}",
+                            file=sys.stderr,
+                        )
 
     # After the loop, any children still in `pending` were never launched.
     for project_dir in pending:

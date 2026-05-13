@@ -73,6 +73,43 @@ def read_fleet_manifest(fleet_id: str, base_dir: str = None) -> dict:
         return None
 
 
+def register_fleet_child(
+    fleet_id: str,
+    project_path: str,
+    run_id: str,
+    *,
+    base_dir: str = None,
+) -> bool:
+    """Append a dispatched child to the fleet manifest's children array.
+
+    Idempotent — skips when (project_path, run_id) is already present. Returns
+    True when the child was added, False when the manifest is missing or the
+    entry was a duplicate. Called by the dispatcher right after a child's
+    run_worktree.py exits, so the manifest carries a back-reference to every
+    dispatched run. The UI also has a registry-side reverse-lookup fallback;
+    this write is the authoritative source.
+    """
+    manifest = read_fleet_manifest(fleet_id, base_dir=base_dir)
+    if manifest is None:
+        return False
+
+    children = manifest.get("children") or []
+    for child in children:
+        if (
+            child.get("project_path") == project_path
+            and child.get("run_id") == run_id
+        ):
+            return False
+
+    children.append(
+        {"project_path": project_path, "run_id": run_id, "status": "running"}
+    )
+    manifest["children"] = children
+    manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+    write_fleet_manifest(manifest, base_dir=base_dir)
+    return True
+
+
 def update_fleet_status(
     fleet_id: str,
     status: str,

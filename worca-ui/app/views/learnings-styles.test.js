@@ -55,7 +55,10 @@ describe('learnings + skipped CSS styles', () => {
 
   describe('skipped status', () => {
     it('has .status-skipped with muted color and opacity', () => {
-      const match = css.match(/\.status-skipped\s*\{([^}]+)\}/);
+      // Anchor to "not part of a compound selector" — otherwise a sibling
+      // rule like `.run-card.status-skipped` would match first and the
+      // test would assert against the wrong block.
+      const match = css.match(/(?:^|[\s,])\.status-skipped\s*\{([^}]+)\}/m);
       expect(match).not.toBeNull();
       const block = match[1];
       expect(block).toContain('color: var(--muted)');

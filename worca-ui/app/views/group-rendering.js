@@ -35,7 +35,7 @@ export function fleetStatusTooltip(
     return haltAt ? `Halted by you on ${haltAt}` : 'Halted by you';
   }
   if (failedCount != null && totalCount != null) {
-    return `Halted automatically: ${failedCount} of ${totalCount} children failed`;
+    return `Halted automatically: ${failedCount} of ${totalCount} projects failed`;
   }
   return null;
 }

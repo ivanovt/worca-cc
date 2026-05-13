@@ -1,11 +1,13 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import {
   fleetStatusLabel,
   fleetStatusTooltip,
   fleetStatusVariant,
 } from './group-rendering.js';
+import { runCardView } from './run-card.js';
 
 // ─── module-level state ───────────────────────────────────────────────────────
 
@@ -27,6 +29,18 @@ export function resetFleetDetailState(overrides = {}) {
   haltDialogOpen = overrides.haltDialogOpen ?? false;
   cleanupDialogOpen = overrides.cleanupDialogOpen ?? false;
   cleanupResumeLossChecked = overrides.cleanupResumeLossChecked ?? false;
+}
+
+// Page-header action handlers in main.js use these to trigger the
+// existing confirm dialogs that live inside the fleet detail body.
+export function openFleetHaltDialog(rerender) {
+  haltDialogOpen = true;
+  rerender?.();
+}
+
+export function openFleetCleanupDialog(rerender) {
+  cleanupDialogOpen = true;
+  rerender?.();
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -100,59 +114,99 @@ function _childStatusVariant(status) {
 
 // ─── sub-views ────────────────────────────────────────────────────────────────
 
-function _statusHeaderView(fleet) {
+// Aggregate per-project cost. The fleet manifest's enriched children
+// don't carry stage iterations (only status), so per-child stage cost has
+// to come from the live registry — we look each project's run_id up in
+// state.runs (passed in as `runsById`). Falls back to the manifest entry
+// when the run hasn't been pushed over the WS yet (early dispatch race).
+function _aggregateChildCost(children, runsById = {}) {
+  let total = 0;
+  for (const c of children || []) {
+    const live = c.run_id ? runsById[c.run_id] : null;
+    total += _computeChildCost(live || c);
+  }
+  return total;
+}
+
+// Pick the wall-clock "finished" timestamp. For a finished fleet we use
+// halted_at (when present) or updated_at. For an in-flight fleet, null —
+// timing strip shows "running for" instead.
+function _wallEndedAt(fleet) {
+  if (fleet.status === 'running' || fleet.status === 'resuming') return null;
+  return fleet.halted_at || fleet.updated_at || null;
+}
+
+// Pipeline-style overview strip. Replaces the previous hero card so the
+// fleet detail page reads with the same vocabulary as the pipeline run
+// page (flat meta rows over a single panel, status + id chip). Action
+// buttons live in the page header (see `contentHeaderView` in main.js)
+// — same placement as Pause/Stop/Resume on the pipeline run page.
+//
+// `runsById` is needed for accurate cost aggregation: the manifest's
+// enriched children carry status only, so per-stage iteration costs come
+// from the WS-pushed state.runs entry.
+function _fleetOverviewSection(fleet, { runsById } = {}) {
+  const children = fleet.children || [];
   const variant = fleetStatusVariant(fleet.status, fleet.halt_reason);
   const label = fleetStatusLabel(fleet.status, fleet.halt_reason);
-  const failedCount = (fleet.children || []).filter(
+  const failedCount = children.filter(
     (c) => c.status === 'failed' || c.status === 'setup_failed',
   ).length;
   const tooltip = fleetStatusTooltip(fleet.status, fleet.halt_reason, {
     haltAt: fleet.halted_at,
     failedCount,
-    totalCount: (fleet.children || []).length,
+    totalCount: children.length,
   });
-  return html`
-    <div class="fleet-detail-status-row">
-      <sl-badge
-        variant="${variant}"
-        pill
-        class="fleet-status-badge"
-        title="${tooltip || ''}"
-      >${label}</sl-badge>
-      <code class="fleet-id-chip">${fleet.fleet_id}</code>
-    </div>
-  `;
-}
 
-function _manifestSection(fleet) {
-  const thresholdPct = Math.round((fleet.fleet_failure_threshold ?? 0.3) * 100);
+  const baseBranch = fleet.base_branch || 'each repo default';
+  const planMode = fleet.plan?.mode || 'none';
+  const startedAt = fleet.created_at || null;
+  const endedAt = _wallEndedAt(fleet);
+  const isActive = fleet.status === 'running' || fleet.status === 'resuming';
+  const duration = startedAt
+    ? formatDuration(elapsed(startedAt, isActive ? null : endedAt))
+    : 'N/A';
+  const cost = _aggregateChildCost(children, runsById);
+
   return html`
-    <div class="new-run-section">
-      <h3 class="new-run-section-title">Manifest</h3>
-      <div class="settings-grid fleet-manifest-grid">
-        <div class="settings-field">
-          <label class="settings-label">Branch template</label>
-          <code class="fleet-meta-mono">${fleet.head_template || '—'}</code>
+    <div
+      class="run-detail-overview fleet-detail-overview"
+      data-fleet-id="${fleet.fleet_id}"
+    >
+      <div class="run-info-section fleet-info-section">
+        <div class="fleet-overview-status-row">
+          <sl-badge
+            variant="${variant}"
+            pill
+            class="fleet-status-badge"
+            title="${tooltip || ''}"
+          >${label}</sl-badge>
+          <code class="fleet-id-chip">${fleet.fleet_id}</code>
         </div>
-        <div class="settings-field">
-          <label class="settings-label">Base branch</label>
-          <span class="fleet-meta-value">${fleet.base_branch || 'each repo default'}</span>
+
+        <div class="fleet-meta-line">
+          <span class="fleet-meta-item"><span class="meta-label">Base:</span> <span class="meta-value">${baseBranch}</span></span>
+          <span class="fleet-meta-item"><span class="meta-label">Plan:</span> <span class="meta-value">${planMode}</span></span>
         </div>
-        <div class="settings-field">
-          <label class="settings-label">Plan mode</label>
-          <span class="fleet-meta-value">${fleet.plan?.mode || 'none'}</span>
+
+        <div class="fleet-meta-line">
+          <span class="fleet-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(startedAt)}</span></span>
+          ${
+            endedAt
+              ? html`<span class="fleet-meta-item"><span class="meta-label">Finished:</span> <span class="meta-value">${formatTimestamp(endedAt)}</span></span>`
+              : nothing
+          }
+          <span class="fleet-meta-item"><span class="meta-label">Duration:</span> <span class="meta-value">${duration}</span></span>
         </div>
-        <div class="settings-field">
-          <label class="settings-label">Max parallel</label>
-          <span class="fleet-meta-value">${fleet.max_parallel ?? 5}</span>
-        </div>
-        <div class="settings-field">
-          <label class="settings-label">Circuit-breaker</label>
-          <span class="fleet-meta-value">${thresholdPct}%</span>
-        </div>
-        <div class="settings-field">
-          <label class="settings-label">Created</label>
-          <span class="fleet-meta-value">${_formatDate(fleet.created_at)}</span>
+
+        <div class="pipeline-cost-strip fleet-cost-strip">
+          <span class="pipeline-cost-item"><span class="meta-label">Fleet Cost:</span> <span class="meta-value">${_formatCost(cost)}</span></span>
+          <span class="pipeline-cost-item"><span class="meta-label">Projects:</span> <span class="meta-value">${children.length}</span></span>
+          ${
+            failedCount > 0
+              ? html`<span class="pipeline-cost-item fleet-cost-failed"><span class="meta-label">Failed:</span> <span class="meta-value">${failedCount}</span></span>`
+              : nothing
+          }
         </div>
       </div>
     </div>
@@ -271,27 +325,54 @@ function _guideSection(fleet, { rerender } = {}) {
   `;
 }
 
-function _childrenSection(fleet) {
+// Renders a placeholder for a project whose run hasn't yet appeared in
+// state.runs (race during early dispatch, or stale registry). Mirrors the
+// structural shape of `runCardView` so the surrounding grid stays aligned.
+function _missingRunPlaceholder(child) {
+  const status = child.status || 'pending';
+  const variant = _childStatusVariant(status);
+  return html`
+    <div class="run-card ${statusClass(status)} fleet-child-card-placeholder">
+      <div class="run-card-top">
+        <span class="run-card-status">${unsafeHTML(statusIcon(status, 16))}</span>
+        <span class="run-card-title">${_projectName(child.project_path)}</span>
+        <sl-badge variant="${variant}" pill class="status-badge-${status}">${status}</sl-badge>
+      </div>
+      <div class="run-card-meta">
+        <span class="run-card-meta-item">
+          <span class="meta-label">Project:</span>
+          <code class="worktree-path-mono">${child.project_path}</code>
+        </span>
+      </div>
+      <div class="run-card-meta">
+        <span class="settings-field-hint">Pipeline registry entry not loaded yet.</span>
+      </div>
+    </div>
+  `;
+}
+
+function _childrenSection(fleet, { runsById, onSelectRun } = {}) {
   const children = fleet.children || [];
 
   if (children.length === 0) {
     return html`
       <div class="new-run-section">
-        <h3 class="new-run-section-title">Children</h3>
+        <h3 class="new-run-section-title">Projects</h3>
         <div class="settings-field">
-          <span class="settings-field-hint">No child runs dispatched yet — fleet orchestrator may still be provisioning targets.</span>
+          <span class="settings-field-hint">No projects dispatched yet — fleet orchestrator may still be provisioning targets.</span>
         </div>
       </div>
     `;
   }
 
   const allHavePr = children.length > 0 && children.every((c) => c.pr_url);
-  const headerCount = `${children.length} ${children.length === 1 ? 'child' : 'children'}`;
+  const headerCount = `${children.length} ${children.length === 1 ? 'project' : 'projects'}`;
+  const runs = runsById || {};
 
   return html`
     <div class="new-run-section fleet-children-section">
       <div class="fleet-children-header">
-        <h3 class="new-run-section-title">Children · ${headerCount}</h3>
+        <h3 class="new-run-section-title">Projects · ${headerCount}</h3>
         ${
           allHavePr
             ? html`
@@ -302,72 +383,23 @@ function _childrenSection(fleet) {
       </div>
       <div class="run-list fleet-children-list">
         ${children.map((child) => {
-          const status = child.status || 'pending';
-          const variant = _childStatusVariant(status);
-          const childCost = _computeChildCost(child);
-          return html`
-            <div class="run-card ${statusClass(status)} fleet-child-card">
-              <div class="run-card-top">
-                <span class="run-card-status">${unsafeHTML(statusIcon(status, 16))}</span>
-                <span class="run-card-title">${_projectName(child.project_path)}</span>
-                <sl-badge variant="${variant}" pill class="status-badge-${status}">${status}</sl-badge>
-              </div>
-              <div class="run-card-meta">
-                ${
-                  child.head_branch
-                    ? html`
-                      <span class="run-card-meta-item">
-                        <span class="meta-label">Head:</span>
-                        <span class="meta-value"><code class="fleet-meta-mono">${child.head_branch}</code></span>
-                      </span>
-                    `
-                    : nothing
-                }
-                ${
-                  child.base_branch
-                    ? html`
-                      <span class="run-card-meta-item">
-                        <span class="meta-label">Base:</span>
-                        <span class="meta-value">${child.base_branch}</span>
-                      </span>
-                    `
-                    : nothing
-                }
-                <span class="run-card-meta-item">
-                  <span class="meta-label">Cost:</span>
-                  <span class="meta-value">${_formatCost(childCost)}</span>
-                </span>
-                ${
-                  child.pr_url
-                    ? html`
-                      <span class="run-card-meta-item">
-                        <span class="meta-label">PR:</span>
-                        <a class="meta-value" href="${child.pr_url}" target="_blank" rel="noopener">${child.pr_url.split('/').slice(-2).join('/')}</a>
-                      </span>
-                    `
-                    : nothing
-                }
-              </div>
-              ${
-                child.project_path
-                  ? html`
-                    <div class="run-card-meta worktree-card-path">
-                      <span class="meta-label">Project:</span>
-                      <code class="worktree-path-mono">${child.project_path}</code>
-                    </div>
-                  `
-                  : nothing
-              }
-            </div>
-          `;
+          const run = child.run_id ? runs[child.run_id] : null;
+          // Anchor id lets the overview's projects strip scroll to the card.
+          const anchorId = child.run_id ? `project-${child.run_id}` : null;
+          const card = run
+            ? runCardView(run, { onClick: onSelectRun })
+            : _missingRunPlaceholder(child);
+          return anchorId
+            ? html`<div id="${anchorId}" class="fleet-project-anchor">${card}</div>`
+            : card;
         })}
       </div>
     </div>
   `;
 }
 
-function _aggregateCostSection(fleet) {
-  const total = _computeFleetCost(fleet.children || []);
+function _aggregateCostSection(fleet, { runsById } = {}) {
+  const total = _aggregateChildCost(fleet.children || [], runsById);
   return html`
     <div class="new-run-section fleet-aggregate-cost-section">
       <h3 class="new-run-section-title">Aggregate Cost</h3>
@@ -421,24 +453,20 @@ function _actionsSection(fleet, { onNavigate, rerender } = {}) {
   const requiresConfirm = _requiresResumeLossConfirm(status);
   const cleanupConfirmDisabled = requiresConfirm && !cleanupResumeLossChecked;
 
+  // The visible action *buttons* moved to the page header
+  // (`contentHeaderView` in main.js) — same placement as Pause / Stop /
+  // Resume on the pipeline run page. This section only renders the
+  // dialogs that those header buttons trigger; the dialogs need to be in
+  // the DOM to function as `sl-dialog` modal portals.
+  // `onNavigate` is unused in this file now (Re-run navigation lives in
+  // the header button), but kept in the signature for caller compat.
+  void onNavigate;
+
   return html`
-    <div class="settings-tab-actions fleet-actions">
+    <div class="fleet-detail-dialogs" hidden>
       ${
         status === 'running'
           ? html`
-            <sl-button
-              variant="warning"
-              size="small"
-              class="btn-halt-fleet"
-              @click=${
-                rerender
-                  ? () => {
-                      haltDialogOpen = true;
-                      rerender();
-                    }
-                  : null
-              }
-            >Halt fleet</sl-button>
             <sl-dialog
               label="Halt fleet?"
               class="halt-confirm-dialog"
@@ -472,29 +500,8 @@ function _actionsSection(fleet, { onNavigate, rerender } = {}) {
           : nothing
       }
       ${
-        status === 'halted' || status === 'failed'
-          ? html`
-            <sl-button variant="success" size="small" class="btn-resume-fleet">Resume fleet</sl-button>
-          `
-          : nothing
-      }
-      ${
         _isTerminal(status)
           ? html`
-            <sl-button
-              variant="danger"
-              size="small"
-              outline
-              class="btn-cleanup-fleet"
-              @click=${
-                rerender
-                  ? () => {
-                      cleanupDialogOpen = true;
-                      rerender();
-                    }
-                  : null
-              }
-            >Cleanup fleet</sl-button>
             <sl-dialog
               label="Cleanup fleet?"
               class="cleanup-confirm-dialog"
@@ -551,21 +558,6 @@ function _actionsSection(fleet, { onNavigate, rerender } = {}) {
           `
           : nothing
       }
-      ${
-        _isTerminal(status)
-          ? html`
-            <sl-button
-              variant="default"
-              size="small"
-              outline
-              class="btn-rerun-fleet"
-              @click=${
-                onNavigate ? () => onNavigate('fleet-runs', 'new') : null
-              }
-            >Re-run fleet</sl-button>
-          `
-          : nothing
-      }
     </div>
   `;
 }
@@ -578,23 +570,25 @@ function _actionsSection(fleet, { onNavigate, rerender } = {}) {
  * @param {object|null} fleet  Full fleet manifest from GET /api/fleet-runs/:id (may be null while loading)
  * @param {{ onNavigate?: function, rerender?: function }} options
  */
-export function fleetDetailView(fleet, { onNavigate, rerender } = {}) {
+export function fleetDetailView(
+  fleet,
+  { onNavigate, rerender, runsById, onSelectRun } = {},
+) {
   if (!fleet) {
     return html`<div class="fleet-detail-loading"><sl-spinner></sl-spinner> Loading fleet…</div>`;
   }
 
   return html`
     <div class="new-run-page fleet-detail-page">
-      ${_statusHeaderView(fleet)}
+      ${_fleetOverviewSection(fleet, { runsById })}
       ${_circuitBreakerAlertView(fleet)}
       ${_userHaltAlertView(fleet)}
+      ${_actionsSection(fleet, { onNavigate, rerender })}
       <div class="new-run-form fleet-detail-body">
-        ${_manifestSection(fleet)}
         ${_workRequestSection(fleet)}
         ${_guideSection(fleet, { rerender })}
-        ${_childrenSection(fleet)}
-        ${_aggregateCostSection(fleet)}
-        ${_actionsSection(fleet, { onNavigate, rerender })}
+        ${_childrenSection(fleet, { runsById, onSelectRun })}
+        ${_aggregateCostSection(fleet, { runsById })}
       </div>
     </div>
   `;

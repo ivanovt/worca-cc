@@ -14,6 +14,7 @@ import {
   Pause,
   Play,
   Plus,
+  RotateCcw,
   Square,
   Trash2,
 } from './utils/icons.js';
@@ -28,7 +29,12 @@ import {
 } from './views/add-project-dialog.js';
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { dashboardView } from './views/dashboard.js';
-import { fleetDetailView } from './views/fleet-detail.js';
+import { fleetCardView } from './views/fleet-card.js';
+import {
+  fleetDetailView,
+  openFleetCleanupDialog,
+  openFleetHaltDialog,
+} from './views/fleet-detail.js';
 import {
   fleetLauncherView,
   getFleetLauncherSubmitState,
@@ -124,6 +130,20 @@ function projectUrl(path) {
   return pid ? `/api/projects/${pid}${path}` : `/api${path}`;
 }
 
+// Resolve the projectId for a runId by looking up the run in state.
+// Required for run-scoped WS messages in global mode: the WS connection
+// itself is bound to `currentProjectId` (often null in global mode), but
+// the server's `resolveProject()` honours `payload.projectId` first. Without
+// this, fetches like `get-agent-prompt` and `subscribe-log` for a run that
+// lives in a non-default project return NOT_FOUND and silently fail (the
+// JS catches the error, the cache stays empty, the UI shows nothing).
+function _runProjectId(runId) {
+  if (!runId) return null;
+  const state = store.getState();
+  const run = state.runs?.[runId] || state.archivedRuns?.[runId] || null;
+  return run?.project || run?._project || state.currentProjectId || null;
+}
+
 const ws = createWsClient();
 const notificationManager = createNotificationManager({
   store,
@@ -174,22 +194,11 @@ function _fleetListView() {
   return html`
     <h3 class="dashboard-section-title">Fleets</h3>
     <div class="fleet-list">
-      ${fleets.map(
-        (f) => html`
-        <div class="fleet-list-row"
-             @click=${() => navigate('fleet-runs', f.fleet_id, null)}>
-          <strong class="fleet-list-row-title">${f.work_request?.title || f.fleet_id}</strong>
-          <sl-badge
-            variant=${f.status === 'running' ? 'primary' : f.status === 'completed' ? 'success' : f.status === 'failed' ? 'danger' : f.status === 'halted' ? 'warning' : 'neutral'}
-            pill
-            class="fleet-list-row-badge"
-          >${f.status}</sl-badge>
-          <span class="fleet-list-row-meta">
-            ${f.children_count ?? 0} children
-          </span>
-          <code class="fleet-list-row-id">${f.fleet_id}</code>
-        </div>
-      `,
+      ${fleets.map((f) =>
+        fleetCardView(f, f.children || [], {
+          onClick: (id) => navigate('fleet-runs', id, null),
+          onChildClick: (runId) => navigate('active', runId, null),
+        }),
       )}
     </div>
   `;
@@ -485,7 +494,7 @@ function handleStageTabChange(stageKey, iterationNumber) {
 
 function fetchRunBeads(runId) {
   if (!runId) return;
-  ws.send('list-beads-by-run', { runId })
+  ws.send('list-beads-by-run', { runId, projectId: _runProjectId(runId) })
     .then((payload) => {
       runBeads.set(runId, payload.issues || []);
       rerender();
@@ -496,12 +505,13 @@ function fetchRunBeads(runId) {
 function fetchAgentPrompts(runId, stages) {
   if (!runId || !stages) return;
   if (!promptCache[runId]) promptCache[runId] = {};
+  const projectId = _runProjectId(runId);
   for (const [key, stage] of Object.entries(stages)) {
     if (stage.status === 'pending') continue;
     const cacheKey = `${runId}:${key}`;
     if (promptCache[runId][key] || promptCachePending.has(cacheKey)) continue;
     promptCachePending.add(cacheKey);
-    ws.send('get-agent-prompt', { runId, stage: key })
+    ws.send('get-agent-prompt', { runId, stage: key, projectId })
       .then((data) => {
         promptCache[runId][key] = data;
         promptCachePending.delete(cacheKey);
@@ -532,7 +542,11 @@ function autoResetLogFilterOnStageChange(prevRun, newRun) {
     clearTerminal();
     store.clearLog();
     ws.send('unsubscribe-log').catch(() => {});
-    ws.send('subscribe-log', { stage: null, runId: newRun.id }).catch(() => {});
+    ws.send('subscribe-log', {
+      stage: null,
+      runId: newRun.id,
+      projectId: _runProjectId(newRun.id),
+    }).catch(() => {});
   }
 }
 
@@ -805,7 +819,10 @@ ws.on('stage-restarted', () => {
 
 ws.on('learn-started', (payload) => {
   if (payload?.runId && payload.runId === route.runId) {
-    ws.send('subscribe-run', { runId: payload.runId }).catch(() => {});
+    ws.send('subscribe-run', {
+      runId: payload.runId,
+      projectId: _runProjectId(payload.runId),
+    }).catch(() => {});
   }
 });
 
@@ -893,7 +910,7 @@ function handleHello(_payload) {
 /** Fetch runs from all projects via REST and merge into state. */
 function fetchAllProjectRuns() {
   const projects = store.getState().projects || [];
-  Promise.all(
+  return Promise.all(
     projects.map((p) =>
       fetch(`/api/projects/${p.name}/runs`)
         .then((r) => r.json())
@@ -967,16 +984,21 @@ function fetchWorktrees() {
 function fetchProjectScopedData() {
   // Multi-project mode: always fetch runs from every project so the sidebar
   // dots reflect the real status of all projects, not just the selected one.
-  if ((store.getState().projects || []).length > 1) {
-    fetchAllProjectRuns();
-  } else {
-    ws.send('list-runs')
-      .then((payload) => {
-        if (payload.settings) settings = payload.settings;
-        store.setRunsBulk(payload.runs || []);
-      })
-      .catch(() => {});
-  }
+  // We capture the runs-load promise so the run-scoped subscriptions below
+  // can wait for it — without that, `_runProjectId(route.runId)` resolves
+  // to null because state.runs is empty, the WS request hits the wrong
+  // project, and the artifact panels (logs, beads, agent prompts) end up
+  // empty on initial page load.
+  const runsLoadedPromise =
+    (store.getState().projects || []).length > 1
+      ? fetchAllProjectRuns()
+      : ws
+          .send('list-runs')
+          .then((payload) => {
+            if (payload.settings) settings = payload.settings;
+            store.setRunsBulk(payload.runs || []);
+          })
+          .catch(() => {});
 
   ws.send('list-beads-issues')
     .then((payload) => {
@@ -1006,17 +1028,28 @@ function fetchProjectScopedData() {
   fetchProjectInfo();
   fetchWorktrees();
 
-  // Subscribe to active run if selected
+  // Subscribe to active run if selected. Wait for runs to load so that
+  // `_runProjectId(route.runId)` can resolve to the correct project — the
+  // server falls back to its default project when no projectId is supplied,
+  // which is the wrong one in global mode and causes the artifact panels
+  // to come up empty.
   if (route.runId) {
-    if (route.section !== 'beads') {
-      ws.send('subscribe-run', { runId: route.runId }).catch(() => {});
-      ws.send('subscribe-log', {
-        stage: logFilter === '*' ? null : logFilter,
-        runId: route.runId,
-      }).catch(() => {});
-    }
-    fetchRunBeads(route.runId);
-    if (route.section === 'beads') fetchBeadsRunIssues(route.runId);
+    runsLoadedPromise.then(() => {
+      if (route.section !== 'beads') {
+        const projectId = _runProjectId(route.runId);
+        ws.send('subscribe-run', {
+          runId: route.runId,
+          projectId,
+        }).catch(() => {});
+        ws.send('subscribe-log', {
+          stage: logFilter === '*' ? null : logFilter,
+          runId: route.runId,
+          projectId,
+        }).catch(() => {});
+      }
+      fetchRunBeads(route.runId);
+      if (route.section === 'beads') fetchBeadsRunIssues(route.runId);
+    });
   }
 }
 
@@ -1157,10 +1190,16 @@ onHashChange((newRoute) => {
     } else {
       logFilter = '*';
       logIterationFilter = null;
-      ws.send('subscribe-run', { runId: route.runId }).catch(() => {});
-      ws.send('subscribe-log', { stage: null, runId: route.runId }).catch(
-        () => {},
-      );
+      const projectId = _runProjectId(route.runId);
+      ws.send('subscribe-run', {
+        runId: route.runId,
+        projectId,
+      }).catch(() => {});
+      ws.send('subscribe-log', {
+        stage: null,
+        runId: route.runId,
+        projectId,
+      }).catch(() => {});
       fetchRunBeads(route.runId);
     }
   }
@@ -1248,6 +1287,7 @@ function handleStageFilter(stage) {
     stage: stage === '*' ? null : stage,
     runId: route.runId,
     iteration: logIterationFilter,
+    projectId: _runProjectId(route.runId),
   }).catch(() => {});
   rerender();
 }
@@ -1261,6 +1301,7 @@ function handleIterationFilter(iteration) {
     stage: logFilter === '*' ? null : logFilter,
     runId: route.runId,
     iteration: iteration,
+    projectId: _runProjectId(route.runId),
   }).catch(() => {});
   rerender();
 }
@@ -1393,6 +1434,25 @@ async function handleResumeRun(runId) {
   } finally {
     _controlPending = null;
     rerender();
+  }
+}
+
+async function handleResumeFleet(fleetId) {
+  try {
+    const res = await fetch(`/api/fleet-runs/${fleetId}/resume`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to resume fleet');
+    } else {
+      // Force a re-fetch of the fleet manifest so the badge / actions
+      // update without needing a manual reload.
+      delete _fleetDetailCache[fleetId];
+      rerender();
+    }
+  } catch (err) {
+    showActionError(err?.message || 'Failed to resume fleet');
   }
 }
 
@@ -1735,7 +1795,7 @@ function fetchBeadsCounts() {
 function fetchBeadsRunIssues(runId) {
   beadsRunLoading = true;
   rerender();
-  ws.send('list-beads-by-run', { runId })
+  ws.send('list-beads-by-run', { runId, projectId: _runProjectId(runId) })
     .then((payload) => {
       beadsRunIssues = payload.issues || [];
       beadsRunLoading = false;
@@ -1936,6 +1996,61 @@ function contentHeaderView() {
           ${unsafeHTML(iconSvg(Play, 14))}
           ${fls.isSubmitting ? 'Launching…' : 'Launch'}
         </button>`;
+    } else if (route.runId) {
+      const fleet = _fleetDetailCache[route.runId];
+      if (fleet) {
+        const fs = fleet.status || 'running';
+        const variantMap = {
+          running: 'primary',
+          resuming: 'primary',
+          paused: 'warning',
+          completed: 'success',
+          failed: 'danger',
+          halted: fleet.halt_reason === 'user' ? 'neutral' : 'warning',
+        };
+        const labelMap = {
+          running: 'Running',
+          resuming: 'Resuming',
+          paused: 'Paused',
+          completed: 'Completed',
+          failed: 'Failed',
+          halted: fleet.halt_reason === 'user' ? 'Halted' : 'Halted (auto)',
+        };
+        badge = html`<sl-badge variant="${variantMap[fs] || 'neutral'}" pill>
+          ${unsafeHTML(statusIcon(fs, 12))}
+          ${labelMap[fs] || fs}
+        </sl-badge>`;
+
+        const isResumable =
+          fs === 'halted' || fs === 'failed' || fs === 'paused';
+        const isRunning = fs === 'running' || fs === 'resuming';
+        const isTerminal = !isRunning;
+
+        const haltBtn = isRunning
+          ? html`<button class="action-btn action-btn--amber" @click=${() => openFleetHaltDialog(rerender)}>
+              ${unsafeHTML(iconSvg(Pause, 14))} Halt
+            </button>`
+          : nothing;
+        const resumeBtn = isResumable
+          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(Play, 14))} Resume
+            </button>`
+          : nothing;
+        const cleanupBtn = isTerminal
+          ? html`<button class="action-btn action-btn--danger" @click=${() => openFleetCleanupDialog(rerender)}>
+              ${unsafeHTML(iconSvg(Trash2, 14))} Cleanup
+            </button>`
+          : nothing;
+        const rerunBtn = isTerminal
+          ? html`<button class="action-btn action-btn--teal" @click=${() => navigate('fleet-runs', 'new', null)}>
+              ${unsafeHTML(iconSvg(RotateCcw, 14))} Re-run
+            </button>`
+          : nothing;
+        const btns = [haltBtn, resumeBtn, cleanupBtn, rerunBtn].filter(
+          (b) => b !== nothing,
+        );
+        if (btns.length) actionButton = html`${btns}`;
+      }
     }
   } else if (route.runId) {
     const run = store.getRunById(route.runId);
@@ -2345,6 +2460,8 @@ function mainContentView() {
       return fleetDetailView(fleet || null, {
         rerender,
         onNavigate: (s, id) => navigate(s, id, null),
+        runsById: state.runs,
+        onSelectRun: (id) => navigate('history', id, null),
       });
     }
     // /fleet-runs → list of fleets

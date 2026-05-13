@@ -62,24 +62,67 @@ const BASE_FLEET = {
   ],
 };
 
+// Shared per-test runs map. The Projects section hydrates fleet children via
+// state.runs[child.run_id] and renders runCardView for each — these fixtures
+// match the children's run_ids.
+const RUNS_BY_ID = {
+  'run-1': {
+    id: 'run-1',
+    pipeline_status: 'completed',
+    active: false,
+    started_at: '2026-05-12T09:00:00.000Z',
+    completed_at: '2026-05-12T09:30:00.000Z',
+    branch: 'migration/alpha/v2-api',
+    work_request: { title: 'alpha' },
+    fleet_id: 'f_202605120900_abc12345',
+    group_type: 'fleet',
+    stages: {
+      planner: {
+        status: 'completed',
+        iterations: [{ cost_usd: 0.05 }],
+      },
+      implementer: {
+        status: 'completed',
+        iterations: [{ cost_usd: 0.1 }],
+      },
+    },
+  },
+  'run-2': {
+    id: 'run-2',
+    pipeline_status: 'running',
+    active: true,
+    started_at: '2026-05-12T09:00:00.000Z',
+    branch: 'migration/beta/v2-api',
+    work_request: { title: 'beta' },
+    fleet_id: 'f_202605120900_abc12345',
+    group_type: 'fleet',
+    stages: {
+      planner: {
+        status: 'running',
+        iterations: [{ cost_usd: 0.03 }],
+      },
+    },
+  },
+};
+
 // ─── header strip ─────────────────────────────────────────────────────────────
 
-describe('fleetDetailView — header strip', () => {
-  it('renders fleet-detail status row', () => {
-    // Page-level header (back button + title) is now rendered by main.js's
-    // contentHeaderView; the view itself surfaces a status row with the
-    // fleet status badge + fleet_id chip.
+describe('fleetDetailView — overview strip', () => {
+  it('renders the flat overview section (no hero card)', () => {
+    // The page top used to be a `fleetCardView` hero; it was replaced
+    // with a flat overview modelled on `runDetailView`'s top — a
+    // projects strip above a single info panel. The hero card is gone.
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-detail-status-row');
-    expect(out).toContain('fleet-status-badge');
+    expect(out).toContain('fleet-detail-overview');
+    expect(out).toContain('run-info-section');
+    expect(out).not.toContain('fleet-detail-hero');
   });
 
-  it('shows the full fleet_id chip', () => {
+  it('embeds the fleet_id on the overview wrapper', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-id-chip');
-    expect(out).toContain(BASE_FLEET.fleet_id);
+    expect(out).toContain(`data-fleet-id="${BASE_FLEET.fleet_id}"`);
   });
 
   it('renders fleet title (work_request.title) somewhere on the page', () => {
@@ -88,10 +131,45 @@ describe('fleetDetailView — header strip', () => {
     expect(out).toContain('Migrate to v2 API');
   });
 
-  it('renders fleet status badge', () => {
+  it('renders the fleet status badge inside the overview', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
     expect(out).toContain('fleet-status-badge');
+  });
+
+  it('does not render the projects strip on the overview', () => {
+    // The strip was redundant with the per-project run-cards rendered in
+    // the Projects section below — pulled out per design feedback.
+    resetFleetDetailState();
+    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
+    expect(out).not.toContain('fleet-projects-strip');
+  });
+
+  it('renders Base / Plan meta on the overview', () => {
+    // Head: row was dropped because head_template isn't actually applied
+    // to per-child branches yet — children use their own
+    // `worca/<slug>-<run_id>` pattern. Showing the unresolved template
+    // here would mislead the user (it doesn't match the branch shown on
+    // any project's run-card below).
+    resetFleetDetailState();
+    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
+    expect(out).toContain('>Base:<');
+    expect(out).toContain('>Plan:<');
+    expect(out).not.toContain('>Head:<');
+  });
+
+  it('renders Started / Duration meta on the overview', () => {
+    resetFleetDetailState();
+    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
+    expect(out).toContain('>Started:<');
+    expect(out).toContain('>Duration:<');
+  });
+
+  it('renders Fleet Cost + Projects count on the overview', () => {
+    resetFleetDetailState();
+    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
+    expect(out).toContain('>Fleet Cost:<');
+    expect(out).toContain('>Projects:<');
   });
 
   it('uses primary variant for running status', () => {
@@ -172,7 +250,7 @@ describe('fleetDetailView — header strip', () => {
         {},
       ),
     );
-    expect(out).toContain('Halted automatically: 1 of 2 children failed');
+    expect(out).toContain('Halted automatically: 1 of 2 projects failed');
   });
 
   it('badge title is empty when fleet is running', () => {
@@ -183,45 +261,27 @@ describe('fleetDetailView — header strip', () => {
   });
 });
 
-// ─── manifest panel ───────────────────────────────────────────────────────────
+// ─── overview meta (replaces the old manifest panel) ──────────────────────────
 
-describe('fleetDetailView — manifest panel', () => {
-  it('renders manifest section with canonical grid', () => {
+describe('fleetDetailView — overview meta', () => {
+  // The standalone "Manifest" panel and the hero card were both folded
+  // into a single flat overview strip. Base branch lives as a
+  // `.meta-value` item on that strip; max-parallel / circuit-breaker
+  // threshold / created-at / head_template are no longer surfaced on the
+  // detail page top.
+  it('does not show the branch template on the overview', () => {
+    // head_template (the pattern, e.g. `migration/{slug}/{project}`) is
+    // not currently applied to children, so showing it would mislead.
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-manifest-grid');
-    expect(out).toContain('Manifest');
+    expect(out).not.toContain('migration/{project}/{slug}');
   });
 
-  it('shows branch template', () => {
+  it('shows plan mode in a meta chip', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('migration/{project}/{slug}');
-  });
-
-  it('shows plan mode', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('none');
-  });
-
-  it('shows max parallel', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('5');
-  });
-
-  it('shows circuit breaker threshold as percentage', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('30%');
-  });
-
-  it('shows created-at timestamp (some locale-formatted form of the ISO date)', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    // _formatDate uses toLocaleString; assert on the year as a stable token.
-    expect(out).toContain('2026');
+    expect(out).toContain('>Plan:<');
+    expect(out).toContain('>none<');
   });
 });
 
@@ -400,79 +460,64 @@ describe('fleetDetailView — guide panel — content loaded', () => {
 
 // ─── children grid ────────────────────────────────────────────────────────────
 
-describe('fleetDetailView — children grid', () => {
-  it('renders children section with the canonical run-list shell', () => {
+describe('fleetDetailView — projects grid', () => {
+  it('renders projects section with the canonical run-list shell', () => {
     resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
+    const out = renderToString(
+      fleetDetailView(BASE_FLEET, { runsById: RUNS_BY_ID }),
+    );
     expect(out).toContain('fleet-children-section');
     expect(out).toContain('fleet-children-list');
   });
 
-  it('renders one run-card per child', () => {
+  it('uses the user-facing label "Projects"', () => {
     resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-child-card');
-    const count = (out.match(/fleet-child-card/g) || []).length;
+    const out = renderToString(
+      fleetDetailView(BASE_FLEET, { runsById: RUNS_BY_ID }),
+    );
+    expect(out).toMatch(/>Projects[ ·]/);
+  });
+
+  it('renders a runCardView per project (one .run-card per child)', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView(BASE_FLEET, { runsById: RUNS_BY_ID }),
+    );
+    const count = (out.match(/class="run-card/g) || []).length;
     expect(count).toBeGreaterThanOrEqual(2);
   });
 
-  it('shows project name from path', () => {
+  it('renders the project title (from work_request.title) inside each card', () => {
     resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('alpha');
-    expect(out).toContain('beta');
+    const out = renderToString(
+      fleetDetailView(BASE_FLEET, { runsById: RUNS_BY_ID }),
+    );
+    expect(out).toContain('>alpha<');
+    expect(out).toContain('>beta<');
   });
 
-  it('shows child status badge inside the run-card', () => {
+  it('renders the head branch via run-card meta', () => {
     resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    // The status badge is rendered via <sl-badge ... class="status-badge-<status>">
-    expect(out).toContain('status-badge-');
-  });
-
-  it('shows head branch for each child', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
+    const out = renderToString(
+      fleetDetailView(BASE_FLEET, { runsById: RUNS_BY_ID }),
+    );
     expect(out).toContain('migration/alpha/v2-api');
     expect(out).toContain('migration/beta/v2-api');
   });
 
-  it('shows base branch for each child', () => {
+  it('renders a placeholder when the run is not yet in state.runs', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    // Both children have base_branch: 'main'
-    expect(out).toContain('main');
+    expect(out).toContain('fleet-child-card-placeholder');
+    expect(out).toContain('Pipeline registry entry not loaded yet');
   });
 
-  it('renders PR link when child has pr_url', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('https://github.com/org/alpha/pull/42');
-  });
-
-  it('does not render PR link when pr_url is null', () => {
-    resetFleetDetailState();
-    const fleetNoPr = {
-      ...BASE_FLEET,
-      children: [{ ...BASE_FLEET.children[1], pr_url: null }],
-    };
-    const out = renderToString(fleetDetailView(fleetNoPr, {}));
-    expect(out).not.toContain('https://github.com');
-  });
-
-  it('shows per-child cost', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    // Alpha child costs 0.05 + 0.10 = $0.15
-    expect(out).toContain('$0.15');
-  });
-
-  it('renders empty-state hint when no children dispatched', () => {
+  it('renders empty-state hint when no projects dispatched', () => {
     resetFleetDetailState();
     const out = renderToString(
       fleetDetailView({ ...BASE_FLEET, children: [] }, {}),
     );
-    expect(out).toContain('No child runs dispatched yet');
+    expect(out).toContain('No projects dispatched yet');
   });
 });
 
@@ -603,37 +648,19 @@ describe('fleetDetailView — circuit breaker alert', () => {
   });
 });
 
-// ─── actions ─────────────────────────────────────────────────────────────────
+// ─── actions (dialogs only) ────────────────────────────────────────────────
+//
+// The visible action buttons (Halt / Resume / Cleanup / Re-run) moved to
+// the page header — same placement as Pause / Stop / Resume on the
+// pipeline run page. They're rendered by `contentHeaderView` in main.js
+// and are not in the scope of this view.
+//
+// `fleetDetailView` still owns the confirm dialogs that those header
+// buttons trigger. Tests here cover: dialog presence by status, dialog
+// copy, and resume-loss checkbox behaviour.
 
-describe('fleetDetailView — halt action', () => {
-  it('shows halt button when fleet is running', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
-    );
-    expect(out).toContain('btn-halt-fleet');
-  });
-
-  it('does not show halt button when fleet is completed', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'completed' }, {}),
-    );
-    expect(out).not.toContain('btn-halt-fleet');
-  });
-
-  it('does not show halt button when fleet is halted', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        { ...BASE_FLEET, status: 'halted', halt_reason: 'user' },
-        {},
-      ),
-    );
-    expect(out).not.toContain('btn-halt-fleet');
-  });
-
-  it('renders halt confirmation dialog', () => {
+describe('fleetDetailView — halt confirmation dialog', () => {
+  it('renders halt dialog when fleet is running', () => {
     resetFleetDetailState();
     const out = renderToString(
       fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
@@ -641,96 +668,57 @@ describe('fleetDetailView — halt action', () => {
     expect(out).toContain('halt-confirm-dialog');
   });
 
+  it('does not render halt dialog when fleet is not running', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView({ ...BASE_FLEET, status: 'completed' }, {}),
+    );
+    expect(out).not.toContain('halt-confirm-dialog');
+  });
+
   it('halt dialog explains in-flight children continue', () => {
     resetFleetDetailState();
     const out = renderToString(
       fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
     );
-    // The dialog should explain in-flight children won't be killed
-    // (text begins with capital I in the refactored copy)
     expect(out.toLowerCase()).toContain('in-flight');
   });
 });
 
-describe('fleetDetailView — resume action', () => {
-  it('shows resume button when fleet is halted', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        { ...BASE_FLEET, status: 'halted', halt_reason: 'user' },
-        {},
-      ),
-    );
-    expect(out).toContain('btn-resume-fleet');
-  });
-
-  it('shows resume button when fleet is failed', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'failed' }, {}),
-    );
-    expect(out).toContain('btn-resume-fleet');
-  });
-
-  it('does not show resume button when fleet is running', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
-    );
-    expect(out).not.toContain('btn-resume-fleet');
-  });
-
-  it('does not show resume button when fleet is completed', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'completed' }, {}),
-    );
-    expect(out).not.toContain('btn-resume-fleet');
-  });
-});
-
-describe('fleetDetailView — cleanup action', () => {
-  it('shows cleanup button when fleet is completed', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'completed' }, {}),
-    );
-    expect(out).toContain('btn-cleanup-fleet');
-  });
-
-  it('shows cleanup button when fleet is halted', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        { ...BASE_FLEET, status: 'halted', halt_reason: 'user' },
-        {},
-      ),
-    );
-    expect(out).toContain('btn-cleanup-fleet');
-  });
-
-  it('shows cleanup button when fleet is failed', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'failed' }, {}),
-    );
-    expect(out).toContain('btn-cleanup-fleet');
-  });
-
-  it('does not show cleanup button when fleet is running', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
-    );
-    expect(out).not.toContain('btn-cleanup-fleet');
-  });
-
-  it('renders cleanup confirmation dialog', () => {
+describe('fleetDetailView — cleanup confirmation dialog', () => {
+  it('renders cleanup dialog when fleet is completed', () => {
     resetFleetDetailState();
     const out = renderToString(
       fleetDetailView({ ...BASE_FLEET, status: 'completed' }, {}),
     );
     expect(out).toContain('cleanup-confirm-dialog');
+  });
+
+  it('renders cleanup dialog when fleet is halted', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView(
+        { ...BASE_FLEET, status: 'halted', halt_reason: 'user' },
+        {},
+      ),
+    );
+    expect(out).toContain('cleanup-confirm-dialog');
+  });
+
+  it('renders cleanup dialog when fleet is failed', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView({ ...BASE_FLEET, status: 'failed' }, {}),
+    );
+    expect(out).toContain('cleanup-confirm-dialog');
+  });
+
+  it('does not render cleanup dialog when fleet is running', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
+    );
+    expect(out).not.toContain('cleanup-confirm-dialog');
   });
 });
 
@@ -804,44 +792,9 @@ describe('fleetDetailView — cleanup resume-loss warning', () => {
   });
 });
 
-// ─── re-run action ────────────────────────────────────────────────────────────
-
-describe('fleetDetailView — re-run fleet', () => {
-  it('shows re-run button when fleet is completed', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'completed' }, {}),
-    );
-    expect(out).toContain('btn-rerun-fleet');
-  });
-
-  it('shows re-run button when fleet is failed', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'failed' }, {}),
-    );
-    expect(out).toContain('btn-rerun-fleet');
-  });
-
-  it('shows re-run button when fleet is halted', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        { ...BASE_FLEET, status: 'halted', halt_reason: 'user' },
-        {},
-      ),
-    );
-    expect(out).toContain('btn-rerun-fleet');
-  });
-
-  it('does not show re-run button when fleet is running', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
-    );
-    expect(out).not.toContain('btn-rerun-fleet');
-  });
-});
+// (re-run button moved to the page header — no longer rendered by
+// `fleetDetailView`. Header-level button visibility is exercised by
+// browser e2e tests, not this file.)
 
 // ─── null / loading state ─────────────────────────────────────────────────────
 

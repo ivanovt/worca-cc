@@ -658,3 +658,31 @@ class TestMainWritesFleetManifest:
         ):
             main(["--resume", "f_202605120809_abc123"])
         mock_write.assert_not_called()
+
+
+class TestParseRunIdFromStdout:
+    """run_worktree.py prints `<run_id>\\n<worktree_path>\\n` on success — the
+    dispatcher reads the first line and registers it back into the fleet
+    manifest's children array (Fix B for empty-children manifest bug)."""
+
+    def test_returns_first_line(self):
+        from worca.scripts.run_fleet import _parse_run_id_from_stdout
+        out = "20260512-204709-032-dfd2\n/repos/test/.worktrees/abc\n"
+        assert _parse_run_id_from_stdout(out) == "20260512-204709-032-dfd2"
+
+    def test_returns_none_for_empty_stdout(self):
+        from worca.scripts.run_fleet import _parse_run_id_from_stdout
+        assert _parse_run_id_from_stdout("") is None
+        assert _parse_run_id_from_stdout(None) is None
+
+    def test_rejects_path_looking_first_line(self):
+        from worca.scripts.run_fleet import _parse_run_id_from_stdout
+        assert _parse_run_id_from_stdout("/tmp/some/path\nother\n") is None
+
+    def test_rejects_first_line_with_spaces(self):
+        from worca.scripts.run_fleet import _parse_run_id_from_stdout
+        assert _parse_run_id_from_stdout("error: something went wrong\n") is None
+
+    def test_strips_whitespace(self):
+        from worca.scripts.run_fleet import _parse_run_id_from_stdout
+        assert _parse_run_id_from_stdout("  r-001  \n/path\n") == "r-001"

@@ -1,0 +1,393 @@
+import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
+import { iconSvg, Pause, Play, RotateCcw, Workflow } from '../utils/icons.js';
+import { statusClass, statusIcon } from '../utils/status-badge.js';
+import {
+  fleetStatusLabel,
+  fleetStatusTooltip,
+  fleetStatusVariant,
+} from './group-rendering.js';
+
+// How many child tiles render before collapsing the tail into a "+N more" chip.
+const _CHILDREN_STRIP_VISIBLE = 8;
+
+function _shortRepoName(child) {
+  // Both shapes work: dashboard passes `Run` objects (use project name from
+  // path / project_id), fleet-detail passes manifest entries (project_path).
+  const raw = child.project_path || child.project || child._project || '';
+  return raw.split('/').filter(Boolean).pop() || '—';
+}
+
+function _resolveChildStatus(child) {
+  // Manifest children carry `status`; live Run objects carry `pipeline_status`.
+  return child.status || child.pipeline_status || 'pending';
+}
+
+function _formatCost(usd) {
+  if (!usd) return null;
+  if (usd < 0.01) return `$${usd.toFixed(4)}`;
+  return `$${usd.toFixed(2)}`;
+}
+
+/**
+ * Render a single child tile inside the children strip.
+ *
+ * The tile is intentionally tiny — status icon + truncated repo name. Click
+ * navigates to the child's pipeline detail (when a run_id resolves to a real
+ * pipeline), or to a placeholder for not-yet-dispatched children.
+ */
+function _childTile(child, { onChildClick } = {}) {
+  const status = _resolveChildStatus(child);
+  const name = _shortRepoName(child);
+  const runId = child.run_id || child.id || null;
+  const title = `${name} — ${status}${runId ? `\n${runId}` : ''}`;
+  const clickable = runId && onChildClick;
+  return html`
+    <button
+      type="button"
+      class="fleet-card-child-tile ${statusClass(status)}"
+      title="${title}"
+      ?disabled=${!clickable}
+      @click=${
+        clickable
+          ? (e) => {
+              e.stopPropagation();
+              onChildClick(runId);
+            }
+          : null
+      }
+    >
+      <span class="fleet-card-child-icon">${unsafeHTML(statusIcon(status, 14))}</span>
+      <span class="fleet-card-child-label">${name}</span>
+    </button>
+  `;
+}
+
+function _overflowTile(extra) {
+  return html`
+    <span class="fleet-card-child-tile fleet-card-child-tile-overflow" aria-hidden="true">
+      <span class="fleet-card-child-label">+${extra}</span>
+    </span>
+  `;
+}
+
+function _aggregateCounts(children) {
+  let completed = 0;
+  let failed = 0;
+  let running = 0;
+  let paused = 0;
+  let halted = 0;
+  let pending = 0;
+  for (const c of children) {
+    const s = _resolveChildStatus(c);
+    if (s === 'completed') completed++;
+    else if (s === 'failed' || s === 'setup_failed' || s === 'unrecoverable')
+      failed++;
+    else if (s === 'running' || s === 'resuming') running++;
+    else if (s === 'paused') paused++;
+    else if (s === 'halted') halted++;
+    else pending++;
+  }
+  return {
+    completed,
+    failed,
+    running,
+    paused,
+    halted,
+    pending,
+    total: children.length,
+  };
+}
+
+function _progressText({ completed, failed, total }) {
+  const parts = [`${completed}/${total} completed`];
+  if (failed > 0) parts.push(`${failed} failed`);
+  return parts.join(' · ');
+}
+
+/**
+ * `fleetCardView` — the shared "card per fleet" component used in the
+ * dashboard and as the page hero on the fleet detail page. Shares the
+ * pipeline card's information hierarchy (status accent, title, meta-chip
+ * rows, action row at the bottom) but differs in form: a layered "stack
+ * of cards" silhouette and a children-strip in the slot that the pipeline
+ * card uses for stage badges.
+ *
+ * The single signature accepts both shapes for `children`:
+ *   - Manifest entries: { project_path, run_id?, status, head_branch?, … }
+ *   - Live Run objects: { id, project, pipeline_status, work_request, … }
+ *
+ * Callers are expected to normalise the rest of the fleet metadata into the
+ * `fleet` argument before invoking — see `_dashboardFleetFromChildren` in
+ * `dashboard.js` for the synthetic-fleet construction path.
+ *
+ * @param {{
+ *   fleet_id: string,
+ *   fleet_id_short?: string,
+ *   title?: string,
+ *   status: string,
+ *   halt_reason?: string | null,
+ *   base_branch?: string | null,
+ *   head_template?: string | null,
+ *   plan_mode?: string | null,
+ *   started_at?: string | null,
+ *   last_activity_at?: string | null,
+ *   cost_usd?: number,
+ * }} fleet
+ * @param {Array<object>} children
+ * @param {{
+ *   onClick?: (fleetId: string) => void,
+ *   onChildClick?: (runId: string) => void,
+ *   onHalt?: (fleetId: string) => void,
+ *   onResumeFailed?: (fleetId: string) => void,
+ * }} options
+ */
+export function fleetCardView(fleet, children = [], options = {}) {
+  const { onClick, onChildClick, onHalt, onResumeFailed } = options;
+
+  const status = fleet.status || 'running';
+  const haltReason = fleet.halt_reason || null;
+  const variant = fleetStatusVariant(status, haltReason);
+  const label = fleetStatusLabel(status, haltReason);
+  const counts = _aggregateCounts(children);
+  const tooltip = fleetStatusTooltip(status, haltReason, {
+    haltAt: fleet.halted_at,
+    failedCount: counts.failed,
+    totalCount: counts.total,
+  });
+
+  // Field-name fallbacks let the card accept the server payload shape
+  // (`GET /api/fleet-runs` → `work_request.title`, `plan.mode`, `created_at`,
+  // `updated_at`) directly. Synthetic shapes built client-side may use the
+  // flatter `title` / `plan_mode` / `started_at` / `last_activity_at` aliases.
+  const title =
+    fleet.title ||
+    fleet.work_request?.title ||
+    `Fleet ${fleet.fleet_id_short || fleet.fleet_id || ''}`;
+  const baseBranch = fleet.base_branch;
+  const headTemplate = fleet.head_template;
+  const planMode = fleet.plan_mode || fleet.plan?.mode || null;
+  const startedAt = fleet.started_at || fleet.created_at || null;
+  const lastActivityAt = fleet.last_activity_at || fleet.updated_at || null;
+  const costUsd = fleet.cost_usd ?? 0;
+
+  const progressPct =
+    counts.total > 0 ? Math.round((counts.completed / counts.total) * 100) : 0;
+  const progressText = _progressText(counts);
+
+  // "Worst child" exception counters — surface failed/halted/paused buckets
+  // when they don't already match the fleet's overall status badge. Replaces
+  // the prior right-edge accent stripe, which was easy to miss. Aligns with
+  // the badge guide: `danger` for failures, `warning` for halted/paused.
+  const exceptionPills = [];
+  if (counts.failed > 0 && status !== 'failed') {
+    exceptionPills.push({
+      variant: 'danger',
+      cls: 'fleet-card-exception-failed',
+      label: `${counts.failed} failed`,
+    });
+  }
+  if (counts.halted > 0 && status !== 'halted') {
+    exceptionPills.push({
+      variant: 'warning',
+      cls: 'fleet-card-exception-halted',
+      label: `${counts.halted} halted`,
+    });
+  }
+  if (counts.paused > 0 && status !== 'paused') {
+    exceptionPills.push({
+      variant: 'warning',
+      cls: 'fleet-card-exception-paused',
+      label: `${counts.paused} paused`,
+    });
+  }
+
+  // Duration: started → last_activity_at if running, else started → most
+  // recent terminal timestamp (or now if neither is provided).
+  const duration =
+    startedAt && lastActivityAt
+      ? formatDuration(elapsed(startedAt, lastActivityAt))
+      : startedAt
+        ? formatDuration(elapsed(startedAt, null))
+        : null;
+
+  // (Tile strip removed — segmented progress bar now plays both roles:
+  // status visualization AND per-project click target.)
+  void _childTile;
+  void _overflowTile;
+  void _CHILDREN_STRIP_VISIBLE;
+
+  const showHalt =
+    onHalt &&
+    (status === 'running' || status === 'paused' || status === 'resuming');
+  const showResume =
+    onResumeFailed &&
+    (status === 'halted' || status === 'failed') &&
+    counts.failed + counts.pending > 0;
+
+  const handleCardClick = onClick
+    ? (e) => {
+        // Ignore clicks that started on an interactive descendant.
+        if (e.target.closest('button, a, sl-button')) return;
+        onClick(fleet.fleet_id);
+      }
+    : null;
+
+  return html`
+    <div
+      class="fleet-card fleet-card-stack ${statusClass(status)}"
+      data-fleet-id="${fleet.fleet_id || ''}"
+      data-halt-reason="${haltReason || ''}"
+      @click=${handleCardClick}
+      style="${handleCardClick ? 'cursor:pointer' : ''}"
+    >
+      <div class="fleet-card-top">
+        <span class="fleet-card-status" title="${tooltip || ''}">
+          ${unsafeHTML(statusIcon(status, 16))}
+        </span>
+        <span class="fleet-card-title">${title}</span>
+        <span class="fleet-card-fleet-chip">
+          ${unsafeHTML(iconSvg(Workflow, 12))}
+          <span>FLEET · ${counts.total} ${counts.total === 1 ? 'project' : 'projects'}</span>
+        </span>
+        <sl-badge
+          variant="${variant}"
+          pill
+          class="fleet-card-status-badge"
+          title="${tooltip || ''}"
+        >${label}</sl-badge>
+        ${exceptionPills.map(
+          (p) => html`
+            <sl-badge
+              variant="${p.variant}"
+              pill
+              class="fleet-card-exception-pill ${p.cls}"
+            >${p.label}</sl-badge>
+          `,
+        )}
+      </div>
+
+      <div class="fleet-card-progress">
+        <span class="meta-label fleet-card-children-label">Projects: ${children.length}</span>
+        ${
+          counts.total > 0
+            ? html`
+              <div
+                class="fleet-card-progress-bar"
+                role="progressbar"
+                aria-valuenow="${progressPct}"
+                aria-valuemin="0"
+                aria-valuemax="100"
+              >
+                ${children.map((c) => {
+                  const s = _resolveChildStatus(c);
+                  const runId = c.run_id || c.id || null;
+                  const clickable = runId && onChildClick;
+                  return html`
+                    <button
+                      type="button"
+                      class="fleet-card-progress-segment ${statusClass(s)}"
+                      title="${_shortRepoName(c)} — ${s}"
+                      ?disabled=${!clickable}
+                      @click=${
+                        clickable
+                          ? (e) => {
+                              e.stopPropagation();
+                              onChildClick(runId);
+                            }
+                          : null
+                      }
+                    ></button>
+                  `;
+                })}
+              </div>
+              <span class="fleet-card-progress-text">${progressText}</span>
+            `
+            : html`
+              <span class="fleet-card-children-empty">No projects dispatched yet</span>
+            `
+        }
+      </div>
+
+      <div class="fleet-card-meta">
+        ${
+          planMode
+            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Plan:</span> <span class="meta-value">${planMode}</span></span>`
+            : nothing
+        }
+        ${
+          baseBranch
+            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Base:</span> <span class="meta-value">${baseBranch}</span></span>`
+            : nothing
+        }
+        ${
+          headTemplate
+            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Head:</span> <span class="meta-value">${headTemplate}</span></span>`
+            : nothing
+        }
+      </div>
+
+      <div class="fleet-card-meta">
+        ${
+          startedAt
+            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(startedAt)}</span></span>`
+            : nothing
+        }
+        ${
+          lastActivityAt
+            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Last activity:</span> <span class="meta-value">${formatTimestamp(lastActivityAt)}</span></span>`
+            : nothing
+        }
+        ${
+          duration
+            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Duration:</span> <span class="meta-value">${duration}</span></span>`
+            : nothing
+        }
+        ${
+          _formatCost(costUsd)
+            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${_formatCost(costUsd)}</span></span>`
+            : nothing
+        }
+      </div>
+
+      ${
+        showHalt || showResume
+          ? html`
+            <div class="fleet-card-actions">
+              ${
+                showHalt
+                  ? html`
+                    <sl-button size="small" variant="warning" outline class="btn-fleet-halt" @click=${(
+                      e,
+                    ) => {
+                      e.stopPropagation();
+                      onHalt(fleet.fleet_id);
+                    }}>
+                      ${unsafeHTML(iconSvg(Pause, 12))} Halt fleet
+                    </sl-button>
+                  `
+                  : nothing
+              }
+              ${
+                showResume
+                  ? html`
+                    <sl-button size="small" variant="primary" outline class="btn-fleet-resume" @click=${(
+                      e,
+                    ) => {
+                      e.stopPropagation();
+                      onResumeFailed(fleet.fleet_id);
+                    }}>
+                      ${unsafeHTML(iconSvg(status === 'halted' ? Play : RotateCcw, 12))}
+                      ${status === 'halted' ? 'Resume failed' : 'Retry failed'}
+                    </sl-button>
+                  `
+                  : nothing
+              }
+            </div>
+          `
+          : nothing
+      }
+    </div>
+  `;
+}

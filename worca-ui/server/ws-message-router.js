@@ -80,6 +80,22 @@ export function createMessageRouter({
     };
   }
 
+  // When a run-scoped subscribe arrives with a `payload.projectId` that
+  // differs from the client's currently-bound subs.projectId, re-bind the
+  // WS to that project. Without this, the targeted project's WatcherSet
+  // stays in POLLING tier (no logWatcher / no live updates), and the
+  // backfill / live stream silently never arrive — symptoms reported by
+  // the user as "no logs / no agent prompts" on the run-detail page in
+  // global mode. We keep the previous projectId reference so demotion
+  // still happens via the normal client-count mechanism.
+  function _adoptProjectFromPayload(ws, payload) {
+    const requested = payload?.projectId;
+    if (!requested || !watcherSets.has(requested)) return;
+    const subs = clientManager.getSubs(ws);
+    if (subs?.projectId === requested) return;
+    clientManager.setProtocol(ws, subs?.protocolVersion ?? 1, requested);
+  }
+
   async function handleMessage(ws, data) {
     let json;
     try {
@@ -147,6 +163,7 @@ export function createMessageRouter({
         );
         return;
       }
+      _adoptProjectFromPayload(ws, req.payload);
       const proj = resolveProject(ws, req.payload);
       const runs = discoverRuns(proj.worcaDir);
       const run = runs.find((r) => r.id === runId);
@@ -294,6 +311,7 @@ export function createMessageRouter({
         );
         return;
       }
+      _adoptProjectFromPayload(ws, req.payload);
       const proj = resolveProject(ws, req.payload);
       if (!proj) {
         ws.send(
@@ -336,6 +354,7 @@ export function createMessageRouter({
     // subscribe-log
     if (req.type === 'subscribe-log') {
       const { stage, runId, iteration } = req.payload || {};
+      _adoptProjectFromPayload(ws, req.payload);
       const proj = resolveProject(ws, req.payload);
       const s = clientManager.ensureSubs(ws);
       s.logStage = stage || '*';
@@ -652,6 +671,7 @@ export function createMessageRouter({
         );
         return;
       }
+      _adoptProjectFromPayload(ws, req.payload);
       const proj = resolveProject(ws, req.payload);
       if (!proj.wset.beadsWatcher) {
         ws.send(JSON.stringify(makeOk(req, { issues: [], runId })));
