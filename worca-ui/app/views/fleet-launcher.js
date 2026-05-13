@@ -467,6 +467,8 @@ function _advancedSection({ rerender } = {}) {
     <div class="new-run-section">
       <h3 class="new-run-section-title">Advanced Options</h3>
       <div class="new-run-advanced">
+        <div class="advanced-subgroup">
+          <div class="advanced-subgroup-title">Branches</div>
         <div class="settings-field">
           <label class="settings-label">PR base branch (optional)</label>
           <sl-input
@@ -550,10 +552,13 @@ function _advancedSection({ rerender } = {}) {
           )}
           <span class="settings-field-hint">Placeholders: <code>{project}</code>, <code>{fleet_id}</code>, <code>{slug}</code>, <code>{yyyymmdd}</code>, <code>{yyyymmddhhmm}</code>.</span>
         </div>
+        </div>
 
         ${
           showPlanModeRadio
             ? html`
+              <div class="advanced-subgroup">
+                <div class="advanced-subgroup-title">Planning</div>
               <div class="settings-field">
                 <label class="settings-label">Per-project planning strategy</label>
                 ${planModeRadio(
@@ -583,10 +588,13 @@ function _advancedSection({ rerender } = {}) {
                 )}
                 <span class="settings-field-hint">Independent: each project runs its own Planner. Plan-first: one reference project plans, others adopt it. Set a Plan File above to skip planning entirely.</span>
               </div>
+              </div>
             `
             : nothing
         }
 
+        <div class="advanced-subgroup">
+          <div class="advanced-subgroup-title">Concurrency</div>
         <div class="new-run-grid">
           <div class="settings-field">
             <label class="settings-label">Max parallel runs</label>
@@ -626,6 +634,7 @@ function _advancedSection({ rerender } = {}) {
             ></sl-range>
             <span class="settings-field-hint">Failure ratio that halts unstarted children after at least 3 have completed.</span>
           </div>
+        </div>
         </div>
       </div>
     </div>

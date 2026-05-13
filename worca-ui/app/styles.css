@@ -2355,7 +2355,39 @@ sl-details.live-output-panel::part(content) {
 .new-run-advanced {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
+}
+
+/* Advanced Options is dense — give each field a touch more breathing room
+   between label / control / hint than the default 4px so multi-line
+   sub-controls (head-template preview, plan-mode radio + warning) don't
+   feel stacked. Scoped to .new-run-advanced so the rest of Settings
+   keeps its tighter rhythm. */
+.new-run-advanced .settings-field {
+  gap: 8px;
+}
+.new-run-advanced .settings-field-hint {
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* Visual subgroup inside Advanced Options — small caps title + subtle
+   underline divider. Keeps the section card's outer border doing the
+   heavy lifting; the subgroup title is just a quiet "BRANCHES" /
+   "PLANNING" / "CONCURRENCY" label for scanability. */
+.advanced-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.advanced-subgroup-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border-subtle);
 }
 
 .new-run-grid {
@@ -5035,23 +5067,126 @@ sl-tooltip.bead-tooltip::part(body) {
   flex: 1 1 auto;
 }
 
-.fleet-launcher-wr-tabs::part(nav) {
-  margin-bottom: 12px;
+/* Head-template preview rows — render below the input as a small inset
+   panel so the per-project resolved branches feel attached to (not just
+   stacked under) the template field. */
+.head-template-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-
-.fleet-launcher-advanced::part(base) {
+.head-template-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-primary);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
+  font-size: 12px;
+}
+.head-template-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.head-template-preview-row .preview-arrow {
+  color: var(--muted);
+}
+.head-template-preview-row .preview-branch {
+  color: var(--text);
+}
+.head-template-preview-row.collision .preview-branch {
+  color: var(--status-error);
+}
+.head-template-preview-row .collision-flag {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--status-error);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Plan-mode radio container: stack the radios with breathing room and
+   keep the divergence-warning alert visually attached to the chosen
+   option without crowding it. */
+.plan-mode-radio {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.plan-mode-radio sl-radio-group::part(form-control) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Token Overhead Estimate widget: padded box with the header and panel
+   stacked. */
+.token-overhead-gate {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.token-gate-header {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.token-gate-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.token-estimate-panel {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  row-gap: 4px;
+  padding: 10px 12px;
   background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.token-estimate-label {
+  color: var(--muted);
+}
+.token-estimate-value {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text);
+}
+.token-estimate-value.token-total {
+  font-weight: 600;
+}
+.token-estimate-detail {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  padding-top: 2px;
 }
 
-.fleet-launcher-launch-section {
-  border-top: 2px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+/* Base-branch validation states */
+.base-branch-validating {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 0;
 }
-
-.fleet-launcher-launch-section .new-run-section-title {
-  color: var(--accent);
+.base-branch-error {
+  font-size: 12px;
+  color: var(--status-error);
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--status-error);
+  border-radius: var(--radius);
+}
+.base-branch-missing-list {
+  margin: 4px 0 0;
+  padding-left: 20px;
 }
 
 /* ── Fleet detail (page) ────────────────────────────────────────────────── */
