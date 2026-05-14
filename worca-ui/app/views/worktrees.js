@@ -100,8 +100,10 @@ function _diskSummaryView(worktrees, diskWarningBytes = 2_000_000_000) {
             `
           : nothing
       }
+      <span class="meta-sep">·</span>
+      <span class="meta-label">Note:</span>
+      <span class="meta-value">Excludes node_modules, .git, and build/cache dirs</span>
     </div>
-    ${caveat}
   `;
 }
 

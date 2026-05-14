@@ -280,12 +280,16 @@ describe('worktreesView - disk summary', () => {
     expect(output).not.toContain('worktrees-disk-alert');
   });
 
-  it('shows disk caveat in normal summary path', () => {
+  it('shows disk caveat inline on the normal summary line', () => {
+    // In the non-warning path the caveat is folded into the summary line
+    // as a "Note:" meta-label/value pair (not a separate caveat div).
     const output = renderToString(worktreesView([completedWorktree]));
-    expect(output).toContain('worktrees-disk-caveat');
+    expect(output).toContain('worktrees-summary');
+    expect(output).toContain('>Note:<');
     expect(output).toContain(
       'Excludes node_modules, .git, and build/cache dirs',
     );
+    expect(output).not.toContain('worktrees-disk-caveat');
   });
 
   it('shows disk caveat in warning-banner path', () => {
