@@ -138,10 +138,12 @@ describe('dashboardView - fleet rendering', () => {
   });
 
   it('uses work_request.title as the fleet-card title', () => {
+    // The fleet card reuses the shared `.run-card-*` structural classes
+    // (the title sits in `.run-card-title`, same as the pipeline card).
     const state = { runs: {}, fleets: [runningFleet] };
     const output = renderToString(dashboardView(state));
     expect(output).toContain('Migrate all repos');
-    expect(output).toContain('fleet-card-title');
+    expect(output).toContain('run-card-title');
   });
 
   it('renders the fleet-card status badge', () => {

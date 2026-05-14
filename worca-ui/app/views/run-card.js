@@ -36,6 +36,24 @@ const BADGE_VARIANT = {
   pending: 'neutral',
 };
 
+// Variant for the overall-run status badge in the card header. Keyed by
+// `pipeline_status` values (distinct from BADGE_VARIANT, which is keyed
+// by per-stage status). Mirrors the page-header badge map in main.js so
+// the pipeline card carries the same status-badge affordance as the
+// worktree and fleet cards.
+const RUN_STATUS_VARIANT = {
+  pending: 'neutral',
+  running: 'primary',
+  resuming: 'primary',
+  paused: 'warning',
+  interrupted: 'warning',
+  halted: 'warning',
+  completed: 'success',
+  failed: 'danger',
+  error: 'danger',
+  cancelled: 'neutral',
+};
+
 function _statusTooltip(run, status) {
   const ref =
     run.status_changed_at ||
@@ -230,6 +248,11 @@ export function runCardView(
         }
         <span class="run-card-title">${title}</span>
         ${run.is_worktree_run ? html`<sl-icon name="folder-symlink" class="run-card-worktree-icon" title=${`Isolated worktree at ${run.worktree_path || ''}`}></sl-icon>` : nothing}
+        <sl-badge
+          variant="${RUN_STATUS_VARIANT[overallStatus] || 'neutral'}"
+          pill
+          class="status-badge-${overallStatus}"
+        >${overallStatus}</sl-badge>
       </div>
       ${(() => {
         const projectItem = projectName

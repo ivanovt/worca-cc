@@ -141,6 +141,34 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
               </sl-badge>`
         }
       </div>
+      ${
+        wt.project || groupLabel
+          ? html`
+              <div class="run-card-meta">
+                ${
+                  wt.project
+                    ? html`<span class="run-card-meta-item">
+                        <span class="meta-label">Project:</span>
+                        <span class="meta-value run-card-project">${wt.project}</span>
+                      </span>`
+                    : nothing
+                }
+                ${
+                  groupLabel
+                    ? html`<span class="run-card-meta-item">
+                        <span class="meta-label">${groupLabel.kind === 'fleet' ? 'Fleet:' : 'Workspace:'}</span>
+                        <a
+                          class="meta-value run-card-group-link"
+                          href="#/${groupLabel.kind === 'fleet' ? 'fleet-runs' : 'workspace-runs'}/${groupLabel.id}"
+                          @click=${(e) => e.stopPropagation()}
+                        >${groupLabel.id}</a>
+                      </span>`
+                    : nothing
+                }
+              </div>
+            `
+          : nothing
+      }
       <div class="run-card-meta">
         <span class="run-card-meta-item">
           <span class="meta-label">Branch:</span>
@@ -154,20 +182,6 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
           <span class="meta-label">Age:</span>
           <span class="meta-value">${_formatAge(wt.age_seconds)}</span>
         </span>
-        ${
-          groupLabel
-            ? html`
-                <span class="run-card-meta-item">
-                  <span class="meta-label">${groupLabel.kind === 'fleet' ? 'Fleet:' : 'Workspace:'}</span>
-                  <a
-                    class="meta-value run-card-group-link"
-                    href="#/${groupLabel.kind === 'fleet' ? 'fleet-runs' : 'workspace-runs'}/${groupLabel.id}"
-                    @click=${(e) => e.stopPropagation()}
-                  >${groupLabel.id}</a>
-                </span>
-              `
-            : nothing
-        }
       </div>
       <div class="run-card-meta worktree-card-path">
         <span class="meta-label">Path:</span>

@@ -1340,35 +1340,17 @@ sl-input [slot="prefix"] {
 .run-card.status-setup-failed { border-left: 3px solid var(--status-failed); }
 .run-card.status-unrecoverable { border-left: 3px solid var(--status-failed); }
 
-/* ── Fleet card (shared component for Dashboard + Fleet detail) ─────────
-   Same information hierarchy + base style as `.run-card` (status-coloured
-   left edge, top/meta/action rows, click-to-navigate), but visually
-   distinct via:
+/* ── Fleet card (shared component for Dashboard + Fleet list) ───────────
+   The fleet card reuses the `.run-card` base class and its shared
+   structural sub-elements (`.run-card-top`, `.run-card-status`,
+   `.run-card-title`, `.run-card-meta`, `.run-card-meta-item`,
+   `.run-card-actions`) — exactly like `.worktree-card` does. The
+   `.fleet-card` / `.fleet-card-*` rules below are only the bits that are
+   genuinely fleet-specific:
      - a layered "stack of cards" silhouette (::before / ::after layers)
-     - a FLEET · N chip next to the title
-     - a children strip in the slot the pipeline card uses for stages
-     - an aggregate progress bar
-     - an optional right-edge "worst child" accent so a single failed
-       child in an otherwise-running fleet is visible at a glance */
-.fleet-card {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px 18px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  background: var(--surface);
-  transition:
-    background var(--transition-fast),
-    box-shadow var(--transition-fast),
-    transform var(--transition-fast);
-}
-
-.fleet-card:hover {
-  background: var(--bg-hover);
-  box-shadow: var(--shadow-md);
-  transform: translateY(-1px);
-}
+     - the "Projects:" name-badge row
+     - the failed-count pill + exception pills
+   The box, hover, and status-accent styling all come from `.run-card`. */
 
 /* Stack-of-cards illusion: two thin layers above-right behind the main card,
    each progressively offset and dimmed. Pure decoration — pointer-events
@@ -1397,49 +1379,16 @@ sl-input [slot="prefix"] {
   opacity: 0.3;
 }
 
-/* Status-coloured left edge — same palette as .run-card so the two cards
-   sit comfortably side-by-side. The halted-user case is treated as
-   informational (grey), matching its `neutral` status-badge variant —
-   per the project's badge-color-language guide §CSS Variables: the
-   variant and the CSS variable must map to the same colour for each
-   state. Circuit-breaker / targets-not-ready halts stay orange. */
-.fleet-card.status-running    { border-left: 3px solid var(--status-running); }
-.fleet-card.status-paused     { border-left: 3px solid var(--status-paused); }
-.fleet-card.status-completed  { border-left: 3px solid var(--status-completed); }
-.fleet-card.status-failed     { border-left: 3px solid var(--status-failed); }
-.fleet-card.status-pending    { border-left: 3px solid var(--status-pending); }
-.fleet-card.status-cancelled  { border-left: 3px solid var(--status-cancelled); }
-.fleet-card.status-halted     { border-left: 3px solid var(--status-paused); }
-.fleet-card.status-resuming   { border-left: 3px solid var(--status-running); }
+/* The status-coloured left edge comes from `.run-card.status-*` (the
+   fleet card carries the `run-card` base class). The one fleet-specific
+   override: a user-initiated halt reads as informational grey, matching
+   its `neutral` status-badge variant — per the badge-color-language
+   guide §CSS Variables. Circuit-breaker / targets-not-ready halts keep
+   the inherited orange. */
 .fleet-card.status-halted[data-halt-reason="user"] {
   border-left-color: var(--status-pending);
 }
 
-/* Top row: status icon + title + FLEET chip + status badge. */
-.fleet-card-top {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.fleet-card-status {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.fleet-card-title {
-  font-weight: 500;
-  font-size: 14px;
-  color: var(--fg);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1;
-  min-width: 0;
-}
-/* FLEET · N chip is a *type identifier*, not a state signal — per Rule 1
-   of the badge-color-language guide ("Blue means active, not orange"), it
-   intentionally uses a muted/neutral palette so it doesn't read as
-   "running" on a completed or halted fleet. */
 /* Project name badges — the value of the "Projects:" meta label. Neutral
    (no status color), each clamped to ~20ch with an ellipsis; the JS also
    pre-truncates so the title attr carries the full name. Up to 3 render
@@ -1487,16 +1436,6 @@ sl-input [slot="prefix"] {
   flex-shrink: 0;
 }
 
-/* Meta-chip rows — same vocabulary as `.run-card-meta`. */
-.fleet-card-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 16px;
-  padding-left: 26px;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-}
 .fleet-card-mono {
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: 11px;
@@ -1523,20 +1462,6 @@ sl-input [slot="prefix"] {
   flex-wrap: wrap;
   gap: 6px;
   padding-left: 26px;
-}
-
-/* Action row — mirrors `.run-card-actions` exactly: right-aligned, so the
-   Archive button lands in the same spot as on the pipeline run card. */
-.fleet-card-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-left: 26px;
-}
-.fleet-card-actions:empty {
-  display: none;
 }
 
 /* --- 21. Dashboard --- */
@@ -4311,6 +4236,7 @@ sl-details.learnings-panel::part(content) {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   padding-left: 26px;
 }

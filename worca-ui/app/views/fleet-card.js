@@ -205,21 +205,20 @@ export function fleetCardView(fleet, children = [], options = {}) {
 
   return html`
     <div
-      class="fleet-card fleet-card-stack ${statusClass(status)}"
+      class="run-card fleet-card fleet-card-stack ${statusClass(status)}"
       data-fleet-id="${fleet.fleet_id || ''}"
       data-halt-reason="${haltReason || ''}"
       @click=${handleCardClick}
-      style="${handleCardClick ? 'cursor:pointer' : ''}"
     >
-      <div class="fleet-card-top">
-        <span class="fleet-card-status" title="${tooltip || ''}">
+      <div class="run-card-top">
+        <span class="run-card-status" title="${tooltip || ''}">
           ${unsafeHTML(statusIcon(status, 16))}
         </span>
-        <span class="fleet-card-title">${title}</span>
+        <span class="run-card-title">${title}</span>
         <sl-badge
           variant="${variant}"
           pill
-          class="fleet-card-status-badge"
+          class="fleet-card-status-badge status-badge-${status}"
           title="${tooltip || ''}"
         >${label}</sl-badge>
         ${exceptionPills.map(
@@ -247,38 +246,38 @@ export function fleetCardView(fleet, children = [], options = {}) {
         }
       </div>
 
-      <div class="fleet-card-meta">
+      <div class="run-card-meta">
         ${
           planMode
-            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Plan:</span> <span class="meta-value">${planMode}</span></span>`
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Plan:</span> <span class="meta-value">${planMode}</span></span>`
             : nothing
         }
         ${
           baseBranch
-            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Base:</span> <span class="meta-value">${baseBranch}</span></span>`
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Base:</span> <span class="meta-value">${baseBranch}</span></span>`
             : nothing
         }
       </div>
 
-      <div class="fleet-card-meta">
+      <div class="run-card-meta">
         ${
           startedAt
-            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(startedAt)}</span></span>`
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(startedAt)}</span></span>`
             : nothing
         }
         ${
           lastActivityAt
-            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Last activity:</span> <span class="meta-value">${formatTimestamp(lastActivityAt)}</span></span>`
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Last activity:</span> <span class="meta-value">${formatTimestamp(lastActivityAt)}</span></span>`
             : nothing
         }
         ${
           duration
-            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Duration:</span> <span class="meta-value">${duration}</span></span>`
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Duration:</span> <span class="meta-value">${duration}</span></span>`
             : nothing
         }
         ${
           _formatCost(costUsd)
-            ? html`<span class="fleet-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${_formatCost(costUsd)}</span></span>`
+            ? html`<span class="run-card-meta-item"><span class="meta-label">Cost:</span> <span class="meta-value">${_formatCost(costUsd)}</span></span>`
             : nothing
         }
       </div>
@@ -286,7 +285,7 @@ export function fleetCardView(fleet, children = [], options = {}) {
       ${
         showHalt || showResume || showArchive || showUnarchive
           ? html`
-            <div class="fleet-card-actions">
+            <div class="run-card-actions">
               ${
                 showHalt
                   ? html`
