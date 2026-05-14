@@ -5382,6 +5382,10 @@ sl-tooltip.bead-tooltip::part(body) {
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+  /* Match `.fleet-meta-line` so the "Fleet ID:" label renders in the
+     same vocabulary as the Projects / Base / Started / Cost labels. */
+  font-size: 13px;
+  color: var(--fg);
 }
 .fleet-meta-line {
   display: flex;
