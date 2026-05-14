@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -10,7 +11,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFleetRouter } from './fleet-routes.js';
+import { createFleetRouter, deriveFleetStatus } from './fleet-routes.js';
 
 const VALID_FLEET_ID = 'f_202605120809_abcdef01';
 
@@ -174,6 +175,160 @@ describe('Fleet Routes', () => {
       const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`);
       const data = await res.json();
       expect(data.fleet.children[0].status).toBe('completed');
+    });
+  });
+
+  // ─── fleet status reconciliation ─────────────────────────────────────────
+
+  describe('deriveFleetStatus (pure)', () => {
+    it('empty children → running', () => {
+      expect(deriveFleetStatus([])).toEqual({
+        status: 'running',
+        halt_reason: null,
+      });
+    });
+
+    it('any running child → running', () => {
+      expect(deriveFleetStatus(['running', 'completed']).status).toBe(
+        'running',
+      );
+    });
+
+    it('all completed → completed', () => {
+      expect(deriveFleetStatus(['completed', 'completed']).status).toBe(
+        'completed',
+      );
+    });
+
+    it('all terminal with a failure → failed', () => {
+      expect(deriveFleetStatus(['completed', 'failed']).status).toBe('failed');
+    });
+
+    it('interrupted is terminal-not-failure → failed, not stuck running', () => {
+      // The exact production bug: failed + completed + interrupted.
+      expect(
+        deriveFleetStatus(['failed', 'completed', 'interrupted']).status,
+      ).toBe('failed');
+    });
+
+    it('interrupted does not trip the circuit breaker', () => {
+      const r = deriveFleetStatus([
+        'interrupted',
+        'interrupted',
+        'interrupted',
+        'running',
+      ]);
+      expect(r.status).toBe('running');
+    });
+
+    it('circuit breaker trips above threshold while children run', () => {
+      const r = deriveFleetStatus(
+        ['failed', 'failed', 'completed', 'running', 'running'],
+        0.3,
+      );
+      expect(r).toEqual({ status: 'halted', halt_reason: 'circuit_breaker' });
+    });
+  });
+
+  describe('GET reconciles a stuck fleet status', () => {
+    function writeChild(projDir, runId, status) {
+      const d = join(projDir, '.worca', 'multi', 'pipelines.d');
+      mkdirSync(d, { recursive: true });
+      writeFileSync(join(d, `${runId}.json`), JSON.stringify({ status }));
+    }
+
+    it('GET /:id derives failed from terminal children of a "running" manifest', async () => {
+      const projDir = join(tmpDir, 'proj');
+      writeChild(projDir, 'run-1', 'failed');
+      writeChild(projDir, 'run-2', 'completed');
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'running',
+          children: [
+            { run_id: 'run-1', project_path: projDir },
+            { run_id: 'run-2', project_path: projDir },
+          ],
+        }),
+      );
+
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`);
+      const data = await res.json();
+      expect(data.fleet.status).toBe('failed');
+    });
+
+    it('GET /:id writes the reconciled status back to the manifest', async () => {
+      const projDir = join(tmpDir, 'proj');
+      writeChild(projDir, 'run-1', 'completed');
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'running',
+          children: [{ run_id: 'run-1', project_path: projDir }],
+        }),
+      );
+
+      await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`);
+
+      const persisted = JSON.parse(
+        readFileSync(join(fleetRunsDir, `${VALID_FLEET_ID}.json`), 'utf8'),
+      );
+      expect(persisted.status).toBe('completed');
+    });
+
+    it('GET /:id leaves a sticky halted fleet untouched', async () => {
+      const projDir = join(tmpDir, 'proj');
+      writeChild(projDir, 'run-1', 'completed');
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'halted',
+          halt_reason: 'user',
+          children: [{ run_id: 'run-1', project_path: projDir }],
+        }),
+      );
+
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`);
+      const data = await res.json();
+      expect(data.fleet.status).toBe('halted');
+      expect(data.fleet.halt_reason).toBe('user');
+    });
+
+    it('GET /:id never advances a "resuming" fleet straight to terminal', async () => {
+      // Children still carry pre-resume terminal state — resuming must hold.
+      const projDir = join(tmpDir, 'proj');
+      writeChild(projDir, 'run-1', 'failed');
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'resuming',
+          children: [{ run_id: 'run-1', project_path: projDir }],
+        }),
+      );
+
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`);
+      const data = await res.json();
+      expect(data.fleet.status).toBe('resuming');
+    });
+
+    it('GET / reconciles fleet summaries in the list view', async () => {
+      const projDir = join(tmpDir, 'proj');
+      writeChild(projDir, 'run-1', 'completed');
+      writeChild(projDir, 'run-2', 'completed');
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'running',
+          children: [
+            { run_id: 'run-1', project_path: projDir },
+            { run_id: 'run-2', project_path: projDir },
+          ],
+        }),
+      );
+
+      const res = await fetch(`${base}/api/fleet-runs`);
+      const data = await res.json();
+      expect(data.fleets[0].status).toBe('completed');
     });
   });
 
