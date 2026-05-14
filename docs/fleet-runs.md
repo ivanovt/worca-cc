@@ -14,7 +14,7 @@ This provisions each target (runs `worca init --upgrade`), then fans out the pip
 
 ## Lifecycle
 
-A fleet is a fan-out **launcher + state machine** wrapping N independent single-project pipelines. The launcher itself runs no agents — it spawns and polls children. Fleet-level status is **derived** from child statuses and re-computed every poll; it is not stored independently except for the sticky `halted` flag.
+A fleet is a fan-out **launcher + state machine** wrapping N independent single-project pipelines. The launcher itself runs no agents — it spawns and polls children. Fleet-level status is **derived** from child statuses: `run_fleet.py` only writes the initial `running` and the sticky operator states, and the worca-ui server re-derives the rest on every read (see [Status derivation](#status-derivation)).
 
 ### Phases
 
@@ -35,22 +35,42 @@ Each child is a **full single-project pipeline** running the standard 9 stages (
 
 ### Status derivation
 
-`derive_fleet_status` (in [`src/worca/orchestrator/fleet_manifest.py`](../src/worca/orchestrator/fleet_manifest.py)) is pure and re-runs every UI poll:
+Fleet status is **derived, not authoritative.** `run_fleet.py` only ever writes the initial `running` plus the sticky operator states — it launches detached children and exits within seconds, long before any child finishes. The terminal status is computed from the children's live `pipelines.d/` statuses by `derive_fleet_status` ([`src/worca/orchestrator/fleet_manifest.py`](../src/worca/orchestrator/fleet_manifest.py)) and its JS twin `deriveFleetStatus` ([`worca-ui/server/fleet-routes.js`](../worca-ui/server/fleet-routes.js)). The JS twin runs on every `GET /api/fleet-runs[/:id]` and **writes the reconciled status back to the manifest** — without it the manifest would stay `running` forever.
 
-| Children state | Fleet status |
+**Child state → bucket.** Every child's live registry status maps to one bucket:
+
+| Child pipeline state | Bucket | Counts toward |
+|---|---|---|
+| `running`, `resuming`, `paused` | in-flight | `running_count` |
+| `completed` | terminal-success | `completed_count`, `terminal_count` |
+| `failed`, `setup_failed`, `unrecoverable` | terminal-failure | `failed_count`, `terminal_count` |
+| `interrupted`, `cancelled` | terminal-stopped | `terminal_count` only — *not* a failure |
+| `pending`, missing entry, unknown | untracked | nothing |
+
+**Derivation** — evaluated top-down, first match wins:
+
+| # | Combination of child buckets | Fleet status |
+|---|---|---|
+| 1 | No children at all | `running` |
+| 2 | ≥1 in-flight **and** circuit breaker met¹ | `halted` (`halt_reason: "circuit_breaker"`) |
+| 3 | ≥1 in-flight, breaker not met | `running` |
+| 4 | 0 in-flight, ≥1 untracked (not all terminal) | `running` |
+| 5 | All children terminal, **every** one `completed` | `completed` |
+| 6 | All children terminal, ≥1 non-`completed` (failure or `interrupted`/`cancelled`) | `failed` |
+
+¹ Circuit breaker met = `terminal_count ≥ min(3, total)` **and** `failed_count > 0` **and** `failed_count / terminal_count ≥ fleet_failure_threshold` (default 0.30). `interrupted`/`cancelled` are terminal but **not** failures — they raise `terminal_count` without raising `failed_count`, so a deliberate stop can never trip the breaker. A fleet with an interrupted child still settles to `failed` (row 6), never sticks on `running`.
+
+**Sticky overlay.** The derivation above only runs when the *stored* manifest status is `running` or `resuming`. Everything else holds until an explicit [resume](#resume):
+
+| Stored status | Re-derived on read? |
 |---|---|
-| Any in `{running, resuming, paused}`, breaker not tripped | `running` |
-| Any in `{running, resuming, paused}`, breaker tripped | `halted` (`halt_reason: "circuit_breaker"`) |
-| All terminal AND all `completed` | `completed` |
-| All terminal AND ≥1 non-`completed` (`failed`, `setup_failed`, `unrecoverable`, `interrupted`) | `failed` |
-| No children registered yet | `running` |
+| `running` | yes — full derivation |
+| `resuming` | yes — but may only advance to `running`, never straight to a terminal status² |
+| `halted` (`user` / `stopped` / `circuit_breaker` / `targets_not_ready` / `plan_first_failed`) | no — operator/breaker action |
+| `paused` | no — Pause action |
+| `completed` / `failed` | no — terminal |
 
-`interrupted` is a **terminal** child state (the pipeline stopped) but is *not* a failure — it is resumable and never trips the circuit breaker. It still counts toward "all terminal", so a fleet with an interrupted child settles to `failed` instead of sticking on `running`.
-
-Sticky manifest states — re-derivation never overrides these; they stay put until an explicit [resume](#resume):
-
-- `halted` with `halt_reason: "user"` (Halt) or `"stopped"` (Stop) or `"circuit_breaker"`
-- `paused` (Pause) — children transition to `paused` asynchronously, so re-deriving would race the manifest back to `running`
+² A just-resumed fleet's children may still carry their pre-resume terminal registry state for a beat before the resumed runners flip them back; deriving `failed` there and sticking it would freeze the resume.
 
 ### Circuit breaker
 
@@ -86,6 +106,23 @@ Halted / stopped / paused / failed fleets resume via `run_fleet.py --resume <fle
 - Sets fleet `status: "resuming"`, then resumes the in-place subset and re-enters the `dispatch_fleet` loop with the re-dispatch subset.
 
 Circuit-breaker rules apply on the resumed dispatch too.
+
+### Available actions per status
+
+What the worca-ui fleet detail page offers (header buttons) and the CLI / API accept, by fleet status:
+
+| Fleet status | Pause | Halt | Stop | Resume | Cleanup | Re-run | Archive |
+|---|---|---|---|---|---|---|---|
+| `running` / `resuming` | ✅ | ✅ | ✅ | — | — | — | — |
+| `paused` | — | — | — | ✅ | ✅ | ✅ | ✅ |
+| `halted` (any `halt_reason`) | — | — | — | ✅ | ✅ | ✅ | ✅ |
+| `failed` | — | — | — | ✅ | ✅ | ✅ | ✅ |
+| `completed` | — | — | — | — | ✅ | ✅ | ✅ |
+
+- **Pause / Halt / Stop** require an in-flight fleet. `POST …/pause` and `POST …/stop` return `409` for any other status; `DELETE` (Halt) on an already-stopped fleet is an idempotent `200` no-op.
+- **Resume** is offered for the non-in-flight states that still have resumable work — `paused`, `halted`, `failed`. Not `completed` (every child already succeeded). `POST …/resume` returns `409` only for an already-`running` fleet.
+- **Cleanup / Re-run** appear once the fleet is no longer in-flight. Cleanup of a *resumable* fleet (`paused` / `halted` / `failed`) goes through a resume-loss confirmation — see [Cleanup](#cleanup).
+- **Archive / Unarchive** are list-view card actions (not detail-page header buttons). `POST …/archive` refuses an in-flight fleet with `409`.
 
 ### State diagram
 
