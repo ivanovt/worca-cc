@@ -8,6 +8,7 @@ import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
 import {
   AlertTriangle,
   ArrowLeft,
+  CircleSlash,
   Database,
   iconSvg,
   Loader,
@@ -1580,6 +1581,66 @@ function handleHaltFleet(fleetId) {
   );
 }
 
+function handlePauseFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Pause Fleet Run',
+      message:
+        'Every in-flight child pauses at its next checkpoint; no new children are launched. A paused fleet can be continued in place with Resume.',
+      confirmLabel: 'Pause',
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}/pause`, {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to pause fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          rerender();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to pause fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+function handleStopFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Stop Fleet Run',
+      message:
+        'Every in-flight child is interrupted immediately (SIGTERM) and no new children are launched. Stopped children can still be continued with Resume.',
+      confirmLabel: 'Stop',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}/stop`, {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to stop fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          rerender();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to stop fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
 function handleCleanupFleet(fleetId) {
   showConfirm(
     {
@@ -2243,9 +2304,24 @@ function contentHeaderView() {
         const isRunning = fs === 'running' || fs === 'resuming';
         const isTerminal = !isRunning;
 
+        // In-flight fleet → three ways to wind it down, by how they treat
+        // children already running:
+        //   Pause — suspend in-flight children at their next checkpoint
+        //   Halt  — stop launching new ones, let in-flight finish naturally
+        //   Stop  — interrupt in-flight children immediately
+        const pauseBtn = isRunning
+          ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(Pause, 14))} Pause
+            </button>`
+          : nothing;
         const haltBtn = isRunning
           ? html`<button class="action-btn action-btn--amber" @click=${() => handleHaltFleet(route.runId)}>
-              ${unsafeHTML(iconSvg(Pause, 14))} Halt
+              ${unsafeHTML(iconSvg(CircleSlash, 14))} Halt
+            </button>`
+          : nothing;
+        const stopBtn = isRunning
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(Square, 14))} Stop
             </button>`
           : nothing;
         const resumeBtn = isResumable
@@ -2263,9 +2339,14 @@ function contentHeaderView() {
               ${unsafeHTML(iconSvg(RotateCcw, 14))} Re-run
             </button>`
           : nothing;
-        const btns = [haltBtn, resumeBtn, cleanupBtn, rerunBtn].filter(
-          (b) => b !== nothing,
-        );
+        const btns = [
+          pauseBtn,
+          haltBtn,
+          stopBtn,
+          resumeBtn,
+          cleanupBtn,
+          rerunBtn,
+        ].filter((b) => b !== nothing);
         if (btns.length) actionButton = html`${btns}`;
       }
     }

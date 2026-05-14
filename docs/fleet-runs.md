@@ -42,10 +42,15 @@ Each child is a **full single-project pipeline** running the standard 9 stages (
 | Any in `{running, resuming, paused}`, breaker not tripped | `running` |
 | Any in `{running, resuming, paused}`, breaker tripped | `halted` (`halt_reason: "circuit_breaker"`) |
 | All terminal AND all `completed` | `completed` |
-| All terminal AND ≥1 failure | `failed` |
+| All terminal AND ≥1 non-`completed` (`failed`, `setup_failed`, `unrecoverable`, `interrupted`) | `failed` |
 | No children registered yet | `running` |
 
-A user-initiated halt (`halt_reason: "user"`) is **sticky** — re-derivation never overrides it. The same applies to `halt_reason: "circuit_breaker"`; both stay halted until explicit [resume](#resume).
+`interrupted` is a **terminal** child state (the pipeline stopped) but is *not* a failure — it is resumable and never trips the circuit breaker. It still counts toward "all terminal", so a fleet with an interrupted child settles to `failed` instead of sticking on `running`.
+
+Sticky manifest states — re-derivation never overrides these; they stay put until an explicit [resume](#resume):
+
+- `halted` with `halt_reason: "user"` (Halt) or `"stopped"` (Stop) or `"circuit_breaker"`
+- `paused` (Pause) — children transition to `paused` asynchronously, so re-deriving would race the manifest back to `running`
 
 ### Circuit breaker
 
@@ -58,15 +63,27 @@ When ≥ `min(3, total)` children have completed AND `failed / terminal ≥ flee
 
 See [Fleet-level circuit breaker](#fleet-level-circuit-breaker) for tuning.
 
+### Halt vs. Pause vs. Stop
+
+Three operator actions wind down an in-flight fleet. They differ only in how they treat children that are already running — none of them launch new children:
+
+| Action | CLI / API | In-flight children | Manifest result |
+|---|---|---|---|
+| **Halt** | `DELETE /api/fleet-runs/:id` | keep running until they finish naturally | `halted` / `halt_reason: "user"` |
+| **Pause** | `run_fleet.py --pause` / `POST …/pause` | a `pause` control file is fanned out; each child stops at its next checkpoint and persists `paused` | `paused` |
+| **Stop** | `run_fleet.py --stop` / `POST …/stop` | a `stop` control file is fanned out **and** each child process is SIGTERM'd; children persist `interrupted` | `halted` / `halt_reason: "stopped"` |
+
+Pause and Stop reuse the per-run control protocol (`worca_lifecycle.cmd_pause` / `cmd_stop`) — there is no fleet-level coordinator process to signal, so the fleet fans a control file out to each child's worktree. All three states are sticky until [resume](#resume).
+
 ### Resume
 
-Halted / failed fleets resume via `run_fleet.py --resume <fleet_id>`. The resume handler:
+Halted / stopped / paused / failed fleets resume via `run_fleet.py --resume <fleet_id>`. The resume handler reads each child's current pipeline-status entry and picks one of two paths per child:
 
-- Reads each child's current pipeline-status file
-- Re-dispatches only children in `{pending, failed, setup_failed}`
-- Skips `{completed, running, resuming, paused, unrecoverable}`
-- For `failed` children whose worktree was cleaned up, marks them `unrecoverable` (nothing left to retry)
-- Sets fleet `status: "resuming"`, then re-enters the same `dispatch_fleet` loop with the resumable subset
+- **In place** — `paused` and `interrupted` children still own a worktree with all their progress, so they are continued via `fleet_lifecycle.resume_child` (spawns `run_pipeline.py --resume` in the existing worktree).
+- **Re-dispatch** — `pending`, `failed`, and `setup_failed` children are re-launched fresh through `dispatch_fleet` (a new worktree).
+- Skips `{completed, running, resuming, unrecoverable}`.
+- For `failed` children whose worktree was cleaned up, marks them `unrecoverable` (nothing left to retry).
+- Sets fleet `status: "resuming"`, then resumes the in-place subset and re-enters the `dispatch_fleet` loop with the re-dispatch subset.
 
 Circuit-breaker rules apply on the resumed dispatch too.
 
@@ -307,17 +324,25 @@ done
 
 …or install whatever per-project automation matches your release process.
 
-## Resume
+## Pause, stop, and resume
 
-A fleet interrupted by Ctrl+C, crash, or circuit-breaker trip can be resumed:
+A running fleet can be paused or stopped, and a halted / stopped / paused / failed fleet can be resumed:
 
 ```bash
+python .claude/scripts/run_fleet.py --pause  f_202601011200_abc12345
+python .claude/scripts/run_fleet.py --stop   f_202601011200_abc12345
 python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
 ```
 
-Resume reads the fleet manifest and resolves each child's current status from its project's `pipelines.d/` registry. Only children with status `pending`, `failed`, or `setup_failed` are re-launched. Children that are `completed`, `running`, `paused`, or `resuming` are left alone.
+`--pause`, `--stop`, and `--resume` are mutually exclusive lifecycle actions on an existing `fleet_id`. See [Halt vs. Pause vs. Stop](#halt-vs-pause-vs-stop) for what each does to in-flight children.
 
-**Cleanup blocks future resume.** If a child's worktree was cleaned up after failure, the child is marked `unrecoverable` and skipped — there is nothing to resume. The UI surfaces a warning when `worca cleanup` would make a fleet permanently unresumable.
+Resume reads the fleet manifest and resolves each child's current status from its project's `pipelines.d/` registry, then takes one of two paths per child:
+
+- `paused` / `interrupted` → continued **in place** in the existing worktree (keeps all prior progress)
+- `pending` / `failed` / `setup_failed` → **re-dispatched fresh** in a new worktree
+- `completed` / `running` / `resuming` / `unrecoverable` → left alone
+
+**Cleanup blocks future resume.** If a child's worktree was cleaned up, the child is marked `unrecoverable` and skipped — there is nothing to resume. The UI surfaces a warning when `worca cleanup` would make a fleet permanently unresumable.
 
 ### Finding a fleet ID
 

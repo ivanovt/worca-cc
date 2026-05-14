@@ -211,9 +211,13 @@ def poll_and_update_fleet_manifest(
         return None
 
     current_status = manifest.get("status", "running")
-    # Preserve all halted states — the halt is sticky until the user explicitly resumes.
-    # Both "user" and "circuit_breaker" halts remain until resume is called.
-    if current_status == "halted":
+    # Preserve sticky operator states — both stay put until an explicit resume:
+    #   - "halted":  Halt (in-flight finished naturally) or Stop (in-flight
+    #                killed, halt_reason="stopped"), plus circuit_breaker.
+    #   - "paused":  Pause — every in-flight child received a pause control
+    #                file. Children may still be transitioning to paused, so
+    #                re-deriving here would race the manifest back to "running".
+    if current_status in ("halted", "paused"):
         return current_status
 
     children = manifest.get("children", [])

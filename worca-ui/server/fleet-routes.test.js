@@ -762,6 +762,122 @@ describe('Fleet Routes', () => {
     });
   });
 
+  // ─── POST /api/fleet-runs/:id/pause ──────────────────────────────────────
+
+  describe('POST /api/fleet-runs/:id/pause', () => {
+    it('returns 400 for invalid fleet ID format', async () => {
+      const res = await fetch(`${base}/api/fleet-runs/not-a-fleet/pause`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('returns 404 for unknown fleet', async () => {
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/pause`,
+        {
+          method: 'POST',
+        },
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 409 when fleet is not in flight', async () => {
+      writeManifest(fleetRunsDir, baseManifest({ status: 'completed' }));
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/pause`,
+        {
+          method: 'POST',
+        },
+      );
+      expect(res.status).toBe(409);
+    });
+
+    it('invokes pauseFleet and returns its result for a running fleet', async () => {
+      const pauseFleet = vi.fn().mockReturnValue({ paused_count: 3 });
+      await stopServer(server);
+      ({ server, base } = await createTestServer({ fleetRunsDir, pauseFleet }));
+      writeManifest(fleetRunsDir, baseManifest({ status: 'running' }));
+
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/pause`,
+        {
+          method: 'POST',
+        },
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.paused_count).toBe(3);
+      expect(pauseFleet).toHaveBeenCalledWith(VALID_FLEET_ID);
+    });
+
+    it('returns 500 when pauseFleet throws', async () => {
+      const pauseFleet = vi.fn(() => {
+        throw new Error('boom');
+      });
+      await stopServer(server);
+      ({ server, base } = await createTestServer({ fleetRunsDir, pauseFleet }));
+      writeManifest(fleetRunsDir, baseManifest({ status: 'running' }));
+
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/pause`,
+        {
+          method: 'POST',
+        },
+      );
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // ─── POST /api/fleet-runs/:id/stop ───────────────────────────────────────
+
+  describe('POST /api/fleet-runs/:id/stop', () => {
+    it('returns 404 for unknown fleet', async () => {
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}/stop`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 409 when fleet is not in flight', async () => {
+      writeManifest(fleetRunsDir, baseManifest({ status: 'halted' }));
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}/stop`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(409);
+    });
+
+    it('invokes stopFleet and returns its result for a running fleet', async () => {
+      const stopFleet = vi.fn().mockReturnValue({ stopped_count: 2 });
+      await stopServer(server);
+      ({ server, base } = await createTestServer({ fleetRunsDir, stopFleet }));
+      writeManifest(fleetRunsDir, baseManifest({ status: 'running' }));
+
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}/stop`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.stopped_count).toBe(2);
+      expect(stopFleet).toHaveBeenCalledWith(VALID_FLEET_ID);
+    });
+
+    it('also accepts a resuming fleet', async () => {
+      const stopFleet = vi.fn().mockReturnValue({ stopped_count: 1 });
+      await stopServer(server);
+      ({ server, base } = await createTestServer({ fleetRunsDir, stopFleet }));
+      writeManifest(fleetRunsDir, baseManifest({ status: 'resuming' }));
+
+      const res = await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}/stop`, {
+        method: 'POST',
+      });
+      expect(res.status).toBe(200);
+      expect(stopFleet).toHaveBeenCalledWith(VALID_FLEET_ID);
+    });
+  });
+
   // ─── POST /api/fleet-runs/:id/relaunch ───────────────────────────────────
 
   describe('POST /api/fleet-runs/:id/relaunch', () => {

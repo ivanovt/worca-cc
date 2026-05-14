@@ -192,8 +192,8 @@ class TestResumeSelectsChildren:
             targets = mock_dispatch.call_args[1]["targets"]
             assert str(proj_a) not in [t["project_dir"] for t in targets]
 
-    def test_resume_skips_paused(self, tmp_path):
-        """Paused (in-flight) child is NOT re-launched."""
+    def test_resume_resumes_paused_in_place(self, tmp_path):
+        """A paused child is resumed in place via resume_child, not re-dispatched."""
         fleet_id = "f_20260512_test"
         fleet_runs_dir = str(tmp_path / "fleet-runs")
         proj_a = tmp_path / "a"
@@ -208,9 +208,41 @@ class TestResumeSelectsChildren:
         with (
             patch("worca.orchestrator.fleet_manifest._FLEET_RUNS_DIR", fleet_runs_dir),
             patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}) as mock_dispatch,
+            patch(
+                "worca.orchestrator.fleet_lifecycle.resume_child", return_value=True
+            ) as mock_resume_child,
         ):
             main(["--resume", fleet_id])
 
+        # In-place resume — never goes through the fresh-worktree dispatch path.
+        mock_resume_child.assert_called_once_with(str(proj_a), "run-a")
+        if mock_dispatch.called:
+            targets = mock_dispatch.call_args[1]["targets"]
+            assert str(proj_a) not in [t["project_dir"] for t in targets]
+
+    def test_resume_resumes_interrupted_in_place(self, tmp_path):
+        """An interrupted (stopped) child is resumed in place via resume_child."""
+        fleet_id = "f_20260512_test"
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        proj_a = tmp_path / "a"
+        proj_a.mkdir()
+
+        children = [{"project_path": str(proj_a), "run_id": "run-a"}]
+        _write_manifest(fleet_runs_dir, fleet_id, children)
+        _write_pipelines_entry(str(proj_a), "run-a", "interrupted")
+
+        from worca.scripts.run_fleet import main
+
+        with (
+            patch("worca.orchestrator.fleet_manifest._FLEET_RUNS_DIR", fleet_runs_dir),
+            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}) as mock_dispatch,
+            patch(
+                "worca.orchestrator.fleet_lifecycle.resume_child", return_value=True
+            ) as mock_resume_child,
+        ):
+            main(["--resume", fleet_id])
+
+        mock_resume_child.assert_called_once_with(str(proj_a), "run-a")
         if mock_dispatch.called:
             targets = mock_dispatch.call_args[1]["targets"]
             assert str(proj_a) not in [t["project_dir"] for t in targets]

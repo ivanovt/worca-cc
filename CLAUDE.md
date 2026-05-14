@@ -316,7 +316,9 @@ python .claude/scripts/run_fleet.py \
   --prompt "Apply logging standards" \
   --plan ./shared-plan.md
 
-# Resume a halted/failed fleet
+# Pause / stop / resume a fleet (lifecycle actions on an existing fleet_id)
+python .claude/scripts/run_fleet.py --pause  f_202601011200_abc12345
+python .claude/scripts/run_fleet.py --stop   f_202601011200_abc12345
 python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
 ```
 
@@ -335,9 +337,23 @@ python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
 | `--head-template TMPL` | Per-child head branch name template. Placeholders: `{project}`, `{fleet_id}`, `{slug}`, `{yyyymmdd}`, `{yyyymmddhhmm}` |
 | `--max-parallel N` | Maximum concurrent child pipelines (default: 5) |
 | `--fleet-failure-threshold RATIO` | Failure ratio that trips the circuit breaker and halts unstarted children (default: 0.30) |
-| `--resume FLEET_ID` | Resume a halted/failed fleet by re-launching failed/pending children |
+| `--pause FLEET_ID` | Pause a running fleet — write a `pause` control file to every in-flight child (manifest → `paused`) |
+| `--stop FLEET_ID` | Stop a running fleet — write a `stop` control file + SIGTERM every in-flight child (manifest → `halted`, `halt_reason=stopped`) |
+| `--resume FLEET_ID` | Resume a halted/stopped/paused/failed fleet — continue paused/interrupted children in place, re-dispatch failed/pending children |
 
-`--branch` is explicitly rejected — use `--base` for the PR base branch and `--head-template` for the per-child head branch name.
+`--branch` is explicitly rejected — use `--base` for the PR base branch and `--head-template` for the per-child head branch name. `--pause`, `--stop` and `--resume` are mutually exclusive lifecycle actions.
+
+### Halt vs. Pause vs. Stop
+
+Three ways to wind down an in-flight fleet, differing only in how they treat children already running:
+
+| Action | New children | In-flight children | Manifest state |
+|--------|--------------|--------------------|----------------|
+| **Halt** (`DELETE /api/fleet-runs/:id`) | not launched | keep running until they finish naturally | `halted` / `halt_reason=user` |
+| **Pause** (`--pause`) | not launched | paused at next checkpoint, resumable in place | `paused` |
+| **Stop** (`--stop`) | not launched | interrupted immediately (SIGTERM), resumable in place | `halted` / `halt_reason=stopped` |
+
+All three are sticky — only `--resume` (or the UI Resume button) clears them. Resume continues `paused`/`interrupted` children in their existing worktrees and re-dispatches `failed`/`pending` ones fresh.
 
 ### Fleet cleanup
 

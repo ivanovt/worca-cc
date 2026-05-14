@@ -559,7 +559,20 @@ export function createApp(options = {}) {
         // Spawn run_fleet.py in a detached subprocess so the route can return
         // immediately. We pass the pre-generated fleet_id so the in-flight
         // manifest path matches what the route just wrote.
-        dispatchFleet: async ({ fleet_id, projects, manifest }) => {
+        dispatchFleet: async ({ fleet_id, projects, manifest, resume }) => {
+          // Resume path: the /resume route already flipped the manifest to
+          // "running"; run_fleet.py --resume reads the manifest, continues
+          // paused/interrupted children in place and re-dispatches
+          // failed/pending ones. No --projects — the manifest is the source.
+          if (resume) {
+            const child = spawn(
+              'python3',
+              ['-m', 'worca.scripts.run_fleet', '--resume', fleet_id],
+              { detached: true, stdio: 'ignore', env: { ...process.env } },
+            );
+            child.unref();
+            return;
+          }
           if (!projects || projects.length === 0) return;
           const args = [
             '-m',

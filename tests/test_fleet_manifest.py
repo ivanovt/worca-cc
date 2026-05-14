@@ -624,6 +624,24 @@ class TestPollAndUpdateFleetManifest:
         )
         assert result == "halted"
 
+    def test_paused_manifest_not_overridden(self, tmp_path):
+        # Pause is sticky: even though the child registry still reads
+        # "running" (children transition to paused asynchronously), poll must
+        # leave the manifest "paused" until an explicit resume.
+        from worca.orchestrator.fleet_manifest import poll_and_update_fleet_manifest
+        project = os.path.join(str(tmp_path), "repo_a")
+        os.makedirs(project, exist_ok=True)
+        self._write_pipeline_entry(project, "r_001", "running")
+        self._create_manifest(
+            tmp_path,
+            children=[{"project_path": project, "run_id": "r_001"}],
+            status="paused",
+        )
+        result = poll_and_update_fleet_manifest(
+            "f_202605120809_abc123", manifest_base_dir=str(tmp_path)
+        )
+        assert result == "paused"
+
     def test_circuit_breaker_halted_manifest_not_overridden(self, tmp_path):
         from worca.orchestrator.fleet_manifest import poll_and_update_fleet_manifest
         project = os.path.join(str(tmp_path), "repo_a")

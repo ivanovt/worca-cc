@@ -211,6 +211,55 @@ class TestMainStub:
         assert result != 0
 
 
+class TestMainLifecycleActions:
+    """main() dispatches --pause / --stop to fleet_lifecycle and is mutually
+    exclusive with --resume."""
+
+    def test_pause_delegates_to_pause_fleet(self):
+        from worca.scripts.run_fleet import main
+        with patch(
+            "worca.orchestrator.fleet_lifecycle.pause_fleet", return_value=2
+        ) as mock_pause:
+            result = main(["--pause", "f_202601010000_abcd1234"])
+        assert result == 0
+        mock_pause.assert_called_once_with("f_202601010000_abcd1234")
+
+    def test_stop_delegates_to_stop_fleet(self):
+        from worca.scripts.run_fleet import main
+        with patch(
+            "worca.orchestrator.fleet_lifecycle.stop_fleet", return_value=1
+        ) as mock_stop:
+            result = main(["--stop", "f_202601010000_abcd1234"])
+        assert result == 0
+        mock_stop.assert_called_once_with("f_202601010000_abcd1234")
+
+    def test_pause_missing_manifest_exits_nonzero(self):
+        from worca.scripts.run_fleet import main
+        with patch(
+            "worca.orchestrator.fleet_lifecycle.pause_fleet", return_value=None
+        ):
+            result = main(["--pause", "f_202601010000_abcd1234"])
+        assert result == 1
+
+    def test_stop_missing_manifest_exits_nonzero(self):
+        from worca.scripts.run_fleet import main
+        with patch(
+            "worca.orchestrator.fleet_lifecycle.stop_fleet", return_value=None
+        ):
+            result = main(["--stop", "f_202601010000_abcd1234"])
+        assert result == 1
+
+    def test_resume_and_pause_mutually_exclusive(self):
+        from worca.scripts.run_fleet import main
+        result = main(["--resume", "f_a", "--pause", "f_b"])
+        assert result == 2
+
+    def test_pause_and_stop_mutually_exclusive(self):
+        from worca.scripts.run_fleet import main
+        result = main(["--pause", "f_a", "--stop", "f_b"])
+        assert result == 2
+
+
 class TestValidateBaseBranch:
     """Unit tests for validate_base_branch() — mocked subprocess, no real git."""
 

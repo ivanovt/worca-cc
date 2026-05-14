@@ -413,18 +413,25 @@ def dispatch_fleet(
 
 
 def resume_fleet(fleet_id: str) -> int:
-    """Resume a halted/failed fleet by re-launching failed/pending children.
+    """Resume a halted/stopped/paused/failed fleet.
 
     Reads the fleet manifest, resolves each child's current status from its
-    project's pipelines.d/ directory, and dispatches only those with status
-    in {pending, failed, setup_failed}.  Children with status completed,
-    running, resuming, paused, or unrecoverable are left alone.
+    project's pipelines.d/ entry, and resumes it by one of two paths:
 
-    When a failed child's worktree_path no longer exists on disk, the child is
-    marked 'unrecoverable' in its pipelines.d/ entry and skipped.
+      - in place: ``paused`` and ``interrupted`` children still own a worktree
+        with all of their progress, so they are continued via
+        ``fleet_lifecycle.resume_child`` (run_pipeline.py --resume).
+      - re-dispatch: ``failed``, ``pending`` and ``setup_failed`` children are
+        re-launched fresh through ``dispatch_fleet`` (a new worktree).
+
+    Children with status completed, running, resuming, or unrecoverable are
+    left alone. When a failed child's worktree_path no longer exists on disk,
+    the child is marked 'unrecoverable' in its pipelines.d/ entry and skipped.
 
     Returns 0 on success, 1 if the manifest is not found.
     """
+    from worca.orchestrator.fleet_lifecycle import resume_child
+
     manifest = read_fleet_manifest(fleet_id)
     if manifest is None:
         print(f"error: fleet manifest not found: {fleet_id!r}", file=sys.stderr)
@@ -439,12 +446,14 @@ def resume_fleet(fleet_id: str) -> int:
     max_parallel = manifest.get("max_parallel", 5)
     threshold = manifest.get("fleet_failure_threshold", 0.30)
 
-    _SKIP_STATUSES = frozenset({"completed", "running", "resuming", "paused", "unrecoverable"})
-    _RESUMABLE = frozenset({"failed", "pending", "setup_failed"})
+    _SKIP_STATUSES = frozenset({"completed", "running", "resuming", "unrecoverable"})
+    _REDISPATCH = frozenset({"failed", "pending", "setup_failed"})
+    _IN_PLACE = frozenset({"paused", "interrupted"})
 
     update_fleet_status(fleet_id, "resuming")
 
-    targets = []
+    targets = []  # re-dispatched fresh via dispatch_fleet
+    inplace = []  # (project_path, run_id) continued via resume_child
     for child in children:
         project_path = child.get("project_path")
         run_id = child.get("run_id")
@@ -489,23 +498,37 @@ def resume_fleet(fleet_id: str) -> int:
                 update_pipeline(run_id, status="unrecoverable", base=child_base)
                 continue
 
-        if status in _RESUMABLE:
+        if status in _IN_PLACE:
+            inplace.append((project_path, run_id))
+        elif status in _REDISPATCH:
             targets.append({"project_dir": project_path, "status": status})
 
-    if not targets:
+    if not targets and not inplace:
         return 0
 
-    dispatch_fleet(
-        targets=targets,
-        fleet_id=fleet_id,
-        prompt=prompt,
-        source=source,
-        base=base,
-        guide=guide,
-        plan=plan,
-        max_parallel=max_parallel,
-        fleet_failure_threshold=threshold,
-    )
+    # Resume paused/interrupted children in their existing worktrees first —
+    # cheap (one Popen each) and they keep all prior progress.
+    for project_path, run_id in inplace:
+        try:
+            resume_child(project_path, run_id)
+        except Exception as exc:
+            print(
+                f"warning: failed to resume child {project_path}/{run_id}: {exc}",
+                file=sys.stderr,
+            )
+
+    if targets:
+        dispatch_fleet(
+            targets=targets,
+            fleet_id=fleet_id,
+            prompt=prompt,
+            source=source,
+            base=base,
+            guide=guide,
+            plan=plan,
+            max_parallel=max_parallel,
+            fleet_failure_threshold=threshold,
+        )
 
     return 0
 
@@ -623,7 +646,20 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--resume",
         metavar="FLEET_ID",
-        help="Resume a previously halted/failed fleet by re-launching failed/pending children",
+        help="Resume a halted/stopped/paused/failed fleet: continue paused/interrupted "
+        "children in place, re-dispatch failed/pending children",
+    )
+
+    # Fleet lifecycle actions — fan a control file out to every in-flight child
+    parser.add_argument(
+        "--pause",
+        metavar="FLEET_ID",
+        help="Pause a running fleet: write a pause control file to every in-flight child",
+    )
+    parser.add_argument(
+        "--stop",
+        metavar="FLEET_ID",
+        help="Stop a running fleet: write a stop control file + SIGTERM every in-flight child",
     )
 
     # Pre-generated fleet id (used by the worca-ui POST /api/fleet-runs route
@@ -643,10 +679,22 @@ def main(argv=None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
-    # Require a work request source unless resuming an existing fleet
-    if not args.resume and not args.prompt and not args.source:
+    # --resume / --pause / --stop are lifecycle actions on an existing fleet
+    # and are mutually exclusive with each other and with a launch.
+    _lifecycle_actions = [
+        a for a in (args.resume, args.pause, args.stop) if a
+    ]
+    if len(_lifecycle_actions) > 1:
         print(
-            "error: one of --prompt, --source, or --resume is required",
+            "error: --resume, --pause and --stop are mutually exclusive",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Require a work request source unless acting on an existing fleet
+    if not _lifecycle_actions and not args.prompt and not args.source:
+        print(
+            "error: one of --prompt, --source, --resume, --pause or --stop is required",
             file=sys.stderr,
         )
         return 2
@@ -656,7 +704,28 @@ def main(argv=None) -> int:
         print("error: --plan and --plan-first are mutually exclusive", file=sys.stderr)
         return 2
 
-    # Handle --resume: re-launch failed/pending children of an existing fleet
+    # Handle --pause / --stop: fan a control file out to every in-flight child
+    if args.pause:
+        from worca.orchestrator.fleet_lifecycle import pause_fleet
+
+        count = pause_fleet(args.pause)
+        if count is None:
+            print(f"error: fleet manifest not found: {args.pause!r}", file=sys.stderr)
+            return 1
+        print(f"paused {count} in-flight child{'' if count == 1 else 'ren'}")
+        return 0
+
+    if args.stop:
+        from worca.orchestrator.fleet_lifecycle import stop_fleet
+
+        count = stop_fleet(args.stop)
+        if count is None:
+            print(f"error: fleet manifest not found: {args.stop!r}", file=sys.stderr)
+            return 1
+        print(f"stopped {count} in-flight child{'' if count == 1 else 'ren'}")
+        return 0
+
+    # Handle --resume: continue/re-launch children of an existing fleet
     if args.resume:
         return resume_fleet(args.resume)
 
