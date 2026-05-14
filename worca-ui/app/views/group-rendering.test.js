@@ -2,7 +2,6 @@ import { html } from 'lit-html';
 import { describe, expect, it } from 'vitest';
 import {
   fleetHeaderView,
-  fleetStatusLabel,
   fleetStatusTooltip,
   fleetStatusVariant,
   groupByFleet,
@@ -112,32 +111,6 @@ describe('fleetStatusVariant', () => {
 
   it('returns neutral for unknown status', () => {
     expect(fleetStatusVariant('something_unknown')).toBe('neutral');
-  });
-});
-
-// ─── fleetStatusLabel ────────────────────────────────────────────────────────
-
-describe('fleetStatusLabel', () => {
-  it('returns status string unchanged for running', () => {
-    expect(fleetStatusLabel('running')).toBe('running');
-  });
-
-  it('returns status string unchanged for completed', () => {
-    expect(fleetStatusLabel('completed')).toBe('completed');
-  });
-
-  it('returns Halted for halted with null reason', () => {
-    expect(fleetStatusLabel('halted', null)).toBe('Halted');
-  });
-
-  it('returns Halted (circuit breaker) for circuit_breaker reason', () => {
-    expect(fleetStatusLabel('halted', 'circuit_breaker')).toBe(
-      'Halted (circuit breaker)',
-    );
-  });
-
-  it('returns Halted for user reason', () => {
-    expect(fleetStatusLabel('halted', 'user')).toBe('Halted');
   });
 });
 

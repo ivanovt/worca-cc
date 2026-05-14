@@ -2286,17 +2286,12 @@ function contentHeaderView() {
           failed: 'danger',
           halted: fleet.halt_reason === 'user' ? 'neutral' : 'warning',
         };
-        const labelMap = {
-          running: 'Running',
-          resuming: 'Resuming',
-          paused: 'Paused',
-          completed: 'Completed',
-          failed: 'Failed',
-          halted: fleet.halt_reason === 'user' ? 'Halted' : 'Halted (auto)',
-        };
+        // Badge text is the bare status word, Title-cased for the page header
+        // (the run-detail header does the same). halt_reason informs the
+        // variant only — never the badge text.
         badge = html`<sl-badge variant="${variantMap[fs] || 'neutral'}" pill>
           ${unsafeHTML(statusIcon(fs, 12))}
-          ${labelMap[fs] || fs}
+          ${fs.charAt(0).toUpperCase() + fs.slice(1)}
         </sl-badge>`;
 
         const isResumable =

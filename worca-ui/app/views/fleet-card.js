@@ -3,11 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { Archive, iconSvg, Pause, Play, RotateCcw } from '../utils/icons.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
-import {
-  fleetStatusLabel,
-  fleetStatusTooltip,
-  fleetStatusVariant,
-} from './group-rendering.js';
+import { fleetStatusTooltip, fleetStatusVariant } from './group-rendering.js';
 
 function _shortRepoName(child) {
   // Both shapes work: dashboard passes `Run` objects (use project name from
@@ -131,7 +127,6 @@ export function fleetCardView(fleet, children = [], options = {}) {
   const status = fleet.status || 'running';
   const haltReason = fleet.halt_reason || null;
   const variant = fleetStatusVariant(status, haltReason);
-  const label = fleetStatusLabel(status, haltReason);
   const counts = _aggregateCounts(children);
   const tooltip = fleetStatusTooltip(status, haltReason, {
     haltAt: fleet.halted_at,
@@ -220,7 +215,7 @@ export function fleetCardView(fleet, children = [], options = {}) {
           pill
           class="fleet-card-status-badge status-badge-${status}"
           title="${tooltip || ''}"
-        >${label}</sl-badge>
+        >${status}</sl-badge>
         ${exceptionPills.map(
           (p) => html`
             <sl-badge

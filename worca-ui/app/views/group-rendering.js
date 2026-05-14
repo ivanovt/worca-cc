@@ -16,14 +16,9 @@ export function fleetStatusVariant(status, haltReason) {
   return FLEET_STATUS_VARIANT[status] || 'neutral';
 }
 
-export function fleetStatusLabel(status, haltReason) {
-  if (status === 'halted') {
-    return haltReason === 'circuit_breaker'
-      ? 'Halted (circuit breaker)'
-      : 'Halted';
-  }
-  return status;
-}
+// The status badge text is always the bare status word (lowercase) — same as
+// every other status badge in the UI. halt_reason informs the badge *variant*
+// (colour) and the hover *tooltip*, never the badge text.
 
 export function fleetStatusTooltip(
   status,
@@ -155,7 +150,6 @@ export function fleetHeaderView(
       : fleetExpandedFromStorage(fleetId, status);
 
   const variant = fleetStatusVariant(status, haltReason);
-  const label = fleetStatusLabel(status, haltReason);
 
   const title =
     children[0]?.work_request?.title || `Fleet ${fleetId.slice(-8)}`;
@@ -231,7 +225,7 @@ export function fleetHeaderView(
           pill
           class="fleet-status-badge"
           title="${tooltip || ''}"
-        >${label}</sl-badge>
+        >${status}</sl-badge>
         <span class="fleet-progress">${progressText}</span>
         <sl-progress-bar
           value="${progressPct}"
