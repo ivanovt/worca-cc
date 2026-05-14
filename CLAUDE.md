@@ -33,6 +33,8 @@ Plan Review and Learn are disabled by default; enable via `worca.stages.plan_rev
 
 All governance enforced via Python hooks in `src/worca/claude_hooks/`.
 
+The rationale behind major architectural choices — UI stack, state model, governance, modularity, webhooks — is consolidated in [`docs/design-principles.md`](./docs/design-principles.md). Read it before proposing structural changes.
+
 ## Project Structure
 
 ```

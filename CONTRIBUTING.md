@@ -28,6 +28,7 @@ That's it — worca is now running *on* the worca repo, ready to plan and implem
    - Implications for both `worca-cc` (Python pipeline) and `worca-ui` (dashboard)
    - Testing and validation strategy
    - Backward compatibility
+   - Alignment with the project's [design principles](./docs/design-principles.md) — the *why* behind existing architectural choices
 3. Ask Claude to draft a detailed plan into `docs/plans/W-NNN-<slug>.md`. Tell it to use the **next available W number** (check existing files in `docs/plans/`).
 4. Have Claude commit and push the plan, then open a GitHub issue that links to it. The issue must follow the structure in [CLAUDE.md](./CLAUDE.md#github-issue-structure) — the pipeline parses the `## Plan` link to skip its own Planner stage.
 
