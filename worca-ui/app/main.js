@@ -30,11 +30,7 @@ import {
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { dashboardView } from './views/dashboard.js';
 import { fleetCardView } from './views/fleet-card.js';
-import {
-  fleetDetailView,
-  openFleetCleanupDialog,
-  openFleetHaltDialog,
-} from './views/fleet-detail.js';
+import { fleetDetailView } from './views/fleet-detail.js';
 import {
   fleetLauncherView,
   getFleetLauncherSubmitState,
@@ -1554,6 +1550,69 @@ async function handleResumeFleet(fleetId) {
   }
 }
 
+function handleHaltFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Halt Fleet Run',
+      message:
+        'Unstarted children are cancelled. In-flight children keep running until they finish naturally — they are never killed. A halted fleet can be resumed later.',
+      confirmLabel: 'Halt',
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}`, {
+            method: 'DELETE',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to halt fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          rerender();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to halt fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+function handleCleanupFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Cleanup Fleet Run',
+      message:
+        'Removes every child worktree and the fleet manifest. This is irreversible — a halted or failed fleet can no longer be resumed once cleaned up.',
+      confirmLabel: 'Cleanup',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          // force=1: the confirm dialog is itself the resume-loss
+          // acknowledgement, so we proceed past the server's 412 gate.
+          const res = await fetch(
+            `/api/fleet-runs/${fleetId}?cleanup=1&force=1`,
+            { method: 'DELETE' },
+          );
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to clean up fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          navigate('fleet-runs', null, null);
+        } catch (err) {
+          showActionError(err?.message || 'Failed to clean up fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
 // Re-fetch /api/fleet-runs and replace state.fleets. Used after a fleet
 // archive / unarchive so the list + sidebar count update immediately —
 // the WS `fleet-update` watcher also fires, but an explicit refetch gives
@@ -2185,7 +2244,7 @@ function contentHeaderView() {
         const isTerminal = !isRunning;
 
         const haltBtn = isRunning
-          ? html`<button class="action-btn action-btn--amber" @click=${() => openFleetHaltDialog(rerender)}>
+          ? html`<button class="action-btn action-btn--amber" @click=${() => handleHaltFleet(route.runId)}>
               ${unsafeHTML(iconSvg(Pause, 14))} Halt
             </button>`
           : nothing;
@@ -2195,7 +2254,7 @@ function contentHeaderView() {
             </button>`
           : nothing;
         const cleanupBtn = isTerminal
-          ? html`<button class="action-btn action-btn--danger" @click=${() => openFleetCleanupDialog(rerender)}>
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCleanupFleet(route.runId)}>
               ${unsafeHTML(iconSvg(Trash2, 14))} Cleanup
             </button>`
           : nothing;
@@ -2617,7 +2676,6 @@ function mainContentView() {
       }
       return fleetDetailView(fleet || null, {
         rerender,
-        onNavigate: (s, id) => navigate(s, id, null),
         runsById: state.runs,
         onSelectRun: (id) => navigate('history', id, null),
       });

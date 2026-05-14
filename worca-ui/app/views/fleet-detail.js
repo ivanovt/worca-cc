@@ -12,9 +12,6 @@ let guideContent = null;
 let guideLoading = false;
 let guideError = null;
 let guideErrorHint = null;
-let haltDialogOpen = false;
-let cleanupDialogOpen = false;
-let cleanupResumeLossChecked = false;
 
 export function resetFleetDetailState(overrides = {}) {
   guideDialogOpen = overrides.guideDialogOpen ?? false;
@@ -22,21 +19,6 @@ export function resetFleetDetailState(overrides = {}) {
   guideLoading = overrides.guideLoading ?? false;
   guideError = overrides.guideError ?? null;
   guideErrorHint = overrides.guideErrorHint ?? null;
-  haltDialogOpen = overrides.haltDialogOpen ?? false;
-  cleanupDialogOpen = overrides.cleanupDialogOpen ?? false;
-  cleanupResumeLossChecked = overrides.cleanupResumeLossChecked ?? false;
-}
-
-// Page-header action handlers in main.js use these to trigger the
-// existing confirm dialogs that live inside the fleet detail body.
-export function openFleetHaltDialog(rerender) {
-  haltDialogOpen = true;
-  rerender?.();
-}
-
-export function openFleetCleanupDialog(rerender) {
-  cleanupDialogOpen = true;
-  rerender?.();
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -80,19 +62,6 @@ function _formatDate(iso) {
   } catch {
     return iso.slice(0, 16);
   }
-}
-
-function _isTerminal(status) {
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'halted' ||
-    status === 'unrecoverable'
-  );
-}
-
-function _requiresResumeLossConfirm(status) {
-  return status === 'halted' || status === 'failed';
 }
 
 function _childStatusVariant(status) {
@@ -440,131 +409,17 @@ function _userHaltAlertView(fleet) {
   `;
 }
 
-function _actionsSection(fleet, { onNavigate, rerender } = {}) {
-  const { status } = fleet;
-  const requiresConfirm = _requiresResumeLossConfirm(status);
-  const cleanupConfirmDisabled = requiresConfirm && !cleanupResumeLossChecked;
-
-  // The visible action *buttons* moved to the page header
-  // (`contentHeaderView` in main.js) — same placement as Pause / Stop /
-  // Resume on the pipeline run page. This section only renders the
-  // dialogs that those header buttons trigger; the dialogs need to be in
-  // the DOM to function as `sl-dialog` modal portals.
-  // `onNavigate` is unused in this file now (Re-run navigation lives in
-  // the header button), but kept in the signature for caller compat.
-  void onNavigate;
-
-  return html`
-    <div class="fleet-detail-dialogs" hidden>
-      ${
-        status === 'running'
-          ? html`
-            <sl-dialog
-              label="Halt fleet?"
-              class="halt-confirm-dialog"
-              ?open=${haltDialogOpen}
-              @sl-after-hide=${
-                rerender
-                  ? () => {
-                      haltDialogOpen = false;
-                      rerender();
-                    }
-                  : null
-              }
-            >
-              <p>Unstarted children will be cancelled.
-                 <strong>In-flight children will continue to run</strong> until they finish.</p>
-              <sl-button slot="footer" variant="warning" class="btn-halt-confirm">Confirm halt</sl-button>
-              <sl-button
-                slot="footer"
-                variant="default"
-                @click=${
-                  rerender
-                    ? () => {
-                        haltDialogOpen = false;
-                        rerender();
-                      }
-                    : null
-                }
-              >Cancel</sl-button>
-            </sl-dialog>
-          `
-          : nothing
-      }
-      ${
-        _isTerminal(status)
-          ? html`
-            <sl-dialog
-              label="Cleanup fleet?"
-              class="cleanup-confirm-dialog"
-              ?open=${cleanupDialogOpen}
-              @sl-after-hide=${
-                rerender
-                  ? () => {
-                      cleanupDialogOpen = false;
-                      cleanupResumeLossChecked = false;
-                      rerender();
-                    }
-                  : null
-              }
-            >
-              <p>This will remove all child worktrees and the fleet manifest directory.</p>
-              ${
-                requiresConfirm
-                  ? html`
-                    <sl-checkbox
-                      class="cleanup-resume-loss-checkbox"
-                      ?checked=${cleanupResumeLossChecked}
-                      @sl-change=${
-                        rerender
-                          ? (e) => {
-                              cleanupResumeLossChecked = e.target.checked;
-                              rerender();
-                            }
-                          : null
-                      }
-                    >I understand resume will be unavailable after cleanup</sl-checkbox>
-                  `
-                  : nothing
-              }
-              <sl-button
-                slot="footer"
-                variant="danger"
-                class="${cleanupConfirmDisabled ? 'btn-cleanup-confirm-disabled' : 'btn-cleanup-confirm'}"
-                ?disabled=${cleanupConfirmDisabled}
-              >Confirm cleanup</sl-button>
-              <sl-button
-                slot="footer"
-                variant="default"
-                @click=${
-                  rerender
-                    ? () => {
-                        cleanupDialogOpen = false;
-                        cleanupResumeLossChecked = false;
-                        rerender();
-                      }
-                    : null
-                }
-              >Cancel</sl-button>
-            </sl-dialog>
-          `
-          : nothing
-      }
-    </div>
-  `;
-}
-
 // ─── main view ────────────────────────────────────────────────────────────────
 
 /**
  * Renders the fleet detail page.
  *
  * @param {object|null} fleet  Full fleet manifest from GET /api/fleet-runs/:id (may be null while loading)
- * @param {{ onNavigate?: function, rerender?: function }} options
+ * @param {{ rerender?: function }} options
  */
 export function fleetDetailView(
   fleet,
-  { onNavigate, rerender, runsById, onSelectRun } = {},
+  { rerender, runsById, onSelectRun } = {},
 ) {
   if (!fleet) {
     return html`<div class="fleet-detail-loading"><sl-spinner></sl-spinner> Loading fleet…</div>`;
@@ -575,7 +430,6 @@ export function fleetDetailView(
       ${_fleetOverviewSection(fleet, { runsById })}
       ${_circuitBreakerAlertView(fleet)}
       ${_userHaltAlertView(fleet)}
-      ${_actionsSection(fleet, { onNavigate, rerender })}
       <div class="new-run-form fleet-detail-body">
         ${_workRequestSection(fleet)}
         ${_guideSection(fleet, { rerender })}
