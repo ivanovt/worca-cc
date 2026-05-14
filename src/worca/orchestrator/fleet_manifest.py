@@ -15,7 +15,17 @@ _FLEET_RUNS_DIR = os.path.expanduser("~/.worca/fleet-runs")
 
 _RUNNING_STATES = frozenset({"running", "resuming", "paused"})
 _FAILURE_STATES = frozenset({"failed", "setup_failed", "unrecoverable"})
-_TERMINAL_STATES = frozenset({"completed"}) | _FAILURE_STATES
+# `interrupted` / `cancelled` are terminal-but-not-completed child states.
+# They must be in _TERMINAL_STATES so a fleet whose children include one
+# can still reach a terminal status — otherwise `derive_fleet_status`
+# never sees `terminal_count == total` and the fleet is stuck "running"
+# forever. They are deliberately NOT in _FAILURE_STATES: a user-stopped
+# child shouldn't inflate the circuit-breaker failure ratio. The fleet
+# still derives as `failed` (not `completed`) because completed_count
+# won't equal total.
+_TERMINAL_STATES = (
+    frozenset({"completed", "interrupted", "cancelled"}) | _FAILURE_STATES
+)
 
 
 def generate_fleet_id(*, now=None) -> tuple:

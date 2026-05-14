@@ -198,7 +198,7 @@ function _fleetOverviewSection(fleet, { runsById } = {}) {
         </div>
 
         <div class="pipeline-cost-strip fleet-cost-strip">
-          <span class="pipeline-cost-item"><span class="meta-label">Fleet Cost:</span> <span class="meta-value">${_formatCost(cost)}</span></span>
+          <span class="pipeline-cost-item"><span class="meta-label">Cost:</span> <span class="meta-value">${_formatCost(cost)}</span></span>
         </div>
       </div>
     </div>

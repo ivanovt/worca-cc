@@ -817,7 +817,7 @@ export function runDetailView(run, settings = {}, options = {}) {
               pipelineCost > 0 || pipelineTurns > 0
                 ? html`
               <div class="pipeline-cost-strip">
-                ${pipelineCost > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Pipeline Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span></span>` : nothing}
+                ${pipelineCost > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span></span>` : nothing}
                 ${pipelineTurns > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Total Turns:</span> <span class="meta-value">${pipelineTurns}</span></span>` : nothing}
               </div>
             `

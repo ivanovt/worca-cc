@@ -470,6 +470,33 @@ class TestDeriveFleetStatus:
         status, _ = self._call(statuses)
         assert status == "running"
 
+    def test_interrupted_child_is_terminal_fleet_failed(self):
+        # `interrupted` is terminal-but-not-completed: an all-terminal
+        # fleet with an interrupted child derives `failed` — NOT stuck
+        # at `running`. (Regression: `interrupted` was missing from
+        # _TERMINAL_STATES, freezing the fleet forever.)
+        status, halt_reason = self._call(["completed", "completed", "interrupted"])
+        assert status == "failed"
+        assert halt_reason is None
+
+    def test_cancelled_child_is_terminal_fleet_failed(self):
+        status, halt_reason = self._call(["completed", "cancelled"])
+        assert status == "failed"
+        assert halt_reason is None
+
+    def test_interrupted_does_not_inflate_circuit_breaker(self):
+        # `interrupted` is terminal but NOT a _FAILURE_STATE — it must not
+        # count toward the circuit-breaker failure ratio. 1 real failure
+        # out of 2 terminal = 0.5, but with the interrupted child excluded
+        # from failed_count it's 1/3 ≈ 0.33... still trips here, so use a
+        # case that would ONLY trip if interrupted were counted as failure:
+        # 1 failed + 1 interrupted + 1 completed + 2 running, threshold .60.
+        # failed_count=1, terminal_count=3 → 0.33 < .60 → no trip.
+        statuses = ["failed", "interrupted", "completed", "running", "running"]
+        status, halt_reason = self._call(statuses, threshold=0.60)
+        assert status == "running"
+        assert halt_reason is None
+
 
 # ---------------------------------------------------------------------------
 # poll_and_update_fleet_manifest

@@ -170,10 +170,10 @@ describe('fleetDetailView — overview strip', () => {
     expect(out).toContain('>Duration:<');
   });
 
-  it('renders Fleet Cost + Projects count on the overview', () => {
+  it('renders Cost + Projects count on the overview', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('>Fleet Cost:<');
+    expect(out).toContain('>Cost:<');
     expect(out).toContain('>Projects:<');
   });
 
