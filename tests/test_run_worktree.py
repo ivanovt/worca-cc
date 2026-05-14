@@ -140,7 +140,7 @@ class TestHelpers:
         assert len(parts[0]) == 8   # YYYYMMDD
         assert len(parts[1]) == 6   # HHMMSS
         assert len(parts[2]) == 3   # mmm
-        assert len(parts[3]) == 4   # xxxx hex
+        assert len(parts[3]) == 8   # xxxxxxxx hex (4-byte random suffix)
 
     def test_generate_run_id_unique(self):
         from worca.scripts.run_worktree import _generate_run_id

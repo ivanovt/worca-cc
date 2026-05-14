@@ -66,10 +66,18 @@ def _resolve_base_branch(args, settings: dict) -> str:
 
 
 def _generate_run_id() -> str:
-    """Generate a unique run ID in YYYYMMDD-HHMMSS-mmm-xxxx format."""
+    """Generate a unique run ID in YYYYMMDD-HHMMSS-mmm-xxxxxxxx format.
+
+    The random suffix is 4 bytes (8 hex chars). A 2-byte suffix only has
+    16 bits of entropy, so back-to-back calls within the same millisecond
+    collided at a ~0.07% rate over 10 IDs — enough to flake CI. 4 bytes
+    matches the fleet_id generator and makes a same-ms collision
+    negligible. RUN_ID_RE is length-agnostic, so widening the suffix is
+    safe for every downstream consumer.
+    """
     now = datetime.now(timezone.utc)
     millis = now.microsecond // 1000
-    suffix = secrets.token_hex(2)
+    suffix = secrets.token_hex(4)
     return f"{now.strftime('%Y%m%d-%H%M%S')}-{millis:03d}-{suffix}"
 
 
