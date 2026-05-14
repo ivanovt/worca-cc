@@ -52,10 +52,15 @@ function _sortFleetsByActivityDesc(fleets) {
   });
 }
 
-function _renderFleetCard(fleet, { onSelectRun, onNavigate } = {}) {
+function _renderFleetCard(
+  fleet,
+  { onSelectRun, onNavigate, onArchiveFleet, onUnarchiveFleet } = {},
+) {
   return fleetCardView(fleet, fleet.children || [], {
     onClick: onNavigate ? (fid) => onNavigate('fleet-runs', fid) : undefined,
     onChildClick: onSelectRun,
+    onArchive: onArchiveFleet,
+    onUnarchive: onUnarchiveFleet,
   });
 }
 
@@ -116,6 +121,8 @@ export function dashboardView(
     onStop,
     onCancel,
     onArchive,
+    onArchiveFleet,
+    onUnarchiveFleet,
     onToggleFleet,
   } = {},
 ) {
@@ -125,8 +132,15 @@ export function dashboardView(
   // option is unused here.
   void onToggleFleet;
 
+  // Shared fleet-card option bag — `onSelectRun` / `onNavigate` vary per
+  // section call below, the archive handlers don't.
+  const fleetCardOpts = { onArchiveFleet, onUnarchiveFleet };
+
   const allRuns = Object.values(state.runs);
-  const fleets = state.fleets || [];
+  // Archived fleets are excluded from every dashboard section — same as
+  // archived pipeline runs. They remain reachable via the /#/fleet-runs
+  // "Show archived" toggle.
+  const fleets = (state.fleets || []).filter((f) => !f.archived);
   const fleetIdSet = new Set(fleets.map((f) => f.fleet_id));
 
   // Standalone runs = runs that aren't represented by a fleet card.
@@ -237,7 +251,7 @@ export function dashboardView(
           ? html`
         <div class="active-group">
           <div class="run-list">
-            ${activeFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate }))}
+            ${activeFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
             ${activeStandalone.map((r) =>
               _renderRunCard(r, {
                 onSelectRun,
@@ -262,7 +276,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-paused">
           <div class="run-list">
-            ${pausedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate }))}
+            ${pausedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
             ${pausedStandalone.map((r) =>
               _renderRunCard(r, { onSelectRun, onResume, onCancel }),
             )}
@@ -287,7 +301,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-failed">
           <div class="run-list">
-            ${failedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate }))}
+            ${failedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
             ${failedStandalonePreview.map((r) =>
               _renderRunCard(r, {
                 onSelectRun,
@@ -317,7 +331,7 @@ export function dashboardView(
         </h3>
         <div class="active-group active-group-completed">
           <div class="run-list">
-            ${completedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate }))}
+            ${completedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
             ${completedStandalonePreview.map((r) =>
               _renderRunCard(r, { onSelectRun }),
             )}

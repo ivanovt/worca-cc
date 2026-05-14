@@ -1525,12 +1525,18 @@ sl-input [slot="prefix"] {
   padding-left: 26px;
 }
 
-/* Action row — mirrors `.run-card-actions` placement & button sizing. */
+/* Action row — mirrors `.run-card-actions` exactly: right-aligned, so the
+   Archive button lands in the same spot as on the pipeline run card. */
 .fleet-card-actions {
   display: flex;
+  align-items: center;
+  justify-content: flex-end;
   flex-wrap: wrap;
   gap: 8px;
   padding-left: 26px;
+}
+.fleet-card-actions:empty {
+  display: none;
 }
 
 /* --- 21. Dashboard --- */
@@ -4294,6 +4300,7 @@ sl-details.learnings-panel::part(content) {
 .filter-chip-failed.active { background: var(--status-failed); border-color: var(--status-failed); }
 .filter-chip-paused.active { background: var(--status-paused); border-color: var(--status-paused); }
 .filter-chip-error.active { background: var(--status-failed); border-color: var(--status-failed); }
+.filter-chip-halted.active { background: var(--status-paused); border-color: var(--status-paused); }
 .filter-chip .chip-count {
   font-size: 0.68rem;
   opacity: 0.7;
@@ -4967,6 +4974,23 @@ sl-tooltip.bead-tooltip::part(body) {
   flex-wrap: wrap;
 }
 .worktrees-toolbar .worktrees-filter {
+  flex: 1;
+  min-width: 240px;
+}
+
+/* Shared text-filter row — the line under the filter chips on the
+   History and Fleets list pages. Mirrors `.worktrees-toolbar` so the
+   three list pages present an identical filter affordance. The
+   worktrees page keeps its own toolbar (it carries the extra
+   "Cleanup all completed" button alongside the text input). */
+.list-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.list-filter-row .list-text-filter {
   flex: 1;
   min-width: 240px;
 }

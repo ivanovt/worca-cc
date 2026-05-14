@@ -117,8 +117,15 @@ export function sidebarView(
   );
   const worktreeDiskWarning = totalWorktreeDisk > diskWarningThreshold;
 
-  const runningFleetCount = fleets.filter((f) => f.status === 'running').length;
-  const haltedFleetCount = fleets.filter((f) => f.status === 'halted').length;
+  // Archived fleets never contribute to the attention badge — they're
+  // explicitly out-of-sight (parity with archived pipeline runs).
+  const liveFleets = fleets.filter((f) => !f.archived);
+  const runningFleetCount = liveFleets.filter(
+    (f) => f.status === 'running',
+  ).length;
+  const haltedFleetCount = liveFleets.filter(
+    (f) => f.status === 'halted',
+  ).length;
   // Badge surfaces fleets that need operator attention: running (active work)
   // + halted (awaiting resume/cleanup decision). Completed/failed fleets are
   // terminal — they don't add to the count.

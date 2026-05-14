@@ -177,6 +177,102 @@ describe('Fleet Routes', () => {
     });
   });
 
+  // ─── archive / unarchive ─────────────────────────────────────────────────
+
+  describe('POST /api/fleet-runs/:id/archive + /unarchive', () => {
+    it('archives a terminal fleet and stamps archived_at', async () => {
+      writeManifest(fleetRunsDir, baseManifest({ status: 'completed' }));
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/archive`,
+        { method: 'POST' },
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(typeof data.archived_at).toBe('string');
+      // Manifest is persisted with the archived flag.
+      const detail = await (
+        await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`)
+      ).json();
+      expect(detail.fleet.archived).toBe(true);
+      expect(detail.fleet.archived_at).toBe(data.archived_at);
+    });
+
+    it('refuses to archive an in-flight (running) fleet with 409', async () => {
+      writeManifest(fleetRunsDir, baseManifest({ status: 'running' }));
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/archive`,
+        { method: 'POST' },
+      );
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.ok).toBe(false);
+    });
+
+    it('archive is idempotent — second call is a 200 no-op', async () => {
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'halted',
+          archived: true,
+          archived_at: '2026-05-14T00:00:00.000Z',
+        }),
+      );
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/archive`,
+        { method: 'POST' },
+      );
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(data.archived_at).toBe('2026-05-14T00:00:00.000Z');
+    });
+
+    it('unarchive clears the archived flag', async () => {
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'failed',
+          archived: true,
+          archived_at: '2026-05-14T00:00:00.000Z',
+        }),
+      );
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/unarchive`,
+        { method: 'POST' },
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()).ok).toBe(true);
+      const detail = await (
+        await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}`)
+      ).json();
+      expect(detail.fleet.archived).toBeUndefined();
+      expect(detail.fleet.archived_at).toBeUndefined();
+    });
+
+    it('archive returns 404 for an unknown fleet', async () => {
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/archive`,
+        { method: 'POST' },
+      );
+      expect(res.status).toBe(404);
+    });
+
+    it('GET list surfaces archived + archived_at on the summary', async () => {
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'completed',
+          archived: true,
+          archived_at: '2026-05-14T00:00:00.000Z',
+        }),
+      );
+      const data = await (await fetch(`${base}/api/fleet-runs`)).json();
+      expect(data.fleets[0].archived).toBe(true);
+      expect(data.fleets[0].archived_at).toBe('2026-05-14T00:00:00.000Z');
+    });
+  });
+
   // ─── Reverse lookup: discover children from registry ─────────────────────
   //
   // The dispatcher's older path initialized `children: []` and never

@@ -131,10 +131,15 @@ describe('fleetDetailView — overview strip', () => {
     expect(out).toContain('Migrate to v2 API');
   });
 
-  it('renders the fleet status badge inside the overview', () => {
+  it('renders the "Fleet ID:" label + id chip in the overview', () => {
+    // The status badge was removed from the overview's first line — it's
+    // already shown in the page header (contentHeaderView). The first row
+    // now carries a labelled fleet-id chip instead.
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).toContain('fleet-status-badge');
+    expect(out).toContain('>Fleet ID:<');
+    expect(out).toContain('fleet-id-chip');
+    expect(out).not.toContain('fleet-status-badge');
   });
 
   it('does not render the projects strip on the overview', () => {
@@ -172,93 +177,9 @@ describe('fleetDetailView — overview strip', () => {
     expect(out).toContain('>Projects:<');
   });
 
-  it('uses primary variant for running status', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'running' }, {}),
-    );
-    expect(out).toContain('variant="primary"');
-  });
-
-  it('uses success variant for completed status', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'completed' }, {}),
-    );
-    expect(out).toContain('variant="success"');
-  });
-
-  it('uses danger variant for failed status', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView({ ...BASE_FLEET, status: 'failed' }, {}),
-    );
-    expect(out).toContain('variant="danger"');
-  });
-
-  it('uses warning variant for halted circuit_breaker', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        { ...BASE_FLEET, status: 'halted', halt_reason: 'circuit_breaker' },
-        {},
-      ),
-    );
-    expect(out).toContain('variant="warning"');
-  });
-
-  it('uses neutral variant for halted user', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        { ...BASE_FLEET, status: 'halted', halt_reason: 'user' },
-        {},
-      ),
-    );
-    expect(out).toContain('variant="neutral"');
-  });
-
-  it('badge title shows user halt text with timestamp', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        {
-          ...BASE_FLEET,
-          status: 'halted',
-          halt_reason: 'user',
-          halted_at: '2026-05-12T10:30:00Z',
-        },
-        {},
-      ),
-    );
-    expect(out).toContain('Halted by you on 2026-05-12T10:30:00Z');
-  });
-
-  it('badge title shows auto halt text for circuit_breaker with failure counts', () => {
-    resetFleetDetailState();
-    const out = renderToString(
-      fleetDetailView(
-        {
-          ...BASE_FLEET,
-          status: 'halted',
-          halt_reason: 'circuit_breaker',
-          children: [
-            { ...BASE_FLEET.children[0], status: 'completed' },
-            { ...BASE_FLEET.children[1], status: 'failed' },
-          ],
-        },
-        {},
-      ),
-    );
-    expect(out).toContain('Halted automatically: 1 of 2 projects failed');
-  });
-
-  it('badge title is empty when fleet is running', () => {
-    resetFleetDetailState();
-    const out = renderToString(fleetDetailView(BASE_FLEET, {}));
-    expect(out).not.toContain('Halted by you');
-    expect(out).not.toContain('Halted automatically');
-  });
+  // The fleet status badge (variant + halt-reason tooltip) now lives in
+  // the page header (contentHeaderView in main.js), not in this view —
+  // so the per-status variant / halt-text assertions moved out with it.
 });
 
 // ─── overview meta (replaces the old manifest panel) ──────────────────────────

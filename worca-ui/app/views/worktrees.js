@@ -357,12 +357,26 @@ function _bulkDialogView(
   `;
 }
 
+// Status chips for the worktrees list — mirrors the History / Fleets
+// `.filter-chips`. "all" plus any status that actually occurs (counted
+// dynamically, same as run-list).
+const WORKTREE_FILTER_STATUSES = [
+  'all',
+  'running',
+  'completed',
+  'failed',
+  'paused',
+  'cancelled',
+];
+
 export function worktreesView(
   worktrees,
   {
     diskWarningBytes,
     filter = '',
     onFilter,
+    statusFilter = 'all',
+    onStatusFilter,
     onSelectRun,
     onCleanup,
     onBulkCleanup,
@@ -384,11 +398,25 @@ export function worktreesView(
     `;
   }
 
+  // Per-chip counts over the full worktree set (before any filtering),
+  // so the chip numbers stay stable as the text filter narrows the list.
+  const statusCounts = { all: worktrees.length };
+  for (const wt of worktrees) {
+    const s = wt.status || 'unknown';
+    statusCounts[s] = (statusCounts[s] || 0) + 1;
+  }
+
+  // Status filter first, then text filter — same ordering as run-list.
+  let narrowed =
+    statusFilter && statusFilter !== 'all'
+      ? worktrees.filter((wt) => (wt.status || 'unknown') === statusFilter)
+      : worktrees;
+  if (filter) {
+    narrowed = narrowed.filter((wt) => _matchesFilter(wt, filter));
+  }
   // Sort newest first to match run-list.js. sortByStartDesc keys on
   // started_at and tolerates missing values.
-  const filtered = sortByStartDesc(
-    filter ? worktrees.filter((wt) => _matchesFilter(wt, filter)) : worktrees,
-  );
+  const filtered = sortByStartDesc(narrowed);
   const completedCount = worktrees.filter(
     (w) => w.status === 'completed',
   ).length;
@@ -396,6 +424,27 @@ export function worktreesView(
   return html`
     <div class="worktrees-view">
       ${_diskSummaryView(worktrees, diskWarningBytes)}
+      ${
+        onStatusFilter
+          ? html`
+        <div class="filter-chips">
+          ${WORKTREE_FILTER_STATUSES.filter(
+            (s) => s === 'all' || statusCounts[s],
+          ).map(
+            (s) => html`
+            <button
+              class="filter-chip ${(statusFilter || 'all') === s ? 'active' : ''} filter-chip-${s}"
+              @click=${() => onStatusFilter(s)}
+            >
+              ${s === 'all' ? 'All' : s}
+              <span class="chip-count">${statusCounts[s] || 0}</span>
+            </button>
+          `,
+          )}
+        </div>
+      `
+          : nothing
+      }
       <div class="worktrees-toolbar">
         <sl-input
           size="small"

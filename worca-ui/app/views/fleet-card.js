@@ -1,7 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
-import { iconSvg, Pause, Play, RotateCcw } from '../utils/icons.js';
+import { Archive, iconSvg, Pause, Play, RotateCcw } from '../utils/icons.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import {
   fleetStatusLabel,
@@ -121,10 +121,12 @@ function _aggregateCounts(children) {
  *   onClick?: (fleetId: string) => void,
  *   onHalt?: (fleetId: string) => void,
  *   onResumeFailed?: (fleetId: string) => void,
+ *   onArchive?: (fleetId: string) => void,
+ *   onUnarchive?: (fleetId: string) => void,
  * }} options
  */
 export function fleetCardView(fleet, children = [], options = {}) {
-  const { onClick, onHalt, onResumeFailed } = options;
+  const { onClick, onHalt, onResumeFailed, onArchive, onUnarchive } = options;
 
   const status = fleet.status || 'running';
   const haltReason = fleet.halt_reason || null;
@@ -187,6 +189,11 @@ export function fleetCardView(fleet, children = [], options = {}) {
     onResumeFailed &&
     (status === 'halted' || status === 'failed') &&
     counts.failed + counts.pending > 0;
+  // Archive is a terminal-state action — same gating intent as the pipeline
+  // run card: never offered while a fleet is in-flight (running/resuming).
+  const isInFlight = status === 'running' || status === 'resuming';
+  const showArchive = onArchive && !fleet.archived && !isInFlight;
+  const showUnarchive = onUnarchive && fleet.archived === true;
 
   const handleCardClick = onClick
     ? (e) => {
@@ -277,7 +284,7 @@ export function fleetCardView(fleet, children = [], options = {}) {
       </div>
 
       ${
-        showHalt || showResume
+        showHalt || showResume || showArchive || showUnarchive
           ? html`
             <div class="fleet-card-actions">
               ${
@@ -306,6 +313,30 @@ export function fleetCardView(fleet, children = [], options = {}) {
                       ${unsafeHTML(iconSvg(status === 'halted' ? Play : RotateCcw, 12))}
                       ${status === 'halted' ? 'Resume failed' : 'Retry failed'}
                     </sl-button>
+                  `
+                  : nothing
+              }
+              ${
+                showArchive
+                  ? html`
+                    <button class="btn-quick-archive" @click=${(e) => {
+                      e.stopPropagation();
+                      onArchive(fleet.fleet_id);
+                    }}>
+                      ${unsafeHTML(iconSvg(Archive, 12))} Archive
+                    </button>
+                  `
+                  : nothing
+              }
+              ${
+                showUnarchive
+                  ? html`
+                    <button class="btn-quick-archive" @click=${(e) => {
+                      e.stopPropagation();
+                      onUnarchive(fleet.fleet_id);
+                    }}>
+                      ${unsafeHTML(iconSvg(RotateCcw, 12))} Unarchive
+                    </button>
                   `
                   : nothing
               }

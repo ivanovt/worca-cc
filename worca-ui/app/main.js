@@ -170,6 +170,39 @@ let restartStageKey = null;
 // -- Fleet views --
 const _fleetDetailCache = {}; // { fleetId: manifest }
 let _fleetDetailFetching = null; // currently-fetching fleet id (single in-flight)
+let _fleetStatusFilter = 'all'; // /#/fleet-runs filter chip selection
+let _fleetTextFilter = ''; // /#/fleet-runs free-text filter
+
+// Free-text match for a fleet — title, fleet id, and member project
+// names. Mirrors `_runMatchesText` (run-list) and `_matchesFilter`
+// (worktrees) so all three list pages search consistently.
+function _fleetMatchesText(fleet, q) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  const title = fleet.work_request?.title || fleet.title || '';
+  const projectNames = (fleet.children || [])
+    .map((c) => (c.project_path || c.project || '').split('/').pop() || '')
+    .join(' ');
+  return (
+    title.toLowerCase().includes(needle) ||
+    (fleet.fleet_id || '').toLowerCase().includes(needle) ||
+    projectNames.toLowerCase().includes(needle)
+  );
+}
+
+// Status chips for the /#/fleet-runs list — mirrors the History page's
+// `.filter-chips`. "halted" replaces pipeline's "paused"/"error" since
+// that's the fleet-level non-terminal-but-stopped state; "archived" pulls
+// from the archived flag rather than a status value.
+const _FLEET_FILTER_STATUSES = [
+  'all',
+  'running',
+  'completed',
+  'failed',
+  'halted',
+  'archived',
+];
+
 function _fleetListView() {
   // state.fleets is the single source of truth: populated on bootstrap and
   // refreshed by the fleet-update WS handler. Reading the module-level
@@ -191,21 +224,83 @@ function _fleetListView() {
       </div>
     `;
   }
+
+  // Per-chip counts. `all` and every status count is over *non-archived*
+  // fleets; `archived` is its own bucket — same split as History (where
+  // archived runs live in a separate `archivedRuns` array).
+  const live = fleets.filter((f) => !f.archived);
+  const counts = { all: live.length, archived: fleets.length - live.length };
+  for (const f of live) {
+    counts[f.status] = (counts[f.status] || 0) + 1;
+  }
+
+  const cardOptions = {
+    onClick: (id) => navigate('fleet-runs', id, null),
+    onChildClick: (runId) => navigate('active', runId, null),
+    onArchive: archiveFleet,
+    onUnarchive: unarchiveFleet,
+  };
+
+  let displayed =
+    _fleetStatusFilter === 'archived'
+      ? fleets.filter((f) => f.archived)
+      : _fleetStatusFilter === 'all'
+        ? live
+        : live.filter((f) => f.status === _fleetStatusFilter);
+
+  // Text filter runs after the chip filter — same ordering as History.
+  const textQ = (_fleetTextFilter || '').trim();
+  if (textQ) {
+    displayed = displayed.filter((f) => _fleetMatchesText(f, textQ));
+  }
+
   return html`
-    <h3 class="dashboard-section-title">Fleets</h3>
-    <div class="fleet-list">
-      ${fleets.map((f) =>
-        fleetCardView(f, f.children || [], {
-          onClick: (id) => navigate('fleet-runs', id, null),
-          onChildClick: (runId) => navigate('active', runId, null),
-        }),
-      )}
+    <div class="filter-chips">
+      ${_FLEET_FILTER_STATUSES
+        .filter((s) => s === 'all' || counts[s])
+        .map(
+          (s) => html`
+          <button
+            class="filter-chip ${(_fleetStatusFilter || 'all') === s ? 'active' : ''} filter-chip-${s}"
+            @click=${() => {
+              _fleetStatusFilter = s;
+              rerender();
+            }}
+          >
+            ${s === 'all' ? 'All' : s}
+            <span class="chip-count">${counts[s] || 0}</span>
+          </button>
+        `,
+        )}
     </div>
+    <div class="list-filter-row">
+      <sl-input
+        size="small"
+        class="list-text-filter"
+        type="text"
+        placeholder="Filter by title, fleet id, or project…"
+        value="${_fleetTextFilter || ''}"
+        @sl-input=${(e) => {
+          _fleetTextFilter = e.target.value;
+          rerender();
+        }}
+      ></sl-input>
+    </div>
+    ${
+      displayed.length === 0
+        ? html`<div class="empty-state">No ${_fleetStatusFilter} fleets</div>`
+        : html`<div class="fleet-list">
+            ${displayed.map((f) =>
+              fleetCardView(f, f.children || [], cardOptions),
+            )}
+          </div>`
+    }
   `;
 }
 
 // -- Worktrees view --
 let worktreesFilter = '';
+let worktreesStatusFilter = 'all'; // worktrees filter-chip selection
 let worktreesDialogItem = null; // null | worktree (single-row cleanup)
 let worktreesDialogBulk = false; // true when "Cleanup all completed" dialog open
 let worktreesDialogCheckbox = false; // resumable/grouped confirmation checkbox
@@ -444,6 +539,7 @@ let webhookSearchTerm = '';
 
 // -- Run history --
 let historyStatusFilter = 'all';
+let historyTextFilter = ''; // free-text filter on the History list
 
 /**
  * Reset all project-scoped state to defaults.
@@ -486,6 +582,7 @@ function resetProjectState() {
   webhookSearchTerm = '';
   // Run history
   historyStatusFilter = 'all';
+  historyTextFilter = '';
 }
 
 function handleStageTabChange(stageKey, iterationNumber) {
@@ -1083,6 +1180,7 @@ function handleProjectSwitch(newProjectId) {
     worktreesLoaded: false,
   });
   worktreesFilter = '';
+  worktreesStatusFilter = 'all';
   worktreesDialogItem = null;
   worktreesDialogBulk = false;
   worktreesDialogCheckbox = false;
@@ -1453,6 +1551,66 @@ async function handleResumeFleet(fleetId) {
     }
   } catch (err) {
     showActionError(err?.message || 'Failed to resume fleet');
+  }
+}
+
+// Re-fetch /api/fleet-runs and replace state.fleets. Used after a fleet
+// archive / unarchive so the list + sidebar count update immediately —
+// the WS `fleet-update` watcher also fires, but an explicit refetch gives
+// instant feedback rather than waiting on the fs-watch debounce.
+async function _refreshFleets() {
+  try {
+    const res = await fetch('/api/fleet-runs');
+    const data = await res.json();
+    store.setState({ fleets: data?.fleets || [] });
+  } catch {
+    // Non-fatal — the WS fleet-update handler will reconcile shortly.
+  }
+}
+
+function archiveFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Archive Fleet Run',
+      message:
+        "This fleet will be hidden from the Fleets list. You can find it later with the 'Show archived' toggle.",
+      confirmLabel: 'Archive',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}/archive`, {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to archive fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to archive fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+async function unarchiveFleet(fleetId) {
+  try {
+    const res = await fetch(`/api/fleet-runs/${fleetId}/unarchive`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to unarchive fleet');
+      return;
+    }
+    delete _fleetDetailCache[fleetId];
+    await _refreshFleets();
+  } catch (err) {
+    showActionError(err?.message || 'Failed to unarchive fleet');
   }
 }
 
@@ -2561,6 +2719,11 @@ function mainContentView() {
         historyStatusFilter = s;
         rerender();
       },
+      textFilter: historyTextFilter,
+      onTextFilter: (value) => {
+        historyTextFilter = value;
+        rerender();
+      },
     });
   }
 
@@ -2570,6 +2733,11 @@ function mainContentView() {
       filter: worktreesFilter,
       onFilter: (value) => {
         worktreesFilter = value;
+        rerender();
+      },
+      statusFilter: worktreesStatusFilter,
+      onStatusFilter: (s) => {
+        worktreesStatusFilter = s;
         rerender();
       },
       onSelectRun: handleSelectRun,
@@ -2619,6 +2787,8 @@ function mainContentView() {
     ${dashboardView(viewState, {
       onSelectRun: (runId) => navigate('active', runId, route.projectId),
       onArchive: archiveRun,
+      onArchiveFleet: archiveFleet,
+      onUnarchiveFleet: unarchiveFleet,
       onNavigate: (section, secondArg, thirdArg) => {
         if (
           secondArg &&

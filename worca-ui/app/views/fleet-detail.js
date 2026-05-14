@@ -3,11 +3,6 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { projectBadgesView } from './fleet-card.js';
-import {
-  fleetStatusLabel,
-  fleetStatusTooltip,
-  fleetStatusVariant,
-} from './group-rendering.js';
 import { runCardView } from './run-card.js';
 
 // ─── module-level state ───────────────────────────────────────────────────────
@@ -148,16 +143,9 @@ function _wallEndedAt(fleet) {
 // from the WS-pushed state.runs entry.
 function _fleetOverviewSection(fleet, { runsById } = {}) {
   const children = fleet.children || [];
-  const variant = fleetStatusVariant(fleet.status, fleet.halt_reason);
-  const label = fleetStatusLabel(fleet.status, fleet.halt_reason);
   const failedCount = children.filter(
     (c) => c.status === 'failed' || c.status === 'setup_failed',
   ).length;
-  const tooltip = fleetStatusTooltip(fleet.status, fleet.halt_reason, {
-    haltAt: fleet.halted_at,
-    failedCount,
-    totalCount: children.length,
-  });
 
   const baseBranch = fleet.base_branch || 'each repo default';
   const planMode = fleet.plan?.mode || 'none';
@@ -176,12 +164,7 @@ function _fleetOverviewSection(fleet, { runsById } = {}) {
     >
       <div class="run-info-section fleet-info-section">
         <div class="fleet-overview-status-row">
-          <sl-badge
-            variant="${variant}"
-            pill
-            class="fleet-status-badge"
-            title="${tooltip || ''}"
-          >${label}</sl-badge>
+          <span class="meta-label">Fleet ID:</span>
           <code class="fleet-id-chip">${fleet.fleet_id}</code>
         </div>
 
