@@ -1440,24 +1440,42 @@ sl-input [slot="prefix"] {
    of the badge-color-language guide ("Blue means active, not orange"), it
    intentionally uses a muted/neutral palette so it doesn't read as
    "running" on a completed or halted fleet. */
-.fleet-card-fleet-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--muted);
-  background: transparent;
+/* Project name badges — the value of the "Projects:" meta label. Neutral
+   (no status color), each clamped to ~20ch with an ellipsis; the JS also
+   pre-truncates so the title attr carries the full name. Up to 3 render
+   inline, the rest collapse into `.fleet-card-project-more`. */
+.fleet-card-project-badge {
+  display: inline-block;
+  max-width: 20ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: 999px;
   flex-shrink: 0;
 }
-.fleet-card-fleet-chip svg {
-  width: 12px;
-  height: 12px;
+.fleet-card-project-more {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+/* Failed-project count — rides the "Projects:" row after the name badges
+   as a solid red badge (e.g. "1 failed"). Only rendered when at least one
+   project failed; callers guard with `failedCount > 0`. */
+.fleet-card-failed-count {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  background: var(--status-error);
+  border-radius: 999px;
 }
 
 /* Exception counter pills — surface non-zero failure / halted / paused
@@ -1485,146 +1503,26 @@ sl-input [slot="prefix"] {
   color: var(--fg);
 }
 
-/* Children strip — the killer differentiator. One tile per child showing
-   status icon + truncated repo name. Tiles are clickable when the child
-   has a resolved run_id; otherwise rendered as disabled buttons. The
-   strip is wrapped in `.fleet-card-children` along with a "Children:"
-   label prefix (Rule 5 of the badge-color-language guide). */
-.fleet-card-children {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 6px 10px;
-  padding-left: 26px;
-}
 .fleet-card-children-label {
   align-self: center;
   flex-shrink: 0;
   font-size: 12px;
   /* Color/weight inherited from `.meta-label` so this row matches the
-     Head/Plan/Started/Duration label vocabulary above. */
-}
-.fleet-card-children-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  flex: 1 1 auto;
-  min-width: 0;
+     Plan/Base/Started/Duration label vocabulary on the rows below. */
 }
 .fleet-card-children-empty {
   font-size: 12px;
   color: var(--muted);
   font-style: italic;
 }
-.fleet-card-child-tile {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 8px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--bg-primary);
-  font-size: 11px;
-  color: var(--fg);
-  font-family: inherit;
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    border-color var(--transition-fast),
-    transform var(--transition-fast);
-  max-width: 140px;
-}
-.fleet-card-child-tile:hover:not(:disabled) {
-  background: var(--bg-hover);
-  transform: translateY(-1px);
-}
-.fleet-card-child-tile:disabled {
-  cursor: default;
-  opacity: 0.85;
-}
-.fleet-card-child-icon {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-}
-.fleet-card-child-label {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* Per-child status tint on the tile's left edge — echoes the card-level
-   left accent at a smaller scale. */
-.fleet-card-child-tile.status-running    { border-left: 2px solid var(--status-running); }
-.fleet-card-child-tile.status-paused     { border-left: 2px solid var(--status-paused); }
-.fleet-card-child-tile.status-interrupted { border-left: 2px solid var(--status-interrupted); }
-.fleet-card-child-tile.status-completed  { border-left: 2px solid var(--status-completed); }
-.fleet-card-child-tile.status-failed,
-.fleet-card-child-tile.status-setup-failed,
-.fleet-card-child-tile.status-unrecoverable { border-left: 2px solid var(--status-failed); }
-.fleet-card-child-tile.status-error       { border-left: 2px solid var(--status-error); }
-.fleet-card-child-tile.status-pending {
-  border-left: 2px solid var(--status-pending);
-  opacity: 0.65;
-}
-.fleet-card-child-tile.status-halted     { border-left: 2px solid var(--status-paused); }
-.fleet-card-child-tile.status-resuming   { border-left: 2px solid var(--status-running); }
-.fleet-card-child-tile-overflow {
-  background: transparent;
-  border-style: dashed;
-  color: var(--muted);
-  cursor: default;
-}
 
-/* Aggregate progress bar + label */
+/* "Projects:" label + name-badge list row. */
 .fleet-card-progress {
   display: flex;
   align-items: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 6px;
   padding-left: 26px;
-}
-.fleet-card-progress-bar {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  gap: 3px;
-  height: 4px;
-  align-items: stretch;
-}
-.fleet-card-progress-segment {
-  flex: 1 1 0;
-  min-width: 4px;
-  border-radius: 2px;
-  background: var(--status-pending);
-  transition: background 120ms ease;
-}
-.fleet-card-progress-segment.status-completed {
-  background: var(--status-completed);
-}
-.fleet-card-progress-segment.status-failed,
-.fleet-card-progress-segment.status-error {
-  background: var(--status-error);
-}
-.fleet-card-progress-segment.status-running,
-.fleet-card-progress-segment.status-in-progress,
-.fleet-card-progress-segment.status-resuming {
-  background: var(--status-running);
-}
-.fleet-card-progress-segment.status-paused,
-.fleet-card-progress-segment.status-blocked,
-.fleet-card-progress-segment.status-interrupted {
-  background: var(--status-blocked);
-}
-.fleet-card-progress-segment.status-pending,
-.fleet-card-progress-segment.status-skipped,
-.fleet-card-progress-segment.status-cancelled {
-  background: var(--status-pending);
-  opacity: 0.55;
-}
-.fleet-card-progress-text {
-  font-size: 11px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 /* Action row — mirrors `.run-card-actions` placement & button sizing. */
@@ -5547,13 +5445,16 @@ sl-tooltip.bead-tooltip::part(body) {
   align-items: center;
   gap: 6px;
 }
+/* Projects row in the hero — label + name badges, same vocabulary as the
+   fleet card's "Projects:" row. Tighter gap than the default meta line so
+   the badges read as a contiguous list. */
+.fleet-meta-line-projects {
+  align-items: center;
+  gap: 6px;
+}
 .fleet-cost-strip {
   /* Reuses .pipeline-cost-strip — no overrides needed but keep the class
      so future tweaks can target fleet-specific copy. */
-}
-.fleet-cost-failed .meta-label,
-.fleet-cost-failed .meta-value {
-  color: var(--status-error);
 }
 
 /* Anchor wrapper around each project run-card so the projects strip can

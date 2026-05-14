@@ -144,34 +144,21 @@ describe('dashboardView - fleet rendering', () => {
     expect(output).toContain('fleet-card-title');
   });
 
-  it('shows aggregate progress text "N/M completed"', () => {
-    const state = { runs: {}, fleets: [runningFleet] };
-    const output = renderToString(dashboardView(state));
-    expect(output).toContain('fleet-card-progress');
-    expect(output).toContain('0/2 completed');
-  });
-
-  it('renders the fleet-card progress bar', () => {
-    const state = { runs: {}, fleets: [runningFleet] };
-    const output = renderToString(dashboardView(state));
-    expect(output).toContain('fleet-card-progress-bar');
-  });
-
   it('renders the fleet-card status badge', () => {
     const state = { runs: {}, fleets: [runningFleet] };
     const output = renderToString(dashboardView(state));
     expect(output).toContain('fleet-card-status-badge');
   });
 
-  it('renders one progress segment per child (clickable, status-coloured)', () => {
-    // Children strip + segmented bar were merged into a single row.
-    // Each segment doubles as the per-project click target.
+  it('renders the "Projects:" row with one name badge per child', () => {
+    // The segmented progress bar + "N/M completed" text were removed —
+    // the Projects row now carries up to 3 neutral name badges (plus a
+    // "+N more" chip when there are more than 3).
     const state = { runs: {}, fleets: [runningFleet] };
     const output = renderToString(dashboardView(state));
-    expect(output).toContain('fleet-card-progress-bar');
-    const segCount = (output.match(/fleet-card-progress-segment/g) || [])
-      .length;
-    expect(segCount).toBeGreaterThanOrEqual(2);
+    expect(output).toContain('fleet-card-progress');
+    const badgeCount = (output.match(/fleet-card-project-badge/g) || []).length;
+    expect(badgeCount).toBe(2); // runningFleet has 2 children
   });
 
   it('does not render a fleet card when state.fleets is empty', () => {

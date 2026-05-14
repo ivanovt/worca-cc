@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
+import { projectBadgesView } from './fleet-card.js';
 import {
   fleetStatusLabel,
   fleetStatusTooltip,
@@ -184,6 +185,20 @@ function _fleetOverviewSection(fleet, { runsById } = {}) {
           <code class="fleet-id-chip">${fleet.fleet_id}</code>
         </div>
 
+        <div class="fleet-meta-line fleet-meta-line-projects">
+          <span class="meta-label">Projects:</span>
+          ${
+            children.length > 0
+              ? projectBadgesView(children)
+              : html`<span class="meta-value">—</span>`
+          }
+          ${
+            failedCount > 0
+              ? html`<span class="fleet-card-failed-count">${failedCount} failed</span>`
+              : nothing
+          }
+        </div>
+
         <div class="fleet-meta-line">
           <span class="fleet-meta-item"><span class="meta-label">Base:</span> <span class="meta-value">${baseBranch}</span></span>
           <span class="fleet-meta-item"><span class="meta-label">Plan:</span> <span class="meta-value">${planMode}</span></span>
@@ -201,12 +216,6 @@ function _fleetOverviewSection(fleet, { runsById } = {}) {
 
         <div class="pipeline-cost-strip fleet-cost-strip">
           <span class="pipeline-cost-item"><span class="meta-label">Fleet Cost:</span> <span class="meta-value">${_formatCost(cost)}</span></span>
-          <span class="pipeline-cost-item"><span class="meta-label">Projects:</span> <span class="meta-value">${children.length}</span></span>
-          ${
-            failedCount > 0
-              ? html`<span class="pipeline-cost-item fleet-cost-failed"><span class="meta-label">Failed:</span> <span class="meta-value">${failedCount}</span></span>`
-              : nothing
-          }
         </div>
       </div>
     </div>
@@ -341,7 +350,7 @@ function _missingRunPlaceholder(child) {
       <div class="run-card-meta">
         <span class="run-card-meta-item">
           <span class="meta-label">Project:</span>
-          <code class="worktree-path-mono">${child.project_path}</code>
+          <span class="meta-value">${_projectName(child.project_path)}</span>
         </span>
       </div>
       <div class="run-card-meta">
