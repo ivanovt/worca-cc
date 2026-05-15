@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { projectStatus } from './sidebar.js';
 
 describe('projectStatus', () => {
@@ -75,5 +75,139 @@ describe('projectStatus', () => {
     expect(projectStatus('proj-2', runs)).toBe('idle');
     // proj-1 has a running run, so it should be running
     expect(projectStatus('proj-1', runs)).toBe('running');
+  });
+
+  // workspace statuses (W-047 §10.7)
+  it('returns running when any run has pipeline_status planning', () => {
+    const runs = { r1: { pipeline_status: 'planning', active: true } };
+    expect(projectStatus('proj-1', runs)).toBe('running');
+  });
+
+  it('returns running when any run has pipeline_status integration_testing', () => {
+    const runs = {
+      r1: { pipeline_status: 'integration_testing', active: true },
+    };
+    expect(projectStatus('proj-1', runs)).toBe('running');
+  });
+
+  it('returns error when any run has pipeline_status integration_failed', () => {
+    const runs = {
+      r1: { pipeline_status: 'integration_failed', active: false },
+    };
+    expect(projectStatus('proj-1', runs)).toBe('error');
+  });
+
+  it('returns paused when any run has pipeline_status blocked', () => {
+    const runs = { r1: { pipeline_status: 'blocked', active: false } };
+    expect(projectStatus('proj-1', runs)).toBe('paused');
+  });
+});
+
+describe('workspace sidebar badge variant logic', () => {
+  function renderToString(template) {
+    if (!template) return '';
+    if (typeof template === 'string') return template;
+    if (!template.strings) return String(template);
+    let result = '';
+    template.strings.forEach((s, i) => {
+      result += s;
+      if (i < template.values.length) {
+        const v = template.values[i];
+        if (typeof v === 'string') result += v;
+        else if (typeof v === 'number') result += String(v);
+        else if (Array.isArray(v)) result += v.map(renderToString).join('');
+        else if (v?.strings) result += renderToString(v);
+      }
+    });
+    return result;
+  }
+
+  function makeState(overrides = {}) {
+    return {
+      runs: {},
+      preferences: {
+        theme: 'light',
+        sidebarCollapsed: false,
+        notifications: null,
+      },
+      projectName: 'test-project',
+      currentProjectId: null,
+      projects: [],
+      beads: { issues: [], dbExists: false },
+      webhookInbox: { events: [] },
+      worktrees: [],
+      worktreeDiskWarningBytes: 2_000_000_000,
+      ...overrides,
+    };
+  }
+
+  const route = { section: 'active' };
+  const defaultOpts = () => ({ onNavigate: vi.fn() });
+
+  it('workspace badge is primary for planning workspaces (no halted/integration_failed)', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      workspaces: [{ workspace_id: 'w1', status: 'planning' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+  });
+
+  it('workspace badge is primary for integration_testing workspaces (no halted/integration_failed)', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      workspaces: [{ workspace_id: 'w1', status: 'integration_testing' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+  });
+
+  it('workspace badge flips to warning when any workspace is integration_failed', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      workspaces: [
+        { workspace_id: 'w1', status: 'running' },
+        { workspace_id: 'w2', status: 'integration_failed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="warning"');
+  });
+
+  it('workspace badge flips to warning when any workspace is halted', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      workspaces: [
+        { workspace_id: 'w1', status: 'planning' },
+        { workspace_id: 'w2', status: 'halted' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="warning"');
+  });
+
+  it('blocked workspace counts toward badge total but does not trigger warning', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      workspaces: [{ workspace_id: 'w1', status: 'blocked' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+    expect(output).toContain('>1<');
   });
 });

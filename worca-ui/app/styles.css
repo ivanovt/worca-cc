@@ -1162,6 +1162,22 @@ sl-input [slot="prefix"] {
   color: var(--status-failed);
 }
 
+.status-planning {
+  color: var(--status-running);
+}
+
+.status-integration-testing {
+  color: var(--status-running);
+}
+
+.status-integration-failed {
+  color: var(--status-failed);
+}
+
+.status-blocked {
+  color: var(--status-paused);
+}
+
 /* --- 18b. Control Buttons --- */
 .action-btn--amber {
   border-color: var(--status-paused);
@@ -1339,6 +1355,10 @@ sl-input [slot="prefix"] {
 .run-card.status-halted   { border-left: 3px solid var(--status-paused); }
 .run-card.status-setup-failed { border-left: 3px solid var(--status-failed); }
 .run-card.status-unrecoverable { border-left: 3px solid var(--status-failed); }
+.run-card.status-planning { border-left: 3px solid var(--status-running); }
+.run-card.status-integration-testing { border-left: 3px solid var(--status-running); }
+.run-card.status-integration-failed { border-left: 3px solid var(--status-failed); }
+.run-card.status-blocked { border-left: 3px solid var(--status-paused); }
 
 /* ── Fleet card (shared component for Dashboard + Fleet list) ───────────
    The fleet card reuses the `.run-card` base class and its shared
@@ -4341,6 +4361,10 @@ sl-details.learnings-panel::part(content) {
 .pipeline-failed { border-left-color: var(--status-failed); }
 .pipeline-paused { border-left-color: var(--status-paused); }
 .pipeline-cancelled { border-left-color: var(--status-cancelled); }
+.pipeline-planning { border-left-color: var(--status-running); }
+.pipeline-integration-testing { border-left-color: var(--status-running); }
+.pipeline-integration-failed { border-left-color: var(--status-failed); }
+.pipeline-blocked { border-left-color: var(--status-paused); }
 .pipeline-unknown { border-left-color: var(--muted); }
 
 .pipeline-card-header {
@@ -5707,4 +5731,108 @@ sl-tooltip.bead-tooltip::part(body) {
 
 .fleet-detail-empty-hint a {
   color: var(--accent, var(--fg));
+}
+
+/* --- Workspace: tier styling --- */
+
+.workspace-card-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.workspace-tier-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tier-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.tier-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tier-children {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tier-child {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+
+/* --- Workspace: DAG graph --- */
+
+.dag-preview {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 16px;
+}
+
+.dag-preview svg {
+  display: block;
+}
+
+.workspace-dag-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.workspace-dag-svg {
+  overflow-x: auto;
+}
+
+.dag-graph-node rect {
+  rx: 6;
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.dag-graph-node text {
+  font-size: 12px;
+  font-family: var(--sl-font-sans);
+  fill: var(--fg);
+}
+
+.dag-graph-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.dag-graph-node--status-pending rect { stroke: var(--status-pending); }
+.dag-graph-node--status-running rect { stroke: var(--status-running); }
+.dag-graph-node--status-completed rect { stroke: var(--status-completed); }
+.dag-graph-node--status-failed rect { stroke: var(--status-failed); }
+.dag-graph-node--status-paused rect { stroke: var(--status-paused); }
+.dag-graph-node--status-blocked rect { stroke: var(--status-blocked); }
+.dag-graph-node--status-planning rect { stroke: var(--status-running); }
+.dag-graph-node--status-integration-testing rect { stroke: var(--status-running); }
+.dag-graph-node--status-integration-failed rect { stroke: var(--status-failed); }
+
+/* --- Workspace: conflict icon --- */
+
+.conflict-icon {
+  color: var(--status-blocked);
 }

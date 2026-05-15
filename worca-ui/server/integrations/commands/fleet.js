@@ -161,7 +161,7 @@ export function createFleetHandlers({ chatContext, restClient }) {
     const resolved = await resolveFleet(restClient, args[0], 'fleet-children');
     if (resolved.disambig) return resolved.disambig;
     const f = resolved.fleet;
-    return `Children of \`${f.fleet_id}\`:\n\n` + fmtChildrenTable(f);
+    return `Children of \`${f.fleet_id}\`:\n\n${fmtChildrenTable(f)}`;
   }
 
   async function fleetHalt(_chatKey, args) {

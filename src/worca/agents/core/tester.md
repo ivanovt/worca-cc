@@ -30,6 +30,14 @@ When the work request includes a `## Reference Guide (normative)` section:
 - **Description conflicts with the guide are bugs to flag.** If the task description asks for something the guide contradicts, record this as a test failure note in your proof artifacts — the description is the bug, not the guide.
 - **Surface divergence, do not resolve it.** Report the conflict with the specific guide rule and the conflicting instruction. The Implementer or Reviewer resolves it; you surface it.
 
+### Conflict emission
+
+When you detect a guide-vs-plan or guide-vs-description divergence, populate the `guide_conflicts` array in your structured output. Each entry must have:
+- `message`: A clear description of the conflict — which guide rule and which instruction conflict.
+- `source`: `"plan"` if the plan diverges from the guide, or `"description"` if the work request description conflicts with the guide.
+
+Only populate `guide_conflicts` when a real conflict exists. Do not emit conflicts speculatively.
+
 ## Rules
 
 <!-- governance -->

@@ -289,6 +289,12 @@
     "fleet": {
       "max_parallel": 5,
       "failure_threshold": 0.30
+    },
+    "workspace": {
+      "init_timeout_seconds": 60,
+      "max_parallel": 5,
+      "context_cap_bytes": 8192,
+      "failure_threshold": 0.30
     }
   }
 }

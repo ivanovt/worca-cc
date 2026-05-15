@@ -1,4 +1,6 @@
 import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { dagGraphView } from './dag-graph.js';
 import {
   guideUploadWidget,
   headTemplateInput,
@@ -22,6 +24,10 @@ function resolveGuideCap(appState) {
 // available, and `planFile` is the optional plan-file path that maps to
 // the API's `plan_mode='explicit'` shortcut.
 
+// ── launcher mode ──────────────────────────────────────────────────────────
+let launcherMode = 'fleet'; // 'fleet' | 'workspace'
+
+// ── fleet-mode state ───────────────────────────────────────────────────────
 let selectedProjects = [];
 let projectFilter = '';
 let sourceType = 'none';
@@ -33,10 +39,6 @@ let headTemplate = 'migration/{slug}/{project}';
 let baseBranch = '';
 let baseBranchError = null;
 let baseBranchValidating = false;
-// `planMode` is only consulted when `planFile` is empty — it picks the
-// fleet-specific per-child planning strategy ('none' = independent,
-// 'plan-first' = one project plans, others adopt). When `planFile` is set
-// the launch handler overrides the wire value to 'explicit'.
 let planMode = 'none';
 let planFirstProject = '';
 let maxParallel = 5;
@@ -44,7 +46,21 @@ let failureThreshold = 0.3;
 let submitStatus = null;
 let submitError = '';
 
+// ── workspace-mode state ───────────────────────────────────────────────────
+let selectedWorkspace = '';
+let workspaceData = null; // { name, repos: [{name, depends_on, ...}] }
+let workspacePlanMode = 'master'; // master | existing | per-repo | independent
+let workspacePlanPath = '';
+let ghAuthStatus = null; // null | 'checking' | 'ok' | 'failed'
+let ghAuthErrors = []; // [{org, command}]
+let skipAuthCheck = false;
+let initTimeout = 60;
+
+const FLEET_HEAD_TEMPLATE_DEFAULT = 'migration/{slug}/{project}';
+const WORKSPACE_HEAD_TEMPLATE_DEFAULT = 'workspace/{slug}/{repo}';
+
 export function resetLauncherState(overrides = {}) {
+  launcherMode = overrides.launcherMode ?? 'fleet';
   selectedProjects = overrides.selectedProjects ?? [];
   projectFilter = overrides.projectFilter ?? '';
   sourceType = overrides.sourceType ?? 'none';
@@ -52,7 +68,11 @@ export function resetLauncherState(overrides = {}) {
   prompt = overrides.prompt ?? '';
   planFile = overrides.planFile ?? '';
   guides = overrides.guides ?? [];
-  headTemplate = overrides.headTemplate ?? 'migration/{slug}/{project}';
+  headTemplate =
+    overrides.headTemplate ??
+    (launcherMode === 'workspace'
+      ? WORKSPACE_HEAD_TEMPLATE_DEFAULT
+      : FLEET_HEAD_TEMPLATE_DEFAULT);
   baseBranch = overrides.baseBranch ?? '';
   baseBranchError = overrides.baseBranchError ?? null;
   baseBranchValidating = overrides.baseBranchValidating ?? false;
@@ -60,6 +80,14 @@ export function resetLauncherState(overrides = {}) {
   planFirstProject = overrides.planFirstProject ?? '';
   maxParallel = overrides.maxParallel ?? 5;
   failureThreshold = overrides.failureThreshold ?? 0.3;
+  selectedWorkspace = overrides.selectedWorkspace ?? '';
+  workspaceData = overrides.workspaceData ?? null;
+  workspacePlanMode = overrides.workspacePlanMode ?? 'master';
+  workspacePlanPath = overrides.workspacePlanPath ?? '';
+  ghAuthStatus = overrides.ghAuthStatus ?? null;
+  ghAuthErrors = overrides.ghAuthErrors ?? [];
+  skipAuthCheck = overrides.skipAuthCheck ?? false;
+  initTimeout = overrides.initTimeout ?? 60;
   submitStatus = null;
   submitError = '';
 }
@@ -104,14 +132,22 @@ function _hasSource() {
 
 function _canLaunch() {
   const guidesTotalBytes = guides.reduce((s, g) => s + (g.size || 0), 0);
-  // guideCapBytes resolved at view time; submit-state callers pass it via
-  // appState through getFleetLauncherSubmitState — see below.
+  const hasContent = prompt.trim().length > 0 || _hasSource();
+  const guidesOk = guidesTotalBytes <= GUIDE_CAP_BYTES_DEFAULT;
+  const baseBranchOk = !((baseBranchError?.missing_in?.length ?? 0) > 0);
+
+  if (launcherMode === 'workspace') {
+    const hasWorkspace = !!(selectedWorkspace && workspaceData);
+    const authOk = ghAuthStatus !== 'failed' || skipAuthCheck;
+    return hasWorkspace && hasContent && guidesOk && baseBranchOk && authOk;
+  }
+
   return (
     selectedProjects.length > 0 &&
-    (prompt.trim().length > 0 || _hasSource()) &&
+    hasContent &&
     !_detectCollision(headTemplate, selectedProjects) &&
-    !((baseBranchError?.missing_in?.length ?? 0) > 0) &&
-    guidesTotalBytes <= GUIDE_CAP_BYTES_DEFAULT
+    baseBranchOk &&
+    guidesOk
   );
 }
 
@@ -126,8 +162,10 @@ export function getFleetLauncherSubmitState() {
 }
 
 export async function submitFleetLauncher({ rerender, onStarted } = {}) {
-  // Validation parity with new-run.js: a Source Type other than "None"
-  // requires a value; otherwise prompt or source is required.
+  if (launcherMode === 'workspace') {
+    return _submitWorkspaceLauncher({ rerender, onStarted });
+  }
+
   if (sourceType !== 'none' && !sourceValue.trim()) {
     submitStatus = 'error';
     submitError = `Please enter a ${_sourceLabel(sourceType).toLowerCase()}.`;
@@ -165,7 +203,6 @@ export async function submitFleetLauncher({ rerender, onStarted } = {}) {
     if (_hasSource()) formData.append('source', sourceValue);
     if (headTemplate) formData.append('head_template', headTemplate);
     if (baseBranch) formData.append('base_branch', baseBranch);
-    // Plan File overrides Plan Mode — when set, every child skips planning.
     const wirePlanMode = planFile ? 'explicit' : planMode;
     formData.append('plan_mode', wirePlanMode);
     if (wirePlanMode === 'explicit' && planFile)
@@ -187,6 +224,69 @@ export async function submitFleetLauncher({ rerender, onStarted } = {}) {
     if (data.ok && data.fleet_id) {
       submitStatus = null;
       onStarted?.(data.fleet_id);
+    } else {
+      submitStatus = 'error';
+      submitError = data.error || 'Launch failed';
+      rerender?.();
+    }
+  } catch (err) {
+    submitStatus = 'error';
+    submitError = err.message || 'Network error';
+    rerender?.();
+  }
+}
+
+async function _submitWorkspaceLauncher({ rerender, onStarted } = {}) {
+  if (!selectedWorkspace || !workspaceData) {
+    submitStatus = 'error';
+    submitError = 'Please select a workspace.';
+    rerender?.();
+    return;
+  }
+  if (!prompt.trim() && !_hasSource()) {
+    submitStatus = 'error';
+    submitError = 'Please provide at least one of: a work source, or a prompt.';
+    rerender?.();
+    return;
+  }
+  if (ghAuthStatus === 'failed' && !skipAuthCheck) {
+    submitStatus = 'error';
+    submitError =
+      'GitHub authentication check failed. Fix auth or check "Skip auth check".';
+    rerender?.();
+    return;
+  }
+
+  submitStatus = 'submitting';
+  submitError = '';
+  rerender?.();
+
+  try {
+    const formData = new FormData();
+    formData.append('workspace', selectedWorkspace);
+    if (prompt.trim()) formData.append('prompt', prompt);
+    if (_hasSource()) formData.append('source', sourceValue);
+    if (headTemplate) formData.append('head_template', headTemplate);
+    if (baseBranch) formData.append('base_branch', baseBranch);
+    formData.append('plan_mode', workspacePlanMode);
+    if (workspacePlanMode === 'existing' && workspacePlanPath)
+      formData.append('workspace_plan', workspacePlanPath);
+    formData.append('max_parallel', String(maxParallel));
+    formData.append('fleet_failure_threshold', String(failureThreshold));
+    formData.append('init_timeout', String(initTimeout));
+    for (const g of guides) {
+      if (g.file) formData.append('guide_files', g.file, g.name);
+    }
+
+    const resp = await fetch('/api/workspace-runs', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await resp.json();
+
+    if (data.ok && data.workspace_id) {
+      submitStatus = null;
+      onStarted?.(data.workspace_id);
     } else {
       submitStatus = 'error';
       submitError = data.error || 'Launch failed';
@@ -594,15 +694,429 @@ function _advancedSection({ rerender } = {}) {
   `;
 }
 
+// ── workspace-mode sub-views ────────────────────────────────────────────────
+
+function _modeToggle({ rerender } = {}) {
+  return html`
+    <div class="launcher-mode-toggle">
+      <sl-radio-group
+        class="launcher-mode-group"
+        value="${launcherMode}"
+        @sl-change=${
+          rerender
+            ? (e) => {
+                const newMode = e.target.value;
+                if (newMode !== launcherMode) {
+                  launcherMode = newMode;
+                  if (
+                    newMode === 'workspace' &&
+                    headTemplate === FLEET_HEAD_TEMPLATE_DEFAULT
+                  ) {
+                    headTemplate = WORKSPACE_HEAD_TEMPLATE_DEFAULT;
+                  } else if (
+                    newMode === 'fleet' &&
+                    headTemplate === WORKSPACE_HEAD_TEMPLATE_DEFAULT
+                  ) {
+                    headTemplate = FLEET_HEAD_TEMPLATE_DEFAULT;
+                  }
+                  rerender();
+                }
+              }
+            : null
+        }
+      >
+        <sl-radio-button value="fleet">Fleet</sl-radio-button>
+        <sl-radio-button value="workspace">Workspace</sl-radio-button>
+      </sl-radio-group>
+    </div>
+  `;
+}
+
+function _workspaceSelectSection(appState, { rerender } = {}) {
+  const workspaces = appState?.workspaces || [];
+
+  return html`
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Workspace</h3>
+      <div class="settings-field">
+        <label class="settings-label">Select workspace</label>
+        <sl-select
+          class="select-workspace"
+          value="${selectedWorkspace}"
+          @sl-change=${
+            rerender
+              ? async (e) => {
+                  selectedWorkspace = e.target.value;
+                  const ws = workspaces.find(
+                    (w) => w.name === selectedWorkspace,
+                  );
+                  workspaceData = ws || null;
+                  ghAuthStatus = null;
+                  ghAuthErrors = [];
+                  if (ws) {
+                    _validateGhAuth(ws, { rerender });
+                  }
+                  rerender();
+                }
+              : null
+          }
+        >
+          ${workspaces.map(
+            (ws) => html`
+              <sl-option value="${ws.name}">${ws.name}</sl-option>
+            `,
+          )}
+        </sl-select>
+        <span class="settings-field-hint">Choose a workspace definition. Repos and dependencies are determined by the workspace.</span>
+      </div>
+      ${
+        workspaceData
+          ? html`
+            <div class="workspace-pinned-repos">
+              <label class="settings-label">Repositories (from workspace)</label>
+              <div class="workspace-repo-tags">
+                ${workspaceData.repos.map(
+                  (r) =>
+                    html`<sl-tag size="small" class="workspace-repo-tag">${r.name}</sl-tag>`,
+                )}
+              </div>
+            </div>
+          `
+          : nothing
+      }
+    </div>
+  `;
+}
+
+function _workspaceDagSection() {
+  if (!workspaceData || !workspaceData.repos || workspaceData.repos.length < 2)
+    return nothing;
+
+  const dagRepos = workspaceData.repos.map((r) => ({
+    name: r.name,
+    status: 'pending',
+    depends_on: r.depends_on || [],
+  }));
+  const { svg } = dagGraphView({ repos: dagRepos }, { mode: 'preview' });
+  if (!svg) return nothing;
+
+  return html`
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Dependency Graph</h3>
+      <div class="dag-preview">${unsafeHTML(svg)}</div>
+    </div>
+  `;
+}
+
+function _ghAuthSection({ rerender } = {}) {
+  if (!workspaceData) return nothing;
+
+  return html`
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">GitHub Authentication</h3>
+      ${
+        ghAuthStatus === 'checking'
+          ? html`<div class="gh-auth-checking"><sl-spinner></sl-spinner> Checking authentication…</div>`
+          : nothing
+      }
+      ${
+        ghAuthStatus === 'ok'
+          ? html`<div class="gh-auth-ok"><sl-badge variant="success">All orgs authenticated</sl-badge></div>`
+          : nothing
+      }
+      ${
+        ghAuthStatus === 'failed' && ghAuthErrors.length > 0
+          ? html`
+            <div class="gh-auth-errors">
+              ${ghAuthErrors.map(
+                (err) => html`
+                  <sl-alert variant="danger" open class="gh-auth-error">
+                    <strong>${err.org}</strong> — not authenticated.<br>
+                    Run: <code>${err.command}</code>
+                  </sl-alert>
+                `,
+              )}
+              <sl-checkbox
+                class="checkbox-skip-auth"
+                ?checked=${skipAuthCheck}
+                @sl-change=${
+                  rerender
+                    ? (e) => {
+                        skipAuthCheck = e.target.checked;
+                        rerender();
+                      }
+                    : null
+                }
+              >Skip auth check (PRs may fail)</sl-checkbox>
+            </div>
+          `
+          : nothing
+      }
+    </div>
+  `;
+}
+
+function _workspacePlanSection({ rerender } = {}) {
+  const showPlanMode = !planFile;
+  if (!showPlanMode) return nothing;
+
+  const wsOptions = [
+    { value: 'master', label: 'Master planner (default)' },
+    { value: 'existing', label: 'Use existing workspace plan' },
+    { value: 'per-repo', label: 'Skip planning, use per-repo plans' },
+    { value: 'independent', label: 'Independent plans' },
+  ];
+
+  return html`
+    <div class="advanced-subgroup">
+      <div class="advanced-subgroup-title">Planning</div>
+      <div class="settings-field">
+        <label class="settings-label">Workspace planning strategy</label>
+        ${planModeRadio(
+          {
+            planMode: workspacePlanMode,
+            planPath: workspacePlanPath,
+            selectedProjects: workspaceData
+              ? workspaceData.repos.map((r) => r.name)
+              : [],
+          },
+          {
+            options: wsOptions,
+            onChange: rerender
+              ? (ev) => {
+                  if (ev.type === 'set-plan-mode') workspacePlanMode = ev.value;
+                  else if (ev.type === 'set-plan-path')
+                    workspacePlanPath = ev.value;
+                  rerender();
+                }
+              : undefined,
+          },
+        )}
+        ${
+          workspacePlanMode === 'existing'
+            ? html`
+              <sl-input
+                class="input-workspace-plan-path"
+                placeholder="workspace-plan.json"
+                value="${workspacePlanPath}"
+                @sl-input=${
+                  rerender
+                    ? (e) => {
+                        workspacePlanPath = e.target.value;
+                        rerender();
+                      }
+                    : null
+                }
+              ></sl-input>
+            `
+            : nothing
+        }
+        ${
+          workspacePlanMode === 'independent'
+            ? html`
+              <sl-alert variant="warning" open class="plan-mode-independent-warning">
+                Each repo runs its own Planner independently. Strategies may diverge across
+                repos.
+              </sl-alert>
+            `
+            : nothing
+        }
+        <span class="settings-field-hint">Master planner: Opus decomposes the prompt into per-repo sub-plans. Independent: each repo runs its own Planner.</span>
+      </div>
+    </div>
+  `;
+}
+
+function _initTimeoutSection({ rerender } = {}) {
+  return html`
+    <div class="settings-field">
+      <label class="settings-label">Init timeout (seconds)</label>
+      <sl-input
+        class="input-init-timeout"
+        type="number"
+        min="10"
+        max="300"
+        value="${initTimeout}"
+        @sl-input=${
+          rerender
+            ? (e) => {
+                initTimeout = Number(e.target.value) || 60;
+                rerender();
+              }
+            : null
+        }
+      ></sl-input>
+      <span class="settings-field-hint">Maximum time to wait for each repo's worca init to complete.</span>
+    </div>
+  `;
+}
+
+async function _validateGhAuth(ws, { rerender } = {}) {
+  ghAuthStatus = 'checking';
+  rerender?.();
+  try {
+    const resp = await fetch('/api/workspace-runs/validate-gh-auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ workspace: ws.name }),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      ghAuthStatus = 'ok';
+      ghAuthErrors = [];
+    } else {
+      ghAuthStatus = 'failed';
+      ghAuthErrors = data.errors || [];
+    }
+  } catch {
+    ghAuthStatus = null;
+    ghAuthErrors = [];
+  }
+  rerender?.();
+}
+
+function _advancedWorkspaceSection({ rerender } = {}) {
+  const wsRepoNames = workspaceData
+    ? workspaceData.repos.map((r) => r.name)
+    : [];
+
+  return html`
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Advanced Options</h3>
+      <div class="new-run-advanced">
+        <div class="advanced-subgroup">
+          <div class="advanced-subgroup-title">Branches</div>
+          <div class="settings-field">
+            <label class="settings-label">PR base branch (optional)</label>
+            <sl-input
+              class="input-base-branch"
+              placeholder="main"
+              value="${baseBranch}"
+              @sl-change=${
+                rerender
+                  ? async (e) => {
+                      baseBranch = e.target.value.trim();
+                      baseBranchError = null;
+                      if (baseBranch && wsRepoNames.length > 0) {
+                        baseBranchValidating = true;
+                        rerender();
+                        try {
+                          const resp = await fetch(
+                            '/api/fleet-runs/validate-base',
+                            {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                projects: wsRepoNames,
+                                base_branch: baseBranch,
+                              }),
+                            },
+                          );
+                          const data = await resp.json();
+                          baseBranchError =
+                            !data.ok && data.missing_in?.length
+                              ? { missing_in: data.missing_in }
+                              : null;
+                        } catch {
+                          // non-blocking
+                        } finally {
+                          baseBranchValidating = false;
+                          rerender();
+                        }
+                      } else {
+                        rerender();
+                      }
+                    }
+                  : null
+              }
+            ></sl-input>
+            <span class="settings-field-hint">Branch the worktrees fork from and PRs target. Leave blank to use each repo's default.</span>
+          </div>
+          <div class="settings-field">
+            <label class="settings-label">Head branch template</label>
+            ${headTemplateInput(
+              { headTemplate },
+              {
+                selectedProjects: wsRepoNames,
+                onChange: rerender
+                  ? (ev) => {
+                      if (ev.type === 'set-head-template')
+                        headTemplate = ev.value;
+                      rerender();
+                    }
+                  : undefined,
+              },
+            )}
+            <span class="settings-field-hint">Placeholders: <code>{repo}</code>, <code>{slug}</code>, <code>{yyyymmdd}</code>, <code>{yyyymmddhhmm}</code>.</span>
+          </div>
+        </div>
+
+        ${_workspacePlanSection({ rerender })}
+
+        <div class="advanced-subgroup">
+          <div class="advanced-subgroup-title">Concurrency</div>
+          <div class="new-run-grid">
+            <div class="settings-field">
+              <label class="settings-label">Max parallel runs</label>
+              <sl-input
+                class="input-max-parallel"
+                type="number"
+                min="1"
+                max="20"
+                value="${maxParallel}"
+                @sl-input=${
+                  rerender
+                    ? (e) => {
+                        maxParallel = Number(e.target.value) || 5;
+                        rerender();
+                      }
+                    : null
+                }
+              ></sl-input>
+              <span class="settings-field-hint">Maximum concurrent child pipelines per tier.</span>
+            </div>
+            <div class="settings-field">
+              <label class="settings-label">Circuit-breaker threshold: ${Math.round(failureThreshold * 100)}%</label>
+              <sl-range
+                class="input-failure-threshold"
+                min="0"
+                max="1"
+                step="0.05"
+                value="${failureThreshold}"
+                @sl-input=${
+                  rerender
+                    ? (e) => {
+                        failureThreshold = Number(e.target.value);
+                        rerender();
+                      }
+                    : null
+                }
+              ></sl-range>
+              <span class="settings-field-hint">Failure ratio that halts unstarted children after at least 3 have completed.</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="advanced-subgroup">
+          <div class="advanced-subgroup-title">Initialization</div>
+          ${_initTimeoutSection({ rerender })}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // ── main view ────────────────────────────────────────────────────────────────
 
 export function fleetLauncherView(appState, { rerender } = {}) {
   const appProjects = appState?.projects || [];
   const guideCapBytes = resolveGuideCap(appState);
   const atCapacity = isAtCapacity(appState);
+  const isWorkspace = launcherMode === 'workspace';
 
   return html`
     <div class="new-run-page fleet-launcher-page">
+      ${_modeToggle({ rerender })}
       ${
         atCapacity
           ? html`
@@ -618,11 +1132,13 @@ export function fleetLauncherView(appState, { rerender } = {}) {
           : nothing
       }
       <div class="new-run-form">
-        ${_projectsSection(appProjects, { rerender })}
+        ${isWorkspace ? _workspaceSelectSection(appState, { rerender }) : _projectsSection(appProjects, { rerender })}
+        ${isWorkspace ? _workspaceDagSection() : nothing}
+        ${isWorkspace ? _ghAuthSection({ rerender }) : nothing}
         ${_workSourceSection({ rerender })}
         ${_promptSection({ rerender })}
         ${_guideSection({ rerender, guideCapBytes })}
-        ${_advancedSection({ rerender })}
+        ${isWorkspace ? _advancedWorkspaceSection({ rerender }) : _advancedSection({ rerender })}
       </div>
     </div>
   `;

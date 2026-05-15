@@ -154,6 +154,22 @@ FLEET_FAILED                    = "fleet.failed"
 FLEET_CIRCUIT_BREAKER_TRIPPED   = "fleet.circuit_breaker.tripped"
 
 
+# ---------------------------------------------------------------------------
+# Workspace (multi-repo coordinated pipeline) lifecycle events (7 events)
+# ---------------------------------------------------------------------------
+# Workspace events are separate from fleet events (W-040 §13.5) — never
+# multiplexed with fleet-update. See ws-workspace-manifest-watcher.js for
+# the JS-side broadcast path.
+
+WORKSPACE_LAUNCHED       = "workspace.launched"
+WORKSPACE_HALTED         = "workspace.halted"
+WORKSPACE_COMPLETED      = "workspace.completed"
+WORKSPACE_FAILED         = "workspace.failed"
+WORKSPACE_TIER_STARTED   = "workspace.tier.started"
+WORKSPACE_TIER_COMPLETED = "workspace.tier.completed"
+GUIDE_CONFLICT           = "workspace.guide_conflict"
+
+
 # ===========================================================================
 # Payload builder helpers
 # ===========================================================================
@@ -944,3 +960,125 @@ def fleet_circuit_breaker_tripped_payload(
         "threshold": threshold,
         "failure_ratio": (failed_count / terminal_count) if terminal_count else 0.0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Workspace event payload builders
+# ---------------------------------------------------------------------------
+
+def workspace_launched_payload(
+    repos: list,
+    workspace_name: str,
+    *,
+    branch_template: str = None,
+    guide_attached: bool = False,
+    max_parallel: int = None,
+    skip_planning: bool = False,
+    tier_count: int = None,
+) -> dict:
+    p: dict = {
+        "repos": repos,
+        "workspace_name": workspace_name,
+        "guide_attached": guide_attached,
+        "skip_planning": skip_planning,
+    }
+    if branch_template is not None:
+        p["branch_template"] = branch_template
+    if max_parallel is not None:
+        p["max_parallel"] = max_parallel
+    if tier_count is not None:
+        p["tier_count"] = tier_count
+    return p
+
+
+def workspace_halted_payload(
+    halt_reason: str,
+    *,
+    completed_tiers: int = None,
+    pending_tiers: int = None,
+) -> dict:
+    p: dict = {"halt_reason": halt_reason}
+    if completed_tiers is not None:
+        p["completed_tiers"] = completed_tiers
+    if pending_tiers is not None:
+        p["pending_tiers"] = pending_tiers
+    return p
+
+
+def workspace_completed_payload(
+    *,
+    tier_count: int,
+    child_count: int,
+    integration_passed: bool,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {
+        "tier_count": tier_count,
+        "child_count": child_count,
+        "integration_passed": integration_passed,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def workspace_failed_payload(
+    *,
+    tier_count: int,
+    completed_count: int,
+    failed_count: int,
+    duration_ms: int = None,
+    failed_tier: int = None,
+) -> dict:
+    p: dict = {
+        "tier_count": tier_count,
+        "completed_count": completed_count,
+        "failed_count": failed_count,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    if failed_tier is not None:
+        p["failed_tier"] = failed_tier
+    return p
+
+
+def workspace_tier_started_payload(
+    tier: int,
+    repos: list,
+) -> dict:
+    return {"tier": tier, "repos": repos}
+
+
+def workspace_tier_completed_payload(
+    tier: int,
+    repos: list,
+    status: str,
+    *,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {"tier": tier, "repos": repos, "status": status}
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def guide_conflict_payload(
+    run_id: str,
+    stage: str,
+    message: str,
+    source: str,
+    *,
+    workspace_id: str = None,
+    fleet_id: str = None,
+) -> dict:
+    p: dict = {
+        "run_id": run_id,
+        "stage": stage,
+        "message": message,
+        "source": source,
+    }
+    if workspace_id is not None:
+        p["workspace_id"] = workspace_id
+    if fleet_id is not None:
+        p["fleet_id"] = fleet_id
+    return p

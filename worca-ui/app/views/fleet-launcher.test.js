@@ -3,6 +3,7 @@ import {
   fleetLauncherView,
   getFleetLauncherSubmitState,
   resetLauncherState,
+  submitFleetLauncher,
 } from './fleet-launcher.js';
 
 function renderToString(template) {
@@ -303,5 +304,323 @@ describe('fleetLauncherView — getFleetLauncherSubmitState', () => {
   it('isSubmitting reflects an in-flight submit (initially false)', () => {
     resetLauncherState();
     expect(getFleetLauncherSubmitState().isSubmitting).toBe(false);
+  });
+});
+
+// ── workspace mode toggle ──────────────────────────────────────────────────
+
+describe('fleetLauncherView — workspace mode toggle', () => {
+  it('renders a mode toggle with Fleet and Workspace options', () => {
+    resetLauncherState();
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('launcher-mode-toggle');
+    expect(out).toContain('Fleet');
+    expect(out).toContain('Workspace');
+  });
+
+  it('defaults to fleet mode', () => {
+    resetLauncherState();
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('fleet-launcher-projects');
+    expect(out).not.toContain('select-workspace');
+  });
+
+  it('in workspace mode, hides project multi-select', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('fleet-launcher-projects');
+  });
+
+  it('in workspace mode, shows workspace select', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const out = renderToString(
+      fleetLauncherView({ projects: [], workspaces: [] }, {}),
+    );
+    expect(out).toContain('select-workspace');
+  });
+});
+
+// ── workspace select and repo list ─────────────────────────────────────────
+
+describe('fleetLauncherView — workspace select', () => {
+  it('populates workspace select from appState.workspaces', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const workspaces = [
+      { name: 'my-ws', repos: [{ name: 'lib', depends_on: [] }] },
+      { name: 'other-ws', repos: [] },
+    ];
+    const out = renderToString(
+      fleetLauncherView({ projects: [], workspaces }, {}),
+    );
+    expect(out).toContain('my-ws');
+    expect(out).toContain('other-ws');
+  });
+
+  it('shows pinned repo list after selecting workspace', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [
+          { name: 'shared-lib', depends_on: [] },
+          { name: 'backend', depends_on: ['shared-lib'] },
+        ],
+      },
+    });
+    const out = renderToString(
+      fleetLauncherView({ projects: [], workspaces: [] }, {}),
+    );
+    expect(out).toContain('workspace-pinned-repos');
+    expect(out).toContain('shared-lib');
+    expect(out).toContain('backend');
+  });
+});
+
+// ── workspace plan mode (4-option radio) ───────────────────────────────────
+
+describe('fleetLauncherView — workspace plan mode', () => {
+  it('renders 4-option plan radio in workspace mode', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('plan-mode-option-master');
+    expect(out).toContain('plan-mode-option-existing');
+    expect(out).toContain('plan-mode-option-per-repo');
+    expect(out).toContain('plan-mode-option-independent');
+  });
+
+  it('shows Master planner as the default option', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('Master planner');
+  });
+
+  it('shows workspace plan path input when existing mode selected', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      workspacePlanMode: 'existing',
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('input-workspace-plan-path');
+  });
+
+  it('hides workspace plan path input in master mode', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      workspacePlanMode: 'master',
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('input-workspace-plan-path');
+  });
+
+  it('shows divergence warning when independent mode selected', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      workspacePlanMode: 'independent',
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('plan-mode-independent-warning');
+  });
+});
+
+// ── workspace DAG preview ──────────────────────────────────────────────────
+
+describe('fleetLauncherView — workspace DAG preview', () => {
+  it('renders DAG preview when workspace is selected', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [
+          { name: 'lib', depends_on: [] },
+          { name: 'app', depends_on: ['lib'] },
+        ],
+      },
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('dag-preview');
+  });
+
+  it('does not show DAG preview when no workspace selected', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('dag-preview');
+  });
+});
+
+// ── workspace gh auth check ────────────────────────────────────────────────
+
+describe('fleetLauncherView — workspace gh auth check', () => {
+  it('shows auth error alerts when auth check fails', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [{ name: 'lib', depends_on: [] }],
+      },
+      ghAuthStatus: 'failed',
+      ghAuthErrors: [
+        {
+          org: 'acme-corp',
+          command: 'gh auth login --hostname github.com --scopes repo',
+        },
+      ],
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('gh-auth-error');
+    expect(out).toContain('acme-corp');
+    expect(out).toContain('gh auth login');
+  });
+
+  it('shows skip auth checkbox', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [{ name: 'lib', depends_on: [] }],
+      },
+      ghAuthStatus: 'failed',
+      ghAuthErrors: [{ org: 'acme', command: 'gh auth login' }],
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('checkbox-skip-auth');
+    expect(out).toContain('Skip auth check');
+  });
+
+  it('shows success indicator when auth check passes', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [{ name: 'lib', depends_on: [] }],
+      },
+      ghAuthStatus: 'ok',
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('gh-auth-ok');
+  });
+});
+
+// ── workspace head template default ────────────────────────────────────────
+
+describe('fleetLauncherView — workspace head template', () => {
+  it('defaults to workspace/{slug}/{repo} in workspace mode', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('workspace/{slug}/{repo}');
+  });
+
+  it('defaults to migration/{slug}/{project} in fleet mode', () => {
+    resetLauncherState({ launcherMode: 'fleet' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('migration/{slug}/{project}');
+  });
+});
+
+// ── workspace init timeout ─────────────────────────────────────────────────
+
+describe('fleetLauncherView — workspace init timeout', () => {
+  it('renders init timeout input in workspace mode', () => {
+    resetLauncherState({ launcherMode: 'workspace' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('input-init-timeout');
+  });
+
+  it('does not render init timeout in fleet mode', () => {
+    resetLauncherState({ launcherMode: 'fleet' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('input-init-timeout');
+  });
+});
+
+// ── workspace submit state ─────────────────────────────────────────────────
+
+describe('fleetLauncherView — workspace submit state', () => {
+  it('canLaunch=false in workspace mode when no workspace selected', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      prompt: 'add feature',
+    });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(false);
+  });
+
+  it('canLaunch=true in workspace mode when workspace + prompt provided', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [{ name: 'lib', depends_on: [] }],
+      },
+      prompt: 'add feature',
+    });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(true);
+  });
+
+  it('canLaunch=false when gh auth fails and skip not checked', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [{ name: 'lib', depends_on: [] }],
+      },
+      prompt: 'add feature',
+      ghAuthStatus: 'failed',
+      ghAuthErrors: [{ org: 'acme', command: 'gh auth login' }],
+    });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(false);
+  });
+
+  it('canLaunch=true when gh auth fails but skip is checked', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [{ name: 'lib', depends_on: [] }],
+      },
+      prompt: 'add feature',
+      ghAuthStatus: 'failed',
+      ghAuthErrors: [{ org: 'acme', command: 'gh auth login' }],
+      skipAuthCheck: true,
+    });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(true);
+  });
+
+  it('canLaunch=true in workspace mode with source instead of prompt', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'my-ws',
+      workspaceData: {
+        name: 'my-ws',
+        repos: [{ name: 'lib', depends_on: [] }],
+      },
+      sourceType: 'source',
+      sourceValue: 'gh:issue:42',
+    });
+    expect(getFleetLauncherSubmitState().canLaunch).toBe(true);
+  });
+});
+
+// ── workspace submit endpoint ──────────────────────────────────────────────
+
+describe('fleetLauncherView — workspace submit', () => {
+  it('validates workspace selection before submit', async () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      prompt: 'add feature',
+    });
+    let lastError = '';
+    await submitFleetLauncher({
+      rerender: () => {
+        lastError = getFleetLauncherSubmitState().submitStatus;
+      },
+    });
+    expect(lastError).toBe('error');
   });
 });

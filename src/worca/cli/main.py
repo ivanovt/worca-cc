@@ -9,6 +9,7 @@ Subcommands:
   status            [run_id]
   multi-status
   integrations status
+  workspace init    /path [--force]
   --version
 
 The `worca run` command is a thin launcher: it finds the git root,
@@ -230,6 +231,10 @@ def create_parser() -> argparse.ArgumentParser:
     from worca.cli.cleanup import register_subcommand as register_cleanup
     register_cleanup(sub)
 
+    # workspace
+    from worca.cli.workspace import register_subcommand as register_workspace
+    register_workspace(sub)
+
     return parser
 
 
@@ -270,6 +275,13 @@ def main(argv=None):
     elif args.command == "cleanup":
         from worca.cli.cleanup import cmd_cleanup
         cmd_cleanup(args)
+    elif args.command == "workspace":
+        if args.workspace_command == "init":
+            from worca.cli.workspace import cmd_workspace_init
+            cmd_workspace_init(args.path, force=args.force)
+        else:
+            print("error: specify a subcommand, e.g. 'worca workspace init /path'", file=sys.stderr)
+            raise SystemExit(1)
     else:
         print(f"error: unknown command {args.command!r}", file=sys.stderr)
         raise SystemExit(1)

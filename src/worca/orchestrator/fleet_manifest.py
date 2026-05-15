@@ -10,22 +10,17 @@ import secrets
 import tempfile
 from datetime import datetime, timezone
 
+from worca.state.status import (
+    PipelineStatus, FleetStatus, FLEET_STICKY,
+    PIPELINE_ACTIVE, PIPELINE_FAILURE, PIPELINE_ALL_TERMINAL,
+)
+
 
 _FLEET_RUNS_DIR = os.path.expanduser("~/.worca/fleet-runs")
 
-_RUNNING_STATES = frozenset({"running", "resuming", "paused"})
-_FAILURE_STATES = frozenset({"failed", "setup_failed", "unrecoverable"})
-# `interrupted` / `cancelled` are terminal-but-not-completed child states.
-# They must be in _TERMINAL_STATES so a fleet whose children include one
-# can still reach a terminal status — otherwise `derive_fleet_status`
-# never sees `terminal_count == total` and the fleet is stuck "running"
-# forever. They are deliberately NOT in _FAILURE_STATES: a user-stopped
-# child shouldn't inflate the circuit-breaker failure ratio. The fleet
-# still derives as `failed` (not `completed`) because completed_count
-# won't equal total.
-_TERMINAL_STATES = (
-    frozenset({"completed", "interrupted", "cancelled"}) | _FAILURE_STATES
-)
+_RUNNING_STATES = PIPELINE_ACTIVE
+_FAILURE_STATES = PIPELINE_FAILURE
+_TERMINAL_STATES = PIPELINE_ALL_TERMINAL
 
 
 def generate_fleet_id(*, now=None) -> tuple:
@@ -112,7 +107,7 @@ def register_fleet_child(
             return False
 
     children.append(
-        {"project_path": project_path, "run_id": run_id, "status": "running"}
+        {"project_path": project_path, "run_id": run_id, "status": PipelineStatus.RUNNING}
     )
     manifest["children"] = children
     manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
@@ -162,11 +157,11 @@ def derive_fleet_status(child_statuses: list, *, threshold: float = 0.30) -> tup
       AND terminal_count >= min(3, total)
     """
     if not child_statuses:
-        return "running", None
+        return FleetStatus.RUNNING, None
 
     total = len(child_statuses)
     running_count = sum(1 for s in child_statuses if s in _RUNNING_STATES)
-    completed_count = sum(1 for s in child_statuses if s == "completed")
+    completed_count = sum(1 for s in child_statuses if s == PipelineStatus.COMPLETED)
     failed_count = sum(1 for s in child_statuses if s in _FAILURE_STATES)
     terminal_count = sum(1 for s in child_statuses if s in _TERMINAL_STATES)
 
@@ -177,17 +172,17 @@ def derive_fleet_status(child_statuses: list, *, threshold: float = 0.30) -> tup
         if terminal_count >= min_terminal and failed_count > 0:
             failure_ratio = failed_count / terminal_count
             if failure_ratio >= threshold:
-                return "halted", "circuit_breaker"
-        return "running", None
+                return FleetStatus.HALTED, "circuit_breaker"
+        return FleetStatus.RUNNING, None
 
     # All dispatched children are in a terminal state
     if terminal_count == total:
         if completed_count == total:
-            return "completed", None
-        return "failed", None
+            return FleetStatus.COMPLETED, None
+        return FleetStatus.FAILED, None
 
     # Pending/untracked children not yet dispatched
-    return "running", None
+    return FleetStatus.RUNNING, None
 
 
 def poll_and_update_fleet_manifest(
@@ -210,14 +205,14 @@ def poll_and_update_fleet_manifest(
     if manifest is None:
         return None
 
-    current_status = manifest.get("status", "running")
+    current_status = manifest.get("status", FleetStatus.RUNNING)
     # Preserve sticky operator states — both stay put until an explicit resume:
     #   - "halted":  Halt (in-flight finished naturally) or Stop (in-flight
     #                killed, halt_reason="stopped"), plus circuit_breaker.
     #   - "paused":  Pause — every in-flight child received a pause control
     #                file. Children may still be transitioning to paused, so
     #                re-deriving here would race the manifest back to "running".
-    if current_status in ("halted", "paused"):
+    if current_status in FLEET_STICKY:
         return current_status
 
     children = manifest.get("children", [])
@@ -235,7 +230,7 @@ def poll_and_update_fleet_manifest(
         try:
             with open(registry_entry) as f:
                 entry = json.load(f)
-            child_statuses.append(entry.get("status", "running"))
+            child_statuses.append(entry.get("status", PipelineStatus.RUNNING))
         except (json.JSONDecodeError, OSError):
             child_statuses.append("running")
 
@@ -297,11 +292,11 @@ def _emit_fleet_transition_event(
     settings_path = _settings_path_for_fleet(manifest)
 
     total = len(child_statuses)
-    failure_states = {"failed", "setup_failed", "unrecoverable"}
-    completed_count = sum(1 for s in child_statuses if s == "completed")
-    failed_count = sum(1 for s in child_statuses if s in failure_states)
+    completed_count = sum(1 for s in child_statuses if s == PipelineStatus.COMPLETED)
+    failed_count = sum(1 for s in child_statuses if s in PIPELINE_FAILURE)
     interrupted_count = sum(
-        1 for s in child_statuses if s in ("interrupted", "cancelled")
+        1 for s in child_statuses
+        if s in (PipelineStatus.INTERRUPTED, PipelineStatus.CANCELLED)
     )
     terminal_count = completed_count + failed_count + interrupted_count
 
@@ -316,7 +311,7 @@ def _emit_fleet_transition_event(
         except Exception:
             pass  # never propagate from the polling path
 
-    if new_status == "completed":
+    if new_status == FleetStatus.COMPLETED:
         _emit(
             FLEET_COMPLETED,
             fleet_completed_payload(
@@ -324,7 +319,7 @@ def _emit_fleet_transition_event(
                 completed_count=completed_count,
             ),
         )
-    elif new_status == "failed":
+    elif new_status == FleetStatus.FAILED:
         _emit(
             FLEET_FAILED,
             fleet_failed_payload(
@@ -334,7 +329,7 @@ def _emit_fleet_transition_event(
                 interrupted_count=interrupted_count,
             ),
         )
-    elif new_status == "halted":
+    elif new_status == FleetStatus.HALTED:
         # Circuit breaker is its own event AND a halt — subscribers can
         # listen to just the specific one if they want fewer firings.
         if halt_reason == "circuit_breaker":

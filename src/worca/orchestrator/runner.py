@@ -33,6 +33,7 @@ from worca.orchestrator.work_request import WorkRequest
 from worca.state.status import (
     load_status, save_status, update_stage, set_milestone, init_status,
     start_iteration, complete_iteration,
+    PipelineStatus, PIPELINE_TERMINAL,
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
@@ -73,6 +74,7 @@ from worca.events.types import (
     preflight_completed_payload, preflight_skipped_payload,
     LEARN_COMPLETED, LEARN_FAILED,
     learn_completed_payload, learn_failed_payload,
+    GUIDE_CONFLICT, guide_conflict_payload,
 )
 
 # Maps pipeline stages to their user-message block files. The stage's
@@ -89,6 +91,33 @@ _STAGE_BLOCK_MAP = {
     Stage.PR:           "pr",
     Stage.LEARN:        "learn",
 }
+
+
+def _emit_guide_conflicts(ctx, stage: str, result: dict) -> None:
+    """Emit GUIDE_CONFLICT events for each entry in result['guide_conflicts'].
+
+    Called after each plan/review/test stage completes. Each conflict item
+    becomes its own event so the UI can surface them individually.
+    """
+    if ctx is None:
+        return
+    conflicts = result.get("guide_conflicts") if isinstance(result, dict) else None
+    if not conflicts:
+        return
+    run_id = ctx.run_id
+    for conflict in conflicts:
+        if not isinstance(conflict, dict):
+            continue
+        message = conflict.get("message", "")
+        source = conflict.get("source", "description")
+        if not message:
+            continue
+        emit_event(ctx, GUIDE_CONFLICT, guide_conflict_payload(
+            run_id=run_id,
+            stage=stage,
+            message=message,
+            source=source,
+        ))
 
 
 class LoopExhaustedError(Exception):
@@ -182,7 +211,7 @@ def _check_control_file(
     action = ctrl["action"]
 
     if action == "pause":
-        status["pipeline_status"] = "paused"
+        status["pipeline_status"] = PipelineStatus.PAUSED
         save_status(status, status_path)
         # Mirror paused into the registry. Without this the entry stays
         # "running" after this process exits, so reconcile_stale() later
@@ -200,7 +229,7 @@ def _check_control_file(
 
     elif action == "stop":
         terminate_current()
-        status["pipeline_status"] = "interrupted"
+        status["pipeline_status"] = PipelineStatus.INTERRUPTED
         status["stop_reason"] = "control_file"
         save_status(status, status_path)
         _log("Pipeline stopped by control file", "warn")
@@ -405,9 +434,7 @@ def _is_same_work_request(existing_wr: dict, new_wr: WorkRequest) -> bool:
     return existing_wr.get("title", "") == new_wr.title
 
 
-# 'failed' intentionally excluded: failed runs remain resumable via _find_active_runs.
-# Fresh-start correctly handles a single failed run (reassigns run_dir/status_path).
-_TERMINAL_STATUSES = {"completed", "interrupted"}
+_TERMINAL_STATUSES = PIPELINE_TERMINAL
 
 
 def _find_active_runs(worca_dir: str) -> list:
@@ -559,7 +586,7 @@ def _install_signal_handlers():
         # Layer 1: immediately persist interrupted status on signal
         if _signal_status is not None and _signal_status_path is not None:
             try:
-                _signal_status["pipeline_status"] = "interrupted"
+                _signal_status["pipeline_status"] = PipelineStatus.INTERRUPTED
                 if not _signal_status.get("stop_reason"):
                     _signal_status["stop_reason"] = "signal"
                 save_status(_signal_status, _signal_status_path)
@@ -590,11 +617,9 @@ def _atexit_cleanup():
     """
     if _signal_status is not None and _signal_status_path is not None:
         try:
-            if _signal_status.get("pipeline_status") == "running":
-                # ctx-present → emit interrupted event; ctx-absent → fall back to failed.
-                # Both paths default stop_reason to "unexpected_exit" and persist status.
+            if _signal_status.get("pipeline_status") == PipelineStatus.RUNNING:
                 _signal_status["pipeline_status"] = (
-                    "interrupted" if _signal_event_ctx is not None else "failed"
+                    PipelineStatus.INTERRUPTED if _signal_event_ctx is not None else PipelineStatus.FAILED
                 )
                 if not _signal_status.get("stop_reason"):
                     _signal_status["stop_reason"] = "unexpected_exit"
@@ -622,7 +647,7 @@ def _atexit_cleanup():
                 _signal_run_id
                 and _signal_registry_dir
                 and _signal_status.get("worktree")
-                and _signal_status.get("pipeline_status") in {"interrupted", "failed", "completed"}
+                and _signal_status.get("pipeline_status") in {PipelineStatus.INTERRUPTED, PipelineStatus.FAILED, PipelineStatus.COMPLETED}
             ):
                 update_pipeline(
                     _signal_run_id,
@@ -1675,7 +1700,7 @@ def run_pipeline(
             if resume_stage is not None:
                 previous = [
                     s for s, v in status.get("stages", {}).items()
-                    if v.get("status") == "completed"
+                    if v.get("status") == PipelineStatus.COMPLETED
                 ]
                 emit_event(ctx, RUN_RESUMED, run_resumed_payload(
                     resume_stage=resume_stage.value,
@@ -1736,7 +1761,7 @@ def run_pipeline(
                 max_beads = len(resumed_beads)
 
         # Transition pipeline to running state
-        status["pipeline_status"] = "running"
+        status["pipeline_status"] = PipelineStatus.RUNNING
         save_status(status, actual_status_path)
         # On resume, the registry was previously flipped to "interrupted" /
         # "failed" when the original run stopped. Flip it back so the UI's
@@ -2439,6 +2464,7 @@ def run_pipeline(
                     _log("PLAN not approved — stopping", "err")
                     raise PipelineError("Plan not approved")
                 _log("PLAN approved", "ok")
+                _emit_guide_conflicts(ctx, "plan", result)
                 # Thread plan outputs into PromptBuilder for downstream stages
                 prompt_builder.update_context("plan_approach", result.get("approach", ""))
                 prompt_builder.update_context("plan_tasks_outline", result.get("tasks_outline", []))
@@ -2712,6 +2738,7 @@ def run_pipeline(
             # Handle test results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.TEST:
                 passed = result.get("passed", False)
+                _emit_guide_conflicts(ctx, "test", result)
                 # Thread test outputs into PromptBuilder
                 prompt_builder.update_context("test_passed", passed)
                 prompt_builder.update_context("test_coverage", result.get("coverage_pct"))
@@ -2823,6 +2850,7 @@ def run_pipeline(
             elif current_stage == Stage.REVIEW:
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")
+                _emit_guide_conflicts(ctx, "review", result)
                 next_stage, status = handle_pr_review(outcome, status)
                 _all_issues = result.get("issues", [])
                 _critical_count = sum(
@@ -2967,7 +2995,7 @@ def run_pipeline(
                     pr_approved = True
                 else:
                     set_milestone(status, "pr_approved", False)
-                    status["pipeline_status"] = "paused"
+                    status["pipeline_status"] = PipelineStatus.PAUSED
                     save_status(status, actual_status_path)
                     pr_approved = False
                     if ctx:
@@ -2983,7 +3011,7 @@ def run_pipeline(
                             if _action == "approve":
                                 pr_approved = True
                                 set_milestone(status, "pr_approved", True)
-                                status["pipeline_status"] = "running"
+                                status["pipeline_status"] = PipelineStatus.RUNNING
                             elif _action == "reject":
                                 raise PipelineInterrupted("PR creation rejected by user", stop_reason="pr_rejected")
                             elif _action == "pause":
@@ -2993,7 +3021,7 @@ def run_pipeline(
                     else:
                         pr_approved = True
                         set_milestone(status, "pr_approved", True)
-                        status["pipeline_status"] = "running"
+                        status["pipeline_status"] = PipelineStatus.RUNNING
 
                 if not pr_approved:
                     save_status(status, actual_status_path)
@@ -3167,7 +3195,7 @@ def run_pipeline(
         total_turns = run_token.get("num_turns", 0)
 
         # Mark pipeline as completed with timestamp
-        status["pipeline_status"] = "completed"
+        status["pipeline_status"] = PipelineStatus.COMPLETED
         status["completed_at"] = datetime.now(timezone.utc).isoformat()
         save_status(status, actual_status_path)
 
@@ -3204,7 +3232,7 @@ def run_pipeline(
                          "success", "", msize, logs_dir, ctx=ctx)
 
         if ctx:
-            _stages_done = [s for s, d in status.get("stages", {}).items() if d.get("status") == "completed"]
+            _stages_done = [s for s, d in status.get("stages", {}).items() if d.get("status") == PipelineStatus.COMPLETED]
             emit_event(ctx, RUN_COMPLETED, run_completed_payload(
                 duration_ms=int(total_elapsed * 1000),
                 total_cost_usd=total_cost,
@@ -3215,7 +3243,7 @@ def run_pipeline(
 
         return status
     except PipelineInterrupted as exc:
-        status["pipeline_status"] = "interrupted"
+        status["pipeline_status"] = PipelineStatus.INTERRUPTED
         status["stop_reason"] = exc.stop_reason
         save_status(status, actual_status_path)
         # Mirror terminal status into the multi-pipeline registry so global-mode
@@ -3233,7 +3261,7 @@ def run_pipeline(
             ))
         raise  # Do NOT run learn on user interruption
     except LoopExhaustedError as e:
-        status["pipeline_status"] = "failed"
+        status["pipeline_status"] = PipelineStatus.FAILED
         status["stop_reason"] = "loop_exhausted"
         save_status(status, actual_status_path)
         _run_learn_stage(status, prompt_builder, settings_path, run_dir,
@@ -3246,7 +3274,7 @@ def run_pipeline(
             ))
         raise
     except PipelineError as e:
-        status["pipeline_status"] = "failed"
+        status["pipeline_status"] = PipelineStatus.FAILED
         status["stop_reason"] = "pipeline_error"
         save_status(status, actual_status_path)
         # Skip LEARN when preflight fails — environment is broken, claude CLI unavailable
@@ -3261,7 +3289,7 @@ def run_pipeline(
             ))
         raise
     except Exception as e:
-        status["pipeline_status"] = "failed"
+        status["pipeline_status"] = PipelineStatus.FAILED
         status["stop_reason"] = type(e).__name__
         save_status(status, actual_status_path)
         _run_learn_stage(status, prompt_builder, settings_path, run_dir,
@@ -3285,8 +3313,8 @@ def run_pipeline(
             ctx.close()
         # Safety net: ensure pipeline_status is never left as "running" on exit
         try:
-            if status and status.get("pipeline_status") == "running":
-                status["pipeline_status"] = "failed"
+            if status and status.get("pipeline_status") == PipelineStatus.RUNNING:
+                status["pipeline_status"] = PipelineStatus.FAILED
                 if not status.get("stop_reason"):
                     status["stop_reason"] = "unexpected_exit"
             if prompt_context_path and prompt_builder:
@@ -3301,7 +3329,7 @@ def run_pipeline(
         # Success case is handled above before the except blocks.
         try:
             if (status and status.get("worktree") and status.get("run_id")
-                    and status.get("pipeline_status") == "failed"):
+                    and status.get("pipeline_status") == PipelineStatus.FAILED):
                 update_pipeline(status["run_id"], status="failed", base=registry_dir)
         except Exception:
             pass

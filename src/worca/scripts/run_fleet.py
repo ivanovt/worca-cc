@@ -20,6 +20,7 @@ from worca.orchestrator.fleet_manifest import (
     register_fleet_child,
     update_fleet_status,
 )
+from worca.state.status import PipelineStatus, FleetStatus
 
 # Per W-040 §5: the fleet scrub list is fleet-specific. It is NOT the same as
 # `worca.utils.env.RESERVED_ENV_KEYS` (which is the denylist for per-model env
@@ -385,15 +386,15 @@ def dispatch_fleet(
             proc = in_flight.pop(project_dir)
             stdout_str, _ = proc.communicate()
             if rc != 0:
-                results[project_dir] = {"status": "failed"}
+                results[project_dir] = {"status": PipelineStatus.FAILED}
                 failed_count += 1
                 if not halted and _check_breaker():
                     halted = True
                     update_fleet_status(
-                        fleet_id, "halted", halt_reason="circuit_breaker"
+                        fleet_id, FleetStatus.HALTED, halt_reason="circuit_breaker"
                     )
             else:
-                results[project_dir] = {"status": "completed"}
+                results[project_dir] = {"status": PipelineStatus.COMPLETED}
                 run_id = _parse_run_id_from_stdout(stdout_str)
                 if run_id:
                     try:
@@ -407,7 +408,7 @@ def dispatch_fleet(
 
     # After the loop, any children still in `pending` were never launched.
     for project_dir in pending:
-        results[project_dir] = {"status": "halted"}
+        results[project_dir] = {"status": FleetStatus.HALTED}
 
     return results
 
@@ -446,9 +447,14 @@ def resume_fleet(fleet_id: str) -> int:
     max_parallel = manifest.get("max_parallel", 5)
     threshold = manifest.get("fleet_failure_threshold", 0.30)
 
-    _SKIP_STATUSES = frozenset({"completed", "running", "resuming", "unrecoverable"})
-    _REDISPATCH = frozenset({"failed", "pending", "setup_failed"})
-    _IN_PLACE = frozenset({"paused", "interrupted"})
+    _SKIP_STATUSES = frozenset({
+        PipelineStatus.COMPLETED, PipelineStatus.RUNNING,
+        PipelineStatus.RESUMING, PipelineStatus.UNRECOVERABLE,
+    })
+    _REDISPATCH = frozenset({
+        PipelineStatus.FAILED, PipelineStatus.PENDING, PipelineStatus.SETUP_FAILED,
+    })
+    _IN_PLACE = frozenset({PipelineStatus.PAUSED, PipelineStatus.INTERRUPTED})
 
     targets = []  # re-dispatched fresh via dispatch_fleet
     inplace = []  # (project_path, run_id) continued via resume_child
@@ -474,10 +480,10 @@ def resume_fleet(fleet_id: str) -> int:
 
         if entry is None:
             # No registry entry — treat as pending (never successfully dispatched)
-            targets.append({"project_dir": project_path, "status": "pending"})
+            targets.append({"project_dir": project_path, "status": PipelineStatus.PENDING})
             continue
 
-        status = entry.get("status", "running")
+        status = entry.get("status", PipelineStatus.RUNNING)
 
         if status in _SKIP_STATUSES:
             continue
@@ -485,7 +491,7 @@ def resume_fleet(fleet_id: str) -> int:
         # For failed status only: check whether the worktree still exists.
         # setup_failed never created a worktree, so no existence check there.
         # If a failed child's worktree was cleaned up, mark it unrecoverable.
-        if status == "failed":
+        if status == PipelineStatus.FAILED:
             worktree_path = entry.get("worktree_path")
             if worktree_path and not os.path.exists(worktree_path):
                 print(
@@ -493,7 +499,7 @@ def resume_fleet(fleet_id: str) -> int:
                     file=sys.stderr,
                 )
                 from worca.orchestrator.registry import update_pipeline
-                update_pipeline(run_id, status="unrecoverable", base=child_base)
+                update_pipeline(run_id, status=PipelineStatus.UNRECOVERABLE, base=child_base)
                 continue
 
         if status in _IN_PLACE:
@@ -510,7 +516,7 @@ def resume_fleet(fleet_id: str) -> int:
 
     # We have work to do — flip the manifest to `resuming` now. Reconciliation
     # will advance it to `running` once a child registry entry reports running.
-    update_fleet_status(fleet_id, "resuming")
+    update_fleet_status(fleet_id, FleetStatus.RESUMING)
 
     # Resume paused/interrupted children in their existing worktrees first —
     # cheap (one Popen each) and they keep all prior progress.
@@ -801,7 +807,7 @@ def main(argv=None) -> int:
             if args.fleet_id:
                 update_fleet_status(
                     args.fleet_id,
-                    "halted",
+                    FleetStatus.HALTED,
                     halt_reason="targets_not_ready",
                 )
             return 1
@@ -854,7 +860,7 @@ def main(argv=None) -> int:
             "base_branch": args.base,
             "max_parallel": args.max_parallel,
             "fleet_failure_threshold": args.fleet_failure_threshold,
-            "status": "running",
+            "status": FleetStatus.RUNNING,
             "halt_reason": None,
             "children": [],
         }
@@ -887,7 +893,7 @@ def main(argv=None) -> int:
                     "plan-first: reference Planner failed — halting fleet before fan-out",
                     file=sys.stderr,
                 )
-                update_fleet_status(fleet_id, "halted", halt_reason="plan_first_failed")
+                update_fleet_status(fleet_id, FleetStatus.HALTED, halt_reason="plan_first_failed")
                 return 1
 
     # Dispatch fleet children — skip setup_failed targets
@@ -898,10 +904,10 @@ def main(argv=None) -> int:
         if _plan_first_ref is not None:
             # Reference already ran — dispatch remaining N-1 children with shared plan
             remaining = [p for p in provisioned if p != _plan_first_ref]
-            dispatch_targets = [{"project_dir": p, "status": "pending"} for p in remaining]
+            dispatch_targets = [{"project_dir": p, "status": PipelineStatus.PENDING} for p in remaining]
             dispatch_plan = shared_plan
         else:
-            dispatch_targets = [{"project_dir": p, "status": "pending"} for p in provisioned]
+            dispatch_targets = [{"project_dir": p, "status": PipelineStatus.PENDING} for p in provisioned]
             dispatch_plan = os.path.abspath(args.plan) if args.plan else None
 
         dispatch_fleet(

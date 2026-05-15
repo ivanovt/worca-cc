@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Activity,
   Archive,
+  Boxes,
   ChevronDown,
   Coins,
   GitBranch,
@@ -41,9 +42,12 @@ export function projectStatus(projectId, runs, currentProjectId) {
 
   for (const r of projectRuns) {
     const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
-    if (ps === 'running') hasRunning = true;
-    else if (ps === 'failed' || ps === 'error') hasError = true;
-    else if (ps === 'paused' || ps === 'approval_needed') hasPaused = true;
+    if (ps === 'running' || ps === 'planning' || ps === 'integration_testing')
+      hasRunning = true;
+    else if (ps === 'failed' || ps === 'error' || ps === 'integration_failed')
+      hasError = true;
+    else if (ps === 'paused' || ps === 'approval_needed' || ps === 'blocked')
+      hasPaused = true;
   }
 
   if (hasRunning) return 'running';
@@ -82,6 +86,7 @@ export function sidebarView(
     currentProjectId,
     worktrees = [],
     fleets = [],
+    workspaces = [],
     worktreeDiskWarningBytes = 2_000_000_000,
     totalRunning = 0,
     maxConcurrentPipelines = 10,
@@ -136,6 +141,25 @@ export function sidebarView(
   // condition. For Fleets the trigger is any halted fleet (matches the
   // Worktrees disk-threshold warning shape).
   const fleetBadgeVariant = haltedFleetCount > 0 ? 'warning' : 'neutral';
+
+  const liveWorkspaces = workspaces.filter((w) => !w.archived);
+  const showWorkspacesEntry = liveWorkspaces.length > 0;
+  const WORKSPACE_ACTIVE = { running: 1, planning: 1, integration_testing: 1 };
+  const WORKSPACE_ATTENTION = { halted: 1, integration_failed: 1 };
+  const activeWorkspaceCount = liveWorkspaces.filter(
+    (w) => WORKSPACE_ACTIVE[w.status],
+  ).length;
+  const attentionWorkspaceCount = liveWorkspaces.filter(
+    (w) => WORKSPACE_ATTENTION[w.status],
+  ).length;
+  const blockedWorkspaceCount = liveWorkspaces.filter(
+    (w) => w.status === 'blocked',
+  ).length;
+  const workspaceBadgeCount =
+    activeWorkspaceCount + attentionWorkspaceCount + blockedWorkspaceCount;
+  const showWorkspaceBadge = workspaceBadgeCount > 0;
+  const workspaceBadgeVariant =
+    attentionWorkspaceCount > 0 ? 'warning' : 'primary';
 
   const connClass =
     connectionState === 'open'
@@ -240,8 +264,13 @@ export function sidebarView(
                     ${unsafeHTML(iconSvg(Workflow, 14))}
                     New Fleet
                   </sl-menu-item>
-                  <!-- W-047 (multi-repo workspace) will add: -->
-                  <!-- <sl-menu-item class="menu-item-new-workspace" @click=...>New Workspace</sl-menu-item> -->
+                  <sl-menu-item
+                    class="menu-item-new-workspace"
+                    @click=${() => onNavigate('workspace-runs/new')}
+                  >
+                    ${unsafeHTML(iconSvg(Boxes, 14))}
+                    New Workspace
+                  </sl-menu-item>
                 </sl-menu>
               </sl-dropdown>
             </div>
@@ -305,6 +334,24 @@ export function sidebarView(
               : ''
           }
         </div>
+        ${
+          showWorkspacesEntry
+            ? html`
+          <div class="sidebar-item ${route.section === 'workspace-runs' ? 'active' : ''}"
+               @click=${() => onNavigate('workspace-runs')}>
+            <span class="sidebar-item-left">
+              ${unsafeHTML(iconSvg(Boxes, 16))}
+              <span>Workspaces</span>
+            </span>
+            ${
+              showWorkspaceBadge
+                ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
+                : ''
+            }
+          </div>
+        `
+            : ''
+        }
       </div>
 
       <div class="sidebar-section">

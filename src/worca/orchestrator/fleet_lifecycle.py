@@ -26,6 +26,7 @@ from worca.orchestrator.fleet_manifest import (
     read_fleet_manifest,
     update_fleet_status,
 )
+from worca.state.status import PipelineStatus, FleetStatus, PIPELINE_IN_FLIGHT
 
 # run_pipeline.py lives in the sibling scripts/ package. fleet_lifecycle.py is
 # at <runtime>/orchestrator/fleet_lifecycle.py, so dirname-twice + scripts/.
@@ -35,10 +36,7 @@ _RUN_PIPELINE = os.path.join(
     "run_pipeline.py",
 )
 
-# Child registry statuses that mean "a pipeline process is in flight" and can
-# therefore act on a control file. Terminal states (completed/failed/...) and
-# already-paused children are skipped.
-_IN_FLIGHT_CHILD_STATES = frozenset({"running", "resuming"})
+_IN_FLIGHT_CHILD_STATES = PIPELINE_IN_FLIGHT
 
 
 def _resolve_child_status(project_path: str, run_id: str) -> str:
@@ -53,9 +51,9 @@ def _resolve_child_status(project_path: str, run_id: str) -> str:
     )
     try:
         with open(entry_path) as f:
-            return json.load(f).get("status", "running")
+            return json.load(f).get("status", PipelineStatus.RUNNING)
     except (OSError, json.JSONDecodeError):
-        return "running"
+        return PipelineStatus.RUNNING
 
 
 def _fan_out(fleet_id: str, action_fn) -> int | None:
@@ -104,7 +102,7 @@ def pause_fleet(fleet_id: str) -> int | None:
     count = _fan_out(fleet_id, cmd_pause)
     if count is None:
         return None
-    update_fleet_status(fleet_id, "paused")
+    update_fleet_status(fleet_id, FleetStatus.PAUSED)
     return count
 
 
@@ -129,7 +127,7 @@ def stop_fleet(fleet_id: str) -> int | None:
     count = _fan_out(fleet_id, cmd_stop)
     if count is None:
         return None
-    update_fleet_status(fleet_id, "halted", halt_reason="stopped")
+    update_fleet_status(fleet_id, FleetStatus.HALTED, halt_reason="stopped")
     _emit_fleet_stop_event(fleet_id, in_flight_count=count)
     return count
 
@@ -208,14 +206,14 @@ def resume_child(project_path: str, run_id: str) -> bool:
     except (OSError, json.JSONDecodeError):
         return False
 
-    if status.get("pipeline_status") in ("interrupted", "failed"):
-        status["pipeline_status"] = "resuming"
+    if status.get("pipeline_status") in (PipelineStatus.INTERRUPTED, PipelineStatus.FAILED):
+        status["pipeline_status"] = PipelineStatus.RESUMING
         status.pop("stop_reason", None)
         with open(status_path, "w") as f:
             json.dump(status, f, indent=2)
             f.write("\n")
 
-    update_pipeline(run_id, status="resuming", base=project_base)
+    update_pipeline(run_id, status=PipelineStatus.RESUMING, base=project_base)
 
     cmd = [
         sys.executable,

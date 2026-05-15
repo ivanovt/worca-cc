@@ -367,6 +367,91 @@ worca cleanup --fleet-id <fleet_id>   # Remove all child worktrees + fleet manif
 
 See [`docs/fleet-runs.md`](./docs/fleet-runs.md) for a full walkthrough including guide attachment, plan modes, the circuit breaker, and resume behavior.
 
+## Workspace Runs
+
+Coordinate changes across interdependent repos with dependency-ordered execution using `run_workspace.py`. Unlike fleet runs (same prompt to N independent repos), workspace runs decompose one prompt into repo-specific sub-plans, execute them in DAG tier order, run cross-repo integration tests, and create linked PRs with dependency metadata.
+
+A workspace is defined by a `workspace.json` in a parent directory whose children are sibling git repos. Child pipelines are standard worca runs dispatched via `run_worktree.py` — all existing governance, hooks, and stage machinery are unchanged.
+
+```bash
+# Initialize a workspace from a parent directory containing git repos
+worca workspace init /path/to/parent
+
+# Edit workspace.json to define depends_on relationships and integration test
+# Then run a coordinated pipeline:
+python .claude/scripts/run_workspace.py /path/to/parent \
+  --prompt "Add user authentication across all services"
+
+# With a normative guide
+python .claude/scripts/run_workspace.py /path/to/parent \
+  --prompt "Migrate to v2 API" \
+  --guide ./migration-spec.md
+
+# Skip master planner (use per-repo independent planning)
+python .claude/scripts/run_workspace.py /path/to/parent \
+  --prompt "Apply logging standards" \
+  --skip-planning
+
+# Dry-run: print the DAG and exit
+python .claude/scripts/run_workspace.py /path/to/parent \
+  --prompt "Add auth" --dry-run
+
+# Resume a failed/halted workspace run
+python .claude/scripts/run_workspace.py /path/to/parent \
+  --resume ws_202601011200_abc12345
+```
+
+### Key flags
+
+| Flag | Description |
+|------|-------------|
+| `WORKSPACE_ROOT` | Positional: path to parent directory containing `workspace.json` |
+| `--prompt TEXT` | Work-request prompt (mutually exclusive with `--source`) |
+| `--source REF` | Source reference (`gh:issue:42`, `bd:bd-abc`) |
+| `--guide PATH` | Normative reference guide (repeatable) |
+| `--branch TEMPLATE` | Branch name template with `{workspace}`, `{repo}`, `{slug}` placeholders (default: `workspace/{slug}/{repo}`) |
+| `--skip-integration` | Skip the cross-repo integration test phase |
+| `--skip-planning` | Skip the master planner; each repo plans independently |
+| `--resume WORKSPACE_ID` | Resume a failed/halted workspace run |
+| `--max-parallel N` | Max concurrent children within a tier (default: 5) |
+| `--dry-run` | Print the DAG and exit without launching children |
+
+### workspace.json format
+
+```json
+{
+  "name": "my-platform",
+  "repos": [
+    { "name": "shared-lib", "path": "shared-lib", "role": "library", "depends_on": [] },
+    { "name": "backend",    "path": "backend",    "role": "service", "depends_on": ["shared-lib"] },
+    { "name": "frontend",   "path": "frontend",   "role": "app",    "depends_on": ["shared-lib"] }
+  ],
+  "integration_test": {
+    "command": "docker compose run integration-tests",
+    "working_dir": "."
+  },
+  "umbrella_repo": "org/my-platform"
+}
+```
+
+Fields: `name` (workspace display name), `repos` (list with `name`, `path`, `role`, `depends_on`), `integration_test` (optional: `command` + `working_dir`), `umbrella_repo` (optional: GitHub `org/repo` for umbrella issue).
+
+### Execution flow
+
+1. **Master planner** (Opus) reads all repos' `CLAUDE.md` files, decomposes the prompt into per-repo sub-plans
+2. **DAG executor** runs tiers sequentially — repos within a tier run in parallel (up to `--max-parallel`)
+3. **Context injection** — between tiers, completed repos' diffs (8 KB cap) are injected as `--guide` into the next tier's children
+4. **Integration test** — after all tiers, runs the user-defined `integration_test.command`; if it fails, no PRs are created
+5. **PR linking** — creates per-repo PRs with dependency comments (`Depends on: org/lib#15`, `Blocks: org/frontend#43`) and an umbrella issue listing all PRs in merge order
+
+### Workspace cleanup
+
+```bash
+worca cleanup --workspace-id <workspace_id>   # Remove all child worktrees + workspace run dir
+```
+
+See [`docs/workspace-runs.md`](./docs/workspace-runs.md) for a full walkthrough including DAG execution, context injection, integration testing, PR linking, and resume behavior.
+
 ## Migrating
 
 User-facing upgrade and cleanup steps live in [`MIGRATION.md`](./MIGRATION.md).

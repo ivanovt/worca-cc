@@ -27,18 +27,10 @@ sys.path.insert(0, str(_CLAUDE_DIR))
 
 from worca.orchestrator.control import write_control  # noqa: E402
 from worca.orchestrator.registry import get_pipeline, list_pipelines, reconcile_stale  # noqa: E402
-from worca.state.status import load_status  # noqa: E402
+from worca.state.status import load_status, PIPELINE_TERMINAL  # noqa: E402
 
 
 _DEFAULT_BASE = ".worca"
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-_TERMINAL_STATUSES = {"completed", "interrupted"}
 
 
 def resolve_run_id(run_id: str | None, base: str = _DEFAULT_BASE) -> str:
@@ -56,7 +48,7 @@ def resolve_run_id(run_id: str | None, base: str = _DEFAULT_BASE) -> str:
         try:
             with open(status_path) as f:
                 data = json.load(f)
-            if data.get("pipeline_status") not in _TERMINAL_STATUSES:
+            if data.get("pipeline_status") not in PIPELINE_TERMINAL:
                 candidates.append(data.get("run_id", Path(status_path).parent.name))
         except (json.JSONDecodeError, OSError):
             continue

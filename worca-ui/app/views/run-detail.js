@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import {
+  AlertTriangle,
   ClipboardCopy,
   Clock,
   Coins,
@@ -611,6 +612,31 @@ function _graphWithTooltips(beads) {
   `;
 }
 
+export function guideConflictsPanelView(conflicts, options = {}) {
+  if (!conflicts || conflicts.length === 0) return nothing;
+  return html`
+    <sl-details open class="guide-conflicts-panel" @sl-after-show=${scrollOnExpand}>
+      <div slot="summary" class="guide-conflicts-header">
+        <span class="guide-conflicts-icon">${unsafeHTML(iconSvg(AlertTriangle, 16))}</span>
+        <span class="guide-conflicts-title">Guide Conflicts</span>
+        <sl-badge variant="warning" pill>${conflicts.length}</sl-badge>
+      </div>
+      <div class="guide-conflicts-list">
+        ${conflicts.map(
+          (c) => html`
+          <div class="guide-conflict-row">
+            <span class="guide-conflict-stage">${c.stage}</span>
+            <span class="guide-conflict-message">${c.message}</span>
+            <sl-badge variant="neutral" pill class="guide-conflict-source">${c.source}</sl-badge>
+            <button class="guide-conflict-view-source" @click=${() => options.onViewSource?.(c.stage)}>View source</button>
+          </div>
+        `,
+        )}
+      </div>
+    </sl-details>
+  `;
+}
+
 export function prApprovalPanelView(run, options = {}) {
   if (
     !(
@@ -724,6 +750,7 @@ export function runDetailView(run, settings = {}, options = {}) {
       ${stageTimelineView(stages, stageUi, run.active)}
       ${_circuitBreakerBannerView(run, settings)}
       ${prVerificationBannerView(run)}
+      ${guideConflictsPanelView(run.guide_conflicts, options)}
 
       <div class="run-info-section">
         ${

@@ -117,4 +117,47 @@ describe('status-badge', () => {
   it('statusIcon does NOT add icon-spin for unrecoverable', () => {
     expect(statusIcon('unrecoverable')).not.toContain('icon-spin');
   });
+
+  // workspace statuses (W-047 §10.7)
+  it('maps planning to status-planning', () => {
+    expect(statusClass('planning')).toBe('status-planning');
+  });
+  it('statusIcon returns SVG for planning', () => {
+    expect(statusIcon('planning')).toContain('<svg');
+  });
+  it('statusIcon adds icon-spin for planning (active state)', () => {
+    expect(statusIcon('planning')).toContain('class="icon-spin"');
+  });
+
+  it('maps integration_testing to status-integration-testing', () => {
+    expect(statusClass('integration_testing')).toBe(
+      'status-integration-testing',
+    );
+  });
+  it('statusIcon returns SVG for integration_testing', () => {
+    expect(statusIcon('integration_testing')).toContain('<svg');
+  });
+  it('statusIcon adds icon-spin for integration_testing (active state)', () => {
+    expect(statusIcon('integration_testing')).toContain('class="icon-spin"');
+  });
+
+  it('maps integration_failed to status-integration-failed', () => {
+    expect(statusClass('integration_failed')).toBe('status-integration-failed');
+  });
+  it('statusIcon returns SVG for integration_failed', () => {
+    expect(statusIcon('integration_failed')).toContain('<svg');
+  });
+  it('statusIcon does NOT add icon-spin for integration_failed', () => {
+    expect(statusIcon('integration_failed')).not.toContain('icon-spin');
+  });
+
+  it('maps blocked to status-blocked', () => {
+    expect(statusClass('blocked')).toBe('status-blocked');
+  });
+  it('statusIcon returns SVG for blocked', () => {
+    expect(statusIcon('blocked')).toContain('<svg');
+  });
+  it('statusIcon does NOT add icon-spin for blocked', () => {
+    expect(statusIcon('blocked')).not.toContain('icon-spin');
+  });
 });

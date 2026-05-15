@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   guideUploadWidget,
   headTemplateInput,
+  initProgressStrip,
   planModeRadio,
+  tokenOverheadGate,
 } from './launcher-shared.js';
 
 function renderToString(template) {
@@ -178,5 +180,182 @@ describe('planModeRadio', () => {
   it('does not show divergence warning when mode is explicit', () => {
     const out = renderToString(planModeRadio({ planMode: 'explicit' }));
     expect(out).not.toContain('plan-mode-independent-warning');
+  });
+});
+
+// ── tokenOverheadGate ──────────────────────────────────────────────────────
+
+describe('tokenOverheadGate', () => {
+  it('renders the gate container', () => {
+    const out = renderToString(tokenOverheadGate({ estimated: false }, {}));
+    expect(out).toContain('token-overhead-gate');
+  });
+
+  it('shows "Estimate cost" prompt before estimation', () => {
+    const out = renderToString(tokenOverheadGate({ estimated: false }, {}));
+    expect(out).toContain('Estimate cost');
+    expect(out).not.toContain('token-overhead-result');
+  });
+
+  it('shows estimate result after estimation', () => {
+    const state = { estimated: true, tokenEstimate: 500_000 };
+    const out = renderToString(tokenOverheadGate(state, {}));
+    expect(out).toContain('token-overhead-result');
+    expect(out).toContain('500');
+  });
+
+  it('uses estimateFn to compute display when provided', () => {
+    const state = { estimated: true, tokenEstimate: 750_000 };
+    const out = renderToString(
+      tokenOverheadGate(state, {
+        estimateFn: (s) => s.tokenEstimate * 2,
+      }),
+    );
+    expect(out).toContain('1,500,000');
+  });
+
+  it('does not require acknowledgement below threshold', () => {
+    const state = { estimated: true, tokenEstimate: 500_000 };
+    const out = renderToString(
+      tokenOverheadGate(state, { threshold: 1_000_000 }),
+    );
+    expect(out).not.toContain('token-overhead-ack');
+    expect(out).toContain('token-overhead-ok');
+  });
+
+  it('requires acknowledgement above threshold', () => {
+    const state = { estimated: true, tokenEstimate: 1_500_000 };
+    const out = renderToString(
+      tokenOverheadGate(state, { threshold: 1_000_000 }),
+    );
+    expect(out).toContain('token-overhead-ack');
+    expect(out).toContain('I understand the cost');
+  });
+
+  it('defaults threshold to 1M tokens', () => {
+    const state = { estimated: true, tokenEstimate: 1_500_000 };
+    const out = renderToString(tokenOverheadGate(state, {}));
+    expect(out).toContain('token-overhead-ack');
+  });
+
+  it('shows ok class when below default threshold', () => {
+    const state = { estimated: true, tokenEstimate: 800_000 };
+    const out = renderToString(tokenOverheadGate(state, {}));
+    expect(out).toContain('token-overhead-ok');
+    expect(out).not.toContain('token-overhead-ack');
+  });
+
+  it('shows warning variant for the cost alert when over threshold', () => {
+    const state = { estimated: true, tokenEstimate: 2_000_000 };
+    const out = renderToString(tokenOverheadGate(state, {}));
+    expect(out).toContain('variant="warning"');
+  });
+
+  it('formats token count with thousands separators', () => {
+    const state = { estimated: true, tokenEstimate: 1_234_567 };
+    const out = renderToString(tokenOverheadGate(state, {}));
+    expect(out).toContain('1,234,567');
+  });
+
+  it('fires onChange with estimate-request when estimate button clicked', () => {
+    const out = renderToString(
+      tokenOverheadGate({ estimated: false }, { onChange: () => {} }),
+    );
+    expect(out).toContain('btn-estimate-cost');
+  });
+
+  it('fires onChange with ack-toggle when checkbox toggled', () => {
+    const state = { estimated: true, tokenEstimate: 2_000_000 };
+    const out = renderToString(
+      tokenOverheadGate(state, { onChange: () => {} }),
+    );
+    expect(out).toContain('checkbox-ack-cost');
+  });
+});
+
+// ── initProgressStrip ──────────────────────────────────────────────────────
+
+describe('initProgressStrip', () => {
+  it('renders a row for each target', () => {
+    const state = {
+      targets: [
+        { name: 'lib', status: 'queued' },
+        { name: 'backend', status: 'queued' },
+        { name: 'frontend', status: 'queued' },
+      ],
+    };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).toContain('init-progress-strip');
+    expect(out).toContain('lib');
+    expect(out).toContain('backend');
+    expect(out).toContain('frontend');
+  });
+
+  it('shows queued status for queued targets', () => {
+    const state = { targets: [{ name: 'repo', status: 'queued' }] };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).toContain('init-target-queued');
+  });
+
+  it('shows initializing status with progress bar', () => {
+    const state = { targets: [{ name: 'repo', status: 'initializing' }] };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).toContain('init-target-initializing');
+    expect(out).toContain('sl-progress-bar');
+  });
+
+  it('shows ready status for completed targets', () => {
+    const state = { targets: [{ name: 'repo', status: 'ready' }] };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).toContain('init-target-ready');
+  });
+
+  it('shows setup_failed status for failed targets', () => {
+    const state = { targets: [{ name: 'repo', status: 'setup_failed' }] };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).toContain('init-target-setup_failed');
+  });
+
+  it('shows cancel button when onCancel is provided', () => {
+    const state = { targets: [{ name: 'repo', status: 'initializing' }] };
+    const out = renderToString(
+      initProgressStrip(state, { onCancel: () => {} }),
+    );
+    expect(out).toContain('btn-cancel-init');
+    expect(out).toContain('Cancel');
+  });
+
+  it('hides cancel button when onCancel is not provided', () => {
+    const state = { targets: [{ name: 'repo', status: 'initializing' }] };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).not.toContain('btn-cancel-init');
+  });
+
+  it('shows "Cancel launch" label by default', () => {
+    const state = { targets: [{ name: 'repo', status: 'initializing' }] };
+    const out = renderToString(
+      initProgressStrip(state, { onCancel: () => {} }),
+    );
+    expect(out).toContain('Cancel launch');
+  });
+
+  it('shows "Halt workspace" label when dispatched is true', () => {
+    const state = { targets: [{ name: 'repo', status: 'ready' }] };
+    const out = renderToString(
+      initProgressStrip(state, { onCancel: () => {}, dispatched: true }),
+    );
+    expect(out).toContain('Halt workspace');
+  });
+
+  it('returns nothing when targets array is empty', () => {
+    const state = { targets: [] };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).not.toContain('init-progress-strip');
+  });
+
+  it('shows cancelled status for cancelled targets', () => {
+    const state = { targets: [{ name: 'repo', status: 'cancelled' }] };
+    const out = renderToString(initProgressStrip(state));
+    expect(out).toContain('init-target-cancelled');
   });
 });

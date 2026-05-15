@@ -48,7 +48,7 @@ class TestPipelineInterruptedLandsOnInterrupted:
         pytest.fail("Could not find except PipelineInterrupted handler in runner.py")
 
     def test_sets_pipeline_status_interrupted(self):
-        """status['pipeline_status'] must be assigned 'interrupted', not 'failed'."""
+        """status['pipeline_status'] must be assigned 'interrupted' (or PipelineStatus.INTERRUPTED), not 'failed'."""
         handler, source = self._find_except_handler()
         found_assignment = False
         for stmt in ast.walk(handler):
@@ -60,13 +60,20 @@ class TestPipelineInterruptedLandsOnInterrupted:
                         and target.value.id == "status"):
                     slice_val = target.slice
                     if isinstance(slice_val, ast.Constant) and slice_val.value == "pipeline_status":
-                        assert isinstance(stmt.value, ast.Constant), (
-                            f"Expected constant assignment at line {stmt.lineno}"
-                        )
-                        assert stmt.value.value == "interrupted", (
-                            f"Expected 'interrupted' but got '{stmt.value.value}' "
-                            f"at line {stmt.lineno}"
-                        )
+                        if isinstance(stmt.value, ast.Constant):
+                            assert stmt.value.value == "interrupted", (
+                                f"Expected 'interrupted' but got '{stmt.value.value}' "
+                                f"at line {stmt.lineno}"
+                            )
+                        elif isinstance(stmt.value, ast.Attribute):
+                            assert stmt.value.attr == "INTERRUPTED", (
+                                f"Expected PipelineStatus.INTERRUPTED but got .{stmt.value.attr} "
+                                f"at line {stmt.lineno}"
+                            )
+                        else:
+                            pytest.fail(
+                                f"Expected constant or PipelineStatus.INTERRUPTED at line {stmt.lineno}"
+                            )
                         found_assignment = True
 
         assert found_assignment, "No status['pipeline_status'] assignment found in except handler"

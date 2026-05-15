@@ -69,6 +69,14 @@ When the work request includes a `## Reference Guide (normative)` section:
 - **Surface plan-vs-guide divergence explicitly.** Call out the specific guide rule and the conflicting plan instruction in your review output. Do not resolve the conflict yourself.
 - **Description requests that conflict with the guide are bugs.** If the work request description asks for something the guide forbids, treat this as a `major` issue to flag — the description is wrong, not the guide.
 
+### Conflict emission
+
+When you detect a guide-vs-plan or guide-vs-description divergence, populate the `guide_conflicts` array in your structured output. Each entry must have:
+- `message`: A clear description of the conflict — which guide rule and which instruction conflict.
+- `source`: `"plan"` if the plan diverges from the guide, or `"description"` if the work request description conflicts with the guide.
+
+Only populate `guide_conflicts` when a real conflict exists. Do not emit conflicts speculatively.
+
 ## Rules
 
 <!-- governance -->

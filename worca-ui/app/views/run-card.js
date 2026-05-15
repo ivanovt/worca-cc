@@ -247,6 +247,7 @@ export function runCardView(
             : html`<span class="run-card-status">${unsafeHTML(statusIcon(overallStatus, 16))}</span>`
         }
         <span class="run-card-title">${title}</span>
+        ${run.guide_conflicts?.length ? html`<sl-icon name="exclamation-triangle" class="conflict-icon" title=${`Guide conflicts flagged (${run.guide_conflicts.length}). View details.`}></sl-icon>` : nothing}
         ${run.is_worktree_run ? html`<sl-icon name="folder-symlink" class="run-card-worktree-icon" title=${`Isolated worktree at ${run.worktree_path || ''}`}></sl-icon>` : nothing}
         <sl-badge
           variant="${RUN_STATUS_VARIANT[overallStatus] || 'neutral'}"

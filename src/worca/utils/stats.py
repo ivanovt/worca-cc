@@ -11,6 +11,8 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+from worca.state.status import PipelineStatus
+
 
 def update_cumulative_stats(
     run_status: dict,
@@ -121,7 +123,7 @@ def _update_cumulative_stats_locked(
         "completed_at": run_status.get("completed_at", ""),
         "total_cost_usd": run_token_usage.get("total_cost_usd", 0),
         "total_tokens": total_tokens,
-        "stages_run": len([s for s in stages_data.values() if s.get("status") == "completed"]),
+        "stages_run": len([s for s in stages_data.values() if s.get("status") == PipelineStatus.COMPLETED]),
         "iterations_total": total_iterations,
     }
     if "runs" not in stats:
