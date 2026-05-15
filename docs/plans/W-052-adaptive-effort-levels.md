@@ -1,10 +1,19 @@
 # W-052: Adaptive Effort Levels for Pipeline Agents
 
-**Status:** Draft (decisions locked 2026-05-12)
+**Status:** Draft (decisions locked 2026-05-12; execution defaults locked 2026-05-15)
 **Priority:** P2
 **Area:** cc + ui
 **Date:** 2026-05-12
 **Depends on:** None
+
+## Locked Defaults (2026-05-15)
+
+Four execution defaults are now binding (mirror of the `## Decisions` section on issue #160):
+
+- **Shipping strategy** — single PR landing all 7 phases atomically. No phase-split. Heavier diff but no half-shipped state and atomic rollback.
+- **Default `auto_mode` (fresh installs)** — `adaptive`. Coordinator emits `worca-effort:*` labels on first run; the implementer consumes them. Documented in MIGRATION.md as a behavior change for upgraders.
+- **Default `auto_cap`** — `xhigh`. Lets escalation reach Opus 4.7's model-default ceiling; `max` is reachable only via explicit operator opt-in.
+- **Per-agent defaults in shipped `src/worca/settings.json`** — bake `planner: xhigh`, `coordinator: medium`, `guardian: high`. Leave `implementer`, `tester`, `reviewer` unset so the adaptive path drives base from the coordinator's per-bead label (or model default under `disabled`/`reactive`).
 
 ## Problem
 
@@ -64,20 +73,22 @@ return {
 
 The per-agent `effort` field accepts only literal rungs: `low | medium | high | xhigh | max`. There is **no `auto` value** — the mode field (`worca.effort.auto_mode`) decides whether explicit values, model defaults, or per-bead LLM judgment are used as the starting point. This collapses the plan's earlier "explicit values never escalate; only `auto` escalates" complexity into a single rule: mode controls escalation, the per-agent field is just the starting point (and acts as an override under `adaptive`).
 
+**This is the shipped `src/worca/settings.json` default** (per *Locked Defaults*). Existing keys (`model`, `max_turns`) are unchanged — only the four new entries shown below are added on top of the current block:
+
 ```jsonc
-// settings.json (committed)
+// src/worca/settings.json (shipped default, committed)
 "worca": {
   "effort": {
-    "auto_mode": "adaptive",        // disabled | reactive | adaptive
-    "auto_cap":  "xhigh"            // low | medium | high | xhigh | max
+    "auto_mode": "adaptive",        // disabled | reactive | adaptive  ← LOCKED
+    "auto_cap":  "xhigh"            // low | medium | high | xhigh | max  ← LOCKED
   },
   "agents": {
-    "planner":     { "model": "opus",   "effort": "xhigh" },
-    "coordinator": { "model": "opus",   "effort": "medium" },
-    "implementer": { "model": "sonnet" },                   // omitted — coordinator label drives base under adaptive
-    "tester":      { "model": "sonnet" },                   // omitted — model default
-    "reviewer":    { "model": "opus"   },                   // omitted — model default
-    "guardian":    { "model": "opus",   "effort": "high"  }
+    "planner":     { "model": "opus",   "max_turns": 100, "effort": "xhigh"  },  // LOCKED — heavy reasoning
+    "coordinator": { "model": "opus",   "max_turns": 300, "effort": "medium" },  // LOCKED — mechanical decomposition
+    "implementer": { "model": "sonnet", "max_turns": 300                     },  // LOCKED unset — adaptive path drives base
+    "tester":      { "model": "sonnet", "max_turns": 100                     },  // LOCKED unset — model default
+    "reviewer":    { "model": "opus",   "max_turns": 50                      },  // LOCKED unset — model default
+    "guardian":    { "model": "opus",   "max_turns": 50,  "effort": "high"   }   // LOCKED — high vigilance
   }
 }
 ```
@@ -403,13 +414,17 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 
 ## Implementation Plan
 
+**Shipping strategy (locked):** all 7 phases land in a **single PR**. Python core, coordinator changes, logging, three UI views, settings panel, and docs are reviewed and merged atomically. No phase split — the feature is not partially useful, and a half-shipped state where the runtime emits `effort: {...}` blocks but the UI has no chips just confuses operators. Atomic rollback if anything regresses.
+
+The phases below structure the *order of work within the PR*, not separate PRs.
+
 ### Phase 1: Schema and resolution core (Python)
 
 **Files:** `src/worca/orchestrator/stages.py`, `src/worca/orchestrator/effort.py` (new), `src/worca/orchestrator/runner.py`, `src/worca/utils/settings.py`, `src/worca/settings.json`.
 
 **Tasks:**
-1. Add `worca.effort` block to `src/worca/settings.json` with `auto_mode: "adaptive"`, `auto_cap: "xhigh"`.
-2. Add `effort` field to default agent entries in `settings.json` (omit on implementer/tester/reviewer to inherit mode-dependent fallback; keep planner/coordinator/guardian explicit).
+1. Add `worca.effort` block to `src/worca/settings.json` with the locked defaults: `auto_mode: "adaptive"`, `auto_cap: "xhigh"`.
+2. Add `effort` field to default agent entries in `settings.json` per the locked per-agent defaults: `planner: "xhigh"`, `coordinator: "medium"`, `guardian: "high"`. Implementer/tester/reviewer remain unset so the adaptive path drives base from the coordinator's per-bead label (or model default under `disabled`/`reactive`).
 3. Create `src/worca/orchestrator/effort.py` with `resolve_effort()`, `apply_escalation()`, `clamp()`, `read_bead_effort_label()`, and the `EFFORT_LEVELS` ordered tuple.
 4. Extend `get_stage_config()` in `stages.py:78-110` to include `effort: agent_config.get("effort")` in the returned dict.
 5. In `runner.py` at the stage-invocation site (~`runner.py:1839-1864`), call `resolve_effort()` with `trigger`, `iter_num`, and the assigned bead (None for non-implementer), and merge the result into `env_overrides` before `run_agent()`.
@@ -482,7 +497,7 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 
 | File | Change |
 |---|---|
-| `src/worca/settings.json` | Add `worca.effort` block; add `effort` to default agents (planner/coordinator/guardian only) |
+| `src/worca/settings.json` | Add `worca.effort` block (`auto_mode: "adaptive"`, `auto_cap: "xhigh"`); add `effort` to planner (`xhigh`), coordinator (`medium`), guardian (`high`). Implementer/tester/reviewer remain unset. |
 | `src/worca/orchestrator/stages.py` | Add `effort` to `get_stage_config()` return value |
 | `src/worca/orchestrator/effort.py` | **New.** `resolve_effort()`, `apply_escalation()`, `clamp()`, `read_bead_effort_label()`, `EFFORT_LEVELS` |
 | `src/worca/orchestrator/runner.py` | Wire `resolve_effort()` at stage invocation; post-COORDINATE warning for unlabeled beads; log line emit; SSE payload |
@@ -510,7 +525,7 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 - **Coordinator concern coupling.** The coordinator now does two jobs: decomposition + effort classification. Risk: prompt growth degrades decomposition quality. Mitigation: keep the effort-labeling instructions to a single appended section in `coordinator.md` (short rubric + `bd create --labels` + `bd update --notes` directives); revisit if decomposition quality regresses in integration tests.
 - **Governance.** No new governance hooks. Effort labels are attached via existing `bd create --labels` / `bd update --notes` calls; existing tool-restriction hooks apply unchanged.
 - **Breaking changes:** None. Omitted `effort` field preserves current behavior; existing pipelines run identically.
-- **Migration:** No required migration. The new `worca.effort` block has safe defaults (`adaptive` / `xhigh`) baked into `settings.json` so a freshly-pulled worca-cc starts using adaptive effort with the coordinator labeling beads. Existing user pipelines without any `effort` configuration see no behavior change beyond the new bead labels.
+- **Migration:** No required migration step. The new `worca.effort` block has the locked defaults (`auto_mode: "adaptive"`, `auto_cap: "xhigh"`) baked into the shipped `src/worca/settings.json`, so a freshly-pulled worca-cc starts using adaptive effort with the coordinator labeling beads. **Upgraders see a behavior change**: pipelines that previously ran every agent at model-default effort will start receiving the planner=xhigh / coordinator=medium / guardian=high explicit values and adaptive escalation on loopbacks. MIGRATION.md documents this and the one-line opt-out (`auto_mode: "disabled"`). Existing user pipelines that already set `worca.agents.<agent>` in their own `settings.json` see additive merge — their values win where set.
 - **Older-rev coordinators.** If a user pins an older `coordinator.md` override (in `.claude/agents/`) that lacks the effort-labeling section, the coordinator simply won't emit labels and `resolve_effort()` falls back to model default with a warning. No halt.
 
 ## Test Plan
