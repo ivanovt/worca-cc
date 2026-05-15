@@ -128,8 +128,18 @@ class WorktreeSource:
 
         Filters keys (all optional):
           run_id      — only include this specific run
+          fleet_id    — when set without run_id, returns [] — fleet child
+                        worktrees are owned by FleetSource.remove and must
+                        not be enumerated here, otherwise `cleanup --fleet-id`
+                        from inside an unrelated project root would offer to
+                        delete every completed worktree in that project's
+                        registry. Symmetric to FleetSource's guard against
+                        the inverse (run_id without fleet_id).
           older_than  — timedelta; only include entries started before now - delta
         """
+        if "fleet_id" in filters and "run_id" not in filters:
+            return []
+
         eligible = []
         for reg in list_pipelines(base=self.base):
             worktree_path = reg.get("worktree_path")

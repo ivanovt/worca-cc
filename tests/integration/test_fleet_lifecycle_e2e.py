@@ -1207,17 +1207,14 @@ def test_fleet_stale_pid_regression(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason="WorktreeSource.list_eligible ignores the fleet_id filter — "
-    "needs the symmetric guard that FleetSource already has",
-    strict=False,
-)
 def test_fleet_cleanup_fleet_id_filter_isolates(tmp_path):
     """`cleanup --fleet-id` must not enumerate unrelated worktrees.
 
-    Synthesises a completed-pipeline registry entry in an unrelated
-    repo and asserts that WorktreeSource ignores it when fleet_id is
-    set. Pure unit-style — no subprocess needed.
+    Gates the symmetric guard in WorktreeSource.list_eligible: when
+    fleet_id is set without run_id, the worktree source returns [] so
+    only FleetSource enumerates work to clean. Without the guard,
+    `cleanup --fleet-id` from inside any repo with completed worktrees
+    would offer to delete every one of them.
     """
     from worca.cli.cleanup import WorktreeSource
 
