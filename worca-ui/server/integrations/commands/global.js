@@ -115,6 +115,15 @@ const HELP_TEXT = `/start \u2014 show your chat ID
 /resume [run_id] \u2014 resume paused run
 /stop [run_id] \u2014 stop run
 
+Fleet commands (cross-project):
+/fleets \u2014 list active fleets
+/fleet [id|last] \u2014 fleet status
+/fleet-children <id|last> \u2014 per-child status
+/fleet-halt <id> \u2014 graceful halt (in-flight finish naturally)
+/fleet-stop <id> [--force] \u2014 SIGTERM every in-flight child (confirms first)
+/fleet-pause <id> \u2014 pause every in-flight child
+/fleet-resume <id> \u2014 resume paused/interrupted, re-dispatch failed
+
 Commands with [run_id] auto-resolve to the active run if omitted.
 Use \`*suffix\` to match by ending, e.g. /status \`*2db5\`
 Project commands require /use first.`;

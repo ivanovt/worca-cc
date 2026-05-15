@@ -12,6 +12,7 @@ import { createWebhookOutAdapter } from './adapters/webhook_out.js';
 import { createAllowlistGuard } from './allowlist.js';
 import { createChatContext } from './chat_context.js';
 import { createControlHandlers } from './commands/control.js';
+import { createFleetHandlers } from './commands/fleet.js';
 import { createGlobalHandlers } from './commands/global.js';
 import { parseCommand } from './commands/parser.js';
 import { createProjectHandlers } from './commands/project.js';
@@ -65,10 +66,12 @@ export function createIntegrations({
   });
   const projectHandlers = createProjectHandlers({ chatContext, restClient });
   const controlHandlers = createControlHandlers({ chatContext, restClient });
+  const fleetHandlers = createFleetHandlers({ chatContext, restClient });
   const allHandlers = {
     ...globalHandlers,
     ...projectHandlers,
     ...controlHandlers,
+    ...fleetHandlers,
   };
 
   // Mutable adapter registry — keyed by adapter name

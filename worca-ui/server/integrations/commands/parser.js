@@ -1,6 +1,9 @@
 const MENTION_RE = /^@\S+$/i;
 
-const COMMAND_RE = /^\/([a-z_]+)(?:@\S+)?$/i;
+// Allow `-` so namespaced commands like /fleet-halt and /fleet-resume parse.
+// Hyphens must appear inside the name, not lead or trail. Backwards-compatible
+// — every existing underscore-only command still matches.
+const COMMAND_RE = /^\/([a-z_][a-z0-9_-]*)(?:@\S+)?$/i;
 
 /**
  * Parses a chat message into a command name and argument list.
