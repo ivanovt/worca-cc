@@ -59,7 +59,18 @@ export async function removeWorktree(
         /* ignore */
       }
       if (isRealDir) {
-        await rm(worktreePath, { recursive: true, force: true });
+        // maxRetries handles transient ENOTEMPTY/EBUSY/EPERM on macOS when a
+        // background process (Spotlight, language servers, npm install
+        // finishing) touches a deep node_modules subtree between the
+        // recursive walk's readdir and the final rmdir. Without retries,
+        // a single race surfaces "ENOTEMPTY: directory not empty, rmdir
+        // .../node_modules/lucide/dist" to the user.
+        await rm(worktreePath, {
+          recursive: true,
+          force: true,
+          maxRetries: 5,
+          retryDelay: 200,
+        });
       }
     }
   }

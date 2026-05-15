@@ -141,6 +141,27 @@ function _runProjectId(runId) {
   return run?.project || run?._project || state.currentProjectId || null;
 }
 
+// Build a project-scoped URL for a run-scoped REST endpoint. Resolves the
+// run's owning project via `_runProjectId` so global mode (no currentProjectId)
+// still hits `/api/projects/<project>/...` instead of falling back to the
+// legacy `/api/...` mount — which has no `worcaDir` configured and returns
+// 501 "worcaDir not configured" for any project-scoped action.
+function runUrl(runId, path) {
+  const pid = _runProjectId(runId);
+  return pid ? `/api/projects/${pid}${path}` : `/api${path}`;
+}
+
+// Build a project-scoped URL for a worktree-scoped REST endpoint. Worktrees
+// in state carry a `project` field stamped by fetchWorktrees; using that
+// keeps cleanup working in global mode when no project is selected. Falls
+// back to legacy `/api/...` only when the worktree isn't in state (e.g. a
+// race with a fresh page navigation).
+function worktreeUrl(runId, path) {
+  const wt = (store.getState().worktrees || []).find((w) => w.run_id === runId);
+  const pid = wt?.project || store.getState().currentProjectId;
+  return pid ? `/api/projects/${pid}${path}` : `/api${path}`;
+}
+
 const ws = createWsClient();
 const notificationManager = createNotificationManager({
   store,
@@ -1462,7 +1483,7 @@ async function handleConfirmStop() {
       (r) => r.active,
     );
     const runId = activeRun?.id || 'current';
-    const res = await fetch(projectUrl(`/runs/${runId}/stop`), {
+    const res = await fetch(runUrl(runId, `/runs/${runId}/stop`), {
       method: 'POST',
     });
     const data = await res.json();
@@ -1499,7 +1520,7 @@ async function handlePausePipeline() {
   actionError = null;
   rerender();
   try {
-    const res = await fetch(projectUrl(`/runs/${runId}/pause`), {
+    const res = await fetch(runUrl(runId, `/runs/${runId}/pause`), {
       method: 'POST',
     });
     const data = await res.json();
@@ -1518,7 +1539,7 @@ async function handlePauseRun(runId) {
   _controlPending = { action: 'pause', runId };
   rerender();
   try {
-    const res = await fetch(projectUrl(`/runs/${runId}/pause`), {
+    const res = await fetch(runUrl(runId, `/runs/${runId}/pause`), {
       method: 'POST',
     });
     const data = await res.json();
@@ -1758,7 +1779,7 @@ function handleStopRun(runId) {
         _controlPending = { action: 'stop', runId };
         rerender();
         try {
-          const res = await fetch(projectUrl(`/runs/${runId}/stop`), {
+          const res = await fetch(runUrl(runId, `/runs/${runId}/stop`), {
             method: 'POST',
           });
           const data = await res.json();
@@ -1793,7 +1814,7 @@ function handleCancelRun(runId) {
         _controlPending = { action: 'cancel', runId };
         rerender();
         try {
-          const res = await fetch(projectUrl(`/runs/${runId}/cancel`), {
+          const res = await fetch(runUrl(runId, `/runs/${runId}/cancel`), {
             method: 'POST',
           });
           const data = await res.json();
@@ -1814,7 +1835,7 @@ function handleCancelRun(runId) {
 
 async function handleApprovePR(runId) {
   try {
-    const res = await fetch(projectUrl(`/runs/${runId}/control`), {
+    const res = await fetch(runUrl(runId, `/runs/${runId}/control`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'approve', source: 'ui-pr-approval' }),
@@ -1837,7 +1858,7 @@ async function handleApprovePR(runId) {
 
 async function handleRejectPR(runId) {
   try {
-    const res = await fetch(projectUrl(`/runs/${runId}/control`), {
+    const res = await fetch(runUrl(runId, `/runs/${runId}/control`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'reject', source: 'ui-pr-approval' }),
@@ -1863,7 +1884,7 @@ async function handleRejectPR(runId) {
 const { archiveRun, unarchiveRun } = createArchiveActions({
   showConfirm,
   showActionError,
-  projectUrl,
+  runUrl,
   store,
   rerender,
 });
@@ -1922,7 +1943,8 @@ function closeWorktreeCleanupDialog() {
 }
 
 async function deleteWorktree(runId, force) {
-  const url = projectUrl(
+  const url = worktreeUrl(
+    runId,
     `/worktrees/${encodeURIComponent(runId)}${force ? '?force=1' : ''}`,
   );
   const res = await fetch(url, { method: 'DELETE' });
@@ -1938,7 +1960,10 @@ async function deleteWorktree(runId, force) {
 }
 
 async function confirmWorktreeCleanup(runId, force) {
-  // Bulk path: runId is null, delete every completed worktree via one POST.
+  // Bulk path: runId is null — delete every completed worktree. In global
+  // mode the completed set can span multiple projects, so we bucket runIds
+  // by their owning project and fire one POST per project. Each /cleanup
+  // endpoint is scoped to a single project's worcaDir/registry.
   // No optimistic removal — the server stamps `cleanup_state: 'pending'` on
   // each registry entry; we surface that via a spinner per card and poll
   // GET /worktrees until everything settles. A page reload during cleanup
@@ -1948,26 +1973,38 @@ async function confirmWorktreeCleanup(runId, force) {
       (w) => w.status === 'completed',
     );
     closeWorktreeCleanupDialog();
-    const runIds = completed.map((w) => w.run_id);
-    const url = projectUrl('/worktrees/cleanup');
-    let data = null;
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ run_ids: runIds, force: true }),
-      });
-      try {
-        data = await res.json();
-      } catch {
-        /* ignore parse errors */
-      }
-    } catch {
-      /* network error — startCleanupPolling will reconcile on next tick */
+    const currentProjectId = store.getState().currentProjectId;
+    const byProject = new Map();
+    for (const w of completed) {
+      const pid = w.project || currentProjectId || null;
+      if (!byProject.has(pid)) byProject.set(pid, []);
+      byProject.get(pid).push(w.run_id);
     }
+    const rejected = [];
+    await Promise.all(
+      [...byProject.entries()].map(async ([pid, run_ids]) => {
+        const url = pid
+          ? `/api/projects/${pid}/worktrees/cleanup`
+          : '/api/worktrees/cleanup';
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ run_ids, force: true }),
+          });
+          try {
+            const data = await res.json();
+            if (Array.isArray(data?.rejected)) rejected.push(...data.rejected);
+          } catch {
+            /* ignore parse errors */
+          }
+        } catch {
+          /* network error — startCleanupPolling will reconcile on next tick */
+        }
+      }),
+    );
     fetchWorktrees();
     startCleanupPolling();
-    const rejected = data?.rejected || [];
     if (rejected.length > 0) {
       showActionError(
         `Cleanup rejected ${rejected.length} item(s):\n${rejected
@@ -1978,13 +2015,30 @@ async function confirmWorktreeCleanup(runId, force) {
     return;
   }
 
-  // Single-row path — server-side single-target DELETE is still synchronous,
-  // so this path doesn't go through cleanup_state; just refresh.
+  // Single-row path — server-side single-target DELETE is synchronous (it
+  // does the actual filesystem rm + git worktree remove before responding),
+  // and on macOS with nested node_modules it can take 10+ seconds. Stamp
+  // `cleanup_state: 'pending'` on the local entry immediately so the card
+  // renders the existing spinner UI while we wait; the bulk path stamps the
+  // same field server-side, so the rendering logic is identical.
   closeWorktreeCleanupDialog();
+  const state0 = store.getState();
+  const optimisticWorktrees = (state0.worktrees || []).map((w) =>
+    w.run_id === runId ? { ...w, cleanup_state: 'pending' } : w,
+  );
+  store.setState({ worktrees: optimisticWorktrees });
   try {
     await deleteWorktree(runId, !!force);
     fetchWorktrees();
   } catch (err) {
+    // Roll back the optimistic stamp so the user can retry from a clean card.
+    const stateNow = store.getState();
+    const rolledBack = (stateNow.worktrees || []).map((w) => {
+      if (w.run_id !== runId) return w;
+      const { cleanup_state: _drop, ...rest } = w;
+      return rest;
+    });
+    store.setState({ worktrees: rolledBack });
     showActionError(err?.message || 'Cleanup failed');
   }
 }
@@ -2017,7 +2071,7 @@ async function handleConfirmRestartStage() {
     );
     const runId = activeRun?.id || 'current';
     const res = await fetch(
-      projectUrl(`/runs/${runId}/stages/${stage}/restart`),
+      runUrl(runId, `/runs/${runId}/stages/${stage}/restart`),
       {
         method: 'POST',
       },
@@ -2203,7 +2257,7 @@ async function doRunLearn() {
   rerender();
   try {
     const runId = route.runId;
-    const res = await fetch(projectUrl(`/runs/${runId}/learn`), {
+    const res = await fetch(runUrl(runId, `/runs/${runId}/learn`), {
       method: 'POST',
     });
     const data = await res.json();

@@ -36,15 +36,37 @@ describe('confirmWorktreeCleanup — bulk path structure', () => {
     expect(fnBody).not.toBeNull();
   });
 
-  it('bulk path fires a single POST to /worktrees/cleanup (not N DELETEs)', () => {
-    // Must contain exactly one POST call to the cleanup endpoint
+  it('bulk path POSTs to /worktrees/cleanup (not N DELETEs)', () => {
+    // Must POST to a project-scoped cleanup endpoint. In global mode
+    // completed worktrees can span multiple projects, so the bulk path
+    // buckets by project and fires one POST per project — but each POST
+    // still targets `/worktrees/cleanup` under `/api/projects/<id>`.
     expect(fnBody).toContain('POST');
     expect(fnBody).toContain('/worktrees/cleanup');
-    // Must NOT use a for-of loop that calls deleteWorktree per iteration
-    // (the old loop used "await deleteWorktree" inside a for...of)
-    expect(fnBody).not.toMatch(
-      /for\s*\(.*of\s+completed\b[\s\S]*?deleteWorktree/,
-    );
+    // Must NOT call deleteWorktree per id inside the bulk branch (the old
+    // loop used `await deleteWorktree(w.run_id, true)` inside a for...of).
+    // We restrict the search to the bulk branch — the single-row branch
+    // below still calls deleteWorktree once, which is expected.
+    const bulkBranchStart = fnBody.indexOf('runId === null');
+    const singleRowMarker = fnBody.indexOf('Single-row path', bulkBranchStart);
+    expect(bulkBranchStart).toBeGreaterThan(-1);
+    expect(singleRowMarker).toBeGreaterThan(bulkBranchStart);
+    const bulkBranch = fnBody.slice(bulkBranchStart, singleRowMarker);
+    expect(bulkBranch).not.toContain('deleteWorktree');
+  });
+
+  it('bulk path buckets runIds by project before POSTing', () => {
+    // Cross-project bulk cleanup: each project's worcaDir owns its own
+    // registry, so a single POST to one project's endpoint cannot remove
+    // worktrees from another. The bulk branch must group completed runIds
+    // by `w.project` and dispatch one POST per project.
+    const bulkBranchStart = fnBody.indexOf('runId === null');
+    expect(bulkBranchStart).toBeGreaterThan(-1);
+    const bulkBranch = fnBody.slice(bulkBranchStart);
+    // Look for evidence of per-project grouping — either a Map keyed by
+    // project, or a reduce/loop that reads `w.project`.
+    expect(bulkBranch).toMatch(/\bw\.project\b|\.project\b/);
+    expect(bulkBranch).toMatch(/\/api\/projects\/\$\{|byProject/);
   });
 
   it('bulk path sends force: true in the request body', () => {

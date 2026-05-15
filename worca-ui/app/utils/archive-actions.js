@@ -4,7 +4,10 @@
  * @param {object} deps - Injected dependencies
  * @param {function} deps.showConfirm - Confirmation dialog
  * @param {function} deps.showActionError - Error display
- * @param {function} deps.projectUrl - URL builder
+ * @param {function} deps.runUrl - URL builder for run-scoped endpoints,
+ *   called as `runUrl(runId, path)`. Must resolve the run's owning project so
+ *   archive/unarchive work in global mode (where no project is selected and
+ *   the legacy `/api/...` mount has no `worcaDir`).
  * @param {object} deps.store - State store (getState, setRun)
  * @param {function} deps.rerender - Re-render UI
  * @param {function} deps.fetchFn - fetch implementation (defaults to global fetch)
@@ -12,7 +15,7 @@
 export function createArchiveActions({
   showConfirm,
   showActionError,
-  projectUrl,
+  runUrl,
   store,
   rerender,
   fetchFn = fetch,
@@ -27,7 +30,7 @@ export function createArchiveActions({
         confirmVariant: 'danger',
         onConfirm: async () => {
           try {
-            const res = await fetchFn(projectUrl(`/runs/${runId}/archive`), {
+            const res = await fetchFn(runUrl(runId, `/runs/${runId}/archive`), {
               method: 'POST',
             });
             const data = await res.json();
@@ -54,7 +57,7 @@ export function createArchiveActions({
 
   async function unarchiveRun(runId) {
     try {
-      const res = await fetchFn(projectUrl(`/runs/${runId}/unarchive`), {
+      const res = await fetchFn(runUrl(runId, `/runs/${runId}/unarchive`), {
         method: 'POST',
       });
       const data = await res.json();

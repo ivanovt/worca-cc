@@ -25,7 +25,7 @@ function makeDeps(overrides = {}) {
   return {
     showConfirm: vi.fn(),
     showActionError: vi.fn(),
-    projectUrl: (path) => `/api/projects/p1${path}`,
+    runUrl: (_runId, path) => `/api/projects/p1${path}`,
     store,
     rerender: vi.fn(),
     fetchFn: vi.fn(),
@@ -73,6 +73,17 @@ describe('archiveRun', () => {
       '/api/projects/p1/runs/run-456/archive',
       { method: 'POST' },
     );
+  });
+
+  it('onConfirm forwards runId to runUrl so global-mode resolves the right project', async () => {
+    const runUrl = vi.fn((_runId, path) => `/api/projects/p1${path}`);
+    const deps = makeDeps({ fetchFn: mockFetchOk(), runUrl });
+    const { archiveRun } = createArchiveActions(deps);
+
+    archiveRun('run-789');
+    await deps.showConfirm.mock.calls[0][0].onConfirm();
+
+    expect(runUrl).toHaveBeenCalledWith('run-789', '/runs/run-789/archive');
   });
 
   it('onConfirm updates store on success', async () => {
@@ -170,6 +181,16 @@ describe('unarchiveRun', () => {
       '/api/projects/p1/runs/run-789/unarchive',
       { method: 'POST' },
     );
+  });
+
+  it('forwards runId to runUrl so global-mode resolves the right project', async () => {
+    const runUrl = vi.fn((_runId, path) => `/api/projects/p1${path}`);
+    const deps = makeDeps({ fetchFn: mockFetchOk(), runUrl });
+    const { unarchiveRun } = createArchiveActions(deps);
+
+    await unarchiveRun('run-XYZ');
+
+    expect(runUrl).toHaveBeenCalledWith('run-XYZ', '/runs/run-XYZ/unarchive');
   });
 
   it('does NOT show confirmation dialog', async () => {
