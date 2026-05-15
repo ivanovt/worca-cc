@@ -98,20 +98,26 @@ def register_pipeline(
     return path
 
 
-def update_pipeline(run_id, status=None, base=_DEFAULT_BASE):
-    """Update terminal status on an existing pipeline entry. Returns True on success.
+def update_pipeline(run_id, status=None, *, pid=None, base=_DEFAULT_BASE):
+    """Update terminal status (and/or pid) on an existing pipeline entry.
 
-    Returns False if the pipeline registry file does not exist.
+    Returns True on success, False if the registry file does not exist.
 
     The registry is a pointer (run_id → worktree_path + pid), not a state
     mirror. Per-stage transitions live in the worktree's status.json; the
     registry is only updated for terminal lifecycle changes (completed,
-    failed). Mid-run state must be read from the worktree's status.json.
+    failed) or to correct the pid (see below).
+
+    ``pid`` was added to fix a stale-pid race: run_worktree.py registers
+    itself with its *own* PID before forking into run_pipeline.py and
+    exiting, so the recorded PID is dead by the time the reconciler
+    polls. The live runner now calls update_pipeline(..., pid=os.getpid())
+    once on startup so subsequent stale_pid checks find a live process.
 
     Note: The read-modify-write cycle is not atomic across concurrent callers.
-    This is safe because each pipeline has its own run_id file, and the
-    orchestrator processes completions sequentially via as_completed().
-    Do not call concurrently for the same run_id without external locking.
+    Each pipeline has its own run_id file, and the orchestrator processes
+    completions sequentially via as_completed(); do not call concurrently
+    for the same run_id without external locking.
     """
     path = _pipeline_path(run_id, base=base)
     if not os.path.exists(path):
@@ -122,6 +128,8 @@ def update_pipeline(run_id, status=None, base=_DEFAULT_BASE):
 
     if status is not None:
         data["status"] = status
+    if pid is not None:
+        data["pid"] = pid
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     _atomic_write(path, data)

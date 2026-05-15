@@ -297,6 +297,39 @@ def _read_child_registry(repo: Path, run_id: str) -> dict:
     return json.loads(path.read_text())
 
 
+def _wait_for_registry_status(
+    repo: Path,
+    run_id: str,
+    expected: set,
+    timeout: int = 15,
+) -> dict:
+    """Poll the parent-project registry entry until status ∈ expected.
+
+    Distinct from _wait_for_pipeline_terminal (which polls the worktree's
+    status.json): the runner's atexit_cleanup mirrors terminal status to
+    the multi-pipeline registry, but this is a separate write that lags
+    status.json by tens to hundreds of ms. Tests that act on the registry
+    status (resume_child, poll_and_update_fleet_manifest) must wait for
+    the mirror, not just status.json.
+    """
+    deadline = time.time() + timeout
+    actual = None
+    while time.time() < deadline:
+        try:
+            entry = _read_child_registry(repo, run_id)
+        except (FileNotFoundError, json.JSONDecodeError):
+            entry = None
+        if entry:
+            actual = entry.get("status")
+            if actual in expected:
+                return entry
+        time.sleep(0.15)
+    raise TimeoutError(
+        f"Registry status for {run_id} in {repo.name} did not reach any "
+        f"of {expected} within {timeout}s (last: {actual!r})"
+    )
+
+
 def _write_child_registry(repo: Path, run_id: str, updates: dict) -> None:
     """Merge updates into the child's registry entry."""
     path = repo / ".worca" / "multi" / "pipelines.d" / f"{run_id}.json"
@@ -534,12 +567,23 @@ def test_fleet_stop_then_resume(tmp_path):
         assert m["status"] == "halted"
         assert m["halt_reason"] == "stopped"
 
-        # Children land terminal — interrupted from SIGTERM, or failed if the
-        # runner couldn't write its interrupted state cleanly. Both are non-
-        # _FAILURE-STATES for halt_reason purposes (interrupted) but the
-        # important invariant is they're NO LONGER running.
+        # Children land terminal — interrupted from SIGTERM, or failed if
+        # the runner couldn't write its interrupted state cleanly. Both
+        # are non-_FAILURE-STATES for halt_reason purposes (interrupted)
+        # but the important invariant is they're NO LONGER running.
         for child, (_, wt) in zip(children, cleanup_pairs):
             _wait_for_pipeline_terminal(wt, child["run_id"], timeout=30)
+
+        # The runner's atexit_cleanup mirrors terminal status into the
+        # parent-project registry after status.json is set. Wait for that
+        # second write — resume_child reads the registry, not status.json.
+        for child, (repo_path, _) in zip(children, cleanup_pairs):
+            _wait_for_registry_status(
+                repo_path,
+                child["run_id"],
+                {"interrupted", "failed"},
+                timeout=15,
+            )
 
         # Sticky-halt: poll must not flip back.
         derived = poll_and_update_fleet_manifest(fleet_id)
@@ -548,16 +592,21 @@ def test_fleet_stop_then_resume(tmp_path):
         # Resume in place for any child landed in 'interrupted' or 'paused'.
         # See _EnvOverride: resume_child spawns a fresh run_pipeline.py whose
         # env is inherited from os.environ, not the child's original env.
+        observed_statuses = {}
         resumed_any = False
         with _EnvOverride(env):
             for child in children:
                 entry = _read_child_registry(
                     Path(child["project_path"]), child["run_id"]
                 )
+                observed_statuses[child["run_id"]] = entry.get("status")
                 if entry.get("status") in ("interrupted", "paused", "failed"):
                     if resume_child(child["project_path"], child["run_id"]):
                         resumed_any = True
-        assert resumed_any, "no children were in a resumable state after stop"
+        assert resumed_any, (
+            "no children were in a resumable state after stop; "
+            f"observed registry statuses: {observed_statuses}"
+        )
 
         update_fleet_status(fleet_id, "running")
 
@@ -1077,18 +1126,14 @@ def test_fleet_guide_injected_into_every_child(tmp_path):
 
 @pytest.mark.timeout(60)
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX fork model")
-@pytest.mark.xfail(
-    reason="run_worktree.py registers its own (parent) PID; "
-    "by the time run_pipeline.py is live, the registered PID is dead",
-    strict=False,
-)
 def test_fleet_stale_pid_regression(tmp_path):
     """Registered PID in pipelines.d/ must be the live run_pipeline.py PID.
 
-    Reproduces the bug from the playwright manual run. Will fail until
-    register_pipeline is called with the inner runner's PID instead of
-    run_worktree.py's. Marked xfail strict=False so the suite stays
-    green and an unexpected pass flags the fix.
+    Gates the stale-PID fix: run_worktree.py registers itself with its
+    own PID before forking into run_pipeline.py and exiting, so the
+    runner must update the registry's pid on startup. Without that, the
+    stale_pid reconciler ghosts a healthy pipeline into
+    "interrupted/stale_pid" within a few poll cycles.
     """
     from worca.orchestrator.fleet_manifest import generate_fleet_id
 
