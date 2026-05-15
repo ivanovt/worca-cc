@@ -540,6 +540,50 @@ class TestFleetSourceListEligible:
 
         assert eligible == []
 
+    # Production manifests carry `created_at`, not `started_at`. Without the
+    # fallback in FleetSource.list_eligible the age guard would be a no-op
+    # and --older-than would delete every fleet regardless of age.
+
+    def _write_created_at_manifest(self, fleet_runs_dir, fleet_id, created_at):
+        os.makedirs(fleet_runs_dir, exist_ok=True)
+        manifest = {
+            "fleet_id": fleet_id,
+            "status": "completed",
+            "created_at": created_at.isoformat(),
+            "title": f"Fleet {fleet_id}",
+            "halt_reason": None,
+            "children": [],
+        }
+        with open(os.path.join(fleet_runs_dir, f"{fleet_id}.json"), "w") as f:
+            json.dump(manifest, f)
+
+    def test_older_than_filter_uses_created_at_when_started_at_missing(self, tmp_path):
+        """Production manifests have created_at, not started_at — must still age-filter."""
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        old = datetime.now(timezone.utc) - timedelta(days=10)
+        self._write_created_at_manifest(fleet_runs_dir, "f_old_created", old)
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible(
+            {"older_than": timedelta(days=7)}
+        )
+
+        assert len(eligible) == 1
+        assert eligible[0]["fleet_id"] == "f_old_created"
+
+    def test_older_than_filter_excludes_recent_created_at(self, tmp_path):
+        """The no-op-age-guard bug: a recent created_at must NOT be eligible."""
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        recent = datetime.now(timezone.utc) - timedelta(days=2)
+        self._write_created_at_manifest(fleet_runs_dir, "f_new_created", recent)
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible(
+            {"older_than": timedelta(days=7)}
+        )
+
+        assert eligible == []
+
     def test_skips_malformed_json(self, tmp_path):
         fleet_runs_dir = str(tmp_path / "fleet-runs")
         os.makedirs(fleet_runs_dir)

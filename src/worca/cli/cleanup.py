@@ -245,7 +245,14 @@ class FleetSource:
                 continue
 
             if "older_than" in filters and filters["older_than"] is not None:
-                started_at = manifest.get("started_at")
+                # Fleet manifests carry `created_at` (set at manifest write).
+                # `started_at` is read first for forward-compatibility if the
+                # field is later added; without the fallback the age guard
+                # would be a no-op and --older-than would delete every fleet.
+                started_at = (
+                    manifest.get("started_at")
+                    or manifest.get("created_at")
+                )
                 if started_at:
                     started = datetime.fromisoformat(started_at)
                     if started.tzinfo is None:

@@ -163,6 +163,83 @@ describe('createFleetManifestWatcher', () => {
     );
   });
 
+  // Regression: previously the watcher broadcast manifest.status verbatim,
+  // so fleets whose children had all finished still showed 'running' over
+  // WebSocket until a REST GET reconciled. The watcher now passes the live
+  // child statuses through effectiveFleetStatus().
+  it('broadcasts effective status, not raw manifest.status', async () => {
+    const broadcaster = { broadcast: vi.fn() };
+    const fleetRunsDir = '/tmp/test-fleet-runs';
+    const fleetId = 'f_202605120809_eff0001';
+    // Manifest still says running (run_fleet.py never wrote terminal), but
+    // every child is completed → effective status should be 'completed'.
+    const manifest = {
+      fleet_id: fleetId,
+      status: 'running',
+      halt_reason: null,
+      children: [
+        { run_id: 'run-1', project_path: '/projA' },
+        { run_id: 'run-2', project_path: '/projB' },
+      ],
+    };
+
+    mockReadFileSync.mockImplementation((path) => {
+      if (path.endsWith(`${fleetId}.json`)) return JSON.stringify(manifest);
+      if (path.includes('run-1'))
+        return JSON.stringify({ status: 'completed' });
+      if (path.includes('run-2'))
+        return JSON.stringify({ status: 'completed' });
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+
+    createFleetManifestWatcher({ broadcaster, fleetRunsDir });
+    watchCallback('change', `${fleetId}.json`);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(broadcaster.broadcast).toHaveBeenCalledWith(
+      'fleet-update',
+      expect.objectContaining({
+        fleet_id: fleetId,
+        status: 'completed',
+        completed_children: 2,
+        failed_children: 0,
+      }),
+    );
+  });
+
+  it('honors sticky halted status when children are all terminal', async () => {
+    const broadcaster = { broadcast: vi.fn() };
+    const fleetRunsDir = '/tmp/test-fleet-runs';
+    const fleetId = 'f_202605120809_halt001';
+    // User halted the fleet — even with all-completed children, the broadcast
+    // must keep 'halted' so the UI does not silently revive a halted fleet.
+    const manifest = {
+      fleet_id: fleetId,
+      status: 'halted',
+      halt_reason: 'user',
+      children: [{ run_id: 'run-1', project_path: '/projA' }],
+    };
+
+    mockReadFileSync.mockImplementation((path) => {
+      if (path.endsWith(`${fleetId}.json`)) return JSON.stringify(manifest);
+      if (path.includes('run-1'))
+        return JSON.stringify({ status: 'completed' });
+      throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    });
+
+    createFleetManifestWatcher({ broadcaster, fleetRunsDir });
+    watchCallback('change', `${fleetId}.json`);
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(broadcaster.broadcast).toHaveBeenCalledWith(
+      'fleet-update',
+      expect.objectContaining({
+        status: 'halted',
+        halt_reason: 'user',
+      }),
+    );
+  });
+
   it('treats missing child registry entry as running', async () => {
     const broadcaster = { broadcast: vi.fn() };
     const fleetRunsDir = '/tmp/test-fleet-runs';

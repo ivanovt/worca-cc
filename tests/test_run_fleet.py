@@ -709,6 +709,130 @@ class TestMainWritesFleetManifest:
         mock_write.assert_not_called()
 
 
+class TestMainProjectsResolution:
+    """main() resolves projects from --projects and/or --projects-file, then
+    errors with exit 2 if the merged list is empty (previously the script
+    would silently exit 0 when --projects-file was used alone)."""
+
+    def _common_mocks(self):
+        """Patches that let main() reach (or skip) dispatch without doing real work."""
+        return (
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}),
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+        )
+
+    def test_no_projects_at_all_exits_2(self, capsys):
+        from worca.scripts.run_fleet import main
+        # No --projects, no --projects-file → empty list → exit 2
+        result = main(["--prompt", "x"])
+        assert result == 2
+        captured = capsys.readouterr()
+        assert "no target projects" in captured.err
+
+    def test_projects_file_alone_resolves_projects(self, tmp_path):
+        """--projects-file alone is sufficient — was previously dead code."""
+        from worca.scripts.run_fleet import main
+        pf = tmp_path / "repos.txt"
+        pf.write_text("/repo/a\n/repo/b\n")
+
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}) as mock_dispatch,
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+        ):
+            result = main(["--projects-file", str(pf), "--prompt", "x"])
+
+        assert result == 0
+        # dispatch_fleet was called with both repos as targets
+        kwargs = mock_dispatch.call_args[1]
+        target_dirs = [t["project_dir"] for t in kwargs["targets"]]
+        assert target_dirs == ["/repo/a", "/repo/b"]
+
+    def test_projects_file_merges_with_projects_flag(self, tmp_path):
+        from worca.scripts.run_fleet import main
+        pf = tmp_path / "repos.txt"
+        pf.write_text("/repo/b\n/repo/c\n")
+
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}) as mock_dispatch,
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+        ):
+            main([
+                "--projects", "/repo/a",
+                "--projects-file", str(pf),
+                "--prompt", "x",
+            ])
+
+        kwargs = mock_dispatch.call_args[1]
+        target_dirs = [t["project_dir"] for t in kwargs["targets"]]
+        assert target_dirs == ["/repo/a", "/repo/b", "/repo/c"]
+
+    def test_projects_file_skips_blank_lines_and_comments(self, tmp_path):
+        from worca.scripts.run_fleet import main
+        pf = tmp_path / "repos.txt"
+        pf.write_text(
+            "# comment\n"
+            "/repo/a\n"
+            "\n"
+            "   \n"
+            "# another comment\n"
+            "/repo/b\n"
+        )
+
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}) as mock_dispatch,
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+        ):
+            main(["--projects-file", str(pf), "--prompt", "x"])
+
+        kwargs = mock_dispatch.call_args[1]
+        target_dirs = [t["project_dir"] for t in kwargs["targets"]]
+        assert target_dirs == ["/repo/a", "/repo/b"]
+
+    def test_projects_file_with_only_comments_exits_2(self, tmp_path, capsys):
+        """An effectively-empty file is treated the same as no file at all."""
+        from worca.scripts.run_fleet import main
+        pf = tmp_path / "repos.txt"
+        pf.write_text("# just comments\n# nothing else\n")
+
+        result = main(["--projects-file", str(pf), "--prompt", "x"])
+        assert result == 2
+        assert "no target projects" in capsys.readouterr().err
+
+    def test_projects_file_unreadable_exits_1(self, tmp_path, capsys):
+        from worca.scripts.run_fleet import main
+        result = main([
+            "--projects-file", str(tmp_path / "does-not-exist.txt"),
+            "--prompt", "x",
+        ])
+        assert result == 1
+        assert "failed to read --projects-file" in capsys.readouterr().err
+
+    def test_projects_dedupe_preserves_order(self, tmp_path):
+        """Duplicate paths between --projects and --projects-file are deduped."""
+        from worca.scripts.run_fleet import main
+        pf = tmp_path / "repos.txt"
+        pf.write_text("/repo/a\n/repo/c\n")
+
+        with (
+            patch("worca.scripts.run_fleet.check_target_readiness", return_value=(True, None)),
+            patch("worca.scripts.run_fleet.dispatch_fleet", return_value={}) as mock_dispatch,
+            patch("worca.orchestrator.fleet_manifest.write_fleet_manifest"),
+        ):
+            main([
+                "--projects", "/repo/a", "/repo/b",
+                "--projects-file", str(pf),
+                "--prompt", "x",
+            ])
+
+        kwargs = mock_dispatch.call_args[1]
+        target_dirs = [t["project_dir"] for t in kwargs["targets"]]
+        assert target_dirs == ["/repo/a", "/repo/b", "/repo/c"]
+
+
 class TestParseRunIdFromStdout:
     """run_worktree.py prints `<run_id>\\n<worktree_path>\\n` on success — the
     dispatcher reads the first line and registers it back into the fleet

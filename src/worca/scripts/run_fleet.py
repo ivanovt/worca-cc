@@ -450,8 +450,6 @@ def resume_fleet(fleet_id: str) -> int:
     _REDISPATCH = frozenset({"failed", "pending", "setup_failed"})
     _IN_PLACE = frozenset({"paused", "interrupted"})
 
-    update_fleet_status(fleet_id, "resuming")
-
     targets = []  # re-dispatched fresh via dispatch_fleet
     inplace = []  # (project_path, run_id) continued via resume_child
     for child in children:
@@ -504,7 +502,15 @@ def resume_fleet(fleet_id: str) -> int:
             targets.append({"project_dir": project_path, "status": status})
 
     if not targets and not inplace:
+        # Nothing qualified to resume — leave the manifest at its prior
+        # terminal status (halted/completed/failed). Writing `resuming` here
+        # would strand the fleet, because reconcile_fleet_status is barred
+        # from advancing `resuming` → terminal.
         return 0
+
+    # We have work to do — flip the manifest to `resuming` now. Reconciliation
+    # will advance it to `running` once a child registry entry reports running.
+    update_fleet_status(fleet_id, "resuming")
 
     # Resume paused/interrupted children in their existing worktrees first —
     # cheap (one Popen each) and they keep all prior progress.
@@ -729,25 +735,50 @@ def main(argv=None) -> int:
     if args.resume:
         return resume_fleet(args.resume)
 
+    # Resolve target projects from --projects and/or --projects-file.
+    # Both flags compose; --projects-file lines starting with '#' are comments.
+    projects = list(args.projects or [])
+    if args.projects_file:
+        try:
+            with open(args.projects_file) as f:
+                file_projects = [
+                    line.strip()
+                    for line in f
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+        except OSError as exc:
+            print(
+                f"error: failed to read --projects-file {args.projects_file!r}: {exc}",
+                file=sys.stderr,
+            )
+            return 1
+        projects.extend(file_projects)
+    projects = list(dict.fromkeys(projects))  # dedupe, preserve order
+
+    if not projects:
+        print(
+            "error: no target projects — supply --projects PATH... or "
+            "--projects-file FILE",
+            file=sys.stderr,
+        )
+        return 2
+
     # Base branch pre-flight: verify branch exists in every target repo (§4)
     if args.base:
-        projects = list(args.projects or [])
-        if projects:
-            missing = validate_base_branch(projects, args.base)
-            if missing:
-                missing_list = "\n".join(f"  {p}" for p in missing)
-                print(
-                    f"error: base branch '{args.base}' not found in:\n{missing_list}",
-                    file=sys.stderr,
-                )
-                return 1
+        missing = validate_base_branch(projects, args.base)
+        if missing:
+            missing_list = "\n".join(f"  {p}" for p in missing)
+            print(
+                f"error: base branch '{args.base}' not found in:\n{missing_list}",
+                file=sys.stderr,
+            )
+            return 1
 
     # Per-target readiness check (§2, post-W-040): the fleet must NOT mutate
     # target projects. We verify every selected project has a `.claude/worca/`
     # that matches the fleet host's installed worca version, and abort the
     # whole fleet if any target is unready. Users run `worca init` /
     # `worca init --upgrade` manually before launching.
-    projects = list(args.projects or [])
     if projects:
         unready: list[tuple[str, str]] = []
         for project in projects:

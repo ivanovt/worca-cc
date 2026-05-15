@@ -2,6 +2,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -11,7 +12,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFleetRouter, deriveFleetStatus } from './fleet-routes.js';
+import {
+  createFleetRouter,
+  deriveFleetStatus,
+  effectiveFleetStatus,
+} from './fleet-routes.js';
 
 const VALID_FLEET_ID = 'f_202605120809_abcdef01';
 
@@ -230,6 +235,74 @@ describe('Fleet Routes', () => {
     });
   });
 
+  // effectiveFleetStatus is the *pure* (non-persisting) decision function
+  // shared by the REST reconciler and the WS watcher. It must honor sticky
+  // states identically to reconcileFleetStatus, and must never advance
+  // 'resuming' straight to a terminal status.
+  describe('effectiveFleetStatus (pure)', () => {
+    it('sticky halted is preserved even when children are all completed', () => {
+      const m = { status: 'halted', halt_reason: 'user' };
+      expect(effectiveFleetStatus(m, ['completed', 'completed'])).toEqual({
+        status: 'halted',
+        halt_reason: 'user',
+      });
+    });
+
+    it('sticky paused is preserved', () => {
+      const m = { status: 'paused', halt_reason: null };
+      expect(effectiveFleetStatus(m, ['running', 'completed']).status).toBe(
+        'paused',
+      );
+    });
+
+    it('sticky completed is preserved', () => {
+      const m = { status: 'completed', halt_reason: null };
+      expect(effectiveFleetStatus(m, ['failed']).status).toBe('completed');
+    });
+
+    it('sticky failed is preserved', () => {
+      const m = { status: 'failed', halt_reason: null };
+      expect(effectiveFleetStatus(m, ['completed']).status).toBe('failed');
+    });
+
+    it('running manifest with all-completed children → completed', () => {
+      const m = { status: 'running', halt_reason: null };
+      expect(effectiveFleetStatus(m, ['completed', 'completed'])).toEqual({
+        status: 'completed',
+        halt_reason: null,
+      });
+    });
+
+    it('running manifest with mixed terminal children → failed', () => {
+      const m = { status: 'running', halt_reason: null };
+      expect(effectiveFleetStatus(m, ['completed', 'failed']).status).toBe(
+        'failed',
+      );
+    });
+
+    it('resuming manifest with all-failed children does NOT advance to terminal', () => {
+      // The exact bug behind stuck-on-'resuming' — must hold at 'resuming'
+      // until at least one child is observed running again.
+      const m = { status: 'resuming', halt_reason: null };
+      expect(effectiveFleetStatus(m, ['failed', 'failed']).status).toBe(
+        'resuming',
+      );
+    });
+
+    it('resuming manifest with any running child advances to running', () => {
+      const m = { status: 'resuming', halt_reason: null };
+      expect(effectiveFleetStatus(m, ['running', 'failed']).status).toBe(
+        'running',
+      );
+    });
+
+    it('does not mutate the manifest argument', () => {
+      const m = { status: 'running', halt_reason: null };
+      effectiveFleetStatus(m, ['completed']);
+      expect(m).toEqual({ status: 'running', halt_reason: null });
+    });
+  });
+
   describe('GET reconciles a stuck fleet status', () => {
     function writeChild(projDir, runId, status) {
       const d = join(projDir, '.worca', 'multi', 'pipelines.d');
@@ -329,6 +402,44 @@ describe('Fleet Routes', () => {
       const res = await fetch(`${base}/api/fleet-runs`);
       const data = await res.json();
       expect(data.fleets[0].status).toBe('completed');
+    });
+  });
+
+  // ─── atomic manifest writes ──────────────────────────────────────────────
+
+  describe('saveManifest (atomic)', () => {
+    it('leaves no .tmp.* leftover files after a routed write', async () => {
+      writeManifest(fleetRunsDir, baseManifest({ status: 'completed' }));
+      // Archive triggers saveManifest with a status mutation.
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/archive`,
+        { method: 'POST' },
+      );
+      expect(res.status).toBe(200);
+
+      const files = readdirSync(fleetRunsDir);
+      // Only the canonical manifest file remains — temp files must have been
+      // renamed away (or cleaned up on failure).
+      expect(files.filter((f) => f.includes('.tmp.'))).toEqual([]);
+      expect(files).toContain(`${VALID_FLEET_ID}.json`);
+    });
+
+    it('writes a complete JSON document (no torn writes)', async () => {
+      writeManifest(fleetRunsDir, baseManifest({ status: 'completed' }));
+      await fetch(`${base}/api/fleet-runs/${VALID_FLEET_ID}/archive`, {
+        method: 'POST',
+      });
+
+      // After the write, the manifest must always be parseable. With the
+      // pre-fix writeFileSync a concurrent reader could see a partial buffer,
+      // but the new atomic write guarantees readers see only the old or new
+      // file via rename.
+      const content = readFileSync(
+        join(fleetRunsDir, `${VALID_FLEET_ID}.json`),
+        'utf8',
+      );
+      expect(() => JSON.parse(content)).not.toThrow();
+      expect(JSON.parse(content).fleet_id).toBe(VALID_FLEET_ID);
     });
   });
 
@@ -914,6 +1025,58 @@ describe('Fleet Routes', () => {
       expect(dispatchFleet).toHaveBeenCalledWith(
         expect.objectContaining({ fleet_id: VALID_FLEET_ID, resume: true }),
       );
+    });
+
+    // Regression: previously the route saved manifest.status='running'
+    // BEFORE awaiting dispatchFleet. A throwing dispatcher then left the
+    // manifest stuck at 'running' with zero live children. The fix is to
+    // only flip to 'running' after dispatch returns.
+    it('leaves manifest at prior status when dispatch throws', async () => {
+      const projDir = join(tmpDir, 'proj-throws');
+      const pipelinesDir = join(projDir, '.worca', 'multi', 'pipelines.d');
+      mkdirSync(pipelinesDir, { recursive: true });
+      writeFileSync(
+        join(pipelinesDir, 'run-throw-001.json'),
+        JSON.stringify({ status: 'paused' }),
+      );
+
+      const dispatchFleet = vi
+        .fn()
+        .mockRejectedValue(new Error('boom dispatch failed'));
+      await stopServer(server);
+      ({ server, base } = await createTestServer({
+        fleetRunsDir,
+        dispatchFleet,
+      }));
+
+      writeManifest(
+        fleetRunsDir,
+        baseManifest({
+          status: 'halted',
+          halt_reason: 'user',
+          children: [
+            {
+              run_id: 'run-throw-001',
+              project_path: projDir,
+              project_slug: 'proj-throws',
+            },
+          ],
+        }),
+      );
+
+      const res = await fetch(
+        `${base}/api/fleet-runs/${VALID_FLEET_ID}/resume`,
+        { method: 'POST' },
+      );
+      expect(res.status).toBe(500);
+
+      // Manifest must NOT have been flipped to 'running' — the user's halt
+      // reason should survive a failed resume so they can retry.
+      const persisted = JSON.parse(
+        readFileSync(join(fleetRunsDir, `${VALID_FLEET_ID}.json`), 'utf8'),
+      );
+      expect(persisted.status).toBe('halted');
+      expect(persisted.halt_reason).toBe('user');
     });
   });
 

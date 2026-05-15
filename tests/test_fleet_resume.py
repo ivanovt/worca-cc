@@ -743,3 +743,65 @@ class TestResumeDispatchWiring:
             result = main(["--resume", fleet_id])
 
         assert result == 0
+
+
+class TestResumeStatusOnNoOp:
+    """When nothing qualifies to resume, the manifest must NOT be flipped to
+    'resuming' — reconcile_fleet_status is barred from advancing
+    'resuming'→terminal, so a no-op resume that wrote 'resuming' would strand
+    the fleet permanently."""
+
+    def test_no_resumable_children_leaves_status_untouched(self, tmp_path):
+        fleet_id = "f_20260512_test"
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        proj_a = tmp_path / "a"
+        proj_a.mkdir()
+
+        children = [{"project_path": str(proj_a), "run_id": "run-a"}]
+        _write_manifest(
+            fleet_runs_dir, fleet_id, children,
+            status="halted", halt_reason="user",
+        )
+        # All children skip-eligible → resume should be a no-op
+        _write_pipelines_entry(str(proj_a), "run-a", "completed")
+
+        from worca.scripts.run_fleet import main
+
+        with patch("worca.orchestrator.fleet_manifest._FLEET_RUNS_DIR", fleet_runs_dir):
+            result = main(["--resume", fleet_id])
+
+        assert result == 0
+
+        with open(os.path.join(fleet_runs_dir, f"{fleet_id}.json")) as f:
+            persisted = json.load(f)
+        assert persisted["status"] == "halted"
+        assert persisted["halt_reason"] == "user"
+
+    def test_resumable_children_sets_resuming(self, tmp_path):
+        """Sanity-check the positive case still flips to 'resuming'."""
+        fleet_id = "f_20260512_test"
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        proj_a = tmp_path / "a"
+        proj_a.mkdir()
+
+        children = [{"project_path": str(proj_a), "run_id": "run-a"}]
+        _write_manifest(fleet_runs_dir, fleet_id, children, status="halted")
+        # 'failed' is in _REDISPATCH → resume should engage and flip status
+        _write_pipelines_entry(str(proj_a), "run-a", "failed", worktree_path=None)
+
+        seen_statuses = []
+
+        def _capture_status(**_kwargs):
+            with open(os.path.join(fleet_runs_dir, f"{fleet_id}.json")) as f:
+                seen_statuses.append(json.load(f).get("status"))
+            return {}
+
+        from worca.scripts.run_fleet import main
+
+        with (
+            patch("worca.orchestrator.fleet_manifest._FLEET_RUNS_DIR", fleet_runs_dir),
+            patch("worca.scripts.run_fleet.dispatch_fleet", side_effect=_capture_status),
+        ):
+            main(["--resume", fleet_id])
+
+        assert "resuming" in seen_statuses

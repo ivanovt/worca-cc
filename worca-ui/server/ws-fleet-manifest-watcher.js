@@ -6,6 +6,7 @@
 import { existsSync, readFileSync, watch } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { effectiveFleetStatus } from './fleet-routes.js';
 
 const FLEET_DEBOUNCE_MS = 200;
 const DEFAULT_FLEET_RUNS_DIR = join(homedir(), '.worca', 'fleet-runs');
@@ -65,10 +66,19 @@ export function createFleetManifestWatcher({
       FAILURE_STATES.has(c.status),
     ).length;
 
+    // Derive the effective status (same rules as REST) instead of broadcasting
+    // raw manifest.status — otherwise cards stay "running" forever, because
+    // run_fleet.py never writes a terminal status after it exits. Pure
+    // function: persists nothing, so we don't trigger a watch→write→watch loop.
+    const { status, halt_reason } = effectiveFleetStatus(
+      manifest,
+      children.map((c) => c.status),
+    );
+
     broadcaster.broadcast('fleet-update', {
       fleet_id: fleetId,
-      status: manifest.status,
-      halt_reason: manifest.halt_reason ?? null,
+      status,
+      halt_reason,
       completed_children,
       failed_children,
       children,
