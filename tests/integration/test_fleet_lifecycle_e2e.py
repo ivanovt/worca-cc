@@ -1173,12 +1173,22 @@ def test_fleet_stale_pid_regression(tmp_path):
         assert alive, f"registered pid {pid} is not live — stale_pid bug"
 
         # Must be a run_pipeline.py — not the parent run_worktree.py.
-        ps = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
-            capture_output=True,
-            text=True,
-        )
-        cmdline = ps.stdout.strip()
+        # /proc/<pid>/cmdline is wider than `ps -o command=` (which truncates
+        # to terminal/COLUMNS width on Linux CI runners). Fall back to
+        # `ps -ww` when /proc isn't available (macOS).
+        cmdline = ""
+        proc_cmdline = Path(f"/proc/{pid}/cmdline")
+        if proc_cmdline.exists():
+            cmdline = proc_cmdline.read_bytes().replace(b"\x00", b" ").decode(
+                "utf-8", errors="replace"
+            )
+        else:
+            ps = subprocess.run(
+                ["ps", "-ww", "-p", str(pid), "-o", "command="],
+                capture_output=True,
+                text=True,
+            )
+            cmdline = ps.stdout.strip()
         assert "run_pipeline.py" in cmdline, (
             f"registered pid {pid} cmdline does not match run_pipeline.py: {cmdline!r}"
         )

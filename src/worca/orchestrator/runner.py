@@ -1548,7 +1548,14 @@ def run_pipeline(
             # run_worktree.py / the original launcher registered with its own
             # (parent) PID before forking into us; without this update the
             # stale_pid reconciler ghosts a healthy resumed run within seconds.
-            if status.get("run_id") and registry_dir:
+            # Only meaningful in worktree mode — that's where the multi-pipeline
+            # registry exists. Mirrors the worktree gate every other
+            # update_pipeline call in this file uses.
+            if (
+                status.get("worktree")
+                and status.get("run_id")
+                and registry_dir
+            ):
                 update_pipeline(
                     status["run_id"], base=registry_dir, pid=os.getpid()
                 )
@@ -1603,8 +1610,9 @@ def run_pipeline(
         # Overwrite the registry's pid with the live runner's PID.
         # run_worktree.py registered with its own (parent) PID before
         # forking into us; without this update the stale_pid reconciler
-        # ghosts a healthy pipeline within seconds. See registry.update_pipeline.
-        if registry_dir:
+        # ghosts a healthy pipeline within seconds. Only meaningful in
+        # worktree mode — see the resume-path comment for full rationale.
+        if status.get("worktree") and registry_dir:
             update_pipeline(run_id, base=registry_dir, pid=os.getpid())
 
         save_status(status, actual_status_path)
