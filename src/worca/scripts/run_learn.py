@@ -104,6 +104,7 @@ def run_learn(run_id, status_dir, settings_path, msize):
     prompt_builder = PromptBuilder(
         work_request_title=wr.get("title", ""),
         work_request_description=wr.get("description", ""),
+        work_request_guide_content=wr.get("guide_content", ""),
     )
 
     # Determine termination type from status

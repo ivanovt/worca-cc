@@ -1150,6 +1150,18 @@ sl-input [slot="prefix"] {
   color: var(--status-cancelled);
 }
 
+.status-halted {
+  color: var(--status-paused);
+}
+
+.status-setup-failed {
+  color: var(--status-failed);
+}
+
+.status-unrecoverable {
+  color: var(--status-failed);
+}
+
 /* --- 18b. Control Buttons --- */
 .action-btn--amber {
   border-color: var(--status-paused);
@@ -1168,6 +1180,19 @@ sl-input [slot="prefix"] {
 
 .action-btn--green:hover {
   background: var(--status-completed);
+  color: #ffffff;
+}
+
+.action-btn--teal {
+  /* "Re-run" / "iterate again" actions — distinct from primary blue
+     (resume) and status palette colors so it reads as a separate
+     intent: launch a fresh attempt from this one. */
+  border-color: #0891b2;
+  color: #0891b2;
+}
+
+.action-btn--teal:hover {
+  background: #0891b2;
   color: #ffffff;
 }
 
@@ -1302,11 +1327,142 @@ sl-input [slot="prefix"] {
 
 /* Status-colored left border accent on run cards */
 .run-card.status-running  { border-left: 3px solid var(--status-running); }
+.run-card.status-resuming { border-left: 3px solid var(--status-running); }
 .run-card.status-paused   { border-left: 3px solid var(--status-paused); }
+.run-card.status-interrupted { border-left: 3px solid var(--status-interrupted); }
 .run-card.status-completed { border-left: 3px solid var(--status-completed); }
 .run-card.status-failed   { border-left: 3px solid var(--status-failed); }
+.run-card.status-error    { border-left: 3px solid var(--status-error); }
 .run-card.status-pending  { border-left: 3px solid var(--status-pending); }
+.run-card.status-skipped  { border-left: 3px solid var(--status-pending); }
 .run-card.status-cancelled { border-left: 3px solid var(--status-cancelled); }
+.run-card.status-halted   { border-left: 3px solid var(--status-paused); }
+.run-card.status-setup-failed { border-left: 3px solid var(--status-failed); }
+.run-card.status-unrecoverable { border-left: 3px solid var(--status-failed); }
+
+/* ── Fleet card (shared component for Dashboard + Fleet list) ───────────
+   The fleet card reuses the `.run-card` base class and its shared
+   structural sub-elements (`.run-card-top`, `.run-card-status`,
+   `.run-card-title`, `.run-card-meta`, `.run-card-meta-item`,
+   `.run-card-actions`) — exactly like `.worktree-card` does. The
+   `.fleet-card` / `.fleet-card-*` rules below are only the bits that are
+   genuinely fleet-specific:
+     - a layered "stack of cards" silhouette (::before / ::after layers)
+     - the "Projects:" name-badge row
+     - the failed-count pill + exception pills
+   The box, hover, and status-accent styling all come from `.run-card`. */
+
+/* Stack-of-cards illusion: two thin layers above-right behind the main card,
+   each progressively offset and dimmed. Pure decoration — pointer-events
+   off so they never steal clicks. */
+.fleet-card-stack {
+  position: relative;
+  isolation: isolate;
+}
+.fleet-card-stack::before,
+.fleet-card-stack::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  pointer-events: none;
+  z-index: -1;
+}
+.fleet-card-stack::before {
+  transform: translate(4px, -4px);
+  opacity: 0.55;
+}
+.fleet-card-stack::after {
+  transform: translate(8px, -8px);
+  opacity: 0.3;
+}
+
+/* The status-coloured left edge comes from `.run-card.status-*` (the
+   fleet card carries the `run-card` base class). The one fleet-specific
+   override: a user-initiated halt reads as informational grey, matching
+   its `neutral` status-badge variant — per the badge-color-language
+   guide §CSS Variables. Circuit-breaker / targets-not-ready halts keep
+   the inherited orange. */
+.fleet-card.status-halted[data-halt-reason="user"] {
+  border-left-color: var(--status-pending);
+}
+
+/* Project name badges — the value of the "Projects:" meta label. Neutral
+   (no status color), each clamped to ~20ch with an ellipsis; the JS also
+   pre-truncates so the title attr carries the full name. Up to 3 render
+   inline, the rest collapse into `.fleet-card-project-more`. */
+.fleet-card-project-badge {
+  display: inline-block;
+  max-width: 20ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  padding: 1px 8px;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.fleet-card-project-more {
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+/* Failed-project count — rides the "Projects:" row after the name badges
+   as a solid red badge (e.g. "1 failed"). Only rendered when at least one
+   project failed; callers guard with `failedCount > 0`. */
+.fleet-card-failed-count {
+  display: inline-block;
+  flex-shrink: 0;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #ffffff;
+  background: var(--status-error);
+  border-radius: 999px;
+}
+
+/* Exception counter pills — surface non-zero failure / halted / paused
+   buckets when they don't already match the fleet's overall status badge.
+   Variants follow the badge-color-language guide: `danger` for failures,
+   `warning` for halts/pauses. Replaces the prior right-edge accent stripe
+   (which was too subtle to be actionable). */
+.fleet-card-exception-pill {
+  flex-shrink: 0;
+}
+
+.fleet-card-mono {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.fleet-card-children-label {
+  align-self: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  /* Color/weight inherited from `.meta-label` so this row matches the
+     Plan/Base/Started/Duration label vocabulary on the rows below. */
+}
+.fleet-card-children-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+/* "Projects:" label + name-badge list row. */
+.fleet-card-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-left: 26px;
+}
 
 /* --- 21. Dashboard --- */
 .dashboard {
@@ -2340,7 +2496,39 @@ sl-details.live-output-panel::part(content) {
 .new-run-advanced {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 24px;
+}
+
+/* Advanced Options is dense — give each field a touch more breathing room
+   between label / control / hint than the default 4px so multi-line
+   sub-controls (head-template preview, plan-mode radio + warning) don't
+   feel stacked. Scoped to .new-run-advanced so the rest of Settings
+   keeps its tighter rhythm. */
+.new-run-advanced .settings-field {
+  gap: 8px;
+}
+.new-run-advanced .settings-field-hint {
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+/* Visual subgroup inside Advanced Options — small caps title + subtle
+   underline divider. Keeps the section card's outer border doing the
+   heavy lifting; the subgroup title is just a quiet "BRANCHES" /
+   "PLANNING" / "CONCURRENCY" label for scanability. */
+.advanced-subgroup {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.advanced-subgroup-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border-subtle);
 }
 
 .new-run-grid {
@@ -2484,39 +2672,106 @@ sl-option.template-grouped:focus::part(suffix) {
   background: var(--bg-tertiary);
 }
 
-/* Sidebar new run button */
+/* Sidebar new run button (split button pattern: primary + chevron).
+   The split button is the W-040 UX choice — primary "New Pipeline"
+   handles the common case; the chevron drops down to a menu of
+   multi-project alternatives (Fleet, plus Workspace when W-047 ships). */
 .sidebar-new-run {
   padding: 8px 8px 4px;
 }
 
-.sidebar-new-run-btn {
+.sidebar-new-run-split {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  min-height: 36px;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: transparent;
+  transition: background var(--transition-fast), border-color var(--transition-fast);
+}
+
+.sidebar-new-run-btn-primary {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  width: 100%;
-  padding: 8px 12px;
-  border: 2px dashed var(--accent);
-  border-radius: var(--radius);
+  min-width: 0;
+  padding: 6px 12px;
+  border: 0;
+  border-right: 2px dashed var(--accent);
   background: transparent;
   color: var(--accent);
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
-  transition: background var(--transition-fast), color var(--transition-fast);
+  transition: background var(--transition-fast), color var(--transition-fast),
+    border-color var(--transition-fast);
 }
 
-.sidebar-new-run-btn:hover {
+.sidebar-new-run-btn-primary:hover:not(:disabled) {
   background: var(--accent);
   color: #ffffff;
 }
 
-.sidebar.collapsed .sidebar-new-run-btn span {
+/* Disabled state: muted (not ghosted) so it reads as "waiting on something"
+   rather than a broken control. Pairs with the title tooltip explaining
+   why it's inactive (e.g., "Select a project first…"). */
+.sidebar-new-run-btn-primary:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  border-right-color: var(--muted);
+}
+
+/* sl-dropdown defaults to inline-block; force it to fill the cross-axis
+   so the slotted chevron button can stretch to the full split height. */
+.sidebar-new-run-chevron-dropdown {
+  display: flex;
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+
+.sidebar-new-run-btn-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  height: 100%;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.sidebar-new-run-btn-chevron:hover:not(:disabled) {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.sidebar-new-run-btn-chevron:disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+}
+
+/* Menu items: icon + label, slight indent under their icon */
+.sidebar-new-run-chevron-dropdown sl-menu-item::part(base) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.sidebar.collapsed .sidebar-new-run-btn-primary span {
   display: none;
 }
 
-.sidebar.collapsed .sidebar-new-run-btn {
+.sidebar.collapsed .sidebar-new-run-btn-primary {
   padding: 8px;
 }
 
@@ -2904,6 +3159,16 @@ sl-details.run-beads-panel::part(content) {
   font-size: 0.82rem;
   background: var(--bg);
   border: 1px solid var(--border-subtle);
+}
+
+/* Default badge layout: when a badge contains an icon + text (e.g. the
+   pipeline-page header status badge "<icon> Completed"), the children
+   sit flush against each other. Give them a small gap. Single-child
+   badges are unaffected because flex+gap only manifests between siblings. */
+sl-badge::part(base) {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .run-bead-row sl-badge::part(base) {
@@ -3960,6 +4225,7 @@ sl-details.learnings-panel::part(content) {
 .filter-chip-failed.active { background: var(--status-failed); border-color: var(--status-failed); }
 .filter-chip-paused.active { background: var(--status-paused); border-color: var(--status-paused); }
 .filter-chip-error.active { background: var(--status-failed); border-color: var(--status-failed); }
+.filter-chip-halted.active { background: var(--status-paused); border-color: var(--status-paused); }
 .filter-chip .chip-count {
   font-size: 0.68rem;
   opacity: 0.7;
@@ -3970,6 +4236,7 @@ sl-details.learnings-panel::part(content) {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   padding-left: 26px;
 }
@@ -4036,11 +4303,8 @@ sl-details.learnings-panel::part(content) {
 .project-status-paused { background: var(--status-paused, #eab308); }
 
 /* --- Dashboard Project Cards --- */
-.project-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 24px; }
-.project-card { background: var(--surface); border-radius: var(--radius); padding: 16px; cursor: pointer; transition: var(--transition-fast); border: 1px solid var(--border); }
-.project-card:hover { border-color: var(--accent); box-shadow: var(--shadow-sm); }
-.project-card-name { font-weight: 600; margin-bottom: 4px; }
-.project-card-stats { font-size: 0.85rem; color: var(--text-secondary); }
+/* .project-cards / .project-card-* removed — see app/views/dashboard.js
+   for the rationale (sidebar dropdown replaces them). */
 
 /* --- Settings Projects List --- */
 .projects-list-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border); }
@@ -4639,6 +4903,23 @@ sl-tooltip.bead-tooltip::part(body) {
   flex: 1;
   min-width: 240px;
 }
+
+/* Shared text-filter row — the line under the filter chips on the
+   History and Fleets list pages. Mirrors `.worktrees-toolbar` so the
+   three list pages present an identical filter affordance. The
+   worktrees page keeps its own toolbar (it carries the extra
+   "Cleanup all completed" button alongside the text input). */
+.list-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.list-filter-row .list-text-filter {
+  flex: 1;
+  min-width: 240px;
+}
 .worktree-card-path {
   align-items: baseline;
 }
@@ -4853,4 +5134,577 @@ sl-tooltip.bead-tooltip::part(body) {
   font-size: 15px;
   line-height: 1.2;
   flex: 0 0 auto;
+}
+
+/* ─── Fleet group (W-040 §13.2) ────────────────────────────────────────────── */
+.fleet-group {
+  margin-bottom: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.fleet-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.fleet-header:hover {
+  background: var(--bg-tertiary);
+}
+
+.fleet-toggle {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: 14px;
+}
+
+.fleet-title {
+  flex: 0 1 auto;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-status-badge {
+  flex-shrink: 0;
+}
+
+.fleet-progress {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.fleet-progress-bar {
+  flex: 1 1 80px;
+  min-width: 60px;
+  max-width: 160px;
+}
+
+.fleet-cost {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.fleet-detail-btn {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.fleet-children {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-primary);
+}
+
+/* ── Fleet launcher (page) ─────────────────────────────────────────────── */
+
+.fleet-launcher-page,
+.fleet-detail-page {
+  max-width: 760px;
+}
+
+.fleet-launcher-projects-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.fleet-launcher-projects-controls .input-project-filter {
+  flex: 1 1 auto;
+}
+
+/* Head-template preview rows — render below the input as a small inset
+   panel so the per-project resolved branches feel attached to (not just
+   stacked under) the template field. */
+.head-template-input {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.head-template-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.head-template-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+.head-template-preview-row .preview-arrow {
+  color: var(--muted);
+}
+.head-template-preview-row .preview-branch {
+  color: var(--text);
+}
+.head-template-preview-row.collision .preview-branch {
+  color: var(--status-error);
+}
+.head-template-preview-row .collision-flag {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--status-error);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Plan-mode radio container: stack the radios with breathing room and
+   keep the divergence-warning alert visually attached to the chosen
+   option without crowding it. */
+.plan-mode-radio {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.plan-mode-radio sl-radio-group::part(form-control) {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Base-branch validation states */
+.base-branch-validating {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+.base-branch-error {
+  font-size: 12px;
+  color: var(--status-error);
+  padding: 8px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--status-error);
+  border-radius: var(--radius);
+}
+.base-branch-missing-list {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+/* ── Fleet detail (page) ────────────────────────────────────────────────── */
+
+/* The page top mirrors `runDetailView`'s overview: a clickable projects
+   strip (analogue of the stage-timeline pills) sits above a single
+   `.run-info-section` panel that holds the status badge + id chip + flat
+   meta rows. No hero card — the per-project run-cards below carry the
+   "card" affordance now. */
+.fleet-detail-overview {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fleet-projects-strip {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+}
+.fleet-projects-strip-segment {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  color: var(--fg);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease;
+  overflow: hidden;
+}
+.fleet-projects-strip-segment:hover {
+  background: var(--bg-hover);
+}
+.fleet-projects-strip-segment:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.fleet-projects-strip-segment.status-running    { border-left-color: var(--status-running); }
+.fleet-projects-strip-segment.status-resuming   { border-left-color: var(--status-running); }
+.fleet-projects-strip-segment.status-paused     { border-left-color: var(--status-paused); }
+.fleet-projects-strip-segment.status-interrupted { border-left-color: var(--status-interrupted); }
+.fleet-projects-strip-segment.status-completed  { border-left-color: var(--status-completed); }
+.fleet-projects-strip-segment.status-failed,
+.fleet-projects-strip-segment.status-setup-failed,
+.fleet-projects-strip-segment.status-unrecoverable { border-left-color: var(--status-failed); }
+.fleet-projects-strip-segment.status-error      { border-left-color: var(--status-error); }
+.fleet-projects-strip-segment.status-halted     { border-left-color: var(--status-paused); }
+.fleet-projects-strip-segment.status-pending,
+.fleet-projects-strip-segment.status-skipped,
+.fleet-projects-strip-segment.status-cancelled  { border-left-color: var(--status-pending); }
+.fleet-projects-strip-icon {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.fleet-projects-strip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.fleet-info-section {
+  /* Inherits .run-info-section padding/background — adds a couple of fleet
+     -specific layout rules for the status row. */
+}
+.fleet-overview-status-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  /* Match `.fleet-meta-line` so the "Fleet ID:" label renders in the
+     same vocabulary as the Projects / Base / Started / Cost labels. */
+  font-size: 13px;
+  color: var(--fg);
+}
+.fleet-meta-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.fleet-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Projects row in the hero — label + name badges, same vocabulary as the
+   fleet card's "Projects:" row. Tighter gap than the default meta line so
+   the badges read as a contiguous list. */
+.fleet-meta-line-projects {
+  align-items: center;
+  gap: 6px;
+}
+.fleet-cost-strip {
+  /* Reuses .pipeline-cost-strip — no overrides needed but keep the class
+     so future tweaks can target fleet-specific copy. */
+}
+
+/* Anchor wrapper around each project run-card so the projects strip can
+   scroll to a specific card on click. */
+.fleet-project-anchor {
+  scroll-margin-top: 80px;
+}
+
+.fleet-detail-status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+}
+
+.fleet-detail-status-row .fleet-status-badge::part(base) {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.fleet-id-chip {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  padding: 2px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+}
+
+.fleet-detail-body {
+  margin-top: 4px;
+}
+
+.fleet-manifest-grid {
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.fleet-meta-mono {
+  font-family: var(--sl-font-mono);
+  font-size: 12.5px;
+  color: var(--fg);
+  background: var(--bg-tertiary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  display: inline-block;
+  word-break: break-all;
+}
+
+.fleet-meta-value {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.fleet-wr-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.fleet-wr-description {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fg);
+  white-space: pre-wrap;
+}
+
+.fleet-guide-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.fleet-guide-tag::part(base) {
+  font-family: var(--sl-font-mono);
+}
+
+.fleet-guide-actions {
+  border-top: none;
+  padding-top: 4px;
+}
+
+.fleet-children-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fleet-children-list {
+  margin-top: 4px;
+}
+
+.fleet-child-card {
+  border-left-width: 3px;
+}
+
+.fleet-child-card .run-card-meta code.fleet-meta-mono {
+  background: transparent;
+  padding: 0;
+  font-size: 12px;
+}
+
+.fleet-aggregate-cost-section .fleet-total-cost {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+
+.fleet-circuit-breaker-alert,
+.fleet-user-halt-alert {
+  display: block;
+}
+
+.fleet-circuit-breaker-alert .cb-trip-reason,
+.fleet-circuit-breaker-alert .cb-unstarted-count {
+  display: block;
+  margin-top: 4px;
+  font-size: 12.5px;
+  color: var(--fg);
+  opacity: 0.85;
+}
+
+.fleet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+/* Run-detail "Fleet:" / "Workspace:" group line above the Branch row.
+   Mirrors .run-branch exactly: same font-size, gap, and value weight.
+   The only visual difference is the accent-colored anchor + underline-
+   on-hover affordance signalling it's clickable. */
+.run-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.run-group-link {
+  /* Inherits font-family + font-size from .run-group → matches the plain
+     <span class="meta-value"> on the Branch line, just colored and
+     underlined-on-hover to read as a link. */
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.run-group-link:hover {
+  text-decoration: underline;
+}
+
+/* Run-card "Fleet:" / "Workspace:" meta-item — sized by parent
+   .run-card-meta (12px). Same coloring as .run-group-link but no
+   monospace. */
+.run-card-group-link {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.run-card-group-link:hover {
+  text-decoration: underline;
+}
+
+/* Sidebar fleet-header clickable feedback */
+.fleet-header-clickable {
+  transition: background-color var(--transition-fast);
+}
+
+.fleet-header-clickable:hover {
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+/* Fleet list view (route: /#/fleet-runs) — one `fleet-card` per fleet.
+   No wrapping border / shared background; each card carries its own
+   chrome plus the layered stack-of-cards shadow. Gap matches the
+   gap between pipeline cards in run-list for visual consistency. */
+.fleet-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.fleet-list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+}
+
+.fleet-list-row:last-child {
+  border-bottom: none;
+}
+
+.fleet-list-row:hover {
+  background-color: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.fleet-list-row-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fleet-list-row-badge {
+  flex-shrink: 0;
+}
+
+.fleet-list-row-meta {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.fleet-list-row-id {
+  font-family: var(--sl-font-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--bg-tertiary);
+  padding: 2px 8px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.fleet-list-loading,
+.fleet-list-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.fleet-detail-empty {
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 540px;
+  margin: 0 auto;
+}
+
+.fleet-detail-empty sl-icon {
+  font-size: 48px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.fleet-detail-empty h2 {
+  margin: 8px 0 0 0;
+  font-size: 18px;
+  color: var(--fg);
+}
+
+.fleet-detail-empty p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.fleet-detail-empty code {
+  font-size: 12px;
+  background: var(--bg-2, var(--border));
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.fleet-detail-empty-hint {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.fleet-detail-empty-hint a {
+  color: var(--accent, var(--fg));
 }

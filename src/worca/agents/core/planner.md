@@ -28,6 +28,14 @@ The work request arrives as a user message. Treat it as the subject of your plan
 
 Produce a structured plan following the `plan.json` schema.
 
+## Guide precedence
+
+When the work request includes a `## Reference Guide (normative)` section, treat it as the highest-authority source:
+
+- **Guide > plan > description.** The guide overrides the plan; the plan overrides the description. Your plan must conform to the guide on every point it addresses.
+- **Surface conflicts, do not resolve them silently.** If the description requests something the guide forbids or is silent on, report the conflict in your plan output and ask for clarification rather than picking one side.
+- **The guide wins even when it disagrees with the plan.** If a prior plan file (passed via `--plan`) diverges from the guide on any normative point, your updated plan must follow the guide and note the divergence.
+
 ## Rules
 
 <!-- governance -->

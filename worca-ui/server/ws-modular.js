@@ -7,6 +7,7 @@
  */
 
 import { existsSync, watch } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { readProjects, synthesizeDefaultProject } from './project-registry.js';
@@ -14,6 +15,7 @@ import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
 import { readProjectWorcaVersion } from './worca-setup.js';
 import { createBroadcaster } from './ws-broadcaster.js';
 import { createClientManager } from './ws-client-manager.js';
+import { createFleetManifestWatcher } from './ws-fleet-manifest-watcher.js';
 import { createMessageRouter } from './ws-message-router.js';
 import { resolveLatestRunDir } from './ws-status-watcher.js';
 
@@ -45,7 +47,13 @@ export function attachWsServer(httpServer, config) {
     getSubs: clientManager.getSubs,
   });
 
-  // 3. Create WatcherSet(s) — one per project
+  // 3a. Fleet manifest watcher — global, not per-project (§13.5)
+  const fleetManifestWatcher = createFleetManifestWatcher({
+    broadcaster,
+    fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
+  });
+
+  // 3b. Create WatcherSet(s) — one per project
   /** @type {Map<string, WatcherSet>} */
   const watcherSets = new Map();
 
@@ -269,6 +277,7 @@ export function attachWsServer(httpServer, config) {
 
   wss.on('close', () => {
     clientManager.destroy();
+    fleetManifestWatcher.destroy();
     if (dirWatcher) {
       try {
         dirWatcher.close();

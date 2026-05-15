@@ -36,3 +36,65 @@ def test_validate_runtime_error_message_on_stderr(tmp_path, monkeypatch, capsys)
     assert "worca runtime not found" in err
     assert ".claude/worca" in err
     assert "worca init" in err
+
+
+# ---------------------------------------------------------------------------
+# copy_claude_config — worca/ runtime always overwrites; everything else
+# keeps tracked-files-win
+# ---------------------------------------------------------------------------
+
+
+def _write(path, text):
+    import os
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as fh:
+        fh.write(text)
+
+
+def test_copy_claude_config_overwrites_worca_runtime(tmp_path):
+    """A stale committed `.claude/worca/` file in the worktree must be
+    overwritten by the project's current runtime — otherwise the spawned
+    run_pipeline.py is a different version than the launcher."""
+    from worca.utils.runtime import copy_claude_config
+
+    src = tmp_path / "project" / ".claude"
+    dst = tmp_path / "worktree" / ".claude"
+    _write(str(src / "worca" / "scripts" / "run_pipeline.py"), "NEW runtime")
+    # Worktree already has a stale committed copy (git placed it).
+    _write(str(dst / "worca" / "scripts" / "run_pipeline.py"), "STALE committed")
+
+    copy_claude_config(str(src), str(dst))
+
+    with open(dst / "worca" / "scripts" / "run_pipeline.py") as fh:
+        assert fh.read() == "NEW runtime"  # overwritten
+
+
+def test_copy_claude_config_preserves_non_runtime_tracked_files(tmp_path):
+    """Outside `.claude/worca/`, tracked-files-win still holds — a project
+    may legitimately commit customised agents / hooks / settings.json."""
+    from worca.utils.runtime import copy_claude_config
+
+    src = tmp_path / "project" / ".claude"
+    dst = tmp_path / "worktree" / ".claude"
+    _write(str(src / "agents" / "planner.md"), "project default")
+    _write(str(dst / "agents" / "planner.md"), "worktree-customised")
+
+    copy_claude_config(str(src), str(dst))
+
+    with open(dst / "agents" / "planner.md") as fh:
+        assert fh.read() == "worktree-customised"  # preserved
+
+
+def test_copy_claude_config_copies_missing_files(tmp_path):
+    """Files absent in the worktree are copied regardless of subtree."""
+    from worca.utils.runtime import copy_claude_config
+
+    src = tmp_path / "project" / ".claude"
+    dst = tmp_path / "worktree" / ".claude"
+    _write(str(src / "settings.json"), "{}")
+    _write(str(src / "worca" / "__init__.py"), "version")
+
+    copy_claude_config(str(src), str(dst))
+
+    assert (dst / "settings.json").exists()
+    assert (dst / "worca" / "__init__.py").exists()

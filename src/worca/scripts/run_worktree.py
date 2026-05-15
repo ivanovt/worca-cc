@@ -16,17 +16,18 @@ Usage:
 """
 import argparse
 import os
-import re
 import secrets
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from worca.orchestrator.registry import register_pipeline
+from worca.orchestrator.registry import register_pipeline, update_pipeline
 from worca.orchestrator.work_request import normalize
 
+from worca.utils.branch_naming import slugify as _slugify
 from worca.utils.git import (
     branch_exists,
     create_pipeline_worktree,
@@ -65,20 +66,59 @@ def _resolve_base_branch(args, settings: dict) -> str:
     return detect_default_branch()
 
 
+def _spawn_log_tail(path: str, max_lines: int = 20) -> str:
+    """Return the last `max_lines` of the spawn log, for the error message."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+        return "\n".join(lines[-max_lines:])
+    except OSError:
+        return ""
+
+
+# How long to watch a freshly-spawned run_pipeline.py for a startup crash.
+# A healthy pipeline writes its status.json well within this window.
+_STARTUP_WAIT_SECONDS = 3.0
+
+
+def _await_pipeline_startup(proc, run_id: str, status_json: str) -> bool:
+    """Watch a freshly-spawned run_pipeline.py for a startup crash.
+
+    Returns True if the pipeline looks healthy (it wrote its status.json,
+    or it's still running after the grace window — a slow-but-alive
+    start). Returns False if the process exited *before* creating
+    status.json — i.e. it crashed on startup (unknown args, import
+    error, missing runtime).
+
+    Extracted as a seam so unit tests can stub it without spinning the
+    real wait loop.
+    """
+    deadline = time.monotonic() + _STARTUP_WAIT_SECONDS
+    while time.monotonic() < deadline:
+        if os.path.exists(status_json):
+            return True  # pipeline started cleanly
+        if proc.poll() is not None:
+            return False  # exited before writing status.json — startup crash
+        time.sleep(0.2)
+    # Still running after the grace window with no status.json yet — treat
+    # as a slow-but-alive start rather than a failure.
+    return True
+
+
 def _generate_run_id() -> str:
-    """Generate a unique run ID in YYYYMMDD-HHMMSS-mmm-xxxx format."""
+    """Generate a unique run ID in YYYYMMDD-HHMMSS-mmm-xxxxxxxx format.
+
+    The random suffix is 4 bytes (8 hex chars). A 2-byte suffix only has
+    16 bits of entropy, so back-to-back calls within the same millisecond
+    collided at a ~0.07% rate over 10 IDs — enough to flake CI. 4 bytes
+    matches the fleet_id generator and makes a same-ms collision
+    negligible. RUN_ID_RE is length-agnostic, so widening the suffix is
+    safe for every downstream consumer.
+    """
     now = datetime.now(timezone.utc)
     millis = now.microsecond // 1000
-    suffix = secrets.token_hex(2)
+    suffix = secrets.token_hex(4)
     return f"{now.strftime('%Y%m%d-%H%M%S')}-{millis:03d}-{suffix}"
-
-
-def _slugify(title: str) -> str:
-    """Convert a title to a filesystem-safe slug (max 30 chars)."""
-    name = title.lower().strip()
-    name = re.sub(r"[^a-z0-9\-]", "-", name)
-    name = re.sub(r"-+", "-", name)
-    return name.strip("-")[:30]
 
 
 def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
@@ -251,6 +291,7 @@ def main(argv=None) -> int:
         pid=os.getpid(),
         branch=f"worca/{slug}-{run_id}",
         fleet_id=args.fleet_id,
+        group_type="fleet" if args.fleet_id else None,
         target_branch=args.branch,
     )
 
@@ -260,15 +301,41 @@ def main(argv=None) -> int:
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
 
-    subprocess.Popen(
-        cmd,
-        cwd=worktree_path,
-        env=env,
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    # Capture the child's stdout+stderr to a spawn log inside the worktree.
+    # A run_pipeline.py that crashes on startup (unknown args, import error,
+    # missing runtime) used to vanish under DEVNULL — leaving a stale
+    # "running" registry entry the UI later mislabels "interrupted (stale_pid)".
+    worca_dir = os.path.join(worktree_path, ".worca")
+    os.makedirs(worca_dir, exist_ok=True)
+    spawn_log = os.path.join(worca_dir, "spawn.log")
+    with open(spawn_log, "wb") as _log_fh:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=worktree_path,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=_log_fh,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+    # Brief liveness check: if run_pipeline.py exits before writing its own
+    # status.json it crashed on startup — mark the registry entry
+    # setup_failed (a terminal failure state the fleet + UI understand) so
+    # it surfaces as a real failure with spawn.log as the diagnostic,
+    # instead of a stale "running" entry the reconciler ghost-interrupts.
+    status_json = os.path.join(worca_dir, "runs", run_id, "status.json")
+    if not _await_pipeline_startup(proc, run_id, status_json):
+        update_pipeline(run_id, status="setup_failed")
+        tail = _spawn_log_tail(spawn_log)
+        print(
+            f"error: run_pipeline.py exited before startup "
+            f"(run {run_id}) — see {spawn_log}",
+            file=sys.stderr,
+        )
+        if tail:
+            print(tail, file=sys.stderr)
+        return 1
 
     # Step 8: print run_id + path and exit immediately
     print(run_id)

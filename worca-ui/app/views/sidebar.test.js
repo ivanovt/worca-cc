@@ -221,25 +221,219 @@ describe('sidebar - New Pipeline button capacity gating', () => {
   });
 });
 
-describe('sidebar - New Pipeline CTA', () => {
-  it('renders a single-action button for New Pipeline CTA', async () => {
+describe('sidebar - New Pipeline CTA (split button)', () => {
+  // Pattern A from the W-040 UX discussion: split-button with primary
+  // "New Pipeline" + chevron dropdown for the multi-project alternatives.
+
+  it('renders the primary "New Pipeline" button alongside a chevron dropdown', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).toContain('sidebar-new-run-btn');
-    // No dropdown wrapper, no menu item — just a plain button.
-    expect(output).not.toContain('sl-dropdown');
-    expect(output).not.toContain('sl-menu-item');
+    expect(output).toContain('sidebar-new-run-split');
+    expect(output).toContain('sidebar-new-run-btn-primary');
+    expect(output).toContain('sidebar-new-run-btn-chevron');
+    expect(output).toContain('>New Pipeline<');
   });
 
-  it('button label contains "New Pipeline"', async () => {
+  it('chevron dropdown exposes New Fleet as a menu item', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).toContain('New Pipeline');
+    expect(output).toContain('sl-dropdown');
+    expect(output).toContain('sl-menu');
+    expect(output).toContain('menu-item-new-fleet');
+    expect(output).toContain('New Fleet');
+  });
+
+  it('primary "New Pipeline" button stays clickable in global mode with no project selected', async () => {
+    // The primary half is no longer gated on project context — it always
+    // navigates to /new-run, and the launcher view handles the "pick a
+    // project" prompt for global-mode-multi. Only capacity disables it.
+    // We can't reliably assert on the ?disabled boolean binding via the
+    // renderToString string form (lit-html's ?attr= literal stays in the
+    // source); the user-visible signal we *can* check is the project-gate
+    // tooltip — if the gate is gone the tooltip text shouldn't render.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      currentProjectId: null,
+      projects: [
+        { name: 'a', path: '/a' },
+        { name: 'b', path: '/b' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-new-run-btn-primary');
+    expect(output).not.toContain('Select a project first');
+  });
+
+  it('chevron is always rendered in global mode (Fleet creation needs no project)', async () => {
+    // The chevron must be present regardless of project context so users
+    // can reach Fleet creation from the sidebar. We can't reliably assert
+    // on the boolean disabled state via renderToString (lit-html's
+    // ?attr= syntax doesn't evaluate to a DOM attribute in the string
+    // form), so we settle for presence — the actual disabled-on-capacity
+    // gating is exercised in the existing atCapacity tests.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      currentProjectId: null,
+      projects: [
+        { name: 'a', path: '/a' },
+        { name: 'b', path: '/b' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-new-run-btn-chevron');
+    expect(output).toContain('menu-item-new-fleet');
+  });
+});
+
+describe('sidebar - Fleets nav entry', () => {
+  // The Fleets entry is always-shown for UX consistency with its peer list
+  // entries (Running, History, Worktrees) — the empty-state experience is
+  // owned by the /fleet-runs view, not by hiding the navigation.
+  it('Fleets entry visible when state.fleets is absent', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('>Fleets<');
+  });
+
+  it('Fleets entry visible when state.fleets is empty', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({ fleets: [] });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('>Fleets<');
+  });
+
+  it('Fleets entry visible when fleets array is non-empty', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [{ fleet_id: 'f1', status: 'completed' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('>Fleets<');
+  });
+
+  it('Fleets badge hidden when no running/halted fleets exist', async () => {
+    // Empty / terminal-only fleet sets produce no badge — the entry stays
+    // visible but stays quiet (matches Worktrees/History when at zero).
+    const { sidebarView } = await import('./sidebar.js');
+    const stateEmpty = makeState({ fleets: [] });
+    const out1 = renderToString(
+      sidebarView(stateEmpty, route, 'open', defaultOpts()),
+    );
+    expect(out1).not.toContain('fleets-count-badge');
+
+    const stateTerminal = makeState({
+      fleets: [{ fleet_id: 'f1', status: 'completed' }],
+    });
+    const out2 = renderToString(
+      sidebarView(stateTerminal, route, 'open', defaultOpts()),
+    );
+    expect(out2).not.toContain('fleets-count-badge');
+  });
+
+  it('Fleets badge counts running + halted (the attention set)', async () => {
+    // Terminal fleets (completed/failed) don't add to the count.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'running' },
+        { fleet_id: 'f2', status: 'running' },
+        { fleet_id: 'f3', status: 'halted' },
+        { fleet_id: 'f4', status: 'completed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('fleets-count-badge');
+    // 2 running + 1 halted = 3, completed excluded
+    expect(output).toContain('>3<');
+  });
+
+  it('Fleets badge variant is neutral when only running fleets exist', async () => {
+    // Sidebar count badges follow the History/Worktrees convention: neutral
+    // grey by default, escalates only on the "needs attention" trigger.
+    // Running fleets are normal active work — no escalation.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'running' },
+        { fleet_id: 'f2', status: 'running' },
+        { fleet_id: 'f3', status: 'completed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('class="fleets-count-badge"');
+    expect(output).toContain('variant="neutral"');
+    expect(output).not.toContain('variant="warning"');
+    expect(output).not.toContain(
+      'variant="primary" pill class="fleets-count-badge"',
+    );
+  });
+
+  it('Fleets badge variant flips to warning when any fleet is halted', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'halted' },
+        // a completed fleet is terminal and excluded from the badge count,
+        // but its presence must not change the variant logic
+        { fleet_id: 'f2', status: 'completed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('fleets-count-badge');
+    expect(output).toContain('variant="warning"');
+    // halted = 1 fleet that needs attention
+    expect(output).toContain('>1<');
+  });
+
+  it('Fleets badge hidden when only terminal fleets exist', async () => {
+    // The entry itself is shown (any fleet exists) but the count badge is
+    // not — neither running nor halted needs operator action.
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'completed' },
+        { fleet_id: 'f2', status: 'failed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('>Fleets<');
+    expect(output).not.toContain('fleets-count-badge');
+  });
+
+  it('Fleets entry is active when route section is fleet-runs', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      fleets: [{ fleet_id: 'f1', status: 'running' }],
+    });
+    const fleetsRoute = { section: 'fleet-runs' };
+    const output = renderToString(
+      sidebarView(state, fleetsRoute, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-item active');
   });
 });

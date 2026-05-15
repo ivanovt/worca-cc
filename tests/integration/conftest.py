@@ -123,6 +123,14 @@ def pipeline_env(tmp_path):
             "WORCA_AGENT": "",  # not in agent mode — hooks should not enforce agent guards
             "WORCA_SKIP_BEADS": "1",  # bd binary may not work in CI
         }
+        # Strip pipeline-specific WORCA_* vars that leak from the parent shell.
+        # WORCA_PLAN_FILE and WORCA_PROJECT_ROOT in particular cause plan_check
+        # to resolve against the parent pipeline's plan file (which exists),
+        # making governance block tests pass when they should block.
+        env.pop("WORCA_PLAN_FILE", None)
+        env.pop("WORCA_PROJECT_ROOT", None)
+        env.pop("WORCA_RUN_ID", None)
+        env.pop("WORCA_RUN_DIR", None)
         if _coverage_enabled():
             # Coverage subprocesses write .coverage.<host>.<pid>.<rand> next to
             # CWD by default. Force them into REPO_ROOT so `coverage combine`

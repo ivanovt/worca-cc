@@ -6,26 +6,33 @@ export const STATES = [
   'failed',
   'interrupted',
   'cancelled',
+  'halted',
+  'setup_failed',
+  'unrecoverable',
 ];
 
 const ACTION_MATRIX = {
   stop: { running: true },
   pause: { running: true },
-  resume: { paused: true, failed: true, interrupted: true },
+  resume: { paused: true, failed: true, interrupted: true, halted: true },
   cancel: {
     pending: true,
     running: true,
     paused: true,
     failed: true,
     interrupted: true,
+    halted: true,
+    setup_failed: true,
   },
   archive: {
-    pending: true,
     paused: true,
     completed: true,
     failed: true,
     interrupted: true,
     cancelled: true,
+    halted: true,
+    setup_failed: true,
+    unrecoverable: true,
   },
   unarchive: {
     completed: true,
@@ -40,6 +47,9 @@ const ACTION_MATRIX = {
     failed: true,
     interrupted: true,
     cancelled: true,
+    halted: true,
+    setup_failed: true,
+    unrecoverable: true,
   },
   learn: {
     paused: true,
@@ -47,6 +57,7 @@ const ACTION_MATRIX = {
     failed: true,
     interrupted: true,
     cancelled: true,
+    halted: true,
   },
 };
 

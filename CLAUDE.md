@@ -212,6 +212,26 @@ The raw `coverage` CLI still works for ad-hoc use (`coverage combine && coverage
 - The post_tool_use hook has a test gate: 2 consecutive pytest failures block further tool calls
 - Subagent dispatch is restricted per agent role (tracking hook)
 
+## Guide Precedence
+
+When a pipeline run includes a `--guide` file, the guide is injected into the work request under a `## Reference Guide (normative)` header by `attach_guide()` in `work_request.py`. All agents must treat it as the highest-authority source:
+
+**Authority order: guide > plan > description**
+
+- The **guide** is normative — it overrides everything else. It typically carries a migration spec, RFC, or compliance requirement.
+- The **plan** is derived from the guide and description. If it diverges from the guide, the guide wins.
+- The **description** is task scope. Conflicts with the guide are bugs in the description, not the guide.
+
+Agent behavior when a guide is present:
+
+| Agent | Behavior |
+|-------|----------|
+| **Planner** | Produces a plan that conforms to the guide. Reports any description-vs-guide conflict rather than silently picking a side. |
+| **Reviewer** | Flags any plan instruction that contradicts the guide as a `critical` issue. Surfaces plan-vs-guide divergence explicitly. |
+| **Tester** | Flags guide-vs-description conflicts as bug notes in proof artifacts. Does not resolve conflicts — surfaces them. |
+
+See `src/worca/agents/core/planner.md`, `reviewer.md`, and `tester.md` for the per-agent instruction blocks.
+
 ## worca-ui Development
 
 **Badge color language:** all `sl-badge` variants and status colors follow the guide in [`worca-ui/docs/badge-color-language.md`](./worca-ui/docs/badge-color-language.md). Read it before adding or modifying badges — blue means active, orange means caution, green means done.
@@ -274,6 +294,78 @@ worca cleanup --older-than 7d   # Remove worktrees started more than 7 days ago
 ```
 
 Running worktrees are never eligible for cleanup. Use `git worktree list` to see all worktrees.
+
+## Fleet Runs
+
+Fan out a single work-request to N independent project repositories in parallel using `run_fleet.py`.
+
+```bash
+# Basic fleet: same prompt to 3 repos
+python .claude/scripts/run_fleet.py \
+  --projects /path/to/repo-a /path/to/repo-b /path/to/repo-c \
+  --prompt "Apply authentication migration"
+
+# With a normative guide and shared base branch
+python .claude/scripts/run_fleet.py \
+  --projects /path/to/repo-a /path/to/repo-b \
+  --prompt "Migrate to v2 API" \
+  --guide ./migration-spec.md \
+  --base main
+
+# Skip per-child planning by supplying a shared plan
+python .claude/scripts/run_fleet.py \
+  --projects /path/to/repo-a /path/to/repo-b \
+  --prompt "Apply logging standards" \
+  --plan ./shared-plan.md
+
+# Pause / stop / resume a fleet (lifecycle actions on an existing fleet_id)
+python .claude/scripts/run_fleet.py --pause  f_202601011200_abc12345
+python .claude/scripts/run_fleet.py --stop   f_202601011200_abc12345
+python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
+```
+
+### Key flags
+
+| Flag | Description |
+|------|-------------|
+| `--projects PATH [PATH ...]` | Target project repository paths |
+| `--projects-file FILE` | File listing project paths (one per line) |
+| `--prompt TEXT` | Work-request prompt (mutually exclusive with `--source`) |
+| `--source REF` | Source reference (`gh:issue:42`, `bd:bd-abc`) |
+| `--guide PATH` | Normative reference guide injected into every child's prompt (repeatable, resolved to absolute paths before dispatch) |
+| `--plan PATH` | Shared plan file; every child skips the PLAN stage |
+| `--plan-first [PROJECT]` | Run the Planner on a reference project first; remaining children inherit its plan |
+| `--base BRANCH` | PR base branch shared across the fleet (each repo's default if omitted) |
+| `--head-template TMPL` | Per-child head branch name template. Placeholders: `{project}`, `{fleet_id}`, `{slug}`, `{yyyymmdd}`, `{yyyymmddhhmm}` |
+| `--max-parallel N` | Maximum concurrent child pipelines (default: 5) |
+| `--fleet-failure-threshold RATIO` | Failure ratio that trips the circuit breaker and halts unstarted children (default: 0.30) |
+| `--pause FLEET_ID` | Pause a running fleet — write a `pause` control file to every in-flight child (manifest → `paused`) |
+| `--stop FLEET_ID` | Stop a running fleet — write a `stop` control file + SIGTERM every in-flight child (manifest → `halted`, `halt_reason=stopped`) |
+| `--resume FLEET_ID` | Resume a halted/stopped/paused/failed fleet — continue paused/interrupted children in place, re-dispatch failed/pending children |
+
+`--branch` is explicitly rejected — use `--base` for the PR base branch and `--head-template` for the per-child head branch name. `--pause`, `--stop` and `--resume` are mutually exclusive lifecycle actions.
+
+### Halt vs. Pause vs. Stop
+
+Three ways to wind down an in-flight fleet, differing only in how they treat children already running:
+
+| Action | New children | In-flight children | Manifest state |
+|--------|--------------|--------------------|----------------|
+| **Halt** (`DELETE /api/fleet-runs/:id`) | not launched | keep running until they finish naturally | `halted` / `halt_reason=user` |
+| **Pause** (`--pause`) | not launched | paused at next checkpoint, resumable in place | `paused` |
+| **Stop** (`--stop`) | not launched | interrupted immediately (SIGTERM), resumable in place | `halted` / `halt_reason=stopped` |
+
+All three are sticky — only `--resume` (or the UI Resume button) clears them. Resume continues `paused`/`interrupted` children in their existing worktrees and re-dispatches `failed`/`pending` ones fresh.
+
+### Fleet cleanup
+
+Fleet worktrees are cleaned up with the standard `worca cleanup` command extended with a fleet-scoped flag:
+
+```bash
+worca cleanup --fleet-id <fleet_id>   # Remove all child worktrees + fleet manifest dir
+```
+
+See [`docs/fleet-runs.md`](./docs/fleet-runs.md) for a full walkthrough including guide attachment, plan modes, the circuit breaker, and resume behavior.
 
 ## Migrating
 

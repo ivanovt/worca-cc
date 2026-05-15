@@ -2,6 +2,7 @@
 import json
 import subprocess
 from unittest.mock import patch, MagicMock, ANY
+import pytest
 
 from worca.orchestrator.work_request import (
     WorkRequest,
@@ -779,3 +780,163 @@ class TestNormalizeDispatcherPlanPathTemplate:
         )
         assert wr.source_type == "prompt"
         assert wr.title == "Just a prompt"
+
+
+# --- attach_guide ---
+
+class TestAttachGuide:
+    """Tests for attach_guide(wr, guide_paths) -> WorkRequest."""
+
+    def test_single_guide_populates_guide_content(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "migration.md"
+        guide.write_text("# Migration Steps\n\nStep 1: do this.")
+
+        wr = WorkRequest(source_type="prompt", title="Fix bug", description="Original task.")
+        result = attach_guide(wr, [str(guide)])
+
+        # description is now untouched — the wrapper lives in the per-stage
+        # .block.md templates, gated on {{#if has_guide}}.
+        assert result.description == "Original task."
+        assert "migration.md" in result.guide_content
+        assert "Migration Steps" in result.guide_content
+        assert "Step 1: do this." in result.guide_content
+
+    def test_description_is_not_mutated(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "spec.md"
+        guide.write_text("Normative content here.")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="Task content.")
+        result = attach_guide(wr, [str(guide)])
+
+        # No header / divider injected into description — that's the template's job.
+        assert "## Reference Guide" not in result.description
+        assert "## Task" not in result.description
+        assert result.description == "Task content."
+
+    def test_multiple_guides_all_included(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide_a = tmp_path / "alpha.md"
+        guide_a.write_text("Alpha content.")
+        guide_b = tmp_path / "beta.md"
+        guide_b.write_text("Beta content.")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="Task.")
+        result = attach_guide(wr, [str(guide_a), str(guide_b)])
+
+        assert "alpha.md" in result.guide_content
+        assert "Alpha content." in result.guide_content
+        assert "beta.md" in result.guide_content
+        assert "Beta content." in result.guide_content
+        assert result.description == "Task."
+
+    def test_empty_guide_list_returns_unchanged(self):
+        from worca.orchestrator.work_request import attach_guide
+
+        wr = WorkRequest(source_type="prompt", title="t", description="Original.")
+        result = attach_guide(wr, [])
+
+        assert result.description == "Original."
+        assert result.guide_content == ""
+
+    def test_returns_new_instance(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "g.md"
+        guide.write_text("guide")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_guide(wr, [str(guide)])
+
+        assert result is not wr
+
+    def test_metadata_preserved(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "g.md"
+        guide.write_text("guide")
+
+        wr = WorkRequest(
+            source_type="github_issue",
+            title="My Title",
+            description="d",
+            source_ref="gh:42",
+            priority=1,
+            plan_path="docs/plans/foo.md",
+        )
+        result = attach_guide(wr, [str(guide)])
+
+        assert result.source_type == "github_issue"
+        assert result.title == "My Title"
+        assert result.source_ref == "gh:42"
+        assert result.priority == 1
+        assert result.plan_path == "docs/plans/foo.md"
+
+    def test_missing_file_raises(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        with pytest.raises((FileNotFoundError, OSError)):
+            attach_guide(wr, [str(tmp_path / "nonexistent.md")])
+
+    def test_raises_when_max_bytes_exceeded(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "big.md"
+        guide.write_text("x" * 200)  # 200 bytes
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        with pytest.raises(ValueError, match="exceeds worca.guide.max_bytes"):
+            attach_guide(wr, [str(guide)], max_bytes=100)
+
+    def test_max_bytes_none_disables_cap(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "big.md"
+        guide.write_text("x" * 10_000)
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_guide(wr, [str(guide)], max_bytes=None)
+        assert len(result.guide_content) > 9_000  # not truncated
+
+    def test_max_bytes_sums_across_files(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        a = tmp_path / "a.md"
+        a.write_text("a" * 60)
+        b = tmp_path / "b.md"
+        b.write_text("b" * 60)
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        # 120 bytes total content + filename headers; cap at 100 — should fail.
+        with pytest.raises(ValueError, match="exceeds worca.guide.max_bytes"):
+            attach_guide(wr, [str(a), str(b)], max_bytes=100)
+
+
+class TestResolveGuideMaxBytes:
+    """resolve_guide_max_bytes(settings) reads worca.guide.max_bytes."""
+
+    def test_reads_from_settings(self):
+        from worca.orchestrator.work_request import resolve_guide_max_bytes
+
+        settings = {"worca": {"guide": {"max_bytes": 4096}}}
+        assert resolve_guide_max_bytes(settings) == 4096
+
+    def test_default_when_missing(self):
+        from worca.orchestrator.work_request import (
+            GUIDE_MAX_BYTES_DEFAULT,
+            resolve_guide_max_bytes,
+        )
+
+        assert resolve_guide_max_bytes({}) == GUIDE_MAX_BYTES_DEFAULT
+        assert resolve_guide_max_bytes({"worca": {}}) == GUIDE_MAX_BYTES_DEFAULT
+        assert resolve_guide_max_bytes({"worca": {"guide": {}}}) == GUIDE_MAX_BYTES_DEFAULT
+
+    def test_default_is_128_kib(self):
+        from worca.orchestrator.work_request import GUIDE_MAX_BYTES_DEFAULT
+
+        assert GUIDE_MAX_BYTES_DEFAULT == 131072

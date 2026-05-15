@@ -36,6 +36,24 @@ const BADGE_VARIANT = {
   pending: 'neutral',
 };
 
+// Variant for the overall-run status badge in the card header. Keyed by
+// `pipeline_status` values (distinct from BADGE_VARIANT, which is keyed
+// by per-stage status). Mirrors the page-header badge map in main.js so
+// the pipeline card carries the same status-badge affordance as the
+// worktree and fleet cards.
+const RUN_STATUS_VARIANT = {
+  pending: 'neutral',
+  running: 'primary',
+  resuming: 'primary',
+  paused: 'warning',
+  interrupted: 'warning',
+  halted: 'warning',
+  completed: 'success',
+  failed: 'danger',
+  error: 'danger',
+  cancelled: 'neutral',
+};
+
 function _statusTooltip(run, status) {
   const ref =
     run.status_changed_at ||
@@ -218,6 +236,8 @@ export function runCardView(
       : run.pipeline_template
     : null;
 
+  const projectName = run.project || run._project || null;
+
   return html`
     <div class="run-card ${statusClass(overallStatus)}" @click=${onClick ? () => onClick(run.id) : null}>
       <div class="run-card-top">
@@ -228,7 +248,42 @@ export function runCardView(
         }
         <span class="run-card-title">${title}</span>
         ${run.is_worktree_run ? html`<sl-icon name="folder-symlink" class="run-card-worktree-icon" title=${`Isolated worktree at ${run.worktree_path || ''}`}></sl-icon>` : nothing}
+        <sl-badge
+          variant="${RUN_STATUS_VARIANT[overallStatus] || 'neutral'}"
+          pill
+          class="status-badge-${overallStatus}"
+        >${overallStatus}</sl-badge>
       </div>
+      ${(() => {
+        const projectItem = projectName
+          ? html`<span class="run-card-meta-item"><span class="meta-label">Project:</span>
+              <span class="meta-value run-card-project">${projectName}</span>
+            </span>`
+          : nothing;
+        // When the run belongs to a fleet, the Fleet label+value sits on
+        // the same meta row as Project so the grouping is visible at a
+        // glance. Workspace grouping keeps its own row (one group type
+        // applies at a time, so this is mutually exclusive).
+        if (run.fleet_id && run.group_type === 'fleet') {
+          return html`<div class="run-card-meta">
+            ${projectItem}
+            <span class="run-card-meta-item"><span class="meta-label">Fleet:</span>
+              <a class="meta-value run-card-group-link" href="#/fleet-runs/${run.fleet_id}" @click=${(e) => e.stopPropagation()}>${run.fleet_id}</a>
+            </span>
+          </div>`;
+        }
+        if (run.workspace_id && run.group_type === 'workspace') {
+          return html`<div class="run-card-meta">
+            ${projectItem}
+            <span class="run-card-meta-item"><span class="meta-label">Workspace:</span>
+              <a class="meta-value run-card-group-link" href="#/workspace-runs/${run.workspace_id}" @click=${(e) => e.stopPropagation()}>${run.workspace_id}</a>
+            </span>
+          </div>`;
+        }
+        return projectName
+          ? html`<div class="run-card-meta">${projectItem}</div>`
+          : nothing;
+      })()}
       ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> <span class="meta-value">${branch}</span></span></div>` : nothing}
       ${pipelineTemplate ? html`<div class="run-card-template"><span class="meta-label">Pipeline:</span> <span class="meta-value">${pipelineTemplate}</span></div>` : nothing}
       <div class="run-card-meta">

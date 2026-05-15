@@ -206,6 +206,7 @@ def main():
                 source_ref=wr.get("source_ref"),
                 priority=wr.get("priority", 2),
                 plan_path=wr.get("plan_path"),
+                guide_content=wr.get("guide_content", ""),
             )
         else:
             print(f"error: cannot resume — status file not found: {status_file}", file=sys.stderr)
@@ -216,17 +217,13 @@ def main():
         work_request = build_work_request(args)
 
         if args.guide:
-            try:
-                from worca.orchestrator.work_request import attach_guide
-            except ImportError:
-                raise argparse.ArgumentError(
-                    None,
-                    "--guide requires worca-cc with attach_guide() (W-040 / #101). "
-                    "The flag was accepted by W-048 plumbing but content injection is "
-                    "not yet implemented in this version. Upgrade worca-cc to a version "
-                    "that ships W-040, or remove --guide from your invocation.",
-                )
-            work_request = attach_guide(work_request, args.guide)
+            from worca.orchestrator.work_request import attach_guide, resolve_guide_max_bytes
+            _guide_settings = load_settings(args.settings)
+            work_request = attach_guide(
+                work_request,
+                args.guide,
+                max_bytes=resolve_guide_max_bytes(_guide_settings),
+            )
 
         # Resolve plan: explicit --plan wins, then auto-detected from issue body
         plan_file = args.plan or work_request.plan_path

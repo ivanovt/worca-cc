@@ -83,11 +83,20 @@ def copy_claude_config(src_dir: str, dst_dir: str) -> None:
 
     Most projects gitignore .claude/, so a fresh worktree starts with no
     .claude/ at all — preflight then fails on missing settings.json. Copy
-    everything from the project's .claude/ into the worktree with three rules:
+    everything from the project's .claude/ into the worktree with these rules:
 
     - Skip settings.local.json (machine-specific; never propagate verbatim).
-    - Never clobber files git has already placed in the worktree. Tracked
-      files win.
+    - `tracked-files-win` for everything *except* the `.claude/worca/`
+      runtime subtree: if `git worktree add` already placed a file there,
+      keep it (projects may legitimately commit customised agents / hooks /
+      skills / settings.json).
+    - The `.claude/worca/` subtree is the opposite: it is `worca init`-
+      managed runtime scaffolding and MUST match the running worca version.
+      It is copied unconditionally, overwriting whatever `git worktree add`
+      materialised from HEAD. Without this, a project that git-tracks
+      `.claude/` with a stale committed `worca/` shadows the project's
+      (working-tree) upgrade — the spawned run_pipeline.py is then a
+      different version than the launcher and crashes on unknown flags.
     - Narrow exception to the local-skip rule: a small allowlist of
       worca-namespace runtime keys (webhooks, events, models) is merged from
       the parent's settings.local.json into the worktree's settings.json.
@@ -99,10 +108,13 @@ def copy_claude_config(src_dir: str, dst_dir: str) -> None:
         rel = os.path.relpath(root, src_dir)
         if rel == ".":
             files = [f for f in files if f not in skip_top_level]
+        # The `worca/` subtree is runtime scaffolding — always overwrite it
+        # so the worktree's runtime matches the running worca version.
+        in_runtime = rel == "worca" or rel.startswith("worca" + os.sep)
         for f in files:
             dst_file = os.path.join(dst_dir, rel, f)
-            if os.path.exists(dst_file):
-                continue  # tracked-files-win
+            if os.path.exists(dst_file) and not in_runtime:
+                continue  # tracked-files-win (everything but the worca/ runtime)
             os.makedirs(os.path.dirname(dst_file), exist_ok=True)
             shutil.copy2(os.path.join(root, f), dst_file)
 

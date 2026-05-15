@@ -319,13 +319,15 @@ class TestCmdCleanup:
 
         import argparse
         args = argparse.Namespace(
-            run_id=None, all=True, dry_run=False, older_than=None
+            run_id=None, fleet_id=None, all=True, dry_run=False, older_than=None
         )
 
         with patch("worca.cli.cleanup._find_git_root", return_value=tmp_path):
-            with patch("worca.cli.cleanup.remove_pipeline_worktree") as mock_rm:
-                from worca.cli.cleanup import cmd_cleanup
-                cmd_cleanup(args)
+            # Isolate FleetSource from the real ~/.worca/fleet-runs/ directory
+            with patch("worca.cli.cleanup.FleetSource.list_eligible", return_value=[]):
+                with patch("worca.cli.cleanup.remove_pipeline_worktree") as mock_rm:
+                    from worca.cli.cleanup import cmd_cleanup
+                    cmd_cleanup(args)
 
         mock_rm.assert_not_called()
         out = capsys.readouterr().out
@@ -373,15 +375,17 @@ class TestCmdCleanup:
 
         import argparse
         args = argparse.Namespace(
-            run_id=None, all=True, dry_run=False,
+            run_id=None, fleet_id=None, all=True, dry_run=False,
             older_than=timedelta(days=7),
         )
 
         with patch("worca.cli.cleanup._find_git_root", return_value=tmp_path):
-            with patch("worca.cli.cleanup.remove_pipeline_worktree", return_value=True) as mock_rm:
-                with patch("worca.cli.cleanup.deregister_pipeline"):
-                    from worca.cli.cleanup import cmd_cleanup
-                    cmd_cleanup(args)
+            # Isolate FleetSource from the real ~/.worca/fleet-runs/ directory
+            with patch("worca.cli.cleanup.FleetSource.list_eligible", return_value=[]):
+                with patch("worca.cli.cleanup.remove_pipeline_worktree", return_value=True) as mock_rm:
+                    with patch("worca.cli.cleanup.deregister_pipeline"):
+                        from worca.cli.cleanup import cmd_cleanup
+                        cmd_cleanup(args)
 
         mock_rm.assert_called_once_with(wt_old)
         out = capsys.readouterr().out
@@ -394,12 +398,14 @@ class TestCmdCleanup:
 
         import argparse
         args = argparse.Namespace(
-            run_id=None, all=True, dry_run=False, older_than=None
+            run_id=None, fleet_id=None, all=True, dry_run=False, older_than=None
         )
 
         with patch("worca.cli.cleanup._find_git_root", return_value=tmp_path):
-            from worca.cli.cleanup import cmd_cleanup
-            cmd_cleanup(args)
+            # Isolate FleetSource from the real ~/.worca/fleet-runs/ directory
+            with patch("worca.cli.cleanup.FleetSource.list_eligible", return_value=[]):
+                from worca.cli.cleanup import cmd_cleanup
+                cmd_cleanup(args)
 
         out = capsys.readouterr().out
         assert "No eligible" in out
@@ -424,3 +430,438 @@ class TestCmdCleanup:
 
         err = capsys.readouterr().err
         assert "failed" in err.lower() or "error" in err.lower() or "warning" in err.lower()
+
+
+# ---------------------------------------------------------------------------
+# FleetSource helpers
+# ---------------------------------------------------------------------------
+
+
+def _write_fleet_manifest(
+    fleet_runs_dir,
+    fleet_id,
+    status="completed",
+    started_at=None,
+    children=None,
+    title=None,
+):
+    """Write a minimal fleet manifest to fleet_runs_dir/<fleet_id>.json."""
+    os.makedirs(fleet_runs_dir, exist_ok=True)
+    ts = (started_at or datetime.now(timezone.utc)).isoformat()
+    manifest = {
+        "fleet_id": fleet_id,
+        "status": status,
+        "started_at": ts,
+        "updated_at": ts,
+        "title": title or f"Fleet {fleet_id}",
+        "halt_reason": None,
+        "children": children or [],
+    }
+    path = os.path.join(fleet_runs_dir, f"{fleet_id}.json")
+    with open(path, "w") as f:
+        json.dump(manifest, f)
+    return path
+
+
+# ---------------------------------------------------------------------------
+# FleetSource.list_eligible
+# ---------------------------------------------------------------------------
+
+
+class TestFleetSourceListEligible:
+    def test_empty_when_dir_does_not_exist(self, tmp_path):
+        from worca.cli.cleanup import FleetSource
+        source = FleetSource(fleet_runs_dir=str(tmp_path / "fleet-runs"))
+        assert source.list_eligible({}) == []
+
+    def test_returns_fleet_manifest_entry(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_20260512_abc1")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert len(eligible) == 1
+        assert eligible[0]["fleet_id"] == "f_20260512_abc1"
+        assert eligible[0]["run_id"] == "f_20260512_abc1"
+
+    def test_returns_title_from_manifest(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_abc", title="My migration fleet")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert eligible[0]["title"] == "My migration fleet"
+
+    def test_fleet_id_filter_includes_matching(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_001")
+        _write_fleet_manifest(fleet_runs_dir, "f_002")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({"fleet_id": "f_001"})
+
+        assert len(eligible) == 1
+        assert eligible[0]["fleet_id"] == "f_001"
+
+    def test_fleet_id_filter_excludes_non_matching(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_001")
+        _write_fleet_manifest(fleet_runs_dir, "f_002")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({"fleet_id": "f_999"})
+
+        assert eligible == []
+
+    def test_older_than_filter_includes_old(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        old_time = datetime.now(timezone.utc) - timedelta(days=10)
+        _write_fleet_manifest(fleet_runs_dir, "f_old", started_at=old_time)
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible(
+            {"older_than": timedelta(days=7)}
+        )
+
+        assert len(eligible) == 1
+        assert eligible[0]["fleet_id"] == "f_old"
+
+    def test_older_than_filter_excludes_recent(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        recent_time = datetime.now(timezone.utc) - timedelta(days=2)
+        _write_fleet_manifest(fleet_runs_dir, "f_new", started_at=recent_time)
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible(
+            {"older_than": timedelta(days=7)}
+        )
+
+        assert eligible == []
+
+    # Production manifests carry `created_at`, not `started_at`. Without the
+    # fallback in FleetSource.list_eligible the age guard would be a no-op
+    # and --older-than would delete every fleet regardless of age.
+
+    def _write_created_at_manifest(self, fleet_runs_dir, fleet_id, created_at):
+        os.makedirs(fleet_runs_dir, exist_ok=True)
+        manifest = {
+            "fleet_id": fleet_id,
+            "status": "completed",
+            "created_at": created_at.isoformat(),
+            "title": f"Fleet {fleet_id}",
+            "halt_reason": None,
+            "children": [],
+        }
+        with open(os.path.join(fleet_runs_dir, f"{fleet_id}.json"), "w") as f:
+            json.dump(manifest, f)
+
+    def test_older_than_filter_uses_created_at_when_started_at_missing(self, tmp_path):
+        """Production manifests have created_at, not started_at — must still age-filter."""
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        old = datetime.now(timezone.utc) - timedelta(days=10)
+        self._write_created_at_manifest(fleet_runs_dir, "f_old_created", old)
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible(
+            {"older_than": timedelta(days=7)}
+        )
+
+        assert len(eligible) == 1
+        assert eligible[0]["fleet_id"] == "f_old_created"
+
+    def test_older_than_filter_excludes_recent_created_at(self, tmp_path):
+        """The no-op-age-guard bug: a recent created_at must NOT be eligible."""
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        recent = datetime.now(timezone.utc) - timedelta(days=2)
+        self._write_created_at_manifest(fleet_runs_dir, "f_new_created", recent)
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible(
+            {"older_than": timedelta(days=7)}
+        )
+
+        assert eligible == []
+
+    def test_skips_malformed_json(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        os.makedirs(fleet_runs_dir)
+        with open(os.path.join(fleet_runs_dir, "bad.json"), "w") as f:
+            f.write("{not valid json}")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert eligible == []
+
+    def test_skips_non_json_files(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        os.makedirs(fleet_runs_dir)
+        with open(os.path.join(fleet_runs_dir, "notes.txt"), "w") as f:
+            f.write("not a manifest")
+        _write_fleet_manifest(fleet_runs_dir, "f_real")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert len(eligible) == 1
+        assert eligible[0]["fleet_id"] == "f_real"
+
+    def test_running_fleet_not_eligible(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_running", status="running")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert eligible == []
+
+    def test_paused_fleet_not_eligible(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_paused", status="paused")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert eligible == []
+
+    def test_completed_fleet_is_eligible(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_done", status="completed")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert len(eligible) == 1
+
+    def test_halted_fleet_is_eligible(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_halted", status="halted")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert len(eligible) == 1
+
+    def test_failed_fleet_is_eligible(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_failed", status="failed")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert len(eligible) == 1
+
+    def test_entry_has_manifest_path(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(fleet_runs_dir, "f_abc")
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert "manifest_path" in eligible[0]
+        assert eligible[0]["manifest_path"].endswith("f_abc.json")
+
+    def test_entry_has_children_list(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        _write_fleet_manifest(
+            fleet_runs_dir,
+            "f_abc",
+            children=[{"run_id": "r1", "project_path": "/p/a"}],
+        )
+
+        from worca.cli.cleanup import FleetSource
+        eligible = FleetSource(fleet_runs_dir=fleet_runs_dir).list_eligible({})
+
+        assert eligible[0]["children"] == [{"run_id": "r1", "project_path": "/p/a"}]
+
+
+# ---------------------------------------------------------------------------
+# FleetSource.remove
+# ---------------------------------------------------------------------------
+
+
+class TestFleetSourceRemove:
+    def test_remove_no_children_removes_manifest_file(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        manifest_path = _write_fleet_manifest(fleet_runs_dir, "f_abc", children=[])
+
+        from worca.cli.cleanup import FleetSource
+        source = FleetSource(fleet_runs_dir=fleet_runs_dir)
+        entry = {
+            "fleet_id": "f_abc",
+            "run_id": "f_abc",
+            "children": [],
+            "manifest_path": manifest_path,
+            "worktree_path": str(tmp_path / "fleet-runs" / "f_abc"),
+        }
+
+        ok = source.remove(entry)
+
+        assert ok is True
+        assert not os.path.isfile(manifest_path)
+
+    def test_remove_removes_fleet_guides_dir(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        manifest_path = _write_fleet_manifest(fleet_runs_dir, "f_abc", children=[])
+        fleet_dir = os.path.join(fleet_runs_dir, "f_abc")
+        os.makedirs(fleet_dir)
+        with open(os.path.join(fleet_dir, "guide.md"), "w") as f:
+            f.write("# Guide")
+
+        from worca.cli.cleanup import FleetSource
+        source = FleetSource(fleet_runs_dir=fleet_runs_dir)
+        entry = {
+            "fleet_id": "f_abc",
+            "run_id": "f_abc",
+            "children": [],
+            "manifest_path": manifest_path,
+            "worktree_path": fleet_dir,
+        }
+
+        ok = source.remove(entry)
+
+        assert ok is True
+        assert not os.path.isdir(fleet_dir)
+        assert not os.path.isfile(manifest_path)
+
+    def test_remove_calls_worktree_source_for_child(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        project_dir = str(tmp_path / "myrepo")
+        os.makedirs(project_dir)
+        child_base = os.path.join(project_dir, ".worca")
+        child_wt = str(tmp_path / "wt_child")
+        os.makedirs(child_wt)
+        _write_registry(child_base, "run-child", child_wt, status="completed")
+
+        manifest_path = _write_fleet_manifest(
+            fleet_runs_dir,
+            "f_abc",
+            children=[{"run_id": "run-child", "project_path": project_dir}],
+        )
+
+        from worca.cli.cleanup import FleetSource
+        source = FleetSource(fleet_runs_dir=fleet_runs_dir)
+        entry = {
+            "fleet_id": "f_abc",
+            "run_id": "f_abc",
+            "children": [{"run_id": "run-child", "project_path": project_dir}],
+            "manifest_path": manifest_path,
+            "worktree_path": str(tmp_path / "fleet-runs" / "f_abc"),
+        }
+
+        with patch("worca.cli.cleanup.remove_pipeline_worktree", return_value=True) as mock_rm:
+            ok = source.remove(entry)
+
+        assert ok is True
+        mock_rm.assert_called_once_with(child_wt)
+        # pipelines.d/ entry should be gone
+        reg_path = os.path.join(child_base, "multi", "pipelines.d", "run-child.json")
+        assert not os.path.isfile(reg_path)
+
+    def test_remove_returns_false_on_child_worktree_failure(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        project_dir = str(tmp_path / "myrepo")
+        os.makedirs(project_dir)
+        child_base = os.path.join(project_dir, ".worca")
+        child_wt = str(tmp_path / "wt_child")
+        os.makedirs(child_wt)
+        _write_registry(child_base, "run-child", child_wt)
+
+        manifest_path = _write_fleet_manifest(
+            fleet_runs_dir,
+            "f_abc",
+            children=[{"run_id": "run-child", "project_path": project_dir}],
+        )
+
+        from worca.cli.cleanup import FleetSource
+        source = FleetSource(fleet_runs_dir=fleet_runs_dir)
+        entry = {
+            "fleet_id": "f_abc",
+            "run_id": "f_abc",
+            "children": [{"run_id": "run-child", "project_path": project_dir}],
+            "manifest_path": manifest_path,
+            "worktree_path": str(tmp_path / "fleet-runs" / "f_abc"),
+        }
+
+        with patch("worca.cli.cleanup.remove_pipeline_worktree", return_value=False):
+            ok = source.remove(entry)
+
+        assert ok is False
+
+    def test_remove_skips_child_without_project_path(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        manifest_path = _write_fleet_manifest(
+            fleet_runs_dir,
+            "f_abc",
+            children=[{"run_id": "run-orphan"}],  # no project_path
+        )
+
+        from worca.cli.cleanup import FleetSource
+        source = FleetSource(fleet_runs_dir=fleet_runs_dir)
+        entry = {
+            "fleet_id": "f_abc",
+            "run_id": "f_abc",
+            "children": [{"run_id": "run-orphan"}],
+            "manifest_path": manifest_path,
+            "worktree_path": str(tmp_path / "fleet-runs" / "f_abc"),
+        }
+
+        with patch("worca.cli.cleanup.remove_pipeline_worktree") as mock_rm:
+            ok = source.remove(entry)
+
+        assert ok is True
+        mock_rm.assert_not_called()
+
+    def test_remove_fleet_dir_missing_still_removes_manifest(self, tmp_path):
+        fleet_runs_dir = str(tmp_path / "fleet-runs")
+        manifest_path = _write_fleet_manifest(fleet_runs_dir, "f_abc", children=[])
+        # No fleet_dir — guides dir never created
+
+        from worca.cli.cleanup import FleetSource
+        source = FleetSource(fleet_runs_dir=fleet_runs_dir)
+        entry = {
+            "fleet_id": "f_abc",
+            "run_id": "f_abc",
+            "children": [],
+            "manifest_path": manifest_path,
+            "worktree_path": str(tmp_path / "fleet-runs" / "f_abc"),  # does not exist
+        }
+
+        ok = source.remove(entry)
+
+        assert ok is True
+        assert not os.path.isfile(manifest_path)
+
+
+# ---------------------------------------------------------------------------
+# _build_sources includes FleetSource
+# ---------------------------------------------------------------------------
+
+
+class TestBuildSourcesIncludesFleetSource:
+    def test_build_sources_includes_fleet_source(self, tmp_path):
+        from worca.cli.cleanup import _build_sources
+        sources = _build_sources(str(tmp_path / ".worca"))
+        source_types = [type(s).__name__ for s in sources]
+        assert "FleetSource" in source_types
+
+
+# ---------------------------------------------------------------------------
+# --fleet-id CLI argument
+# ---------------------------------------------------------------------------
+
+
+class TestCleanupFleetIdArg:
+    def test_main_parser_cleanup_fleet_id(self):
+        from worca.cli.main import create_parser
+        parser = create_parser()
+        args = parser.parse_args(["cleanup", "--fleet-id", "f_20260512_abc1"])
+        assert args.fleet_id == "f_20260512_abc1"
+
+    def test_fleet_id_absent_by_default(self):
+        from worca.cli.main import create_parser
+        parser = create_parser()
+        args = parser.parse_args(["cleanup"])
+        assert args.fleet_id is None

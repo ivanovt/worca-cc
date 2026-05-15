@@ -8,12 +8,14 @@ import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
 import {
   AlertTriangle,
   ArrowLeft,
+  CircleSlash,
   Database,
   iconSvg,
   Loader,
   Pause,
   Play,
   Plus,
+  RotateCcw,
   Square,
   Trash2,
 } from './utils/icons.js';
@@ -28,6 +30,13 @@ import {
 } from './views/add-project-dialog.js';
 import { beadsPanelView, beadsRunListView } from './views/beads-panel.js';
 import { dashboardView } from './views/dashboard.js';
+import { fleetCardView } from './views/fleet-card.js';
+import { fleetDetailView } from './views/fleet-detail.js';
+import {
+  fleetLauncherView,
+  getFleetLauncherSubmitState,
+  submitFleetLauncher,
+} from './views/fleet-launcher.js';
 import { learningsSectionView } from './views/learnings-panel.js';
 import {
   clearLiveTerminal,
@@ -93,12 +102,43 @@ import '@shoelace-style/shoelace/dist/components/radio-group/radio-group.js';
 import '@shoelace-style/shoelace/dist/components/radio/radio.js';
 import '@shoelace-style/shoelace/dist/components/checkbox/checkbox.js';
 import '@shoelace-style/shoelace/dist/components/spinner/spinner.js';
+// Dropdown + menu power the sidebar's "+ New" picker. Without these the
+// custom elements stay unregistered and the <sl-menu-item> children bleed
+// inline as plain text (observed: "New Fleet" rendering below the trigger).
+import '@shoelace-style/shoelace/dist/components/dropdown/dropdown.js';
+import '@shoelace-style/shoelace/dist/components/menu/menu.js';
+import '@shoelace-style/shoelace/dist/components/menu-item/menu-item.js';
+// sl-icon / sl-icon-button: status indicators and toggle controls used in
+// fleet detail, group-rendering, settings, run-card.
+import '@shoelace-style/shoelace/dist/components/icon/icon.js';
+import '@shoelace-style/shoelace/dist/components/icon-button/icon-button.js';
+// sl-card: PR approval panel in run-detail.
+import '@shoelace-style/shoelace/dist/components/card/card.js';
+// sl-progress-bar / sl-range / sl-tag: fleet header progress bar, fleet
+// launcher circuit-breaker threshold slider, fleet-detail guide filenames.
+import '@shoelace-style/shoelace/dist/components/progress-bar/progress-bar.js';
+import '@shoelace-style/shoelace/dist/components/range/range.js';
+import '@shoelace-style/shoelace/dist/components/tag/tag.js';
 
 const store = createStore();
 
 function projectUrl(path) {
   const pid = store.getState().currentProjectId;
   return pid ? `/api/projects/${pid}${path}` : `/api${path}`;
+}
+
+// Resolve the projectId for a runId by looking up the run in state.
+// Required for run-scoped WS messages in global mode: the WS connection
+// itself is bound to `currentProjectId` (often null in global mode), but
+// the server's `resolveProject()` honours `payload.projectId` first. Without
+// this, fetches like `get-agent-prompt` and `subscribe-log` for a run that
+// lives in a non-default project return NOT_FOUND and silently fail (the
+// JS catches the error, the cache stays empty, the UI shows nothing).
+function _runProjectId(runId) {
+  if (!runId) return null;
+  const state = store.getState();
+  const run = state.runs?.[runId] || state.archivedRuns?.[runId] || null;
+  return run?.project || run?._project || state.currentProjectId || null;
 }
 
 const ws = createWsClient();
@@ -124,8 +164,149 @@ let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: 
 let actionError = null; // null | string (error message, auto-clears)
 let restartStageKey = null;
 
+// -- Fleet views --
+const _fleetDetailCache = {}; // { fleetId: manifest }
+let _fleetDetailFetching = null; // currently-fetching fleet id (single in-flight)
+// Set of fleet ids the API has confirmed missing (404 / !data.ok). Symmetric
+// to _fleetDetailCache for the negative case — without it the detail view
+// stays at "Loading fleet…" forever when the manifest has been cleaned up
+// (common path: user navigates to a fleet link from a history entry, but
+// `worca cleanup --fleet-id` already removed the manifest). In-memory only
+// — a page refresh re-fetches and re-marks. Persisting would create a
+// staleness hazard (manifest re-created with same id during testing) for
+// no real-world benefit since fleet ids embed a timestamp + random suffix.
+const _fleetDetailMissing = new Set();
+let _fleetStatusFilter = 'all'; // /#/fleet-runs filter chip selection
+let _fleetTextFilter = ''; // /#/fleet-runs free-text filter
+
+// Free-text match for a fleet — title, fleet id, and member project
+// names. Mirrors `_runMatchesText` (run-list) and `_matchesFilter`
+// (worktrees) so all three list pages search consistently.
+function _fleetMatchesText(fleet, q) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  const title = fleet.work_request?.title || fleet.title || '';
+  const projectNames = (fleet.children || [])
+    .map((c) => (c.project_path || c.project || '').split('/').pop() || '')
+    .join(' ');
+  return (
+    title.toLowerCase().includes(needle) ||
+    (fleet.fleet_id || '').toLowerCase().includes(needle) ||
+    projectNames.toLowerCase().includes(needle)
+  );
+}
+
+// Status chips for the /#/fleet-runs list — mirrors the History page's
+// `.filter-chips`. "halted" replaces pipeline's "paused"/"error" since
+// that's the fleet-level non-terminal-but-stopped state; "archived" pulls
+// from the archived flag rather than a status value.
+const _FLEET_FILTER_STATUSES = [
+  'all',
+  'running',
+  'completed',
+  'failed',
+  'halted',
+  'archived',
+];
+
+function _fleetListView() {
+  // state.fleets is the single source of truth: populated on bootstrap and
+  // refreshed by the fleet-update WS handler. Reading the module-level
+  // cache used to drop refreshed entries on the floor (the list never
+  // updated after halt / cleanup events). Switch to a state-driven read so
+  // the list view stays consistent with the sidebar Fleets count.
+  const fleets = store.getState().fleets;
+  if (fleets === undefined) {
+    // Bootstrap hasn't completed yet (no /api/fleet-runs fetch returned).
+    return html`<div class="fleet-list-loading"><sl-spinner></sl-spinner> Loading fleets…</div>`;
+  }
+  if (fleets.length === 0) {
+    return html`
+      <div class="fleet-list-empty">
+        <p>No fleet runs yet.</p>
+        <sl-button variant="primary" @click=${() => navigate('fleet-runs', 'new', null)}>
+          + New Fleet
+        </sl-button>
+      </div>
+    `;
+  }
+
+  // Per-chip counts. `all` and every status count is over *non-archived*
+  // fleets; `archived` is its own bucket — same split as History (where
+  // archived runs live in a separate `archivedRuns` array).
+  const live = fleets.filter((f) => !f.archived);
+  const counts = { all: live.length, archived: fleets.length - live.length };
+  for (const f of live) {
+    counts[f.status] = (counts[f.status] || 0) + 1;
+  }
+
+  const cardOptions = {
+    onClick: (id) => navigate('fleet-runs', id, null),
+    onChildClick: (runId) => navigate('active', runId, null),
+    onArchive: archiveFleet,
+    onUnarchive: unarchiveFleet,
+  };
+
+  let displayed =
+    _fleetStatusFilter === 'archived'
+      ? fleets.filter((f) => f.archived)
+      : _fleetStatusFilter === 'all'
+        ? live
+        : live.filter((f) => f.status === _fleetStatusFilter);
+
+  // Text filter runs after the chip filter — same ordering as History.
+  const textQ = (_fleetTextFilter || '').trim();
+  if (textQ) {
+    displayed = displayed.filter((f) => _fleetMatchesText(f, textQ));
+  }
+
+  return html`
+    <div class="filter-chips">
+      ${_FLEET_FILTER_STATUSES
+        .filter((s) => s === 'all' || counts[s])
+        .map(
+          (s) => html`
+          <button
+            class="filter-chip ${(_fleetStatusFilter || 'all') === s ? 'active' : ''} filter-chip-${s}"
+            @click=${() => {
+              _fleetStatusFilter = s;
+              rerender();
+            }}
+          >
+            ${s === 'all' ? 'All' : s}
+            <span class="chip-count">${counts[s] || 0}</span>
+          </button>
+        `,
+        )}
+    </div>
+    <div class="list-filter-row">
+      <sl-input
+        size="small"
+        class="list-text-filter"
+        type="text"
+        placeholder="Filter by title, fleet id, or project…"
+        value="${_fleetTextFilter || ''}"
+        @sl-input=${(e) => {
+          _fleetTextFilter = e.target.value;
+          rerender();
+        }}
+      ></sl-input>
+    </div>
+    ${
+      displayed.length === 0
+        ? html`<div class="empty-state">No ${_fleetStatusFilter} fleets</div>`
+        : html`<div class="fleet-list">
+            ${displayed.map((f) =>
+              fleetCardView(f, f.children || [], cardOptions),
+            )}
+          </div>`
+    }
+  `;
+}
+
 // -- Worktrees view --
 let worktreesFilter = '';
+let worktreesStatusFilter = 'all'; // worktrees filter-chip selection
 let worktreesDialogItem = null; // null | worktree (single-row cleanup)
 let worktreesDialogBulk = false; // true when "Cleanup all completed" dialog open
 let worktreesDialogCheckbox = false; // resumable/grouped confirmation checkbox
@@ -364,6 +545,7 @@ let webhookSearchTerm = '';
 
 // -- Run history --
 let historyStatusFilter = 'all';
+let historyTextFilter = ''; // free-text filter on the History list
 
 /**
  * Reset all project-scoped state to defaults.
@@ -406,6 +588,7 @@ function resetProjectState() {
   webhookSearchTerm = '';
   // Run history
   historyStatusFilter = 'all';
+  historyTextFilter = '';
 }
 
 function handleStageTabChange(stageKey, iterationNumber) {
@@ -414,7 +597,7 @@ function handleStageTabChange(stageKey, iterationNumber) {
 
 function fetchRunBeads(runId) {
   if (!runId) return;
-  ws.send('list-beads-by-run', { runId })
+  ws.send('list-beads-by-run', { runId, projectId: _runProjectId(runId) })
     .then((payload) => {
       runBeads.set(runId, payload.issues || []);
       rerender();
@@ -425,12 +608,13 @@ function fetchRunBeads(runId) {
 function fetchAgentPrompts(runId, stages) {
   if (!runId || !stages) return;
   if (!promptCache[runId]) promptCache[runId] = {};
+  const projectId = _runProjectId(runId);
   for (const [key, stage] of Object.entries(stages)) {
     if (stage.status === 'pending') continue;
     const cacheKey = `${runId}:${key}`;
     if (promptCache[runId][key] || promptCachePending.has(cacheKey)) continue;
     promptCachePending.add(cacheKey);
-    ws.send('get-agent-prompt', { runId, stage: key })
+    ws.send('get-agent-prompt', { runId, stage: key, projectId })
       .then((data) => {
         promptCache[runId][key] = data;
         promptCachePending.delete(cacheKey);
@@ -461,7 +645,11 @@ function autoResetLogFilterOnStageChange(prevRun, newRun) {
     clearTerminal();
     store.clearLog();
     ws.send('unsubscribe-log').catch(() => {});
-    ws.send('subscribe-log', { stage: null, runId: newRun.id }).catch(() => {});
+    ws.send('subscribe-log', {
+      stage: null,
+      runId: newRun.id,
+      projectId: _runProjectId(newRun.id),
+    }).catch(() => {});
   }
 }
 
@@ -623,6 +811,25 @@ ws.on('preferences', (payload) => {
   }
 });
 
+// Fleet manifest watcher pushes fleet-update events when ~/.worca/fleet-runs/<id>.json
+// changes. Refresh the list so the sidebar count badge and any open fleet
+// detail view stay current.
+ws.on('fleet-update', () => {
+  fetch('/api/fleet-runs')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ fleets: data?.fleets || [] });
+      // Invalidate cached detail manifests so the next view fetch is fresh.
+      // Drop missing markers in the same step — a fleet-list refresh implies
+      // any negative caches may be stale (manifest could have been restored).
+      for (const k of Object.keys(_fleetDetailCache)) {
+        delete _fleetDetailCache[k];
+      }
+      _fleetDetailMissing.clear();
+    })
+    .catch(() => {});
+});
+
 ws.on('beads-update', (payload, msg) => {
   const currentProject = store.getState().currentProjectId;
   if (msg?.project && currentProject && msg.project !== currentProject) return;
@@ -718,7 +925,10 @@ ws.on('stage-restarted', () => {
 
 ws.on('learn-started', (payload) => {
   if (payload?.runId && payload.runId === route.runId) {
-    ws.send('subscribe-run', { runId: payload.runId }).catch(() => {});
+    ws.send('subscribe-run', {
+      runId: payload.runId,
+      projectId: _runProjectId(payload.runId),
+    }).catch(() => {});
   }
 });
 
@@ -771,6 +981,14 @@ function handleHello(_payload) {
     return;
   }
 
+  // Fetch fleets list (used by sidebar's Fleets entry + count badge). Best-effort.
+  fetch('/api/fleet-runs')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ fleets: data?.fleets || [] });
+    })
+    .catch(() => {});
+
   // Multi-project mode: fetch projects and send hello-ack
   fetch('/api/projects')
     .then((r) => r.json())
@@ -798,7 +1016,7 @@ function handleHello(_payload) {
 /** Fetch runs from all projects via REST and merge into state. */
 function fetchAllProjectRuns() {
   const projects = store.getState().projects || [];
-  Promise.all(
+  return Promise.all(
     projects.map((p) =>
       fetch(`/api/projects/${p.name}/runs`)
         .then((r) => r.json())
@@ -872,16 +1090,21 @@ function fetchWorktrees() {
 function fetchProjectScopedData() {
   // Multi-project mode: always fetch runs from every project so the sidebar
   // dots reflect the real status of all projects, not just the selected one.
-  if ((store.getState().projects || []).length > 1) {
-    fetchAllProjectRuns();
-  } else {
-    ws.send('list-runs')
-      .then((payload) => {
-        if (payload.settings) settings = payload.settings;
-        store.setRunsBulk(payload.runs || []);
-      })
-      .catch(() => {});
-  }
+  // We capture the runs-load promise so the run-scoped subscriptions below
+  // can wait for it — without that, `_runProjectId(route.runId)` resolves
+  // to null because state.runs is empty, the WS request hits the wrong
+  // project, and the artifact panels (logs, beads, agent prompts) end up
+  // empty on initial page load.
+  const runsLoadedPromise =
+    (store.getState().projects || []).length > 1
+      ? fetchAllProjectRuns()
+      : ws
+          .send('list-runs')
+          .then((payload) => {
+            if (payload.settings) settings = payload.settings;
+            store.setRunsBulk(payload.runs || []);
+          })
+          .catch(() => {});
 
   ws.send('list-beads-issues')
     .then((payload) => {
@@ -911,17 +1134,28 @@ function fetchProjectScopedData() {
   fetchProjectInfo();
   fetchWorktrees();
 
-  // Subscribe to active run if selected
+  // Subscribe to active run if selected. Wait for runs to load so that
+  // `_runProjectId(route.runId)` can resolve to the correct project — the
+  // server falls back to its default project when no projectId is supplied,
+  // which is the wrong one in global mode and causes the artifact panels
+  // to come up empty.
   if (route.runId) {
-    if (route.section !== 'beads') {
-      ws.send('subscribe-run', { runId: route.runId }).catch(() => {});
-      ws.send('subscribe-log', {
-        stage: logFilter === '*' ? null : logFilter,
-        runId: route.runId,
-      }).catch(() => {});
-    }
-    fetchRunBeads(route.runId);
-    if (route.section === 'beads') fetchBeadsRunIssues(route.runId);
+    runsLoadedPromise.then(() => {
+      if (route.section !== 'beads') {
+        const projectId = _runProjectId(route.runId);
+        ws.send('subscribe-run', {
+          runId: route.runId,
+          projectId,
+        }).catch(() => {});
+        ws.send('subscribe-log', {
+          stage: logFilter === '*' ? null : logFilter,
+          runId: route.runId,
+          projectId,
+        }).catch(() => {});
+      }
+      fetchRunBeads(route.runId);
+      if (route.section === 'beads') fetchBeadsRunIssues(route.runId);
+    });
   }
 }
 
@@ -955,6 +1189,7 @@ function handleProjectSwitch(newProjectId) {
     worktreesLoaded: false,
   });
   worktreesFilter = '';
+  worktreesStatusFilter = 'all';
   worktreesDialogItem = null;
   worktreesDialogBulk = false;
   worktreesDialogCheckbox = false;
@@ -1062,10 +1297,16 @@ onHashChange((newRoute) => {
     } else {
       logFilter = '*';
       logIterationFilter = null;
-      ws.send('subscribe-run', { runId: route.runId }).catch(() => {});
-      ws.send('subscribe-log', { stage: null, runId: route.runId }).catch(
-        () => {},
-      );
+      const projectId = _runProjectId(route.runId);
+      ws.send('subscribe-run', {
+        runId: route.runId,
+        projectId,
+      }).catch(() => {});
+      ws.send('subscribe-log', {
+        stage: null,
+        runId: route.runId,
+        projectId,
+      }).catch(() => {});
       fetchRunBeads(route.runId);
     }
   }
@@ -1098,8 +1339,11 @@ onHashChange((newRoute) => {
 
 // --- Actions ---
 
-function handleNavigate(section) {
-  navigate(section, null, route.projectId);
+function handleNavigate(section, runId) {
+  // runId is forwarded so callers can deep-link (e.g. fleet header → fleet
+  // detail at /fleet-runs/<id>). Most invocations pass only `section`, which
+  // leaves runId === undefined and navigates to the section root.
+  navigate(section, runId ?? null, route.projectId);
 }
 
 function handleSelectRun(runId) {
@@ -1150,6 +1394,7 @@ function handleStageFilter(stage) {
     stage: stage === '*' ? null : stage,
     runId: route.runId,
     iteration: logIterationFilter,
+    projectId: _runProjectId(route.runId),
   }).catch(() => {});
   rerender();
 }
@@ -1163,6 +1408,7 @@ function handleIterationFilter(iteration) {
     stage: logFilter === '*' ? null : logFilter,
     runId: route.runId,
     iteration: iteration,
+    projectId: _runProjectId(route.runId),
   }).catch(() => {});
   rerender();
 }
@@ -1295,6 +1541,208 @@ async function handleResumeRun(runId) {
   } finally {
     _controlPending = null;
     rerender();
+  }
+}
+
+async function handleResumeFleet(fleetId) {
+  try {
+    const res = await fetch(`/api/fleet-runs/${fleetId}/resume`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to resume fleet');
+    } else {
+      // Force a re-fetch of the fleet manifest so the badge / actions
+      // update without needing a manual reload.
+      delete _fleetDetailCache[fleetId];
+      rerender();
+    }
+  } catch (err) {
+    showActionError(err?.message || 'Failed to resume fleet');
+  }
+}
+
+function handleHaltFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Halt Fleet Run',
+      message:
+        'Unstarted children are cancelled. In-flight children keep running until they finish naturally — they are never killed. A halted fleet can be resumed later.',
+      confirmLabel: 'Halt',
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}`, {
+            method: 'DELETE',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to halt fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          rerender();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to halt fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+function handlePauseFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Pause Fleet Run',
+      message:
+        'Every in-flight child pauses at its next checkpoint; no new children are launched. A paused fleet can be continued in place with Resume.',
+      confirmLabel: 'Pause',
+      confirmVariant: 'warning',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}/pause`, {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to pause fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          rerender();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to pause fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+function handleStopFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Stop Fleet Run',
+      message:
+        'Every in-flight child is interrupted immediately (SIGTERM) and no new children are launched. Stopped children can still be continued with Resume.',
+      confirmLabel: 'Stop',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}/stop`, {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to stop fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          rerender();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to stop fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+function handleCleanupFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Cleanup Fleet Run',
+      message:
+        'Removes every child worktree and the fleet manifest. This is irreversible — a halted or failed fleet can no longer be resumed once cleaned up.',
+      confirmLabel: 'Cleanup',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          // force=1: the confirm dialog is itself the resume-loss
+          // acknowledgement, so we proceed past the server's 412 gate.
+          const res = await fetch(
+            `/api/fleet-runs/${fleetId}?cleanup=1&force=1`,
+            { method: 'DELETE' },
+          );
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to clean up fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+          navigate('fleet-runs', null, null);
+        } catch (err) {
+          showActionError(err?.message || 'Failed to clean up fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+// Re-fetch /api/fleet-runs and replace state.fleets. Used after a fleet
+// archive / unarchive so the list + sidebar count update immediately —
+// the WS `fleet-update` watcher also fires, but an explicit refetch gives
+// instant feedback rather than waiting on the fs-watch debounce.
+async function _refreshFleets() {
+  try {
+    const res = await fetch('/api/fleet-runs');
+    const data = await res.json();
+    store.setState({ fleets: data?.fleets || [] });
+  } catch {
+    // Non-fatal — the WS fleet-update handler will reconcile shortly.
+  }
+}
+
+function archiveFleet(fleetId) {
+  showConfirm(
+    {
+      label: 'Archive Fleet Run',
+      message:
+        "This fleet will be hidden from the Fleets list. You can find it later with the 'Show archived' toggle.",
+      confirmLabel: 'Archive',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/fleet-runs/${fleetId}/archive`, {
+            method: 'POST',
+          });
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to archive fleet');
+            return;
+          }
+          delete _fleetDetailCache[fleetId];
+          await _refreshFleets();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to archive fleet');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+async function unarchiveFleet(fleetId) {
+  try {
+    const res = await fetch(`/api/fleet-runs/${fleetId}/unarchive`, {
+      method: 'POST',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to unarchive fleet');
+      return;
+    }
+    delete _fleetDetailCache[fleetId];
+    await _refreshFleets();
+  } catch (err) {
+    showActionError(err?.message || 'Failed to unarchive fleet');
   }
 }
 
@@ -1637,7 +2085,7 @@ function fetchBeadsCounts() {
 function fetchBeadsRunIssues(runId) {
   beadsRunLoading = true;
   rerender();
-  ws.send('list-beads-by-run', { runId })
+  ws.send('list-beads-by-run', { runId, projectId: _runProjectId(runId) })
     .then((payload) => {
       beadsRunIssues = payload.issues || [];
       beadsRunLoading = false;
@@ -1816,6 +2264,98 @@ function contentHeaderView() {
     const dbPath = state.beads?.dbPath;
     if (dbPath) {
       actionButton = html`<span class="beads-db-path">${unsafeHTML(iconSvg(Database, 12))} Beads DB<br><code>${dbPath}</code></span>`;
+    }
+  } else if (route.section === 'fleet-runs') {
+    title =
+      route.runId === 'new'
+        ? 'New Fleet'
+        : route.runId
+          ? `Fleet ${route.runId.split('_').pop() || route.runId}`
+          : 'Fleets';
+    showBack = true;
+    if (route.runId === 'new') {
+      const fls = getFleetLauncherSubmitState();
+      const capReached = isAtCapacity(state);
+      actionButton = html`
+        <button class="action-btn action-btn--primary" ?disabled=${fls.isSubmitting || !fls.canLaunch || capReached}
+          @click=${() =>
+            submitFleetLauncher({
+              rerender,
+              onStarted: (fleetId) => navigate('fleet-runs', fleetId, null),
+            })}>
+          ${unsafeHTML(iconSvg(Play, 14))}
+          ${fls.isSubmitting ? 'Launching…' : 'Launch'}
+        </button>`;
+    } else if (route.runId) {
+      const fleet = _fleetDetailCache[route.runId];
+      if (fleet) {
+        const fs = fleet.status || 'running';
+        const variantMap = {
+          running: 'primary',
+          resuming: 'primary',
+          paused: 'warning',
+          completed: 'success',
+          failed: 'danger',
+          halted: fleet.halt_reason === 'user' ? 'neutral' : 'warning',
+        };
+        // Badge text is the bare status word, Title-cased for the page header
+        // (the run-detail header does the same). halt_reason informs the
+        // variant only — never the badge text.
+        badge = html`<sl-badge variant="${variantMap[fs] || 'neutral'}" pill>
+          ${unsafeHTML(statusIcon(fs, 12))}
+          ${fs.charAt(0).toUpperCase() + fs.slice(1)}
+        </sl-badge>`;
+
+        const isResumable =
+          fs === 'halted' || fs === 'failed' || fs === 'paused';
+        const isRunning = fs === 'running' || fs === 'resuming';
+        const isTerminal = !isRunning;
+
+        // In-flight fleet → three ways to wind it down, by how they treat
+        // children already running:
+        //   Pause — suspend in-flight children at their next checkpoint
+        //   Halt  — stop launching new ones, let in-flight finish naturally
+        //   Stop  — interrupt in-flight children immediately
+        const pauseBtn = isRunning
+          ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(Pause, 14))} Pause
+            </button>`
+          : nothing;
+        const haltBtn = isRunning
+          ? html`<button class="action-btn action-btn--amber" @click=${() => handleHaltFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(CircleSlash, 14))} Halt
+            </button>`
+          : nothing;
+        const stopBtn = isRunning
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(Square, 14))} Stop
+            </button>`
+          : nothing;
+        const resumeBtn = isResumable
+          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(Play, 14))} Resume
+            </button>`
+          : nothing;
+        const cleanupBtn = isTerminal
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCleanupFleet(route.runId)}>
+              ${unsafeHTML(iconSvg(Trash2, 14))} Cleanup
+            </button>`
+          : nothing;
+        const rerunBtn = isTerminal
+          ? html`<button class="action-btn action-btn--teal" @click=${() => navigate('fleet-runs', 'new', null)}>
+              ${unsafeHTML(iconSvg(RotateCcw, 14))} Re-run
+            </button>`
+          : nothing;
+        const btns = [
+          pauseBtn,
+          haltBtn,
+          stopBtn,
+          resumeBtn,
+          cleanupBtn,
+          rerunBtn,
+        ].filter((b) => b !== nothing);
+        if (btns.length) actionButton = html`${btns}`;
+      }
     }
   } else if (route.runId) {
     const run = store.getRunById(route.runId);
@@ -2074,7 +2614,9 @@ function mainContentView() {
     });
   }
 
-  if (route.runId) {
+  // The runId catch-all renders the per-run pipeline detail view. Exclude
+  // sections that own their own :id sub-route (fleet-runs).
+  if (route.runId && route.section !== 'fleet-runs') {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
     // switch), redirect to the section root instead of showing a stale view.
@@ -2087,6 +2629,24 @@ function mainContentView() {
     ) {
       navigate(route.section, null, route.projectId);
       return html``;
+    }
+    // Orphan run (e.g. child that died before writing status.json): runs
+    // are loaded but this id isn't there. Show an empty-state instead of
+    // rendering run-detail with run=undefined (which silently breaks).
+    if (!run && state.runsLoaded) {
+      return html`
+        <div class="run-detail run-detail-layout">
+          <div class="run-detail-layout__overview">
+            <sl-alert variant="warning" open>
+              <strong>Run not found.</strong>
+              No <code>status.json</code> exists for
+              <code>${route.runId}</code> — it may have been an orphan worktree
+              whose pipeline died before writing run state. Clean it up from the
+              <a href="#/worktrees" @click=${() => navigate('worktrees')}>Worktrees</a> view.
+            </sl-alert>
+          </div>
+        </div>
+      `;
     }
     // Compute iteration counts per stage from run status
     const stageIterations = {};
@@ -2173,6 +2733,53 @@ function mainContentView() {
 
   if (route.section === 'new-run') {
     return newRunView(viewState, { rerender });
+  }
+
+  if (route.section === 'fleet-runs') {
+    // /fleet-runs/new → launcher (Launch button lives in the page header,
+    // wired to submitFleetLauncher above).
+    if (route.runId === 'new') {
+      return fleetLauncherView(viewState, { rerender });
+    }
+    // /fleet-runs/:id → detail (fetch on demand, cache result)
+    if (route.runId) {
+      const fleet = _fleetDetailCache[route.runId];
+      const isMissing = _fleetDetailMissing.has(route.runId);
+      if (!fleet && !isMissing) {
+        // Trigger fetch — only re-render on success/error
+        if (_fleetDetailFetching !== route.runId) {
+          _fleetDetailFetching = route.runId;
+          fetch(`/api/fleet-runs/${route.runId}`)
+            .then(async (r) => ({ status: r.status, data: await r.json() }))
+            .then(({ status, data }) => {
+              _fleetDetailFetching = null;
+              if (data?.ok && data.fleet) {
+                _fleetDetailMissing.delete(route.runId);
+                _fleetDetailCache[route.runId] = data.fleet;
+                rerender();
+              } else if (status === 404 || data?.ok === false) {
+                // Manifest cleaned up (or never existed) — record the
+                // negative result so the view leaves the loading state and
+                // we don't refetch on every render tick.
+                _fleetDetailMissing.add(route.runId);
+                rerender();
+              }
+            })
+            .catch(() => {
+              _fleetDetailFetching = null;
+            });
+        }
+      }
+      return fleetDetailView(fleet || null, {
+        rerender,
+        runsById: state.runs,
+        onSelectRun: (id) => navigate('history', id, null),
+        missing: isMissing,
+        fleetId: route.runId,
+      });
+    }
+    // /fleet-runs → list of fleets
+    return _fleetListView(rerender);
   }
 
   if (route.section === 'project-settings') {
@@ -2268,6 +2875,11 @@ function mainContentView() {
         historyStatusFilter = s;
         rerender();
       },
+      textFilter: historyTextFilter,
+      onTextFilter: (value) => {
+        historyTextFilter = value;
+        rerender();
+      },
     });
   }
 
@@ -2277,6 +2889,11 @@ function mainContentView() {
       filter: worktreesFilter,
       onFilter: (value) => {
         worktreesFilter = value;
+        rerender();
+      },
+      statusFilter: worktreesStatusFilter,
+      onStatusFilter: (s) => {
+        worktreesStatusFilter = s;
         rerender();
       },
       onSelectRun: handleSelectRun,
@@ -2326,6 +2943,8 @@ function mainContentView() {
     ${dashboardView(viewState, {
       onSelectRun: (runId) => navigate('active', runId, route.projectId),
       onArchive: archiveRun,
+      onArchiveFleet: archiveFleet,
+      onUnarchiveFleet: unarchiveFleet,
       onNavigate: (section, secondArg, thirdArg) => {
         if (
           secondArg &&

@@ -4,6 +4,7 @@ import { formatDuration } from '../utils/duration.js';
 import { iconSvg, Trash2 } from '../utils/icons.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
+import { groupByFleet } from './group-rendering.js';
 
 function _formatBytes(bytes) {
   if (!bytes || bytes < 0) return '0 B';
@@ -18,18 +19,25 @@ function _formatAge(ageSeconds) {
 }
 
 function _groupLabel(wt) {
-  if (wt.group_type === 'fleet' && wt.fleet_id) return `fleet:${wt.fleet_id}`;
+  // Returns { kind, id } so consumers can pick separate labels ("Fleet:" /
+  // "Workspace:") and route to the right detail page. The previous
+  // "fleet:<id>" / "workspace:<id>" prefix-string form is kept by callers
+  // that still want a single token for filtering.
+  if (wt.group_type === 'fleet' && wt.fleet_id)
+    return { kind: 'fleet', id: wt.fleet_id };
   if (wt.group_type === 'workspace' && wt.workspace_id)
-    return `workspace:${wt.workspace_id}`;
+    return { kind: 'workspace', id: wt.workspace_id };
   return null;
 }
 
 function _matchesFilter(wt, filter) {
   const q = filter.toLowerCase();
+  const g = _groupLabel(wt);
+  const groupHaystack = g ? `${g.kind} ${g.id}` : '';
   return (
     (wt.title || '').toLowerCase().includes(q) ||
     (wt.branch || '').toLowerCase().includes(q) ||
-    (_groupLabel(wt) || '').toLowerCase().includes(q) ||
+    groupHaystack.toLowerCase().includes(q) ||
     (wt.worktree_path || '').toLowerCase().includes(q)
   );
 }
@@ -92,8 +100,10 @@ function _diskSummaryView(worktrees, diskWarningBytes = 2_000_000_000) {
             `
           : nothing
       }
+      <span class="meta-sep">·</span>
+      <span class="meta-label">Note:</span>
+      <span class="meta-value">Excludes node_modules, .git, and build/cache dirs</span>
     </div>
-    ${caveat}
   `;
 }
 
@@ -131,6 +141,34 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
               </sl-badge>`
         }
       </div>
+      ${
+        wt.project || groupLabel
+          ? html`
+              <div class="run-card-meta">
+                ${
+                  wt.project
+                    ? html`<span class="run-card-meta-item">
+                        <span class="meta-label">Project:</span>
+                        <span class="meta-value run-card-project">${wt.project}</span>
+                      </span>`
+                    : nothing
+                }
+                ${
+                  groupLabel
+                    ? html`<span class="run-card-meta-item">
+                        <span class="meta-label">${groupLabel.kind === 'fleet' ? 'Fleet:' : 'Workspace:'}</span>
+                        <a
+                          class="meta-value run-card-group-link"
+                          href="#/${groupLabel.kind === 'fleet' ? 'fleet-runs' : 'workspace-runs'}/${groupLabel.id}"
+                          @click=${(e) => e.stopPropagation()}
+                        >${groupLabel.id}</a>
+                      </span>`
+                    : nothing
+                }
+              </div>
+            `
+          : nothing
+      }
       <div class="run-card-meta">
         <span class="run-card-meta-item">
           <span class="meta-label">Branch:</span>
@@ -144,16 +182,6 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
           <span class="meta-label">Age:</span>
           <span class="meta-value">${_formatAge(wt.age_seconds)}</span>
         </span>
-        ${
-          groupLabel
-            ? html`
-                <span class="run-card-meta-item">
-                  <span class="meta-label">Group:</span>
-                  <span class="meta-value">${groupLabel}</span>
-                </span>
-              `
-            : nothing
-        }
       </div>
       <div class="run-card-meta worktree-card-path">
         <span class="meta-label">Path:</span>
@@ -220,13 +248,19 @@ function _cleanupDialogView(
       </p>
       ${
         isGrouped
-          ? html`
-              <sl-alert variant="warning" open class="group-warning">
-                This worktree belongs to
-                <strong>${_groupLabel(dialogItem)}</strong> — removing it will
-                block the group's <code>--resume</code> for this child.
-              </sl-alert>
-            `
+          ? (
+              () => {
+                const g = _groupLabel(dialogItem);
+                const kindLabel = g?.kind === 'fleet' ? 'fleet' : 'workspace';
+                return html`
+                <sl-alert variant="warning" open class="group-warning">
+                  This worktree belongs to ${kindLabel}
+                  <strong>${g?.id ?? ''}</strong> — removing it will
+                  block the ${kindLabel}'s <code>--resume</code> for this child.
+                </sl-alert>
+              `;
+              }
+            )()
           : nothing
       }
       ${
@@ -277,18 +311,16 @@ function _bulkDialogView(
   if (completed.length === 0) return nothing;
   const totalBytes = completed.reduce((s, w) => s + (w.disk_bytes || 0), 0);
 
-  const standalone = completed.filter((w) => !w.group_type);
-  const byFleet = {};
+  const { fleetGroups: byFleet, standalone: fleetStandalone } =
+    groupByFleet(completed);
   const byWorkspace = {};
-  for (const w of completed) {
-    if (w.group_type === 'fleet' && w.fleet_id) {
-      if (!byFleet[w.fleet_id]) byFleet[w.fleet_id] = [];
-      byFleet[w.fleet_id].push(w);
-    } else if (w.group_type === 'workspace' && w.workspace_id) {
+  for (const w of fleetStandalone) {
+    if (w.group_type === 'workspace' && w.workspace_id) {
       if (!byWorkspace[w.workspace_id]) byWorkspace[w.workspace_id] = [];
       byWorkspace[w.workspace_id].push(w);
     }
   }
+  const standalone = fleetStandalone.filter((w) => !w.group_type);
 
   const groupLines = [
     standalone.length > 0 ? `${standalone.length} standalone` : null,
@@ -341,12 +373,26 @@ function _bulkDialogView(
   `;
 }
 
+// Status chips for the worktrees list — mirrors the History / Fleets
+// `.filter-chips`. "all" plus any status that actually occurs (counted
+// dynamically, same as run-list).
+const WORKTREE_FILTER_STATUSES = [
+  'all',
+  'running',
+  'completed',
+  'failed',
+  'paused',
+  'cancelled',
+];
+
 export function worktreesView(
   worktrees,
   {
     diskWarningBytes,
     filter = '',
     onFilter,
+    statusFilter = 'all',
+    onStatusFilter,
     onSelectRun,
     onCleanup,
     onBulkCleanup,
@@ -368,11 +414,25 @@ export function worktreesView(
     `;
   }
 
+  // Per-chip counts over the full worktree set (before any filtering),
+  // so the chip numbers stay stable as the text filter narrows the list.
+  const statusCounts = { all: worktrees.length };
+  for (const wt of worktrees) {
+    const s = wt.status || 'unknown';
+    statusCounts[s] = (statusCounts[s] || 0) + 1;
+  }
+
+  // Status filter first, then text filter — same ordering as run-list.
+  let narrowed =
+    statusFilter && statusFilter !== 'all'
+      ? worktrees.filter((wt) => (wt.status || 'unknown') === statusFilter)
+      : worktrees;
+  if (filter) {
+    narrowed = narrowed.filter((wt) => _matchesFilter(wt, filter));
+  }
   // Sort newest first to match run-list.js. sortByStartDesc keys on
   // started_at and tolerates missing values.
-  const filtered = sortByStartDesc(
-    filter ? worktrees.filter((wt) => _matchesFilter(wt, filter)) : worktrees,
-  );
+  const filtered = sortByStartDesc(narrowed);
   const completedCount = worktrees.filter(
     (w) => w.status === 'completed',
   ).length;
@@ -380,6 +440,27 @@ export function worktreesView(
   return html`
     <div class="worktrees-view">
       ${_diskSummaryView(worktrees, diskWarningBytes)}
+      ${
+        onStatusFilter
+          ? html`
+        <div class="filter-chips">
+          ${WORKTREE_FILTER_STATUSES.filter(
+            (s) => s === 'all' || statusCounts[s],
+          ).map(
+            (s) => html`
+            <button
+              class="filter-chip ${(statusFilter || 'all') === s ? 'active' : ''} filter-chip-${s}"
+              @click=${() => onStatusFilter(s)}
+            >
+              ${s === 'all' ? 'All' : s}
+              <span class="chip-count">${statusCounts[s] || 0}</span>
+            </button>
+          `,
+          )}
+        </div>
+      `
+          : nothing
+      }
       <div class="worktrees-toolbar">
         <sl-input
           size="small"

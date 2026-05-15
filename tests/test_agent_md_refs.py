@@ -138,6 +138,32 @@ def test_guardian_output_references_pr_schema():
 
 
 # ---------------------------------------------------------------------------
+# Fleet PR grouping (W-040 Phase 5 §11)
+# ---------------------------------------------------------------------------
+
+
+def test_guardian_fleet_pr_title_prefix_format():
+    content = _read("guardian.md")
+    assert "[fleet:" in content, (
+        "guardian.md must contain [fleet:<fleet_id_short>] prefix format for fleet PR titles (W-040 §11)"
+    )
+
+
+def test_guardian_fleet_manifest_footer():
+    content = _read("guardian.md")
+    assert "fleet-runs" in content, (
+        "guardian.md must reference fleet-runs manifest path for the PR footer (W-040 §11)"
+    )
+
+
+def test_guardian_fleet_id_short_referenced():
+    content = _read("guardian.md")
+    assert "fleet_id_short" in content, (
+        "guardian.md must reference fleet_id_short for consistent fleet display (W-040 §11)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # reviewer.md
 # ---------------------------------------------------------------------------
 
@@ -170,3 +196,140 @@ def test_learner_has_six_analysis_categories():
     assert "implementation iterations" in content.lower() or "implementation" in content
     assert "test" in content.lower()
     assert "review" in content.lower()
+
+
+# ---------------------------------------------------------------------------
+# Guide precedence (W-040 Phase 1 task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_planner_has_guide_precedence_section():
+    content = _read("planner.md")
+    assert "Guide precedence" in content, (
+        "planner.md must contain a 'Guide precedence' instruction block (W-040)"
+    )
+
+
+def test_planner_guide_precedence_requires_conformance():
+    content = _read("planner.md")
+    # Planner must produce a plan that conforms to the guide
+    assert "guide" in content.lower(), (
+        "planner.md must instruct agent to conform to the guide"
+    )
+
+
+def test_planner_guide_precedence_surface_conflict():
+    content = _read("planner.md")
+    lower = content.lower()
+    # Planner must surface conflicts rather than silently resolving them
+    assert "conflict" in lower or "diverge" in lower, (
+        "planner.md must instruct agent to surface guide-vs-description conflicts"
+    )
+
+
+def test_reviewer_has_guide_precedence_section():
+    content = _read("reviewer.md")
+    assert "Guide precedence" in content, (
+        "reviewer.md must contain a 'Guide precedence' instruction block (W-040)"
+    )
+
+
+def test_reviewer_guide_precedence_flag_divergence():
+    content = _read("reviewer.md")
+    lower = content.lower()
+    # Reviewer must flag plan-vs-guide divergence
+    assert "diverge" in lower or "conflict" in lower, (
+        "reviewer.md must instruct agent to flag plan-vs-guide divergence"
+    )
+
+
+def test_tester_has_guide_precedence_section():
+    content = _read("tester.md")
+    assert "Guide precedence" in content, (
+        "tester.md must contain a 'Guide precedence' instruction block (W-040)"
+    )
+
+
+def test_tester_guide_precedence_treat_as_bug():
+    content = _read("tester.md")
+    lower = content.lower()
+    # Tester must treat guide-conflicting description as a bug to flag
+    assert "bug" in lower or "flag" in lower, (
+        "tester.md must instruct agent to treat guide-conflicting descriptions as bugs to flag"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Guide wrapper consistency across .block.md files (W-040 §5)
+#
+# The guide envelope is duplicated across each stage's .block.md (the overlay
+# loader has no {{> partial}} mechanism). These tests assert byte-identical
+# wrapper text so the precedence wording cannot drift across stages.
+# ---------------------------------------------------------------------------
+
+
+GUIDE_WRAPPER_TEXT = """{{#if has_guide}}
+## Reference Guide (normative)
+
+The following guidance is authoritative for this work-request. Treat any
+conflict between the guide and the task description as a bug in the task
+description, and surface it rather than silently resolving it.
+
+{{guide_content}}
+
+---
+
+## Task
+
+{{/if}}
+{{work_request}}"""
+
+
+BLOCK_FILES_WITH_WORK_REQUEST = [
+    "coordinate.block.md",
+    "implement.block.md",
+    "learn.block.md",
+    "plan.block.md",
+    "plan-review.block.md",
+    "pr.block.md",
+    "review.block.md",
+    "test.block.md",
+]
+
+
+def test_guide_wrapper_text_byte_identical_across_block_files():
+    """Every .block.md that interpolates {{work_request}} must wrap it with the
+    canonical guide envelope. The wrapper must be byte-identical everywhere so
+    the precedence wording cannot drift across stages.
+    """
+    drift = []
+    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+        content = _read(fname)
+        if GUIDE_WRAPPER_TEXT not in content:
+            drift.append(fname)
+    assert not drift, (
+        "guide wrapper drift detected in: "
+        + ", ".join(drift)
+        + " — wrapper must be byte-identical across all .block.md files. "
+        "If you intentionally changed the precedence wording, update "
+        "GUIDE_WRAPPER_TEXT in this test and apply the same change to every "
+        "file in BLOCK_FILES_WITH_WORK_REQUEST."
+    )
+
+
+def test_guide_header_not_in_python_source():
+    """The normative header must live in .block.md templates only — never in
+    Python source. Hardcoding LLM-facing prose in .py violates the project rule
+    that agent prompts must be declarative and customizable.
+    """
+    work_request_py = (
+        pathlib.Path(__file__).parent.parent
+        / "src" / "worca" / "orchestrator" / "work_request.py"
+    ).read_text()
+    assert "## Reference Guide (normative)" not in work_request_py, (
+        "## Reference Guide header must not appear in work_request.py — "
+        "it belongs in the .block.md template wrappers."
+    )
+    assert "_GUIDE_HEADER" not in work_request_py, (
+        "_GUIDE_HEADER constant should be removed from work_request.py"
+    )

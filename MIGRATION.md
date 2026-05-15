@@ -352,6 +352,73 @@ W-051: Configurable model profiles with per-model environment variables.
 
 - **`worca.models` entries now accept an object form** `{ "id": "model-id", "env": { "KEY": "value" } }` in addition to the existing plain string. Env vars are injected into the subprocess environment when the corresponding agent stage runs. Secrets belong in `settings.local.json` (gitignored). No migration required — purely additive; existing string-form configs continue to work unchanged.
 
+### 0.25.x → 0.28.0
+
+W-040: Fleet runs — cross-repository fan-out of a single work-request.
+
+**New features:**
+
+- **`run_fleet.py`** — new entry point that fans a single work-request out to N independent project repositories in parallel. Each target gets its own isolated pipeline (own git worktree, own branch, own PR), grouped under a shared `fleet_id` in `pipelines.d/`.
+
+  ```bash
+  python .claude/scripts/run_fleet.py \
+    --projects /path/to/repo-a /path/to/repo-b /path/to/repo-c \
+    --prompt "Apply authentication migration"
+  ```
+
+- **`--guide PATH`** (repeatable) — attach a normative reference document (migration spec, RFC) that every child's agents treat as the highest-authority source. Paths are resolved to absolute before dispatch. Also now wired into `run_pipeline.py` and `run_parallel.py`. Combined guide content is capped at 64 KB (`worca.guide.max_bytes`).
+
+- **`--head-template TMPL`** — per-child head branch name template. Placeholders: `{project}`, `{fleet_id}`, `{slug}`, `{yyyymmdd}`, `{yyyymmddhhmm}`. If no placeholder is present, `/{project}` is appended automatically to ensure uniqueness across the fleet.
+
+- **`--base BRANCH`** — PR base branch shared across the fleet. When omitted, each child resolves its own default branch. `--branch` is explicitly rejected on `run_fleet.py` — use `--base` and `--head-template` instead.
+
+- **`--plan PATH`** — shared plan file; every child receives it and skips the PLAN stage entirely (recommended for fleet work).
+
+- **`--plan-first [PROJECT]`** — run the Planner on a reference child first; once its `MASTER_PLAN.md` appears it is copied to `~/.worca/fleet-runs/<fleet_id>/shared-plan.md` and all remaining children inherit it. Mutually exclusive with `--plan`.
+
+- **`--max-parallel N`** — maximum concurrent child pipelines (default: 5). Children are dispatched in batches; the fleet-level circuit breaker fires between batches.
+
+- **`--fleet-failure-threshold RATIO`** — failure ratio that trips the circuit breaker and halts unstarted children (default: 0.30). In-flight children are never killed.
+
+- **`--resume FLEET_ID`** — resume a halted or failed fleet by re-launching only failed/pending/setup_failed children. Children that are completed, running, or paused are left alone.
+
+- **`--init-timeout SECONDS`** — per-target `worca init --upgrade` timeout (default: 60). Targets that exceed this are marked `setup_failed` and skipped; the fleet continues.
+
+- **`fleet_id` in `pipelines.d/`** — each child pipeline's registry entry now carries `fleet_id` and `group_type: "fleet"`. The UI reads these fields to group runs under a shared fleet header. Existing entries without `fleet_id` are unaffected.
+
+- **Fleet manifest** — fleet-level state is tracked at `~/.worca/fleet-runs/<fleet_id>.json` (work request, guide paths, plan mode, circuit breaker status, child list). Per-child pipeline state remains in each project's `pipelines.d/` entries — not duplicated.
+
+- **`worca cleanup --fleet-id FLEET_ID`** — remove all child worktrees, their `pipelines.d/` entries, and the fleet manifest directory (including uploaded guides) in one command.
+
+- **Guardian PR titles** — when `fleet_id` is present the Guardian agent prepends `[fleet:<short_id>]` to every PR title, making fleet PRs easy to spot in GitHub's PR list.
+
+**New UI surfaces:**
+
+- **Dashboard fleet grouping** — the worca-ui dashboard groups fleet children under a collapsible fleet header showing an aggregate status badge (blue = running, orange = halted by circuit breaker, green = completed, red = failed), aggregate progress (`N/M completed · K failed`), and a link to the fleet detail view. Requires **global mode** (`pnpm worca:ui` without `--project`).
+
+- **Fleet launcher** (`New Fleet` option in the sidebar dropdown) — form to launch a fleet from the UI: target project multi-select, prompt, guide file upload, plan mode toggle, concurrency settings.
+
+- **Fleet detail view** — per-fleet page listing all children with their individual run status, branch, and PR link.
+
+**New settings:**
+
+```jsonc
+"worca": {
+  "guide": {
+    "max_bytes": 65536          // 64 KB hard cap on combined guide content
+  },
+  "fleet": {
+    "init_timeout_seconds": 60  // per-target worca init --upgrade timeout
+  }
+}
+```
+
+Both keys are additive. Existing installs pick them up as defaults on the next `worca init --upgrade`.
+
+**No automatic migration required.** All changes are additive. Run `worca init --upgrade` once to pull the new `worca.guide.*` and `worca.fleet.*` defaults into your project's `settings.json`.
+
+**Full walkthrough:** [`docs/fleet-runs.md`](./docs/fleet-runs.md).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

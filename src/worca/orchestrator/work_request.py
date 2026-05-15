@@ -104,6 +104,7 @@ class WorkRequest:
     source_ref: Optional[str] = None
     priority: int = 2
     plan_path: Optional[str] = None
+    guide_content: str = ""  # populated by attach_guide() — body of normative reference material
 
 
 def normalize_plan_file(path: str, content: str = None) -> WorkRequest:
@@ -257,6 +258,82 @@ def normalize_beads_task(ref: str) -> WorkRequest:
         source_type="beads",
         title=title,
         source_ref=f"bd:{task_id}",
+    )
+
+
+GUIDE_MAX_BYTES_DEFAULT = 131072  # 128 KiB — see W-040 §9
+
+
+def resolve_guide_max_bytes(settings: dict) -> int:
+    """Read ``worca.guide.max_bytes`` from settings, falling back to the default.
+
+    Centralised so every entry script resolves the cap the same way.
+    """
+    return (
+        settings.get("worca", {})
+        .get("guide", {})
+        .get("max_bytes", GUIDE_MAX_BYTES_DEFAULT)
+    )
+
+
+def attach_guide(
+    wr: WorkRequest,
+    guide_paths: "list[str]",
+    *,
+    max_bytes: int | None = None,
+) -> WorkRequest:
+    """Return a new WorkRequest with guide content collected into guide_content.
+
+    Each guide file is read and concatenated under its filename as a subsection.
+    The result is stored in ``guide_content`` — the normative header and the
+    ``## Task`` divider live in the per-stage ``.block.md`` templates (which
+    conditionally wrap ``{{work_request}}`` with ``{{#if has_guide}}…{{/if}}``).
+    The original ``description`` is left untouched.
+
+    Args:
+        wr: source work request
+        guide_paths: list of guide file paths (absolute). Empty list = no-op clone.
+        max_bytes: combined-size cap; raises ValueError BEFORE returning when the
+                   total exceeds it (W-040 §9). None disables the cap.
+
+    Raises:
+        ValueError: combined guide content exceeds ``max_bytes``.
+        OSError / FileNotFoundError: a guide path is unreadable.
+    """
+    if not guide_paths:
+        return WorkRequest(
+            source_type=wr.source_type,
+            title=wr.title,
+            description=wr.description,
+            source_ref=wr.source_ref,
+            priority=wr.priority,
+            plan_path=wr.plan_path,
+            guide_content=wr.guide_content,
+        )
+
+    sections = []
+    total_bytes = 0
+    for path in guide_paths:
+        with open(path, "r") as f:
+            content = f.read()
+        total_bytes += len(content.encode("utf-8"))
+        filename = os.path.basename(path)
+        sections.append(f"### {filename}\n\n{content}")
+
+    if max_bytes is not None and total_bytes > max_bytes:
+        raise ValueError(
+            f"guide content exceeds worca.guide.max_bytes "
+            f"({total_bytes} > {max_bytes}); reduce guide size or raise the cap"
+        )
+
+    return WorkRequest(
+        source_type=wr.source_type,
+        title=wr.title,
+        description=wr.description,
+        source_ref=wr.source_ref,
+        priority=wr.priority,
+        plan_path=wr.plan_path,
+        guide_content="\n".join(sections),
     )
 
 

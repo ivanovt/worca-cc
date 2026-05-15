@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Activity,
   Archive,
+  ChevronDown,
   Coins,
   GitBranch,
   iconSvg,
@@ -10,6 +11,7 @@ import {
   Plus,
   Settings,
   SlidersHorizontal,
+  Workflow,
   Zap,
 } from '../utils/icons.js';
 
@@ -79,6 +81,7 @@ export function sidebarView(
     projects,
     currentProjectId,
     worktrees = [],
+    fleets = [],
     worktreeDiskWarningBytes = 2_000_000_000,
     totalRunning = 0,
     maxConcurrentPipelines = 10,
@@ -113,6 +116,26 @@ export function sidebarView(
     0,
   );
   const worktreeDiskWarning = totalWorktreeDisk > diskWarningThreshold;
+
+  // Archived fleets never contribute to the attention badge — they're
+  // explicitly out-of-sight (parity with archived pipeline runs).
+  const liveFleets = fleets.filter((f) => !f.archived);
+  const runningFleetCount = liveFleets.filter(
+    (f) => f.status === 'running',
+  ).length;
+  const haltedFleetCount = liveFleets.filter(
+    (f) => f.status === 'halted',
+  ).length;
+  // Badge surfaces fleets that need operator attention: running (active work)
+  // + halted (awaiting resume/cleanup decision). Completed/failed fleets are
+  // terminal — they don't add to the count.
+  const fleetBadgeCount = runningFleetCount + haltedFleetCount;
+  const showFleetBadge = fleetBadgeCount > 0;
+  // Variant follows the convention used by History/Worktrees: neutral grey
+  // by default, escalates to warning only when there's a "needs attention"
+  // condition. For Fleets the trigger is any halted fleet (matches the
+  // Worktrees disk-threshold warning shape).
+  const fleetBadgeVariant = haltedFleetCount > 0 ? 'warning' : 'neutral';
 
   const connClass =
     connectionState === 'open'
@@ -170,20 +193,61 @@ export function sidebarView(
           : ''
       }
 
-      ${
-        currentProjectId || (projects || []).length <= 1
-          ? html`
-      <div class="sidebar-new-run">
-        <button
-          type="button"
-          class="sidebar-new-run-btn"
-          ?disabled=${atCapacity}
-          @click=${() => onNavigate('new-run')}
-        >
-          ${unsafeHTML(iconSvg(Plus, 14))}
-          <span>New Pipeline</span>
-        </button>
-      </div>
+      ${(() => {
+        // Split-button "+ New" affordance. Left half is the primary
+        // action (single-project pipeline) — what most users want most
+        // of the time. Right half is a chevron that opens a menu of
+        // multi-project alternatives (Fleet now, Workspace once W-047
+        // lands). Pattern A from the W-040 UX discussion.
+        //
+        // The primary half is gated only by the global capacity cap; the
+        // launcher itself handles the "no project selected" case (in
+        // global mode it surfaces a project picker before submit).
+        const primaryTitle = atCapacity ? 'Pipeline capacity reached' : '';
+        return html`
+          <div class="sidebar-new-run">
+            <div class="sidebar-new-run-split">
+              <button
+                type="button"
+                class="sidebar-new-run-btn-primary"
+                ?disabled=${atCapacity}
+                title=${primaryTitle}
+                @click=${atCapacity ? null : () => onNavigate('new-run')}
+              >
+                ${unsafeHTML(iconSvg(Plus, 14))}
+                <span>New Pipeline</span>
+              </button>
+              <sl-dropdown
+                class="sidebar-new-run-chevron-dropdown"
+                placement="bottom-end"
+                hoist
+              >
+                <button
+                  slot="trigger"
+                  type="button"
+                  class="sidebar-new-run-btn-chevron"
+                  ?disabled=${atCapacity}
+                  title="More creation options"
+                  aria-label="More creation options"
+                >
+                  ${unsafeHTML(iconSvg(ChevronDown, 14))}
+                </button>
+                <sl-menu>
+                  <sl-menu-item
+                    class="menu-item-new-fleet"
+                    @click=${() => onNavigate('fleet-runs/new')}
+                  >
+                    ${unsafeHTML(iconSvg(Workflow, 14))}
+                    New Fleet
+                  </sl-menu-item>
+                  <!-- W-047 (multi-repo workspace) will add: -->
+                  <!-- <sl-menu-item class="menu-item-new-workspace" @click=...>New Workspace</sl-menu-item> -->
+                </sl-menu>
+              </sl-dropdown>
+            </div>
+          </div>
+        `;
+      })()}
 
       <div class="sidebar-section">
         <div class="sidebar-section-header">Pipeline</div>
@@ -229,6 +293,18 @@ export function sidebarView(
                 : ''
           }
         </div>
+        <div class="sidebar-item ${route.section === 'fleet-runs' ? 'active' : ''}"
+             @click=${() => onNavigate('fleet-runs')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Workflow, 16))}
+            <span>Fleets</span>
+          </span>
+          ${
+            showFleetBadge
+              ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
+              : ''
+          }
+        </div>
       </div>
 
       <div class="sidebar-section">
@@ -272,9 +348,6 @@ export function sidebarView(
           </span>
         </div>
       </div>
-      `
-          : ''
-      }
 
       <div class="sidebar-footer">
         <div class="connection-indicator ${connClass}">

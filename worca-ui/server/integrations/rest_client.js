@@ -13,5 +13,12 @@ export function createRestClient({ host, port }) {
       });
       return { status: r.status, data: r.ok ? await r.json() : null };
     },
+    // DELETE used by /fleet-halt (DELETE /api/fleet-runs/:id) — added when
+    // chat fleet commands landed. Mirrors the get/post pair: no body, returns
+    // parsed JSON on 2xx, null on error status.
+    async delete(path) {
+      const r = await fetch(`${base}${path}`, { method: 'DELETE' });
+      return { status: r.status, data: r.ok ? await r.json() : null };
+    },
   };
 }

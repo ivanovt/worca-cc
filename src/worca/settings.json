@@ -282,6 +282,13 @@
     "parallel": {
       "default_base_branch": "main",
       "worktree_base_dir": ".worktrees"
+    },
+    "guide": {
+      "max_bytes": 131072
+    },
+    "fleet": {
+      "max_parallel": 5,
+      "failure_threshold": 0.30
     }
   }
 }

@@ -758,38 +758,6 @@ class TestGuideFlag:
         args = parser.parse_args(["--prompt", "Fix"])
         assert args.guide is None
 
-    @patch("worca.scripts.run_pipeline.run_pipeline")
-    def test_guide_flag_errors_without_attach_guide(self, mock_run_pipeline, tmp_path):
-        """When attach_guide not importable, --guide raises ArgumentError; dispatch never starts."""
-        import argparse as _argparse
-        import sys
-        from worca.scripts.run_pipeline import main
-
-        settings_path = tmp_path / ".claude" / "settings.json"
-        settings_path.parent.mkdir(parents=True)
-        settings_path.write_text(json.dumps({"worca": {}}))
-
-        # Simulate attach_guide missing: patch sys.modules with a stub that
-        # raises AttributeError on attach_guide access (→ ImportError at from-import).
-        fake_wr = MagicMock(spec=["normalize", "WorkRequest"])
-        from worca.orchestrator.work_request import WorkRequest
-        fake_wr.WorkRequest = WorkRequest
-
-        with patch("sys.argv", [
-            "run_pipeline.py", "--prompt", "Fix bug",
-            "--guide", "spec.md",
-            "--settings", str(settings_path),
-            "--status-dir", str(tmp_path / ".worca"),
-        ]):
-            with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
-                mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
-                with patch.dict(sys.modules, {"worca.orchestrator.work_request": fake_wr}):
-                    with pytest.raises(_argparse.ArgumentError) as exc_info:
-                        main()
-
-        mock_run_pipeline.assert_not_called()
-        assert "attach_guide" in str(exc_info.value)
-
 
 class TestEnsureBdDaemonAtCwd:
     """Verify run_pipeline starts the bd daemon up-front so subsequent bd

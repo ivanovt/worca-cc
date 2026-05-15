@@ -1,6 +1,6 @@
 // server/app.js
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
+import { createFleetRouter } from './fleet-routes.js';
 import { RAW_BODY } from './integrations/index.js';
 import { verify } from './integrations/verify.js';
 import { LaunchLock } from './launch-lock.js';
@@ -548,6 +549,72 @@ export function createApp(options = {}) {
         serverHost,
         serverPort,
         launchLock,
+      }),
+    );
+    app.use(
+      '/api/fleet-runs',
+      createFleetRouter({
+        fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
+        prefsDir,
+        // Spawn run_fleet.py in a detached subprocess so the route can return
+        // immediately. We pass the pre-generated fleet_id so the in-flight
+        // manifest path matches what the route just wrote.
+        dispatchFleet: async ({ fleet_id, projects, manifest, resume }) => {
+          // Resume path: the /resume route already flipped the manifest to
+          // "running"; run_fleet.py --resume reads the manifest, continues
+          // paused/interrupted children in place and re-dispatches
+          // failed/pending ones. No --projects — the manifest is the source.
+          if (resume) {
+            const child = spawn(
+              'python3',
+              ['-m', 'worca.scripts.run_fleet', '--resume', fleet_id],
+              { detached: true, stdio: 'ignore', env: { ...process.env } },
+            );
+            child.unref();
+            return;
+          }
+          if (!projects || projects.length === 0) return;
+          const args = [
+            '-m',
+            'worca.scripts.run_fleet',
+            '--fleet-id',
+            fleet_id,
+            '--projects',
+            ...projects,
+          ];
+          if (manifest.work_request?.source) {
+            args.push('--source', manifest.work_request.source);
+          } else {
+            args.push('--prompt', manifest.work_request?.description ?? '');
+          }
+          if (manifest.head_template) {
+            args.push('--head-template', manifest.head_template);
+          }
+          if (manifest.base_branch) {
+            args.push('--base', manifest.base_branch);
+          }
+          if (manifest.plan?.path) {
+            args.push('--plan', manifest.plan.path);
+          }
+          for (const p of manifest.guide?.paths || []) {
+            args.push('--guide', p);
+          }
+          if (manifest.max_parallel) {
+            args.push('--max-parallel', String(manifest.max_parallel));
+          }
+          if (manifest.fleet_failure_threshold != null) {
+            args.push(
+              '--fleet-failure-threshold',
+              String(manifest.fleet_failure_threshold),
+            );
+          }
+          const child = spawn('python3', args, {
+            detached: true,
+            stdio: 'ignore',
+            env: { ...process.env },
+          });
+          child.unref();
+        },
       }),
     );
   }

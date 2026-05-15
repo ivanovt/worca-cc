@@ -727,6 +727,44 @@ export function runDetailView(run, settings = {}, options = {}) {
 
       <div class="run-info-section">
         ${
+          run.project || run._project
+            ? html`
+          <div class="run-project">
+            <span class="meta-label">Project:</span>
+            <span class="meta-value run-project-name">${run.project || run._project}</span>
+          </div>
+        `
+            : nothing
+        }
+        ${
+          run.fleet_id && run.group_type === 'fleet'
+            ? html`
+          <div class="run-group">
+            <span class="meta-label">Fleet:</span>
+            <a
+              class="meta-value run-group-link"
+              href="#/fleet-runs/${run.fleet_id}"
+              title="Open fleet detail"
+            >${run.fleet_id}</a>
+          </div>
+        `
+            : nothing
+        }
+        ${
+          run.workspace_id && run.group_type === 'workspace'
+            ? html`
+          <div class="run-group">
+            <span class="meta-label">Workspace:</span>
+            <a
+              class="meta-value run-group-link"
+              href="#/workspace-runs/${run.workspace_id}"
+              title="Open workspace detail"
+            >${run.workspace_id}</a>
+          </div>
+        `
+            : nothing
+        }
+        ${
           branch
             ? html`
           <div class="run-branch">
@@ -779,7 +817,7 @@ export function runDetailView(run, settings = {}, options = {}) {
               pipelineCost > 0 || pipelineTurns > 0
                 ? html`
               <div class="pipeline-cost-strip">
-                ${pipelineCost > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Pipeline Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span></span>` : nothing}
+                ${pipelineCost > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span></span>` : nothing}
                 ${pipelineTurns > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Total Turns:</span> <span class="meta-value">${pipelineTurns}</span></span>` : nothing}
               </div>
             `

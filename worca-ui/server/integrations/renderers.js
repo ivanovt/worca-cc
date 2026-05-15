@@ -155,6 +155,90 @@ function renderCostBudgetWarning(envelope) {
 }
 
 // ---------------------------------------------------------------------------
+// Fleet event renderers
+// ---------------------------------------------------------------------------
+// Mirror the run-event renderers' shape: short title line + indented meta
+// rows. fleet_id replaces run_id as the primary key; envelopes are
+// fleet-shaped (top-level fleet_id, no `pipeline` wrapper). See
+// src/worca/events/fleet_emitter.py for the envelope schema.
+
+function fleetId(envelope) {
+  return envelope.fleet_id ?? 'fleet';
+}
+
+function projectBasename(p) {
+  if (!p) return '';
+  const parts = p.split('/').filter(Boolean);
+  return parts[parts.length - 1] || p;
+}
+
+function renderFleetLaunched(envelope) {
+  const p = envelope.payload ?? {};
+  const projects = Array.isArray(p.projects) ? p.projects : [];
+  const projectsLabel = projects.length
+    ? projects.slice(0, 5).map(projectBasename).join(', ') +
+      (projects.length > 5 ? `, +${projects.length - 5} more` : '')
+    : '(none)';
+  const parts = [`\u{1F680} **Fleet launched:** \`${fleetId(envelope)}\``];
+  parts.push(`   **Projects:** ${projects.length} — ${projectsLabel}`);
+  if (p.plan_mode && p.plan_mode !== 'none') {
+    parts.push(`   **Plan mode:** ${p.plan_mode}`);
+  }
+  if (p.guide_attached) parts.push('   **Guide:** attached');
+  if (p.base_branch) parts.push(`   **Base:** ${p.base_branch}`);
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderFleetHalted(envelope) {
+  const p = envelope.payload ?? {};
+  const reason = p.halt_reason || 'unknown';
+  // Severity matches the reason: circuit_breaker is an error, user/stopped is
+  // a warning. Keeps Slack/Discord colour coding consistent with the per-run
+  // pipeline.run.interrupted vs pipeline.circuit_breaker.tripped split.
+  const sev = reason === 'circuit_breaker' ? 'error' : 'warning';
+  const parts = [`\u{1F6D1} **Fleet halted:** \`${fleetId(envelope)}\``];
+  parts.push(`   **Reason:** ${reason}`);
+  if (p.in_flight_count != null) {
+    parts.push(`   **In-flight at halt:** ${p.in_flight_count}`);
+  }
+  if (p.pending_count != null && p.pending_count > 0) {
+    parts.push(`   **Pending (not dispatched):** ${p.pending_count}`);
+  }
+  return mdMsg(parts.join('\n'), sev);
+}
+
+function renderFleetCompleted(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`✅ **Fleet completed:** \`${fleetId(envelope)}\``];
+  if (p.child_count != null) {
+    parts.push(
+      `   **Children:** ${p.completed_count ?? p.child_count}/${p.child_count} completed`,
+    );
+  }
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  return mdMsg(parts.join('\n'), 'success');
+}
+
+function renderFleetFailed(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`❌ **Fleet failed:** \`${fleetId(envelope)}\``];
+  if (p.child_count != null) {
+    const failed = p.failed_count ?? 0;
+    const interrupted = p.interrupted_count ?? 0;
+    const completed = p.completed_count ?? 0;
+    parts.push(
+      `   **Children:** ${completed}/${p.child_count} completed, ${failed} failed, ${interrupted} interrupted`,
+    );
+  }
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  return mdMsg(parts.join('\n'), 'error');
+}
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -173,6 +257,20 @@ const EVENT_RENDERERS = {
   'pipeline.git.pr_merged': renderGitPrMerged,
   'pipeline.circuit_breaker.tripped': renderCbTripped,
   'pipeline.cost.budget_warning': renderCostBudgetWarning,
+  // fleet.launched is intentionally NOT in this map by default — projects
+  // that launch many fleets per day would find it noisy. Opt-in callers
+  // can register it themselves via renderEvent's renderer override (or
+  // by extending TIER1_EVENTS in a future per-project config).
+  'fleet.halted': renderFleetHalted,
+  'fleet.completed': renderFleetCompleted,
+  'fleet.failed': renderFleetFailed,
+};
+
+// fleet.launched ships as an opt-in renderer rather than a Tier-1 default —
+// see comment above. Callers that want it can pull it from this export and
+// register it in their own pipeline.
+export const OPT_IN_RENDERERS = {
+  'fleet.launched': renderFleetLaunched,
 };
 
 export const TIER1_EVENTS = Object.keys(EVENT_RENDERERS);

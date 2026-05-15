@@ -154,15 +154,21 @@ def _check_control_file(
     status: dict,
     status_path: str,
     ctx,
+    registry_dir: Optional[str] = None,
 ) -> None:
     """Poll the control file for pause/stop actions.
 
     Reads .worca/runs/{run_id}/control.json at the top of each iteration.
     Deletes the file after reading.
 
-    On pause: sets pipeline_status=paused, saves status, exits 0.
+    On pause: sets pipeline_status=paused, mirrors that into the multi-pipeline
+             registry, saves status, exits 0.
     On stop: SIGTERMs the Claude subprocess, sets pipeline_status=interrupted
              with stop_reason=control_file, saves status, raises PipelineInterrupted.
+
+    registry_dir is the parent project's .worca/ in worktree mode (where the
+    multi-pipeline registry lives). When omitted, the registry mirror is
+    skipped — in-place runs have no registry entry to update.
     """
     if not run_id:
         return
@@ -178,6 +184,15 @@ def _check_control_file(
     if action == "pause":
         status["pipeline_status"] = "paused"
         save_status(status, status_path)
+        # Mirror paused into the registry. Without this the entry stays
+        # "running" after this process exits, so reconcile_stale() later
+        # flips it to "failed" (dead PID) and fleet status derivation
+        # misreads a paused child.
+        if status.get("worktree") and registry_dir:
+            try:
+                update_pipeline(run_id, status="paused", base=registry_dir)
+            except Exception:
+                pass  # registry mirror is best-effort; status.json is canonical
         if ctx is not None:
             emit_event(ctx, RUN_PAUSED, run_paused_payload(reason="control_file"))
         _log("Pipeline paused by control file", "warn")
@@ -1529,6 +1544,22 @@ def run_pipeline(
             _write_pid(actual_status_path)
             _write_pid(status_path)
 
+            # Overwrite the registry's pid with the live runner's PID.
+            # run_worktree.py / the original launcher registered with its own
+            # (parent) PID before forking into us; without this update the
+            # stale_pid reconciler ghosts a healthy resumed run within seconds.
+            # Only meaningful in worktree mode — that's where the multi-pipeline
+            # registry exists. Mirrors the worktree gate every other
+            # update_pipeline call in this file uses.
+            if (
+                status.get("worktree")
+                and status.get("run_id")
+                and registry_dir
+            ):
+                update_pipeline(
+                    status["run_id"], base=registry_dir, pid=os.getpid()
+                )
+
             # Clear stale control.json left over from a previous stop/pause that
             # killed the process before it could consume the file.  Without this,
             # the first iteration of the resumed pipeline would read the old
@@ -1575,6 +1606,14 @@ def run_pipeline(
 
         # Write PID to per-run directory
         _write_pid(actual_status_path)
+
+        # Overwrite the registry's pid with the live runner's PID.
+        # run_worktree.py registered with its own (parent) PID before
+        # forking into us; without this update the stale_pid reconciler
+        # ghosts a healthy pipeline within seconds. Only meaningful in
+        # worktree mode — see the resume-path comment for full rationale.
+        if status.get("worktree") and registry_dir:
+            update_pipeline(run_id, base=registry_dir, pid=os.getpid())
 
         save_status(status, actual_status_path)
 
@@ -1683,6 +1722,7 @@ def run_pipeline(
             core_dir=_pb_core_dir,
             template_agents_dir=_pb_template_agents_dir,
             run_dir=run_dir,
+            work_request_guide_content=work_request.guide_content,
         )
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
@@ -1811,7 +1851,7 @@ def run_pipeline(
             current_stage = stage_order[stage_idx]
 
             # --- Control file polling ---
-            _check_control_file(status.get("run_id"), worca_dir, status, actual_status_path, ctx)
+            _check_control_file(status.get("run_id"), worca_dir, status, actual_status_path, ctx, registry_dir)
 
             # Skip stages pre-marked as skipped (e.g. PLAN when plan_file provided)
             existing_stage = status.get("stages", {}).get(current_stage.value, {})
@@ -2957,6 +2997,17 @@ def run_pipeline(
 
                 if not pr_approved:
                     save_status(status, actual_status_path)
+                    # Mirror paused into the multi-pipeline registry before
+                    # returning — otherwise the entry stays "running" while
+                    # this process exits at the PR-approval gate, and
+                    # reconcile_stale() / fleet status derivation misread it.
+                    if status.get("worktree") and status.get("run_id"):
+                        try:
+                            update_pipeline(
+                                status["run_id"], status="paused", base=registry_dir
+                            )
+                        except Exception:
+                            pass  # registry mirror is best-effort
                     return
 
                 # Post-condition verification: only when guardian explicitly

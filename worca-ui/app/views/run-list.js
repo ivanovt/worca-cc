@@ -12,6 +12,19 @@ const HISTORY_STATUSES = [
   'archived',
 ];
 
+// Free-text match across the fields a user is likely to recall: the
+// work-request title, the branch name, and the run id. Mirrors the
+// worktrees text filter so the three list pages search consistently.
+function _runMatchesText(run, q) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  return (
+    (run.work_request?.title || '').toLowerCase().includes(needle) ||
+    (run.branch || '').toLowerCase().includes(needle) ||
+    (run.id || '').toLowerCase().includes(needle)
+  );
+}
+
 export function runListView(
   runs,
   filter,
@@ -25,6 +38,8 @@ export function runListView(
     onUnarchive,
     statusFilter,
     onStatusFilter,
+    textFilter = '',
+    onTextFilter,
     archivedRuns = [],
     runsLoaded = true,
   } = {},
@@ -59,6 +74,13 @@ export function runListView(
     displayed = sortByStartDesc(displayed);
   }
 
+  // Text filter runs *after* the status filter, on whatever the chips
+  // narrowed down to (including the archived bucket).
+  const textQ = (textFilter || '').trim();
+  if (textQ) {
+    displayed = displayed.filter((r) => _runMatchesText(r, textQ));
+  }
+
   if (
     baseFiltered.length === 0 &&
     !(statusFilter === 'archived' && archivedRuns.length > 0)
@@ -89,6 +111,22 @@ export function runListView(
           </button>
         `,
         )}
+      </div>
+    `
+        : ''
+    }
+    ${
+      showStatusChips && onTextFilter
+        ? html`
+      <div class="list-filter-row">
+        <sl-input
+          size="small"
+          class="list-text-filter"
+          type="text"
+          placeholder="Filter by title, branch, or run id…"
+          value="${textFilter || ''}"
+          @sl-input=${(e) => onTextFilter(e.target.value)}
+        ></sl-input>
       </div>
     `
         : ''

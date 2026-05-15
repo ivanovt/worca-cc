@@ -10,6 +10,7 @@ import ArrowDown from 'lucide/dist/esm/icons/arrow-down';
 import ArrowLeft from 'lucide/dist/esm/icons/arrow-left';
 import ArrowRight from 'lucide/dist/esm/icons/arrow-right';
 import Bell from 'lucide/dist/esm/icons/bell';
+import ChevronDown from 'lucide/dist/esm/icons/chevron-down';
 import ChevronRight from 'lucide/dist/esm/icons/chevron-right';
 import Circle from 'lucide/dist/esm/icons/circle';
 import CircleAlert from 'lucide/dist/esm/icons/circle-alert';
@@ -104,6 +105,7 @@ export {
   ExternalLink,
   GitBranch,
   GitPullRequest,
+  ChevronDown,
   ChevronRight,
   Save,
   Settings,

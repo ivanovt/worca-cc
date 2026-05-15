@@ -505,8 +505,127 @@ def test_register_rejects_both_ids(tmp_path):
 # --- reconcile_orphan_groups ---
 
 
-def test_reconcile_orphan_groups_noop(tmp_path):
-    """reconcile_orphan_groups is a no-op stub that always returns []."""
+def test_reconcile_orphan_groups_empty_registry(tmp_path):
+    """Empty registry returns an empty list."""
     base = str(tmp_path / ".worca")
-    result = reconcile_orphan_groups(base=base)
+    fleet_dir = str(tmp_path / "fleet-runs")
+    result = reconcile_orphan_groups(base=base, fleet_manifest_base_dir=fleet_dir)
     assert result == []
+
+
+def test_reconcile_orphan_groups_strips_dead_fleet(tmp_path):
+    """Entry with fleet_id whose manifest is gone gets fleet_id/group_type stripped."""
+    base = str(tmp_path / ".worca")
+    fleet_dir = str(tmp_path / "fleet-runs")
+    os.makedirs(fleet_dir, exist_ok=True)
+    register_pipeline(
+        "run-orphan", "/tmp/wt", "Orphan", 1, base=base,
+        fleet_id="f_dead_1234", group_type="fleet",
+    )
+
+    orphaned = reconcile_orphan_groups(base=base, fleet_manifest_base_dir=fleet_dir)
+
+    assert orphaned == ["run-orphan"]
+    entry = get_pipeline("run-orphan", base=base)
+    assert "fleet_id" not in entry
+    assert "group_type" not in entry
+
+
+def test_reconcile_orphan_groups_preserves_live_fleet(tmp_path):
+    """Entry with fleet_id whose manifest exists is left untouched."""
+    base = str(tmp_path / ".worca")
+    fleet_dir = str(tmp_path / "fleet-runs")
+    os.makedirs(fleet_dir, exist_ok=True)
+    register_pipeline(
+        "run-live", "/tmp/wt", "Live", 1, base=base,
+        fleet_id="f_live_abcd", group_type="fleet",
+    )
+    # Write a manifest so the fleet is considered alive
+    manifest_path = os.path.join(fleet_dir, "f_live_abcd.json")
+    with open(manifest_path, "w") as f:
+        json.dump({"fleet_id": "f_live_abcd", "status": "running"}, f)
+
+    orphaned = reconcile_orphan_groups(base=base, fleet_manifest_base_dir=fleet_dir)
+
+    assert orphaned == []
+    entry = get_pipeline("run-live", base=base)
+    assert entry["fleet_id"] == "f_live_abcd"
+    assert entry["group_type"] == "fleet"
+
+
+def test_reconcile_orphan_groups_ignores_entries_without_fleet_id(tmp_path):
+    """Entries without fleet_id are never touched."""
+    base = str(tmp_path / ".worca")
+    fleet_dir = str(tmp_path / "fleet-runs")
+    register_pipeline("run-plain", "/tmp/wt", "Plain", 1, base=base)
+
+    orphaned = reconcile_orphan_groups(base=base, fleet_manifest_base_dir=fleet_dir)
+
+    assert orphaned == []
+    entry = get_pipeline("run-plain", base=base)
+    assert "fleet_id" not in entry
+
+
+def test_reconcile_orphan_groups_returns_all_affected_ids(tmp_path):
+    """All run_ids stripped in one call are returned."""
+    base = str(tmp_path / ".worca")
+    fleet_dir = str(tmp_path / "fleet-runs")
+    os.makedirs(fleet_dir, exist_ok=True)
+    register_pipeline(
+        "run-dead1", "/tmp/wt", "Dead 1", 1, base=base,
+        fleet_id="f_gone_1111", group_type="fleet",
+    )
+    register_pipeline(
+        "run-dead2", "/tmp/wt", "Dead 2", 2, base=base,
+        fleet_id="f_gone_2222", group_type="fleet",
+    )
+    register_pipeline(
+        "run-alive", "/tmp/wt", "Alive", 3, base=base,
+        fleet_id="f_ok_3333", group_type="fleet",
+    )
+    # Only the "alive" fleet has a manifest
+    manifest_path = os.path.join(fleet_dir, "f_ok_3333.json")
+    with open(manifest_path, "w") as f:
+        json.dump({"fleet_id": "f_ok_3333", "status": "running"}, f)
+
+    orphaned = reconcile_orphan_groups(base=base, fleet_manifest_base_dir=fleet_dir)
+
+    assert sorted(orphaned) == ["run-dead1", "run-dead2"]
+    for run_id in ("run-dead1", "run-dead2"):
+        entry = get_pipeline(run_id, base=base)
+        assert "fleet_id" not in entry
+        assert "group_type" not in entry
+    alive = get_pipeline("run-alive", base=base)
+    assert alive["fleet_id"] == "f_ok_3333"
+
+
+def test_reconcile_orphan_groups_updates_timestamp(tmp_path):
+    """Stripped entries get an updated updated_at timestamp."""
+    base = str(tmp_path / ".worca")
+    fleet_dir = str(tmp_path / "fleet-runs")
+    register_pipeline(
+        "run-ts", "/tmp/wt", "Timestamps", 1, base=base,
+        fleet_id="f_gone_ts", group_type="fleet",
+    )
+    before_ts = get_pipeline("run-ts", base=base)["updated_at"]
+
+    reconcile_orphan_groups(base=base, fleet_manifest_base_dir=fleet_dir)
+
+    after_ts = get_pipeline("run-ts", base=base)["updated_at"]
+    assert after_ts >= before_ts
+
+
+def test_reconcile_orphan_groups_strips_fleet_id_only_no_group_type(tmp_path):
+    """fleet_id is stripped even when group_type was never set; no KeyError."""
+    base = str(tmp_path / ".worca")
+    fleet_dir = str(tmp_path / "fleet-runs")
+    register_pipeline(
+        "run-ngt", "/tmp/wt", "No Group Type", 1, base=base,
+        fleet_id="f_gone_ngt",
+    )
+
+    orphaned = reconcile_orphan_groups(base=base, fleet_manifest_base_dir=fleet_dir)
+
+    assert orphaned == ["run-ngt"]
+    entry = get_pipeline("run-ngt", base=base)
+    assert "fleet_id" not in entry

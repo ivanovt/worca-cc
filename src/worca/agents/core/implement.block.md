@@ -27,6 +27,20 @@
 {{assigned_task}}
 
 {{/if}}
+{{#if has_guide}}
+## Reference Guide (normative)
+
+The following guidance is authoritative for this work-request. Treat any
+conflict between the guide and the task description as a bug in the task
+description, and surface it rather than silently resolving it.
+
+{{guide_content}}
+
+---
+
+## Task
+
+{{/if}}
 {{work_request}}
 {{else}}
 Implement the code changes for the assigned task. Follow TDD: write a failing test first, then implement. When the assigned bead is complete, run `bd close <id>` and STOP — do not attempt `git commit` / `git push` / `git stash`. The guardian handles all git state changes.
@@ -39,5 +53,19 @@ Implement the code changes for the assigned task. Follow TDD: write a failing te
 
 ## Work Request
 
+{{#if has_guide}}
+## Reference Guide (normative)
+
+The following guidance is authoritative for this work-request. Treat any
+conflict between the guide and the task description as a bug in the task
+description, and surface it rather than silently resolving it.
+
+{{guide_content}}
+
+---
+
+## Task
+
+{{/if}}
 {{work_request}}
 {{/if}}

@@ -185,3 +185,65 @@ def test_pause_event_payload_contains_reason(tmp_path):
     assert pause_calls, "No RUN_PAUSED call found"
     payload = pause_calls[0].args[2]
     assert "reason" in payload
+
+
+# --- pause registry mirror (worktree mode) ---
+
+
+def test_pause_mirrors_paused_into_registry_in_worktree_mode(tmp_path):
+    """In worktree mode, control-file pause writes status="paused" into the
+    parent multi-pipeline registry entry — without this the entry stays
+    "running" after the process exits, and reconcile_stale flips it to failed.
+    """
+    from worca.orchestrator.registry import get_pipeline, register_pipeline
+
+    registry_dir = str(tmp_path / "parent" / ".worca")
+    register_pipeline("run-1", str(tmp_path / "wt"), "t", 1234, base=registry_dir)
+    write_control("run-1", "pause", base=str(tmp_path))
+    status = {"run_id": "run-1", "pipeline_status": "running", "worktree": True}
+    status_path = str(tmp_path / "status.json")
+
+    with pytest.raises(SystemExit):
+        _check_control_file(
+            "run-1", str(tmp_path), status, status_path, None, registry_dir
+        )
+
+    assert get_pipeline("run-1", base=registry_dir)["status"] == "paused"
+
+
+def test_pause_skips_registry_mirror_when_not_worktree(tmp_path):
+    """In-place (non-worktree) runs have no registry entry to mirror into —
+    the registry write must be skipped, not attempted."""
+    from worca.orchestrator.registry import get_pipeline, register_pipeline
+
+    registry_dir = str(tmp_path / ".worca")
+    register_pipeline("run-1", str(tmp_path / "wt"), "t", 1234, base=registry_dir)
+    write_control("run-1", "pause", base=str(tmp_path))
+    status = {"run_id": "run-1", "pipeline_status": "running"}  # no "worktree"
+    status_path = str(tmp_path / "status.json")
+
+    with pytest.raises(SystemExit):
+        _check_control_file(
+            "run-1", str(tmp_path), status, status_path, None, registry_dir
+        )
+
+    assert get_pipeline("run-1", base=registry_dir)["status"] == "running"
+
+
+def test_pause_registry_mirror_is_best_effort(tmp_path):
+    """A missing registry entry must not crash the pause path."""
+    write_control("run-1", "pause", base=str(tmp_path))
+    status = {"run_id": "run-1", "pipeline_status": "running", "worktree": True}
+    status_path = str(tmp_path / "status.json")
+
+    with pytest.raises(SystemExit):
+        _check_control_file(
+            "run-1",
+            str(tmp_path),
+            status,
+            status_path,
+            None,
+            str(tmp_path / "empty" / ".worca"),
+        )
+
+    assert status["pipeline_status"] == "paused"
