@@ -600,10 +600,13 @@ def test_fleet_circuit_breaker_trips_with_running_children(tmp_path):
         _setup_repo(r)
 
     fail_scenario = _write_scenario(tmp_path, "fail", _scenario_planner_fails())
-    # 60s slow gives a comfortable window for the breaker check even if the
-    # 3 fail-fast children take a few seconds to land terminal.
+    # 25s gives the breaker plenty of window — first 3 fail in ~1s each
+    # after dispatch, breaker is evaluated within 5–15s on slow CI runners,
+    # and slow children still have headroom before COORDINATE returns.
+    # Short enough that the post-breaker terminal-wait finishes inside its
+    # timeout even on the slowest CI runner.
     slow_scenario = _write_scenario(
-        tmp_path, "slow", _scenario_slow_at("coordinator", slow_s=60)
+        tmp_path, "slow", _scenario_slow_at("coordinator", slow_s=25)
     )
 
     fleet_id, fleet_id_short = generate_fleet_id()
@@ -630,16 +633,14 @@ def test_fleet_circuit_breaker_trips_with_running_children(tmp_path):
             cleanup_pairs.append((repo, wt))
         _populate_children(fleet_runs_dir, manifest, children)
 
-        # Wait for the 3 fail-fast children to land terminal failed.
+        # Wait for the 3 fail-fast children to land terminal failed. Then
+        # immediately poll — the slow children should still be at COORDINATE
+        # because slow_s=25 is much longer than typical fail-fast latency.
         for child, (_, wt) in zip(children[:3], cleanup_pairs[:3]):
             _wait_for_pipeline_status(
                 wt, child["run_id"], {"failed"}, timeout=45
             )
 
-        # The slow children should still be parked at COORDINATE for ~60s,
-        # so this poll catches the (3 failed + 2 running) shape that trips
-        # the breaker. We do not assert each slow child's status directly
-        # — the derived fleet status is what matters.
         derived = poll_and_update_fleet_manifest(fleet_id)
         assert derived == "halted", f"breaker did not trip: derived={derived!r}"
 
@@ -653,8 +654,10 @@ def test_fleet_circuit_breaker_trips_with_running_children(tmp_path):
         assert again == "halted"
 
         # In-flight children allowed to finish naturally — manifest stays halted.
+        # slow_s=25 + ~5s for trailing stages → ~30s; 90s ceiling gives 3×
+        # margin for CI runner variance.
         for child, (_, wt) in zip(children[3:], cleanup_pairs[3:]):
-            _wait_for_pipeline_terminal(wt, child["run_id"], timeout=60)
+            _wait_for_pipeline_terminal(wt, child["run_id"], timeout=90)
 
         final = poll_and_update_fleet_manifest(fleet_id)
         assert final == "halted"  # circuit_breaker is sticky
@@ -686,8 +689,10 @@ def test_fleet_circuit_breaker_does_not_trip_below_threshold(tmp_path):
         _setup_repo(r)
 
     fail_scenario = _write_scenario(tmp_path, "fail", _scenario_planner_fails())
+    # Slow children only need to outlast the breaker poll — they're killed
+    # in the finally block, so we don't wait for them to terminate naturally.
     slow_scenario = _write_scenario(
-        tmp_path, "slow", _scenario_slow_at("coordinator", slow_s=60)
+        tmp_path, "slow", _scenario_slow_at("coordinator", slow_s=25)
     )
 
     fleet_id, fleet_id_short = generate_fleet_id()
