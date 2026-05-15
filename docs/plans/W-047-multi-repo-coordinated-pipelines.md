@@ -4,7 +4,36 @@
 **Priority:** P3
 **Area:** cc + ui
 **Date:** 2026-04-26
-**Depends on:** W-040 / #101 (fleet runs — cross-repository fan-out, `fleet_id` grouping, manifest, circuit breaker, `--resume`, guide injection) — **open, remaining blocker**. Builds on W-048 / #82 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `register_pipeline()` mutual exclusion of `fleet_id`/`workspace_id`, `target_branch`, `group_type`) — **shipped**.
+**Depends on:** W-040 / #101 (fleet runs — cross-repository fan-out, `fleet_id` grouping, manifest, circuit breaker, `--resume`, guide injection) — **shipped** (merged `93b0e1b`, released `bb91088`). Builds on W-048 / #82 (worktree-based pipeline isolation — `pipelines.d/` registry, unified `discoverRuns`, `register_pipeline()` mutual exclusion of `fleet_id`/`workspace_id`, `target_branch`, `group_type`) — **shipped**.
+
+## Decisions (locked)
+
+Locked-in execution constraints. These take precedence over any contradicting design choice elsewhere in this plan. Implementer agents must honor every clause; reviewer flags violations as `critical`.
+
+### Delivery shape
+- Ship the whole plan as **one PR** — Phases 1–8 land together. Cross-phase dependencies (master planner → DAG executor → integration env → PR linker) are tight enough that incremental PRs would each ship in a half-broken state.
+
+### Scope
+- v1 = full plan as written. Master planner + DAG executor + cross-repo integration test + linked PRs with dep comments + umbrella issue + full UI surface per §10. No scope cuts.
+- UI = full §10 in the same PR — `workspace-create.js`, `workspace-edit.js`, `workspace-detail.js`, `dag-graph.js`, conflict surfacing, multipart guide upload, all REST endpoints from §10.10.
+
+### Status enums refactor
+- Bundle with Phase 1. Add `PipelineStatus`, `FleetStatus`, `WorkspaceStatus` to `src/worca/state/status.py` in this PR; migrate every status read site in one pass. Workspace-specific values (`planning`, `integration_testing`, `integration_failed`, `blocked`) land alongside the new enums.
+
+### UI design conformance (binding)
+
+All new UI reuses the existing design system. **No** new badge variants, status colors, button vocabulary, fonts, layout primitives, or component libraries beyond what is already in tree. Specifically:
+
+- **Badges & colors.** Follow `worca-ui/docs/badge-color-language.md` verbatim. Every new workspace status maps to an existing Shoelace variant (`primary` / `success` / `warning` / `danger` / `neutral`) per §10.7. Reuse the `--status-*` CSS variables in `worca-ui/app/styles.css:20-31`. **No new CSS variables, no new variants.**
+- **Status vocabulary.** Extend the `STATES` array in `worca-ui/app/utils/state-actions.js` — do not introduce a parallel string set. New status strings are added there once and reused via `actionAllowed(action, status)` and the helpers in `worca-ui/app/utils/status-badge.js` (`resolveStatus`, `statusClass`, `statusIcon`). Inline `status → color` logic in views is forbidden — every render goes through `status-badge.js`.
+- **Action vocabulary.** Reuse W-040 fleet-detail verbs across workspace surfaces: **Halt / Pause / Stop / Resume / Re-run / Cleanup**. No synonyms — "Remove", "Delete", "Discard", "Abort" are rejected. Cleanup is the single artifact-removal verb (W-048 binding contract).
+- **Components.** Shoelace primitives only: `<sl-badge>`, `<sl-button>`, `<sl-dialog>`, `<sl-card>`, `<sl-tab-group>`, `<sl-textarea>`, `<sl-progress-bar>`, `<sl-select>`, `<sl-alert>`, `<sl-icon>`, `<sl-checkbox>`. Per `docs/design-principles.md` UI Stack. **Plan editor stays plain `<sl-textarea>` — no Monaco / CodeMirror** (§10.5 binding). **DAG renderer is hand-rolled SVG — no d3 / cytoscape** (§10.6 binding).
+- **Page structure.** Workspace detail mirrors `run-detail.js` / `fleet-detail.js`: header strip → primary panel (DAG) → secondary cards (plan, context, cost, integration log, PR table) → actions row at bottom. Sidebar nav is flat siblings under "Pipeline" per W-048 §13.7 — no nesting under a "Multi-Repo" parent.
+- **Typography.** Inherit from `styles.css` — no font-family overrides, no per-view typography rules. Tabular numerals (`font-variant-numeric: tabular-nums`) on cost / duration columns to match existing convention.
+- **Sidebar count badges.** Mirror fleet (W-040): `<sl-badge variant="primary" pill>` for active count, flips to `warning` when any workspace is `halted` / `integration_failed`.
+
+### Plan stale-reference fix (binding)
+- `worca-ui/app/views/multi-dashboard.js` **was deleted during W-048** (see W-040 snapshot 2026-05-11; verified gone in tree at decision time). §10.4 and §10.7's "three call sites" rule must be rewritten to drop `multi-dashboard.js` and route through `worca-ui/app/utils/status-badge.js` helpers + `dashboard.js` only. Every `multi-dashboard.js` reference in this plan must be reconciled with current tree before implementation — a reviewer must reject any PR that touches a non-existent file.
 
 ## Problem
 
