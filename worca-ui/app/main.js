@@ -167,6 +167,15 @@ let restartStageKey = null;
 // -- Fleet views --
 const _fleetDetailCache = {}; // { fleetId: manifest }
 let _fleetDetailFetching = null; // currently-fetching fleet id (single in-flight)
+// Set of fleet ids the API has confirmed missing (404 / !data.ok). Symmetric
+// to _fleetDetailCache for the negative case — without it the detail view
+// stays at "Loading fleet…" forever when the manifest has been cleaned up
+// (common path: user navigates to a fleet link from a history entry, but
+// `worca cleanup --fleet-id` already removed the manifest). In-memory only
+// — a page refresh re-fetches and re-marks. Persisting would create a
+// staleness hazard (manifest re-created with same id during testing) for
+// no real-world benefit since fleet ids embed a timestamp + random suffix.
+const _fleetDetailMissing = new Set();
 let _fleetStatusFilter = 'all'; // /#/fleet-runs filter chip selection
 let _fleetTextFilter = ''; // /#/fleet-runs free-text filter
 
@@ -811,9 +820,12 @@ ws.on('fleet-update', () => {
     .then((data) => {
       store.setState({ fleets: data?.fleets || [] });
       // Invalidate cached detail manifests so the next view fetch is fresh.
+      // Drop missing markers in the same step — a fleet-list refresh implies
+      // any negative caches may be stale (manifest could have been restored).
       for (const k of Object.keys(_fleetDetailCache)) {
         delete _fleetDetailCache[k];
       }
+      _fleetDetailMissing.clear();
     })
     .catch(() => {});
 });
@@ -2732,16 +2744,24 @@ function mainContentView() {
     // /fleet-runs/:id → detail (fetch on demand, cache result)
     if (route.runId) {
       const fleet = _fleetDetailCache[route.runId];
-      if (!fleet) {
+      const isMissing = _fleetDetailMissing.has(route.runId);
+      if (!fleet && !isMissing) {
         // Trigger fetch — only re-render on success/error
         if (_fleetDetailFetching !== route.runId) {
           _fleetDetailFetching = route.runId;
           fetch(`/api/fleet-runs/${route.runId}`)
-            .then((r) => r.json())
-            .then((data) => {
+            .then(async (r) => ({ status: r.status, data: await r.json() }))
+            .then(({ status, data }) => {
               _fleetDetailFetching = null;
               if (data?.ok && data.fleet) {
+                _fleetDetailMissing.delete(route.runId);
                 _fleetDetailCache[route.runId] = data.fleet;
+                rerender();
+              } else if (status === 404 || data?.ok === false) {
+                // Manifest cleaned up (or never existed) — record the
+                // negative result so the view leaves the loading state and
+                // we don't refetch on every render tick.
+                _fleetDetailMissing.add(route.runId);
                 rerender();
               }
             })
@@ -2754,6 +2774,8 @@ function mainContentView() {
         rerender,
         runsById: state.runs,
         onSelectRun: (id) => navigate('history', id, null),
+        missing: isMissing,
+        fleetId: route.runId,
       });
     }
     // /fleet-runs → list of fleets

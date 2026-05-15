@@ -414,14 +414,40 @@ function _userHaltAlertView(fleet) {
 /**
  * Renders the fleet detail page.
  *
- * @param {object|null} fleet  Full fleet manifest from GET /api/fleet-runs/:id (may be null while loading)
- * @param {{ rerender?: function }} options
+ * Three states:
+ *   - `fleet` present                    → full detail page
+ *   - `fleet === null && missing`        → cleaned-up empty state
+ *   - `fleet === null && !missing`       → loading spinner
+ *
+ * @param {object|null} fleet     Full fleet manifest from GET /api/fleet-runs/:id (null while loading or missing)
+ * @param {{ rerender?: function, runsById?: object, onSelectRun?: function, missing?: boolean, fleetId?: string }} options
  */
 export function fleetDetailView(
   fleet,
-  { rerender, runsById, onSelectRun } = {},
+  { rerender, runsById, onSelectRun, missing, fleetId } = {},
 ) {
   if (!fleet) {
+    if (missing) {
+      return html`
+        <div class="fleet-detail-empty">
+          <sl-icon name="archive" library="default"></sl-icon>
+          <h2>Fleet not found</h2>
+          <p>
+            ${
+              fleetId
+                ? html`The fleet manifest for
+                  <code>${fleetId}</code> is no longer available.`
+                : html`The fleet manifest is no longer available.`
+            }
+            It has been cleaned up or was never created.
+          </p>
+          <p class="fleet-detail-empty-hint">
+            Per-project run history is still accessible from the
+            <a href="#/history">History</a> view.
+          </p>
+        </div>
+      `;
+    }
     return html`<div class="fleet-detail-loading"><sl-spinner></sl-spinner> Loading fleet…</div>`;
   }
 

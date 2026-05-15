@@ -573,12 +573,56 @@ describe('fleetDetailView — circuit breaker alert', () => {
 // `fleetDetailView`. Header-level button visibility is exercised by
 // browser e2e tests, not this file.)
 
-// ─── null / loading state ─────────────────────────────────────────────────────
+// ─── null / loading / missing states ──────────────────────────────────────────
 
 describe('fleetDetailView — null fleet', () => {
-  it('renders loading state when fleet is null', () => {
+  it('renders loading state when fleet is null and not flagged missing', () => {
     resetFleetDetailState();
     const out = renderToString(fleetDetailView(null, {}));
     expect(out).toContain('fleet-detail-loading');
+    expect(out).not.toContain('fleet-detail-empty');
+  });
+
+  it('renders empty state when fleet is missing (404)', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView(null, {
+        missing: true,
+        fleetId: 'f_202605120900_deadbeef',
+      }),
+    );
+    expect(out).toContain('fleet-detail-empty');
+    expect(out).toContain('Fleet not found');
+    expect(out).toContain('cleaned up');
+    expect(out).not.toContain('fleet-detail-loading');
+  });
+
+  it('empty state includes the fleet id when provided', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView(null, {
+        missing: true,
+        fleetId: 'f_202605120900_deadbeef',
+      }),
+    );
+    expect(out).toContain('f_202605120900_deadbeef');
+  });
+
+  it('empty state omits the id chip when not provided', () => {
+    resetFleetDetailState();
+    const out = renderToString(fleetDetailView(null, { missing: true }));
+    expect(out).toContain('Fleet not found');
+    expect(out).not.toContain('<code>');
+  });
+
+  it('empty state links back to history', () => {
+    resetFleetDetailState();
+    const out = renderToString(
+      fleetDetailView(null, {
+        missing: true,
+        fleetId: 'f_202605120900_deadbeef',
+      }),
+    );
+    expect(out).toContain('#/history');
   });
 });

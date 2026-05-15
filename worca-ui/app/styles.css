@@ -5663,3 +5663,48 @@ sl-tooltip.bead-tooltip::part(body) {
   align-items: center;
   gap: 12px;
 }
+
+.fleet-detail-empty {
+  padding: 64px 24px;
+  text-align: center;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: 540px;
+  margin: 0 auto;
+}
+
+.fleet-detail-empty sl-icon {
+  font-size: 48px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
+.fleet-detail-empty h2 {
+  margin: 8px 0 0 0;
+  font-size: 18px;
+  color: var(--fg);
+}
+
+.fleet-detail-empty p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.fleet-detail-empty code {
+  font-size: 12px;
+  background: var(--bg-2, var(--border));
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+.fleet-detail-empty-hint {
+  font-size: 13px;
+  opacity: 0.85;
+}
+
+.fleet-detail-empty-hint a {
+  color: var(--accent, var(--fg));
+}
