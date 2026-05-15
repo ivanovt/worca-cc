@@ -140,6 +140,20 @@ RUN_PAUSED              = "pipeline.run.paused"
 RUN_RESUMED_FROM_PAUSE  = "pipeline.run.resumed_from_pause"
 
 
+# ---------------------------------------------------------------------------
+# Fleet (multi-project fan-out) lifecycle events (5 events)
+# ---------------------------------------------------------------------------
+# These complement the per-child pipeline.run.* events with fleet-level
+# transitions a subscriber would otherwise have to aggregate manually.
+# See src/worca/events/fleet_emitter.py for the emit path.
+
+FLEET_LAUNCHED                  = "fleet.launched"
+FLEET_HALTED                    = "fleet.halted"
+FLEET_COMPLETED                 = "fleet.completed"
+FLEET_FAILED                    = "fleet.failed"
+FLEET_CIRCUIT_BREAKER_TRIPPED   = "fleet.circuit_breaker.tripped"
+
+
 # ===========================================================================
 # Payload builder helpers
 # ===========================================================================
@@ -824,3 +838,109 @@ def run_paused_payload(reason: str, waiting: bool = False) -> dict:
 
 def run_resumed_from_pause_payload(reason: str) -> dict:
     return {"reason": reason}
+
+
+# ---------------------------------------------------------------------------
+# Fleet event payload builders
+# ---------------------------------------------------------------------------
+# Each fleet event carries enough context that a subscriber can act on it
+# without immediately re-reading the manifest: project list, plan/guide mode,
+# child status counts. Builders accept None for optional fields and omit them
+# from the resulting dict so the JSONL line stays compact for empty fields.
+
+
+def fleet_launched_payload(
+    projects: list,
+    *,
+    head_template: str = None,
+    base_branch: str = None,
+    plan_mode: str = "none",
+    plan_path: str = None,
+    guide_attached: bool = False,
+    max_parallel: int = None,
+    failure_threshold: float = None,
+    child_count: int = None,
+) -> dict:
+    p: dict = {
+        "projects": projects,
+        "plan_mode": plan_mode,
+        "guide_attached": guide_attached,
+    }
+    if head_template is not None:
+        p["head_template"] = head_template
+    if base_branch is not None:
+        p["base_branch"] = base_branch
+    if plan_path is not None:
+        p["plan_path"] = plan_path
+    if max_parallel is not None:
+        p["max_parallel"] = max_parallel
+    if failure_threshold is not None:
+        p["failure_threshold"] = failure_threshold
+    if child_count is not None:
+        p["child_count"] = child_count
+    return p
+
+
+def fleet_halted_payload(
+    halt_reason: str,
+    *,
+    in_flight_count: int = None,
+    pending_count: int = None,
+) -> dict:
+    """halt_reason: 'stopped' | 'circuit_breaker' | 'user'."""
+    p: dict = {"halt_reason": halt_reason}
+    if in_flight_count is not None:
+        p["in_flight_count"] = in_flight_count
+    if pending_count is not None:
+        p["pending_count"] = pending_count
+    return p
+
+
+def fleet_completed_payload(
+    *,
+    child_count: int,
+    completed_count: int,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {
+        "child_count": child_count,
+        "completed_count": completed_count,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def fleet_failed_payload(
+    *,
+    child_count: int,
+    completed_count: int,
+    failed_count: int,
+    interrupted_count: int = 0,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {
+        "child_count": child_count,
+        "completed_count": completed_count,
+        "failed_count": failed_count,
+        "interrupted_count": interrupted_count,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def fleet_circuit_breaker_tripped_payload(
+    *,
+    failed_count: int,
+    terminal_count: int,
+    total_count: int,
+    threshold: float,
+) -> dict:
+    return {
+        "failed_count": failed_count,
+        "terminal_count": terminal_count,
+        "total_count": total_count,
+        "threshold": threshold,
+        "failure_ratio": (failed_count / terminal_count) if terminal_count else 0.0,
+    }

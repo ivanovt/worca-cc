@@ -470,3 +470,42 @@ Fleet-level defaults in `.claude/settings.json` (or `settings.local.json` for se
   }
 }
 ```
+
+## Fleet-level events and webhooks
+
+Five aggregated `fleet.*` events complement the per-child `pipeline.run.*` stream. Subscribers watching a fleet should listen to these directly instead of reconstructing fleet state from each child's pipeline events.
+
+| Event | When | Payload highlights |
+|---|---|---|
+| `fleet.launched` | After `run_fleet.py` finishes dispatching all children | `projects`, `plan_mode`, `guide_attached`, `head_template`, `base_branch`, `max_parallel`, `failure_threshold`, `child_count` |
+| `fleet.halted` | `stop_fleet`, **or** when reconciler trips the breaker | `halt_reason` (`"stopped"`, `"circuit_breaker"`, `"user"`), `in_flight_count`, `pending_count` |
+| `fleet.circuit_breaker.tripped` | Manifest reconciler crosses the failure-ratio threshold | `failed_count`, `terminal_count`, `total_count`, `threshold`, `failure_ratio` (fires alongside `fleet.halted`) |
+| `fleet.completed` | All children landed `completed` | `child_count`, `completed_count` |
+| `fleet.failed` | All children terminal, at least one not `completed` | `child_count`, `completed_count`, `failed_count`, `interrupted_count` |
+
+Each event has the envelope:
+
+```jsonc
+{
+  "schema_version": "1",
+  "event_id": "<uuid4>",
+  "event_type": "fleet.launched",
+  "timestamp": "2026-01-01T12:00:00.000Z",
+  "fleet_id": "f_202601011200_abc12345",
+  "payload": { /* per-event fields */ }
+}
+```
+
+Events are written to `~/.worca/fleet-runs/<fleet_id>.events.jsonl` (audit log) and dispatched to the same `worca.hooks` + `worca.webhooks` configuration the per-pipeline events use. Wire up a hook by event type:
+
+```jsonc
+"worca": {
+  "hooks": {
+    "fleet.halted": ["./scripts/page_on_call.sh"],
+    "fleet.circuit_breaker.tripped": ["./scripts/page_on_call.sh"],
+    "fleet.*": ["./scripts/log_fleet_events.sh"]
+  }
+}
+```
+
+Transitions are edge-triggered: a fleet that stays `running` across many polls fires no events, and a sticky `halted` / `paused` fleet doesn't re-emit on subsequent polls. `fleet.circuit_breaker.tripped` and `fleet.halted` both fire on a breaker trip (in that order) — subscribers that want only one signal should filter to the more specific event. Settings are resolved from the **first child's project root** (every fleet child shares its parent's settings), so each project's `worca.hooks` is honored without explicit fleet-level config.

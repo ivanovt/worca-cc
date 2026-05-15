@@ -916,7 +916,67 @@ def main(argv=None) -> int:
             fleet_failure_threshold=args.fleet_failure_threshold,
         )
 
+        # Fire fleet.launched once dispatch returns — children may still be
+        # spinning up worktrees, but the manifest is populated and the fleet
+        # is "in flight" from the subscriber's perspective. Best-effort
+        # emission: never raises, never blocks the return.
+        _emit_fleet_launched(
+            fleet_id=fleet_id,
+            projects=provisioned,
+            plan_mode=plan_mode,
+            plan_path=os.path.abspath(args.plan) if args.plan else None,
+            guide_attached=bool(args.guide),
+            head_template=args.head_template,
+            base_branch=args.base,
+            max_parallel=args.max_parallel,
+            failure_threshold=args.fleet_failure_threshold,
+        )
+
     return 0
+
+
+def _emit_fleet_launched(
+    *,
+    fleet_id: str,
+    projects: list,
+    plan_mode: str,
+    plan_path: str | None,
+    guide_attached: bool,
+    head_template: str | None,
+    base_branch: str | None,
+    max_parallel: int,
+    failure_threshold: float,
+) -> None:
+    """Fire fleet.launched. Best-effort — never raises, never blocks."""
+    try:
+        from worca.events.fleet_emitter import emit_fleet_event
+        from worca.events.types import FLEET_LAUNCHED, fleet_launched_payload
+
+        # Settings come from the first project's root — every fleet child
+        # shares its parent's hook/webhook config.
+        settings_path = ".claude/settings.json"
+        if projects:
+            settings_path = os.path.join(
+                projects[0], ".claude", "settings.json"
+            )
+        emit_fleet_event(
+            fleet_id,
+            FLEET_LAUNCHED,
+            fleet_launched_payload(
+                projects=list(projects),
+                head_template=head_template,
+                base_branch=base_branch,
+                plan_mode=plan_mode,
+                plan_path=plan_path,
+                guide_attached=guide_attached,
+                max_parallel=max_parallel,
+                failure_threshold=failure_threshold,
+                child_count=len(projects),
+            ),
+            settings_path=settings_path,
+        )
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

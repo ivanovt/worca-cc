@@ -241,7 +241,8 @@ def poll_and_update_fleet_manifest(
 
     new_status, halt_reason = derive_fleet_status(child_statuses, threshold=threshold)
 
-    if new_status != current_status or halt_reason is not None:
+    transitioned = new_status != current_status
+    if transitioned or halt_reason is not None:
         update_fleet_status(
             fleet_id,
             new_status,
@@ -249,4 +250,128 @@ def poll_and_update_fleet_manifest(
             base_dir=manifest_base_dir,
         )
 
+    # Fleet-level webhook emission. Only on genuine state transitions —
+    # poll_and_update is called every WS tick and a no-op poll on a
+    # running fleet would otherwise spam subscribers. Failures here are
+    # non-fatal (emit_fleet_event never raises). Settings come from the
+    # first child's project root — every child in a fleet shares the
+    # parent's settings, and the manifest doesn't carry one of its own.
+    if transitioned:
+        _emit_fleet_transition_event(
+            manifest, new_status, halt_reason, child_statuses, threshold
+        )
+
     return new_status
+
+
+def _emit_fleet_transition_event(
+    manifest: dict,
+    new_status: str,
+    halt_reason: str | None,
+    child_statuses: list,
+    threshold: float,
+) -> None:
+    """Emit a fleet webhook event for a status transition.
+
+    Decoupled into its own helper so the polling hot path is unaffected
+    when no subscribers are configured (the import + emit cost is paid
+    once per transition, not per poll).
+    """
+    try:
+        from worca.events.fleet_emitter import emit_fleet_event
+        from worca.events.types import (
+            FLEET_CIRCUIT_BREAKER_TRIPPED,
+            FLEET_COMPLETED,
+            FLEET_FAILED,
+            FLEET_HALTED,
+            fleet_circuit_breaker_tripped_payload,
+            fleet_completed_payload,
+            fleet_failed_payload,
+            fleet_halted_payload,
+        )
+    except Exception:
+        return  # events module unavailable — keep the poll quiet
+
+    fleet_id = manifest.get("fleet_id")
+    children = manifest.get("children") or []
+    settings_path = _settings_path_for_fleet(manifest)
+
+    total = len(child_statuses)
+    failure_states = {"failed", "setup_failed", "unrecoverable"}
+    completed_count = sum(1 for s in child_statuses if s == "completed")
+    failed_count = sum(1 for s in child_statuses if s in failure_states)
+    interrupted_count = sum(
+        1 for s in child_statuses if s in ("interrupted", "cancelled")
+    )
+    terminal_count = completed_count + failed_count + interrupted_count
+
+    def _emit(event_type: str, payload: dict) -> None:
+        try:
+            emit_fleet_event(
+                fleet_id,
+                event_type,
+                payload,
+                settings_path=settings_path,
+            )
+        except Exception:
+            pass  # never propagate from the polling path
+
+    if new_status == "completed":
+        _emit(
+            FLEET_COMPLETED,
+            fleet_completed_payload(
+                child_count=total,
+                completed_count=completed_count,
+            ),
+        )
+    elif new_status == "failed":
+        _emit(
+            FLEET_FAILED,
+            fleet_failed_payload(
+                child_count=total,
+                completed_count=completed_count,
+                failed_count=failed_count,
+                interrupted_count=interrupted_count,
+            ),
+        )
+    elif new_status == "halted":
+        # Circuit breaker is its own event AND a halt — subscribers can
+        # listen to just the specific one if they want fewer firings.
+        if halt_reason == "circuit_breaker":
+            _emit(
+                FLEET_CIRCUIT_BREAKER_TRIPPED,
+                fleet_circuit_breaker_tripped_payload(
+                    failed_count=failed_count,
+                    terminal_count=terminal_count,
+                    total_count=total,
+                    threshold=threshold,
+                ),
+            )
+        in_flight = total - terminal_count
+        pending = max(total - len(children), 0)
+        _emit(
+            FLEET_HALTED,
+            fleet_halted_payload(
+                halt_reason=halt_reason or "unknown",
+                in_flight_count=in_flight,
+                pending_count=pending,
+            ),
+        )
+
+
+def _settings_path_for_fleet(manifest: dict) -> str:
+    """Pick a settings.json path to resolve worca.hooks/webhooks from.
+
+    The fleet manifest doesn't carry a settings reference of its own.
+    Every child shares its parent project's settings; we use the first
+    child's project root as the conventional source. Falls back to the
+    cwd-relative default when no children are registered yet (in which
+    case there's nothing meaningful to emit anyway — fleet.launched
+    happens after at least one child is registered).
+    """
+    children = manifest.get("children") or []
+    if children:
+        project_path = children[0].get("project_path")
+        if project_path:
+            return os.path.join(project_path, ".claude", "settings.json")
+    return ".claude/settings.json"

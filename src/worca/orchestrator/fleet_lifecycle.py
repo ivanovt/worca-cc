@@ -119,6 +119,10 @@ def stop_fleet(fleet_id: str) -> int | None:
     naturally) and from a circuit-breaker halt.
 
     Returns the number of children stopped, or None if the manifest is missing.
+
+    Fires the ``fleet.halted`` webhook with halt_reason="stopped" exactly
+    once per stop (not on every poll). Failures are non-fatal — emission
+    is best-effort and never raises.
     """
     from worca.scripts.worca_lifecycle import cmd_stop
 
@@ -126,7 +130,37 @@ def stop_fleet(fleet_id: str) -> int | None:
     if count is None:
         return None
     update_fleet_status(fleet_id, "halted", halt_reason="stopped")
+    _emit_fleet_stop_event(fleet_id, in_flight_count=count)
     return count
+
+
+def _emit_fleet_stop_event(fleet_id: str, *, in_flight_count: int) -> None:
+    """Fire fleet.halted (halt_reason=stopped). Best-effort, never raises."""
+    try:
+        manifest = read_fleet_manifest(fleet_id)
+        if manifest is None:
+            return
+        from worca.events.fleet_emitter import emit_fleet_event
+        from worca.events.types import FLEET_HALTED, fleet_halted_payload
+
+        settings_path = ".claude/settings.json"
+        children = manifest.get("children") or []
+        if children:
+            project_path = children[0].get("project_path")
+            if project_path:
+                settings_path = os.path.join(
+                    project_path, ".claude", "settings.json"
+                )
+        emit_fleet_event(
+            fleet_id,
+            FLEET_HALTED,
+            fleet_halted_payload(
+                halt_reason="stopped", in_flight_count=in_flight_count
+            ),
+            settings_path=settings_path,
+        )
+    except Exception:
+        pass
 
 
 def resume_child(project_path: str, run_id: str) -> bool:
