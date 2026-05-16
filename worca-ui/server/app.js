@@ -29,6 +29,29 @@ import { getVersionInfo } from './versions.js';
 import { createInbox } from './webhook-inbox.js';
 import { createWorkspaceRouter } from './workspace-routes.js';
 
+// Invokes `worca cleanup --<flag> <id>` as a subprocess and resolves once
+// the cleanup completes. Wired into the fleet/workspace router DELETE
+// ?cleanup=1 path so the UI Cleanup button actually removes the worktrees
+// + manifest dir (without this, the route falls back to a no-op default).
+function runWorcaCleanupSubprocess(flag, id) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      'python3',
+      ['-m', 'worca.cli.main', 'cleanup', flag, id],
+      { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } },
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('exit', (code) => {
+      if (code === 0) resolve({});
+      else reject(new Error(`worca cleanup exited ${code}: ${stderr.trim()}`));
+    });
+  });
+}
+
 export function createApp(options = {}) {
   const app = express();
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
@@ -557,6 +580,7 @@ export function createApp(options = {}) {
       createFleetRouter({
         fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
         prefsDir,
+        runCleanup: (id) => runWorcaCleanupSubprocess('--fleet-id', id),
         // Spawn run_fleet.py in a detached subprocess so the route can return
         // immediately. We pass the pre-generated fleet_id so the in-flight
         // manifest path matches what the route just wrote.
@@ -624,6 +648,7 @@ export function createApp(options = {}) {
     const workspaceRouters = createWorkspaceRouter({
       workspaceRunsDir: join(homedir(), '.worca', 'workspace-runs'),
       workspacesDir: join(homedir(), '.worca', 'workspaces.d'),
+      runCleanup: (id) => runWorcaCleanupSubprocess('--workspace-id', id),
       // Spawn run_workspace.py in a detached subprocess, mirroring the fleet
       // dispatcher. We pass --workspace-id so the script reuses the manifest
       // the route just wrote instead of generating a fresh ID (which would
