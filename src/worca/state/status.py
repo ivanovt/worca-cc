@@ -55,9 +55,13 @@ PIPELINE_ACTIVE = frozenset({
 PIPELINE_IN_FLIGHT = frozenset({PipelineStatus.RUNNING, PipelineStatus.RESUMING})
 
 FLEET_STICKY = frozenset({FleetStatus.HALTED, FleetStatus.PAUSED})
+FLEET_TERMINAL = frozenset({FleetStatus.COMPLETED, FleetStatus.FAILED, FleetStatus.HALTED})
 
 WORKSPACE_TERMINAL = frozenset({
-    WorkspaceStatus.COMPLETED, WorkspaceStatus.FAILED, WorkspaceStatus.INTEGRATION_FAILED,
+    WorkspaceStatus.COMPLETED,
+    WorkspaceStatus.FAILED,
+    WorkspaceStatus.INTEGRATION_FAILED,
+    WorkspaceStatus.HALTED,
 })
 
 

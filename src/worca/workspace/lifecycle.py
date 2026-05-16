@@ -49,7 +49,7 @@ def halt_workspace(
         return False
 
     status = manifest.get("status", "")
-    if status in WORKSPACE_TERMINAL or status == WorkspaceStatus.HALTED:
+    if status in WORKSPACE_TERMINAL:
         return False
 
     manifest["status"] = WorkspaceStatus.HALTED

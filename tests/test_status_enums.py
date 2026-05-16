@@ -175,14 +175,33 @@ def test_workspace_terminal_set():
     assert WorkspaceStatus.COMPLETED in WORKSPACE_TERMINAL
     assert WorkspaceStatus.FAILED in WORKSPACE_TERMINAL
     assert WorkspaceStatus.INTEGRATION_FAILED in WORKSPACE_TERMINAL
+    assert WorkspaceStatus.HALTED in WORKSPACE_TERMINAL
     assert WorkspaceStatus.RUNNING not in WORKSPACE_TERMINAL
-    assert len(WORKSPACE_TERMINAL) == 3
+    assert len(WORKSPACE_TERMINAL) == 4
 
 
 def test_workspace_terminal_accepts_raw_strings():
     from worca.state.status import WORKSPACE_TERMINAL
     assert "completed" in WORKSPACE_TERMINAL
     assert "integration_failed" in WORKSPACE_TERMINAL
+    assert "halted" in WORKSPACE_TERMINAL
+
+
+def test_fleet_terminal_set():
+    from worca.state.status import FleetStatus, FLEET_TERMINAL
+    assert FleetStatus.COMPLETED in FLEET_TERMINAL
+    assert FleetStatus.FAILED in FLEET_TERMINAL
+    assert FleetStatus.HALTED in FLEET_TERMINAL
+    assert FleetStatus.RUNNING not in FLEET_TERMINAL
+    assert FleetStatus.PAUSED not in FLEET_TERMINAL
+    assert len(FLEET_TERMINAL) == 3
+
+
+def test_fleet_terminal_accepts_raw_strings():
+    from worca.state.status import FLEET_TERMINAL
+    assert "completed" in FLEET_TERMINAL
+    assert "failed" in FLEET_TERMINAL
+    assert "halted" in FLEET_TERMINAL
 
 
 # --- resolve_status with enums ---

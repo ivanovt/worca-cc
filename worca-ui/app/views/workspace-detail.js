@@ -4,6 +4,7 @@ import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { ClipboardCopy, iconSvg } from '../utils/icons.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
+import { WORKSPACE_TERMINAL } from '../utils/status-constants.js';
 import { dagGraphView } from './dag-graph.js';
 import { runCardView } from './run-card.js';
 
@@ -174,12 +175,7 @@ function _guideConflictsAggregate(children) {
 
 const HALTABLE = new Set(['running', 'planning', 'integration_testing']);
 const RESUMABLE = new Set(['halted', 'failed', 'integration_failed']);
-const TERMINAL = new Set([
-  'completed',
-  'failed',
-  'integration_failed',
-  'halted',
-]);
+const TERMINAL = WORKSPACE_TERMINAL;
 const PLAN_EDITABLE = new Set(['halted', 'failed', 'integration_failed']);
 const RERUN_INTEGRATION = new Set(['integration_failed', 'completed']);
 

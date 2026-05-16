@@ -23,6 +23,7 @@ import {
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Router } from 'express';
+import { WORKSPACE_TERMINAL } from '../app/utils/status-constants.js';
 
 const DEFAULT_WS_RUNS_DIR = join(homedir(), '.worca', 'workspace-runs');
 const DEFAULT_WORKSPACES_DIR = join(homedir(), '.worca', 'workspaces.d');
@@ -316,16 +317,9 @@ function aggregateCost(manifest) {
 // `updated_at` across the child status.json files — closest available
 // real timestamp for "when this workspace stopped progressing". Returns
 // null if no children have status files yet (rare for terminal states).
-const WORKSPACE_TERMINAL_STATUSES = new Set([
-  'completed',
-  'failed',
-  'integration_failed',
-  'halted',
-]);
-
 function _synthesizeFinishedAt(manifest) {
   if (manifest.finished_at) return manifest.finished_at;
-  if (!WORKSPACE_TERMINAL_STATUSES.has(manifest.status)) return null;
+  if (!WORKSPACE_TERMINAL.has(manifest.status)) return null;
   let latest = null;
   for (const child of manifest.children ?? []) {
     const st = _readChildStatus(child);

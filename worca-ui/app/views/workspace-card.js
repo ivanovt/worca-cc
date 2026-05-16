@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { iconSvg, RotateCcw, Trash2 } from '../utils/icons.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
+import { WORKSPACE_TERMINAL } from '../utils/status-constants.js';
 
 // Workspace-run status → sl-badge variant. Mirrors fleetStatusVariant so
 // the two card types share their semantic colour grammar — primary for
@@ -25,12 +26,7 @@ function _statusVariant(status) {
 }
 
 function _isTerminal(status) {
-  return (
-    status === 'completed' ||
-    status === 'failed' ||
-    status === 'integration_failed' ||
-    status === 'halted'
-  );
+  return WORKSPACE_TERMINAL.has(status);
 }
 
 function _tierCount(dag) {
