@@ -36,6 +36,7 @@ import Loader from 'lucide/dist/esm/icons/loader';
 import Lock from 'lucide/dist/esm/icons/lock';
 import Moon from 'lucide/dist/esm/icons/moon';
 import Pause from 'lucide/dist/esm/icons/pause';
+import Pencil from 'lucide/dist/esm/icons/pencil';
 import Play from 'lucide/dist/esm/icons/play';
 import Plus from 'lucide/dist/esm/icons/plus';
 import RefreshCw from 'lucide/dist/esm/icons/refresh-cw';
@@ -92,6 +93,7 @@ export {
   RefreshCw,
   ArrowDown,
   Pause,
+  Pencil,
   Zap,
   Clock,
   AlertTriangle,

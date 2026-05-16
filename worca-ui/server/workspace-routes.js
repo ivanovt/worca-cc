@@ -578,6 +578,68 @@ export function createWorkspaceRouter({
     }
   });
 
+  // ── DELETE /api/workspaces/:name ──────────────────────────────────────
+  workspaces.delete('/:name', (req, res) => {
+    const name = sanitizeFilename(req.params.name);
+    const regPath = join(workspacesDir, `${name}.json`);
+    if (!existsSync(regPath)) {
+      return res
+        .status(404)
+        .json({ ok: false, error: `Workspace "${name}" not found` });
+    }
+
+    let reg;
+    try {
+      reg = JSON.parse(readFileSync(regPath, 'utf8'));
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+
+    // Refuse deletion while any non-terminal run still references the
+    // workspace root — deleting the topology mid-flight would orphan the
+    // children and leave the manifest pointing at a missing workspace.json.
+    const pointers = listPointers(workspaceRunsDir);
+    const activeRuns = pointers.filter((p) => {
+      if (p.workspace_root !== reg.path) return false;
+      const m = readManifest(workspaceRunsDir, p.workspace_id);
+      return m && ACTIVE_STATUSES.has(m.status);
+    });
+
+    if (activeRuns.length > 0) {
+      return res.status(409).json({
+        ok: false,
+        error: `Cannot delete workspace while ${activeRuns.length} active run(s) reference it. Halt them first.`,
+      });
+    }
+
+    // Remove both the registration and the topology file in the parent.
+    // Caller (UI) confirmed this is destructive before reaching here.
+    try {
+      unlinkSync(regPath);
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        error: `Failed to remove registration: ${err.message}`,
+      });
+    }
+
+    const wsJsonPath = join(reg.path, 'workspace.json');
+    if (existsSync(wsJsonPath)) {
+      try {
+        unlinkSync(wsJsonPath);
+      } catch (err) {
+        // Registration already gone — surface the partial failure but don't
+        // pretend success; user may want to clean up the leftover file.
+        return res.status(500).json({
+          ok: false,
+          error: `Registration removed, but failed to delete ${wsJsonPath}: ${err.message}`,
+        });
+      }
+    }
+
+    res.json({ ok: true });
+  });
+
   // ════════════════════════════════════════════════════════════════════════
   // workspaceRuns router — mounted at /api/workspace-runs
   // ════════════════════════════════════════════════════════════════════════

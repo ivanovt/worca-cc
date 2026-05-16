@@ -392,6 +392,74 @@ describe('Workspace Routes', () => {
     });
   });
 
+  describe('DELETE /api/workspaces/:name', () => {
+    it('returns 404 for unknown workspace', async () => {
+      const res = await fetch(`${base}/api/workspaces/nonexistent`, {
+        method: 'DELETE',
+      });
+      expect(res.status).toBe(404);
+    });
+
+    it('returns 409 when active workspace runs reference the workspace', async () => {
+      mkdirSync(workspacesDir, { recursive: true });
+      writeFileSync(
+        join(workspacesDir, 'my-workspace.json'),
+        JSON.stringify({ name: 'my-workspace', path: wsRoot }),
+      );
+      writeWorkspaceJson(wsRoot, baseWorkspace());
+      writeManifest(
+        wsRunsDir,
+        VALID_WS_ID,
+        baseManifest(wsRoot, { status: 'running' }),
+      );
+
+      const res = await fetch(`${base}/api/workspaces/my-workspace`, {
+        method: 'DELETE',
+      });
+      expect(res.status).toBe(409);
+      const data = await res.json();
+      expect(data.ok).toBe(false);
+      expect(data.error).toMatch(/active/i);
+    });
+
+    it('removes registration and workspace.json on success', async () => {
+      mkdirSync(workspacesDir, { recursive: true });
+      writeFileSync(
+        join(workspacesDir, 'my-workspace.json'),
+        JSON.stringify({ name: 'my-workspace', path: wsRoot }),
+      );
+      writeWorkspaceJson(wsRoot, baseWorkspace());
+
+      const res = await fetch(`${base}/api/workspaces/my-workspace`, {
+        method: 'DELETE',
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+
+      // Both files should be gone.
+      expect(existsSync(join(workspacesDir, 'my-workspace.json'))).toBe(false);
+      expect(existsSync(join(wsRoot, 'workspace.json'))).toBe(false);
+    });
+
+    it('succeeds when workspace.json is already missing (only registration left)', async () => {
+      mkdirSync(workspacesDir, { recursive: true });
+      writeFileSync(
+        join(workspacesDir, 'my-workspace.json'),
+        JSON.stringify({ name: 'my-workspace', path: wsRoot }),
+      );
+      // No workspace.json on disk this time.
+
+      const res = await fetch(`${base}/api/workspaces/my-workspace`, {
+        method: 'DELETE',
+      });
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.ok).toBe(true);
+      expect(existsSync(join(workspacesDir, 'my-workspace.json'))).toBe(false);
+    });
+  });
+
   // ─── POST /api/workspace-runs/validate-gh-auth ────────────────────────
 
   describe('POST /api/workspace-runs/validate-gh-auth', () => {

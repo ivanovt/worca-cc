@@ -44,6 +44,14 @@ export function createStore(initial = {}) {
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
     worktrees: initial.worktrees ?? [],
     worktreesLoaded: initial.worktreesLoaded ?? false,
+    fleets: initial.fleets ?? [],
+    // `workspaces` are definitions ({ name, path, repos }) used by the
+    // launcher dropdown; `workspaceRuns` are pipeline executions
+    // ({ workspace_id, status, ... }) counted by the sidebar badge. They were
+    // accidentally collapsed onto the same key in W-047, breaking the
+    // launcher when sidebar code mutated state.workspaces with run shape.
+    workspaces: initial.workspaces ?? [],
+    workspaceRuns: initial.workspaceRuns ?? [],
     worktreeDiskWarningBytes: initial.worktreeDiskWarningBytes ?? 2_000_000_000,
     classifierModel: initial.classifierModel ?? 'haiku',
     cleanupPolicy: initial.cleanupPolicy ?? 'never',
@@ -91,6 +99,8 @@ export function createStore(initial = {}) {
         next.addProjectDialogOpen === state.addProjectDialogOpen &&
         next.worktrees === state.worktrees &&
         next.fleets === state.fleets &&
+        next.workspaces === state.workspaces &&
+        next.workspaceRuns === state.workspaceRuns &&
         next.runsLoaded === state.runsLoaded &&
         next.worktreeDiskWarningBytes === state.worktreeDiskWarningBytes &&
         next.classifierModel === state.classifierModel &&

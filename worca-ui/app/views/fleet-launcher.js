@@ -263,17 +263,22 @@ async function _submitWorkspaceLauncher({ rerender, onStarted } = {}) {
 
   try {
     const formData = new FormData();
-    formData.append('workspace', selectedWorkspace);
+    // Server expects `workspace_name` (matches the on-disk
+    // ~/.worca/workspaces.d/<name>.json registration filename); the launcher
+    // historically sent `workspace`, which the server silently dropped and
+    // rejected with "workspace_name is required".
+    formData.append('workspace_name', selectedWorkspace);
     if (prompt.trim()) formData.append('prompt', prompt);
     if (_hasSource()) formData.append('source', sourceValue);
-    if (headTemplate) formData.append('head_template', headTemplate);
-    if (baseBranch) formData.append('base_branch', baseBranch);
+    // Workspace runs use `branch_template` (per-repo branch name template),
+    // not the per-project `head_template` used by fleet runs. Map the
+    // launcher's head-template field across so the server actually picks it
+    // up — keeping the legacy field name unsent avoids confusion.
+    if (headTemplate) formData.append('branch_template', headTemplate);
     formData.append('plan_mode', workspacePlanMode);
     if (workspacePlanMode === 'existing' && workspacePlanPath)
       formData.append('workspace_plan', workspacePlanPath);
     formData.append('max_parallel', String(maxParallel));
-    formData.append('fleet_failure_threshold', String(failureThreshold));
-    formData.append('init_timeout', String(initTimeout));
     for (const g of guides) {
       if (g.file) formData.append('guide_files', g.file, g.name);
     }
@@ -696,44 +701,16 @@ function _advancedSection({ rerender } = {}) {
 
 // ── workspace-mode sub-views ────────────────────────────────────────────────
 
-function _modeToggle({ rerender } = {}) {
-  return html`
-    <div class="launcher-mode-toggle">
-      <sl-radio-group
-        class="launcher-mode-group"
-        value="${launcherMode}"
-        @sl-change=${
-          rerender
-            ? (e) => {
-                const newMode = e.target.value;
-                if (newMode !== launcherMode) {
-                  launcherMode = newMode;
-                  if (
-                    newMode === 'workspace' &&
-                    headTemplate === FLEET_HEAD_TEMPLATE_DEFAULT
-                  ) {
-                    headTemplate = WORKSPACE_HEAD_TEMPLATE_DEFAULT;
-                  } else if (
-                    newMode === 'fleet' &&
-                    headTemplate === WORKSPACE_HEAD_TEMPLATE_DEFAULT
-                  ) {
-                    headTemplate = FLEET_HEAD_TEMPLATE_DEFAULT;
-                  }
-                  rerender();
-                }
-              }
-            : null
-        }
-      >
-        <sl-radio-button value="fleet">Fleet</sl-radio-button>
-        <sl-radio-button value="workspace">Workspace</sl-radio-button>
-      </sl-radio-group>
-    </div>
-  `;
-}
+// In-form Fleet/Workspace radio toggle was removed once the sidebar got
+// dedicated entries (#/fleet-runs/new vs #/workspace-runs/new) — the URL is
+// the canonical source of mode now. Keeping it in-form created an
+// inconsistent state (URL says workspace, radio says fleet) and confused
+// users about why both options appeared on a page they reached via the
+// "+ New Workspace" affordance.
 
 function _workspaceSelectSection(appState, { rerender } = {}) {
   const workspaces = appState?.workspaces || [];
+  const hasNone = workspaces.length === 0;
 
   return html`
     <div class="new-run-section">
@@ -743,6 +720,7 @@ function _workspaceSelectSection(appState, { rerender } = {}) {
         <sl-select
           class="select-workspace"
           value="${selectedWorkspace}"
+          ?disabled=${hasNone}
           @sl-change=${
             rerender
               ? async (e) => {
@@ -767,7 +745,16 @@ function _workspaceSelectSection(appState, { rerender } = {}) {
             `,
           )}
         </sl-select>
-        <span class="settings-field-hint">Choose a workspace definition. Repos and dependencies are determined by the workspace.</span>
+        ${
+          hasNone
+            ? html`
+              <span class="settings-field-hint">
+                No workspace definitions registered yet — manage them in
+                <a href="#/workspaces">Configuration → Workspaces</a>.
+              </span>
+            `
+            : html`<span class="settings-field-hint">Choose a workspace definition. Repos and dependencies are determined by the workspace.</span>`
+        }
       </div>
       ${
         workspaceData
@@ -1116,7 +1103,6 @@ export function fleetLauncherView(appState, { rerender } = {}) {
 
   return html`
     <div class="new-run-page fleet-launcher-page">
-      ${_modeToggle({ rerender })}
       ${
         atCapacity
           ? html`

@@ -307,15 +307,13 @@ describe('fleetLauncherView — getFleetLauncherSubmitState', () => {
   });
 });
 
-// ── workspace mode toggle ──────────────────────────────────────────────────
+// ── launcher mode (URL-driven) ─────────────────────────────────────────────
 
-describe('fleetLauncherView — workspace mode toggle', () => {
-  it('renders a mode toggle with Fleet and Workspace options', () => {
+describe('fleetLauncherView — launcher mode', () => {
+  it('does not render an in-form mode toggle (mode is URL-driven via the sidebar)', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain('launcher-mode-toggle');
-    expect(out).toContain('Fleet');
-    expect(out).toContain('Workspace');
+    expect(out).not.toContain('launcher-mode-toggle');
   });
 
   it('defaults to fleet mode', () => {

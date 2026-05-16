@@ -27,6 +27,7 @@ import { discoverSubagents } from './subagents-discovery.js';
 import { checkWorcaVersion } from './version-check.js';
 import { getVersionInfo } from './versions.js';
 import { createInbox } from './webhook-inbox.js';
+import { createWorkspaceRouter } from './workspace-routes.js';
 
 export function createApp(options = {}) {
   const app = express();
@@ -617,6 +618,70 @@ export function createApp(options = {}) {
         },
       }),
     );
+
+    // Workspace routers — both definitions (/api/workspaces) and runs
+    // (/api/workspace-runs). The router factory exposes them as a pair.
+    const workspaceRouters = createWorkspaceRouter({
+      workspaceRunsDir: join(homedir(), '.worca', 'workspace-runs'),
+      workspacesDir: join(homedir(), '.worca', 'workspaces.d'),
+      // Spawn run_workspace.py in a detached subprocess, mirroring the fleet
+      // dispatcher. We pass --workspace-id so the script reuses the manifest
+      // the route just wrote instead of generating a fresh ID (which would
+      // orphan the manifest the UI navigated to).
+      dispatchWorkspace: async ({
+        workspace_id,
+        workspace_root,
+        manifest,
+        resume,
+      }) => {
+        if (resume) {
+          const child = spawn(
+            'python3',
+            [
+              '-m',
+              'worca.scripts.run_workspace',
+              workspace_root,
+              '--resume',
+              workspace_id,
+            ],
+            { detached: true, stdio: 'ignore', env: { ...process.env } },
+          );
+          child.unref();
+          return;
+        }
+        const args = [
+          '-m',
+          'worca.scripts.run_workspace',
+          workspace_root,
+          '--workspace-id',
+          workspace_id,
+        ];
+        if (manifest.work_request?.source) {
+          args.push('--source', manifest.work_request.source);
+        } else {
+          args.push('--prompt', manifest.work_request?.description ?? '');
+        }
+        if (manifest.branch_template) {
+          args.push('--branch', manifest.branch_template);
+        }
+        if (manifest.skip_integration) args.push('--skip-integration');
+        if (manifest.skip_planning) args.push('--skip-planning');
+        if (manifest.max_parallel) {
+          args.push('--max-parallel', String(manifest.max_parallel));
+        }
+        for (const p of manifest.guide?.paths || []) {
+          args.push('--guide', p);
+        }
+        const child = spawn('python3', args, {
+          detached: true,
+          stdio: 'ignore',
+          env: { ...process.env },
+        });
+        child.unref();
+      },
+    });
+    app.use('/api/workspaces', workspaceRouters.workspaces);
+    app.use('/api/workspace-runs', workspaceRouters.workspaceRuns);
   }
 
   // POST /api/integrations/telegram/detect — find chat IDs from recent messages.

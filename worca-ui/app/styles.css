@@ -5798,8 +5798,110 @@ sl-tooltip.bead-tooltip::part(body) {
   gap: 8px;
 }
 
+
+
 .workspace-dag-svg {
   overflow-x: auto;
+}
+
+/* --- Configuration → Workspaces list --- */
+
+.workspaces-config-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 64px 24px;
+  gap: 12px;
+  color: var(--fg-muted);
+}
+.workspaces-config-empty .empty-icon {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+.workspaces-config-empty h3 {
+  margin: 0;
+  color: var(--fg);
+}
+.workspaces-config-empty p {
+  max-width: 480px;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.workspaces-config-table {
+  padding: 16px;
+  overflow-x: auto;
+}
+.workspaces-config-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.workspaces-config-table thead th {
+  text-align: left;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.workspaces-config-table tbody td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.workspaces-config-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+.workspaces-config-table .ws-name strong {
+  font-weight: 600;
+}
+.workspaces-config-table .ws-path code,
+.workspaces-config-table .ws-umbrella {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.workspaces-config-table .ws-tiers {
+  color: var(--fg-muted);
+  font-size: 12px;
+  margin-left: 4px;
+}
+.workspaces-config-table .ws-dash {
+  color: var(--fg-muted);
+  opacity: 0.5;
+}
+.workspaces-config-table .actions-col {
+  text-align: right;
+}
+.workspaces-config-table .ws-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.ws-action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ws-action-btn:hover {
+  background: var(--bg-hover);
+}
+.ws-action-btn--danger:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: rgb(220, 38, 38);
+  border-color: rgba(220, 38, 38, 0.4);
 }
 
 .dag-graph-node rect {

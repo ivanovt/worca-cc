@@ -439,28 +439,28 @@ describe('sidebar - Fleets nav entry', () => {
 });
 
 describe('sidebar - Workspaces nav entry', () => {
-  it('Workspaces entry hidden when state.workspaces is absent', async () => {
+  it('Workspaces entry always visible when state.workspaces is absent', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).not.toContain('>Workspaces<');
+    expect(output).toContain('>Workspaces<');
   });
 
-  it('Workspaces entry hidden when state.workspaces is empty', async () => {
+  it('Workspaces entry always visible when state.workspaces is empty', async () => {
     const { sidebarView } = await import('./sidebar.js');
-    const state = makeState({ workspaces: [] });
+    const state = makeState({ workspaceRuns: [] });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
-    expect(output).not.toContain('>Workspaces<');
+    expect(output).toContain('>Workspaces<');
   });
 
   it('Workspaces entry visible when workspaces array is non-empty', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [{ workspace_id: 'w1', status: 'completed' }],
+      workspaceRuns: [{ workspace_id: 'w1', status: 'completed' }],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -471,7 +471,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces entry is a flat sibling under Pipeline (not nested under Multi-Repo)', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [{ workspace_id: 'w1', status: 'running' }],
+      workspaceRuns: [{ workspace_id: 'w1', status: 'running' }],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -483,7 +483,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces badge hidden when no active/halted/integration_failed workspaces exist', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [{ workspace_id: 'w1', status: 'completed' }],
+      workspaceRuns: [{ workspace_id: 'w1', status: 'completed' }],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -495,7 +495,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces badge counts active workspaces (running + planning + integration_testing)', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
         { workspace_id: 'w2', status: 'planning' },
         { workspace_id: 'w3', status: 'integration_testing' },
@@ -509,10 +509,10 @@ describe('sidebar - Workspaces nav entry', () => {
     expect(output).toContain('>3<');
   });
 
-  it('Workspaces badge variant is primary when only active workspaces exist', async () => {
+  it('Workspaces badge variant is neutral when only active workspaces exist (matches Fleets)', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
         { workspace_id: 'w2', status: 'completed' },
       ],
@@ -521,13 +521,13 @@ describe('sidebar - Workspaces nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    expect(output).toContain('variant="primary"');
+    expect(output).toContain('variant="neutral"');
   });
 
   it('Workspaces badge variant flips to warning when any workspace is halted', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
         { workspace_id: 'w2', status: 'halted' },
       ],
@@ -542,7 +542,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces badge variant flips to warning when any workspace is integration_failed', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'planning' },
         { workspace_id: 'w2', status: 'integration_failed' },
       ],
@@ -557,7 +557,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces badge includes halted + integration_failed in the attention count', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
         { workspace_id: 'w2', status: 'halted' },
         { workspace_id: 'w3', status: 'integration_failed' },
@@ -575,7 +575,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces badge hidden when only terminal workspaces exist', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'completed' },
         { workspace_id: 'w2', status: 'failed' },
       ],
@@ -590,7 +590,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces entry is active when route section is workspace-runs', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [{ workspace_id: 'w1', status: 'running' }],
+      workspaceRuns: [{ workspace_id: 'w1', status: 'running' }],
     });
     const wsRoute = { section: 'workspace-runs' };
     const output = renderToString(
@@ -602,7 +602,7 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces entry excludes archived workspaces from badge', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'running', archived: true },
         { workspace_id: 'w2', status: 'completed' },
       ],

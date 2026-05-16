@@ -16,6 +16,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Save,
   Square,
   Trash2,
 } from './utils/icons.js';
@@ -35,6 +36,7 @@ import { fleetDetailView } from './views/fleet-detail.js';
 import {
   fleetLauncherView,
   getFleetLauncherSubmitState,
+  resetLauncherState,
   submitFleetLauncher,
 } from './views/fleet-launcher.js';
 import { learningsSectionView } from './views/learnings-panel.js';
@@ -77,6 +79,20 @@ import {
 import { sidebarView } from './views/sidebar.js';
 import { tokenCostsView } from './views/token-costs.js';
 import { webhookInboxView } from './views/webhook-inbox.js';
+import {
+  getWorkspaceCreateSubmitState,
+  resetWorkspaceCreateState,
+  submitWorkspaceCreate,
+  workspaceCreateView,
+} from './views/workspace-create.js';
+import { workspaceDetailView } from './views/workspace-detail.js';
+import {
+  getWorkspaceEditSubmitState,
+  loadWorkspace,
+  submitWorkspaceEdit,
+  workspaceEditView,
+} from './views/workspace-edit.js';
+import { workspacesConfigView } from './views/workspaces-config.js';
 import { worktreesView } from './views/worktrees.js';
 import { createWsClient } from './ws.js';
 
@@ -200,6 +216,26 @@ const _fleetDetailMissing = new Set();
 let _fleetStatusFilter = 'all'; // /#/fleet-runs filter chip selection
 let _fleetTextFilter = ''; // /#/fleet-runs free-text filter
 
+// -- Workspace views -- (mirror fleet detail-cache pattern)
+const _wsDetailCache = {}; // { workspaceId: manifest }
+let _wsDetailFetching = null;
+const _wsDetailMissing = new Set();
+
+// Tracks which section last entered the launcher's "new" route so we only
+// reset launcherMode on transitions between fleet-runs and workspace-runs.
+// Without this, every rerender would clobber user edits inside the form.
+let _lastLauncherSection = null;
+// Same idea for the workspace-create form — reset on first entry, persist
+// across in-route rerenders so user input survives keystrokes.
+let _lastCreateSection = null;
+// Track the workspace name currently loaded into the edit form so we only
+// re-fetch when navigating to a different workspace, not on every rerender.
+let _lastEditWorkspace = null;
+// When the user clicks "Launch" in the workspaces-config list, we stash the
+// chosen workspace name here. The launcher consumes it on mount, presetting
+// the dropdown so the user lands ready to submit instead of re-selecting.
+let _pendingLaunchWorkspace = null;
+
 // Free-text match for a fleet — title, fleet id, and member project
 // names. Mirrors `_runMatchesText` (run-list) and `_matchesFilter`
 // (worktrees) so all three list pages search consistently.
@@ -322,6 +358,49 @@ function _fleetListView() {
             )}
           </div>`
     }
+  `;
+}
+
+// Compact, fleet-list-styled view for workspace runs. Workspaces don't yet
+// have card components or filter chips like fleets — this gives the route a
+// real list rendering until they're added.
+function _workspaceListView() {
+  const workspaces = store.getState().workspaceRuns;
+  if (workspaces === undefined) {
+    return html`<div class="fleet-list-loading"><sl-spinner></sl-spinner> Loading workspace runs…</div>`;
+  }
+  if (workspaces.length === 0) {
+    return html`
+      <div class="fleet-list-empty">
+        <p>No workspace runs yet.</p>
+        <sl-button variant="primary" @click=${() => navigate('workspace-runs', 'new', null)}>
+          + New Workspace
+        </sl-button>
+      </div>
+    `;
+  }
+  return html`
+    <div class="fleet-list">
+      ${workspaces.map(
+        (w) => html`
+          <div
+            class="fleet-card"
+            @click=${() => navigate('workspace-runs', w.workspace_id, null)}
+          >
+            <div class="fleet-card-header">
+              <strong>${w.workspace_name || w.workspace_id}</strong>
+              <sl-badge variant="neutral">${w.status || 'unknown'}</sl-badge>
+            </div>
+            <div class="fleet-card-meta">
+              ${w.work_request?.title || w.work_request?.description || ''}
+            </div>
+            <div class="fleet-card-meta">
+              ${w.children_count || 0} repo(s) · ${w.workspace_id}
+            </div>
+          </div>
+        `,
+      )}
+    </div>
   `;
 }
 
@@ -1007,6 +1086,24 @@ function handleHello(_payload) {
     .then((r) => r.json())
     .then((data) => {
       store.setState({ fleets: data?.fleets || [] });
+    })
+    .catch(() => {});
+
+  // Fetch workspace runs list (used by sidebar's Workspaces entry + count badge).
+  // Best-effort — server may not be wired in older clones.
+  fetch('/api/workspace-runs')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ workspaceRuns: data?.workspace_runs || [] });
+    })
+    .catch(() => {});
+
+  // Fetch workspace definitions (used by the launcher's "Select workspace"
+  // dropdown). Distinct from workspace runs — see state.js comment.
+  fetch('/api/workspaces')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ workspaces: data?.workspaces || [] });
     })
     .catch(() => {});
 
@@ -1721,6 +1818,60 @@ async function _refreshFleets() {
   }
 }
 
+async function _refreshWorkspaces() {
+  try {
+    const res = await fetch('/api/workspace-runs');
+    const data = await res.json();
+    store.setState({ workspaceRuns: data?.workspace_runs || [] });
+  } catch {
+    // Non-fatal — bootstrap and next user navigation will reconcile.
+  }
+}
+
+async function _refreshWorkspaceDefinitions() {
+  try {
+    const res = await fetch('/api/workspaces');
+    const data = await res.json();
+    store.setState({ workspaces: data?.workspaces || [] });
+  } catch {
+    // Non-fatal.
+  }
+}
+
+function handleLaunchWorkspace(name) {
+  // Stash for the launcher to consume on its first render in workspace mode.
+  _pendingLaunchWorkspace = name;
+  navigate('workspace-runs', 'new', null);
+}
+
+function handleDeleteWorkspace(name) {
+  showConfirm(
+    {
+      label: 'Delete Workspace',
+      message: `This removes the registration AND the workspace.json topology file. The repos themselves are untouched. Cannot be undone.`,
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(
+            `/api/workspaces/${encodeURIComponent(name)}`,
+            { method: 'DELETE' },
+          );
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to delete workspace');
+            return;
+          }
+          await _refreshWorkspaceDefinitions();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to delete workspace');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
 function archiveFleet(fleetId) {
   showConfirm(
     {
@@ -2411,6 +2562,87 @@ function contentHeaderView() {
         if (btns.length) actionButton = html`${btns}`;
       }
     }
+  } else if (route.section === 'workspaces' && route.runId === 'new') {
+    title = 'New Workspace';
+    showBack = true;
+    const wcs = getWorkspaceCreateSubmitState();
+    actionButton = html`
+      <button class="action-btn action-btn--primary" ?disabled=${wcs.isSubmitting || !wcs.canSubmit}
+        @click=${() =>
+          submitWorkspaceCreate({
+            rerender,
+            onCreated: (name) => {
+              _refreshWorkspaceDefinitions();
+              resetWorkspaceCreateState();
+              // After creating, drop the user back at the workspaces list so
+              // they can see their new definition and decide what to do next
+              // (launch it, edit it, create another). The launcher remains
+              // one click away via the row's Launch action.
+              navigate('workspaces', null, null);
+              return name;
+            },
+          })}>
+        ${unsafeHTML(iconSvg(Plus, 14))}
+        ${wcs.isSubmitting ? 'Creating…' : 'Create'}
+      </button>`;
+  } else if (
+    route.section === 'workspaces' &&
+    route.runId &&
+    route.action === 'edit'
+  ) {
+    title = `Edit Workspace: ${route.runId}`;
+    showBack = true;
+    const wes = getWorkspaceEditSubmitState();
+    actionButton = html`
+      <button class="action-btn action-btn--primary" ?disabled=${wes.isSubmitting || !wes.canSubmit}
+        @click=${() =>
+          submitWorkspaceEdit({
+            rerender,
+            onUpdated: () => {
+              _refreshWorkspaceDefinitions();
+              _lastEditWorkspace = null;
+              navigate('workspaces', null, null);
+            },
+          })}>
+        ${unsafeHTML(iconSvg(Save, 14))}
+        ${wes.isSubmitting ? 'Saving…' : 'Save'}
+      </button>`;
+  } else if (route.section === 'workspaces') {
+    title = 'Workspaces';
+    actionButton = html`
+      <button class="action-btn action-btn--primary"
+        @click=${() => navigate('workspaces', 'new', null)}>
+        ${unsafeHTML(iconSvg(Plus, 14))}
+        New Workspace
+      </button>`;
+  } else if (route.section === 'workspace-runs') {
+    title =
+      route.runId === 'new'
+        ? 'New Workspace'
+        : route.runId
+          ? `Workspace ${route.runId.split('_').pop() || route.runId}`
+          : 'Workspaces';
+    showBack = true;
+    if (route.runId === 'new') {
+      // Reuse fleet-launcher's submit state — it dispatches based on
+      // launcherMode, so workspace mode hits POST /api/workspace-runs and
+      // returns data.workspace_id on success.
+      const fls = getFleetLauncherSubmitState();
+      const capReached = isAtCapacity(state);
+      actionButton = html`
+        <button class="action-btn action-btn--primary" ?disabled=${fls.isSubmitting || !fls.canLaunch || capReached}
+          @click=${() =>
+            submitFleetLauncher({
+              rerender,
+              onStarted: (workspaceId) => {
+                _refreshWorkspaces();
+                navigate('workspace-runs', workspaceId, null);
+              },
+            })}>
+          ${unsafeHTML(iconSvg(Play, 14))}
+          ${fls.isSubmitting ? 'Launching…' : 'Launch'}
+        </button>`;
+    }
   } else if (route.runId) {
     const run = store.getRunById(route.runId);
     const raw = run?.work_request?.title || 'Pipeline Details';
@@ -2669,8 +2901,14 @@ function mainContentView() {
   }
 
   // The runId catch-all renders the per-run pipeline detail view. Exclude
-  // sections that own their own :id sub-route (fleet-runs).
-  if (route.runId && route.section !== 'fleet-runs') {
+  // sections that own their own :id sub-route (fleet-runs, workspace-runs,
+  // workspaces — the create-definition flow).
+  if (
+    route.runId &&
+    route.section !== 'fleet-runs' &&
+    route.section !== 'workspace-runs' &&
+    route.section !== 'workspaces'
+  ) {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
     // switch), redirect to the section root instead of showing a stale view.
@@ -2793,6 +3031,10 @@ function mainContentView() {
     // /fleet-runs/new → launcher (Launch button lives in the page header,
     // wired to submitFleetLauncher above).
     if (route.runId === 'new') {
+      if (_lastLauncherSection !== 'fleet-runs') {
+        resetLauncherState({ launcherMode: 'fleet' });
+        _lastLauncherSection = 'fleet-runs';
+      }
       return fleetLauncherView(viewState, { rerender });
     }
     // /fleet-runs/:id → detail (fetch on demand, cache result)
@@ -2834,6 +3076,96 @@ function mainContentView() {
     }
     // /fleet-runs → list of fleets
     return _fleetListView(rerender);
+  }
+
+  if (route.section === 'workspaces') {
+    // /workspaces/new → create a workspace definition.
+    if (route.runId === 'new') {
+      if (_lastCreateSection !== 'workspaces') {
+        resetWorkspaceCreateState();
+        _lastCreateSection = 'workspaces';
+      }
+      return workspaceCreateView(viewState, { rerender });
+    }
+    // /workspaces/:name/edit → edit an existing definition. workspaceEditView
+    // owns its own load state — kick off the fetch on first entry so the
+    // form populates with the current workspace.json.
+    if (route.runId && route.action === 'edit') {
+      if (_lastEditWorkspace !== route.runId) {
+        _lastEditWorkspace = route.runId;
+        loadWorkspace({ name: route.runId, rerender });
+      }
+      return workspaceEditView(viewState, { rerender });
+    }
+    // Bare /workspaces → list view (CRUD surface for definitions).
+    return workspacesConfigView(viewState, {
+      onCreate: () => navigate('workspaces', 'new', null),
+      onLaunch: handleLaunchWorkspace,
+      onEdit: (name) => navigate('workspaces', name, null, 'edit'),
+      onDelete: handleDeleteWorkspace,
+      onOpenRuns: () => navigate('workspace-runs', null, null),
+    });
+  }
+
+  if (route.section === 'workspace-runs') {
+    // /workspace-runs/new → launcher in workspace mode. Fleet launcher is the
+    // shared launch surface for both fleets and workspaces; preset the mode
+    // once on entry, then defer to its own state on subsequent renders.
+    if (route.runId === 'new') {
+      // A pending launch from the Configuration → Workspaces list takes
+      // priority over the normal mode-reset: we want to land with the
+      // chosen workspace already selected and its DAG visible.
+      if (_pendingLaunchWorkspace) {
+        const ws = (store.getState().workspaces || []).find(
+          (w) => w.name === _pendingLaunchWorkspace,
+        );
+        resetLauncherState({
+          launcherMode: 'workspace',
+          selectedWorkspace: _pendingLaunchWorkspace,
+          workspaceData: ws || null,
+        });
+        _lastLauncherSection = 'workspace-runs';
+        _pendingLaunchWorkspace = null;
+      } else if (_lastLauncherSection !== 'workspace-runs') {
+        resetLauncherState({ launcherMode: 'workspace' });
+        _lastLauncherSection = 'workspace-runs';
+      }
+      return fleetLauncherView(viewState, { rerender });
+    }
+    // /workspace-runs/:id → detail (fetch on demand, mirror fleet pattern)
+    if (route.runId) {
+      const ws = _wsDetailCache[route.runId];
+      const isMissing = _wsDetailMissing.has(route.runId);
+      if (!ws && !isMissing) {
+        if (_wsDetailFetching !== route.runId) {
+          _wsDetailFetching = route.runId;
+          fetch(`/api/workspace-runs/${route.runId}`)
+            .then(async (r) => ({ status: r.status, data: await r.json() }))
+            .then(({ status, data }) => {
+              _wsDetailFetching = null;
+              if (data?.ok && data.manifest) {
+                _wsDetailMissing.delete(route.runId);
+                _wsDetailCache[route.runId] = data.manifest;
+                rerender();
+              } else if (status === 404 || data?.ok === false) {
+                _wsDetailMissing.add(route.runId);
+                rerender();
+              }
+            })
+            .catch(() => {
+              _wsDetailFetching = null;
+            });
+        }
+      }
+      return workspaceDetailView(ws || null, {
+        rerender,
+        missing: isMissing,
+        workspaceId: route.runId,
+        onSelectRun: (id) => navigate('history', id, null),
+      });
+    }
+    // /workspace-runs → list of workspace runs
+    return _workspaceListView(rerender);
   }
 
   if (route.section === 'project-settings') {

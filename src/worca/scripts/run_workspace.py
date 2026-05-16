@@ -522,6 +522,16 @@ def create_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--workspace-id",
+        metavar="WORKSPACE_ID",
+        help=(
+            "Use this workspace_id instead of generating a new one. The caller "
+            "(typically the UI server) may pre-create the manifest at this ID "
+            "to keep the dispatched run aligned with what the UI navigated to."
+        ),
+    )
+
+    parser.add_argument(
         "--max-parallel",
         type=int,
         default=5,
@@ -664,7 +674,15 @@ def main(argv=None) -> int:
         _print_dag(ws, skip_integration=args.skip_integration)
         return 0
 
-    ws_id, ws_id_short = generate_workspace_id()
+    if args.workspace_id:
+        ws_id = args.workspace_id
+        # Derive a stable short ID from the supplied workspace_id rather than
+        # generating a fresh random one. Format is ws_<ts>_<short>, so take the
+        # trailing token; if it doesn't parse, fall back to a fresh short.
+        parts = ws_id.split("_")
+        ws_id_short = parts[-1] if len(parts) >= 3 else secrets.token_hex(4)
+    else:
+        ws_id, ws_id_short = generate_workspace_id()
 
     run_dir = create_workspace_run_dir(workspace_root, ws_id)
     write_pointer_file(ws_id, workspace_root)

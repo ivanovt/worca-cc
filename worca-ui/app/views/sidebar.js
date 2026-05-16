@@ -86,7 +86,9 @@ export function sidebarView(
     currentProjectId,
     worktrees = [],
     fleets = [],
-    workspaces = [],
+    // Sidebar counts pipeline executions (workspaceRuns), not definitions.
+    // state.workspaces is reserved for the launcher's dropdown.
+    workspaceRuns = [],
     worktreeDiskWarningBytes = 2_000_000_000,
     totalRunning = 0,
     maxConcurrentPipelines = 10,
@@ -142,8 +144,7 @@ export function sidebarView(
   // Worktrees disk-threshold warning shape).
   const fleetBadgeVariant = haltedFleetCount > 0 ? 'warning' : 'neutral';
 
-  const liveWorkspaces = workspaces.filter((w) => !w.archived);
-  const showWorkspacesEntry = liveWorkspaces.length > 0;
+  const liveWorkspaces = workspaceRuns.filter((w) => !w.archived);
   const WORKSPACE_ACTIVE = { running: 1, planning: 1, integration_testing: 1 };
   const WORKSPACE_ATTENTION = { halted: 1, integration_failed: 1 };
   const activeWorkspaceCount = liveWorkspaces.filter(
@@ -158,8 +159,10 @@ export function sidebarView(
   const workspaceBadgeCount =
     activeWorkspaceCount + attentionWorkspaceCount + blockedWorkspaceCount;
   const showWorkspaceBadge = workspaceBadgeCount > 0;
+  // Match Fleets: neutral when only running/blocked, escalate to warning when
+  // attention conditions (halted, integration_failed) are present.
   const workspaceBadgeVariant =
-    attentionWorkspaceCount > 0 ? 'warning' : 'primary';
+    attentionWorkspaceCount > 0 ? 'warning' : 'neutral';
 
   const connClass =
     connectionState === 'open'
@@ -334,24 +337,18 @@ export function sidebarView(
               : ''
           }
         </div>
-        ${
-          showWorkspacesEntry
-            ? html`
-          <div class="sidebar-item ${route.section === 'workspace-runs' ? 'active' : ''}"
-               @click=${() => onNavigate('workspace-runs')}>
-            <span class="sidebar-item-left">
-              ${unsafeHTML(iconSvg(Boxes, 16))}
-              <span>Workspaces</span>
-            </span>
-            ${
-              showWorkspaceBadge
-                ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
-                : ''
-            }
-          </div>
-        `
-            : ''
-        }
+        <div class="sidebar-item ${route.section === 'workspace-runs' ? 'active' : ''}"
+             @click=${() => onNavigate('workspace-runs')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Boxes, 16))}
+            <span>Workspaces</span>
+          </span>
+          ${
+            showWorkspaceBadge
+              ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
+              : ''
+          }
+        </div>
       </div>
 
       <div class="sidebar-section">
@@ -392,6 +389,13 @@ export function sidebarView(
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(SlidersHorizontal, 16))}
             <span>Project Settings</span>
+          </span>
+        </div>
+        <div class="sidebar-item ${route.section === 'workspaces' ? 'active' : ''}"
+             @click=${() => onNavigate('workspaces')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Boxes, 16))}
+            <span>Workspaces</span>
           </span>
         </div>
       </div>

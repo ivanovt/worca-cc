@@ -144,34 +144,34 @@ describe('workspace sidebar badge variant logic', () => {
   const route = { section: 'active' };
   const defaultOpts = () => ({ onNavigate: vi.fn() });
 
-  it('workspace badge is primary for planning workspaces (no halted/integration_failed)', async () => {
+  it('workspace badge is neutral for planning workspaces (no halted/integration_failed)', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [{ workspace_id: 'w1', status: 'planning' }],
+      workspaceRuns: [{ workspace_id: 'w1', status: 'planning' }],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    expect(output).toContain('variant="primary"');
+    expect(output).toContain('variant="neutral"');
   });
 
-  it('workspace badge is primary for integration_testing workspaces (no halted/integration_failed)', async () => {
+  it('workspace badge is neutral for integration_testing workspaces (no halted/integration_failed)', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [{ workspace_id: 'w1', status: 'integration_testing' }],
+      workspaceRuns: [{ workspace_id: 'w1', status: 'integration_testing' }],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    expect(output).toContain('variant="primary"');
+    expect(output).toContain('variant="neutral"');
   });
 
   it('workspace badge flips to warning when any workspace is integration_failed', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
         { workspace_id: 'w2', status: 'integration_failed' },
       ],
@@ -186,7 +186,7 @@ describe('workspace sidebar badge variant logic', () => {
   it('workspace badge flips to warning when any workspace is halted', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [
+      workspaceRuns: [
         { workspace_id: 'w1', status: 'planning' },
         { workspace_id: 'w2', status: 'halted' },
       ],
@@ -201,13 +201,13 @@ describe('workspace sidebar badge variant logic', () => {
   it('blocked workspace counts toward badge total but does not trigger warning', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
-      workspaces: [{ workspace_id: 'w1', status: 'blocked' }],
+      workspaceRuns: [{ workspace_id: 'w1', status: 'blocked' }],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    expect(output).toContain('variant="primary"');
+    expect(output).toContain('variant="neutral"');
     expect(output).toContain('>1<');
   });
 });
