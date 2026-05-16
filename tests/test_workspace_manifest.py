@@ -15,7 +15,7 @@ def _minimal():
     return {
         "name": "my-platform",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
+            {"name": "lib", "path": "lib", "depends_on": []},
         ],
     }
 
@@ -25,9 +25,9 @@ def _linear_chain():
     return {
         "name": "my-platform",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
-            {"name": "backend", "path": "backend", "role": "service", "depends_on": ["lib"]},
-            {"name": "frontend", "path": "frontend", "role": "app", "depends_on": ["backend"]},
+            {"name": "lib", "path": "lib", "depends_on": []},
+            {"name": "backend", "path": "backend", "depends_on": ["lib"]},
+            {"name": "frontend", "path": "frontend", "depends_on": ["backend"]},
         ],
     }
 
@@ -37,10 +37,10 @@ def _diamond():
     return {
         "name": "diamond",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
-            {"name": "backend", "path": "backend", "role": "service", "depends_on": ["lib"]},
-            {"name": "worker", "path": "worker", "role": "service", "depends_on": ["lib"]},
-            {"name": "frontend", "path": "frontend", "role": "app", "depends_on": ["backend", "worker"]},
+            {"name": "lib", "path": "lib", "depends_on": []},
+            {"name": "backend", "path": "backend", "depends_on": ["lib"]},
+            {"name": "worker", "path": "worker", "depends_on": ["lib"]},
+            {"name": "frontend", "path": "frontend", "depends_on": ["backend", "worker"]},
         ],
     }
 
@@ -50,9 +50,9 @@ def _cycle():
     return {
         "name": "cycle",
         "repos": [
-            {"name": "a", "path": "a", "role": "svc", "depends_on": ["c"]},
-            {"name": "b", "path": "b", "role": "svc", "depends_on": ["a"]},
-            {"name": "c", "path": "c", "role": "svc", "depends_on": ["b"]},
+            {"name": "a", "path": "a", "depends_on": ["c"]},
+            {"name": "b", "path": "b", "depends_on": ["a"]},
+            {"name": "c", "path": "c", "depends_on": ["b"]},
         ],
     }
 
@@ -62,7 +62,7 @@ def _self_cycle():
     return {
         "name": "self-cycle",
         "repos": [
-            {"name": "a", "path": "a", "role": "svc", "depends_on": ["a"]},
+            {"name": "a", "path": "a", "depends_on": ["a"]},
         ],
     }
 
@@ -72,7 +72,7 @@ def _missing_dep():
     return {
         "name": "missing",
         "repos": [
-            {"name": "a", "path": "a", "role": "svc", "depends_on": ["nonexistent"]},
+            {"name": "a", "path": "a", "depends_on": ["nonexistent"]},
         ],
     }
 
@@ -90,8 +90,8 @@ class TestLoadValid:
         assert len(ws.repos) == 1
         assert ws.repos[0].name == "lib"
         assert ws.repos[0].path == "lib"
-        assert ws.repos[0].role == "library"
         assert ws.repos[0].depends_on == []
+        assert not hasattr(ws.repos[0], "role")
         assert ws.integration_test is None
         assert ws.umbrella_repo is None
 
@@ -187,8 +187,8 @@ class TestMissingDepName:
         doc = {
             "name": "test",
             "repos": [
-                {"name": "a", "path": "a", "role": "svc", "depends_on": []},
-                {"name": "b", "path": "b", "role": "svc", "depends_on": ["a", "ghost"]},
+                {"name": "a", "path": "a", "depends_on": []},
+                {"name": "b", "path": "b", "depends_on": ["a", "ghost"]},
             ],
         }
         root = _write_workspace_json(tmp_path, doc)
@@ -201,8 +201,8 @@ class TestMissingDepName:
         doc = {
             "name": "dupes",
             "repos": [
-                {"name": "a", "path": "a1", "role": "svc", "depends_on": []},
-                {"name": "a", "path": "a2", "role": "svc", "depends_on": []},
+                {"name": "a", "path": "a1", "depends_on": []},
+                {"name": "a", "path": "a2", "depends_on": []},
             ],
         }
         root = _write_workspace_json(tmp_path, doc)
@@ -244,9 +244,9 @@ class TestTierComputation:
         doc = {
             "name": "flat",
             "repos": [
-                {"name": "a", "path": "a", "role": "svc", "depends_on": []},
-                {"name": "b", "path": "b", "role": "svc", "depends_on": []},
-                {"name": "c", "path": "c", "role": "svc", "depends_on": []},
+                {"name": "a", "path": "a", "depends_on": []},
+                {"name": "b", "path": "b", "depends_on": []},
+                {"name": "c", "path": "c", "depends_on": []},
             ],
         }
         root = _write_workspace_json(tmp_path, doc)
@@ -260,9 +260,9 @@ class TestTierComputation:
         doc = {
             "name": "partial",
             "repos": [
-                {"name": "a", "path": "a", "role": "svc", "depends_on": []},
-                {"name": "b", "path": "b", "role": "svc", "depends_on": []},
-                {"name": "c", "path": "c", "role": "svc", "depends_on": ["a"]},
+                {"name": "a", "path": "a", "depends_on": []},
+                {"name": "b", "path": "b", "depends_on": []},
+                {"name": "c", "path": "c", "depends_on": ["a"]},
             ],
         }
         root = _write_workspace_json(tmp_path, doc)
@@ -278,9 +278,9 @@ class TestTierComputation:
         doc = {
             "name": "order",
             "repos": [
-                {"name": "zebra", "path": "z", "role": "svc", "depends_on": []},
-                {"name": "apple", "path": "a", "role": "svc", "depends_on": []},
-                {"name": "mango", "path": "m", "role": "svc", "depends_on": []},
+                {"name": "zebra", "path": "z", "depends_on": []},
+                {"name": "apple", "path": "a", "depends_on": []},
+                {"name": "mango", "path": "m", "depends_on": []},
             ],
         }
         root = _write_workspace_json(tmp_path, doc)

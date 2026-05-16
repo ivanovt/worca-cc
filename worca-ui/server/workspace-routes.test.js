@@ -52,8 +52,8 @@ function baseWorkspace(overrides = {}) {
   return {
     name: 'my-workspace',
     repos: [
-      { name: 'api', path: 'api', role: 'backend', depends_on: [] },
-      { name: 'web', path: 'web', role: 'frontend', depends_on: ['api'] },
+      { name: 'api', path: 'api', depends_on: [] },
+      { name: 'web', path: 'web', depends_on: ['api'] },
     ],
     ...overrides,
   };
@@ -199,8 +199,8 @@ describe('Workspace Routes', () => {
           name: 'cyclic',
           parent_path: wsRoot,
           repos: [
-            { name: 'a', path: 'api', role: 'lib', depends_on: ['b'] },
-            { name: 'b', path: 'web', role: 'lib', depends_on: ['a'] },
+            { name: 'a', path: 'api', depends_on: ['b'] },
+            { name: 'b', path: 'web', depends_on: ['a'] },
           ],
         }),
       });
@@ -218,8 +218,8 @@ describe('Workspace Routes', () => {
           name: 'my-workspace',
           parent_path: wsRoot,
           repos: [
-            { name: 'api', path: 'api', role: 'backend', depends_on: [] },
-            { name: 'web', path: 'web', role: 'frontend', depends_on: ['api'] },
+            { name: 'api', path: 'api', depends_on: [] },
+            { name: 'web', path: 'web', depends_on: ['api'] },
           ],
         }),
       });
@@ -237,9 +237,7 @@ describe('Workspace Routes', () => {
         body: JSON.stringify({
           name: 'my-workspace',
           parent_path: wsRoot,
-          repos: [
-            { name: 'api', path: 'api', role: 'backend', depends_on: [] },
-          ],
+          repos: [{ name: 'api', path: 'api', depends_on: [] }],
         }),
       });
       expect(res.status).toBe(201);
@@ -333,8 +331,8 @@ describe('Workspace Routes', () => {
         body: JSON.stringify({
           ...baseWorkspace(),
           repos: [
-            { name: 'api', path: 'api', role: 'backend', depends_on: ['web'] },
-            { name: 'web', path: 'web', role: 'frontend', depends_on: ['api'] },
+            { name: 'api', path: 'api', depends_on: ['web'] },
+            { name: 'web', path: 'web', depends_on: ['api'] },
           ],
         }),
       });
@@ -350,7 +348,7 @@ describe('Workspace Routes', () => {
       writeWorkspaceJson(wsRoot, baseWorkspace());
 
       const updated = baseWorkspace({
-        repos: [{ name: 'api', path: 'api', role: 'backend', depends_on: [] }],
+        repos: [{ name: 'api', path: 'api', depends_on: [] }],
       });
       const res = await fetch(`${base}/api/workspaces/my-workspace`, {
         method: 'PUT',

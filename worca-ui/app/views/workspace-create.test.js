@@ -102,13 +102,13 @@ describe('workspaceCreateView — repo selection', () => {
     expect(out).not.toContain('repo-checklist');
   });
 
-  it('renders role select for each checked repo', () => {
+  it('no longer renders a per-repo role select (role field removed)', () => {
     resetWorkspaceCreateState({
       scannedRepos: [{ name: 'backend', path: 'backend', role_hint: null }],
       selectedRepos: ['backend'],
     });
     const out = renderToString(workspaceCreateView({}, {}));
-    expect(out).toContain('select-repo-role-backend');
+    expect(out).not.toContain('select-repo-role-');
   });
 });
 

@@ -23,7 +23,6 @@ def _minimal_doc():
             {
                 "name": "shared-lib",
                 "path": "shared-lib",
-                "role": "library",
                 "depends_on": [],
             }
         ],
@@ -37,19 +36,16 @@ def _full_doc():
             {
                 "name": "shared-lib",
                 "path": "shared-lib",
-                "role": "library",
                 "depends_on": [],
             },
             {
                 "name": "backend",
                 "path": "backend",
-                "role": "service",
                 "depends_on": ["shared-lib"],
             },
             {
                 "name": "frontend",
                 "path": "frontend",
-                "role": "app",
                 "depends_on": ["backend"],
             },
         ],
@@ -105,7 +101,6 @@ class TestSchemaStructure:
             "depends_on",
             "name",
             "path",
-            "role",
         ]
 
     def test_repo_name_is_string(self, schema):
@@ -116,9 +111,11 @@ class TestSchemaStructure:
         props = schema["properties"]["repos"]["items"]["properties"]
         assert props["path"]["type"] == "string"
 
-    def test_repo_role_is_string(self, schema):
+    def test_repo_has_no_role_property(self, schema):
+        # `role` was removed (was a freeform label with no behavioral effect).
+        # Lock that in so it can't accidentally come back.
         props = schema["properties"]["repos"]["items"]["properties"]
-        assert props["role"]["type"] == "string"
+        assert "role" not in props
 
     def test_repo_depends_on_is_array_of_strings(self, schema):
         props = schema["properties"]["repos"]["items"]["properties"]
@@ -223,12 +220,6 @@ class TestRepoValidation:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_repo_missing_role_invalid(self, schema):
-        doc = _minimal_doc()
-        del doc["repos"][0]["role"]
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
-
     def test_repo_missing_depends_on_invalid(self, schema):
         doc = _minimal_doc()
         del doc["repos"][0]["depends_on"]
@@ -258,13 +249,6 @@ class TestRepoValidation:
         doc["repos"][0]["path"] = ""
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
-
-    def test_repo_role_empty_invalid(self, schema):
-        doc = _minimal_doc()
-        doc["repos"][0]["role"] = ""
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
-
 
 class TestIntegrationTest:
     def test_integration_test_both_fields_valid(self, schema):

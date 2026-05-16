@@ -113,8 +113,6 @@ def create_workspace_prs(
     ws_short = workspace_id.rsplit("_", 1)[-1] if "_" in workspace_id else workspace_id
     title = f"[workspace:{ws_short}] {work_title}" if work_title else f"[workspace:{ws_short}]"
 
-    repo_info = {r.name: r for r in workspace.repos}
-
     for child in manifest["children"]:
         if child["status"] != "completed":
             continue
@@ -134,12 +132,7 @@ def create_workspace_prs(
         if not branch:
             continue
 
-        repo = repo_info.get(repo_name)
-        role = repo.role if repo else ""
-        body = (
-            f"**Workspace:** {workspace_name} ({workspace_id}).\n"
-            f"**Repo role:** {role}"
-        )
+        body = f"**Workspace:** {workspace_name} ({workspace_id})."
 
         cmd = [
             "gh", "pr", "create",
@@ -245,9 +238,14 @@ def post_dependency_comments(manifest: dict, workspace: Workspace) -> None:
 
 
 def build_umbrella_body(manifest: dict, workspace: Workspace) -> str:
-    """Build umbrella issue body with PR checklist in merge order (tier order)."""
+    """Build umbrella issue body with PR checklist in merge order (tier order).
+
+    `workspace` is kept in the signature for API compatibility — callers pass
+    it but it's no longer needed since `role` was removed. Could be dropped
+    in a follow-up.
+    """
+    _ = workspace  # unused; kept for callers
     work_title = manifest.get("work_request", {}).get("title", "Workspace changes")
-    repo_info = {r.name: r for r in workspace.repos}
 
     lines = [f"## Workspace PR Set: {work_title}", ""]
 
@@ -259,10 +257,8 @@ def build_umbrella_body(manifest: dict, workspace: Workspace) -> str:
                 None,
             )
             if child and child.get("pr_url") and child.get("nwo") and child.get("pr_number"):
-                repo = repo_info.get(repo_name)
-                desc = repo.role if repo else repo_name
                 lines.append(
-                    f"- [ ] {child['nwo']}#{child['pr_number']} — {desc}"
+                    f"- [ ] {child['nwo']}#{child['pr_number']} — {repo_name}"
                 )
 
     return "\n".join(lines)

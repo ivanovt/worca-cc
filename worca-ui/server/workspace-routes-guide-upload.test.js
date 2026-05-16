@@ -27,7 +27,7 @@ function writeWorkspaceJson(root, workspace) {
 function baseWorkspace() {
   return {
     name: 'upload-test',
-    repos: [{ name: 'api', path: 'api', role: 'backend', depends_on: [] }],
+    repos: [{ name: 'api', path: 'api', depends_on: [] }],
   };
 }
 

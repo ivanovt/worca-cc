@@ -154,11 +154,11 @@ def test_workspace_fullstack_3_repos(tmp_path):
     workspace_json = {
         "name": "acme-fullstack",
         "repos": [
-            {"name": "shared-lib", "path": "shared-lib", "role": "shared types",
+            {"name": "shared-lib", "path": "shared-lib", 
              "depends_on": []},
-            {"name": "backend", "path": "backend", "role": "API server",
+            {"name": "backend", "path": "backend", 
              "depends_on": ["shared-lib"]},
-            {"name": "frontend", "path": "frontend", "role": "web client",
+            {"name": "frontend", "path": "frontend", 
              "depends_on": ["backend"]},
         ],
         "integration_test": {
@@ -206,7 +206,7 @@ def test_workspace_fullstack_3_repos(tmp_path):
         tiers=ws.tiers,
         repos_by_name={r.name: r.path for r in ws.repos},
         dependency_graph={r.name: r.depends_on for r in ws.repos},
-        repos_info={r.name: {"path": r.path, "role": r.role} for r in ws.repos},
+        repos_info={r.name: {"path": r.path} for r in ws.repos},
     )
 
     assert manifest["workspace_id"] == ws_id

@@ -171,19 +171,19 @@ def test_workspace_e2e_3_repos(tmp_path):
             {
                 "name": "shared-lib",
                 "path": "shared-lib",
-                "role": "shared types library",
+                
                 "depends_on": [],
             },
             {
                 "name": "backend",
                 "path": "backend",
-                "role": "API server",
+                
                 "depends_on": ["shared-lib"],
             },
             {
                 "name": "frontend",
                 "path": "frontend",
-                "role": "web client",
+                
                 "depends_on": ["backend"],
             },
         ],
@@ -346,7 +346,7 @@ def test_workspace_e2e_3_repos(tmp_path):
         tiers=ws.tiers,
         repos_by_name={r.name: r.path for r in ws.repos},
         dependency_graph={r.name: r.depends_on for r in ws.repos},
-        repos_info={r.name: {"path": r.path, "role": r.role} for r in ws.repos},
+        repos_info={r.name: {"path": r.path} for r in ws.repos},
     )
     manifest["children"] = [
         {

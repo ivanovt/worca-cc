@@ -31,7 +31,6 @@ class IntegrationTest:
 class RepoEntry:
     name: str
     path: str
-    role: str
     depends_on: list[str]
 
 
@@ -57,7 +56,6 @@ class Workspace:
             RepoEntry(
                 name=r["name"],
                 path=r["path"],
-                role=r["role"],
                 depends_on=r["depends_on"],
             )
             for r in doc["repos"]

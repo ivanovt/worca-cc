@@ -20,7 +20,7 @@ def _minimal_doc():
     return {
         "name": "my-platform",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
+            {"name": "lib", "path": "lib", "depends_on": []},
         ],
     }
 
@@ -30,9 +30,9 @@ def _linear_chain_doc():
     return {
         "name": "my-platform",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
-            {"name": "backend", "path": "backend", "role": "service", "depends_on": ["lib"]},
-            {"name": "frontend", "path": "frontend", "role": "app", "depends_on": ["backend"]},
+            {"name": "lib", "path": "lib", "depends_on": []},
+            {"name": "backend", "path": "backend", "depends_on": ["lib"]},
+            {"name": "frontend", "path": "frontend", "depends_on": ["backend"]},
         ],
     }
 
@@ -42,10 +42,10 @@ def _diamond_doc():
     return {
         "name": "diamond",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
-            {"name": "backend", "path": "backend", "role": "service", "depends_on": ["lib"]},
-            {"name": "worker", "path": "worker", "role": "service", "depends_on": ["lib"]},
-            {"name": "frontend", "path": "frontend", "role": "app", "depends_on": ["backend", "worker"]},
+            {"name": "lib", "path": "lib", "depends_on": []},
+            {"name": "backend", "path": "backend", "depends_on": ["lib"]},
+            {"name": "worker", "path": "worker", "depends_on": ["lib"]},
+            {"name": "frontend", "path": "frontend", "depends_on": ["backend", "worker"]},
         ],
     }
 
@@ -304,7 +304,6 @@ class TestWorkspaceManifest:
             tiers=[["lib"], ["backend"], ["frontend"]],
             repos_by_name={"lib": "lib", "backend": "backend", "frontend": "frontend"},
             dependency_graph={"lib": [], "backend": ["lib"], "frontend": ["backend"]},
-            repos_info={"lib": {"path": "lib", "role": "library"}, "backend": {"path": "backend", "role": "service"}, "frontend": {"path": "frontend", "role": "app"}},
         )
 
         assert manifest["workspace_id"] == ws_id
@@ -322,7 +321,7 @@ class TestWorkspaceManifest:
         assert "created_at" in manifest
         assert manifest["dag"]["dependency_graph"] == {"lib": [], "backend": ["lib"], "frontend": ["backend"]}
         assert manifest["repos_by_name"] == {"lib": "lib", "backend": "backend", "frontend": "frontend"}
-        assert manifest["repos_info"]["lib"]["role"] == "library"
+        assert "repos_info" not in manifest
         assert manifest["failure_threshold"] is None
 
     def test_manifest_with_failure_threshold(self, tmp_path):
@@ -342,7 +341,6 @@ class TestWorkspaceManifest:
             tiers=[["lib"]],
             repos_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
-            repos_info={"lib": {"path": "lib", "role": "library"}},
             failure_threshold=0.30,
         )
         assert manifest["failure_threshold"] == 0.30
@@ -364,7 +362,6 @@ class TestWorkspaceManifest:
             tiers=[["lib"]],
             repos_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
-            repos_info={"lib": {"path": "lib", "role": "library"}},
         )
         assert manifest["work_request"]["source"] == "gh:issue:42"
         assert manifest["work_request"]["description"] == ""
@@ -391,7 +388,6 @@ class TestWorkspaceManifest:
             tiers=[["lib"]],
             repos_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
-            repos_info={"lib": {"path": "lib", "role": "library"}},
         )
 
         assert len(manifest["guide"]["paths"]) == 2
@@ -422,7 +418,6 @@ class TestWorkspaceManifest:
             tiers=[["lib"]],
             repos_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
-            repos_info={"lib": {"path": "lib", "role": "library"}},
         )
 
         path = write_workspace_manifest(manifest, run_dir)

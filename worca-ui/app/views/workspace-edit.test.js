@@ -46,9 +46,7 @@ describe('workspaceEditView — loading', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
-        { name: 'backend', path: 'backend', role: 'service', depends_on: [] },
-      ],
+      repos: [{ name: 'backend', path: 'backend', depends_on: [] }],
       selectedRepos: ['backend'],
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -64,7 +62,7 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'library', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -77,11 +75,11 @@ describe('workspaceEditView — pre-fill', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'backend', path: 'backend', role: 'service', depends_on: [] },
+        { name: 'backend', path: 'backend', depends_on: [] },
         {
           name: 'frontend',
           path: 'frontend',
-          role: 'frontend',
+
           depends_on: ['backend'],
         },
       ],
@@ -98,8 +96,8 @@ describe('workspaceEditView — pre-fill', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'lib', path: 'lib', role: 'library', depends_on: [] },
-        { name: 'api', path: 'api', role: 'service', depends_on: ['lib'] },
+        { name: 'lib', path: 'lib', depends_on: [] },
+        { name: 'api', path: 'api', depends_on: ['lib'] },
       ],
       selectedRepos: ['lib', 'api'],
       dependencies: { api: ['lib'] },
@@ -113,7 +111,7 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'default', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
       integrationCmd: 'npm test',
       integrationCwd: '/work',
@@ -127,7 +125,7 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'default', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
       umbrellaRepo: 'org/umbrella',
     });
@@ -140,25 +138,22 @@ describe('workspaceEditView — pre-fill', () => {
 // ── repo checklist editing ────────────────────────────────────────────
 
 describe('workspaceEditView — repo editing', () => {
-  it('renders role select for each repo', () => {
+  it('no longer renders a per-repo role select (role field removed)', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
-        { name: 'backend', path: 'backend', role: 'service', depends_on: [] },
-      ],
+      repos: [{ name: 'backend', path: 'backend', depends_on: [] }],
       selectedRepos: ['backend'],
-      repoRoles: { backend: 'service' },
     });
     const out = renderToString(workspaceEditView({}, {}));
-    expect(out).toContain('select-repo-role-backend');
+    expect(out).not.toContain('select-repo-role-');
   });
 
   it('does not render parent dir section (already set)', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'default', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -175,8 +170,8 @@ describe('workspaceEditView — dependency editor', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'lib', path: 'lib', role: 'library', depends_on: [] },
-        { name: 'api', path: 'api', role: 'service', depends_on: [] },
+        { name: 'lib', path: 'lib', depends_on: [] },
+        { name: 'api', path: 'api', depends_on: [] },
       ],
       selectedRepos: ['lib', 'api'],
     });
@@ -188,7 +183,7 @@ describe('workspaceEditView — dependency editor', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'library', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -200,8 +195,8 @@ describe('workspaceEditView — dependency editor', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'lib', path: 'lib', role: 'library', depends_on: [] },
-        { name: 'api', path: 'api', role: 'service', depends_on: ['lib'] },
+        { name: 'lib', path: 'lib', depends_on: [] },
+        { name: 'api', path: 'api', depends_on: ['lib'] },
       ],
       selectedRepos: ['lib', 'api'],
       dependencies: { api: ['lib'] },
@@ -219,8 +214,8 @@ describe('workspaceEditView — cycle detection', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'a', path: 'a', role: 'default', depends_on: ['b'] },
-        { name: 'b', path: 'b', role: 'default', depends_on: ['a'] },
+        { name: 'a', path: 'a', depends_on: ['b'] },
+        { name: 'b', path: 'b', depends_on: ['a'] },
       ],
       selectedRepos: ['a', 'b'],
       dependencies: { a: ['b'], b: ['a'] },
@@ -234,8 +229,8 @@ describe('workspaceEditView — cycle detection', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'a', path: 'a', role: 'default', depends_on: [] },
-        { name: 'b', path: 'b', role: 'default', depends_on: ['a'] },
+        { name: 'a', path: 'a', depends_on: [] },
+        { name: 'b', path: 'b', depends_on: ['a'] },
       ],
       selectedRepos: ['a', 'b'],
       dependencies: { b: ['a'] },
@@ -252,7 +247,7 @@ describe('workspaceEditView — snapshot semantics banner', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'default', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
       hasActiveRuns: true,
     });
@@ -264,7 +259,7 @@ describe('workspaceEditView — snapshot semantics banner', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'default', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
       hasActiveRuns: false,
     });
@@ -282,8 +277,8 @@ describe('workspaceEditView — worca init action', () => {
       workspaceName: 'my-ws',
       originalRepoNames: ['lib'],
       repos: [
-        { name: 'lib', path: 'lib', role: 'default', depends_on: [] },
-        { name: 'api', path: 'api', role: 'service', depends_on: [] },
+        { name: 'lib', path: 'lib', depends_on: [] },
+        { name: 'api', path: 'api', depends_on: [] },
       ],
       selectedRepos: ['lib', 'api'],
     });
@@ -297,8 +292,8 @@ describe('workspaceEditView — worca init action', () => {
       workspaceName: 'my-ws',
       originalRepoNames: ['lib', 'api'],
       repos: [
-        { name: 'lib', path: 'lib', role: 'default', depends_on: [] },
-        { name: 'api', path: 'api', role: 'service', depends_on: [] },
+        { name: 'lib', path: 'lib', depends_on: [] },
+        { name: 'api', path: 'api', depends_on: [] },
       ],
       selectedRepos: ['lib', 'api'],
     });
@@ -312,8 +307,8 @@ describe('workspaceEditView — worca init action', () => {
       workspaceName: 'my-ws',
       originalRepoNames: ['lib', 'api', 'frontend'],
       repos: [
-        { name: 'lib', path: 'lib', role: 'default', depends_on: [] },
-        { name: 'api', path: 'api', role: 'service', depends_on: [] },
+        { name: 'lib', path: 'lib', depends_on: [] },
+        { name: 'api', path: 'api', depends_on: [] },
       ],
       selectedRepos: ['lib', 'api'],
     });
@@ -338,8 +333,8 @@ describe('getWorkspaceEditSubmitState', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'a', path: 'a', role: 'default', depends_on: [] },
-        { name: 'b', path: 'b', role: 'default', depends_on: [] },
+        { name: 'a', path: 'a', depends_on: [] },
+        { name: 'b', path: 'b', depends_on: [] },
       ],
       selectedRepos: ['a', 'b'],
       dependencies: { a: ['b'], b: ['a'] },
@@ -357,8 +352,8 @@ describe('getWorkspaceEditSubmitState', () => {
       loadStatus: 'done',
       workspaceName: 'my-ws',
       repos: [
-        { name: 'lib', path: 'lib', role: 'library', depends_on: [] },
-        { name: 'api', path: 'api', role: 'service', depends_on: ['lib'] },
+        { name: 'lib', path: 'lib', depends_on: [] },
+        { name: 'api', path: 'api', depends_on: ['lib'] },
       ],
       selectedRepos: ['lib', 'api'],
       dependencies: { api: ['lib'] },
@@ -379,7 +374,7 @@ describe('workspaceEditView — submit error', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'default', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
       submitStatus: 'error',
       submitError: 'Cannot edit while active',
@@ -393,7 +388,7 @@ describe('workspaceEditView — submit error', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', role: 'default', depends_on: [] }],
+      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
       selectedRepos: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));

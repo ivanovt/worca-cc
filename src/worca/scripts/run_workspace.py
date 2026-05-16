@@ -96,7 +96,6 @@ def create_workspace_manifest(
     tiers: list[list[str]],
     repos_by_name: dict[str, str],
     dependency_graph: dict[str, list[str]],
-    repos_info: dict[str, dict],
     failure_threshold: float | None = None,
 ) -> dict:
     """Build the workspace manifest dict (extends fleet manifest schema per §7)."""
@@ -132,7 +131,6 @@ def create_workspace_manifest(
         "halt_reason": None,
         "dag": {"tiers": dag_tiers, "dependency_graph": dependency_graph},
         "repos_by_name": repos_by_name,
-        "repos_info": repos_info,
         "failure_threshold": failure_threshold,
         "children": [],
         "integration_test": {"status": "pending", "exit_code": None, "log_path": None},
@@ -196,7 +194,6 @@ def build_planner_prompt(
             {
                 "name": r.name,
                 "path": r.path,
-                "role": r.role,
                 "depends_on": r.depends_on,
             }
             for r in workspace.repos
@@ -456,7 +453,7 @@ def _print_dag(workspace: Workspace, *, skip_integration: bool) -> None:
         for name in tier:
             repo = repo_map[name]
             deps = f" (depends on: {', '.join(repo.depends_on)})" if repo.depends_on else ""
-            print(f"    - {name} [{repo.role}]{deps}")
+            print(f"    - {name}{deps}")
         print()
 
     if workspace.integration_test and not skip_integration:
@@ -695,7 +692,6 @@ def main(argv=None) -> int:
     failure_threshold = settings.get("worca", {}).get("workspace", {}).get("failure_threshold")
 
     dependency_graph = {r.name: r.depends_on for r in ws.repos}
-    repos_info = {r.name: {"path": r.path, "role": r.role} for r in ws.repos}
 
     manifest = create_workspace_manifest(
         workspace_id=ws_id,
@@ -711,7 +707,6 @@ def main(argv=None) -> int:
         tiers=ws.tiers,
         repos_by_name=repos_by_name,
         dependency_graph=dependency_graph,
-        repos_info=repos_info,
         failure_threshold=failure_threshold,
     )
 

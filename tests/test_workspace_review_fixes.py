@@ -40,10 +40,6 @@ def _base_manifest(workspace_root="/workspace", **overrides):
             },
         },
         "repos_by_name": {"lib": "shared-lib", "backend": "services/backend"},
-        "repos_info": {
-            "lib": {"path": "shared-lib", "role": "library"},
-            "backend": {"path": "services/backend", "role": "service"},
-        },
         "children": [],
         "plan": {"workspace_plan_path": None, "repo_plans": {}},
     }
@@ -72,7 +68,6 @@ class TestDependencyGraphInManifest:
             tiers=[["lib"], ["backend"]],
             repos_by_name={"lib": "lib", "backend": "backend"},
             dependency_graph=dep_graph,
-            repos_info={},
         )
         assert manifest["dag"]["dependency_graph"] == dep_graph
 
@@ -187,55 +182,6 @@ class TestDetectBaseRef:
 
         with patch("worca.workspace.dag_executor._run_git", side_effect=mock_run_git):
             assert _detect_base_ref("/some/path") == "HEAD~1"
-
-
-# ---- #8: WORCA_REPO_ROLE in child env -------------------------------------
-
-class TestRepoRoleEnvVar:
-    def test_build_child_env_sets_repo_role(self):
-        from worca.workspace.dag_executor import _build_child_env
-
-        env = _build_child_env(
-            {},
-            workspace_id="ws_1",
-            workspace_name="test",
-            repo_role="service",
-        )
-        assert env["WORCA_REPO_ROLE"] == "service"
-
-    def test_build_child_env_omits_empty_role(self):
-        from worca.workspace.dag_executor import _build_child_env
-
-        env = _build_child_env(
-            {},
-            workspace_id="ws_1",
-            workspace_name="test",
-            repo_role="",
-        )
-        assert "WORCA_REPO_ROLE" not in env
-
-    def test_run_child_passes_role_from_repos_info(self):
-        from worca.workspace.dag_executor import DagExecutor
-
-        manifest = _base_manifest()
-        executor = DagExecutor(manifest, "/tmp/run-dir")
-
-        captured_env = []
-
-        def mock_run(cmd, *, env=None, **kwargs):
-            captured_env.append(env)
-            return subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout="run-123\n/tmp/wt\n", stderr=""
-            )
-
-        with (
-            patch("subprocess.run", side_effect=mock_run),
-            patch("worca.scripts.run_workspace.write_workspace_manifest"),
-        ):
-            executor._run_child("lib")
-
-        assert captured_env[0]["WORCA_REPO_ROLE"] == "library"
 
 
 # ---- #10: project_path in children ----------------------------------------

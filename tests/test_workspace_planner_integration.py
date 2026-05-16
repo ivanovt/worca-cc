@@ -13,9 +13,9 @@ def _make_workspace(repos=None, tiers=None, name="my-platform"):
     """Build a Workspace instance for testing without touching disk."""
     if repos is None:
         repos = [
-            RepoEntry(name="lib", path="lib", role="library", depends_on=[]),
-            RepoEntry(name="backend", path="backend", role="service", depends_on=["lib"]),
-            RepoEntry(name="frontend", path="frontend", role="app", depends_on=["backend"]),
+            RepoEntry(name="lib", path="lib", depends_on=[]),
+            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
+            RepoEntry(name="frontend", path="frontend", depends_on=["backend"]),
         ]
     if tiers is None:
         tiers = [["lib"], ["backend"], ["frontend"]]
@@ -79,8 +79,8 @@ class TestGatherRepoContext:
         (tmp_path / "backend" / "CLAUDE.md").write_text("# Backend\nExpress.js server.")
 
         ws = _make_workspace(repos=[
-            RepoEntry(name="lib", path="lib", role="library", depends_on=[]),
-            RepoEntry(name="backend", path="backend", role="service", depends_on=["lib"]),
+            RepoEntry(name="lib", path="lib", depends_on=[]),
+            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
         ], tiers=[["lib"], ["backend"]])
 
         ctx = gather_repo_context(ws, str(tmp_path))
@@ -94,7 +94,7 @@ class TestGatherRepoContext:
         (tmp_path / "lib" / "CLAUDE.md").write_text("A" * 8000)
 
         ws = _make_workspace(repos=[
-            RepoEntry(name="lib", path="lib", role="library", depends_on=[]),
+            RepoEntry(name="lib", path="lib", depends_on=[]),
         ], tiers=[["lib"]])
 
         ctx = gather_repo_context(ws, str(tmp_path), max_bytes=4096)
@@ -106,7 +106,7 @@ class TestGatherRepoContext:
         (tmp_path / "lib").mkdir()
 
         ws = _make_workspace(repos=[
-            RepoEntry(name="lib", path="lib", role="library", depends_on=[]),
+            RepoEntry(name="lib", path="lib", depends_on=[]),
         ], tiers=[["lib"]])
 
         ctx = gather_repo_context(ws, str(tmp_path))
@@ -134,8 +134,6 @@ class TestBuildPlannerPrompt:
         assert "lib" in prompt
         assert "backend" in prompt
         assert "frontend" in prompt
-        assert "library" in prompt
-        assert "service" in prompt
 
     def test_contains_repo_contexts(self):
         from worca.scripts.run_workspace import build_planner_prompt
@@ -473,8 +471,8 @@ class TestMainPlannerIntegration:
             doc = {
                 "name": "my-platform",
                 "repos": [
-                    {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
-                    {"name": "backend", "path": "backend", "role": "service", "depends_on": ["lib"]},
+                    {"name": "lib", "path": "lib", "depends_on": []},
+                    {"name": "backend", "path": "backend", "depends_on": ["lib"]},
                 ],
             }
         (tmp_path / "workspace.json").write_text(json.dumps(doc))

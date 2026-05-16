@@ -15,7 +15,7 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["name", "path", "role", "depends_on"],
+        "required": ["name", "path", "depends_on"],
         "additionalProperties": false,
         "properties": {
           "name": {
@@ -27,11 +27,6 @@
             "type": "string",
             "minLength": 1,
             "description": "Relative path from workspace root to the repo directory"
-          },
-          "role": {
-            "type": "string",
-            "minLength": 1,
-            "description": "Freeform label injected into master planner prompt for context"
           },
           "depends_on": {
             "type": "array",

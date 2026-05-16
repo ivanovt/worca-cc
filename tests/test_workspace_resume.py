@@ -34,9 +34,9 @@ def _linear_workspace_json():
     return {
         "name": "my-platform",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
-            {"name": "backend", "path": "backend", "role": "service", "depends_on": ["lib"]},
-            {"name": "frontend", "path": "frontend", "role": "app", "depends_on": ["backend"]},
+            {"name": "lib", "path": "lib", "depends_on": []},
+            {"name": "backend", "path": "backend", "depends_on": ["lib"]},
+            {"name": "frontend", "path": "frontend", "depends_on": ["backend"]},
         ],
     }
 
@@ -45,10 +45,10 @@ def _diamond_workspace_json():
     return {
         "name": "diamond",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "library", "depends_on": []},
-            {"name": "backend", "path": "backend", "role": "service", "depends_on": ["lib"]},
-            {"name": "worker", "path": "worker", "role": "service", "depends_on": ["lib"]},
-            {"name": "frontend", "path": "frontend", "role": "app", "depends_on": ["backend", "worker"]},
+            {"name": "lib", "path": "lib", "depends_on": []},
+            {"name": "backend", "path": "backend", "depends_on": ["lib"]},
+            {"name": "worker", "path": "worker", "depends_on": ["lib"]},
+            {"name": "frontend", "path": "frontend", "depends_on": ["backend", "worker"]},
         ],
     }
 

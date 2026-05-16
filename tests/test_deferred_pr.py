@@ -11,8 +11,8 @@ from worca.workspace.manifest import RepoEntry, Workspace
 
 def _make_workspace():
     repos = [
-        RepoEntry(name="lib", path="lib", role="library", depends_on=[]),
-        RepoEntry(name="app", path="app", role="service", depends_on=["lib"]),
+        RepoEntry(name="lib", path="lib", depends_on=[]),
+        RepoEntry(name="app", path="app", depends_on=["lib"]),
     ]
     return Workspace(name="test-ws", repos=repos, tiers=[["lib"], ["app"]])
 

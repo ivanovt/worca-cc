@@ -17,8 +17,8 @@ from worca.workspace.manifest import IntegrationTest, RepoEntry, Workspace
 def _make_workspace(*, integration_test=None, repos=None, tiers=None):
     if repos is None:
         repos = [
-            RepoEntry(name="lib", path="lib", role="library", depends_on=[]),
-            RepoEntry(name="backend", path="backend", role="service", depends_on=["lib"]),
+            RepoEntry(name="lib", path="lib", depends_on=[]),
+            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
         ]
     if tiers is None:
         tiers = [["lib"], ["backend"]]
@@ -83,8 +83,8 @@ class TestEnvSetup:
     def test_creates_worktrees_for_completed_children(self, mock_run, tmp_path):
         ws_root = str(tmp_path)
         repos = [
-            RepoEntry(name="lib", path="lib", role="library", depends_on=[]),
-            RepoEntry(name="backend", path="backend", role="service", depends_on=["lib"]),
+            RepoEntry(name="lib", path="lib", depends_on=[]),
+            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
         ]
         ws = _make_workspace(repos=repos)
         children = [
@@ -114,7 +114,7 @@ class TestEnvSetup:
     @patch("worca.workspace.integration_test.subprocess.run")
     def test_skips_non_completed_children(self, mock_run, tmp_path):
         ws_root = str(tmp_path)
-        repos = [RepoEntry(name="lib", path="lib", role="library", depends_on=[])]
+        repos = [RepoEntry(name="lib", path="lib", depends_on=[])]
         ws = _make_workspace(repos=repos, tiers=[["lib"]])
         children = [
             {"repo": "lib", "worktree_path": None, "status": "failed", "tier": 0},
@@ -133,7 +133,7 @@ class TestEnvCleanup:
     @patch("worca.workspace.integration_test.subprocess.run")
     def test_removes_worktrees(self, mock_run, tmp_path):
         ws_root = str(tmp_path)
-        repos = [RepoEntry(name="lib", path="lib", role="library", depends_on=[])]
+        repos = [RepoEntry(name="lib", path="lib", depends_on=[])]
         ws = _make_workspace(repos=repos, tiers=[["lib"]])
         env_paths = {"lib": os.path.join(ws_root, ".worca", "integration-env", "lib")}
 
@@ -161,7 +161,7 @@ class TestPass:
         env_dir = os.path.join(ws_root, ".worca", "integration-env")
         ws = _make_workspace(
             integration_test=IntegrationTest(command="make test", working_dir="."),
-            repos=[RepoEntry(name="lib", path="lib", role="library", depends_on=[])],
+            repos=[RepoEntry(name="lib", path="lib", depends_on=[])],
             tiers=[["lib"]],
         )
         manifest = _make_manifest(
@@ -207,7 +207,7 @@ class TestFail:
         env_dir = os.path.join(ws_root, ".worca", "integration-env")
         ws = _make_workspace(
             integration_test=IntegrationTest(command="make test", working_dir="."),
-            repos=[RepoEntry(name="lib", path="lib", role="library", depends_on=[])],
+            repos=[RepoEntry(name="lib", path="lib", depends_on=[])],
             tiers=[["lib"]],
         )
         manifest = _make_manifest(

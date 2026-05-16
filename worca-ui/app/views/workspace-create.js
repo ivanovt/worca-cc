@@ -1,12 +1,12 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { FolderOpen, iconSvg } from '../utils/icons.js';
 import { dagGraphView } from './dag-graph.js';
 
 let workspaceName = '';
 let parentDir = '';
 let scannedRepos = [];
 let selectedRepos = [];
-let repoRoles = {};
 let dependencies = {};
 let integrationCmd = '';
 let integrationCwd = '';
@@ -21,7 +21,6 @@ export function resetWorkspaceCreateState(overrides = {}) {
   parentDir = overrides.parentDir ?? '';
   scannedRepos = overrides.scannedRepos ?? [];
   selectedRepos = overrides.selectedRepos ?? [];
-  repoRoles = overrides.repoRoles ?? {};
   dependencies = overrides.dependencies ?? {};
   integrationCmd = overrides.integrationCmd ?? '';
   integrationCwd = overrides.integrationCwd ?? '';
@@ -123,7 +122,6 @@ export async function submitWorkspaceCreate({ rerender, onCreated } = {}) {
     return {
       name,
       path: scanned?.path || name,
-      role: repoRoles[name] || 'default',
       depends_on: dependencies[name] || [],
     };
   });
@@ -163,6 +161,59 @@ export async function submitWorkspaceCreate({ rerender, onCreated } = {}) {
     submitStatus = 'error';
     submitError = err.message || 'Network error';
     rerender?.();
+  }
+}
+
+// Server-side native folder picker — same endpoint Add Project uses
+// (macOS osascript / Windows PowerShell / Linux zenity/kdialog). Just fills
+// the input; the user clicks Scan to look for repos.
+export async function browseParentDir({ rerender } = {}) {
+  try {
+    const resp = await fetch('/api/choose-directory', { method: 'POST' });
+    const data = await resp.json();
+    if (data.ok && data.path) {
+      parentDir = data.path;
+      rerender?.();
+    }
+  } catch {
+    // User cancelled or picker tool missing — silent.
+  }
+}
+
+// Open the native folder picker and add the chosen directory to the
+// workspace as an "external" repo (one that doesn't live as a direct child
+// of `parentDir`). If the picked path happens to fall inside `parentDir`,
+// it's stored relative; otherwise it's stored absolute. The downstream
+// resolver (`os.path.join(workspace_root, repo.path)`) accepts both.
+export async function addExternalRepo({ rerender } = {}) {
+  try {
+    const resp = await fetch('/api/choose-directory', { method: 'POST' });
+    const data = await resp.json();
+    if (!(data.ok && data.path)) return;
+    const picked = data.path;
+    const parent = parentDir.trim().replace(/\/+$/, '');
+    let path = picked;
+    if (parent && picked.startsWith(`${parent}/`)) {
+      path = picked.slice(parent.length + 1);
+    }
+    const baseName = picked.split('/').filter(Boolean).pop() || 'repo';
+    // Deduplicate on name — if a sibling with this name already exists,
+    // suffix with -2, -3, etc. so both stay reachable.
+    let name = baseName;
+    let i = 2;
+    const existingNames = new Set(scannedRepos.map((r) => r.name));
+    while (existingNames.has(name)) {
+      name = `${baseName}-${i}`;
+      i++;
+    }
+    scannedRepos = [
+      ...scannedRepos,
+      { name, path, role_hint: null, external: true },
+    ];
+    selectedRepos = [...selectedRepos, name];
+    rerender?.();
+  } catch {
+    // User cancelled or picker tool missing — silent.
   }
 }
 
@@ -224,7 +275,20 @@ function _nameSection({ rerender } = {}) {
 
 function _parentDirSection(appState, { rerender } = {}) {
   const projects = appState?.projects || [];
-  const suggestions = _parentDirSuggestions(projects);
+  const allSuggestions = _parentDirSuggestions(projects);
+
+  // Combobox-style filter: while the input has text, narrow the suggestion
+  // list to entries that start with what the user typed (case-insensitive).
+  // Hide entirely when the input already matches a suggestion exactly — no
+  // point offering "pick this" when it's already picked.
+  const trimmed = parentDir.trim().toLowerCase();
+  const exactMatch = allSuggestions.some((s) => s.toLowerCase() === trimmed);
+  const filteredSuggestions = !trimmed
+    ? allSuggestions
+    : exactMatch
+      ? []
+      : allSuggestions.filter((s) => s.toLowerCase().startsWith(trimmed));
+  const showDropdown = filteredSuggestions.length > 0;
 
   return html`
     <div class="new-run-section">
@@ -233,34 +297,9 @@ function _parentDirSection(appState, { rerender } = {}) {
         projects.length === 0
           ? html`
             <sl-alert variant="warning" open class="parent-dir-empty-state">
-              No registered projects found. Enter a parent directory path manually.
+              No registered projects found. Enter a parent directory path manually
+              or click Browse to pick one.
             </sl-alert>
-          `
-          : nothing
-      }
-      ${
-        suggestions.length > 0
-          ? html`
-            <div class="parent-dir-suggestions">
-              <span class="settings-field-hint">Detected from registered projects:</span>
-              ${suggestions.map(
-                (s) => html`
-                  <sl-tag
-                    class="parent-dir-tag"
-                    size="small"
-                    @click=${
-                      rerender
-                        ? () => {
-                            parentDir = s;
-                            rerender();
-                          }
-                        : null
-                    }
-                    style="cursor:pointer"
-                  >${s}</sl-tag>
-                `,
-              )}
-            </div>
           `
           : nothing
       }
@@ -281,13 +320,53 @@ function _parentDirSection(appState, { rerender } = {}) {
             }
           ></sl-input>
           <sl-button
+            class="btn-browse-parent-dir"
+            size="medium"
+            title="Browse…"
+            @click=${rerender ? () => browseParentDir({ rerender }) : null}
+            style="--sl-input-height-medium:100%"
+          >
+            ${unsafeHTML(iconSvg(FolderOpen, 16))}
+          </sl-button>
+          <sl-button
             class="btn-scan"
             variant="primary"
-            size="small"
+            size="medium"
             ?disabled=${!parentDir.trim() || scanStatus === 'scanning'}
             @click=${rerender ? () => scanParentDir({ rerender }) : null}
+            style="--sl-input-height-medium:100%"
           >${scanStatus === 'scanning' ? 'Scanning…' : 'Scan'}</sl-button>
         </div>
+        ${
+          showDropdown
+            ? html`
+              <div class="parent-dir-suggestions">
+                <div class="parent-dir-suggestions-label">
+                  Detected from registered projects
+                </div>
+                ${filteredSuggestions.map(
+                  (s) => html`
+                    <button
+                      type="button"
+                      class="parent-dir-suggestion-item"
+                      @click=${
+                        rerender
+                          ? () => {
+                              parentDir = s;
+                              rerender();
+                            }
+                          : null
+                      }
+                    >
+                      ${unsafeHTML(iconSvg(FolderOpen, 14))}
+                      <span>${s}</span>
+                    </button>
+                  `,
+                )}
+              </div>
+            `
+            : nothing
+        }
         <span class="settings-field-hint">Directory containing all repositories in this workspace.</span>
       </div>
       ${
@@ -341,35 +420,26 @@ function _repoChecklistSection({ rerender } = {}) {
                 }
               >${repo.name}</sl-checkbox>
               ${
-                selectedRepos.includes(repo.name)
-                  ? html`
-                    <sl-select
-                      class="select-repo-role-${repo.name}"
-                      size="small"
-                      value="${repoRoles[repo.name] || 'default'}"
-                      @sl-change=${
-                        rerender
-                          ? (e) => {
-                              repoRoles = {
-                                ...repoRoles,
-                                [repo.name]: e.target.value,
-                              };
-                              rerender();
-                            }
-                          : null
-                      }
-                    >
-                      <sl-option value="default">Default</sl-option>
-                      <sl-option value="library">Library</sl-option>
-                      <sl-option value="service">Service</sl-option>
-                      <sl-option value="frontend">Frontend</sl-option>
-                    </sl-select>
-                  `
+                repo.external
+                  ? html`<sl-tag size="small" variant="primary" class="ws-external-tag" title="${repo.path}">External</sl-tag>`
                   : nothing
               }
             </div>
           `,
         )}
+      </div>
+      <div class="repo-checklist-actions">
+        <sl-button
+          class="btn-add-external-repo"
+          size="small"
+          @click=${rerender ? () => addExternalRepo({ rerender }) : null}
+        >
+          + Add external repo…
+        </sl-button>
+        <span class="settings-field-hint">
+          Pick a repo from anywhere on disk — useful when a workspace member
+          lives outside the parent directory.
+        </span>
       </div>
     </div>
   `;
@@ -433,7 +503,16 @@ function _depEditorSection({ rerender } = {}) {
           `
           : nothing
       }
-      ${svg ? html`<div class="dag-preview">${unsafeHTML(svg)}</div>` : nothing}
+      ${
+        svg
+          ? html`
+            <div class="dag-preview-block">
+              <label class="settings-label dag-preview-label">Dependency Graph</label>
+              <div class="dag-preview">${unsafeHTML(svg)}</div>
+            </div>
+          `
+          : nothing
+      }
     </div>
   `;
 }

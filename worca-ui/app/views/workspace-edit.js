@@ -3,9 +3,13 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { dagGraphView } from './dag-graph.js';
 
 let workspaceName = '';
+let parentPath = '';
+// `repos` is the merged list: union of currently-registered repos and any
+// other git repos discovered by scanning the parent dir. Registered ones
+// stay pre-checked; unregistered siblings are unchecked but selectable so
+// the edit form supports both removing AND adding members symmetrically.
 let repos = [];
 let selectedRepos = [];
-let repoRoles = {};
 let dependencies = {};
 let integrationCmd = '';
 let integrationCwd = '';
@@ -14,14 +18,16 @@ let originalRepoNames = [];
 let hasActiveRuns = false;
 let loadStatus = null;
 let loadError = '';
+let scanStatus = null; // null | 'scanning' | 'done' | 'error'
+let scanError = '';
 let submitStatus = null;
 let submitError = '';
 
 export function resetWorkspaceEditState(overrides = {}) {
   workspaceName = overrides.workspaceName ?? '';
+  parentPath = overrides.parentPath ?? '';
   repos = overrides.repos ?? [];
   selectedRepos = overrides.selectedRepos ?? [];
-  repoRoles = overrides.repoRoles ?? {};
   dependencies = overrides.dependencies ?? {};
   integrationCmd = overrides.integrationCmd ?? '';
   integrationCwd = overrides.integrationCwd ?? '';
@@ -30,6 +36,8 @@ export function resetWorkspaceEditState(overrides = {}) {
   hasActiveRuns = overrides.hasActiveRuns ?? false;
   loadStatus = overrides.loadStatus ?? null;
   loadError = overrides.loadError ?? '';
+  scanStatus = overrides.scanStatus ?? null;
+  scanError = overrides.scanError ?? '';
   submitStatus = overrides.submitStatus ?? null;
   submitError = overrides.submitError ?? '';
 }
@@ -88,6 +96,8 @@ export function getWorkspaceEditSubmitState() {
 export async function loadWorkspace({ name, rerender } = {}) {
   loadStatus = 'loading';
   loadError = '';
+  scanStatus = null;
+  scanError = '';
   rerender?.();
 
   try {
@@ -96,27 +106,112 @@ export async function loadWorkspace({ name, rerender } = {}) {
     if (data.ok) {
       const ws = data.workspace;
       workspaceName = ws.name || name;
-      repos = ws.repos || [];
-      selectedRepos = repos.map((r) => r.name);
-      repoRoles = {};
+      parentPath = data.path || '';
+      const registered = ws.repos || [];
+      selectedRepos = registered.map((r) => r.name);
       dependencies = {};
-      for (const r of repos) {
-        repoRoles[r.name] = r.role || 'default';
+      for (const r of registered) {
         if (r.depends_on?.length) dependencies[r.name] = [...r.depends_on];
       }
       integrationCmd = ws.integration_test?.command || '';
       integrationCwd = ws.integration_test?.cwd || '';
       umbrellaRepo = ws.umbrella_repo || '';
-      originalRepoNames = repos.map((r) => r.name);
+      originalRepoNames = registered.map((r) => r.name);
       hasActiveRuns = false;
+
+      // Seed repos with the registered set first; the scan below will merge
+      // in any additional unregistered sibling repos discovered on disk.
+      repos = registered.map((r) => ({
+        name: r.name,
+        path: r.path || r.name,
+        registered: true,
+      }));
       loadStatus = 'done';
-    } else {
-      loadStatus = 'error';
-      loadError = data.error || 'Failed to load workspace';
+      rerender?.();
+
+      // Best-effort: scan the parent for sibling git repos so the user can
+      // re-add ones they previously unchecked, or include new repos that
+      // appeared after the workspace was created. A scan failure is
+      // non-fatal — the form still works in remove-only mode.
+      if (parentPath) {
+        await _scanForAdditions({ rerender });
+      }
+      return;
     }
+    loadStatus = 'error';
+    loadError = data.error || 'Failed to load workspace';
   } catch (err) {
     loadStatus = 'error';
     loadError = err.message || 'Network error';
+  }
+  rerender?.();
+}
+
+// Native folder picker for adding an arbitrary repo outside the workspace
+// parent. Same logic as workspace-create.addExternalRepo — keep the two in
+// sync if you change the path normalization rules.
+export async function addExternalRepo({ rerender } = {}) {
+  try {
+    const resp = await fetch('/api/choose-directory', { method: 'POST' });
+    const data = await resp.json();
+    if (!(data.ok && data.path)) return;
+    const picked = data.path;
+    const parent = (parentPath || '').replace(/\/+$/, '');
+    let path = picked;
+    if (parent && picked.startsWith(`${parent}/`)) {
+      path = picked.slice(parent.length + 1);
+    }
+    const baseName = picked.split('/').filter(Boolean).pop() || 'repo';
+    let name = baseName;
+    let i = 2;
+    const existingNames = new Set(repos.map((r) => r.name));
+    while (existingNames.has(name)) {
+      name = `${baseName}-${i}`;
+      i++;
+    }
+    repos = [...repos, { name, path, registered: false, external: true }];
+    selectedRepos = [...selectedRepos, name];
+    rerender?.();
+  } catch {
+    // User cancelled or picker tool missing — silent.
+  }
+}
+
+async function _scanForAdditions({ rerender } = {}) {
+  scanStatus = 'scanning';
+  scanError = '';
+  rerender?.();
+  try {
+    const resp = await fetch('/api/workspaces/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parent_path: parentPath }),
+    });
+    const data = await resp.json();
+    if (!data.ok) {
+      scanStatus = 'error';
+      scanError = data.error || 'Scan failed';
+      rerender?.();
+      return;
+    }
+    const registeredByName = new Map(repos.map((r) => [r.name, r]));
+    const merged = [...repos];
+    for (const found of data.repos || []) {
+      if (registeredByName.has(found.name)) continue;
+      merged.push({
+        name: found.name,
+        path: found.path || found.name,
+        registered: false,
+      });
+    }
+    // Stable sort: registered first (preserves load order), then siblings
+    // alphabetically — keeps the user's existing layout intact and groups
+    // additions at the bottom where they're visually distinct.
+    repos = merged;
+    scanStatus = 'done';
+  } catch (err) {
+    scanStatus = 'error';
+    scanError = err.message || 'Network error';
   }
   rerender?.();
 }
@@ -144,7 +239,6 @@ export async function submitWorkspaceEdit({ rerender, onUpdated } = {}) {
     return {
       name,
       path: orig?.path || name,
-      role: repoRoles[name] || 'default',
       depends_on: dependencies[name] || [],
     };
   });
@@ -210,11 +304,25 @@ function _nameSection() {
 }
 
 function _repoChecklistSection({ rerender } = {}) {
-  if (repos.length === 0) return nothing;
+  if (repos.length === 0 && scanStatus !== 'scanning') return nothing;
 
   return html`
     <div class="new-run-section">
       <h3 class="new-run-section-title">Repositories</h3>
+      ${
+        scanStatus === 'scanning'
+          ? html`<div class="ws-edit-scan-status"><sl-spinner></sl-spinner> Scanning ${parentPath} for additional repositories…</div>`
+          : nothing
+      }
+      ${
+        scanStatus === 'error'
+          ? html`
+            <sl-alert variant="warning" open class="ws-edit-scan-error">
+              Couldn't scan ${parentPath} for additional repositories: ${scanError}. You can still remove existing repos.
+            </sl-alert>
+          `
+          : nothing
+      }
       <div class="repo-checklist">
         ${repos.map(
           (repo) => html`
@@ -246,35 +354,28 @@ function _repoChecklistSection({ rerender } = {}) {
                 }
               >${repo.name}</sl-checkbox>
               ${
-                selectedRepos.includes(repo.name)
-                  ? html`
-                    <sl-select
-                      class="select-repo-role-${repo.name}"
-                      size="small"
-                      value="${repoRoles[repo.name] || 'default'}"
-                      @sl-change=${
-                        rerender
-                          ? (e) => {
-                              repoRoles = {
-                                ...repoRoles,
-                                [repo.name]: e.target.value,
-                              };
-                              rerender();
-                            }
-                          : null
-                      }
-                    >
-                      <sl-option value="default">Default</sl-option>
-                      <sl-option value="library">Library</sl-option>
-                      <sl-option value="service">Service</sl-option>
-                      <sl-option value="frontend">Frontend</sl-option>
-                    </sl-select>
-                  `
-                  : nothing
+                repo.external
+                  ? html`<sl-tag size="small" variant="primary" class="ws-external-tag" title="${repo.path}">External</sl-tag>`
+                  : repo.registered === false
+                    ? html`<sl-tag size="small" variant="neutral" class="ws-edit-new-tag">Available</sl-tag>`
+                    : nothing
               }
             </div>
           `,
         )}
+      </div>
+      <div class="repo-checklist-actions">
+        <sl-button
+          class="btn-add-external-repo"
+          size="small"
+          @click=${rerender ? () => addExternalRepo({ rerender }) : null}
+        >
+          + Add external repo…
+        </sl-button>
+        <span class="settings-field-hint">
+          Pick a repo from anywhere on disk — useful when a workspace member
+          lives outside the parent directory.
+        </span>
       </div>
     </div>
   `;
@@ -338,7 +439,16 @@ function _depEditorSection({ rerender } = {}) {
           `
           : nothing
       }
-      ${svg ? html`<div class="dag-preview">${unsafeHTML(svg)}</div>` : nothing}
+      ${
+        svg
+          ? html`
+            <div class="dag-preview-block">
+              <label class="settings-label dag-preview-label">Dependency Graph</label>
+              <div class="dag-preview">${unsafeHTML(svg)}</div>
+            </div>
+          `
+          : nothing
+      }
     </div>
   `;
 }

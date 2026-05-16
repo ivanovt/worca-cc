@@ -27,10 +27,10 @@ def _diamond_workspace_json():
     return {
         "name": "diamond-platform",
         "repos": [
-            {"name": "lib", "path": "lib", "role": "shared library", "depends_on": []},
-            {"name": "svc-a", "path": "svc-a", "role": "service A", "depends_on": ["lib"]},
-            {"name": "svc-b", "path": "svc-b", "role": "service B", "depends_on": ["lib"]},
-            {"name": "gateway", "path": "gateway", "role": "API gateway", "depends_on": ["svc-a", "svc-b"]},
+            {"name": "lib", "path": "lib", "depends_on": []},
+            {"name": "svc-a", "path": "svc-a", "depends_on": ["lib"]},
+            {"name": "svc-b", "path": "svc-b", "depends_on": ["lib"]},
+            {"name": "gateway", "path": "gateway", "depends_on": ["svc-a", "svc-b"]},
         ],
     }
 

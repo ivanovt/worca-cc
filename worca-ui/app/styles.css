@@ -5804,6 +5804,98 @@ sl-tooltip.bead-tooltip::part(body) {
   overflow-x: auto;
 }
 
+/* --- Workspace forms: external-repo picker --- */
+
+.repo-checklist-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.ws-external-tag {
+  margin-left: 8px;
+}
+
+/* --- Workspace forms: Dependency Graph label --- */
+
+.dag-preview-block {
+  margin-top: 16px;
+}
+.dag-preview-label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+/* --- Workspace edit: scan-for-additions status + Available tag --- */
+
+.ws-edit-scan-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin-bottom: 12px;
+}
+.ws-edit-scan-error {
+  margin-bottom: 12px;
+}
+.ws-edit-new-tag {
+  margin-left: 8px;
+}
+
+/* --- Workspace create: Parent Directory row --- */
+
+.parent-dir-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.parent-dir-row .input-parent-dir {
+  flex: 1;
+}
+.parent-dir-suggestions {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.parent-dir-suggestions-label {
+  padding: 6px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.parent-dir-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  text-align: left;
+}
+.parent-dir-suggestion-item:last-child {
+  border-bottom: none;
+}
+.parent-dir-suggestion-item:hover {
+  background: var(--bg-hover);
+}
+.parent-dir-suggestion-item svg {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+
 /* --- Configuration → Workspaces list --- */
 
 .workspaces-config-empty {

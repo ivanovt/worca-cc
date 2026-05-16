@@ -521,7 +521,10 @@ export function createWorkspaceRouter({
           error: `workspace.json not found at ${reg.path}`,
         });
       }
-      res.json({ ok: true, workspace: ws });
+      // Include parent path so the edit view can scan the directory for
+      // currently-unselected repos and offer them as additions. Without
+      // this the form can only remove repos, not add new ones.
+      res.json({ ok: true, workspace: ws, path: reg.path });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }

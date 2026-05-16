@@ -38,7 +38,6 @@ def _build_child_env(
     *,
     workspace_id: str,
     workspace_name: str,
-    repo_role: str = "",
 ) -> dict:
     result = {}
     for key, value in base_env.items():
@@ -51,8 +50,6 @@ def _build_child_env(
     result["WORCA_WORKSPACE_ID"] = workspace_id
     result["WORCA_WORKSPACE_NAME"] = workspace_name
     result["WORCA_DEFER_PR"] = "1"
-    if repo_role:
-        result["WORCA_REPO_ROLE"] = repo_role
     return result
 
 
@@ -238,7 +235,6 @@ class DagExecutor:
         self._guide_paths = manifest.get("guide", {}).get("paths", [])
         self._repo_plans = manifest.get("plan", {}).get("repo_plans", {}) or {}
         self._repos_by_name = manifest.get("repos_by_name") or {}
-        self._repos_info = manifest.get("repos_info") or {}
         self._dependency_graph = manifest.get("dag", {}).get("dependency_graph") or {}
         self._context_paths: dict[str, str] = {}
         self._current_tier = -1
@@ -438,12 +434,10 @@ class DagExecutor:
             self._context_paths[repo] = path
 
     def _run_child(self, repo: str) -> dict:
-        repo_info = self._repos_info.get(repo, {})
         env = _build_child_env(
             os.environ.copy(),
             workspace_id=self._workspace_id,
             workspace_name=self._workspace_name,
-            repo_role=repo_info.get("role", ""),
         )
 
         deps = self._dependency_graph.get(repo, [])

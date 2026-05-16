@@ -109,6 +109,6 @@ def test_combined_workspace_run():
     assert "target_branch" in content
     assert "--base" in content
 
-    # Step 6: workspace body augmentation
+    # Step 6: workspace body augmentation (workspace name appears; the per-repo
+    # role field was removed — guardian.md no longer references it).
     assert "workspace" in lower and ("name" in lower or "workspace_name" in lower)
-    assert "repo role" in lower or "repo_role" in lower or "WORCA_REPO_ROLE" in content

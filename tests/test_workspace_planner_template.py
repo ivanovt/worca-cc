@@ -79,11 +79,6 @@ def test_mentions_repo_topology():
     assert "topology" in lower or "dependency" in lower or "depends_on" in lower
 
 
-def test_mentions_repo_role():
-    content = _read()
-    assert "role" in content.lower()
-
-
 # ---------------------------------------------------------------------------
 # Per-repo CLAUDE.md context
 # ---------------------------------------------------------------------------

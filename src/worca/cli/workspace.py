@@ -17,7 +17,7 @@ import sys
 def scan_repos(parent_dir: str) -> list[dict]:
     """Scan child directories of parent_dir for git repos.
 
-    Returns a sorted list of repo dicts with name, path, role, depends_on.
+    Returns a sorted list of repo dicts with name, path, depends_on.
     Skips hidden directories (starting with '.').
     """
     repos = []
@@ -32,7 +32,6 @@ def scan_repos(parent_dir: str) -> list[dict]:
         repos.append({
             "name": entry,
             "path": entry,
-            "role": "service",
             "depends_on": [],
         })
     return repos
@@ -80,7 +79,7 @@ def cmd_workspace_init(path: str, force: bool = False) -> None:
     print(f"Workspace '{doc['name']}' initialized with {len(doc['repos'])} repo(s):")
     for repo in doc["repos"]:
         deps = ", ".join(repo["depends_on"]) if repo["depends_on"] else "none"
-        print(f"  {repo['name']} ({repo['role']}) — depends_on: {deps}")
+        print(f"  {repo['name']} — depends_on: {deps}")
     print(f"\nCreated: {ws_path}")
     print(f"Created: {worca_dir}/")
     print("\nEdit workspace.json to define depends_on relationships and add an integration test.")

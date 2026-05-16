@@ -98,12 +98,14 @@ class TestScanRepos:
         repos = scan_repos(parent)
         assert repos[0]["depends_on"] == []
 
-    def test_default_role_is_service(self, tmp_path):
+    def test_no_role_field_emitted(self, tmp_path):
+        # `role` was a freeform label with no behavioral effect; removed to
+        # simplify the schema. Make sure scan_repos doesn't reintroduce it.
         from worca.cli.workspace import scan_repos
 
         parent = _make_workspace(tmp_path, ["a"])
         repos = scan_repos(parent)
-        assert repos[0]["role"] == "service"
+        assert "role" not in repos[0]
 
     def test_results_sorted_by_name(self, tmp_path):
         from worca.cli.workspace import scan_repos
@@ -142,8 +144,8 @@ class TestGenerateWorkspaceJson:
         repo = doc["repos"][0]
         assert "name" in repo
         assert "path" in repo
-        assert "role" in repo
         assert "depends_on" in repo
+        assert "role" not in repo
 
     def test_validates_against_schema(self, tmp_path):
         import jsonschema

@@ -47,7 +47,6 @@ Build the standard PR description from the work request and approach summary. Th
   ```
 - If `WORCA_WORKSPACE_ID` is set: append workspace context:
   - **Workspace:** `WORCA_WORKSPACE_NAME` (`WORCA_WORKSPACE_ID`).
-  - **Repo role:** `WORCA_REPO_ROLE` (read from the environment variable set by the workspace orchestrator).
   - Dependency annotations are added post-creation by `run_workspace.py` via `gh pr comment` — do NOT include them in the initial body.
 
 ### Step 7 — Create PR

@@ -19,9 +19,9 @@ from worca.workspace.pr_linker import (
 
 def _make_workspace(*, umbrella_repo=None):
     repos = [
-        RepoEntry(name="shared-lib", path="shared-lib", role="library", depends_on=[]),
-        RepoEntry(name="backend", path="backend", role="service", depends_on=["shared-lib"]),
-        RepoEntry(name="frontend", path="frontend", role="app", depends_on=["backend"]),
+        RepoEntry(name="shared-lib", path="shared-lib", depends_on=[]),
+        RepoEntry(name="backend", path="backend", depends_on=["shared-lib"]),
+        RepoEntry(name="frontend", path="frontend", depends_on=["backend"]),
     ]
     tiers = [["shared-lib"], ["backend"], ["frontend"]]
     return Workspace(
@@ -278,15 +278,17 @@ class TestUmbrellaIssue:
         frontend_pos = body.index("org/frontend#43")
         assert lib_pos < backend_pos < frontend_pos
 
-    def test_body_includes_repo_role_as_description(self):
+    def test_body_uses_repo_name_as_description(self):
+        # `role` was removed (was a freeform label with no behavior). The
+        # umbrella body now falls back to the repo name.
         ws = _make_workspace()
         manifest = _make_manifest_with_prs()
 
         body = build_umbrella_body(manifest, ws)
 
-        assert "— library" in body
-        assert "— service" in body
-        assert "— app" in body
+        assert "— shared-lib" in body
+        assert "— backend" in body
+        assert "— frontend" in body
 
     def test_create_uses_umbrella_repo_from_workspace(self):
         ws = _make_workspace(umbrella_repo="org/platform-meta")
