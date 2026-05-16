@@ -110,7 +110,7 @@ def cmd_workspace_migrate(path: str) -> None:
         doc = json.load(f)
 
     if "projects" in doc and "repos" not in doc:
-        print(f"workspace.json already uses `projects`; nothing to do.")
+        print("workspace.json already uses `projects`; nothing to do.")
         return
 
     if "repos" not in doc:

@@ -63,9 +63,25 @@ jobs:
           cache: 'npm'
           cache-dependency-path: worca-ui/package-lock.json
 
+      # status-constants.js is codegen'd from src/worca/state/status.py by
+      # `npm run build` (see worca-ui/scripts/build-frontend.js). The UI
+      # server and several views import it, so the build (and the Python
+      # env it depends on) must run before vitest can even resolve modules.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install worca-cc (for status-constants codegen)
+        run: pip install -e .
+
       - name: Install dependencies
         working-directory: worca-ui
         run: npm ci
+
+      - name: Build (runs codegen + esbuild bundle)
+        working-directory: worca-ui
+        run: npm run build
 
       - name: Lint with biome
         working-directory: worca-ui
