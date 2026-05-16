@@ -1,11 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { dagGraphView } from './dag-graph.js';
-import {
-  guideUploadWidget,
-  headTemplateInput,
-  planModeRadio,
-} from './launcher-shared.js';
+import { guideUploadWidget, planModeRadio } from './launcher-shared.js';
 import { isAtCapacity } from './new-run.js';
 
 const GUIDE_CAP_BYTES_DEFAULT = 128 * 1024; // matches src/worca/settings.json + GUIDE_MAX_BYTES_DEFAULT in work_request.py
@@ -94,29 +90,13 @@ export function resetLauncherState(overrides = {}) {
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-function _resolveProjectSlug(projectPath) {
-  return (
-    (projectPath.split('/').pop() || projectPath)
-      .toLowerCase()
-      .replace(/[^a-z0-9-]+/g, '-')
-      .replace(/^-+|-+$/g, '') || 'project'
-  );
-}
-
-function _detectCollision(template, projects) {
-  if (projects.length < 2) return false;
-  const seen = new Set();
-  for (const p of projects) {
-    const slug = _resolveProjectSlug(p);
-    let branch = template || 'migration/{slug}/{project}';
-    branch = branch.replace(/\{project\}/g, slug);
-    branch = branch.replace(/\{fleet_id\}/g, 'f_preview');
-    branch = branch.replace(/\{slug\}/g, 'slug');
-    branch = branch.replace(/\{yyyymmddhhmm\}/g, '202605120900');
-    branch = branch.replace(/\{yyyymmdd\}/g, '20260512');
-    if (seen.has(branch)) return true;
-    seen.add(branch);
-  }
+function _detectCollision(_template, _projects) {
+  // Disabled: the head-branch template field is hidden because
+  // `--head-template` is dead config (run_fleet never passes it through to
+  // run_worktree, which hardcodes `worca/{slug}-{run_id}`). Even if it
+  // weren't, distinct projects = distinct git remotes = distinct branch
+  // namespaces, so a same-name branch in three repos is not a collision.
+  // Kept as a stub so call sites + tests don't need to change shape.
   return false;
 }
 
@@ -593,23 +573,14 @@ function _advancedSection({ rerender } = {}) {
           }
         </div>
 
-        <div class="settings-field">
-          <label class="settings-label">Head branch template</label>
-          ${headTemplateInput(
-            { headTemplate },
-            {
-              selectedProjects,
-              onChange: rerender
-                ? (ev) => {
-                    if (ev.type === 'set-head-template')
-                      headTemplate = ev.value;
-                    rerender();
-                  }
-                : undefined,
-            },
-          )}
-          <span class="settings-field-hint">Placeholders: <code>{project}</code>, <code>{fleet_id}</code>, <code>{slug}</code>, <code>{yyyymmdd}</code>, <code>{yyyymmddhhmm}</code>.</span>
-        </div>
+        ${
+          nothing /* Head branch template hidden — `--head-template` is
+                    dead config end-to-end (run_fleet stores it but never
+                    forwards to run_worktree, which hardcodes the worktree
+                    branch as `worca/{slug}-{run_id}`). Re-mount
+                    headTemplateInput here when run_worktree starts
+                    consuming the template. */
+        }
         </div>
 
         ${
@@ -729,11 +700,11 @@ function _workspaceSelectSection(appState, { rerender } = {}) {
                     (w) => w.name === selectedWorkspace,
                   );
                   workspaceData = ws || null;
+                  // gh auth pre-flight skipped — server check is a no-op
+                  // stub and the panel is hidden. Keep state slots intact so
+                  // tests + skip-checkbox still work when the panel returns.
                   ghAuthStatus = null;
                   ghAuthErrors = [];
-                  if (ws) {
-                    _validateGhAuth(ws, { rerender });
-                  }
                   rerender();
                 }
               : null
@@ -1019,23 +990,12 @@ function _advancedWorkspaceSection({ rerender } = {}) {
             ></sl-input>
             <span class="settings-field-hint">Branch the worktrees fork from and PRs target. Leave blank to use each repo's default.</span>
           </div>
-          <div class="settings-field">
-            <label class="settings-label">Head branch template</label>
-            ${headTemplateInput(
-              { headTemplate },
-              {
-                selectedProjects: wsRepoNames,
-                onChange: rerender
-                  ? (ev) => {
-                      if (ev.type === 'set-head-template')
-                        headTemplate = ev.value;
-                      rerender();
-                    }
-                  : undefined,
-              },
-            )}
-            <span class="settings-field-hint">Placeholders: <code>{repo}</code>, <code>{slug}</code>, <code>{yyyymmdd}</code>, <code>{yyyymmddhhmm}</code>.</span>
-          </div>
+          ${
+            nothing /* Branch template hidden — workspace branch_template
+                      is captured in the manifest but dag_executor never
+                      consumes it; the actual branch is hardcoded by
+                      run_worktree. Re-mount when the wiring exists. */
+          }
         </div>
 
         ${_workspacePlanSection({ rerender })}
@@ -1120,7 +1080,11 @@ export function fleetLauncherView(appState, { rerender } = {}) {
       <div class="new-run-form">
         ${isWorkspace ? _workspaceSelectSection(appState, { rerender }) : _projectsSection(appProjects, { rerender })}
         ${isWorkspace ? _workspaceDagSection() : nothing}
-        ${isWorkspace ? _ghAuthSection({ rerender }) : nothing}
+${
+  nothing /* gh auth panel hidden — defaultValidateGhAuth is a no-op
+              stub server-side, so the always-green badge would lie. Re-mount
+              `_ghAuthSection({ rerender })` here when the real check ships. */
+}
         ${_workSourceSection({ rerender })}
         ${_promptSection({ rerender })}
         ${_guideSection({ rerender, guideCapBytes })}
