@@ -32,17 +32,17 @@ class TestWorkspaceEventConstants:
 class TestWorkspaceLaunchedPayload:
     def test_minimal(self):
         p = types.workspace_launched_payload(
-            repos=["repo-a", "repo-b"],
+            projects=["repo-a", "repo-b"],
             workspace_name="my-ws",
         )
-        assert p["repos"] == ["repo-a", "repo-b"]
+        assert p["projects"] == ["repo-a", "repo-b"]
         assert p["workspace_name"] == "my-ws"
         assert "guide_attached" in p
         assert p["guide_attached"] is False
 
     def test_all_fields(self):
         p = types.workspace_launched_payload(
-            repos=["repo-a"],
+            projects=["repo-a"],
             workspace_name="my-ws",
             branch_template="workspace/{slug}/{repo}",
             guide_attached=True,
@@ -58,7 +58,7 @@ class TestWorkspaceLaunchedPayload:
 
     def test_omits_none_optionals(self):
         p = types.workspace_launched_payload(
-            repos=["repo-a"],
+            projects=["repo-a"],
             workspace_name="my-ws",
         )
         assert "branch_template" not in p
@@ -137,27 +137,27 @@ class TestWorkspaceTierStartedPayload:
     def test_basic(self):
         p = types.workspace_tier_started_payload(
             tier=0,
-            repos=["repo-a", "repo-b"],
+            projects=["repo-a", "repo-b"],
         )
         assert p["tier"] == 0
-        assert p["repos"] == ["repo-a", "repo-b"]
+        assert p["projects"] == ["repo-a", "repo-b"]
 
 
 class TestWorkspaceTierCompletedPayload:
     def test_basic(self):
         p = types.workspace_tier_completed_payload(
             tier=0,
-            repos=["repo-a"],
+            projects=["repo-a"],
             status="completed",
         )
         assert p["tier"] == 0
-        assert p["repos"] == ["repo-a"]
+        assert p["projects"] == ["repo-a"]
         assert p["status"] == "completed"
 
     def test_with_duration(self):
         p = types.workspace_tier_completed_payload(
             tier=1,
-            repos=["repo-b"],
+            projects=["repo-b"],
             status="failed",
             duration_ms=3000,
         )

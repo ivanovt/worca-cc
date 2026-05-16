@@ -967,7 +967,7 @@ def fleet_circuit_breaker_tripped_payload(
 # ---------------------------------------------------------------------------
 
 def workspace_launched_payload(
-    repos: list,
+    projects: list,
     workspace_name: str,
     *,
     branch_template: str = None,
@@ -977,7 +977,7 @@ def workspace_launched_payload(
     tier_count: int = None,
 ) -> dict:
     p: dict = {
-        "repos": repos,
+        "projects": projects,
         "workspace_name": workspace_name,
         "guide_attached": guide_attached,
         "skip_planning": skip_planning,
@@ -1044,19 +1044,19 @@ def workspace_failed_payload(
 
 def workspace_tier_started_payload(
     tier: int,
-    repos: list,
+    projects: list,
 ) -> dict:
-    return {"tier": tier, "repos": repos}
+    return {"tier": tier, "projects": projects}
 
 
 def workspace_tier_completed_payload(
     tier: int,
-    repos: list,
+    projects: list,
     status: str,
     *,
     duration_ms: int = None,
 ) -> dict:
-    p: dict = {"tier": tier, "repos": repos, "status": status}
+    p: dict = {"tier": tier, "projects": projects, "status": status}
     if duration_ms is not None:
         p["duration_ms"] = duration_ms
     return p

@@ -51,7 +51,7 @@ function writeWorkspaceJson(root, workspace) {
 function baseWorkspace(overrides = {}) {
   return {
     name: 'my-workspace',
-    repos: [
+    projects: [
       { name: 'api', path: 'api', depends_on: [] },
       { name: 'web', path: 'web', depends_on: ['api'] },
     ],
@@ -79,8 +79,8 @@ function baseManifest(wsRoot, overrides = {}) {
     halt_reason: null,
     dag: {
       tiers: [
-        { tier: 0, repos: ['api'], status: 'running' },
-        { tier: 1, repos: ['web'], status: 'pending' },
+        { tier: 0, projects: ['api'], status: 'running' },
+        { tier: 1, projects: ['web'], status: 'pending' },
       ],
     },
     children: [],
@@ -173,8 +173,8 @@ describe('Workspace Routes', () => {
       expect(res.status).toBe(200);
       const data = await res.json();
       expect(data.ok).toBe(true);
-      expect(data.repos).toHaveLength(2);
-      const names = data.repos.map((r) => r.name).sort();
+      expect(data.projects).toHaveLength(2);
+      const names = data.projects.map((r) => r.name).sort();
       expect(names).toEqual(['repo-a', 'repo-b']);
     });
   });
@@ -186,7 +186,7 @@ describe('Workspace Routes', () => {
       const res = await fetch(`${base}/api/workspaces`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ parent_path: wsRoot, repos: [] }),
+        body: JSON.stringify({ parent_path: wsRoot, projects: [] }),
       });
       expect(res.status).toBe(400);
     });
@@ -198,7 +198,7 @@ describe('Workspace Routes', () => {
         body: JSON.stringify({
           name: 'cyclic',
           parent_path: wsRoot,
-          repos: [
+          projects: [
             { name: 'a', path: 'api', depends_on: ['b'] },
             { name: 'b', path: 'web', depends_on: ['a'] },
           ],
@@ -217,7 +217,7 @@ describe('Workspace Routes', () => {
         body: JSON.stringify({
           name: 'my-workspace',
           parent_path: wsRoot,
-          repos: [
+          projects: [
             { name: 'api', path: 'api', depends_on: [] },
             { name: 'web', path: 'web', depends_on: ['api'] },
           ],
@@ -237,7 +237,7 @@ describe('Workspace Routes', () => {
         body: JSON.stringify({
           name: 'my-workspace',
           parent_path: wsRoot,
-          repos: [{ name: 'api', path: 'api', depends_on: [] }],
+          projects: [{ name: 'api', path: 'api', depends_on: [] }],
         }),
       });
       expect(res.status).toBe(201);
@@ -301,7 +301,7 @@ describe('Workspace Routes', () => {
       const data = await res.json();
       expect(data.ok).toBe(true);
       expect(data.workspace.name).toBe('my-workspace');
-      expect(data.workspace.repos).toHaveLength(2);
+      expect(data.workspace.projects).toHaveLength(2);
     });
   });
 
@@ -330,7 +330,7 @@ describe('Workspace Routes', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...baseWorkspace(),
-          repos: [
+          projects: [
             { name: 'api', path: 'api', depends_on: ['web'] },
             { name: 'web', path: 'web', depends_on: ['api'] },
           ],
@@ -348,7 +348,7 @@ describe('Workspace Routes', () => {
       writeWorkspaceJson(wsRoot, baseWorkspace());
 
       const updated = baseWorkspace({
-        repos: [{ name: 'api', path: 'api', depends_on: [] }],
+        projects: [{ name: 'api', path: 'api', depends_on: [] }],
       });
       const res = await fetch(`${base}/api/workspaces/my-workspace`, {
         method: 'PUT',
@@ -362,7 +362,7 @@ describe('Workspace Routes', () => {
       const saved = JSON.parse(
         readFileSync(join(wsRoot, 'workspace.json'), 'utf8'),
       );
-      expect(saved.repos).toHaveLength(1);
+      expect(saved.projects).toHaveLength(1);
     });
 
     it('returns 409 when active workspace runs exist', async () => {
@@ -948,7 +948,7 @@ describe('Workspace Routes', () => {
           body: JSON.stringify({
             plan_json: {
               summary: 'edited plan',
-              repos: [
+              projects: [
                 {
                   name: 'api',
                   description: 'API changes',

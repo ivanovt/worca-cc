@@ -14,7 +14,7 @@ def _write_workspace_json(tmp_path, doc):
 def _minimal():
     return {
         "name": "my-platform",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
         ],
     }
@@ -24,7 +24,7 @@ def _linear_chain():
     """lib -> backend -> frontend (3 tiers)."""
     return {
         "name": "my-platform",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
             {"name": "backend", "path": "backend", "depends_on": ["lib"]},
             {"name": "frontend", "path": "frontend", "depends_on": ["backend"]},
@@ -36,7 +36,7 @@ def _diamond():
     """Diamond: lib -> (backend, worker) -> frontend."""
     return {
         "name": "diamond",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
             {"name": "backend", "path": "backend", "depends_on": ["lib"]},
             {"name": "worker", "path": "worker", "depends_on": ["lib"]},
@@ -49,7 +49,7 @@ def _cycle():
     """A -> B -> C -> A."""
     return {
         "name": "cycle",
-        "repos": [
+        "projects": [
             {"name": "a", "path": "a", "depends_on": ["c"]},
             {"name": "b", "path": "b", "depends_on": ["a"]},
             {"name": "c", "path": "c", "depends_on": ["b"]},
@@ -61,7 +61,7 @@ def _self_cycle():
     """Repo depends on itself."""
     return {
         "name": "self-cycle",
-        "repos": [
+        "projects": [
             {"name": "a", "path": "a", "depends_on": ["a"]},
         ],
     }
@@ -71,7 +71,7 @@ def _missing_dep():
     """Repo references a dependency that doesn't exist."""
     return {
         "name": "missing",
-        "repos": [
+        "projects": [
             {"name": "a", "path": "a", "depends_on": ["nonexistent"]},
         ],
     }
@@ -87,11 +87,11 @@ class TestLoadValid:
         ws = Workspace.load(root)
 
         assert ws.name == "my-platform"
-        assert len(ws.repos) == 1
-        assert ws.repos[0].name == "lib"
-        assert ws.repos[0].path == "lib"
-        assert ws.repos[0].depends_on == []
-        assert not hasattr(ws.repos[0], "role")
+        assert len(ws.projects) == 1
+        assert ws.projects[0].name == "lib"
+        assert ws.projects[0].path == "lib"
+        assert ws.projects[0].depends_on == []
+        assert not hasattr(ws.projects[0], "role")
         assert ws.integration_test is None
         assert ws.umbrella_repo is None
 
@@ -105,7 +105,7 @@ class TestLoadValid:
         ws = Workspace.load(root)
 
         assert ws.name == "my-platform"
-        assert len(ws.repos) == 3
+        assert len(ws.projects) == 3
         assert ws.integration_test is not None
         assert ws.integration_test.command == "make test"
         assert ws.integration_test.working_dir == "."
@@ -133,12 +133,12 @@ class TestLoadValid:
         with pytest.raises(jsonschema.ValidationError):
             Workspace.load(str(tmp_path))
 
-    def test_repos_accessible_by_name(self, tmp_path):
+    def test_projects_accessible_by_name(self, tmp_path):
         from worca.workspace.manifest import Workspace
 
         root = _write_workspace_json(tmp_path, _linear_chain())
         ws = Workspace.load(root)
-        names = [r.name for r in ws.repos]
+        names = [r.name for r in ws.projects]
         assert names == ["lib", "backend", "frontend"]
 
 
@@ -186,7 +186,7 @@ class TestMissingDepName:
 
         doc = {
             "name": "test",
-            "repos": [
+            "projects": [
                 {"name": "a", "path": "a", "depends_on": []},
                 {"name": "b", "path": "b", "depends_on": ["a", "ghost"]},
             ],
@@ -195,12 +195,12 @@ class TestMissingDepName:
         with pytest.raises(WorkspaceDependencyError, match="ghost"):
             Workspace.load(root)
 
-    def test_duplicate_repo_names_raises(self, tmp_path):
+    def test_duplicate_project_names_raises(self, tmp_path):
         from worca.workspace.manifest import Workspace, WorkspaceDependencyError
 
         doc = {
             "name": "dupes",
-            "repos": [
+            "projects": [
                 {"name": "a", "path": "a1", "depends_on": []},
                 {"name": "a", "path": "a2", "depends_on": []},
             ],
@@ -243,7 +243,7 @@ class TestTierComputation:
 
         doc = {
             "name": "flat",
-            "repos": [
+            "projects": [
                 {"name": "a", "path": "a", "depends_on": []},
                 {"name": "b", "path": "b", "depends_on": []},
                 {"name": "c", "path": "c", "depends_on": []},
@@ -259,7 +259,7 @@ class TestTierComputation:
 
         doc = {
             "name": "partial",
-            "repos": [
+            "projects": [
                 {"name": "a", "path": "a", "depends_on": []},
                 {"name": "b", "path": "b", "depends_on": []},
                 {"name": "c", "path": "c", "depends_on": ["a"]},
@@ -277,7 +277,7 @@ class TestTierComputation:
 
         doc = {
             "name": "order",
-            "repos": [
+            "projects": [
                 {"name": "zebra", "path": "z", "depends_on": []},
                 {"name": "apple", "path": "a", "depends_on": []},
                 {"name": "mango", "path": "m", "depends_on": []},

@@ -69,13 +69,13 @@ describe('workspaceCreateView — parent dir picker', () => {
 describe('workspaceCreateView — repo selection', () => {
   it('shows scanned repos as a checklist', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [
+      scannedProjects: [
         { name: 'backend', path: 'backend', role_hint: null },
         { name: 'frontend', path: 'frontend', role_hint: null },
       ],
     });
     const out = renderToString(workspaceCreateView({}, {}));
-    expect(out).toContain('repo-checklist');
+    expect(out).toContain('project-checklist');
     expect(out).toContain('backend');
     expect(out).toContain('frontend');
   });
@@ -97,15 +97,15 @@ describe('workspaceCreateView — repo selection', () => {
   });
 
   it('does not show repo checklist when no scan has been run', () => {
-    resetWorkspaceCreateState({ scannedRepos: [] });
+    resetWorkspaceCreateState({ scannedProjects: [] });
     const out = renderToString(workspaceCreateView({}, {}));
-    expect(out).not.toContain('repo-checklist');
+    expect(out).not.toContain('project-checklist');
   });
 
   it('no longer renders a per-repo role select (role field removed)', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [{ name: 'backend', path: 'backend', role_hint: null }],
-      selectedRepos: ['backend'],
+      scannedProjects: [{ name: 'backend', path: 'backend', role_hint: null }],
+      selectedProjects: ['backend'],
     });
     const out = renderToString(workspaceCreateView({}, {}));
     expect(out).not.toContain('select-repo-role-');
@@ -117,11 +117,11 @@ describe('workspaceCreateView — repo selection', () => {
 describe('workspaceCreateView — dependency editor', () => {
   it('shows dependency editor when 2+ repos are selected', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [
+      scannedProjects: [
         { name: 'shared-lib', path: 'shared-lib', role_hint: null },
         { name: 'backend', path: 'backend', role_hint: null },
       ],
-      selectedRepos: ['shared-lib', 'backend'],
+      selectedProjects: ['shared-lib', 'backend'],
     });
     const out = renderToString(workspaceCreateView({}, {}));
     expect(out).toContain('dep-editor');
@@ -129,8 +129,8 @@ describe('workspaceCreateView — dependency editor', () => {
 
   it('does not show dependency editor with fewer than 2 repos', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [{ name: 'backend', path: 'backend', role_hint: null }],
-      selectedRepos: ['backend'],
+      scannedProjects: [{ name: 'backend', path: 'backend', role_hint: null }],
+      selectedProjects: ['backend'],
     });
     const out = renderToString(workspaceCreateView({}, {}));
     expect(out).not.toContain('dep-editor');
@@ -138,11 +138,11 @@ describe('workspaceCreateView — dependency editor', () => {
 
   it('renders add-dependency controls for each selected repo', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [
+      scannedProjects: [
         { name: 'lib', path: 'lib', role_hint: null },
         { name: 'api', path: 'api', role_hint: null },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
     });
     const out = renderToString(workspaceCreateView({}, {}));
     expect(out).toContain('dep-row-api');
@@ -150,11 +150,11 @@ describe('workspaceCreateView — dependency editor', () => {
 
   it('shows live DAG preview container when dependencies are set', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [
+      scannedProjects: [
         { name: 'lib', path: 'lib', role_hint: null },
         { name: 'api', path: 'api', role_hint: null },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
       dependencies: { api: ['lib'] },
     });
     const out = renderToString(workspaceCreateView({}, {}));
@@ -167,11 +167,11 @@ describe('workspaceCreateView — dependency editor', () => {
 describe('workspaceCreateView — cycle detection', () => {
   it('shows cycle warning when dependencies form a cycle', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [
+      scannedProjects: [
         { name: 'a', path: 'a', role_hint: null },
         { name: 'b', path: 'b', role_hint: null },
       ],
-      selectedRepos: ['a', 'b'],
+      selectedProjects: ['a', 'b'],
       dependencies: { a: ['b'], b: ['a'] },
     });
     const out = renderToString(workspaceCreateView({}, {}));
@@ -180,11 +180,11 @@ describe('workspaceCreateView — cycle detection', () => {
 
   it('no cycle warning when dependencies are acyclic', () => {
     resetWorkspaceCreateState({
-      scannedRepos: [
+      scannedProjects: [
         { name: 'a', path: 'a', role_hint: null },
         { name: 'b', path: 'b', role_hint: null },
       ],
-      selectedRepos: ['a', 'b'],
+      selectedProjects: ['a', 'b'],
       dependencies: { b: ['a'] },
     });
     const out = renderToString(workspaceCreateView({}, {}));
@@ -233,7 +233,7 @@ describe('workspaceCreateView — name', () => {
 describe('getWorkspaceCreateSubmitState', () => {
   it('canSubmit=false when no name is set', () => {
     resetWorkspaceCreateState({
-      selectedRepos: ['lib'],
+      selectedProjects: ['lib'],
       parentDir: '/work',
     });
     expect(getWorkspaceCreateSubmitState().canSubmit).toBe(false);
@@ -250,7 +250,7 @@ describe('getWorkspaceCreateSubmitState', () => {
   it('canSubmit=false when no parent dir is set', () => {
     resetWorkspaceCreateState({
       workspaceName: 'my-ws',
-      selectedRepos: ['lib'],
+      selectedProjects: ['lib'],
     });
     expect(getWorkspaceCreateSubmitState().canSubmit).toBe(false);
   });
@@ -259,11 +259,11 @@ describe('getWorkspaceCreateSubmitState', () => {
     resetWorkspaceCreateState({
       workspaceName: 'my-ws',
       parentDir: '/work',
-      scannedRepos: [
+      scannedProjects: [
         { name: 'a', path: 'a', role_hint: null },
         { name: 'b', path: 'b', role_hint: null },
       ],
-      selectedRepos: ['a', 'b'],
+      selectedProjects: ['a', 'b'],
       dependencies: { a: ['b'], b: ['a'] },
     });
     expect(getWorkspaceCreateSubmitState().canSubmit).toBe(false);
@@ -273,11 +273,11 @@ describe('getWorkspaceCreateSubmitState', () => {
     resetWorkspaceCreateState({
       workspaceName: 'my-ws',
       parentDir: '/work',
-      scannedRepos: [
+      scannedProjects: [
         { name: 'lib', path: 'lib', role_hint: null },
         { name: 'api', path: 'api', role_hint: null },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
       dependencies: { api: ['lib'] },
     });
     expect(getWorkspaceCreateSubmitState().canSubmit).toBe(true);

@@ -10,6 +10,7 @@ Subcommands:
   multi-status
   integrations status
   workspace init    /path [--force]
+  workspace migrate /path
   --version
 
 The `worca run` command is a thin launcher: it finds the git root,
@@ -279,6 +280,9 @@ def main(argv=None):
         if args.workspace_command == "init":
             from worca.cli.workspace import cmd_workspace_init
             cmd_workspace_init(args.path, force=args.force)
+        elif args.workspace_command == "migrate":
+            from worca.cli.workspace import cmd_workspace_migrate
+            cmd_workspace_migrate(args.path)
         else:
             print("error: specify a subcommand, e.g. 'worca workspace init /path'", file=sys.stderr)
             raise SystemExit(1)

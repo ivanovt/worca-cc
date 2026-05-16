@@ -34,7 +34,7 @@ The workspace definition lives at `{workspace_root}/workspace.json`:
 ```json
 {
   "name": "my-platform",
-  "repos": [
+  "projects": [
     {
       "name": "shared-lib",
       "path": "shared-lib",
@@ -67,11 +67,11 @@ The workspace definition lives at `{workspace_root}/workspace.json`:
 | Field | Required | Description |
 |-------|----------|-------------|
 | `name` | yes | Workspace display name used in UI, PR annotations, and branch templates |
-| `repos` | yes | Array of repo entries (at least one) |
-| `repos[].name` | yes | Repo identifier referenced in `depends_on` lists |
-| `repos[].path` | yes | Relative path from workspace root to the repo directory |
-| `repos[].role` | yes | Freeform label (`library`, `service`, `app`, `infra`, etc.) — injected into the master planner prompt for context |
-| `repos[].depends_on` | yes | Array of repo names that must complete before this repo starts (empty array `[]` for tier-0 repos) |
+| `projects` | yes | Array of repo entries (at least one) |
+| `projects[].name` | yes | Repo identifier referenced in `depends_on` lists |
+| `projects[].path` | yes | Relative path from workspace root to the repo directory |
+| `projects[].role` | yes | Freeform label (`library`, `service`, `app`, `infra`, etc.) — injected into the master planner prompt for context |
+| `projects[].depends_on` | yes | Array of repo names that must complete before this repo starts (empty array `[]` for tier-0 repos) |
 | `integration_test` | no | Cross-repo integration test configuration |
 | `integration_test.command` | yes (if `integration_test` present) | Shell command to run |
 | `integration_test.working_dir` | yes (if `integration_test` present) | Working directory relative to workspace root |

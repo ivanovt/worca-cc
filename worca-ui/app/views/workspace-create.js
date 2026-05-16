@@ -5,8 +5,8 @@ import { dagGraphView } from './dag-graph.js';
 
 let workspaceName = '';
 let parentDir = '';
-let scannedRepos = [];
-let selectedRepos = [];
+let scannedProjects = [];
+let selectedProjects = [];
 let dependencies = {};
 let integrationCmd = '';
 let integrationCwd = '';
@@ -19,8 +19,8 @@ let submitError = '';
 export function resetWorkspaceCreateState(overrides = {}) {
   workspaceName = overrides.workspaceName ?? '';
   parentDir = overrides.parentDir ?? '';
-  scannedRepos = overrides.scannedRepos ?? [];
-  selectedRepos = overrides.selectedRepos ?? [];
+  scannedProjects = overrides.scannedProjects ?? [];
+  selectedProjects = overrides.selectedProjects ?? [];
   dependencies = overrides.dependencies ?? {};
   integrationCmd = overrides.integrationCmd ?? '';
   integrationCwd = overrides.integrationCwd ?? '';
@@ -31,14 +31,14 @@ export function resetWorkspaceCreateState(overrides = {}) {
   submitError = overrides.submitError ?? '';
 }
 
-function _detectCycle(repos, deps) {
+function _detectCycle(projects, deps) {
   const inDegree = {};
   const dependents = {};
-  for (const name of repos) {
+  for (const name of projects) {
     inDegree[name] = 0;
     dependents[name] = [];
   }
-  for (const name of repos) {
+  for (const name of projects) {
     for (const dep of deps[name] || []) {
       if (!(dep in inDegree)) continue;
       inDegree[name]++;
@@ -56,11 +56,13 @@ function _detectCycle(repos, deps) {
       if (inDegree[dep] === 0) next.push(dep);
     }
   }
-  return processed !== repos.length;
+  return processed !== projects.length;
 }
 
 function _hasCycle() {
-  return selectedRepos.length >= 2 && _detectCycle(selectedRepos, dependencies);
+  return (
+    selectedProjects.length >= 2 && _detectCycle(selectedProjects, dependencies)
+  );
 }
 
 function _parentDirSuggestions(projects) {
@@ -80,7 +82,7 @@ export function getWorkspaceCreateSubmitState() {
     canSubmit:
       workspaceName.trim().length > 0 &&
       parentDir.trim().length > 0 &&
-      selectedRepos.length > 0 &&
+      selectedProjects.length > 0 &&
       !hasCycle,
     isSubmitting: submitStatus === 'submitting',
     submitStatus,
@@ -100,7 +102,7 @@ export async function submitWorkspaceCreate({ rerender, onCreated } = {}) {
     rerender?.();
     return;
   }
-  if (selectedRepos.length === 0) {
+  if (selectedProjects.length === 0) {
     submitStatus = 'error';
     submitError = 'Select at least one repository.';
     rerender?.();
@@ -117,8 +119,8 @@ export async function submitWorkspaceCreate({ rerender, onCreated } = {}) {
   submitError = '';
   rerender?.();
 
-  const repos = selectedRepos.map((name) => {
-    const scanned = scannedRepos.find((r) => r.name === name);
+  const projects = selectedProjects.map((name) => {
+    const scanned = scannedProjects.find((r) => r.name === name);
     return {
       name,
       path: scanned?.path || name,
@@ -129,7 +131,7 @@ export async function submitWorkspaceCreate({ rerender, onCreated } = {}) {
   const body = {
     name: workspaceName.trim(),
     parent_path: parentDir.trim(),
-    repos,
+    projects,
   };
   if (integrationCmd.trim()) {
     body.integration_test = {
@@ -201,16 +203,16 @@ export async function addExternalRepo({ rerender } = {}) {
     // suffix with -2, -3, etc. so both stay reachable.
     let name = baseName;
     let i = 2;
-    const existingNames = new Set(scannedRepos.map((r) => r.name));
+    const existingNames = new Set(scannedProjects.map((r) => r.name));
     while (existingNames.has(name)) {
       name = `${baseName}-${i}`;
       i++;
     }
-    scannedRepos = [
-      ...scannedRepos,
+    scannedProjects = [
+      ...scannedProjects,
       { name, path, role_hint: null, external: true },
     ];
-    selectedRepos = [...selectedRepos, name];
+    selectedProjects = [...selectedProjects, name];
     rerender?.();
   } catch {
     // User cancelled or picker tool missing — silent.
@@ -231,15 +233,15 @@ export async function scanParentDir({ rerender } = {}) {
     });
     const data = await resp.json();
     if (data.ok) {
-      scannedRepos = data.repos || [];
+      scannedProjects = data.projects || [];
       scanStatus = 'done';
     } else {
-      scannedRepos = [];
+      scannedProjects = [];
       scanStatus = 'error';
       scanError = data.error || 'Scan failed';
     }
   } catch (err) {
-    scannedRepos = [];
+    scannedProjects = [];
     scanStatus = 'error';
     scanError = err.message || 'Network error';
   }
@@ -384,32 +386,35 @@ function _parentDirSection(appState, { rerender } = {}) {
 }
 
 function _repoChecklistSection({ rerender } = {}) {
-  if (scannedRepos.length === 0) return nothing;
+  if (scannedProjects.length === 0) return nothing;
 
   return html`
     <div class="new-run-section">
       <h3 class="new-run-section-title">Repositories</h3>
-      <div class="repo-checklist">
-        ${scannedRepos.map(
-          (repo) => html`
-            <div class="repo-checklist-item">
+      <div class="project-checklist">
+        ${scannedProjects.map(
+          (project) => html`
+            <div class="project-checklist-item">
               <sl-checkbox
-                class="checkbox-repo-${repo.name}"
-                ?checked=${selectedRepos.includes(repo.name)}
+                class="checkbox-project-${project.name}"
+                ?checked=${selectedProjects.includes(project.name)}
                 @sl-change=${
                   rerender
                     ? (e) => {
                         if (e.target.checked) {
-                          selectedRepos = [...selectedRepos, repo.name];
+                          selectedProjects = [
+                            ...selectedProjects,
+                            project.name,
+                          ];
                         } else {
-                          selectedRepos = selectedRepos.filter(
-                            (n) => n !== repo.name,
+                          selectedProjects = selectedProjects.filter(
+                            (n) => n !== project.name,
                           );
                           const newDeps = { ...dependencies };
-                          delete newDeps[repo.name];
+                          delete newDeps[project.name];
                           for (const key of Object.keys(newDeps)) {
                             newDeps[key] = newDeps[key].filter(
-                              (d) => d !== repo.name,
+                              (d) => d !== project.name,
                             );
                           }
                           dependencies = newDeps;
@@ -418,19 +423,19 @@ function _repoChecklistSection({ rerender } = {}) {
                       }
                     : null
                 }
-              >${repo.name}</sl-checkbox>
+              >${project.name}</sl-checkbox>
               ${
-                repo.external
-                  ? html`<sl-tag size="small" variant="primary" class="ws-external-tag" title="${repo.path}">External</sl-tag>`
+                project.external
+                  ? html`<sl-tag size="small" variant="primary" class="ws-external-tag" title="${project.path}">External</sl-tag>`
                   : nothing
               }
             </div>
           `,
         )}
       </div>
-      <div class="repo-checklist-actions">
+      <div class="project-checklist-actions">
         <sl-button
-          class="btn-add-external-repo"
+          class="btn-add-external-project"
           size="small"
           @click=${rerender ? () => addExternalRepo({ rerender }) : null}
         >
@@ -446,21 +451,21 @@ function _repoChecklistSection({ rerender } = {}) {
 }
 
 function _depEditorSection({ rerender } = {}) {
-  if (selectedRepos.length < 2) return nothing;
+  if (selectedProjects.length < 2) return nothing;
 
   const hasCycle = _hasCycle();
-  const dagRepos = selectedRepos.map((name) => ({
+  const dagProjects = selectedProjects.map((name) => ({
     name,
     status: 'pending',
     depends_on: dependencies[name] || [],
   }));
-  const { svg } = dagGraphView({ repos: dagRepos }, { mode: 'edit' });
+  const { svg } = dagGraphView({ projects: dagProjects }, { mode: 'edit' });
 
   return html`
     <div class="new-run-section">
       <h3 class="new-run-section-title">Dependencies</h3>
       <div class="dep-editor">
-        ${selectedRepos.map(
+        ${selectedProjects.map(
           (name) => html`
             <div class="dep-row dep-row-${name}">
               <span class="dep-repo-name">${name}</span>
@@ -486,7 +491,7 @@ function _depEditorSection({ rerender } = {}) {
                     : null
                 }
               >
-                ${selectedRepos
+                ${selectedProjects
                   .filter((r) => r !== name)
                   .map((r) => html`<sl-option value="${r}">${r}</sl-option>`)}
               </sl-select>

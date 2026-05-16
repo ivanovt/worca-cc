@@ -25,14 +25,14 @@ class TestPerTargetTimeout:
                 raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        repos = [
+        projects = [
             {"name": "fast-repo", "path": "fast-repo"},
             {"name": "slow-repo", "path": "slow-repo"},
         ]
 
         with patch("worca.workspace.init.subprocess.run", side_effect=mock_run):
             results = init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=1,
             )
@@ -48,14 +48,14 @@ class TestPerTargetTimeout:
                 raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        repos = [
+        projects = [
             {"name": "fast-repo", "path": "fast-repo"},
             {"name": "slow-repo", "path": "slow-repo"},
         ]
 
         with patch("worca.workspace.init.subprocess.run", side_effect=mock_run):
             results = init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=1,
             )
@@ -70,11 +70,11 @@ class TestPerTargetTimeout:
                 args=cmd, returncode=1, stdout="", stderr="init error",
             )
 
-        repos = [{"name": "broken-repo", "path": "broken-repo"}]
+        projects = [{"name": "broken-repo", "path": "broken-repo"}]
 
         with patch("worca.workspace.init.subprocess.run", side_effect=mock_run):
             results = init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=60,
             )
@@ -93,7 +93,7 @@ class TestPerTargetTimeout:
                 raise subprocess.TimeoutExpired(cmd=cmd, timeout=1)
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        repos = [
+        projects = [
             {"name": "repo-a", "path": "repo-a"},
             {"name": "slow-repo", "path": "slow-repo"},
             {"name": "repo-b", "path": "repo-b"},
@@ -101,7 +101,7 @@ class TestPerTargetTimeout:
 
         with patch("worca.workspace.init.subprocess.run", side_effect=mock_run):
             results = init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=1,
             )
@@ -119,11 +119,11 @@ class TestPerTargetTimeout:
             captured_timeouts.append(kwargs.get("timeout"))
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        repos = [{"name": "repo", "path": "repo"}]
+        projects = [{"name": "repo", "path": "repo"}]
 
         with patch("worca.workspace.init.subprocess.run", side_effect=mock_run):
             init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=42,
             )
@@ -138,11 +138,11 @@ class TestPerTargetTimeout:
             captured_timeouts.append(kwargs.get("timeout"))
             return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
-        repos = [{"name": "repo", "path": "repo"}]
+        projects = [{"name": "repo", "path": "repo"}]
 
         with patch("worca.workspace.init.subprocess.run", side_effect=mock_run):
             init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
             )
 
@@ -171,7 +171,7 @@ class TestCancelDuringInit:
                 proc.wait.return_value = None
             return proc
 
-        repos = [
+        projects = [
             {"name": "repo-a", "path": "repo-a"},
             {"name": "repo-b", "path": "repo-b"},
             {"name": "repo-c", "path": "repo-c"},
@@ -179,7 +179,7 @@ class TestCancelDuringInit:
 
         with patch("worca.workspace.init.subprocess.Popen", side_effect=mock_popen):
             results = init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=60,
                 cancel_event=cancel,
@@ -208,14 +208,14 @@ class TestCancelDuringInit:
                 proc.wait.return_value = None
             return proc
 
-        repos = [
+        projects = [
             {"name": "repo-first", "path": "repo-first"},
             {"name": "repo-second", "path": "repo-second"},
         ]
 
         with patch("worca.workspace.init.subprocess.Popen", side_effect=mock_popen):
             results = init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=60,
                 cancel_event=cancel,
@@ -239,11 +239,11 @@ class TestCancelDuringInit:
         def mock_popen(cmd, **kwargs):
             return mock_proc
 
-        repos = [{"name": "repo", "path": "repo"}]
+        projects = [{"name": "repo", "path": "repo"}]
 
         with patch("worca.workspace.init.subprocess.Popen", side_effect=mock_popen):
             results = init_workspace_targets(
-                repos=repos,
+                projects=projects,
                 workspace_root="/workspace",
                 timeout_seconds=60,
                 cancel_event=cancel,
@@ -257,10 +257,10 @@ class TestCancelDuringInit:
         cancel = threading.Event()
         cancel.set()
 
-        repos = [{"name": "repo", "path": "repo"}]
+        projects = [{"name": "repo", "path": "repo"}]
 
         results = init_workspace_targets(
-            repos=repos,
+            projects=projects,
             workspace_root="/workspace",
             timeout_seconds=60,
             cancel_event=cancel,

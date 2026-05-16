@@ -31,17 +31,17 @@ def _base_manifest(workspace_root="/workspace", **overrides):
         "guide": {"paths": [], "bytes": 0, "filenames": []},
         "dag": {
             "tiers": [
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["backend"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["backend"], "status": "pending"},
             ],
             "dependency_graph": {
                 "lib": [],
                 "backend": ["lib"],
             },
         },
-        "repos_by_name": {"lib": "shared-lib", "backend": "services/backend"},
+        "projects_by_name": {"lib": "shared-lib", "backend": "services/backend"},
         "children": [],
-        "plan": {"workspace_plan_path": None, "repo_plans": {}},
+        "plan": {"workspace_plan_path": None, "project_plans": {}},
     }
     m.update(overrides)
     return m
@@ -66,7 +66,7 @@ class TestDependencyGraphInManifest:
             skip_integration=False,
             skip_planning=False,
             tiers=[["lib"], ["backend"]],
-            repos_by_name={"lib": "lib", "backend": "backend"},
+            projects_by_name={"lib": "lib", "backend": "backend"},
             dependency_graph=dep_graph,
         )
         assert manifest["dag"]["dependency_graph"] == dep_graph
@@ -82,7 +82,7 @@ class TestDependencyGraphInManifest:
 # ---- #2: _run_child uses repo path ----------------------------------------
 
 class TestRunChildUsesRepoPath:
-    def test_run_child_resolves_path_from_repos_by_name(self):
+    def test_run_child_resolves_path_from_projects_by_name(self):
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _base_manifest(workspace_root="/workspace")
@@ -106,10 +106,10 @@ class TestRunChildUsesRepoPath:
         assert result["status"] == "completed"
         assert captured_cwd[0] == "/workspace/shared-lib"
 
-    def test_run_child_falls_back_to_repo_name(self):
+    def test_run_child_falls_back_to_project_name(self):
         from worca.workspace.dag_executor import DagExecutor
 
-        manifest = _base_manifest(repos_by_name={})
+        manifest = _base_manifest(projects_by_name={})
         executor = DagExecutor(manifest, "/tmp/run-dir")
 
         captured_cwd = []
@@ -192,7 +192,7 @@ class TestProjectPathInChildren:
 
         manifest = _base_manifest(
             dag={
-                "tiers": [{"tier": 0, "repos": ["lib"], "status": "pending"}],
+                "tiers": [{"tier": 0, "projects": ["lib"], "status": "pending"}],
                 "dependency_graph": {"lib": []},
             },
         )
@@ -218,7 +218,7 @@ class TestProjectPathInChildren:
 
         manifest = _base_manifest()
         manifest["children"] = [
-            {"repo": "lib", "status": "failed", "run_id": None,
+            {"project": "lib", "status": "failed", "run_id": None,
              "worktree_path": None, "tier": 0},
         ]
         manifest["dag"]["tiers"][0]["status"] = "failed"
@@ -249,8 +249,8 @@ class TestBlockedReposCircuitBreaker:
         manifest = _base_manifest(
             dag={
                 "tiers": [
-                    {"tier": 0, "repos": ["lib"], "status": "pending"},
-                    {"tier": 1, "repos": ["backend"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "pending"},
+                    {"tier": 1, "projects": ["backend"], "status": "pending"},
                 ],
                 "dependency_graph": {"lib": [], "backend": ["lib"]},
             },
@@ -343,7 +343,7 @@ class TestDagExecutorUsesStatusEnum:
 
         manifest = _base_manifest(
             dag={
-                "tiers": [{"tier": 0, "repos": ["lib"], "status": "pending"}],
+                "tiers": [{"tier": 0, "projects": ["lib"], "status": "pending"}],
                 "dependency_graph": {"lib": []},
             },
         )
@@ -370,7 +370,7 @@ class TestDagExecutorUsesStatusEnum:
 
         manifest = _base_manifest(
             dag={
-                "tiers": [{"tier": 0, "repos": ["lib"], "status": "pending"}],
+                "tiers": [{"tier": 0, "projects": ["lib"], "status": "pending"}],
                 "dependency_graph": {"lib": []},
             },
         )

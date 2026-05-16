@@ -79,13 +79,13 @@ def validate_gh_auth(nwos: set[str]) -> list[str]:
 
 
 def _resolve_all_nwos(workspace: Workspace, workspace_root: str) -> dict[str, str]:
-    """Resolve owner/repo for all workspace repos."""
+    """Resolve owner/repo for each workspace project's git remote."""
     nwos: dict[str, str] = {}
-    for repo in workspace.repos:
-        repo_path = os.path.join(workspace_root, repo.path)
-        nwo = resolve_repo_nwo(repo_path)
+    for project in workspace.projects:
+        project_path = os.path.join(workspace_root, project.path)
+        nwo = resolve_repo_nwo(project_path)
         if nwo:
-            nwos[repo.name] = nwo
+            nwos[project.name] = nwo
     return nwos
 
 
@@ -119,8 +119,8 @@ def create_workspace_prs(
         if child.get("pr_number"):
             continue
 
-        repo_name = child["repo"]
-        nwo = nwos.get(repo_name)
+        project_name = child["project"]
+        nwo = nwos.get(project_name)
         if not nwo:
             continue
 
@@ -157,31 +157,31 @@ def create_workspace_prs(
 
 
 def _invert_dependency_graph(workspace: Workspace) -> dict[str, list[str]]:
-    """Build reverse map: repo -> repos that depend on it."""
-    dependents: dict[str, list[str]] = {r.name: [] for r in workspace.repos}
-    for repo in workspace.repos:
-        for dep in repo.depends_on:
+    """Build reverse map: project -> projects that depend on it."""
+    dependents: dict[str, list[str]] = {p.name: [] for p in workspace.projects}
+    for project in workspace.projects:
+        for dep in project.depends_on:
             if dep in dependents:
-                dependents[dep].append(repo.name)
+                dependents[dep].append(project.name)
     return dependents
 
 
 def build_dependency_comment(
-    repo_name: str,
+    project_name: str,
     all_pr_info: dict[str, dict],
     workspace: Workspace,
     workspace_id: str,
 ) -> str:
     """Build markdown dependency comment for a child PR."""
     dependents_map = _invert_dependency_graph(workspace)
-    repo_info = {r.name: r for r in workspace.repos}
-    repo = repo_info[repo_name]
+    project_info = {p.name: p for p in workspace.projects}
+    project = project_info[project_name]
 
     lines = [f"## Workspace: {workspace.name}"]
 
-    if repo.depends_on:
+    if project.depends_on:
         dep_refs = []
-        for dep in repo.depends_on:
+        for dep in project.depends_on:
             pr = all_pr_info.get(dep)
             if pr and pr.get("nwo") and pr.get("pr_number"):
                 dep_refs.append(f"{pr['nwo']}#{pr['pr_number']} (must merge first)")
@@ -189,7 +189,7 @@ def build_dependency_comment(
                 dep_refs.append(f"{dep} (no PR)")
         lines.append(f"**Depends on:** {', '.join(dep_refs)}")
 
-    blocked = dependents_map.get(repo_name, [])
+    blocked = dependents_map.get(project_name, [])
     if blocked:
         blocked_refs = []
         for b in blocked:
@@ -212,7 +212,7 @@ def post_dependency_comments(manifest: dict, workspace: Workspace) -> None:
     all_pr_info: dict[str, dict] = {}
     for child in manifest["children"]:
         if child.get("pr_number"):
-            all_pr_info[child["repo"]] = {
+            all_pr_info[child["project"]] = {
                 "pr_number": child["pr_number"],
                 "pr_url": child.get("pr_url"),
                 "nwo": child.get("nwo"),
@@ -223,7 +223,7 @@ def post_dependency_comments(manifest: dict, workspace: Workspace) -> None:
             continue
 
         comment = build_dependency_comment(
-            child["repo"], all_pr_info, workspace, workspace_id,
+            child["project"], all_pr_info, workspace, workspace_id,
         )
 
         subprocess.run(
@@ -251,14 +251,14 @@ def build_umbrella_body(manifest: dict, workspace: Workspace) -> str:
 
     tiers = manifest.get("dag", {}).get("tiers", [])
     for tier_info in tiers:
-        for repo_name in tier_info.get("repos", []):
+        for project_name in tier_info.get("projects", []):
             child = next(
-                (c for c in manifest["children"] if c["repo"] == repo_name),
+                (c for c in manifest["children"] if c["project"] == project_name),
                 None,
             )
             if child and child.get("pr_url") and child.get("nwo") and child.get("pr_number"):
                 lines.append(
-                    f"- [ ] {child['nwo']}#{child['pr_number']} — {repo_name}"
+                    f"- [ ] {child['nwo']}#{child['pr_number']} — {project_name}"
                 )
 
     return "\n".join(lines)
@@ -270,10 +270,10 @@ def create_umbrella_issue(manifest: dict, workspace: Workspace) -> dict | None:
 
     if not target_repo:
         tiers = manifest.get("dag", {}).get("tiers", [])
-        if tiers and tiers[0].get("repos"):
-            first_repo = tiers[0]["repos"][0]
+        if tiers and tiers[0].get("projects"):
+            first_project = tiers[0]["projects"][0]
             child = next(
-                (c for c in manifest["children"] if c["repo"] == first_repo),
+                (c for c in manifest["children"] if c["project"] == first_project),
                 None,
             )
             if child and child.get("nwo"):

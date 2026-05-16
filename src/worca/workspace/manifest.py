@@ -21,6 +21,15 @@ class WorkspaceDependencyError(Exception):
     pass
 
 
+class WorkspaceLegacySchemaError(Exception):
+    """Raised when workspace.json uses the pre-rename `repos` key.
+
+    Points the user at `worca workspace migrate <path>` so they can convert
+    in place — we made a hard cut from `repos` to `projects` rather than
+    accepting both keys (see plan PR 3, "naming sweep").
+    """
+
+
 @dataclass
 class IntegrationTest:
     command: str
@@ -28,7 +37,7 @@ class IntegrationTest:
 
 
 @dataclass
-class RepoEntry:
+class ProjectEntry:
     name: str
     path: str
     depends_on: list[str]
@@ -37,7 +46,7 @@ class RepoEntry:
 @dataclass
 class Workspace:
     name: str
-    repos: list[RepoEntry]
+    projects: list[ProjectEntry]
     tiers: list[list[str]]
     integration_test: IntegrationTest | None = None
     umbrella_repo: str | None = None
@@ -48,21 +57,28 @@ class Workspace:
         with open(manifest_path) as f:
             doc = json.load(f)
 
+        if "repos" in doc and "projects" not in doc:
+            raise WorkspaceLegacySchemaError(
+                f"{manifest_path} uses the legacy `repos` key. Run "
+                f"`worca workspace migrate {workspace_root}` to convert "
+                f"the file to the current `projects` schema."
+            )
+
         with open(_SCHEMA_PATH) as f:
             schema = json.load(f)
         jsonschema.validate(doc, schema)
 
-        repos = [
-            RepoEntry(
-                name=r["name"],
-                path=r["path"],
-                depends_on=r["depends_on"],
+        projects = [
+            ProjectEntry(
+                name=p["name"],
+                path=p["path"],
+                depends_on=p["depends_on"],
             )
-            for r in doc["repos"]
+            for p in doc["projects"]
         ]
 
-        _validate_deps(repos)
-        tiers = _compute_tiers(repos)
+        _validate_deps(projects)
+        tiers = _compute_tiers(projects)
 
         it = doc.get("integration_test")
         integration_test = (
@@ -73,39 +89,39 @@ class Workspace:
 
         return cls(
             name=doc["name"],
-            repos=repos,
+            projects=projects,
             tiers=tiers,
             integration_test=integration_test,
             umbrella_repo=doc.get("umbrella_repo"),
         )
 
 
-def _validate_deps(repos: list[RepoEntry]) -> None:
-    names = [r.name for r in repos]
+def _validate_deps(projects: list[ProjectEntry]) -> None:
+    names = [p.name for p in projects]
     seen: set[str] = set()
     for name in names:
         if name in seen:
-            raise WorkspaceDependencyError(f"duplicate repo name: {name}")
+            raise WorkspaceDependencyError(f"duplicate project name: {name}")
         seen.add(name)
 
     name_set = set(names)
-    for repo in repos:
-        for dep in repo.depends_on:
+    for project in projects:
+        for dep in project.depends_on:
             if dep not in name_set:
                 raise WorkspaceDependencyError(
-                    f"repo '{repo.name}' depends on '{dep}' which is not defined"
+                    f"project '{project.name}' depends on '{dep}' which is not defined"
                 )
 
 
-def _compute_tiers(repos: list[RepoEntry]) -> list[list[str]]:
+def _compute_tiers(projects: list[ProjectEntry]) -> list[list[str]]:
     """Kahn's algorithm — BFS topological sort grouped into tiers. Raises on cycles."""
-    in_degree: dict[str, int] = {r.name: 0 for r in repos}
-    dependents: dict[str, list[str]] = {r.name: [] for r in repos}
+    in_degree: dict[str, int] = {p.name: 0 for p in projects}
+    dependents: dict[str, list[str]] = {p.name: [] for p in projects}
 
-    for repo in repos:
-        for dep in repo.depends_on:
-            in_degree[repo.name] += 1
-            dependents[dep].append(repo.name)
+    for project in projects:
+        for dep in project.depends_on:
+            in_degree[project.name] += 1
+            dependents[dep].append(project.name)
 
     queue: deque[str] = deque(
         sorted(name for name, deg in in_degree.items() if deg == 0)
@@ -125,10 +141,10 @@ def _compute_tiers(repos: list[RepoEntry]) -> list[list[str]]:
                     next_queue.append(dep)
         queue = next_queue
 
-    if processed != len(repos):
+    if processed != len(projects):
         remaining = sorted(name for name, deg in in_degree.items() if deg > 0)
         raise WorkspaceCycleError(
-            f"dependency cycle detected among repos: {', '.join(remaining)}"
+            f"dependency cycle detected among projects: {', '.join(remaining)}"
         )
 
     return tiers

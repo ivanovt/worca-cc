@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { dagGraphView } from './dag-graph.js';
 
 const linearChain = {
-  repos: [
+  projects: [
     { name: 'shared-lib', status: 'completed', depends_on: [] },
     { name: 'backend', status: 'running', depends_on: ['shared-lib'] },
     { name: 'frontend', status: 'pending', depends_on: ['backend'] },
@@ -10,7 +10,7 @@ const linearChain = {
 };
 
 const diamondDag = {
-  repos: [
+  projects: [
     { name: 'core', status: 'completed', depends_on: [] },
     { name: 'api', status: 'running', depends_on: ['core'] },
     { name: 'web', status: 'running', depends_on: ['core'] },
@@ -20,7 +20,7 @@ const diamondDag = {
 
 describe('dagGraphView', () => {
   it('returns empty svg for empty repos', () => {
-    const result = dagGraphView({ repos: [] }, { mode: 'navigate' });
+    const result = dagGraphView({ projects: [] }, { mode: 'navigate' });
     expect(result.svg).toBe('');
     expect(result.nodes).toEqual([]);
   });
@@ -167,7 +167,7 @@ describe('dagGraphView', () => {
     it('draws edges from source right edge to target left edge', () => {
       const { svg, nodes } = dagGraphView(
         {
-          repos: [
+          projects: [
             { name: 'a', status: 'completed', depends_on: [] },
             { name: 'b', status: 'pending', depends_on: ['a'] },
           ],
@@ -221,7 +221,9 @@ describe('dagGraphView', () => {
     it('escapes special characters in repo names', () => {
       const { svg } = dagGraphView(
         {
-          repos: [{ name: 'lib<script>', status: 'pending', depends_on: [] }],
+          projects: [
+            { name: 'lib<script>', status: 'pending', depends_on: [] },
+          ],
         },
         { mode: 'preview' },
       );
@@ -233,7 +235,7 @@ describe('dagGraphView', () => {
   describe('single repo (no edges)', () => {
     it('renders one node with no edges', () => {
       const { svg, nodes } = dagGraphView(
-        { repos: [{ name: 'solo', status: 'completed', depends_on: [] }] },
+        { projects: [{ name: 'solo', status: 'completed', depends_on: [] }] },
         { mode: 'navigate' },
       );
       expect(nodes).toHaveLength(1);

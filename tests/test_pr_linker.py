@@ -3,7 +3,7 @@ import subprocess
 from unittest.mock import patch
 
 
-from worca.workspace.manifest import RepoEntry, Workspace
+from worca.workspace.manifest import ProjectEntry, Workspace
 from worca.workspace.pr_linker import (
     build_dependency_comment,
     build_umbrella_body,
@@ -18,15 +18,15 @@ from worca.workspace.pr_linker import (
 
 
 def _make_workspace(*, umbrella_repo=None):
-    repos = [
-        RepoEntry(name="shared-lib", path="shared-lib", depends_on=[]),
-        RepoEntry(name="backend", path="backend", depends_on=["shared-lib"]),
-        RepoEntry(name="frontend", path="frontend", depends_on=["backend"]),
+    projects = [
+        ProjectEntry(name="shared-lib", path="shared-lib", depends_on=[]),
+        ProjectEntry(name="backend", path="backend", depends_on=["shared-lib"]),
+        ProjectEntry(name="frontend", path="frontend", depends_on=["backend"]),
     ]
     tiers = [["shared-lib"], ["backend"], ["frontend"]]
     return Workspace(
         name="my-platform",
-        repos=repos,
+        projects=projects,
         tiers=tiers,
         umbrella_repo=umbrella_repo,
     )
@@ -40,14 +40,14 @@ def _make_manifest_with_prs():
         "work_request": {"title": "Add user profiles", "description": "...", "source": None},
         "dag": {
             "tiers": [
-                {"tier": 0, "repos": ["shared-lib"], "status": "completed"},
-                {"tier": 1, "repos": ["backend"], "status": "completed"},
-                {"tier": 2, "repos": ["frontend"], "status": "completed"},
+                {"tier": 0, "projects": ["shared-lib"], "status": "completed"},
+                {"tier": 1, "projects": ["backend"], "status": "completed"},
+                {"tier": 2, "projects": ["frontend"], "status": "completed"},
             ],
         },
         "children": [
             {
-                "repo": "shared-lib",
+                "project": "shared-lib",
                 "run_id": "r-001",
                 "worktree_path": "/wt/shared-lib",
                 "status": "completed",
@@ -57,7 +57,7 @@ def _make_manifest_with_prs():
                 "nwo": "org/shared-lib",
             },
             {
-                "repo": "backend",
+                "project": "backend",
                 "run_id": "r-002",
                 "worktree_path": "/wt/backend",
                 "status": "completed",
@@ -67,7 +67,7 @@ def _make_manifest_with_prs():
                 "nwo": "org/backend",
             },
             {
-                "repo": "frontend",
+                "project": "frontend",
                 "run_id": "r-003",
                 "worktree_path": "/wt/frontend",
                 "status": "completed",
@@ -82,7 +82,7 @@ def _make_manifest_with_prs():
 
 def _all_pr_info_from(manifest):
     return {
-        c["repo"]: {"pr_number": c["pr_number"], "pr_url": c["pr_url"], "nwo": c["nwo"]}
+        c["project"]: {"pr_number": c["pr_number"], "pr_url": c["pr_url"], "nwo": c["nwo"]}
         for c in manifest["children"]
         if c.get("pr_number")
     }
@@ -186,9 +186,9 @@ class TestDependencyComments:
         manifest = _make_manifest_with_prs()
         pr_info = _all_pr_info_from(manifest)
 
-        for repo_name in ["shared-lib", "backend", "frontend"]:
+        for project_name in ["shared-lib", "backend", "frontend"]:
             comment = build_dependency_comment(
-                repo_name, pr_info, ws, manifest["workspace_id"],
+                project_name, pr_info, ws, manifest["workspace_id"],
             )
             assert "**Workspace run:** `ws_202605150000_aabb1122`" in comment
 
@@ -278,7 +278,7 @@ class TestUmbrellaIssue:
         frontend_pos = body.index("org/frontend#43")
         assert lib_pos < backend_pos < frontend_pos
 
-    def test_body_uses_repo_name_as_description(self):
+    def test_body_uses_project_name_as_description(self):
         # `role` was removed (was a freeform label with no behavior). The
         # umbrella body now falls back to the repo name.
         ws = _make_workspace()

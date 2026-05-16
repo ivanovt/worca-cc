@@ -127,7 +127,7 @@ def test_workspace_fullstack_3_repos(tmp_path):
     """Full-stack: run_workspace.py setup → DagExecutor dispatch → registry →
     discovery → dashboard data → WorkspaceSource cleanup."""
     from worca.workspace.manifest import Workspace
-    from worca.workspace.dag_executor import _extract_repo_context, _write_context_file
+    from worca.workspace.dag_executor import _extract_project_context, _write_context_file
     from worca.scripts.run_workspace import (
         create_workspace_manifest,
         write_workspace_manifest,
@@ -153,7 +153,7 @@ def test_workspace_fullstack_3_repos(tmp_path):
 
     workspace_json = {
         "name": "acme-fullstack",
-        "repos": [
+        "projects": [
             {"name": "shared-lib", "path": "shared-lib", 
              "depends_on": []},
             {"name": "backend", "path": "backend", 
@@ -204,8 +204,8 @@ def test_workspace_fullstack_3_repos(tmp_path):
         skip_integration=False,
         skip_planning=True,
         tiers=ws.tiers,
-        repos_by_name={r.name: r.path for r in ws.repos},
-        dependency_graph={r.name: r.depends_on for r in ws.repos},
+        projects_by_name={r.name: r.path for r in ws.projects},
+        dependency_graph={r.name: r.depends_on for r in ws.projects},
     )
 
     assert manifest["workspace_id"] == ws_id
@@ -278,7 +278,7 @@ def test_workspace_fullstack_3_repos(tmp_path):
 
         if tier_idx < len(ws.tiers) - 1:
             for repo_name in tier:
-                content = _extract_repo_context(worktree_paths[repo_name])
+                content = _extract_project_context(worktree_paths[repo_name])
                 if content.strip():
                     _write_context_file(run_dir, repo_name, content)
 
@@ -353,7 +353,7 @@ def test_workspace_fullstack_3_repos(tmp_path):
     # Populate manifest.children with the data dashboard.js expects
     manifest["children"] = [
         {
-            "repo": repo_name,
+            "project": repo_name,
             "run_id": run_ids[repo_name],
             "worktree_path": worktree_paths[repo_name],
             "project_path": str(repo_paths[repo_name]),
@@ -378,11 +378,11 @@ def test_workspace_fullstack_3_repos(tmp_path):
     # Verify tier data in dag matches what _renderWorkspaceCard reads
     for dag_tier in manifest["dag"]["tiers"]:
         assert "tier" in dag_tier
-        assert "repos" in dag_tier
+        assert "projects" in dag_tier
         assert "status" in dag_tier
 
     # Verify children cover all repos and are unique
-    child_repos = [c["repo"] for c in manifest["children"]]
+    child_repos = [c["project"] for c in manifest["children"]]
     assert sorted(child_repos) == sorted(repo_names)
     child_run_ids = [c["run_id"] for c in manifest["children"]]
     assert len(set(child_run_ids)) == len(child_run_ids), (

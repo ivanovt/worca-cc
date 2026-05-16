@@ -19,7 +19,7 @@ def _write_workspace_json(tmp_path, doc=None):
 def _minimal_doc():
     return {
         "name": "my-platform",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
         ],
     }
@@ -29,7 +29,7 @@ def _linear_chain_doc():
     """lib -> backend -> frontend (3 tiers)."""
     return {
         "name": "my-platform",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
             {"name": "backend", "path": "backend", "depends_on": ["lib"]},
             {"name": "frontend", "path": "frontend", "depends_on": ["backend"]},
@@ -41,7 +41,7 @@ def _diamond_doc():
     """Diamond: lib -> (backend, worker) -> frontend."""
     return {
         "name": "diamond",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
             {"name": "backend", "path": "backend", "depends_on": ["lib"]},
             {"name": "worker", "path": "worker", "depends_on": ["lib"]},
@@ -96,16 +96,16 @@ class TestArgParsing:
         parser = create_parser()
         args = parser.parse_args([
             "/some/path", "--prompt", "x",
-            "--branch", "workspace/{slug}/{repo}",
+            "--branch", "workspace/{slug}/{project}",
         ])
-        assert args.branch == "workspace/{slug}/{repo}"
+        assert args.branch == "workspace/{slug}/{project}"
 
     def test_branch_template_default(self):
         from worca.scripts.run_workspace import create_parser
 
         parser = create_parser()
         args = parser.parse_args(["/some/path", "--prompt", "x"])
-        assert args.branch == "workspace/{slug}/{repo}"
+        assert args.branch == "workspace/{slug}/{project}"
 
     def test_skip_integration_flag(self):
         from worca.scripts.run_workspace import create_parser
@@ -297,12 +297,12 @@ class TestWorkspaceManifest:
             prompt="Add user profiles",
             source=None,
             guide_paths=[],
-            branch_template="workspace/{slug}/{repo}",
+            branch_template="workspace/{slug}/{project}",
             max_parallel=5,
             skip_integration=False,
             skip_planning=False,
             tiers=[["lib"], ["backend"], ["frontend"]],
-            repos_by_name={"lib": "lib", "backend": "backend", "frontend": "frontend"},
+            projects_by_name={"lib": "lib", "backend": "backend", "frontend": "frontend"},
             dependency_graph={"lib": [], "backend": ["lib"], "frontend": ["backend"]},
         )
 
@@ -315,12 +315,12 @@ class TestWorkspaceManifest:
         assert manifest["halt_reason"] is None
         assert len(manifest["dag"]["tiers"]) == 3
         assert manifest["dag"]["tiers"][0]["tier"] == 0
-        assert manifest["dag"]["tiers"][0]["repos"] == ["lib"]
+        assert manifest["dag"]["tiers"][0]["projects"] == ["lib"]
         assert manifest["dag"]["tiers"][0]["status"] == "pending"
         assert manifest["children"] == []
         assert "created_at" in manifest
         assert manifest["dag"]["dependency_graph"] == {"lib": [], "backend": ["lib"], "frontend": ["backend"]}
-        assert manifest["repos_by_name"] == {"lib": "lib", "backend": "backend", "frontend": "frontend"}
+        assert manifest["projects_by_name"] == {"lib": "lib", "backend": "backend", "frontend": "frontend"}
         assert "repos_info" not in manifest
         assert manifest["failure_threshold"] is None
 
@@ -334,12 +334,12 @@ class TestWorkspaceManifest:
             prompt="x",
             source=None,
             guide_paths=[],
-            branch_template="workspace/{slug}/{repo}",
+            branch_template="workspace/{slug}/{project}",
             max_parallel=5,
             skip_integration=False,
             skip_planning=False,
             tiers=[["lib"]],
-            repos_by_name={"lib": "lib"},
+            projects_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
             failure_threshold=0.30,
         )
@@ -355,12 +355,12 @@ class TestWorkspaceManifest:
             prompt=None,
             source="gh:issue:42",
             guide_paths=[],
-            branch_template="workspace/{slug}/{repo}",
+            branch_template="workspace/{slug}/{project}",
             max_parallel=5,
             skip_integration=False,
             skip_planning=False,
             tiers=[["lib"]],
-            repos_by_name={"lib": "lib"},
+            projects_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
         )
         assert manifest["work_request"]["source"] == "gh:issue:42"
@@ -381,12 +381,12 @@ class TestWorkspaceManifest:
             prompt="x",
             source=None,
             guide_paths=[str(guide_a), str(guide_b)],
-            branch_template="workspace/{slug}/{repo}",
+            branch_template="workspace/{slug}/{project}",
             max_parallel=5,
             skip_integration=False,
             skip_planning=False,
             tiers=[["lib"]],
-            repos_by_name={"lib": "lib"},
+            projects_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
         )
 
@@ -411,12 +411,12 @@ class TestWorkspaceManifest:
             prompt="x",
             source=None,
             guide_paths=[],
-            branch_template="workspace/{slug}/{repo}",
+            branch_template="workspace/{slug}/{project}",
             max_parallel=5,
             skip_integration=False,
             skip_planning=False,
             tiers=[["lib"]],
-            repos_by_name={"lib": "lib"},
+            projects_by_name={"lib": "lib"},
             dependency_graph={"lib": []},
         )
 

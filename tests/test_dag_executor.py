@@ -15,14 +15,14 @@ def _make_manifest(
     prompt="Apply migration",
     guide_paths=None,
     branch_template="workspace/{slug}/{repo}",
-    repo_plans=None,
+    project_plans=None,
     dependency_graph=None,
 ):
     """Build a minimal workspace manifest dict for tests."""
     if tiers is None:
         tiers = [
-            {"tier": 0, "repos": ["lib"], "status": "pending"},
-            {"tier": 1, "repos": ["backend", "frontend"], "status": "pending"},
+            {"tier": 0, "projects": ["lib"], "status": "pending"},
+            {"tier": 1, "projects": ["backend", "frontend"], "status": "pending"},
         ]
     return {
         "workspace_id": workspace_id,
@@ -36,7 +36,7 @@ def _make_manifest(
         "branch_template": branch_template,
         "dag": {"tiers": tiers, "dependency_graph": dependency_graph or {}},
         "children": [],
-        "plan": {"workspace_plan_path": None, "repo_plans": repo_plans or {}},
+        "plan": {"workspace_plan_path": None, "project_plans": project_plans or {}},
     }
 
 
@@ -61,7 +61,7 @@ class TestDagExecutorTierOrdering:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["repo-a", "repo-b"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["repo-a", "repo-b"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -90,8 +90,8 @@ class TestDagExecutorTierOrdering:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
         )
         run_dir = "/tmp/run-dir"
@@ -119,9 +119,9 @@ class TestDagExecutorTierOrdering:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["base"], "status": "pending"},
-                {"tier": 1, "repos": ["mid"], "status": "pending"},
-                {"tier": 2, "repos": ["top"], "status": "pending"},
+                {"tier": 0, "projects": ["base"], "status": "pending"},
+                {"tier": 1, "projects": ["mid"], "status": "pending"},
+                {"tier": 2, "projects": ["top"], "status": "pending"},
             ],
         )
         run_dir = "/tmp/run-dir"
@@ -143,13 +143,13 @@ class TestDagExecutorTierOrdering:
 
         assert tier_at_dispatch == [0, 1, 2]
 
-    def test_within_tier_repos_run_in_parallel(self):
+    def test_within_tier_projects_run_in_parallel(self):
         """Repos within the same tier are submitted to ThreadPoolExecutor."""
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["a", "b", "c"], "status": "pending"},
+                {"tier": 0, "projects": ["a", "b", "c"], "status": "pending"},
             ],
         )
         run_dir = "/tmp/run-dir"
@@ -185,7 +185,7 @@ class TestDagExecutorChildCommand:
 
         manifest = _make_manifest(
             workspace_id="ws_test_123",
-            tiers=[{"tier": 0, "repos": ["repo-a"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["repo-a"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -212,7 +212,7 @@ class TestDagExecutorChildCommand:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["repo-a"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["repo-a"], "status": "pending"}],
             prompt="Do the thing",
         )
         run_dir = "/tmp/run-dir"
@@ -240,7 +240,7 @@ class TestDagExecutorChildCommand:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["repo-a"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["repo-a"], "status": "pending"}],
             guide_paths=["/guides/spec.md", "/guides/api.md"],
         )
         run_dir = "/tmp/run-dir"
@@ -267,8 +267,8 @@ class TestDagExecutorChildCommand:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["repo-a"], "status": "pending"}],
-            repo_plans={"repo-a": "/plans/repo-a-plan.md"},
+            tiers=[{"tier": 0, "projects": ["repo-a"], "status": "pending"}],
+            project_plans={"repo-a": "/plans/repo-a-plan.md"},
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -301,7 +301,7 @@ class TestDagExecutorChildEnv:
         manifest = _make_manifest(
             workspace_id="ws_test_456",
             workspace_name="my-workspace",
-            tiers=[{"tier": 0, "repos": ["repo-a"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["repo-a"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -328,7 +328,7 @@ class TestDagExecutorChildEnv:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["repo-a"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["repo-a"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -361,7 +361,7 @@ class TestDagExecutorChildEnv:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["repo-a"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["repo-a"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -390,7 +390,7 @@ class TestDagExecutorManifestUpdates:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["lib"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["lib"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -418,7 +418,7 @@ class TestDagExecutorManifestUpdates:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["lib"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["lib"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -443,7 +443,7 @@ class TestDagExecutorManifestUpdates:
         assert len(final_manifest["children"]) == 1
         child = final_manifest["children"][0]
         assert child["run_id"] == "r-abc"
-        assert child["repo"] == "lib"
+        assert child["project"] == "lib"
         assert child["status"] == "completed"
 
     def test_workspace_status_completed_when_all_succeed(self):
@@ -451,8 +451,8 @@ class TestDagExecutorManifestUpdates:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
         )
         run_dir = "/tmp/run-dir"
@@ -472,7 +472,7 @@ class TestDagExecutorManifestUpdates:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["lib"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["lib"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -491,7 +491,7 @@ class TestDagExecutorManifestUpdates:
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
-            tiers=[{"tier": 0, "repos": ["lib"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["lib"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -519,8 +519,8 @@ class TestDagExecutorManifestUpdates:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -544,12 +544,12 @@ class TestDagExecutorManifestUpdates:
 
         assert dispatch_count == 1
 
-    def test_cwd_is_repo_path_under_workspace_root(self):
+    def test_cwd_is_project_path_under_workspace_root(self):
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
             workspace_root="/projects",
-            tiers=[{"tier": 0, "repos": ["my-lib"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["my-lib"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -579,7 +579,7 @@ class TestDagExecutorMaxParallel:
 
         manifest = _make_manifest(
             max_parallel=2,
-            tiers=[{"tier": 0, "repos": ["a", "b", "c", "d"], "status": "pending"}],
+            tiers=[{"tier": 0, "projects": ["a", "b", "c", "d"], "status": "pending"}],
         )
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)
@@ -614,8 +614,8 @@ class TestContextInjection:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -633,7 +633,7 @@ class TestContextInjection:
             patch("subprocess.run", side_effect=mock_run),
             patch("worca.scripts.run_workspace.write_workspace_manifest"),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="diff stuff",
             ) as mock_extract,
             patch(
@@ -650,8 +650,8 @@ class TestContextInjection:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -665,7 +665,7 @@ class TestContextInjection:
             ),
             patch("worca.scripts.run_workspace.write_workspace_manifest"),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="diff content",
             ),
             patch(
@@ -682,8 +682,8 @@ class TestContextInjection:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -700,7 +700,7 @@ class TestContextInjection:
             patch("subprocess.run", side_effect=mock_run),
             patch("worca.scripts.run_workspace.write_workspace_manifest"),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="ctx",
             ),
             patch(
@@ -720,8 +720,8 @@ class TestContextInjection:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -738,7 +738,7 @@ class TestContextInjection:
             patch("subprocess.run", side_effect=mock_run),
             patch("worca.scripts.run_workspace.write_workspace_manifest"),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="ctx",
             ),
             patch(
@@ -757,9 +757,9 @@ class TestContextInjection:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["mid"], "status": "pending"},
-                {"tier": 2, "repos": ["top"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["mid"], "status": "pending"},
+                {"tier": 2, "projects": ["top"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "mid": ["lib"], "top": ["mid"]},
         )
@@ -779,7 +779,7 @@ class TestContextInjection:
             patch("subprocess.run", side_effect=mock_run),
             patch("worca.scripts.run_workspace.write_workspace_manifest"),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="ctx",
             ),
             patch(
@@ -912,8 +912,8 @@ class TestFailurePropagationBlockedOnFailure:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -937,7 +937,7 @@ class TestFailurePropagationBlockedOnFailure:
 
         blocked = [c for c in manifest["children"] if c["status"] == "blocked"]
         assert len(blocked) == 1
-        assert blocked[0]["repo"] == "app"
+        assert blocked[0]["project"] == "app"
 
     def test_blocked_child_has_null_run_id_and_worktree(self):
         """Blocked children have no run_id or worktree_path."""
@@ -945,8 +945,8 @@ class TestFailurePropagationBlockedOnFailure:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -969,9 +969,9 @@ class TestFailurePropagationBlockedOnFailure:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["mid"], "status": "pending"},
-                {"tier": 2, "repos": ["top"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["mid"], "status": "pending"},
+                {"tier": 2, "projects": ["top"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "mid": ["lib"], "top": ["mid"]},
         )
@@ -984,7 +984,7 @@ class TestFailurePropagationBlockedOnFailure:
         ):
             executor.execute()
 
-        blocked = {c["repo"] for c in manifest["children"] if c["status"] == "blocked"}
+        blocked = {c["project"] for c in manifest["children"] if c["status"] == "blocked"}
         assert blocked == {"mid", "top"}
 
     def test_multiple_deps_one_fails_child_blocked(self):
@@ -993,8 +993,8 @@ class TestFailurePropagationBlockedOnFailure:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib", "svc"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib", "svc"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "svc": [], "app": ["lib", "svc"]},
         )
@@ -1015,7 +1015,7 @@ class TestFailurePropagationBlockedOnFailure:
 
         blocked = [c for c in manifest["children"] if c["status"] == "blocked"]
         assert len(blocked) == 1
-        assert blocked[0]["repo"] == "app"
+        assert blocked[0]["project"] == "app"
 
     def test_workspace_status_failed_when_any_blocked(self):
         """Workspace overall status is 'failed' when there are blocked children."""
@@ -1023,8 +1023,8 @@ class TestFailurePropagationBlockedOnFailure:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"]},
         )
@@ -1049,8 +1049,8 @@ class TestFailurePropagationNonDependentContinues:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["app", "svc"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["app", "svc"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "app": ["lib"], "svc": []},
         )
@@ -1075,7 +1075,7 @@ class TestFailurePropagationNonDependentContinues:
         assert "/workspace/svc" in dispatched
         assert "/workspace/app" not in dispatched
 
-        statuses = {c["repo"]: c["status"] for c in manifest["children"]}
+        statuses = {c["project"]: c["status"] for c in manifest["children"]}
         assert statuses["app"] == "blocked"
         assert statuses["svc"] == "completed"
 
@@ -1085,8 +1085,8 @@ class TestFailurePropagationNonDependentContinues:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["api", "web", "docs"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["api", "web", "docs"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "api": ["lib"], "web": ["lib"], "docs": []},
         )
@@ -1120,8 +1120,8 @@ class TestFailurePropagationNonDependentContinues:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib", "config"], "status": "pending"},
-                {"tier": 1, "repos": ["app"], "status": "pending"},
+                {"tier": 0, "projects": ["lib", "config"], "status": "pending"},
+                {"tier": 1, "projects": ["app"], "status": "pending"},
             ],
             dependency_graph={"lib": [], "config": [], "app": ["config"]},
         )
@@ -1146,17 +1146,17 @@ class TestFailurePropagationNonDependentContinues:
         dispatched_repos = [d.split("/")[-1] for d in dispatched]
         assert "app" in dispatched_repos
 
-        statuses = {c["repo"]: c["status"] for c in manifest["children"]}
+        statuses = {c["project"]: c["status"] for c in manifest["children"]}
         assert statuses["app"] == "completed"
 
-    def test_context_injection_skips_failed_repos(self):
+    def test_context_injection_skips_failed_projects(self):
         """Context extraction only runs for completed repos, not failed ones."""
         from worca.workspace.dag_executor import DagExecutor
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["lib", "config"], "status": "pending"},
-                {"tier": 1, "repos": ["app", "svc"], "status": "pending"},
+                {"tier": 0, "projects": ["lib", "config"], "status": "pending"},
+                {"tier": 1, "projects": ["app", "svc"], "status": "pending"},
             ],
             dependency_graph={
                 "lib": [], "config": [], "app": ["config"], "svc": ["lib"],
@@ -1181,7 +1181,7 @@ class TestFailurePropagationNonDependentContinues:
             patch("subprocess.run", side_effect=mock_run),
             patch("worca.scripts.run_workspace.write_workspace_manifest"),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 side_effect=mock_extract,
             ),
             patch(
@@ -1203,8 +1203,8 @@ class TestDagCircuitBreaker:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["a", "b", "c", "d"], "status": "pending"},
-                {"tier": 1, "repos": ["e"], "status": "pending"},
+                {"tier": 0, "projects": ["a", "b", "c", "d"], "status": "pending"},
+                {"tier": 1, "projects": ["e"], "status": "pending"},
             ],
             dependency_graph={"a": [], "b": [], "c": [], "d": [], "e": []},
         )
@@ -1230,7 +1230,7 @@ class TestDagCircuitBreaker:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["a", "b", "c", "d", "e"], "status": "pending"},
+                {"tier": 0, "projects": ["a", "b", "c", "d", "e"], "status": "pending"},
             ],
             dependency_graph={"a": [], "b": [], "c": [], "d": [], "e": []},
         )
@@ -1260,8 +1260,8 @@ class TestDagCircuitBreaker:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["a", "b"], "status": "pending"},
-                {"tier": 1, "repos": ["c", "d"], "status": "pending"},
+                {"tier": 0, "projects": ["a", "b"], "status": "pending"},
+                {"tier": 1, "projects": ["c", "d"], "status": "pending"},
             ],
             dependency_graph={"a": [], "b": [], "c": [], "d": []},
         )
@@ -1286,8 +1286,8 @@ class TestDagCircuitBreaker:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["a", "b", "c"], "status": "pending"},
-                {"tier": 1, "repos": ["d"], "status": "pending"},
+                {"tier": 0, "projects": ["a", "b", "c"], "status": "pending"},
+                {"tier": 1, "projects": ["d"], "status": "pending"},
             ],
             dependency_graph={"a": [], "b": [], "c": [], "d": []},
         )
@@ -1311,7 +1311,7 @@ class TestDagCircuitBreaker:
         assert "d" not in dispatched_repos
 
         halted = [c for c in manifest["children"] if c["status"] == "halted"]
-        assert any(c["repo"] == "d" for c in halted)
+        assert any(c["project"] == "d" for c in halted)
 
     def test_no_circuit_breaker_when_threshold_not_set(self):
         """Without failure_threshold, circuit breaker is not active."""
@@ -1319,7 +1319,7 @@ class TestDagCircuitBreaker:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["a", "b", "c"], "status": "pending"},
+                {"tier": 0, "projects": ["a", "b", "c"], "status": "pending"},
             ],
             dependency_graph={"a": [], "b": [], "c": []},
         )
@@ -1341,7 +1341,7 @@ class TestDagCircuitBreaker:
 
         manifest = _make_manifest(
             tiers=[
-                {"tier": 0, "repos": ["a", "b"], "status": "pending"},
+                {"tier": 0, "projects": ["a", "b"], "status": "pending"},
             ],
             dependency_graph={"a": [], "b": []},
         )

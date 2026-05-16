@@ -336,8 +336,8 @@ describe('fleetLauncherView — workspace select', () => {
   it('populates workspace select from appState.workspaces', () => {
     resetLauncherState({ launcherMode: 'workspace' });
     const workspaces = [
-      { name: 'my-ws', repos: [{ name: 'lib', depends_on: [] }] },
-      { name: 'other-ws', repos: [] },
+      { name: 'my-ws', projects: [{ name: 'lib', depends_on: [] }] },
+      { name: 'other-ws', projects: [] },
     ];
     const out = renderToString(
       fleetLauncherView({ projects: [], workspaces }, {}),
@@ -352,7 +352,7 @@ describe('fleetLauncherView — workspace select', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [
+        projects: [
           { name: 'shared-lib', depends_on: [] },
           { name: 'backend', depends_on: ['shared-lib'] },
         ],
@@ -422,7 +422,7 @@ describe('fleetLauncherView — workspace DAG preview', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [
+        projects: [
           { name: 'lib', depends_on: [] },
           { name: 'app', depends_on: ['lib'] },
         ],
@@ -451,7 +451,7 @@ describe('fleetLauncherView — workspace gh auth check (panel hidden)', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [{ name: 'lib', depends_on: [] }],
+        projects: [{ name: 'lib', depends_on: [] }],
       },
       ghAuthStatus: 'failed',
       ghAuthErrors: [{ org: 'acme', command: 'gh auth login' }],
@@ -468,7 +468,7 @@ describe('fleetLauncherView — workspace gh auth check (panel hidden)', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [{ name: 'lib', depends_on: [] }],
+        projects: [{ name: 'lib', depends_on: [] }],
       },
       ghAuthStatus: 'ok',
     });
@@ -529,7 +529,7 @@ describe('fleetLauncherView — workspace submit state', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [{ name: 'lib', depends_on: [] }],
+        projects: [{ name: 'lib', depends_on: [] }],
       },
       prompt: 'add feature',
     });
@@ -542,7 +542,7 @@ describe('fleetLauncherView — workspace submit state', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [{ name: 'lib', depends_on: [] }],
+        projects: [{ name: 'lib', depends_on: [] }],
       },
       prompt: 'add feature',
       ghAuthStatus: 'failed',
@@ -557,7 +557,7 @@ describe('fleetLauncherView — workspace submit state', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [{ name: 'lib', depends_on: [] }],
+        projects: [{ name: 'lib', depends_on: [] }],
       },
       prompt: 'add feature',
       ghAuthStatus: 'failed',
@@ -573,7 +573,7 @@ describe('fleetLauncherView — workspace submit state', () => {
       selectedWorkspace: 'my-ws',
       workspaceData: {
         name: 'my-ws',
-        repos: [{ name: 'lib', depends_on: [] }],
+        projects: [{ name: 'lib', depends_on: [] }],
       },
       sourceType: 'source',
       sourceValue: 'gh:issue:42',

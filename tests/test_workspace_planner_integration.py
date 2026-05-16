@@ -4,37 +4,37 @@ import os
 from unittest.mock import patch
 
 
-from worca.workspace.manifest import Workspace, RepoEntry
+from worca.workspace.manifest import Workspace, ProjectEntry
 
 
 # ---- helpers ----------------------------------------------------------------
 
-def _make_workspace(repos=None, tiers=None, name="my-platform"):
+def _make_workspace(projects=None, tiers=None, name="my-platform"):
     """Build a Workspace instance for testing without touching disk."""
-    if repos is None:
-        repos = [
-            RepoEntry(name="lib", path="lib", depends_on=[]),
-            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
-            RepoEntry(name="frontend", path="frontend", depends_on=["backend"]),
+    if projects is None:
+        projects = [
+            ProjectEntry(name="lib", path="lib", depends_on=[]),
+            ProjectEntry(name="backend", path="backend", depends_on=["lib"]),
+            ProjectEntry(name="frontend", path="frontend", depends_on=["backend"]),
         ]
     if tiers is None:
         tiers = [["lib"], ["backend"], ["frontend"]]
-    return Workspace(name=name, repos=repos, tiers=tiers)
+    return Workspace(name=name, projects=projects, tiers=tiers)
 
 
-def _valid_plan(repo_names=None):
+def _valid_plan(project_names=None):
     """Return a minimal valid workspace plan dict."""
-    if repo_names is None:
-        repo_names = ["lib", "backend", "frontend"]
+    if project_names is None:
+        project_names = ["lib", "backend", "frontend"]
     return {
         "summary": "Add user authentication across all services",
-        "repos": [
+        "projects": [
             {
                 "name": name,
                 "description": f"Implement auth changes in {name}",
                 "acceptance_criteria": [f"{name} auth tests pass"],
             }
-            for name in repo_names
+            for name in project_names
         ],
         "integration_expectations": ["End-to-end auth flow works"],
     }
@@ -44,7 +44,7 @@ def _plan_with_skip():
     """Return a plan where one repo is skipped."""
     return {
         "summary": "Backend-only change",
-        "repos": [
+        "projects": [
             {
                 "name": "lib",
                 "description": "No changes needed",
@@ -67,59 +67,59 @@ def _plan_with_skip():
     }
 
 
-# ---- gather_repo_context ----------------------------------------------------
+# ---- gather_project_context ----------------------------------------------------
 
 class TestGatherRepoContext:
     def test_reads_claude_md_from_repos(self, tmp_path):
-        from worca.scripts.run_workspace import gather_repo_context
+        from worca.scripts.run_workspace import gather_project_context
 
         (tmp_path / "lib").mkdir()
         (tmp_path / "lib" / "CLAUDE.md").write_text("# Lib project\nUses Python.")
         (tmp_path / "backend").mkdir()
         (tmp_path / "backend" / "CLAUDE.md").write_text("# Backend\nExpress.js server.")
 
-        ws = _make_workspace(repos=[
-            RepoEntry(name="lib", path="lib", depends_on=[]),
-            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
+        ws = _make_workspace(projects=[
+            ProjectEntry(name="lib", path="lib", depends_on=[]),
+            ProjectEntry(name="backend", path="backend", depends_on=["lib"]),
         ], tiers=[["lib"], ["backend"]])
 
-        ctx = gather_repo_context(ws, str(tmp_path))
+        ctx = gather_project_context(ws, str(tmp_path))
         assert ctx["lib"] == "# Lib project\nUses Python."
         assert ctx["backend"] == "# Backend\nExpress.js server."
 
     def test_truncates_to_max_bytes(self, tmp_path):
-        from worca.scripts.run_workspace import gather_repo_context
+        from worca.scripts.run_workspace import gather_project_context
 
         (tmp_path / "lib").mkdir()
         (tmp_path / "lib" / "CLAUDE.md").write_text("A" * 8000)
 
-        ws = _make_workspace(repos=[
-            RepoEntry(name="lib", path="lib", depends_on=[]),
+        ws = _make_workspace(projects=[
+            ProjectEntry(name="lib", path="lib", depends_on=[]),
         ], tiers=[["lib"]])
 
-        ctx = gather_repo_context(ws, str(tmp_path), max_bytes=4096)
+        ctx = gather_project_context(ws, str(tmp_path), max_bytes=4096)
         assert len(ctx["lib"].encode("utf-8")) <= 4096
 
     def test_missing_claude_md_returns_empty_string(self, tmp_path):
-        from worca.scripts.run_workspace import gather_repo_context
+        from worca.scripts.run_workspace import gather_project_context
 
         (tmp_path / "lib").mkdir()
 
-        ws = _make_workspace(repos=[
-            RepoEntry(name="lib", path="lib", depends_on=[]),
+        ws = _make_workspace(projects=[
+            ProjectEntry(name="lib", path="lib", depends_on=[]),
         ], tiers=[["lib"]])
 
-        ctx = gather_repo_context(ws, str(tmp_path))
+        ctx = gather_project_context(ws, str(tmp_path))
         assert ctx["lib"] == ""
 
     def test_all_repos_covered(self, tmp_path):
-        from worca.scripts.run_workspace import gather_repo_context
+        from worca.scripts.run_workspace import gather_project_context
 
         for name in ["lib", "backend", "frontend"]:
             (tmp_path / name).mkdir()
 
         ws = _make_workspace()
-        ctx = gather_repo_context(ws, str(tmp_path))
+        ctx = gather_project_context(ws, str(tmp_path))
         assert set(ctx.keys()) == {"lib", "backend", "frontend"}
 
 
@@ -135,7 +135,7 @@ class TestBuildPlannerPrompt:
         assert "backend" in prompt
         assert "frontend" in prompt
 
-    def test_contains_repo_contexts(self):
+    def test_contains_project_contexts(self):
         from worca.scripts.run_workspace import build_planner_prompt
 
         ws = _make_workspace()
@@ -203,24 +203,24 @@ class TestValidateWorkspacePlan:
 
         ws = _make_workspace()
         plan = _valid_plan()
-        del plan["repos"]
+        del plan["projects"]
         errors = validate_workspace_plan(plan, ws)
         assert len(errors) > 0
 
-    def test_unknown_repo_name_returns_error(self):
+    def test_unknown_project_name_returns_error(self):
         from worca.scripts.run_workspace import validate_workspace_plan
 
         ws = _make_workspace()
         plan = _valid_plan()
-        plan["repos"][0]["name"] = "nonexistent"
+        plan["projects"][0]["name"] = "nonexistent"
         errors = validate_workspace_plan(plan, ws)
         assert any("nonexistent" in e for e in errors)
 
-    def test_empty_repos_array_returns_error(self):
+    def test_empty_projects_array_returns_error(self):
         from worca.scripts.run_workspace import validate_workspace_plan
 
         ws = _make_workspace()
-        plan = {"summary": "x", "repos": [], "integration_expectations": []}
+        plan = {"summary": "x", "projects": [], "integration_expectations": []}
         errors = validate_workspace_plan(plan, ws)
         assert len(errors) > 0
 
@@ -283,36 +283,36 @@ class TestFormatWorkspacePlanMd:
         assert "End-to-end auth flow works" in md
 
 
-# ---- format_repo_plan_md ---------------------------------------------------
+# ---- format_project_plan_md ---------------------------------------------------
 
 class TestFormatRepoPlanMd:
     def test_contains_description(self):
-        from worca.scripts.run_workspace import format_repo_plan_md
+        from worca.scripts.run_workspace import format_project_plan_md
 
         repo = {"name": "backend", "description": "Add auth endpoint", "acceptance_criteria": ["test"]}
-        md = format_repo_plan_md(repo, "Cross-repo auth feature")
+        md = format_project_plan_md(repo, "Cross-repo auth feature")
         assert "Add auth endpoint" in md
 
     def test_contains_acceptance_criteria(self):
-        from worca.scripts.run_workspace import format_repo_plan_md
+        from worca.scripts.run_workspace import format_project_plan_md
 
         repo = {"name": "backend", "description": "x", "acceptance_criteria": ["API returns 200", "Token validated"]}
-        md = format_repo_plan_md(repo, "summary")
+        md = format_project_plan_md(repo, "summary")
         assert "API returns 200" in md
         assert "Token validated" in md
 
     def test_contains_workspace_summary(self):
-        from worca.scripts.run_workspace import format_repo_plan_md
+        from worca.scripts.run_workspace import format_project_plan_md
 
         repo = {"name": "lib", "description": "x", "acceptance_criteria": ["test"]}
-        md = format_repo_plan_md(repo, "Cross-repo auth feature")
+        md = format_project_plan_md(repo, "Cross-repo auth feature")
         assert "Cross-repo auth feature" in md
 
     def test_depends_on_listed(self):
-        from worca.scripts.run_workspace import format_repo_plan_md
+        from worca.scripts.run_workspace import format_project_plan_md
 
         repo = {"name": "frontend", "description": "x", "acceptance_criteria": ["test"], "depends_on": ["backend"]}
-        md = format_repo_plan_md(repo, "summary")
+        md = format_project_plan_md(repo, "summary")
         assert "backend" in md
 
 
@@ -375,7 +375,7 @@ class TestWriteWorkspacePlanFiles:
         assert "lib" not in paths
         assert not os.path.isfile(os.path.join(run_dir, "lib-plan.md"))
 
-    def test_returns_only_non_skipped_repo_paths(self, tmp_path):
+    def test_returns_only_non_skipped_project_paths(self, tmp_path):
         from worca.scripts.run_workspace import write_workspace_plan_files
 
         run_dir = str(tmp_path / "run")
@@ -470,13 +470,13 @@ class TestMainPlannerIntegration:
         if doc is None:
             doc = {
                 "name": "my-platform",
-                "repos": [
+                "projects": [
                     {"name": "lib", "path": "lib", "depends_on": []},
                     {"name": "backend", "path": "backend", "depends_on": ["lib"]},
                 ],
             }
         (tmp_path / "workspace.json").write_text(json.dumps(doc))
-        for r in doc["repos"]:
+        for r in doc["projects"]:
             (tmp_path / r["path"]).mkdir(exist_ok=True)
         return str(tmp_path)
 
@@ -575,13 +575,13 @@ class TestMainPlannerIntegration:
 
         assert manifest["status"] == "completed"
         assert "plan" in manifest
-        assert "repo_plans" in manifest["plan"]
+        assert "project_plans" in manifest["plan"]
 
     def test_validation_failure_returns_error(self, tmp_path, monkeypatch, capsys):
         from worca.scripts.run_workspace import main
 
         ws_root = self._write_workspace_json(tmp_path)
-        bad_plan = {"summary": "x", "repos": [], "integration_expectations": []}
+        bad_plan = {"summary": "x", "projects": [], "integration_expectations": []}
         mock_event = {"type": "result", "result": json.dumps(bad_plan)}
 
         monkeypatch.setattr(

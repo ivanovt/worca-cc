@@ -8,23 +8,23 @@ from worca.workspace.integration_test import (
     run_integration_test,
     setup_integration_env,
 )
-from worca.workspace.manifest import IntegrationTest, RepoEntry, Workspace
+from worca.workspace.manifest import IntegrationTest, ProjectEntry, Workspace
 
 
 # -- helpers ------------------------------------------------------------------
 
 
-def _make_workspace(*, integration_test=None, repos=None, tiers=None):
-    if repos is None:
-        repos = [
-            RepoEntry(name="lib", path="lib", depends_on=[]),
-            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
+def _make_workspace(*, integration_test=None, projects=None, tiers=None):
+    if projects is None:
+        projects = [
+            ProjectEntry(name="lib", path="lib", depends_on=[]),
+            ProjectEntry(name="backend", path="backend", depends_on=["lib"]),
         ]
     if tiers is None:
         tiers = [["lib"], ["backend"]]
     return Workspace(
         name="test-ws",
-        repos=repos,
+        projects=projects,
         tiers=tiers,
         integration_test=integration_test,
     )
@@ -33,8 +33,8 @@ def _make_workspace(*, integration_test=None, repos=None, tiers=None):
 def _make_manifest(*, skip_integration=False, children=None, workspace_root="/ws"):
     if children is None:
         children = [
-            {"repo": "lib", "worktree_path": "/ws/.worktrees/lib-wt", "status": "completed", "tier": 0},
-            {"repo": "backend", "worktree_path": "/ws/.worktrees/backend-wt", "status": "completed", "tier": 1},
+            {"project": "lib", "worktree_path": "/ws/.worktrees/lib-wt", "status": "completed", "tier": 0},
+            {"project": "backend", "worktree_path": "/ws/.worktrees/backend-wt", "status": "completed", "tier": 1},
         ]
     return {
         "workspace_id": "ws_test_123",
@@ -82,14 +82,14 @@ class TestEnvSetup:
     @patch("worca.workspace.integration_test.subprocess.run")
     def test_creates_worktrees_for_completed_children(self, mock_run, tmp_path):
         ws_root = str(tmp_path)
-        repos = [
-            RepoEntry(name="lib", path="lib", depends_on=[]),
-            RepoEntry(name="backend", path="backend", depends_on=["lib"]),
+        projects = [
+            ProjectEntry(name="lib", path="lib", depends_on=[]),
+            ProjectEntry(name="backend", path="backend", depends_on=["lib"]),
         ]
-        ws = _make_workspace(repos=repos)
+        ws = _make_workspace(projects=projects)
         children = [
-            {"repo": "lib", "worktree_path": str(tmp_path / "wt-lib"), "status": "completed", "tier": 0},
-            {"repo": "backend", "worktree_path": str(tmp_path / "wt-backend"), "status": "completed", "tier": 1},
+            {"project": "lib", "worktree_path": str(tmp_path / "wt-lib"), "status": "completed", "tier": 0},
+            {"project": "backend", "worktree_path": str(tmp_path / "wt-backend"), "status": "completed", "tier": 1},
         ]
 
         os.makedirs(tmp_path / "lib")
@@ -114,10 +114,10 @@ class TestEnvSetup:
     @patch("worca.workspace.integration_test.subprocess.run")
     def test_skips_non_completed_children(self, mock_run, tmp_path):
         ws_root = str(tmp_path)
-        repos = [RepoEntry(name="lib", path="lib", depends_on=[])]
-        ws = _make_workspace(repos=repos, tiers=[["lib"]])
+        projects = [ProjectEntry(name="lib", path="lib", depends_on=[])]
+        ws = _make_workspace(projects=projects, tiers=[["lib"]])
         children = [
-            {"repo": "lib", "worktree_path": None, "status": "failed", "tier": 0},
+            {"project": "lib", "worktree_path": None, "status": "failed", "tier": 0},
         ]
 
         env_dir, env_paths = setup_integration_env(ws_root, children, ws)
@@ -133,8 +133,8 @@ class TestEnvCleanup:
     @patch("worca.workspace.integration_test.subprocess.run")
     def test_removes_worktrees(self, mock_run, tmp_path):
         ws_root = str(tmp_path)
-        repos = [RepoEntry(name="lib", path="lib", depends_on=[])]
-        ws = _make_workspace(repos=repos, tiers=[["lib"]])
+        projects = [ProjectEntry(name="lib", path="lib", depends_on=[])]
+        ws = _make_workspace(projects=projects, tiers=[["lib"]])
         env_paths = {"lib": os.path.join(ws_root, ".worca", "integration-env", "lib")}
 
         os.makedirs(tmp_path / "lib")
@@ -161,13 +161,13 @@ class TestPass:
         env_dir = os.path.join(ws_root, ".worca", "integration-env")
         ws = _make_workspace(
             integration_test=IntegrationTest(command="make test", working_dir="."),
-            repos=[RepoEntry(name="lib", path="lib", depends_on=[])],
+            projects=[ProjectEntry(name="lib", path="lib", depends_on=[])],
             tiers=[["lib"]],
         )
         manifest = _make_manifest(
             workspace_root=ws_root,
             children=[
-                {"repo": "lib", "worktree_path": str(tmp_path / "wt"), "status": "completed", "tier": 0},
+                {"project": "lib", "worktree_path": str(tmp_path / "wt"), "status": "completed", "tier": 0},
             ],
         )
 
@@ -207,13 +207,13 @@ class TestFail:
         env_dir = os.path.join(ws_root, ".worca", "integration-env")
         ws = _make_workspace(
             integration_test=IntegrationTest(command="make test", working_dir="."),
-            repos=[RepoEntry(name="lib", path="lib", depends_on=[])],
+            projects=[ProjectEntry(name="lib", path="lib", depends_on=[])],
             tiers=[["lib"]],
         )
         manifest = _make_manifest(
             workspace_root=ws_root,
             children=[
-                {"repo": "lib", "worktree_path": str(tmp_path / "wt"), "status": "completed", "tier": 0},
+                {"project": "lib", "worktree_path": str(tmp_path / "wt"), "status": "completed", "tier": 0},
             ],
         )
 

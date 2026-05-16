@@ -94,7 +94,7 @@ def create_workspace_manifest(
     skip_integration: bool,
     skip_planning: bool,
     tiers: list[list[str]],
-    repos_by_name: dict[str, str],
+    projects_by_name: dict[str, str],
     dependency_graph: dict[str, list[str]],
     failure_threshold: float | None = None,
 ) -> dict:
@@ -104,8 +104,8 @@ def create_workspace_manifest(
     )
 
     dag_tiers = [
-        {"tier": i, "repos": tier_repos, "status": "pending"}
-        for i, tier_repos in enumerate(tiers)
+        {"tier": i, "projects": tier_projects, "status": "pending"}
+        for i, tier_projects in enumerate(tiers)
     ]
 
     return {
@@ -130,7 +130,7 @@ def create_workspace_manifest(
         "status": WorkspaceStatus.PLANNING,
         "halt_reason": None,
         "dag": {"tiers": dag_tiers, "dependency_graph": dependency_graph},
-        "repos_by_name": repos_by_name,
+        "projects_by_name": projects_by_name,
         "failure_threshold": failure_threshold,
         "children": [],
         "integration_test": {"status": "pending", "exit_code": None, "log_path": None},
@@ -159,16 +159,16 @@ def write_workspace_manifest(manifest: dict, run_dir: str) -> str:
     return path
 
 
-def gather_repo_context(
+def gather_project_context(
     workspace: Workspace,
     workspace_root: str,
     *,
     max_bytes: int = 4096,
 ) -> dict[str, str]:
-    """Read CLAUDE.md from each repo, truncate to max_bytes."""
+    """Read CLAUDE.md from each project, truncate to max_bytes."""
     contexts: dict[str, str] = {}
-    for repo in workspace.repos:
-        claude_md_path = os.path.join(workspace_root, repo.path, "CLAUDE.md")
+    for project in workspace.projects:
+        claude_md_path = os.path.join(workspace_root, project.path, "CLAUDE.md")
         try:
             with open(claude_md_path, encoding="utf-8") as f:
                 content = f.read()
@@ -177,26 +177,26 @@ def gather_repo_context(
                 content = encoded[:max_bytes].decode("utf-8", errors="ignore")
         except FileNotFoundError:
             content = ""
-        contexts[repo.name] = content
+        contexts[project.name] = content
     return contexts
 
 
 def build_planner_prompt(
     workspace: Workspace,
     prompt: str,
-    repo_contexts: dict[str, str],
+    project_contexts: dict[str, str],
     guide_paths: list[str],
 ) -> str:
     """Build the prompt for the workspace planner agent."""
     topology = {
         "name": workspace.name,
-        "repos": [
+        "projects": [
             {
-                "name": r.name,
-                "path": r.path,
-                "depends_on": r.depends_on,
+                "name": p.name,
+                "path": p.path,
+                "depends_on": p.depends_on,
             }
-            for r in workspace.repos
+            for p in workspace.projects
         ],
     }
 
@@ -204,13 +204,13 @@ def build_planner_prompt(
     sections.append("## Workspace Topology\n")
     sections.append(f"```json\n{json.dumps(topology, indent=2)}\n```\n")
 
-    sections.append("## Per-Repo Context (CLAUDE.md)\n")
-    for repo in workspace.repos:
-        ctx = repo_contexts.get(repo.name, "")
+    sections.append("## Per-Project Context (CLAUDE.md)\n")
+    for project in workspace.projects:
+        ctx = project_contexts.get(project.name, "")
         if ctx:
-            sections.append(f"### {repo.name}\n\n{ctx}\n")
+            sections.append(f"### {project.name}\n\n{ctx}\n")
         else:
-            sections.append(f"### {repo.name}\n\n(no CLAUDE.md found)\n")
+            sections.append(f"### {project.name}\n\n(no CLAUDE.md found)\n")
 
     if guide_paths:
         sections.append("## Reference Guide (normative)\n")
@@ -229,7 +229,7 @@ def build_planner_prompt(
 
 
 def validate_workspace_plan(plan: dict, workspace: Workspace) -> list[str]:
-    """Validate plan against workspace_plan.json schema and workspace repos."""
+    """Validate plan against workspace_plan.json schema and workspace projects."""
     errors: list[str] = []
 
     schema_path = os.path.join(_SCHEMAS_DIR, "workspace_plan.json")
@@ -242,11 +242,11 @@ def validate_workspace_plan(plan: dict, workspace: Workspace) -> list[str]:
         errors.append(f"schema validation: {e.message}")
         return errors
 
-    known_repos = {r.name for r in workspace.repos}
-    for repo_entry in plan.get("repos", []):
-        name = repo_entry.get("name", "")
-        if name not in known_repos:
-            errors.append(f"unknown repo '{name}' not in workspace.json")
+    known_projects = {p.name for p in workspace.projects}
+    for project_entry in plan.get("projects", []):
+        name = project_entry.get("name", "")
+        if name not in known_projects:
+            errors.append(f"unknown project '{name}' not in workspace.json")
 
     return errors
 
@@ -256,15 +256,15 @@ def format_workspace_plan_md(plan: dict) -> str:
     lines = ["# Workspace Plan\n"]
     lines.append(f"## Summary\n\n{plan['summary']}\n")
 
-    lines.append("## Repos\n")
-    for repo in plan["repos"]:
-        skip_tag = " (skipped)" if repo.get("skip") else ""
-        lines.append(f"### {repo['name']}{skip_tag}\n")
-        lines.append(f"{repo['description']}\n")
-        if repo.get("depends_on"):
-            lines.append(f"**Depends on:** {', '.join(repo['depends_on'])}\n")
+    lines.append("## Projects\n")
+    for project in plan["projects"]:
+        skip_tag = " (skipped)" if project.get("skip") else ""
+        lines.append(f"### {project['name']}{skip_tag}\n")
+        lines.append(f"{project['description']}\n")
+        if project.get("depends_on"):
+            lines.append(f"**Depends on:** {', '.join(project['depends_on'])}\n")
         lines.append("**Acceptance Criteria:**\n")
-        for ac in repo["acceptance_criteria"]:
+        for ac in project["acceptance_criteria"]:
             lines.append(f"- {ac}")
         lines.append("")
 
@@ -277,24 +277,24 @@ def format_workspace_plan_md(plan: dict) -> str:
     return "\n".join(lines)
 
 
-def format_repo_plan_md(repo_entry: dict, workspace_summary: str) -> str:
-    """Format a single repo's plan as markdown for --plan injection."""
-    lines = [f"# Plan: {repo_entry['name']}\n"]
+def format_project_plan_md(project_entry: dict, workspace_summary: str) -> str:
+    """Format a single project's plan as markdown for --plan injection."""
+    lines = [f"# Plan: {project_entry['name']}\n"]
     lines.append(f"## Workspace Context\n\n{workspace_summary}\n")
-    lines.append(f"## Description\n\n{repo_entry['description']}\n")
-    if repo_entry.get("depends_on"):
-        lines.append(f"## Dependencies\n\nDepends on: {', '.join(repo_entry['depends_on'])}\n")
+    lines.append(f"## Description\n\n{project_entry['description']}\n")
+    if project_entry.get("depends_on"):
+        lines.append(f"## Dependencies\n\nDepends on: {', '.join(project_entry['depends_on'])}\n")
     lines.append("## Acceptance Criteria\n")
-    for ac in repo_entry["acceptance_criteria"]:
+    for ac in project_entry["acceptance_criteria"]:
         lines.append(f"- {ac}")
     lines.append("")
     return "\n".join(lines)
 
 
 def write_workspace_plan_files(plan: dict, run_dir: str) -> dict[str, str]:
-    """Write workspace-plan.md, workspace-plan.json, per-repo {repo}-plan.md.
+    """Write workspace-plan.md, workspace-plan.json, per-project {project}-plan.md.
 
-    Returns {repo_name: absolute_path_to_plan_md} for non-skipped repos.
+    Returns {project_name: absolute_path_to_plan_md} for non-skipped projects.
     """
     json_path = os.path.join(run_dir, "workspace-plan.json")
     with open(json_path, "w") as f:
@@ -305,16 +305,16 @@ def write_workspace_plan_files(plan: dict, run_dir: str) -> dict[str, str]:
     with open(md_path, "w") as f:
         f.write(format_workspace_plan_md(plan))
 
-    repo_plan_paths: dict[str, str] = {}
-    for repo in plan["repos"]:
-        if repo.get("skip"):
+    project_plan_paths: dict[str, str] = {}
+    for project in plan["projects"]:
+        if project.get("skip"):
             continue
-        plan_path = os.path.join(run_dir, f"{repo['name']}-plan.md")
+        plan_path = os.path.join(run_dir, f"{project['name']}-plan.md")
         with open(plan_path, "w") as f:
-            f.write(format_repo_plan_md(repo, plan["summary"]))
-        repo_plan_paths[repo["name"]] = plan_path
+            f.write(format_project_plan_md(project, plan["summary"]))
+        project_plan_paths[project["name"]] = plan_path
 
-    return repo_plan_paths
+    return project_plan_paths
 
 
 def run_workspace_planner(
@@ -392,7 +392,7 @@ def classify_children_for_resume(
 ) -> tuple[set[str], set[str]]:
     """Classify manifest children into skip vs. redispatch sets.
 
-    Returns (skip_repos, redispatch_repos).
+    Returns (skip_projects, redispatch_projects).
     - skip: completed children — left as-is, worktrees retained for context.
     - redispatch: failed/blocked/halted children — re-dispatched fresh.
     """
@@ -400,20 +400,20 @@ def classify_children_for_resume(
     redispatch: set[str] = set()
 
     for child in children:
-        repo = child["repo"]
+        project = child["project"]
         status = child.get("status", "")
         if status == "completed":
-            skip.add(repo)
+            skip.add(project)
         else:
-            redispatch.add(repo)
+            redispatch.add(project)
 
     return skip, redispatch
 
 
 def rebuild_resume_manifest(
     manifest: dict,
-    skip_repos: set[str],
-    redispatch_repos: set[str],
+    skip_projects: set[str],
+    redispatch_projects: set[str],
 ) -> dict:
     """Rebuild a manifest for resume: reset non-completed tiers/children.
 
@@ -422,10 +422,10 @@ def rebuild_resume_manifest(
     manifest["halt_reason"] = None
 
     manifest["children"] = [
-        c for c in manifest["children"] if c["repo"] in skip_repos
+        c for c in manifest["children"] if c["project"] in skip_projects
     ]
 
-    all_children_done = len(redispatch_repos) == 0
+    all_children_done = len(redispatch_projects) == 0
 
     if all_children_done:
         manifest["status"] = WorkspaceStatus.INTEGRATION_TESTING
@@ -433,8 +433,8 @@ def rebuild_resume_manifest(
         manifest["status"] = WorkspaceStatus.RUNNING
 
     for tier in manifest["dag"]["tiers"]:
-        tier_repos = set(tier["repos"])
-        if tier_repos <= skip_repos:
+        tier_projects = set(tier["projects"])
+        if tier_projects <= skip_projects:
             tier["status"] = "completed"
         else:
             if all_children_done:
@@ -454,16 +454,16 @@ def rebuild_resume_manifest(
 def _print_dag(workspace: Workspace, *, skip_integration: bool) -> None:
     """Print the DAG in a human-readable format for --dry-run."""
     print(f"Workspace: {workspace.name}")
-    print(f"Repos:     {len(workspace.repos)}")
+    print(f"Projects:  {len(workspace.projects)}")
     print(f"Tiers:     {len(workspace.tiers)}")
     print()
 
-    repo_map = {r.name: r for r in workspace.repos}
+    project_map = {p.name: p for p in workspace.projects}
     for i, tier in enumerate(workspace.tiers):
         print(f"  Tier {i}:")
         for name in tier:
-            repo = repo_map[name]
-            deps = f" (depends on: {', '.join(repo.depends_on)})" if repo.depends_on else ""
+            project = project_map[name]
+            deps = f" (depends on: {', '.join(project.depends_on)})" if project.depends_on else ""
             print(f"    - {name}{deps}")
         print()
 
@@ -479,7 +479,7 @@ def _print_dag(workspace: Workspace, *, skip_integration: bool) -> None:
 def create_parser() -> argparse.ArgumentParser:
     """Build the argument parser for run_workspace."""
     parser = argparse.ArgumentParser(
-        description="Run a coordinated multi-repo workspace pipeline (W-047)",
+        description="Run a coordinated multi-project workspace pipeline (W-047)",
     )
 
     parser.add_argument(
@@ -501,11 +501,11 @@ def create_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--branch",
-        default="workspace/{slug}/{repo}",
+        default="workspace/{slug}/{project}",
         metavar="TEMPLATE",
         help=(
-            "Branch name template with {workspace}, {repo}, {slug} placeholders. "
-            "Default: workspace/{slug}/{repo}"
+            "Branch name template with {workspace}, {project}, {slug} placeholders. "
+            "Default: workspace/{slug}/{project}"
         ),
     )
 
@@ -520,7 +520,7 @@ def create_parser() -> argparse.ArgumentParser:
         "--skip-planning",
         action="store_true",
         default=False,
-        help="Skip the master planner; use --plan per-repo instead",
+        help="Skip the master planner; use --plan per-project instead",
     )
 
     parser.add_argument(
@@ -597,10 +597,10 @@ def _resume_workspace(workspace_root: str, workspace_id: str) -> int:
 
     skip, redispatch = classify_children_for_resume(manifest["children"])
 
-    all_repos = {r.name for r in ws.repos}
-    missing = all_repos - skip - redispatch
-    for repo in missing:
-        redispatch.add(repo)
+    all_projects = {p.name for p in ws.projects}
+    missing = all_projects - skip - redispatch
+    for project in missing:
+        redispatch.add(project)
 
     rebuild_resume_manifest(manifest, skip, redispatch)
     write_workspace_manifest(manifest, run_dir)
@@ -621,7 +621,7 @@ def _resume_workspace(workspace_root: str, workspace_id: str) -> int:
             print("Integration test passed. Workspace completed.")
             return 0
 
-    print(f"Resuming workspace {workspace_id} — re-dispatching {len(redispatch)} repo(s)")
+    print(f"Resuming workspace {workspace_id} — re-dispatching {len(redispatch)} project(s)")
 
     executor = DagExecutor(manifest, run_dir)
     result = executor.execute()
@@ -695,14 +695,14 @@ def main(argv=None) -> int:
     run_dir = create_workspace_run_dir(workspace_root, ws_id)
     write_pointer_file(ws_id, workspace_root)
 
-    repos_by_name = {r.name: r.path for r in ws.repos}
+    projects_by_name = {p.name: p.path for p in ws.projects}
     guide_paths = [os.path.abspath(g) for g in (args.guide or [])]
 
     from worca.utils.settings import load_settings
     settings = load_settings(args.settings)
     failure_threshold = settings.get("worca", {}).get("workspace", {}).get("failure_threshold")
 
-    dependency_graph = {r.name: r.depends_on for r in ws.repos}
+    dependency_graph = {p.name: p.depends_on for p in ws.projects}
 
     manifest = create_workspace_manifest(
         workspace_id=ws_id,
@@ -716,7 +716,7 @@ def main(argv=None) -> int:
         skip_integration=args.skip_integration,
         skip_planning=args.skip_planning,
         tiers=ws.tiers,
-        repos_by_name=repos_by_name,
+        projects_by_name=projects_by_name,
         dependency_graph=dependency_graph,
         failure_threshold=failure_threshold,
     )
@@ -725,9 +725,9 @@ def main(argv=None) -> int:
 
     if not args.skip_planning:
         print(f"Running workspace planner for {ws.name}...")
-        repo_contexts = gather_repo_context(ws, workspace_root)
+        project_contexts = gather_project_context(ws, workspace_root)
         planner_prompt = build_planner_prompt(
-            ws, args.prompt or "", repo_contexts, guide_paths,
+            ws, args.prompt or "", project_contexts, guide_paths,
         )
 
         try:
@@ -749,14 +749,14 @@ def main(argv=None) -> int:
             write_workspace_manifest(manifest, run_dir)
             return 1
 
-        repo_plan_paths = write_workspace_plan_files(plan, run_dir)
+        project_plan_paths = write_workspace_plan_files(plan, run_dir)
         manifest["status"] = WorkspaceStatus.RUNNING
         manifest["plan"] = {
             "workspace_plan_path": os.path.join(run_dir, "workspace-plan.json"),
-            "repo_plans": repo_plan_paths,
+            "project_plans": project_plan_paths,
         }
         write_workspace_manifest(manifest, run_dir)
-        print(f"Workspace plan written: {len(repo_plan_paths)} repo plan(s)")
+        print(f"Workspace plan written: {len(project_plan_paths)} project plan(s)")
     else:
         manifest["status"] = WorkspaceStatus.RUNNING
         write_workspace_manifest(manifest, run_dir)
@@ -764,7 +764,7 @@ def main(argv=None) -> int:
     from worca.workspace.dag_executor import DagExecutor
     from worca.workspace.integration_test import run_integration_test
 
-    print(f"Workspace run {ws_id} — dispatching {len(ws.repos)} repo(s)")
+    print(f"Workspace run {ws_id} — dispatching {len(ws.projects)} project(s)")
 
     executor = DagExecutor(manifest, run_dir)
     result = executor.execute()

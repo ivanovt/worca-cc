@@ -1,7 +1,7 @@
-"""Cross-repo integration test runner (W-047 §5).
+"""Cross-project integration test runner (W-047 §5).
 
 After all tiers complete, sets up integration-env worktrees at
-{workspace_root}/.worca/integration-env/{repo_name}/ on each child's branch,
+{workspace_root}/.worca/integration-env/{project_name}/ on each child's branch,
 executes the workspace.json integration_test.command, and captures output to
 integration-test.log. Cleans up worktrees after (pass or fail).
 """
@@ -21,19 +21,19 @@ def setup_integration_env(
 ) -> tuple[str, dict[str, str]]:
     """Create git worktrees in integration-env/ for each completed child.
 
-    Returns (env_dir, {repo_name: worktree_path}).
+    Returns (env_dir, {project_name: worktree_path}).
     """
     env_dir = os.path.join(workspace_root, ".worca", "integration-env")
     os.makedirs(env_dir, exist_ok=True)
 
-    repo_paths = {r.name: r.path for r in workspace.repos}
+    project_paths = {p.name: p.path for p in workspace.projects}
     env_paths: dict[str, str] = {}
 
     for child in children:
         if child["status"] != "completed" or not child.get("worktree_path"):
             continue
 
-        repo_name = child["repo"]
+        project_name = child["project"]
         worktree_path = child["worktree_path"]
 
         proc = subprocess.run(
@@ -46,17 +46,17 @@ def setup_integration_env(
             continue
         branch = proc.stdout.strip()
 
-        original_repo = os.path.join(workspace_root, repo_paths[repo_name])
-        dest = os.path.join(env_dir, repo_name)
+        original_project = os.path.join(workspace_root, project_paths[project_name])
+        dest = os.path.join(env_dir, project_name)
 
         proc_add = subprocess.run(
             ["git", "worktree", "add", dest, branch],
-            cwd=original_repo,
+            cwd=original_project,
             capture_output=True,
             text=True,
         )
         if proc_add.returncode == 0:
-            env_paths[repo_name] = dest
+            env_paths[project_name] = dest
 
     return env_dir, env_paths
 
@@ -67,13 +67,13 @@ def cleanup_integration_env(
     workspace: Workspace,
 ) -> None:
     """Remove integration-env worktrees."""
-    repo_paths = {r.name: r.path for r in workspace.repos}
+    project_paths = {p.name: p.path for p in workspace.projects}
 
-    for repo_name, env_path in env_paths.items():
-        original_repo = os.path.join(workspace_root, repo_paths[repo_name])
+    for project_name, env_path in env_paths.items():
+        original_project = os.path.join(workspace_root, project_paths[project_name])
         subprocess.run(
             ["git", "worktree", "remove", "--force", env_path],
-            cwd=original_repo,
+            cwd=original_project,
             capture_output=True,
             text=True,
         )
@@ -87,7 +87,7 @@ def run_integration_test(
     workspace: Workspace,
     run_dir: str,
 ) -> dict:
-    """Run cross-repo integration test phase.
+    """Run cross-project integration test phase.
 
     Returns {"status": "passed"|"failed"|"skipped",
              "exit_code": int|None, "log_path": str|None}.

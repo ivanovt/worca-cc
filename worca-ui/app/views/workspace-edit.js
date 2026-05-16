@@ -8,13 +8,13 @@ let parentPath = '';
 // other git repos discovered by scanning the parent dir. Registered ones
 // stay pre-checked; unregistered siblings are unchecked but selectable so
 // the edit form supports both removing AND adding members symmetrically.
-let repos = [];
-let selectedRepos = [];
+let projects = [];
+let selectedProjects = [];
 let dependencies = {};
 let integrationCmd = '';
 let integrationCwd = '';
 let umbrellaRepo = '';
-let originalRepoNames = [];
+let originalProjectNames = [];
 let hasActiveRuns = false;
 let loadStatus = null;
 let loadError = '';
@@ -26,13 +26,13 @@ let submitError = '';
 export function resetWorkspaceEditState(overrides = {}) {
   workspaceName = overrides.workspaceName ?? '';
   parentPath = overrides.parentPath ?? '';
-  repos = overrides.repos ?? [];
-  selectedRepos = overrides.selectedRepos ?? [];
+  projects = overrides.projects ?? [];
+  selectedProjects = overrides.selectedProjects ?? [];
   dependencies = overrides.dependencies ?? {};
   integrationCmd = overrides.integrationCmd ?? '';
   integrationCwd = overrides.integrationCwd ?? '';
   umbrellaRepo = overrides.umbrellaRepo ?? '';
-  originalRepoNames = overrides.originalRepoNames ?? [];
+  originalProjectNames = overrides.originalProjectNames ?? [];
   hasActiveRuns = overrides.hasActiveRuns ?? false;
   loadStatus = overrides.loadStatus ?? null;
   loadError = overrides.loadError ?? '';
@@ -71,13 +71,15 @@ function _detectCycle(repoNames, deps) {
 }
 
 function _hasCycle() {
-  return selectedRepos.length >= 2 && _detectCycle(selectedRepos, dependencies);
+  return (
+    selectedProjects.length >= 2 && _detectCycle(selectedProjects, dependencies)
+  );
 }
 
 function _hasAddedRepos() {
-  if (originalRepoNames.length === 0) return false;
-  const origSet = new Set(originalRepoNames);
-  return selectedRepos.some((name) => !origSet.has(name));
+  if (originalProjectNames.length === 0) return false;
+  const origSet = new Set(originalProjectNames);
+  return selectedProjects.some((name) => !origSet.has(name));
 }
 
 export function getWorkspaceEditSubmitState() {
@@ -86,7 +88,7 @@ export function getWorkspaceEditSubmitState() {
     canSubmit:
       loadStatus === 'done' &&
       workspaceName.trim().length > 0 &&
-      selectedRepos.length > 0 &&
+      selectedProjects.length > 0 &&
       !hasCycle,
     isSubmitting: submitStatus === 'submitting',
     submitStatus,
@@ -107,8 +109,8 @@ export async function loadWorkspace({ name, rerender } = {}) {
       const ws = data.workspace;
       workspaceName = ws.name || name;
       parentPath = data.path || '';
-      const registered = ws.repos || [];
-      selectedRepos = registered.map((r) => r.name);
+      const registered = ws.projects || [];
+      selectedProjects = registered.map((r) => r.name);
       dependencies = {};
       for (const r of registered) {
         if (r.depends_on?.length) dependencies[r.name] = [...r.depends_on];
@@ -116,12 +118,12 @@ export async function loadWorkspace({ name, rerender } = {}) {
       integrationCmd = ws.integration_test?.command || '';
       integrationCwd = ws.integration_test?.cwd || '';
       umbrellaRepo = ws.umbrella_repo || '';
-      originalRepoNames = registered.map((r) => r.name);
+      originalProjectNames = registered.map((r) => r.name);
       hasActiveRuns = false;
 
       // Seed repos with the registered set first; the scan below will merge
       // in any additional unregistered sibling repos discovered on disk.
-      repos = registered.map((r) => ({
+      projects = registered.map((r) => ({
         name: r.name,
         path: r.path || r.name,
         registered: true,
@@ -164,13 +166,13 @@ export async function addExternalRepo({ rerender } = {}) {
     const baseName = picked.split('/').filter(Boolean).pop() || 'repo';
     let name = baseName;
     let i = 2;
-    const existingNames = new Set(repos.map((r) => r.name));
+    const existingNames = new Set(projects.map((r) => r.name));
     while (existingNames.has(name)) {
       name = `${baseName}-${i}`;
       i++;
     }
-    repos = [...repos, { name, path, registered: false, external: true }];
-    selectedRepos = [...selectedRepos, name];
+    projects = [...projects, { name, path, registered: false, external: true }];
+    selectedProjects = [...selectedProjects, name];
     rerender?.();
   } catch {
     // User cancelled or picker tool missing — silent.
@@ -194,9 +196,9 @@ async function _scanForAdditions({ rerender } = {}) {
       rerender?.();
       return;
     }
-    const registeredByName = new Map(repos.map((r) => [r.name, r]));
-    const merged = [...repos];
-    for (const found of data.repos || []) {
+    const registeredByName = new Map(projects.map((r) => [r.name, r]));
+    const merged = [...projects];
+    for (const found of data.projects || []) {
       if (registeredByName.has(found.name)) continue;
       merged.push({
         name: found.name,
@@ -207,7 +209,7 @@ async function _scanForAdditions({ rerender } = {}) {
     // Stable sort: registered first (preserves load order), then siblings
     // alphabetically — keeps the user's existing layout intact and groups
     // additions at the bottom where they're visually distinct.
-    repos = merged;
+    projects = merged;
     scanStatus = 'done';
   } catch (err) {
     scanStatus = 'error';
@@ -217,7 +219,7 @@ async function _scanForAdditions({ rerender } = {}) {
 }
 
 export async function submitWorkspaceEdit({ rerender, onUpdated } = {}) {
-  if (selectedRepos.length === 0) {
+  if (selectedProjects.length === 0) {
     submitStatus = 'error';
     submitError = 'At least one repository is required.';
     rerender?.();
@@ -234,8 +236,8 @@ export async function submitWorkspaceEdit({ rerender, onUpdated } = {}) {
   submitError = '';
   rerender?.();
 
-  const updatedRepos = selectedRepos.map((name) => {
-    const orig = repos.find((r) => r.name === name);
+  const updatedProjects = selectedProjects.map((name) => {
+    const orig = projects.find((r) => r.name === name);
     return {
       name,
       path: orig?.path || name,
@@ -245,7 +247,7 @@ export async function submitWorkspaceEdit({ rerender, onUpdated } = {}) {
 
   const body = {
     name: workspaceName.trim(),
-    repos: updatedRepos,
+    projects: updatedProjects,
   };
   if (integrationCmd.trim()) {
     body.integration_test = {
@@ -270,7 +272,7 @@ export async function submitWorkspaceEdit({ rerender, onUpdated } = {}) {
 
     if (data.ok) {
       submitStatus = null;
-      originalRepoNames = selectedRepos.slice();
+      originalProjectNames = selectedProjects.slice();
       onUpdated?.(workspaceName);
     } else {
       submitStatus = 'error';
@@ -304,7 +306,7 @@ function _nameSection() {
 }
 
 function _repoChecklistSection({ rerender } = {}) {
-  if (repos.length === 0 && scanStatus !== 'scanning') return nothing;
+  if (projects.length === 0 && scanStatus !== 'scanning') return nothing;
 
   return html`
     <div class="new-run-section">
@@ -323,27 +325,30 @@ function _repoChecklistSection({ rerender } = {}) {
           `
           : nothing
       }
-      <div class="repo-checklist">
-        ${repos.map(
-          (repo) => html`
-            <div class="repo-checklist-item">
+      <div class="project-checklist">
+        ${projects.map(
+          (project) => html`
+            <div class="project-checklist-item">
               <sl-checkbox
-                class="checkbox-repo-${repo.name}"
-                ?checked=${selectedRepos.includes(repo.name)}
+                class="checkbox-project-${project.name}"
+                ?checked=${selectedProjects.includes(project.name)}
                 @sl-change=${
                   rerender
                     ? (e) => {
                         if (e.target.checked) {
-                          selectedRepos = [...selectedRepos, repo.name];
+                          selectedProjects = [
+                            ...selectedProjects,
+                            project.name,
+                          ];
                         } else {
-                          selectedRepos = selectedRepos.filter(
-                            (n) => n !== repo.name,
+                          selectedProjects = selectedProjects.filter(
+                            (n) => n !== project.name,
                           );
                           const newDeps = { ...dependencies };
-                          delete newDeps[repo.name];
+                          delete newDeps[project.name];
                           for (const key of Object.keys(newDeps)) {
                             newDeps[key] = newDeps[key].filter(
-                              (d) => d !== repo.name,
+                              (d) => d !== project.name,
                             );
                           }
                           dependencies = newDeps;
@@ -352,11 +357,11 @@ function _repoChecklistSection({ rerender } = {}) {
                       }
                     : null
                 }
-              >${repo.name}</sl-checkbox>
+              >${project.name}</sl-checkbox>
               ${
-                repo.external
-                  ? html`<sl-tag size="small" variant="primary" class="ws-external-tag" title="${repo.path}">External</sl-tag>`
-                  : repo.registered === false
+                project.external
+                  ? html`<sl-tag size="small" variant="primary" class="ws-external-tag" title="${project.path}">External</sl-tag>`
+                  : project.registered === false
                     ? html`<sl-tag size="small" variant="neutral" class="ws-edit-new-tag">Available</sl-tag>`
                     : nothing
               }
@@ -364,9 +369,9 @@ function _repoChecklistSection({ rerender } = {}) {
           `,
         )}
       </div>
-      <div class="repo-checklist-actions">
+      <div class="project-checklist-actions">
         <sl-button
-          class="btn-add-external-repo"
+          class="btn-add-external-project"
           size="small"
           @click=${rerender ? () => addExternalRepo({ rerender }) : null}
         >
@@ -382,21 +387,21 @@ function _repoChecklistSection({ rerender } = {}) {
 }
 
 function _depEditorSection({ rerender } = {}) {
-  if (selectedRepos.length < 2) return nothing;
+  if (selectedProjects.length < 2) return nothing;
 
   const hasCycle = _hasCycle();
-  const dagRepos = selectedRepos.map((name) => ({
+  const dagProjects = selectedProjects.map((name) => ({
     name,
     status: 'pending',
     depends_on: dependencies[name] || [],
   }));
-  const { svg } = dagGraphView({ repos: dagRepos }, { mode: 'edit' });
+  const { svg } = dagGraphView({ projects: dagProjects }, { mode: 'edit' });
 
   return html`
     <div class="new-run-section">
       <h3 class="new-run-section-title">Dependencies</h3>
       <div class="dep-editor">
-        ${selectedRepos.map(
+        ${selectedProjects.map(
           (name) => html`
             <div class="dep-row dep-row-${name}">
               <span class="dep-repo-name">${name}</span>
@@ -422,7 +427,7 @@ function _depEditorSection({ rerender } = {}) {
                     : null
                 }
               >
-                ${selectedRepos
+                ${selectedProjects
                   .filter((r) => r !== name)
                   .map((r) => html`<sl-option value="${r}">${r}</sl-option>`)}
               </sl-select>
@@ -530,8 +535,8 @@ function _snapshotBanner() {
 
 function _initAction() {
   if (!_hasAddedRepos()) return nothing;
-  const origSet = new Set(originalRepoNames);
-  const added = selectedRepos.filter((n) => !origSet.has(n));
+  const origSet = new Set(originalProjectNames);
+  const added = selectedProjects.filter((n) => !origSet.has(n));
   return html`
     <sl-alert variant="primary" open class="ws-edit-init-action">
       New repos added: ${added.join(', ')}. Run <code>worca init</code> in newly-added repos before launching a workspace run.

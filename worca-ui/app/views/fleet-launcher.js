@@ -733,7 +733,7 @@ function _workspaceSelectSection(appState, { rerender } = {}) {
             <div class="workspace-pinned-repos">
               <label class="settings-label">Repositories (from workspace)</label>
               <div class="workspace-repo-tags">
-                ${workspaceData.repos.map(
+                ${workspaceData.projects.map(
                   (r) =>
                     html`<sl-tag size="small" class="workspace-repo-tag">${r.name}</sl-tag>`,
                 )}
@@ -747,15 +747,19 @@ function _workspaceSelectSection(appState, { rerender } = {}) {
 }
 
 function _workspaceDagSection() {
-  if (!workspaceData || !workspaceData.repos || workspaceData.repos.length < 2)
+  if (
+    !workspaceData ||
+    !workspaceData.projects ||
+    workspaceData.projects.length < 2
+  )
     return nothing;
 
-  const dagRepos = workspaceData.repos.map((r) => ({
+  const dagProjects = workspaceData.projects.map((r) => ({
     name: r.name,
     status: 'pending',
     depends_on: r.depends_on || [],
   }));
-  const { svg } = dagGraphView({ repos: dagRepos }, { mode: 'preview' });
+  const { svg } = dagGraphView({ projects: dagProjects }, { mode: 'preview' });
   if (!svg) return nothing;
 
   return html`
@@ -835,7 +839,7 @@ function _workspacePlanSection({ rerender } = {}) {
             planMode: workspacePlanMode,
             planPath: workspacePlanPath,
             selectedProjects: workspaceData
-              ? workspaceData.repos.map((r) => r.name)
+              ? workspaceData.projects.map((r) => r.name)
               : [],
           },
           {
@@ -935,7 +939,7 @@ async function _validateGhAuth(ws, { rerender } = {}) {
 
 function _advancedWorkspaceSection({ rerender } = {}) {
   const wsRepoNames = workspaceData
-    ? workspaceData.repos.map((r) => r.name)
+    ? workspaceData.projects.map((r) => r.name)
     : [];
 
   return html`

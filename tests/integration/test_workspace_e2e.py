@@ -142,7 +142,7 @@ def test_workspace_e2e_3_repos(tmp_path):
     (DagExecutor's _build_child_env strips WORCA_* — the dispatch surface
     is otherwise identical).
     """
-    from worca.workspace.dag_executor import _extract_repo_context, _write_context_file
+    from worca.workspace.dag_executor import _extract_project_context, _write_context_file
     from worca.workspace.integration_test import run_integration_test
     from worca.workspace.manifest import Workspace
     from worca.workspace.pr_linker import link_workspace_prs
@@ -167,7 +167,7 @@ def test_workspace_e2e_3_repos(tmp_path):
     # ── 2. workspace.json ─────────────────────────────────────────────────
     workspace_json = {
         "name": "acme-platform",
-        "repos": [
+        "projects": [
             {
                 "name": "shared-lib",
                 "path": "shared-lib",
@@ -303,7 +303,7 @@ def test_workspace_e2e_3_repos(tmp_path):
         # Extract context artifacts for downstream tiers
         if tier_idx < len(ws.tiers) - 1:
             for repo_name in tier:
-                content = _extract_repo_context(worktree_paths[repo_name])
+                content = _extract_project_context(worktree_paths[repo_name])
                 if content.strip():
                     _write_context_file(run_dir, repo_name, content)
 
@@ -344,12 +344,12 @@ def test_workspace_e2e_3_repos(tmp_path):
         skip_integration=False,
         skip_planning=True,
         tiers=ws.tiers,
-        repos_by_name={r.name: r.path for r in ws.repos},
-        dependency_graph={r.name: r.depends_on for r in ws.repos},
+        projects_by_name={r.name: r.path for r in ws.projects},
+        dependency_graph={r.name: r.depends_on for r in ws.projects},
     )
     manifest["children"] = [
         {
-            "repo": repo_name,
+            "project": repo_name,
             "run_id": run_ids[repo_name],
             "worktree_path": worktree_paths[repo_name],
             "status": "completed",
@@ -394,7 +394,7 @@ def test_workspace_e2e_3_repos(tmp_path):
         f"Expected 3 PRs, got {len(pr_children)}: "
         f"{[(c['repo'], c.get('pr_url')) for c in manifest['children']]}"
     )
-    pr_map = {c["repo"]: c for c in pr_children}
+    pr_map = {c["project"]: c for c in pr_children}
     assert pr_map["shared-lib"]["pr_number"] == 1
     assert pr_map["backend"]["pr_number"] == 2
     assert pr_map["frontend"]["pr_number"] == 3

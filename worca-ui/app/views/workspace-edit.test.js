@@ -46,8 +46,8 @@ describe('workspaceEditView — loading', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'backend', path: 'backend', depends_on: [] }],
-      selectedRepos: ['backend'],
+      projects: [{ name: 'backend', path: 'backend', depends_on: [] }],
+      selectedProjects: ['backend'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).toContain('workspace-edit-page');
@@ -62,8 +62,8 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).toContain('my-ws');
@@ -74,7 +74,7 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'backend', path: 'backend', depends_on: [] },
         {
           name: 'frontend',
@@ -83,10 +83,10 @@ describe('workspaceEditView — pre-fill', () => {
           depends_on: ['backend'],
         },
       ],
-      selectedRepos: ['backend', 'frontend'],
+      selectedProjects: ['backend', 'frontend'],
     });
     const out = renderToString(workspaceEditView({}, {}));
-    expect(out).toContain('repo-checklist');
+    expect(out).toContain('project-checklist');
     expect(out).toContain('backend');
     expect(out).toContain('frontend');
   });
@@ -95,11 +95,11 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'lib', path: 'lib', depends_on: [] },
         { name: 'api', path: 'api', depends_on: ['lib'] },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
       dependencies: { api: ['lib'] },
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -111,8 +111,8 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
       integrationCmd: 'npm test',
       integrationCwd: '/work',
     });
@@ -125,8 +125,8 @@ describe('workspaceEditView — pre-fill', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
       umbrellaRepo: 'org/umbrella',
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -142,8 +142,8 @@ describe('workspaceEditView — repo editing', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'backend', path: 'backend', depends_on: [] }],
-      selectedRepos: ['backend'],
+      projects: [{ name: 'backend', path: 'backend', depends_on: [] }],
+      selectedProjects: ['backend'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).not.toContain('select-repo-role-');
@@ -153,8 +153,8 @@ describe('workspaceEditView — repo editing', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).not.toContain('input-parent-dir');
@@ -169,11 +169,11 @@ describe('workspaceEditView — dependency editor', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'lib', path: 'lib', depends_on: [] },
         { name: 'api', path: 'api', depends_on: [] },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).toContain('dep-editor');
@@ -183,8 +183,8 @@ describe('workspaceEditView — dependency editor', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).not.toContain('dep-editor');
@@ -194,11 +194,11 @@ describe('workspaceEditView — dependency editor', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'lib', path: 'lib', depends_on: [] },
         { name: 'api', path: 'api', depends_on: ['lib'] },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
       dependencies: { api: ['lib'] },
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -213,11 +213,11 @@ describe('workspaceEditView — cycle detection', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'a', path: 'a', depends_on: ['b'] },
         { name: 'b', path: 'b', depends_on: ['a'] },
       ],
-      selectedRepos: ['a', 'b'],
+      selectedProjects: ['a', 'b'],
       dependencies: { a: ['b'], b: ['a'] },
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -228,11 +228,11 @@ describe('workspaceEditView — cycle detection', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'a', path: 'a', depends_on: [] },
         { name: 'b', path: 'b', depends_on: ['a'] },
       ],
-      selectedRepos: ['a', 'b'],
+      selectedProjects: ['a', 'b'],
       dependencies: { b: ['a'] },
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -247,8 +247,8 @@ describe('workspaceEditView — snapshot semantics banner', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
       hasActiveRuns: true,
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -259,8 +259,8 @@ describe('workspaceEditView — snapshot semantics banner', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
       hasActiveRuns: false,
     });
     const out = renderToString(workspaceEditView({}, {}));
@@ -275,12 +275,12 @@ describe('workspaceEditView — worca init action', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      originalRepoNames: ['lib'],
-      repos: [
+      originalProjectNames: ['lib'],
+      projects: [
         { name: 'lib', path: 'lib', depends_on: [] },
         { name: 'api', path: 'api', depends_on: [] },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).toContain('ws-edit-init-action');
@@ -290,12 +290,12 @@ describe('workspaceEditView — worca init action', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      originalRepoNames: ['lib', 'api'],
-      repos: [
+      originalProjectNames: ['lib', 'api'],
+      projects: [
         { name: 'lib', path: 'lib', depends_on: [] },
         { name: 'api', path: 'api', depends_on: [] },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).not.toContain('ws-edit-init-action');
@@ -305,12 +305,12 @@ describe('workspaceEditView — worca init action', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      originalRepoNames: ['lib', 'api', 'frontend'],
-      repos: [
+      originalProjectNames: ['lib', 'api', 'frontend'],
+      projects: [
         { name: 'lib', path: 'lib', depends_on: [] },
         { name: 'api', path: 'api', depends_on: [] },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).not.toContain('ws-edit-init-action');
@@ -332,11 +332,11 @@ describe('getWorkspaceEditSubmitState', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'a', path: 'a', depends_on: [] },
         { name: 'b', path: 'b', depends_on: [] },
       ],
-      selectedRepos: ['a', 'b'],
+      selectedProjects: ['a', 'b'],
       dependencies: { a: ['b'], b: ['a'] },
     });
     expect(getWorkspaceEditSubmitState().canSubmit).toBe(false);
@@ -351,11 +351,11 @@ describe('getWorkspaceEditSubmitState', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [
+      projects: [
         { name: 'lib', path: 'lib', depends_on: [] },
         { name: 'api', path: 'api', depends_on: ['lib'] },
       ],
-      selectedRepos: ['lib', 'api'],
+      selectedProjects: ['lib', 'api'],
       dependencies: { api: ['lib'] },
     });
     expect(getWorkspaceEditSubmitState().canSubmit).toBe(true);
@@ -374,8 +374,8 @@ describe('workspaceEditView — submit error', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
       submitStatus: 'error',
       submitError: 'Cannot edit while active',
     });
@@ -388,8 +388,8 @@ describe('workspaceEditView — submit error', () => {
     resetWorkspaceEditState({
       loadStatus: 'done',
       workspaceName: 'my-ws',
-      repos: [{ name: 'lib', path: 'lib', depends_on: [] }],
-      selectedRepos: ['lib'],
+      projects: [{ name: 'lib', path: 'lib', depends_on: [] }],
+      selectedProjects: ['lib'],
     });
     const out = renderToString(workspaceEditView({}, {}));
     expect(out).not.toContain('ws-edit-error');

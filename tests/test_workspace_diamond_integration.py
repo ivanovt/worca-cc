@@ -26,7 +26,7 @@ from unittest.mock import patch
 def _diamond_workspace_json():
     return {
         "name": "diamond-platform",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
             {"name": "svc-a", "path": "svc-a", "depends_on": ["lib"]},
             {"name": "svc-b", "path": "svc-b", "depends_on": ["lib"]},
@@ -51,9 +51,9 @@ def _diamond_manifest(workspace_root, **overrides):
         "halt_reason": None,
         "dag": {
             "tiers": [
-                {"tier": 0, "repos": ["lib"], "status": "pending"},
-                {"tier": 1, "repos": ["svc-a", "svc-b"], "status": "pending"},
-                {"tier": 2, "repos": ["gateway"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "pending"},
+                {"tier": 1, "projects": ["svc-a", "svc-b"], "status": "pending"},
+                {"tier": 2, "projects": ["gateway"], "status": "pending"},
             ],
             "dependency_graph": {
                 "lib": [],
@@ -63,7 +63,7 @@ def _diamond_manifest(workspace_root, **overrides):
             },
         },
         "children": [],
-        "plan": {"workspace_plan_path": None, "repo_plans": {}},
+        "plan": {"workspace_plan_path": None, "project_plans": {}},
         "integration_test": {"status": "pending", "exit_code": None, "log_path": None},
     }
     m.update(overrides)
@@ -148,7 +148,7 @@ class TestDiamondAllSuccess:
         with (
             patch.object(DagExecutor, "_run_child", fake_run_child),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="",
             ),
         ):
@@ -176,7 +176,7 @@ class TestDiamondAllSuccess:
         with (
             patch.object(DagExecutor, "_run_child", fake_run_child),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="",
             ),
         ):
@@ -206,13 +206,13 @@ class TestDiamondAllSuccess:
         with (
             patch.object(DagExecutor, "_run_child", fake_run_child),
             patch(
-                "worca.workspace.dag_executor._extract_repo_context",
+                "worca.workspace.dag_executor._extract_project_context",
                 return_value="",
             ),
         ):
             executor.execute()
 
-        child_repos = {c["repo"] for c in manifest["children"]}
+        child_repos = {c["project"] for c in manifest["children"]}
         assert child_repos == {"lib", "svc-a", "svc-b", "gateway"}
         assert all(c["status"] == "completed" for c in manifest["children"])
 
@@ -254,7 +254,7 @@ class TestDiamondFailurePropagation:
 
         blocked = [c for c in manifest["children"] if c["status"] == "blocked"]
         assert len(blocked) == 1
-        assert blocked[0]["repo"] == "gateway"
+        assert blocked[0]["project"] == "gateway"
 
     def test_gateway_not_dispatched(self):
         manifest = _diamond_manifest("/workspace")
@@ -266,21 +266,21 @@ class TestDiamondFailurePropagation:
         manifest = _diamond_manifest("/workspace")
         self._run_with_svc_a_failure(manifest)
 
-        lib = next(c for c in manifest["children"] if c["repo"] == "lib")
+        lib = next(c for c in manifest["children"] if c["project"] == "lib")
         assert lib["status"] == "completed"
 
     def test_svc_b_completed(self):
         manifest = _diamond_manifest("/workspace")
         self._run_with_svc_a_failure(manifest)
 
-        svc_b = next(c for c in manifest["children"] if c["repo"] == "svc-b")
+        svc_b = next(c for c in manifest["children"] if c["project"] == "svc-b")
         assert svc_b["status"] == "completed"
 
     def test_svc_a_marked_failed(self):
         manifest = _diamond_manifest("/workspace")
         self._run_with_svc_a_failure(manifest)
 
-        svc_a = next(c for c in manifest["children"] if c["repo"] == "svc-a")
+        svc_a = next(c for c in manifest["children"] if c["project"] == "svc-a")
         assert svc_a["status"] == "failed"
 
     def test_workspace_status_failed(self):
@@ -294,7 +294,7 @@ class TestDiamondFailurePropagation:
         manifest = _diamond_manifest("/workspace")
         self._run_with_svc_a_failure(manifest)
 
-        gateway = next(c for c in manifest["children"] if c["repo"] == "gateway")
+        gateway = next(c for c in manifest["children"] if c["project"] == "gateway")
         assert gateway["run_id"] is None
         assert gateway["worktree_path"] is None
 
@@ -324,15 +324,15 @@ class TestDiamondResume:
         ws_root = str(tmp_path)
         manifest = _diamond_manifest(ws_root, status="failed")
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
-            {"tier": 1, "repos": ["svc-a", "svc-b"], "status": "failed"},
-            {"tier": 2, "repos": ["gateway"], "status": "pending"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
+            {"tier": 1, "projects": ["svc-a", "svc-b"], "status": "failed"},
+            {"tier": 2, "projects": ["gateway"], "status": "pending"},
         ]
         manifest["children"] = [
-            {"repo": "lib", "run_id": "r-lib", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
-            {"repo": "svc-a", "run_id": "r-svc-a", "worktree_path": None, "status": "failed", "tier": 1},
-            {"repo": "svc-b", "run_id": "r-svc-b", "worktree_path": str(tmp_path / "wt_svc_b"), "status": "completed", "tier": 1},
-            {"repo": "gateway", "run_id": None, "worktree_path": None, "status": "blocked", "tier": 2},
+            {"project": "lib", "run_id": "r-lib", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
+            {"project": "svc-a", "run_id": "r-svc-a", "worktree_path": None, "status": "failed", "tier": 1},
+            {"project": "svc-b", "run_id": "r-svc-b", "worktree_path": str(tmp_path / "wt_svc_b"), "status": "completed", "tier": 1},
+            {"project": "gateway", "run_id": None, "worktree_path": None, "status": "blocked", "tier": 2},
         ]
         return manifest
 
@@ -362,7 +362,7 @@ class TestDiamondResume:
         skip, redispatch = classify_children_for_resume(manifest["children"])
         rebuild_resume_manifest(manifest, skip, redispatch)
 
-        child_repos = {c["repo"] for c in manifest["children"]}
+        child_repos = {c["project"] for c in manifest["children"]}
         assert "lib" in child_repos
         assert "svc-b" in child_repos
         assert "svc-a" not in child_repos
@@ -422,7 +422,7 @@ class TestDiamondResume:
 
         with (
             patch.object(DagExecutor, "_run_child", fake_run_child),
-            patch("worca.workspace.dag_executor._extract_repo_context", fake_extract),
+            patch("worca.workspace.dag_executor._extract_project_context", fake_extract),
         ):
             executor = DagExecutor(manifest, str(tmp_path / "run-dir"))
             result = executor.execute()
@@ -459,13 +459,13 @@ class TestDiamondResume:
 
         with (
             patch.object(DagExecutor, "_run_child", fake_run_child),
-            patch("worca.workspace.dag_executor._extract_repo_context", fake_extract),
+            patch("worca.workspace.dag_executor._extract_project_context", fake_extract),
         ):
             executor = DagExecutor(manifest, str(tmp_path / "run-dir"))
             result = executor.execute()
 
         assert result["status"] == "failed"
-        children_by_repo = {c["repo"]: c for c in manifest["children"]}
+        children_by_repo = {c["project"]: c for c in manifest["children"]}
         assert children_by_repo["gateway"]["status"] == "blocked"
         assert children_by_repo["svc-a"]["status"] == "failed"
         assert children_by_repo["lib"]["status"] == "completed"
@@ -498,7 +498,7 @@ class TestDiamondResume:
 
         with (
             patch.object(DagExecutor, "_run_child", fake_run_child),
-            patch("worca.workspace.dag_executor._extract_repo_context", fake_extract),
+            patch("worca.workspace.dag_executor._extract_project_context", fake_extract),
         ):
             executor = DagExecutor(manifest, str(tmp_path / "run-dir"))
             executor.execute()

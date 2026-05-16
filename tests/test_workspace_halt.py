@@ -19,8 +19,8 @@ def _make_manifest(
 ):
     if tiers is None:
         tiers = [
-            {"tier": 0, "repos": ["lib"], "status": "running"},
-            {"tier": 1, "repos": ["backend", "frontend"], "status": "pending"},
+            {"tier": 0, "projects": ["lib"], "status": "running"},
+            {"tier": 1, "projects": ["backend", "frontend"], "status": "pending"},
         ]
     return {
         "workspace_id": workspace_id,
@@ -34,7 +34,7 @@ def _make_manifest(
         "branch_template": "workspace/{slug}/{repo}",
         "dag": {"tiers": tiers, "dependency_graph": {}},
         "children": children or [],
-        "plan": {"workspace_plan_path": None, "repo_plans": {}},
+        "plan": {"workspace_plan_path": None, "project_plans": {}},
         "integration_test": {"status": "pending", "exit_code": None, "log_path": None},
     }
 
@@ -110,9 +110,9 @@ class TestHaltReasonUser:
             manifest = _make_manifest(
                 workspace_root=ws_root,
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "running"},
-                    {"tier": 1, "repos": ["app"], "status": "pending"},
-                    {"tier": 2, "repos": ["web"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "running"},
+                    {"tier": 1, "projects": ["app"], "status": "pending"},
+                    {"tier": 2, "projects": ["web"], "status": "pending"},
                 ],
             )
             _write_manifest_to_disk(manifest, tmp)
@@ -134,8 +134,8 @@ class TestHaltReasonUser:
             manifest = _make_manifest(
                 workspace_root=ws_root,
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "running"},
-                    {"tier": 1, "repos": ["app"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "running"},
+                    {"tier": 1, "projects": ["app"], "status": "pending"},
                 ],
             )
             _write_manifest_to_disk(manifest, tmp)
@@ -155,11 +155,11 @@ class TestHaltReasonUser:
             manifest = _make_manifest(
                 workspace_root=ws_root,
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "running"},
-                    {"tier": 1, "repos": ["app", "web"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "running"},
+                    {"tier": 1, "projects": ["app", "web"], "status": "pending"},
                 ],
                 children=[
-                    {"repo": "lib", "run_id": "r-1", "worktree_path": "/wt/lib",
+                    {"project": "lib", "run_id": "r-1", "worktree_path": "/wt/lib",
                      "status": "running", "tier": 0},
                 ],
             )
@@ -173,7 +173,7 @@ class TestHaltReasonUser:
             halted_children = [
                 c for c in saved["children"] if c["status"] == "halted"
             ]
-            halted_repos = {c["repo"] for c in halted_children}
+            halted_repos = {c["project"] for c in halted_children}
             assert halted_repos == {"app", "web"}
             for c in halted_children:
                 assert c["run_id"] is None
@@ -187,11 +187,11 @@ class TestHaltReasonUser:
             manifest = _make_manifest(
                 workspace_root=ws_root,
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "completed"},
-                    {"tier": 1, "repos": ["app"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "completed"},
+                    {"tier": 1, "projects": ["app"], "status": "pending"},
                 ],
                 children=[
-                    {"repo": "lib", "run_id": "r-1", "worktree_path": "/wt/lib",
+                    {"project": "lib", "run_id": "r-1", "worktree_path": "/wt/lib",
                      "status": "completed", "tier": 0},
                 ],
             )
@@ -202,7 +202,7 @@ class TestHaltReasonUser:
             )
 
             saved = _read_manifest_from_disk(ws_root, manifest["workspace_id"])
-            lib_child = next(c for c in saved["children"] if c["repo"] == "lib")
+            lib_child = next(c for c in saved["children"] if c["project"] == "lib")
             assert lib_child["status"] == "completed"
             assert lib_child["run_id"] == "r-1"
 
@@ -224,7 +224,7 @@ class TestHaltReasonUser:
             manifest = _make_manifest(
                 workspace_root=ws_root,
                 status=WorkspaceStatus.COMPLETED,
-                tiers=[{"tier": 0, "repos": ["lib"], "status": "completed"}],
+                tiers=[{"tier": 0, "projects": ["lib"], "status": "completed"}],
             )
             _write_manifest_to_disk(manifest, tmp)
 
@@ -243,8 +243,8 @@ class TestHaltReasonUser:
                 status=WorkspaceStatus.HALTED,
                 halt_reason="user",
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "completed"},
-                    {"tier": 1, "repos": ["app"], "status": "halted"},
+                    {"tier": 0, "projects": ["lib"], "status": "completed"},
+                    {"tier": 1, "projects": ["app"], "status": "halted"},
                 ],
             )
             _write_manifest_to_disk(manifest, tmp)
@@ -263,8 +263,8 @@ class TestHaltReasonUser:
                 workspace_root=ws_root,
                 status=WorkspaceStatus.PLANNING,
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "pending"},
-                    {"tier": 1, "repos": ["app"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "pending"},
+                    {"tier": 1, "projects": ["app"], "status": "pending"},
                 ],
             )
             _write_manifest_to_disk(manifest, tmp)
@@ -287,7 +287,7 @@ class TestHaltReasonUser:
                 workspace_root=ws_root,
                 status=WorkspaceStatus.INTEGRATION_TESTING,
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "completed"},
+                    {"tier": 0, "projects": ["lib"], "status": "completed"},
                 ],
             )
             _write_manifest_to_disk(manifest, tmp)
@@ -313,8 +313,8 @@ class TestHaltReasonCircuitBreaker:
         from worca.workspace.dag_executor import DagExecutor
 
         tiers = [
-            {"tier": 0, "repos": ["a", "b", "c", "d"], "status": "pending"},
-            {"tier": 1, "repos": ["e"], "status": "pending"},
+            {"tier": 0, "projects": ["a", "b", "c", "d"], "status": "pending"},
+            {"tier": 1, "projects": ["e"], "status": "pending"},
         ]
         manifest = {
             "workspace_id": "ws_test_cb",
@@ -327,7 +327,7 @@ class TestHaltReasonCircuitBreaker:
             "guide": {"paths": [], "bytes": 0, "filenames": []},
             "dag": {"tiers": tiers, "dependency_graph": {}},
             "children": [],
-            "plan": {"workspace_plan_path": None, "repo_plans": {}},
+            "plan": {"workspace_plan_path": None, "project_plans": {}},
             "failure_threshold": 0.30,
         }
         run_dir = "/tmp/run-dir"
@@ -357,8 +357,8 @@ class TestHaltReasonCircuitBreaker:
             manifest = _make_manifest(
                 workspace_root=ws_root,
                 tiers=[
-                    {"tier": 0, "repos": ["lib"], "status": "running"},
-                    {"tier": 1, "repos": ["app"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "running"},
+                    {"tier": 1, "projects": ["app"], "status": "pending"},
                 ],
             )
             _write_manifest_to_disk(manifest, tmp)
@@ -379,9 +379,9 @@ class TestHaltReasonCircuitBreaker:
         from worca.workspace.dag_executor import DagExecutor
 
         tiers = [
-            {"tier": 0, "repos": ["a", "b", "c"], "status": "pending"},
-            {"tier": 1, "repos": ["d"], "status": "pending"},
-            {"tier": 2, "repos": ["e"], "status": "pending"},
+            {"tier": 0, "projects": ["a", "b", "c"], "status": "pending"},
+            {"tier": 1, "projects": ["d"], "status": "pending"},
+            {"tier": 2, "projects": ["e"], "status": "pending"},
         ]
         manifest = {
             "workspace_id": "ws_test_cb2",
@@ -394,7 +394,7 @@ class TestHaltReasonCircuitBreaker:
             "guide": {"paths": [], "bytes": 0, "filenames": []},
             "dag": {"tiers": tiers, "dependency_graph": {}},
             "children": [],
-            "plan": {"workspace_plan_path": None, "repo_plans": {}},
+            "plan": {"workspace_plan_path": None, "project_plans": {}},
             "failure_threshold": 0.30,
         }
         run_dir = "/tmp/run-dir"
@@ -423,7 +423,7 @@ class TestHaltReasonCircuitBreaker:
         from worca.workspace.dag_executor import DagExecutor
 
         tiers = [
-            {"tier": 0, "repos": ["a"], "status": "pending"},
+            {"tier": 0, "projects": ["a"], "status": "pending"},
         ]
         manifest = {
             "workspace_id": "ws_test_nohalt",
@@ -436,7 +436,7 @@ class TestHaltReasonCircuitBreaker:
             "guide": {"paths": [], "bytes": 0, "filenames": []},
             "dag": {"tiers": tiers, "dependency_graph": {}},
             "children": [],
-            "plan": {"workspace_plan_path": None, "repo_plans": {}},
+            "plan": {"workspace_plan_path": None, "project_plans": {}},
         }
         run_dir = "/tmp/run-dir"
         executor = DagExecutor(manifest, run_dir)

@@ -3,18 +3,18 @@ import subprocess
 from unittest.mock import patch
 
 
-from worca.workspace.manifest import RepoEntry, Workspace
+from worca.workspace.manifest import ProjectEntry, Workspace
 
 
 # -- helpers ------------------------------------------------------------------
 
 
 def _make_workspace():
-    repos = [
-        RepoEntry(name="lib", path="lib", depends_on=[]),
-        RepoEntry(name="app", path="app", depends_on=["lib"]),
+    projects = [
+        ProjectEntry(name="lib", path="lib", depends_on=[]),
+        ProjectEntry(name="app", path="app", depends_on=["lib"]),
     ]
-    return Workspace(name="test-ws", repos=repos, tiers=[["lib"], ["app"]])
+    return Workspace(name="test-ws", projects=projects, tiers=[["lib"], ["app"]])
 
 
 def _make_manifest_no_prs():
@@ -26,20 +26,20 @@ def _make_manifest_no_prs():
         "work_request": {"title": "Apply migration", "description": "...", "source": None},
         "dag": {
             "tiers": [
-                {"tier": 0, "repos": ["lib"], "status": "completed"},
-                {"tier": 1, "repos": ["app"], "status": "completed"},
+                {"tier": 0, "projects": ["lib"], "status": "completed"},
+                {"tier": 1, "projects": ["app"], "status": "completed"},
             ],
         },
         "children": [
             {
-                "repo": "lib",
+                "project": "lib",
                 "run_id": "r-001",
                 "worktree_path": "/wt/lib",
                 "status": "completed",
                 "tier": 0,
             },
             {
-                "repo": "app",
+                "project": "app",
                 "run_id": "r-002",
                 "worktree_path": "/wt/app",
                 "status": "completed",

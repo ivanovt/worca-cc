@@ -1,12 +1,12 @@
 """Tier-based DAG executor for workspace pipelines (W-047 §3).
 
 Dispatches child pipelines via run_worktree.py in topological tier order.
-Repos within a tier run in parallel via ThreadPoolExecutor; tiers execute
+Projects within a tier run in parallel via ThreadPoolExecutor; tiers execute
 sequentially. Each child receives --workspace-id (not --fleet-id) and
 per-child env vars WORCA_WORKSPACE_ID, WORCA_WORKSPACE_NAME, WORCA_DEFER_PR=1.
 
 Between tiers, context artifacts (git diff --stat + targeted file-level diffs)
-are extracted from completed children, written to {run_dir}/context/{repo}-diff.md,
+are extracted from completed children, written to {run_dir}/context/{project}-diff.md,
 and injected into the next tier's children via --guide (W-047 §4).
 """
 from __future__ import annotations
@@ -203,7 +203,7 @@ def _detect_base_ref(worktree_path: str) -> str:
     return "HEAD~1"
 
 
-def _extract_repo_context(
+def _extract_project_context(
     worktree_path: str, cap_bytes: int = CONTEXT_CAP_BYTES,
 ) -> str:
     base = _detect_base_ref(worktree_path)
@@ -212,12 +212,12 @@ def _extract_repo_context(
     return _assemble_context(stat, full_diff, cap_bytes)
 
 
-def _write_context_file(run_dir: str, repo: str, content: str) -> str:
+def _write_context_file(run_dir: str, project: str, content: str) -> str:
     context_dir = os.path.join(run_dir, "context")
     os.makedirs(context_dir, exist_ok=True)
-    path = os.path.join(context_dir, f"{repo}-diff.md")
+    path = os.path.join(context_dir, f"{project}-diff.md")
     with open(path, "w") as f:
-        f.write(f"## Dependency Context: {repo}\n\n{content}")
+        f.write(f"## Dependency Context: {project}\n\n{content}")
     return path
 
 
@@ -233,55 +233,55 @@ class DagExecutor:
         self._max_parallel = manifest.get("max_parallel", 5)
         self._prompt = manifest["work_request"]["description"]
         self._guide_paths = manifest.get("guide", {}).get("paths", [])
-        self._repo_plans = manifest.get("plan", {}).get("repo_plans", {}) or {}
-        self._repos_by_name = manifest.get("repos_by_name") or {}
+        self._project_plans = manifest.get("plan", {}).get("project_plans", {}) or {}
+        self._projects_by_name = manifest.get("projects_by_name") or {}
         self._dependency_graph = manifest.get("dag", {}).get("dependency_graph") or {}
         self._context_paths: dict[str, str] = {}
         self._current_tier = -1
-        self._failed_repos: set[str] = set()
+        self._failed_projects: set[str] = set()
         self._failure_threshold = manifest.get("failure_threshold")
-        self._total_repos = sum(len(t["repos"]) for t in manifest["dag"]["tiers"])
+        self._total_projects = sum(len(t["projects"]) for t in manifest["dag"]["tiers"])
         self._terminal_count = 0
         self._failed_count = 0
 
-        self._completed_repos: dict[str, dict] = {}
+        self._completed_projects: dict[str, dict] = {}
         for child in manifest.get("children", []):
             if child.get("status") == "completed":
-                self._completed_repos[child["repo"]] = child
+                self._completed_projects[child["project"]] = child
 
     def execute(self) -> dict:
         tiers = self._manifest["dag"]["tiers"]
 
         for i, tier_info in enumerate(tiers):
             tier_idx = tier_info["tier"]
-            repos = tier_info["repos"]
+            projects = tier_info["projects"]
             self._current_tier = tier_idx
 
             if tier_info["status"] == "completed":
                 if self._dependency_graph and i < len(tiers) - 1:
-                    self._regenerate_tier_context(repos)
+                    self._regenerate_tier_context(projects)
                 continue
 
             if self._check_circuit_breaker():
                 self._halt_remaining_tiers(tiers[i:])
                 return {"status": "halted"}
 
-            already_done = [r for r in repos if r in self._completed_repos]
-            need_dispatch = [r for r in repos if r not in self._completed_repos]
+            already_done = [p for p in projects if p in self._completed_projects]
+            need_dispatch = [p for p in projects if p not in self._completed_projects]
 
-            blocked, runnable = self._partition_repos(need_dispatch)
+            blocked, runnable = self._partition_projects(need_dispatch)
 
-            for repo in blocked:
-                repo_path = self._repos_by_name.get(repo, repo)
+            for project in blocked:
+                project_path = self._projects_by_name.get(project, project)
                 self._manifest["children"].append({
-                    "repo": repo,
+                    "project": project,
                     "run_id": None,
                     "worktree_path": None,
-                    "project_path": os.path.join(self._workspace_root, repo_path),
+                    "project_path": os.path.join(self._workspace_root, project_path),
                     "status": "blocked",
                     "tier": tier_idx,
                 })
-                self._failed_repos.add(repo)
+                self._failed_projects.add(project)
                 self._terminal_count += 1
                 self._failed_count += 1
 
@@ -298,22 +298,22 @@ class DagExecutor:
                 else:
                     tier_info["status"] = "completed"
 
-                for repo, result in results.items():
-                    repo_path = self._repos_by_name.get(repo, repo)
+                for project, result in results.items():
+                    project_path = self._projects_by_name.get(project, project)
                     self._manifest["children"].append({
-                        "repo": repo,
+                        "project": project,
                         "run_id": result.get("run_id"),
                         "worktree_path": result.get("worktree_path"),
-                        "project_path": os.path.join(self._workspace_root, repo_path),
+                        "project_path": os.path.join(self._workspace_root, project_path),
                         "status": result["status"],
                         "tier": tier_idx,
                     })
                     self._terminal_count += 1
                     if result["status"] == "failed":
-                        self._failed_repos.add(repo)
+                        self._failed_projects.add(project)
                         self._failed_count += 1
                     elif result["status"] == "completed":
-                        self._completed_repos[repo] = result
+                        self._completed_projects[project] = result
             elif not already_done:
                 tier_info["status"] = "failed"
             else:
@@ -329,19 +329,19 @@ class DagExecutor:
                 completed_this_tier = {}
                 if runnable:
                     completed_this_tier = {
-                        repo: r for repo, r in results.items()
+                        project: r for project, r in results.items()
                         if r["status"] == "completed"
                     }
-                for repo in already_done:
-                    child_info = self._completed_repos[repo]
-                    completed_this_tier[repo] = {
+                for project in already_done:
+                    child_info = self._completed_projects[project]
+                    completed_this_tier[project] = {
                         "status": "completed",
                         "worktree_path": child_info.get("worktree_path"),
                     }
                 if completed_this_tier:
                     self._extract_tier_context(completed_this_tier)
 
-        has_failures = self._failed_repos or self._failed_count > 0
+        has_failures = self._failed_projects or self._failed_count > 0
         if self._check_circuit_breaker():
             self._manifest["status"] = WorkspaceStatus.HALTED
             self._manifest["halt_reason"] = "circuit_breaker"
@@ -356,21 +356,21 @@ class DagExecutor:
         self._write_manifest()
         return {"status": "completed"}
 
-    def _partition_repos(self, repos: list[str]) -> tuple[list[str], list[str]]:
+    def _partition_projects(self, projects: list[str]) -> tuple[list[str], list[str]]:
         blocked = []
         runnable = []
-        for repo in repos:
-            deps = self._dependency_graph.get(repo, [])
-            if any(dep in self._failed_repos for dep in deps):
-                blocked.append(repo)
+        for project in projects:
+            deps = self._dependency_graph.get(project, [])
+            if any(dep in self._failed_projects for dep in deps):
+                blocked.append(project)
             else:
-                runnable.append(repo)
+                runnable.append(project)
         return blocked, runnable
 
     def _check_circuit_breaker(self) -> bool:
         if self._failure_threshold is None:
             return False
-        min_terminal = min(3, self._total_repos)
+        min_terminal = min(3, self._total_projects)
         if self._terminal_count < min_terminal:
             return False
         return self._failed_count / self._terminal_count >= self._failure_threshold
@@ -378,13 +378,13 @@ class DagExecutor:
     def _halt_remaining_tiers(self, remaining_tiers: list[dict]) -> None:
         for tier_info in remaining_tiers:
             tier_info["status"] = "halted"
-            for repo in tier_info["repos"]:
-                repo_path = self._repos_by_name.get(repo, repo)
+            for project in tier_info["projects"]:
+                project_path = self._projects_by_name.get(project, project)
                 self._manifest["children"].append({
-                    "repo": repo,
+                    "project": project,
                     "run_id": None,
                     "worktree_path": None,
-                    "project_path": os.path.join(self._workspace_root, repo_path),
+                    "project_path": os.path.join(self._workspace_root, project_path),
                     "status": "halted",
                     "tier": tier_info["tier"],
                 })
@@ -392,60 +392,60 @@ class DagExecutor:
         self._manifest["halt_reason"] = "circuit_breaker"
         self._write_manifest()
 
-    def _dispatch_tier(self, repos: list[str]) -> dict:
+    def _dispatch_tier(self, projects: list[str]) -> dict:
         results = {}
 
         with ThreadPoolExecutor(max_workers=self._max_parallel) as pool:
             futures = {
-                pool.submit(self._run_child, repo): repo for repo in repos
+                pool.submit(self._run_child, project): project for project in projects
             }
             for future in futures:
-                repo = futures[future]
-                results[repo] = future.result()
+                project = futures[future]
+                results[project] = future.result()
 
         return results
 
-    def _regenerate_tier_context(self, repos: list[str]) -> None:
-        """Re-extract context from already-completed repos in a skipped tier."""
-        for repo in repos:
-            child = self._completed_repos.get(repo)
+    def _regenerate_tier_context(self, projects: list[str]) -> None:
+        """Re-extract context from already-completed projects in a skipped tier."""
+        for project in projects:
+            child = self._completed_projects.get(project)
             if not child:
                 continue
             worktree_path = child.get("worktree_path")
             if not worktree_path:
                 continue
-            content = _extract_repo_context(worktree_path)
+            content = _extract_project_context(worktree_path)
             if not content.strip():
                 continue
-            path = _write_context_file(self._run_dir, repo, content)
-            self._context_paths[repo] = path
+            path = _write_context_file(self._run_dir, project, content)
+            self._context_paths[project] = path
 
     def _extract_tier_context(self, results: dict) -> None:
-        for repo, result in results.items():
+        for project, result in results.items():
             if result["status"] != "completed":
                 continue
             worktree_path = result.get("worktree_path")
             if not worktree_path:
                 continue
-            content = _extract_repo_context(worktree_path)
+            content = _extract_project_context(worktree_path)
             if not content.strip():
                 continue
-            path = _write_context_file(self._run_dir, repo, content)
-            self._context_paths[repo] = path
+            path = _write_context_file(self._run_dir, project, content)
+            self._context_paths[project] = path
 
-    def _run_child(self, repo: str) -> dict:
+    def _run_child(self, project: str) -> dict:
         env = _build_child_env(
             os.environ.copy(),
             workspace_id=self._workspace_id,
             workspace_name=self._workspace_name,
         )
 
-        deps = self._dependency_graph.get(repo, [])
+        deps = self._dependency_graph.get(project, [])
         context_guides = [
             self._context_paths[dep] for dep in deps if dep in self._context_paths
         ]
 
-        plan_path = self._repo_plans.get(repo)
+        plan_path = self._project_plans.get(project)
         cmd = _build_child_cmd(
             workspace_id=self._workspace_id,
             prompt=self._prompt,
@@ -453,8 +453,8 @@ class DagExecutor:
             plan_path=plan_path,
         )
 
-        repo_path = self._repos_by_name.get(repo, repo)
-        cwd = os.path.join(self._workspace_root, repo_path)
+        project_path = self._projects_by_name.get(project, project)
+        cwd = os.path.join(self._workspace_root, project_path)
 
         proc = subprocess.run(
             cmd,

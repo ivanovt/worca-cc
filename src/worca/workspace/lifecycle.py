@@ -30,7 +30,7 @@ def halt_workspace(
     """Halt a workspace run. In-flight tier children finish naturally.
 
     Sets status to 'halted' and halt_reason to 'user'. Pending tiers
-    are marked halted and their repos get halted child entries.
+    are marked halted and their projects get halted child entries.
 
     Returns True on success, False when the manifest is missing or the
     workspace is already in a terminal/halted state.
@@ -55,15 +55,15 @@ def halt_workspace(
     manifest["status"] = WorkspaceStatus.HALTED
     manifest["halt_reason"] = "user"
 
-    existing_repos = {c["repo"] for c in manifest.get("children", [])}
+    existing_projects = {c["project"] for c in manifest.get("children", [])}
 
     for tier_info in manifest.get("dag", {}).get("tiers", []):
         if tier_info["status"] == "pending":
             tier_info["status"] = "halted"
-            for repo in tier_info["repos"]:
-                if repo not in existing_repos:
+            for project in tier_info["projects"]:
+                if project not in existing_projects:
                     manifest["children"].append({
-                        "repo": repo,
+                        "project": project,
                         "run_id": None,
                         "worktree_path": None,
                         "status": "halted",

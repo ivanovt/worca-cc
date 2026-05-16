@@ -35,7 +35,7 @@ const BASE_WORKSPACE = {
     description: 'Coordinated migration across backend, lib, and frontend.',
   },
   dag: {
-    repos: [
+    projects: [
       { name: 'shared-lib', depends_on: [], status: 'completed', tier: 0 },
       {
         name: 'backend',

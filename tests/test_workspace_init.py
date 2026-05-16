@@ -37,81 +37,81 @@ def _make_git_repo(path):
     )
 
 
-def _make_workspace(tmp_path, repo_names):
+def _make_workspace(tmp_path, project_names):
     """Create a parent dir with child git repos, return parent path."""
     parent = tmp_path / "workspace"
     parent.mkdir()
-    for name in repo_names:
+    for name in project_names:
         _make_git_repo(str(parent / name))
     return str(parent)
 
 
-# ---- unit tests for scan_repos ------------------------------------------------
+# ---- unit tests for scan_projects ------------------------------------------------
 
-class TestScanRepos:
+class TestScanProjects:
     def test_discovers_git_children(self, tmp_path):
-        from worca.cli.workspace import scan_repos
+        from worca.cli.workspace import scan_projects
 
         parent = _make_workspace(tmp_path, ["backend", "frontend", "lib"])
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         names = sorted(r["name"] for r in repos)
         assert names == ["backend", "frontend", "lib"]
 
     def test_paths_are_relative(self, tmp_path):
-        from worca.cli.workspace import scan_repos
+        from worca.cli.workspace import scan_projects
 
         parent = _make_workspace(tmp_path, ["myrepo"])
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         assert repos[0]["path"] == "myrepo"
 
     def test_skips_non_git_dirs(self, tmp_path):
-        from worca.cli.workspace import scan_repos
+        from worca.cli.workspace import scan_projects
 
         parent = _make_workspace(tmp_path, ["real-repo"])
         # Create a non-git directory
         (tmp_path / "workspace" / "just-a-dir").mkdir()
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         assert len(repos) == 1
         assert repos[0]["name"] == "real-repo"
 
     def test_skips_hidden_dirs(self, tmp_path):
-        from worca.cli.workspace import scan_repos
+        from worca.cli.workspace import scan_projects
 
         parent = _make_workspace(tmp_path, ["visible"])
         _make_git_repo(str(tmp_path / "workspace" / ".hidden-repo"))
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         assert len(repos) == 1
         assert repos[0]["name"] == "visible"
 
     def test_no_repos_found(self, tmp_path):
-        from worca.cli.workspace import scan_repos
+        from worca.cli.workspace import scan_projects
 
         parent = tmp_path / "empty"
         parent.mkdir()
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         assert repos == []
 
     def test_defaults_depends_on_empty(self, tmp_path):
-        from worca.cli.workspace import scan_repos
+        from worca.cli.workspace import scan_projects
 
         parent = _make_workspace(tmp_path, ["a"])
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         assert repos[0]["depends_on"] == []
 
     def test_no_role_field_emitted(self, tmp_path):
         # `role` was a freeform label with no behavioral effect; removed to
-        # simplify the schema. Make sure scan_repos doesn't reintroduce it.
-        from worca.cli.workspace import scan_repos
+        # simplify the schema. Make sure scan_projects doesn't reintroduce it.
+        from worca.cli.workspace import scan_projects
 
         parent = _make_workspace(tmp_path, ["a"])
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         assert "role" not in repos[0]
 
     def test_results_sorted_by_name(self, tmp_path):
-        from worca.cli.workspace import scan_repos
+        from worca.cli.workspace import scan_projects
 
         parent = _make_workspace(tmp_path, ["zebra", "alpha", "mid"])
-        repos = scan_repos(parent)
+        repos = scan_projects(parent)
         names = [r["name"] for r in repos]
         assert names == ["alpha", "mid", "zebra"]
 
@@ -125,7 +125,7 @@ class TestGenerateWorkspaceJson:
         parent = _make_workspace(tmp_path, ["api", "web"])
         doc = generate_workspace_json(parent)
         assert doc["name"] == "workspace"
-        assert len(doc["repos"]) == 2
+        assert len(doc["projects"]) == 2
 
     def test_name_from_dir_basename(self, tmp_path):
         from worca.cli.workspace import generate_workspace_json
@@ -141,7 +141,7 @@ class TestGenerateWorkspaceJson:
 
         parent = _make_workspace(tmp_path, ["repo1"])
         doc = generate_workspace_json(parent)
-        repo = doc["repos"][0]
+        repo = doc["projects"][0]
         assert "name" in repo
         assert "path" in repo
         assert "depends_on" in repo
@@ -173,7 +173,7 @@ class TestCmdWorkspaceInit:
         with open(ws_path) as f:
             doc = json.load(f)
         assert doc["name"] == "workspace"
-        assert len(doc["repos"]) == 2
+        assert len(doc["projects"]) == 2
 
     def test_creates_dot_worca_dir(self, tmp_path):
         from worca.cli.workspace import cmd_workspace_init
@@ -236,7 +236,7 @@ class TestCmdWorkspaceInit:
         cmd_workspace_init(parent)
         ws = Workspace.load(parent)
         assert ws.name == "workspace"
-        assert len(ws.repos) == 2
+        assert len(ws.projects) == 2
 
 
 # ---- test CLI integration via argparse -----------------------------------------

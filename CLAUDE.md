@@ -421,7 +421,7 @@ python .claude/scripts/run_workspace.py /path/to/parent \
 ```json
 {
   "name": "my-platform",
-  "repos": [
+  "projects": [
     { "name": "shared-lib", "path": "shared-lib", "role": "library", "depends_on": [] },
     { "name": "backend",    "path": "backend",    "role": "service", "depends_on": ["shared-lib"] },
     { "name": "frontend",   "path": "frontend",   "role": "app",    "depends_on": ["shared-lib"] }
@@ -434,7 +434,7 @@ python .claude/scripts/run_workspace.py /path/to/parent \
 }
 ```
 
-Fields: `name` (workspace display name), `repos` (list with `name`, `path`, `role`, `depends_on`), `integration_test` (optional: `command` + `working_dir`), `umbrella_repo` (optional: GitHub `org/repo` for umbrella issue).
+Fields: `name` (workspace display name), `projects` (list with `name`, `path`, `role`, `depends_on`), `integration_test` (optional: `command` + `working_dir`), `umbrella_repo` (optional: GitHub `org/repo` for umbrella issue).
 
 ### Execution flow
 

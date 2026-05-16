@@ -148,14 +148,14 @@ function readWorkspaceJson(wsRoot) {
   }
 }
 
-function detectCycle(repos) {
+function detectCycle(projects) {
   const inDegree = {};
   const dependents = {};
-  for (const r of repos) {
+  for (const r of projects) {
     inDegree[r.name] = 0;
     dependents[r.name] = [];
   }
-  for (const r of repos) {
+  for (const r of projects) {
     for (const dep of r.depends_on || []) {
       if (!(dep in inDegree)) return `unknown dependency '${dep}'`;
       inDegree[r.name]++;
@@ -173,23 +173,23 @@ function detectCycle(repos) {
       if (inDegree[dep] === 0) next.push(dep);
     }
   }
-  if (processed !== repos.length) {
+  if (processed !== projects.length) {
     const remaining = Object.keys(inDegree)
       .filter((n) => inDegree[n] > 0)
       .sort();
-    return `dependency cycle detected among repos: ${remaining.join(', ')}`;
+    return `dependency cycle detected among projects: ${remaining.join(', ')}`;
   }
   return null;
 }
 
-function computeTiers(repos) {
+function computeTiers(projects) {
   const inDegree = {};
   const dependents = {};
-  for (const r of repos) {
+  for (const r of projects) {
     inDegree[r.name] = 0;
     dependents[r.name] = [];
   }
-  for (const r of repos) {
+  for (const r of projects) {
     for (const dep of r.depends_on || []) {
       inDegree[r.name]++;
       dependents[dep].push(r.name);
@@ -233,13 +233,13 @@ function sanitizeFilename(raw) {
   return name || 'guide';
 }
 
-function scanForRepos(parentPath) {
-  const repos = [];
+function scanForProjects(parentPath) {
+  const projects = [];
   let entries;
   try {
     entries = readdirSync(parentPath);
   } catch {
-    return repos;
+    return projects;
   }
   for (const entry of entries) {
     const full = join(parentPath, entry);
@@ -249,14 +249,14 @@ function scanForRepos(parentPath) {
       continue;
     }
     if (existsSync(join(full, '.git'))) {
-      repos.push({
+      projects.push({
         name: entry,
         path: entry,
         role_hint: null,
       });
     }
   }
-  return repos;
+  return projects;
 }
 
 function enrichChildStatus(child) {
@@ -458,8 +458,8 @@ export function createWorkspaceRouter({
         .json({ ok: false, error: `Path does not exist: ${parent_path}` });
     }
     try {
-      const repos = scanForRepos(parent_path);
-      res.json({ ok: true, repos });
+      const projects = scanForProjects(parent_path);
+      res.json({ ok: true, projects });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -467,7 +467,7 @@ export function createWorkspaceRouter({
 
   // ── POST /api/workspaces ──────────────────────────────────────────────
   workspaces.post('/', (req, res) => {
-    const { name, parent_path, repos, integration_test, umbrella_repo } =
+    const { name, parent_path, projects, integration_test, umbrella_repo } =
       req.body ?? {};
     if (!name || typeof name !== 'string') {
       return res.status(400).json({ ok: false, error: 'name is required' });
@@ -477,18 +477,18 @@ export function createWorkspaceRouter({
         .status(400)
         .json({ ok: false, error: 'parent_path is required' });
     }
-    if (!Array.isArray(repos) || repos.length === 0) {
+    if (!Array.isArray(projects) || projects.length === 0) {
       return res
         .status(400)
-        .json({ ok: false, error: 'repos must be a non-empty array' });
+        .json({ ok: false, error: 'projects must be a non-empty array' });
     }
 
-    const cycleErr = detectCycle(repos);
+    const cycleErr = detectCycle(projects);
     if (cycleErr) {
       return res.status(422).json({ ok: false, error: cycleErr });
     }
 
-    const wsJson = { name, repos };
+    const wsJson = { name, projects };
     if (integration_test) wsJson.integration_test = integration_test;
     if (umbrella_repo) wsJson.umbrella_repo = umbrella_repo;
 
@@ -522,7 +522,7 @@ export function createWorkspaceRouter({
         return {
           name: reg.name,
           path: reg.path,
-          repos: ws?.repos ?? [],
+          projects: ws?.projects ?? [],
           integration_test: ws?.integration_test ?? null,
           umbrella_repo: ws?.umbrella_repo ?? null,
         };
@@ -594,8 +594,8 @@ export function createWorkspaceRouter({
     }
 
     const updated = req.body ?? {};
-    const repos = updated.repos ?? [];
-    const cycleErr = detectCycle(repos);
+    const projects = updated.projects ?? [];
+    const cycleErr = detectCycle(projects);
     if (cycleErr) {
       return res.status(422).json({ ok: false, error: cycleErr });
     }
@@ -738,10 +738,10 @@ export function createWorkspaceRouter({
       }
 
       const missing_in = [];
-      for (const repo of ws.repos) {
-        const repoPath = join(reg.path, repo.path);
-        const exists = await validateBaseBranch(repoPath, base_branch);
-        if (!exists) missing_in.push(repo.name);
+      for (const project of ws.projects) {
+        const projectPath = join(reg.path, project.path);
+        const exists = await validateBaseBranch(projectPath, base_branch);
+        if (!exists) missing_in.push(project.name);
       }
       res.json({ ok: missing_in.length === 0, missing_in });
     } catch (err) {
@@ -816,7 +816,7 @@ export function createWorkspaceRouter({
         });
       }
 
-      const cycleErr = detectCycle(ws.repos);
+      const cycleErr = detectCycle(ws.projects);
       if (cycleErr) {
         return res.status(422).json({ ok: false, error: cycleErr });
       }
@@ -863,10 +863,10 @@ export function createWorkspaceRouter({
         guideEntry = { paths, bytes: totalBytes, filenames, uploaded: true };
       }
 
-      const tiers = computeTiers(ws.repos);
-      const dagTiers = tiers.map((repos, i) => ({
+      const tiers = computeTiers(ws.projects);
+      const dagTiers = tiers.map((projects, i) => ({
         tier: i,
-        repos,
+        projects,
         status: 'pending',
       }));
 
@@ -882,7 +882,7 @@ export function createWorkspaceRouter({
           source: source ?? null,
         },
         guide: guideEntry,
-        branch_template: branch_template ?? 'workspace/{slug}/{repo}',
+        branch_template: branch_template ?? 'workspace/{slug}/{project}',
         max_parallel: Number(max_parallel) || 5,
         skip_integration: false,
         skip_planning: plan_mode === 'skip',
@@ -1318,9 +1318,9 @@ export function createWorkspaceRouter({
     res.send(readFileSync(logPath, 'utf8'));
   });
 
-  // ── GET /api/workspace-runs/:id/context/:repo ─────────────────────────
-  workspaceRuns.get('/:id/context/:repo', (req, res) => {
-    const { id, repo } = req.params;
+  // ── GET /api/workspace-runs/:id/context/:project ─────────────────────────
+  workspaceRuns.get('/:id/context/:project', (req, res) => {
+    const { id, project } = req.params;
     if (!validateWsId(id)) {
       return res.status(400).json({ ok: false, error: 'Invalid workspace ID' });
     }
@@ -1331,16 +1331,16 @@ export function createWorkspaceRouter({
         .json({ ok: false, error: `Workspace run "${id}" not found` });
     }
 
-    const safeRepo = basename(repo);
+    const safeProject = basename(project);
     const contextPath = join(
       runDir(manifest),
       'context',
-      `${safeRepo}-diff.md`,
+      `${safeProject}-diff.md`,
     );
     if (!existsSync(contextPath)) {
       return res.status(404).json({
         ok: false,
-        error: `No context artifact found for repo "${safeRepo}"`,
+        error: `No context artifact found for project "${safeProject}"`,
       });
     }
 

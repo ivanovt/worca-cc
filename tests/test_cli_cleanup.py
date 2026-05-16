@@ -1185,7 +1185,7 @@ class TestWorkspaceSourceListEligible:
         ws_root = str(tmp_path / "workspace")
         os.makedirs(ws_root)
         children = [
-            {"repo": "backend", "run_id": "r1", "project_path": "/p/backend"},
+            {"project": "backend", "run_id": "r1", "project_path": "/p/backend"},
         ]
         _write_workspace_pointer(pointer_dir, "ws_ch", ws_root)
         _write_workspace_manifest(
@@ -1285,7 +1285,7 @@ class TestWorkspaceSourceRemove:
         pointer_path = _write_workspace_pointer(pointer_dir, "ws_ch", ws_root)
         run_dir = _write_workspace_manifest(
             ws_root, "ws_ch", status="completed",
-            children=[{"repo": "backend", "run_id": "run-child", "project_path": project_dir}],
+            children=[{"project": "backend", "run_id": "run-child", "project_path": project_dir}],
         )
 
         from worca.cli.cleanup import WorkspaceSource
@@ -1297,7 +1297,7 @@ class TestWorkspaceSourceRemove:
             "run_dir": run_dir,
             "pointer_path": pointer_path,
             "worktree_path": run_dir,
-            "children": [{"repo": "backend", "run_id": "run-child", "project_path": project_dir}],
+            "children": [{"project": "backend", "run_id": "run-child", "project_path": project_dir}],
         }
 
         with patch("worca.cli.cleanup.remove_pipeline_worktree", return_value=True) as mock_rm:
@@ -1321,7 +1321,7 @@ class TestWorkspaceSourceRemove:
         pointer_path = _write_workspace_pointer(pointer_dir, "ws_fail", ws_root)
         run_dir = _write_workspace_manifest(
             ws_root, "ws_fail", status="completed",
-            children=[{"repo": "backend", "run_id": "run-child", "project_path": project_dir}],
+            children=[{"project": "backend", "run_id": "run-child", "project_path": project_dir}],
         )
 
         from worca.cli.cleanup import WorkspaceSource
@@ -1333,7 +1333,7 @@ class TestWorkspaceSourceRemove:
             "run_dir": run_dir,
             "pointer_path": pointer_path,
             "worktree_path": run_dir,
-            "children": [{"repo": "backend", "run_id": "run-child", "project_path": project_dir}],
+            "children": [{"project": "backend", "run_id": "run-child", "project_path": project_dir}],
         }
 
         with patch("worca.cli.cleanup.remove_pipeline_worktree", return_value=False):
@@ -1347,7 +1347,7 @@ class TestWorkspaceSourceRemove:
         pointer_path = _write_workspace_pointer(pointer_dir, "ws_skip", ws_root)
         run_dir = _write_workspace_manifest(
             ws_root, "ws_skip", status="completed",
-            children=[{"repo": "orphan", "run_id": "run-orphan"}],
+            children=[{"project": "orphan", "run_id": "run-orphan"}],
         )
 
         from worca.cli.cleanup import WorkspaceSource
@@ -1359,7 +1359,7 @@ class TestWorkspaceSourceRemove:
             "run_dir": run_dir,
             "pointer_path": pointer_path,
             "worktree_path": run_dir,
-            "children": [{"repo": "orphan", "run_id": "run-orphan"}],
+            "children": [{"project": "orphan", "run_id": "run-orphan"}],
         }
 
         with patch("worca.cli.cleanup.remove_pipeline_worktree") as mock_rm:

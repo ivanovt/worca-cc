@@ -33,7 +33,7 @@ def _write_pointer(pointer_dir, ws_id, workspace_root):
 def _linear_workspace_json():
     return {
         "name": "my-platform",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
             {"name": "backend", "path": "backend", "depends_on": ["lib"]},
             {"name": "frontend", "path": "frontend", "depends_on": ["backend"]},
@@ -44,7 +44,7 @@ def _linear_workspace_json():
 def _diamond_workspace_json():
     return {
         "name": "diamond",
-        "repos": [
+        "projects": [
             {"name": "lib", "path": "lib", "depends_on": []},
             {"name": "backend", "path": "backend", "depends_on": ["lib"]},
             {"name": "worker", "path": "worker", "depends_on": ["lib"]},
@@ -70,9 +70,9 @@ def _base_manifest(workspace_root, ws_id="ws_202601011200_abc12345", **overrides
         "halt_reason": None,
         "dag": {
             "tiers": [
-                {"tier": 0, "repos": ["lib"], "status": "completed"},
-                {"tier": 1, "repos": ["backend"], "status": "failed"},
-                {"tier": 2, "repos": ["frontend"], "status": "pending"},
+                {"tier": 0, "projects": ["lib"], "status": "completed"},
+                {"tier": 1, "projects": ["backend"], "status": "failed"},
+                {"tier": 2, "projects": ["frontend"], "status": "pending"},
             ],
             "dependency_graph": {
                 "lib": [],
@@ -81,10 +81,10 @@ def _base_manifest(workspace_root, ws_id="ws_202601011200_abc12345", **overrides
             },
         },
         "children": [
-            {"repo": "lib", "run_id": "run_lib_001", "worktree_path": "/tmp/wt/lib", "status": "completed", "tier": 0},
-            {"repo": "backend", "run_id": "run_be_001", "worktree_path": "/tmp/wt/backend", "status": "failed", "tier": 1},
+            {"project": "lib", "run_id": "run_lib_001", "worktree_path": "/tmp/wt/lib", "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": "run_be_001", "worktree_path": "/tmp/wt/backend", "status": "failed", "tier": 1},
         ],
-        "plan": {"workspace_plan_path": "/tmp/plan.json", "repo_plans": {}},
+        "plan": {"workspace_plan_path": "/tmp/plan.json", "project_plans": {}},
         "integration_test": {"status": "pending", "exit_code": None, "log_path": None},
     }
     m.update(overrides)
@@ -135,7 +135,7 @@ class TestClassifyChildrenForResume:
         from worca.scripts.run_workspace import classify_children_for_resume
 
         children = [
-            {"repo": "lib", "run_id": "r1", "status": "completed", "tier": 0},
+            {"project": "lib", "run_id": "r1", "status": "completed", "tier": 0},
         ]
         skip, redispatch = classify_children_for_resume(children)
         assert "lib" in skip
@@ -145,8 +145,8 @@ class TestClassifyChildrenForResume:
         from worca.scripts.run_workspace import classify_children_for_resume
 
         children = [
-            {"repo": "lib", "run_id": "r1", "status": "completed", "tier": 0},
-            {"repo": "backend", "run_id": "r2", "status": "failed", "tier": 1},
+            {"project": "lib", "run_id": "r1", "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": "r2", "status": "failed", "tier": 1},
         ]
         skip, redispatch = classify_children_for_resume(children)
         assert "lib" in skip
@@ -156,8 +156,8 @@ class TestClassifyChildrenForResume:
         from worca.scripts.run_workspace import classify_children_for_resume
 
         children = [
-            {"repo": "lib", "run_id": "r1", "status": "completed", "tier": 0},
-            {"repo": "backend", "run_id": "r2", "status": "blocked", "tier": 1},
+            {"project": "lib", "run_id": "r1", "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": "r2", "status": "blocked", "tier": 1},
         ]
         skip, redispatch = classify_children_for_resume(children)
         assert "backend" in redispatch
@@ -166,7 +166,7 @@ class TestClassifyChildrenForResume:
         from worca.scripts.run_workspace import classify_children_for_resume
 
         children = [
-            {"repo": "lib", "run_id": None, "status": "halted", "tier": 2},
+            {"project": "lib", "run_id": None, "status": "halted", "tier": 2},
         ]
         skip, redispatch = classify_children_for_resume(children)
         assert "lib" in redispatch
@@ -207,7 +207,7 @@ class TestRebuildResumeManifest:
         manifest = _base_manifest(ws_root)
 
         result = rebuild_resume_manifest(manifest, {"lib"}, {"backend"})
-        child_repos = [c["repo"] for c in result["children"]]
+        child_repos = [c["project"] for c in result["children"]]
         assert "lib" in child_repos
         assert "backend" not in child_repos
 
@@ -218,7 +218,7 @@ class TestRebuildResumeManifest:
         manifest = _base_manifest(ws_root)
 
         result = rebuild_resume_manifest(manifest, {"lib"}, {"backend"})
-        lib_child = [c for c in result["children"] if c["repo"] == "lib"][0]
+        lib_child = [c for c in result["children"] if c["project"] == "lib"][0]
         assert lib_child["status"] == "completed"
         assert lib_child["run_id"] == "run_lib_001"
 
@@ -240,7 +240,7 @@ class TestResumePartialTier:
     """Resume a workspace where tier 0 completed but tier 1 failed — only
     failed/blocked/halted children should be re-dispatched."""
 
-    def test_resume_skips_completed_repos(self, tmp_path):
+    def test_resume_skips_completed_projects(self, tmp_path):
         """DagExecutor in resume mode must not re-dispatch completed repos."""
         from worca.workspace.dag_executor import DagExecutor
 
@@ -250,12 +250,12 @@ class TestResumePartialTier:
         manifest = _base_manifest(ws_root)
         manifest["status"] = "running"
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
-            {"tier": 1, "repos": ["backend"], "status": "pending"},
-            {"tier": 2, "repos": ["frontend"], "status": "pending"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
+            {"tier": 1, "projects": ["backend"], "status": "pending"},
+            {"tier": 2, "projects": ["frontend"], "status": "pending"},
         ]
         manifest["children"] = [
-            {"repo": "lib", "run_id": "run_lib_001", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
+            {"project": "lib", "run_id": "run_lib_001", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
         ]
 
         dispatched = []
@@ -268,7 +268,7 @@ class TestResumePartialTier:
             return ""
 
         with patch.object(DagExecutor, "_run_child", fake_run_child), \
-             patch("worca.workspace.dag_executor._extract_repo_context", fake_extract):
+             patch("worca.workspace.dag_executor._extract_project_context", fake_extract):
             executor = DagExecutor(manifest, run_dir)
             result = executor.execute()
 
@@ -290,15 +290,15 @@ class TestResumePartialTier:
         manifest = _base_manifest(ws_root)
         manifest["status"] = "running"
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
-            {"tier": 1, "repos": ["backend"], "status": "pending"},
-            {"tier": 2, "repos": ["frontend"], "status": "pending"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
+            {"tier": 1, "projects": ["backend"], "status": "pending"},
+            {"tier": 2, "projects": ["frontend"], "status": "pending"},
         ]
         manifest["dag"]["dependency_graph"] = {
             "lib": [], "backend": ["lib"], "frontend": ["backend"],
         }
         manifest["children"] = [
-            {"repo": "lib", "run_id": "run_lib_001", "worktree_path": str(wt_lib), "status": "completed", "tier": 0},
+            {"project": "lib", "run_id": "run_lib_001", "worktree_path": str(wt_lib), "status": "completed", "tier": 0},
         ]
 
         context_extracted_from = []
@@ -311,7 +311,7 @@ class TestResumePartialTier:
             return {"status": "completed", "run_id": f"run_{repo}_002", "worktree_path": str(tmp_path / f"wt_{repo}")}
 
         with patch.object(DagExecutor, "_run_child", fake_run_child), \
-             patch("worca.workspace.dag_executor._extract_repo_context", fake_extract):
+             patch("worca.workspace.dag_executor._extract_project_context", fake_extract):
             executor = DagExecutor(manifest, run_dir)
             result = executor.execute()
 
@@ -327,15 +327,15 @@ class TestResumePartialTier:
         manifest = _base_manifest(ws_root)
         manifest["status"] = "running"
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
-            {"tier": 1, "repos": ["backend"], "status": "pending"},
-            {"tier": 2, "repos": ["frontend"], "status": "pending"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
+            {"tier": 1, "projects": ["backend"], "status": "pending"},
+            {"tier": 2, "projects": ["frontend"], "status": "pending"},
         ]
         manifest["dag"]["dependency_graph"] = {
             "lib": [], "backend": ["lib"], "frontend": ["backend"],
         }
         manifest["children"] = [
-            {"repo": "lib", "run_id": "run_lib_001", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
+            {"project": "lib", "run_id": "run_lib_001", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
         ]
 
         def fake_run_child(self_inner, repo):
@@ -347,12 +347,12 @@ class TestResumePartialTier:
             return ""
 
         with patch.object(DagExecutor, "_run_child", fake_run_child), \
-             patch("worca.workspace.dag_executor._extract_repo_context", fake_extract):
+             patch("worca.workspace.dag_executor._extract_project_context", fake_extract):
             executor = DagExecutor(manifest, run_dir)
             result = executor.execute()
 
         assert result["status"] == "failed"
-        children_by_repo = {c["repo"]: c for c in manifest["children"]}
+        children_by_repo = {c["project"]: c for c in manifest["children"]}
         assert children_by_repo["frontend"]["status"] == "blocked"
 
 
@@ -370,14 +370,14 @@ class TestResumeIntegrationOnly:
         ws_root = str(tmp_path)
         manifest = _base_manifest(ws_root, status="integration_failed")
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
-            {"tier": 1, "repos": ["backend"], "status": "completed"},
-            {"tier": 2, "repos": ["frontend"], "status": "completed"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
+            {"tier": 1, "projects": ["backend"], "status": "completed"},
+            {"tier": 2, "projects": ["frontend"], "status": "completed"},
         ]
         manifest["children"] = [
-            {"repo": "lib", "run_id": "r1", "worktree_path": "/tmp/wt_lib", "status": "completed", "tier": 0},
-            {"repo": "backend", "run_id": "r2", "worktree_path": "/tmp/wt_be", "status": "completed", "tier": 1},
-            {"repo": "frontend", "run_id": "r3", "worktree_path": "/tmp/wt_fe", "status": "completed", "tier": 2},
+            {"project": "lib", "run_id": "r1", "worktree_path": "/tmp/wt_lib", "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": "r2", "worktree_path": "/tmp/wt_be", "status": "completed", "tier": 1},
+            {"project": "frontend", "run_id": "r3", "worktree_path": "/tmp/wt_fe", "status": "completed", "tier": 2},
         ]
         manifest["integration_test"] = {"status": "failed", "exit_code": 1, "log_path": "/tmp/log"}
 
@@ -391,10 +391,10 @@ class TestResumeIntegrationOnly:
         ws_root = str(tmp_path)
         manifest = _base_manifest(ws_root, status="integration_failed")
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
         ]
         manifest["children"] = [
-            {"repo": "lib", "run_id": "r1", "worktree_path": "/tmp/wt_lib", "status": "completed", "tier": 0},
+            {"project": "lib", "run_id": "r1", "worktree_path": "/tmp/wt_lib", "status": "completed", "tier": 0},
         ]
         manifest["integration_test"] = {"status": "failed", "exit_code": 1, "log_path": "/tmp/log"}
 
@@ -409,12 +409,12 @@ class TestResumeIntegrationOnly:
         ws_root = str(tmp_path)
         manifest = _base_manifest(ws_root, status="integration_failed")
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
-            {"tier": 1, "repos": ["backend"], "status": "completed"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
+            {"tier": 1, "projects": ["backend"], "status": "completed"},
         ]
         manifest["children"] = [
-            {"repo": "lib", "run_id": "r1", "worktree_path": "/tmp/wt_lib", "status": "completed", "tier": 0},
-            {"repo": "backend", "run_id": "r2", "worktree_path": "/tmp/wt_be", "status": "completed", "tier": 1},
+            {"project": "lib", "run_id": "r1", "worktree_path": "/tmp/wt_lib", "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": "r2", "worktree_path": "/tmp/wt_be", "status": "completed", "tier": 1},
         ]
         manifest["integration_test"] = {"status": "failed", "exit_code": 1, "log_path": "/tmp/log"}
 
@@ -435,9 +435,9 @@ class TestTierAndIntegrationFailureCombo:
         from worca.scripts.run_workspace import classify_children_for_resume
 
         children = [
-            {"repo": "lib", "run_id": "r1", "status": "completed", "tier": 0},
-            {"repo": "backend", "run_id": "r2", "status": "failed", "tier": 1},
-            {"repo": "frontend", "run_id": None, "status": "blocked", "tier": 2},
+            {"project": "lib", "run_id": "r1", "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": "r2", "status": "failed", "tier": 1},
+            {"project": "frontend", "run_id": None, "status": "blocked", "tier": 2},
         ]
         skip, redispatch = classify_children_for_resume(children)
         assert skip == {"lib"}
@@ -453,10 +453,10 @@ class TestTierAndIntegrationFailureCombo:
         result = rebuild_resume_manifest(manifest, {"lib"}, {"backend", "frontend"})
         assert result["status"] == "running"
         assert result["integration_test"]["status"] == "pending"
-        children_repos = {c["repo"] for c in result["children"]}
-        assert "lib" in children_repos
-        assert "backend" not in children_repos
-        assert "frontend" not in children_repos
+        children_projects = {c["project"] for c in result["children"]}
+        assert "lib" in children_projects
+        assert "backend" not in children_projects
+        assert "frontend" not in children_projects
 
     def test_combo_dag_executor_handles_mixed_state(self, tmp_path):
         """Full combo: tier 0 completed, tier 1 has one failed + one completed (diamond),
@@ -480,9 +480,9 @@ class TestTierAndIntegrationFailureCombo:
             "halt_reason": None,
             "dag": {
                 "tiers": [
-                    {"tier": 0, "repos": ["lib"], "status": "completed"},
-                    {"tier": 1, "repos": ["backend", "worker"], "status": "pending"},
-                    {"tier": 2, "repos": ["frontend"], "status": "pending"},
+                    {"tier": 0, "projects": ["lib"], "status": "completed"},
+                    {"tier": 1, "projects": ["backend", "worker"], "status": "pending"},
+                    {"tier": 2, "projects": ["frontend"], "status": "pending"},
                 ],
                 "dependency_graph": {
                     "lib": [],
@@ -492,8 +492,8 @@ class TestTierAndIntegrationFailureCombo:
                 },
             },
             "children": [
-                {"repo": "lib", "run_id": "r_lib", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
-                {"repo": "worker", "run_id": "r_worker", "worktree_path": str(tmp_path / "wt_worker"), "status": "completed", "tier": 1},
+                {"project": "lib", "run_id": "r_lib", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
+                {"project": "worker", "run_id": "r_worker", "worktree_path": str(tmp_path / "wt_worker"), "status": "completed", "tier": 1},
             ],
             "plan": {},
             "integration_test": {"status": "pending", "exit_code": None, "log_path": None},
@@ -509,7 +509,7 @@ class TestTierAndIntegrationFailureCombo:
             return ""
 
         with patch.object(DagExecutor, "_run_child", fake_run_child), \
-             patch("worca.workspace.dag_executor._extract_repo_context", fake_extract):
+             patch("worca.workspace.dag_executor._extract_project_context", fake_extract):
             executor = DagExecutor(manifest, run_dir)
             result = executor.execute()
 
@@ -533,13 +533,13 @@ class TestMainResume:
 
         manifest = _base_manifest(workspace_root, ws_id, status="failed")
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
-            {"tier": 1, "repos": ["backend"], "status": "failed"},
-            {"tier": 2, "repos": ["frontend"], "status": "pending"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
+            {"tier": 1, "projects": ["backend"], "status": "failed"},
+            {"tier": 2, "projects": ["frontend"], "status": "pending"},
         ]
         manifest["children"] = [
-            {"repo": "lib", "run_id": "r1", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
-            {"repo": "backend", "run_id": "r2", "worktree_path": None, "status": "failed", "tier": 1},
+            {"project": "lib", "run_id": "r1", "worktree_path": str(tmp_path / "wt_lib"), "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": "r2", "worktree_path": None, "status": "failed", "tier": 1},
         ]
         _write_manifest(run_dir, manifest)
 
@@ -581,10 +581,10 @@ class TestMainResume:
 
         manifest = _base_manifest(workspace_root, ws_id, status="completed")
         manifest["dag"]["tiers"] = [
-            {"tier": 0, "repos": ["lib"], "status": "completed"},
+            {"tier": 0, "projects": ["lib"], "status": "completed"},
         ]
         manifest["children"] = [
-            {"repo": "lib", "run_id": "r1", "status": "completed", "tier": 0},
+            {"project": "lib", "run_id": "r1", "status": "completed", "tier": 0},
         ]
         _write_manifest(run_dir, manifest)
 

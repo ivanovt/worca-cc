@@ -19,7 +19,7 @@ def schema():
 def _minimal_doc():
     return {
         "name": "my-platform",
-        "repos": [
+        "projects": [
             {
                 "name": "shared-lib",
                 "path": "shared-lib",
@@ -32,7 +32,7 @@ def _minimal_doc():
 def _full_doc():
     return {
         "name": "my-platform",
-        "repos": [
+        "projects": [
             {
                 "name": "shared-lib",
                 "path": "shared-lib",
@@ -73,9 +73,9 @@ class TestSchemaStructure:
     def test_schema_type_is_object(self, schema):
         assert schema["type"] == "object"
 
-    def test_name_and_repos_required(self, schema):
+    def test_name_and_projects_required(self, schema):
         assert "name" in schema["required"]
-        assert "repos" in schema["required"]
+        assert "projects" in schema["required"]
 
     def test_integration_test_not_required(self, schema):
         assert "integration_test" not in schema["required"]
@@ -89,36 +89,36 @@ class TestSchemaStructure:
     def test_name_min_length(self, schema):
         assert schema["properties"]["name"]["minLength"] == 1
 
-    def test_repos_is_array(self, schema):
-        assert schema["properties"]["repos"]["type"] == "array"
+    def test_projects_is_array(self, schema):
+        assert schema["properties"]["projects"]["type"] == "array"
 
-    def test_repos_min_items(self, schema):
-        assert schema["properties"]["repos"]["minItems"] == 1
+    def test_projects_min_items(self, schema):
+        assert schema["properties"]["projects"]["minItems"] == 1
 
-    def test_repo_item_required_fields(self, schema):
-        repo_schema = schema["properties"]["repos"]["items"]
+    def test_project_item_required_fields(self, schema):
+        repo_schema = schema["properties"]["projects"]["items"]
         assert sorted(repo_schema["required"]) == [
             "depends_on",
             "name",
             "path",
         ]
 
-    def test_repo_name_is_string(self, schema):
-        props = schema["properties"]["repos"]["items"]["properties"]
+    def test_project_name_is_string(self, schema):
+        props = schema["properties"]["projects"]["items"]["properties"]
         assert props["name"]["type"] == "string"
 
-    def test_repo_path_is_string(self, schema):
-        props = schema["properties"]["repos"]["items"]["properties"]
+    def test_project_path_is_string(self, schema):
+        props = schema["properties"]["projects"]["items"]["properties"]
         assert props["path"]["type"] == "string"
 
-    def test_repo_has_no_role_property(self, schema):
+    def test_project_has_no_role_property(self, schema):
         # `role` was removed (was a freeform label with no behavioral effect).
         # Lock that in so it can't accidentally come back.
-        props = schema["properties"]["repos"]["items"]["properties"]
+        props = schema["properties"]["projects"]["items"]["properties"]
         assert "role" not in props
 
-    def test_repo_depends_on_is_array_of_strings(self, schema):
-        props = schema["properties"]["repos"]["items"]["properties"]
+    def test_project_depends_on_is_array_of_strings(self, schema):
+        props = schema["properties"]["projects"]["items"]["properties"]
         dep = props["depends_on"]
         assert dep["type"] == "array"
         assert dep["items"]["type"] == "string"
@@ -144,8 +144,8 @@ class TestSchemaStructure:
     def test_no_additional_properties_on_root(self, schema):
         assert schema["additionalProperties"] is False
 
-    def test_no_additional_properties_on_repo(self, schema):
-        repo_schema = schema["properties"]["repos"]["items"]
+    def test_no_additional_properties_on_project(self, schema):
+        repo_schema = schema["properties"]["projects"]["items"]
         assert repo_schema["additionalProperties"] is False
 
     def test_no_additional_properties_on_integration_test(self, schema):
@@ -163,9 +163,9 @@ class TestMinimalDoc:
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_missing_repos_invalid(self, schema):
+    def test_missing_projects_invalid(self, schema):
         doc = _minimal_doc()
-        del doc["repos"]
+        del doc["projects"]
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
@@ -177,7 +177,7 @@ class TestMinimalDoc:
 
     def test_empty_repos_invalid(self, schema):
         doc = _minimal_doc()
-        doc["repos"] = []
+        doc["projects"] = []
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
@@ -207,46 +207,46 @@ class TestFullDoc:
         jsonschema.validate(doc, schema)
 
 
-class TestRepoValidation:
-    def test_repo_missing_name_invalid(self, schema):
+class TestProjectValidation:
+    def test_project_missing_name_invalid(self, schema):
         doc = _minimal_doc()
-        del doc["repos"][0]["name"]
+        del doc["projects"][0]["name"]
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_repo_missing_path_invalid(self, schema):
+    def test_project_missing_path_invalid(self, schema):
         doc = _minimal_doc()
-        del doc["repos"][0]["path"]
+        del doc["projects"][0]["path"]
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_repo_missing_depends_on_invalid(self, schema):
+    def test_project_missing_depends_on_invalid(self, schema):
         doc = _minimal_doc()
-        del doc["repos"][0]["depends_on"]
+        del doc["projects"][0]["depends_on"]
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_repo_depends_on_non_string_invalid(self, schema):
+    def test_project_depends_on_non_string_invalid(self, schema):
         doc = _minimal_doc()
-        doc["repos"][0]["depends_on"] = [123]
+        doc["projects"][0]["depends_on"] = [123]
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_repo_extra_property_invalid(self, schema):
+    def test_project_extra_property_invalid(self, schema):
         doc = _minimal_doc()
-        doc["repos"][0]["unknown"] = "bar"
+        doc["projects"][0]["unknown"] = "bar"
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_repo_name_empty_invalid(self, schema):
+    def test_project_name_empty_invalid(self, schema):
         doc = _minimal_doc()
-        doc["repos"][0]["name"] = ""
+        doc["projects"][0]["name"] = ""
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 
-    def test_repo_path_empty_invalid(self, schema):
+    def test_project_path_empty_invalid(self, schema):
         doc = _minimal_doc()
-        doc["repos"][0]["path"] = ""
+        doc["projects"][0]["path"] = ""
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, schema)
 

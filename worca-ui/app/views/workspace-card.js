@@ -127,7 +127,7 @@ export function workspaceCardView(ws, options = {}) {
 
       <div class="run-card-meta">
         <span class="run-card-meta-item">
-          <span class="meta-label">Repos:</span>
+          <span class="meta-label">Projects:</span>
           <span class="meta-value">${repoSummary}</span>
         </span>
         ${

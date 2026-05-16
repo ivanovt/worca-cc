@@ -24,19 +24,19 @@ function statusColor(status) {
 }
 
 export function dagGraphView(dag, options = {}) {
-  if (!dag || !dag.repos || dag.repos.length === 0) {
+  if (!dag || !dag.projects || dag.projects.length === 0) {
     return { svg: '', nodes: [] };
   }
 
   const { mode = 'preview' } = options;
-  const repos = dag.repos;
-  const repoByName = new Map(repos.map((r) => [r.name, r]));
-  const tiers = computeTiers(repos);
+  const projects = dag.projects;
+  const projectByName = new Map(projects.map((r) => [r.name, r]));
+  const tiers = computeTiers(projects);
 
   const tierGroups = new Map();
   for (const [name, tier] of tiers) {
     if (!tierGroups.has(tier)) tierGroups.set(tier, []);
-    tierGroups.get(tier).push(repoByName.get(name));
+    tierGroups.get(tier).push(projectByName.get(name));
   }
 
   const maxTier = Math.max(...tiers.values(), 0);
@@ -58,10 +58,10 @@ export function dagGraphView(dag, options = {}) {
   }
 
   let edges = '';
-  for (const repo of repos) {
-    const to = positions.get(repo.name);
+  for (const project of projects) {
+    const to = positions.get(project.name);
     if (!to) continue;
-    for (const depName of repo.depends_on) {
+    for (const depName of project.depends_on) {
       const from = positions.get(depName);
       if (!from) continue;
       const x1 = from.x + NODE_W;
@@ -69,7 +69,7 @@ export function dagGraphView(dag, options = {}) {
       const x2 = to.x;
       const y2 = to.y + NODE_H / 2;
       const cx = Math.round((x1 + x2) / 2);
-      const dep = repoByName.get(depName);
+      const dep = projectByName.get(depName);
       const stroke =
         mode === 'navigate' && dep ? statusColor(dep.status) : 'var(--border)';
       edges += `<path class="dag-graph-edge" d="M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}" fill="none" stroke="${stroke}" stroke-width="2"/>`;
@@ -84,24 +84,26 @@ export function dagGraphView(dag, options = {}) {
   const cursorStyle = interactive ? ' style="cursor:pointer"' : '';
   const actionAttr = action ? ` data-action="${action}"` : '';
 
-  for (const repo of repos) {
-    const pos = positions.get(repo.name);
+  for (const project of projects) {
+    const pos = positions.get(project.name);
     if (!pos) continue;
-    const sc = statusClass(repo.status);
-    const fill = statusColor(repo.status);
+    const sc = statusClass(project.status);
+    const fill = statusColor(project.status);
     const label =
-      repo.name.length > 18 ? `${repo.name.slice(0, 18)}...` : repo.name;
-    nodes += `<g class="dag-graph-node dag-graph-node--${sc}" transform="translate(${pos.x},${pos.y})"${actionAttr} data-repo="${escapeXml(repo.name)}"${cursorStyle}>`;
+      project.name.length > 18
+        ? `${project.name.slice(0, 18)}...`
+        : project.name;
+    nodes += `<g class="dag-graph-node dag-graph-node--${sc}" transform="translate(${pos.x},${pos.y})"${actionAttr} data-project="${escapeXml(project.name)}"${cursorStyle}>`;
     nodes += `<rect width="${NODE_W}" height="${NODE_H}" rx="6" fill="${fill}" fill-opacity="0.15" stroke="${fill}" stroke-width="1.5"/>`;
     nodes += `<text x="${NODE_W / 2}" y="${NODE_H / 2 + 4}" text-anchor="middle" font-size="12" fill="currentColor">${escapeXml(label)}</text>`;
     nodes += '</g>';
     nodeList.push({
-      name: repo.name,
+      name: project.name,
       x: pos.x,
       y: pos.y,
       w: NODE_W,
       h: NODE_H,
-      tier: tiers.get(repo.name),
+      tier: tiers.get(project.name),
     });
   }
 
@@ -109,14 +111,14 @@ export function dagGraphView(dag, options = {}) {
   return { svg, nodes: nodeList };
 }
 
-function computeTiers(repos) {
+function computeTiers(projects) {
   const inDegree = new Map();
   const dependents = new Map();
-  for (const r of repos) {
+  for (const r of projects) {
     inDegree.set(r.name, 0);
     dependents.set(r.name, []);
   }
-  for (const r of repos) {
+  for (const r of projects) {
     for (const dep of r.depends_on) {
       inDegree.set(r.name, (inDegree.get(r.name) || 0) + 1);
       if (dependents.has(dep)) {

@@ -73,7 +73,7 @@ class TestWorkspaceRunsMd:
         assert "workspace.json" in self.text
 
     def test_workspace_json_schema_documented(self):
-        for field in ["name", "repos", "path", "depends_on",
+        for field in ["name", "projects", "path", "depends_on",
                        "integration_test", "umbrella_repo"]:
             assert field in self.text, f"Missing workspace.json field '{field}'"
 
