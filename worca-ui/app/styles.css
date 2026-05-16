@@ -5808,6 +5808,82 @@ sl-tooltip.bead-tooltip::part(body) {
 
 /* --- Workspace run card --- */
 
+/* --- sl-dialog: wider markdown-body dialogs (plan, guide) --- */
+
+sl-dialog.markdown-dialog::part(panel) {
+  /* Default sl-dialog is ~31rem wide — too narrow for prose with code
+     blocks. Cap at 90vw so it stays comfortable on small viewports. */
+  width: min(960px, 90vw);
+  max-width: min(960px, 90vw);
+}
+sl-dialog.markdown-dialog::part(body) {
+  /* Give the body breathing room and let it scroll vertically instead
+     of the whole dialog growing without bound. */
+  max-height: 70vh;
+  overflow: auto;
+}
+
+/* --- Markdown body styling (used by guide-content + workspace-plan-content) --- */
+
+.markdown-body {
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.2em 0 0.5em;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.markdown-body h1 { font-size: 1.5em; }
+.markdown-body h2 { font-size: 1.25em; border-bottom: 1px solid var(--border-subtle); padding-bottom: 4px; }
+.markdown-body h3 { font-size: 1.1em; }
+.markdown-body p { margin: 0.6em 0; }
+.markdown-body ul,
+.markdown-body ol { margin: 0.6em 0; padding-left: 1.5em; }
+.markdown-body li { margin: 0.25em 0; }
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.markdown-body pre {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--border);
+  padding: 4px 12px;
+  margin: 0.6em 0;
+  color: var(--fg-muted);
+}
+.markdown-body a { color: var(--accent); }
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border-subtle);
+  padding: 4px 8px;
+  text-align: left;
+}
+
 .workspace-run-card .workspace-card-prompt {
   margin: 6px 0 10px;
   color: var(--fg);

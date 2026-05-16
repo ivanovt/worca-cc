@@ -1,9 +1,51 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { dagGraphView } from './dag-graph.js';
 import { runCardView } from './run-card.js';
+
+// `marked` is configured once for the whole module. GitHub-flavoured Markdown
+// + line-break = newline so the planner's bullet/heading output renders the
+// way it reads in the source file. `mangle:false` keeps email-like strings
+// untouched. `headerIds:false` because we render into a sl-dialog body where
+// auto-generated id collisions across openings would just be noise.
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  mangle: false,
+  headerIds: false,
+});
+
+function _renderMarkdown(text) {
+  if (!text) return '';
+  try {
+    return marked.parse(text);
+  } catch {
+    // Fall back to an escaped <pre> so a parser blow-up still shows the
+    // raw content instead of a blank dialog.
+    const esc = String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return `<pre>${esc}</pre>`;
+  }
+}
+
+function _copyToClipboard(text, label) {
+  if (!text) return;
+  navigator.clipboard
+    ?.writeText(text)
+    .then(() => {
+      const evt = new CustomEvent('worca:toast', {
+        bubbles: true,
+        detail: { message: `${label} copied to clipboard` },
+      });
+      document.dispatchEvent(evt);
+    })
+    .catch(() => {});
+}
 
 // ─── module-level state ───────────────────────────────────────────────────────
 
@@ -352,7 +394,7 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
           }
         ></sl-textarea>
       `
-    : html`<pre class="workspace-plan-content">${planText}</pre>`;
+    : html`<div class="workspace-plan-content markdown-body">${unsafeHTML(_renderMarkdown(planText))}</div>`;
 
   return html`
     <div class="new-run-section workspace-plan-panel">
@@ -382,7 +424,7 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
       }
       <sl-dialog
         label="Workspace Plan"
-        class="plan-edit-dialog"
+        class="plan-edit-dialog markdown-dialog"
         ?open=${planDialogOpen}
         @sl-after-hide=${
           rerender
@@ -396,6 +438,16 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
       >
         ${planBody}
         <div slot="footer">
+          ${
+            !planEditMode
+              ? html`
+                <sl-button
+                  class="btn-copy-plan"
+                  @click=${() => _copyToClipboard(planText, 'Workspace plan')}
+                >Copy</sl-button>
+              `
+              : nothing
+          }
           ${
             canEdit && !planEditMode
               ? html`
@@ -462,7 +514,15 @@ function _contextArtifactsPanel(ws) {
 }
 
 function _aggregateCostSection(ws) {
-  const total = _computeTotalCost(ws.children, ws.master_planner_cost);
+  // Same source-of-truth as the hero meta strip: the server-aggregated
+  // `cost_usd` (walks each child's real status.json). The legacy
+  // `_computeTotalCost` walks `child.stages` which the manifest's child
+  // entries don't carry — it always returns 0. Keep the legacy path as
+  // a test-only fallback when ws.cost_usd is undefined.
+  const total =
+    typeof ws.cost_usd === 'number'
+      ? ws.cost_usd
+      : _computeTotalCost(ws.children, ws.master_planner_cost);
   return html`
     <div class="new-run-section workspace-aggregate-cost">
       <h3 class="new-run-section-title">Aggregate Cost</h3>
@@ -592,7 +652,7 @@ function _guideSection(ws, { rerender } = {}) {
       return html`<div class="guide-error">${guideError}</div>`;
     }
     if (guideContent) {
-      return html`<pre class="guide-content">${guideContent}</pre>`;
+      return html`<div class="guide-content markdown-body">${unsafeHTML(_renderMarkdown(guideContent))}</div>`;
     }
     return nothing;
   })();
@@ -627,7 +687,7 @@ function _guideSection(ws, { rerender } = {}) {
       </div>
       <sl-dialog
         label="Guide Content"
-        class="guide-dialog"
+        class="guide-dialog markdown-dialog"
         ?open=${guideDialogOpen}
         @sl-after-hide=${
           rerender
@@ -639,6 +699,19 @@ function _guideSection(ws, { rerender } = {}) {
         }
       >
         ${guideBody}
+        ${
+          guideContent
+            ? html`
+              <div slot="footer">
+                <sl-button
+                  class="btn-copy-guide"
+                  @click=${() =>
+                    _copyToClipboard(guideContent, 'Guide content')}
+                >Copy</sl-button>
+              </div>
+            `
+            : nothing
+        }
       </sl-dialog>
     </div>
   `;

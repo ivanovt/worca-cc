@@ -255,9 +255,16 @@ describe('workspaceDetailView — workspace plan panel', () => {
     expect(out).toContain('Workspace Plan');
   });
 
-  it('renders the plan content', () => {
+  it('mounts the View plan dialog with a markdown-body container', () => {
+    // The plan content lives inside an sl-dialog body rendered via the
+    // unsafeHTML directive (after passing through marked). The test
+    // string-renderer doesn't dive into directives, so we assert on the
+    // wrapper classes that signal the modal is wired correctly; the
+    // actual rendered markdown is covered by Playwright verification.
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('Update shared-lib types');
+    expect(out).toContain('plan-edit-dialog');
+    expect(out).toContain('markdown-body');
+    expect(out).toContain('btn-view-plan');
   });
 
   it('hides edit plan button when status is running', () => {
