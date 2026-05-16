@@ -326,17 +326,17 @@ describe('workspaceDetailView — context artifacts panel', () => {
   });
 });
 
-// ─── cost (now inline in the hero meta strip) ─────────────────────────────
+// ─── cost (inline in hero + standalone aggregate-cost panel) ──────────────
 
-describe('workspaceDetailView — cost (inline)', () => {
-  // The standalone AGGREGATE COST panel was folded into the hero meta
-  // strip for visual parity with /fleet-runs/:id. These assertions check
-  // the inline rendering instead.
+describe('workspaceDetailView — cost (inline + panel)', () => {
+  // After the fleet-detail alignment, cost shows in TWO places: the hero
+  // meta strip (next to Started / Duration) AND a dedicated AGGREGATE
+  // COST panel at the bottom — matches fleet-detail exactly.
   beforeEach(() => resetWorkspaceDetailState());
 
-  it('no longer renders a separate aggregate-cost panel', () => {
+  it('renders the standalone aggregate-cost panel (matches fleet)', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).not.toContain('workspace-aggregate-cost');
+    expect(out).toContain('workspace-aggregate-cost');
   });
 
   it('shows total cost in the hero meta strip', () => {
@@ -431,34 +431,34 @@ describe('workspaceDetailView — integration test panel', () => {
 
 // ─── PR table ────────────────────────────────────────────────────────────────
 
-describe('workspaceDetailView — PR table', () => {
+describe('workspaceDetailView — Repos section (replaces PR table)', () => {
+  // The previous 4-column PR table was replaced with the same Repos
+  // listing fleet-detail uses for "Projects" — each child renders as a
+  // rich runCardView (or a placeholder when the matching Run object
+  // hasn't loaded yet). PR URLs / dependency annotations move into the
+  // run card itself, so they're no longer tested as table cells here.
   beforeEach(() => resetWorkspaceDetailState());
 
-  it('renders PR table section', () => {
+  it('renders the Repos section with per-child cards', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('workspace-pr-table');
-    expect(out).toContain('Pull Requests');
+    expect(out).toContain('workspace-children-section');
+    expect(out).toContain('Repos');
   });
 
-  it('renders one row per child repo', () => {
+  it('headline reflects the child count', () => {
+    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
+    // 3 children in BASE_WORKSPACE
+    expect(out).toMatch(/Repos\s*·\s*3 repos/);
+  });
+
+  it('renders one row per child repo (by name)', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
     expect(out).toContain('shared-lib');
     expect(out).toContain('backend');
     expect(out).toContain('frontend');
   });
 
-  it('renders PR URL as link when available', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('https://github.com/org/shared-lib/pull/10');
-  });
-
-  it('renders dependency annotations as sl-tag chips', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('Blocks: org/backend#5');
-    expect(out).toContain('Depends on: org/shared-lib#10');
-  });
-
-  it('shows "Copy all PR URLs" button when any child has PR URL', () => {
+  it('shows "Copy all PR URLs" button when every child has a PR URL', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
     expect(out).toContain('btn-copy-all-pr-urls');
   });
@@ -487,11 +487,11 @@ describe('workspaceDetailView — PR table', () => {
     expect(out).not.toContain('umbrella-issue-link');
   });
 
-  it('shows dash for missing PR', () => {
+  it('renders a placeholder card for children with no matching Run', () => {
+    // BASE_WORKSPACE has no runsById passed, so every child falls to the
+    // placeholder branch — exercises the missing-run path.
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    // backend and frontend have no PR yet
-    const dashes = (out.match(/pr-pending/g) || []).length;
-    expect(dashes).toBeGreaterThanOrEqual(2);
+    expect(out).toContain('fleet-child-card-placeholder');
   });
 });
 

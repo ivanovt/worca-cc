@@ -1,22 +1,40 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
+import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { dagGraphView } from './dag-graph.js';
+import { runCardView } from './run-card.js';
 
 // ─── module-level state ───────────────────────────────────────────────────────
 
-let planEditDialogOpen = false;
+let planDialogOpen = false;
+let planEditMode = false;
 let planEditContent = '';
 let haltConfirmDialogOpen = false;
 let cleanupDialogOpen = false;
 let cleanupResumeAcked = false;
 
+// Reference Guide state — mirror fleet-detail so the two pages share the
+// same fetch-on-open + dialog UX. Each workspace's guide is loaded
+// lazily on first dialog open and cached in module state.
+let guideDialogOpen = false;
+let guideContent = null;
+let guideLoading = false;
+let guideError = null;
+let guideLoadedFor = null; // workspace_id the cached guide belongs to
+
 export function resetWorkspaceDetailState(overrides = {}) {
-  planEditDialogOpen = overrides.planEditDialogOpen ?? false;
+  planDialogOpen = overrides.planDialogOpen ?? false;
+  planEditMode = overrides.planEditMode ?? false;
   planEditContent = overrides.planEditContent ?? '';
   haltConfirmDialogOpen = overrides.haltConfirmDialogOpen ?? false;
   cleanupDialogOpen = overrides.cleanupDialogOpen ?? false;
   cleanupResumeAcked = overrides.cleanupResumeAcked ?? false;
+  guideDialogOpen = overrides.guideDialogOpen ?? false;
+  guideContent = overrides.guideContent ?? null;
+  guideLoading = overrides.guideLoading ?? false;
+  guideError = overrides.guideError ?? null;
+  guideLoadedFor = overrides.guideLoadedFor ?? null;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -298,8 +316,7 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
   //      inlines the plan text on the manifest object.
   //   2. _planContentCache — populated by the on-demand fetch below.
   //   3. ws.plan.workspace_plan_path — manifest path that triggers the
-  //      fetch the first time the panel renders for this workspace.
-  // If none yield content, fall back to the "No workspace plan" hint.
+  //      fetch the first time the dialog opens.
   if (
     (ws.workspace_plan == null || ws.workspace_plan === '') &&
     ws.plan?.workspace_plan_path
@@ -313,58 +330,92 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
       : cached || '';
   const hasPlan = planText !== '';
 
+  // Match fleet's REFERENCE GUIDE panel: a compact summary + a "View plan"
+  // button that opens the full content in a modal. Keeps the body
+  // scannable instead of letting a multi-page <pre> dominate it.
+  const summary = hasPlan
+    ? html`<span class="settings-field-hint">Generated workspace plan with per-repo breakdown.</span>`
+    : html`<span class="settings-field-hint">No workspace plan available.</span>`;
+
+  const planBody = planEditMode
+    ? html`
+        <sl-textarea
+          rows="30"
+          class="plan-edit-textarea code"
+          value="${planEditContent}"
+          @sl-input=${
+            rerender
+              ? (e) => {
+                  planEditContent = e.target.value;
+                }
+              : null
+          }
+        ></sl-textarea>
+      `
+    : html`<pre class="workspace-plan-content">${planText}</pre>`;
+
   return html`
     <div class="new-run-section workspace-plan-panel">
       <h3 class="new-run-section-title">Workspace Plan</h3>
+      <div class="settings-field">${summary}</div>
       ${
         hasPlan
-          ? html`<pre class="workspace-plan-content">${planText}</pre>`
-          : html`<div class="settings-field"><span class="settings-field-hint">No workspace plan available.</span></div>`
-      }
-      ${
-        canEdit
           ? html`
             <div class="settings-tab-actions">
               <sl-button
                 size="small"
-                class="btn-edit-plan"
+                class="btn-view-plan"
                 @click=${
                   rerender
                     ? () => {
-                        planEditDialogOpen = true;
+                        planDialogOpen = true;
+                        planEditMode = false;
                         planEditContent = planText;
                         rerender();
                       }
                     : null
                 }
-              >Edit plan</sl-button>
+              >View plan</sl-button>
             </div>
-            <sl-dialog
-              label="Edit Workspace Plan"
-              class="plan-edit-dialog"
-              ?open=${planEditDialogOpen}
-              @sl-after-hide=${
-                rerender
-                  ? () => {
-                      planEditDialogOpen = false;
-                      rerender();
-                    }
-                  : null
+          `
+          : nothing
+      }
+      <sl-dialog
+        label="Workspace Plan"
+        class="plan-edit-dialog"
+        ?open=${planDialogOpen}
+        @sl-after-hide=${
+          rerender
+            ? () => {
+                planDialogOpen = false;
+                planEditMode = false;
+                rerender();
               }
-            >
-              <sl-textarea
-                rows="30"
-                class="plan-edit-textarea code"
-                value="${planEditContent}"
-                @sl-input=${
-                  rerender
-                    ? (e) => {
-                        planEditContent = e.target.value;
-                      }
-                    : null
-                }
-              ></sl-textarea>
-              <div slot="footer">
+            : null
+        }
+      >
+        ${planBody}
+        <div slot="footer">
+          ${
+            canEdit && !planEditMode
+              ? html`
+                <sl-button
+                  class="btn-edit-plan"
+                  @click=${
+                    rerender
+                      ? () => {
+                          planEditMode = true;
+                          rerender();
+                        }
+                      : null
+                  }
+                >Edit plan</sl-button>
+              `
+              : nothing
+          }
+          ${
+            canEdit && planEditMode
+              ? html`
                 <sl-button
                   variant="primary"
                   class="btn-save-plan"
@@ -372,17 +423,18 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
                     onSavePlan
                       ? () => {
                           onSavePlan(planEditContent);
-                          planEditDialogOpen = false;
+                          planDialogOpen = false;
+                          planEditMode = false;
                           if (rerender) rerender();
                         }
                       : null
                   }
                 >Save</sl-button>
-              </div>
-            </sl-dialog>
-          `
-          : nothing
-      }
+              `
+              : nothing
+          }
+        </div>
+      </sl-dialog>
     </div>
   `;
 }
@@ -424,8 +476,19 @@ function _aggregateCostSection(ws) {
 }
 
 function _integrationTestPanel(ws) {
-  const integ = ws.integration;
-  if (!integ || !integ.enabled) return nothing;
+  // Accept both shapes the manifest has carried at various times:
+  //   - `ws.integration` (legacy) with `{enabled, command, cwd, status}`
+  //   - `ws.integration_test` (current) with `{status, exit_code, log_path,
+  //     command?, cwd?}` — command/cwd may live on the workspace.json
+  //     `integration_test` definition the manifest doesn't necessarily
+  //     persist, so we fall back to the run-level fields when present.
+  // Render only when an actual command exists somewhere (no point showing
+  // a "skipped" badge if the workspace was never configured with one).
+  const legacy = ws.integration;
+  const current = ws.integration_test;
+  const integ = legacy ?? current ?? {};
+  const command = integ.command || legacy?.command || null;
+  if (!command) return nothing;
 
   const showRerun = RERUN_INTEGRATION.has(ws.status);
 
@@ -434,7 +497,7 @@ function _integrationTestPanel(ws) {
       <h3 class="new-run-section-title">Integration Test</h3>
       <div class="settings-field">
         <label class="settings-label">Command</label>
-        <code class="integration-command">${integ.command || '—'}</code>
+        <code class="integration-command">${command}</code>
       </div>
       ${
         integ.cwd
@@ -469,14 +532,182 @@ function _integrationTestPanel(ws) {
   `;
 }
 
-function _prTable(ws) {
-  const children = ws.children || [];
-  const anyHavePr = children.some((c) => c.pr_url);
+// ─── reference guide (mirrors fleet-detail._guideSection) ───────────────────
+
+function _ensureGuideFetched(ws, rerender) {
+  if (guideLoading) return;
+  if (guideLoadedFor === ws.workspace_id) return;
+  if (!ws.guide || !(ws.guide.paths || ws.guide.filenames || []).length) return;
+  guideLoading = true;
+  guideError = null;
+  fetch(`/api/workspace-runs/${encodeURIComponent(ws.workspace_id)}/guide`, {
+    headers: { Accept: 'text/markdown' },
+  })
+    .then(async (r) => {
+      guideLoading = false;
+      guideLoadedFor = ws.workspace_id;
+      if (!r.ok) {
+        guideError =
+          'Guide content is not retrievable from this server (older manifest or pruned files).';
+        rerender?.();
+        return;
+      }
+      guideContent = await r.text();
+      rerender?.();
+    })
+    .catch((err) => {
+      guideLoading = false;
+      guideLoadedFor = ws.workspace_id;
+      guideError = err?.message || 'Failed to load guide';
+      rerender?.();
+    });
+}
+
+function _formatBytes(b) {
+  if (!b) return '0 B';
+  if (b < 1024) return `${b} B`;
+  if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function _guideSection(ws, { rerender } = {}) {
+  const guide = ws.guide;
+  const filenames = guide?.filenames || [];
+  if (!guide || filenames.length === 0) {
+    return html`
+      <div class="new-run-section">
+        <h3 class="new-run-section-title">Reference Guide</h3>
+        <div class="settings-field">
+          <span class="settings-field-hint">No guide attached to this workspace run.</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const guideBody = (() => {
+    if (guideLoading) {
+      return html`<div class="guide-loading"><sl-spinner></sl-spinner> Loading…</div>`;
+    }
+    if (guideError) {
+      return html`<div class="guide-error">${guideError}</div>`;
+    }
+    if (guideContent) {
+      return html`<pre class="guide-content">${guideContent}</pre>`;
+    }
+    return nothing;
+  })();
 
   return html`
-    <div class="new-run-section workspace-pr-table">
-      <div class="workspace-pr-header">
-        <h3 class="new-run-section-title">Pull Requests</h3>
+    <div class="new-run-section">
+      <h3 class="new-run-section-title">Reference Guide</h3>
+      <div class="settings-field">
+        <label class="settings-label">Attached files</label>
+        <div class="fleet-guide-files">
+          ${filenames.map(
+            (n) =>
+              html`<sl-tag pill size="small" class="fleet-guide-tag">${n}</sl-tag>`,
+          )}
+        </div>
+        <span class="settings-field-hint">Total size: ${_formatBytes(guide.bytes)}.</span>
+      </div>
+      <div class="settings-tab-actions fleet-guide-actions">
+        <sl-button
+          size="small"
+          class="btn-view-guide"
+          @click=${
+            rerender
+              ? () => {
+                  guideDialogOpen = true;
+                  _ensureGuideFetched(ws, rerender);
+                  rerender();
+                }
+              : null
+          }
+        >View guide content</sl-button>
+      </div>
+      <sl-dialog
+        label="Guide Content"
+        class="guide-dialog"
+        ?open=${guideDialogOpen}
+        @sl-after-hide=${
+          rerender
+            ? () => {
+                guideDialogOpen = false;
+                rerender();
+              }
+            : null
+        }
+      >
+        ${guideBody}
+      </sl-dialog>
+    </div>
+  `;
+}
+
+// ─── repos / children (mirrors fleet-detail._childrenSection) ───────────────
+
+function _childStatusVariant(status) {
+  if (status === 'completed') return 'success';
+  if (status === 'failed' || status === 'unrecoverable') return 'danger';
+  if (status === 'running' || status === 'in_progress') return 'primary';
+  if (status === 'halted' || status === 'paused') return 'warning';
+  return 'neutral';
+}
+
+function _missingRunPlaceholder(child) {
+  const status = child.status || 'pending';
+  const variant = _childStatusVariant(status);
+  const repoName = child.repo || child.project_path?.split('/').pop() || '—';
+  return html`
+    <div class="run-card ${statusClass(status)} fleet-child-card-placeholder">
+      <div class="run-card-top">
+        <span class="run-card-status">${unsafeHTML(statusIcon(status, 16))}</span>
+        <span class="run-card-title">${repoName}</span>
+        <sl-badge variant="${variant}" pill class="status-badge-${status}">${status}</sl-badge>
+      </div>
+      <div class="run-card-meta">
+        <span class="run-card-meta-item">
+          <span class="meta-label">Repo:</span>
+          <span class="meta-value">${repoName}</span>
+        </span>
+        ${
+          child.tier != null
+            ? html`<span class="run-card-meta-item">
+                <span class="meta-label">Tier:</span>
+                <span class="meta-value">${child.tier}</span>
+              </span>`
+            : nothing
+        }
+      </div>
+      <div class="run-card-meta">
+        <span class="settings-field-hint">Pipeline registry entry not loaded yet.</span>
+      </div>
+    </div>
+  `;
+}
+
+function _childrenSection(ws, { runsById, onSelectRun } = {}) {
+  const children = ws.children || [];
+
+  if (children.length === 0) {
+    return html`
+      <div class="new-run-section">
+        <h3 class="new-run-section-title">Repos</h3>
+        <div class="settings-field">
+          <span class="settings-field-hint">No repos dispatched yet — workspace orchestrator may still be planning or provisioning.</span>
+        </div>
+      </div>
+    `;
+  }
+
+  const headerCount = `${children.length} ${children.length === 1 ? 'repo' : 'repos'}`;
+  const anyHavePr = children.some((c) => c.pr_url);
+  const runs = runsById || {};
+
+  return html`
+    <div class="new-run-section fleet-children-section workspace-children-section">
+      <div class="fleet-children-header">
+        <h3 class="new-run-section-title">Repos · ${headerCount}</h3>
         ${
           anyHavePr
             ? html`<sl-button size="small" class="btn-copy-all-pr-urls">Copy all PR URLs</sl-button>`
@@ -492,49 +723,18 @@ function _prTable(ws) {
           `
           : nothing
       }
-      <table class="workspace-pr-rows">
-        <thead>
-          <tr>
-            <th>Repo</th>
-            <th>PR</th>
-            <th>Status</th>
-            <th>Dependencies</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${children.map(
-            (child) => html`
-              <tr class="workspace-pr-row">
-                <td>${child.repo_name || child.project_path?.split('/').pop() || '—'}</td>
-                <td>
-                  ${
-                    child.pr_url
-                      ? html`<a href="${child.pr_url}" target="_blank">#${child.pr_number}</a>`
-                      : html`<span class="pr-pending">—</span>`
-                  }
-                </td>
-                <td>
-                  ${
-                    child.pr_status
-                      ? html`<sl-badge variant="${child.pr_status === 'merged' ? 'success' : 'primary'}" pill>${child.pr_status}</sl-badge>`
-                      : html`<span class="pr-pending">—</span>`
-                  }
-                </td>
-                <td>
-                  ${
-                    (child.dep_annotations || []).length > 0
-                      ? (child.dep_annotations || []).map(
-                          (ann) =>
-                            html`<sl-tag size="small" pill>${_depAnnotationLabel(ann)}</sl-tag>`,
-                        )
-                      : html`<span>—</span>`
-                  }
-                </td>
-              </tr>
-            `,
-          )}
-        </tbody>
-      </table>
+      <div class="run-list fleet-children-list">
+        ${children.map((child) => {
+          const run = child.run_id ? runs[child.run_id] : null;
+          const anchorId = child.run_id ? `repo-${child.run_id}` : null;
+          const card = run
+            ? runCardView(run, { onClick: onSelectRun })
+            : _missingRunPlaceholder(child);
+          return anchorId
+            ? html`<div id="${anchorId}" class="fleet-project-anchor">${card}</div>`
+            : card;
+        })}
+      </div>
     </div>
   `;
 }
@@ -724,7 +924,12 @@ export function workspaceDetailView(
     onCleanup: _onCleanup,
     onRerun: _onRerun,
     onSavePlan,
-    onSelectRun: _onSelectRun,
+    // Mirror fleet-detail's signature: runsById is the map of `state.runs`
+    // keyed by run_id so _childrenSection can render the rich runCardView
+    // for each child instead of a sparse table. onSelectRun is plumbed
+    // through to the cards so clicking jumps to /history/:run_id.
+    runsById,
+    onSelectRun,
   } = {},
 ) {
   if (!workspace) {
@@ -752,24 +957,36 @@ export function workspaceDetailView(
     return html`<div class="workspace-detail-loading"><sl-spinner></sl-spinner> Loading workspace…</div>`;
   }
 
-  // Header actions (Resume / Cleanup / Re-run) live in the page-header bar
-  // for visual parity with /fleet-runs/:id and /history/:id — the previous
-  // bottom-of-body `_actionsRow` is intentionally dropped. The cost meta
-  // moved into the hero meta strip, so `_aggregateCostSection` is dropped
-  // too. Both onHalt/onResume/onCleanup/onRerun callbacks remain in the
-  // signature so callers don't break; they're just unused here now.
+  // Body order mirrors fleet-detail wherever a concept exists, with the
+  // workspace-only additions slotted into the most natural positions:
+  //
+  //   1. WORK REQUEST       (aligned with fleet)
+  //   2. REFERENCE GUIDE    (aligned with fleet — guide loaded on demand)
+  //   3. DEPENDENCY GRAPH   (workspace-only structural info)
+  //   4. REPOS · N repos    (aligned with fleet's PROJECTS — runCardView per child)
+  //   5. WORKSPACE PLAN     (workspace-only, folded behind a View plan modal)
+  //   6. INTEGRATION TEST   (workspace-only, only when configured)
+  //   7. CONTEXT ARTIFACTS  (workspace-only, only when populated)
+  //   8. AGGREGATE COST     (aligned with fleet)
+  //
+  // Header actions (Resume / Cleanup / Re-run) live in the page-header
+  // bar — see main.js' contentHeaderView for workspace-runs/:id.
+  // onHalt/onResume/onCleanup/onRerun stay in the signature for API
+  // compatibility but the body doesn't render its own action row.
   return html`
     <div class="new-run-page workspace-detail-page">
       ${_overviewSection(workspace)}
       ${_circuitBreakerAlertView(workspace)}
       ${_userHaltAlertView(workspace)}
       <div class="new-run-form workspace-detail-body">
-        ${_dagPanel(workspace)}
         ${_workRequestSection(workspace)}
+        ${_guideSection(workspace, { rerender })}
+        ${_dagPanel(workspace)}
+        ${_childrenSection(workspace, { runsById, onSelectRun })}
         ${_planPanel(workspace, { rerender, onSavePlan })}
-        ${_contextArtifactsPanel(workspace)}
         ${_integrationTestPanel(workspace)}
-        ${_prTable(workspace)}
+        ${_contextArtifactsPanel(workspace)}
+        ${_aggregateCostSection(workspace)}
       </div>
     </div>
   `;

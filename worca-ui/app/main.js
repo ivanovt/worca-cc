@@ -3386,6 +3386,9 @@ function mainContentView() {
         rerender,
         missing: isMissing,
         workspaceId: route.runId,
+        // Mirror /fleet-runs/:id call site so _childrenSection can render
+        // rich runCardView's for each child instead of a sparse PR table.
+        runsById: state.runs,
         onSelectRun: (id) => navigate('history', id, null),
       });
     }
