@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
+import { ClipboardCopy, iconSvg } from '../utils/icons.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { dagGraphView } from './dag-graph.js';
 import { runCardView } from './run-card.js';
@@ -439,16 +440,6 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
         ${planBody}
         <div slot="footer">
           ${
-            !planEditMode
-              ? html`
-                <sl-button
-                  class="btn-copy-plan"
-                  @click=${() => _copyToClipboard(planText, 'Workspace plan')}
-                >Copy</sl-button>
-              `
-              : nothing
-          }
-          ${
             canEdit && !planEditMode
               ? html`
                 <sl-button
@@ -485,6 +476,32 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
               `
               : nothing
           }
+          ${
+            !planEditMode
+              ? html`
+                <sl-button
+                  class="btn-copy-plan"
+                  @click=${() => _copyToClipboard(planText, 'Workspace plan')}
+                >
+                  <span slot="prefix">${unsafeHTML(iconSvg(ClipboardCopy, 14))}</span>
+                  Copy
+                </sl-button>
+              `
+              : nothing
+          }
+          <sl-button
+            variant="primary"
+            class="btn-close-plan"
+            @click=${
+              rerender
+                ? () => {
+                    planDialogOpen = false;
+                    planEditMode = false;
+                    rerender();
+                  }
+                : null
+            }
+          >Close</sl-button>
         </div>
       </sl-dialog>
     </div>
@@ -699,19 +716,34 @@ function _guideSection(ws, { rerender } = {}) {
         }
       >
         ${guideBody}
-        ${
-          guideContent
-            ? html`
-              <div slot="footer">
+        <div slot="footer">
+          ${
+            guideContent
+              ? html`
                 <sl-button
                   class="btn-copy-guide"
                   @click=${() =>
                     _copyToClipboard(guideContent, 'Guide content')}
-                >Copy</sl-button>
-              </div>
-            `
-            : nothing
-        }
+                >
+                  <span slot="prefix">${unsafeHTML(iconSvg(ClipboardCopy, 14))}</span>
+                  Copy
+                </sl-button>
+              `
+              : nothing
+          }
+          <sl-button
+            variant="primary"
+            class="btn-close-guide"
+            @click=${
+              rerender
+                ? () => {
+                    guideDialogOpen = false;
+                    rerender();
+                  }
+                : null
+            }
+          >Close</sl-button>
+        </div>
       </sl-dialog>
     </div>
   `;

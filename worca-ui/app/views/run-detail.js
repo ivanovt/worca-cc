@@ -169,18 +169,33 @@ function _planArtifactDialog(run, rerender) {
       }
     >
       ${body}
-      ${
-        planText
-          ? html`
-            <div slot="footer">
+      <div slot="footer">
+        ${
+          planText
+            ? html`
               <sl-button
                 class="btn-copy-run-plan"
                 @click=${() => _copyToClipboardSimple(planText)}
-              >Copy</sl-button>
-            </div>
-          `
-          : nothing
-      }
+              >
+                <span slot="prefix">${unsafeHTML(iconSvg(ClipboardCopy, 14))}</span>
+                Copy
+              </sl-button>
+            `
+            : nothing
+        }
+        <sl-button
+          variant="primary"
+          class="btn-close-run-plan"
+          @click=${
+            rerender
+              ? () => {
+                  _planDialogRunId = null;
+                  rerender();
+                }
+              : null
+          }
+        >Close</sl-button>
+      </div>
     </sl-dialog>
   `;
 }
