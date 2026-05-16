@@ -206,7 +206,6 @@ def test_workspace_fullstack_3_repos(tmp_path):
         tiers=ws.tiers,
         repos_by_name={r.name: r.path for r in ws.repos},
         dependency_graph={r.name: r.depends_on for r in ws.repos},
-        repos_info={r.name: {"path": r.path} for r in ws.repos},
     )
 
     assert manifest["workspace_id"] == ws_id

@@ -1044,9 +1044,13 @@ test.describe('workspace context artifacts', () => {
       integration_test: { status: 'pending', exit_code: null, log_path: null },
     });
 
-    // Write a context artifact for the web repo (injected from api tier)
+    // Write a context artifact for the web repo (injected from api tier).
+    // Path convention is `{run_dir}/context/{repo}-diff.md` — matches
+    // `_write_context_file` in dag_executor.py and the server route at
+    // workspace-routes.js:1294 (`GET /api/workspace-runs/:id/context/:repo`).
+    mkdirSync(join(runDir, 'context'), { recursive: true });
     writeFileSync(
-      join(runDir, 'web-context.md'),
+      join(runDir, 'context', 'web-diff.md'),
       '# API changes\n\nAdded /v2/users endpoint.',
       'utf8',
     );
