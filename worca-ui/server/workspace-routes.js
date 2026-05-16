@@ -276,30 +276,67 @@ function enrichChildStatus(child) {
   }
 }
 
+// Read a child run's status.json. The `.worca/multi/pipelines.d/<id>.json`
+// file is a lightweight pointer with `status / pid / branch / worktree_path`
+// — it does NOT contain stages. The actual per-stage costs and PR fields
+// live in `<worktree>/.worca/runs/<run_id>/status.json`.
+function _readChildStatus(child) {
+  if (!child.run_id || !child.worktree_path) return null;
+  const statusPath = join(
+    child.worktree_path,
+    '.worca',
+    'runs',
+    child.run_id,
+    'status.json',
+  );
+  if (!existsSync(statusPath)) return null;
+  try {
+    return JSON.parse(readFileSync(statusPath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 function aggregateCost(manifest) {
   let cost = 0;
   for (const child of manifest.children ?? []) {
-    if (!child.run_id || !child.worktree_path) continue;
-    const regPath = join(
-      child.worktree_path,
-      '.worca',
-      'multi',
-      'pipelines.d',
-      `${child.run_id}.json`,
-    );
-    if (!existsSync(regPath)) continue;
-    try {
-      const reg = JSON.parse(readFileSync(regPath, 'utf8'));
-      for (const stage of Object.values(reg.stages ?? {})) {
-        for (const iter of stage.iterations ?? []) {
-          cost += iter.cost_usd ?? 0;
-        }
+    const st = _readChildStatus(child);
+    if (!st) continue;
+    for (const stage of Object.values(st.stages ?? {})) {
+      for (const iter of stage.iterations ?? []) {
+        cost += iter.cost_usd ?? 0;
       }
-    } catch {
-      // skip
     }
   }
   return cost;
+}
+
+// Synthesize a workspace `finished_at` when the manifest is in a terminal
+// state but no explicit field was written. We use the maximum
+// `updated_at` across the child status.json files — closest available
+// real timestamp for "when this workspace stopped progressing". Returns
+// null if no children have status files yet (rare for terminal states).
+const WORKSPACE_TERMINAL_STATUSES = new Set([
+  'completed',
+  'failed',
+  'integration_failed',
+  'halted',
+]);
+
+function _synthesizeFinishedAt(manifest) {
+  if (manifest.finished_at) return manifest.finished_at;
+  if (!WORKSPACE_TERMINAL_STATUSES.has(manifest.status)) return null;
+  let latest = null;
+  for (const child of manifest.children ?? []) {
+    const st = _readChildStatus(child);
+    // child status.json carries `completed_at` for the run's wall-end
+    // timestamp; `updated_at` is from a different shape and isn't set on
+    // these files. Take the maximum across children.
+    const ts = st?.completed_at || st?.updated_at;
+    if (!ts) continue;
+    if (!latest || ts > latest) latest = ts;
+  }
+  return latest;
 }
 
 // ─── multipart parser ──────────────────────────────────────────────────────
@@ -930,7 +967,16 @@ export function createWorkspaceRouter({
     }
     const children = (manifest.children ?? []).map(enrichChildStatus);
     const cost_usd = aggregateCost(manifest);
-    res.json({ ok: true, manifest: { ...manifest, children }, cost_usd });
+    // Synthesize finished_at for terminal manifests so the UI can compute
+    // a stable duration. Older runs (pre-this-fix) and any run whose
+    // status was set to terminal without updating the manifest field will
+    // get a value derived from the child status.json updated_at maxima.
+    const finished_at = _synthesizeFinishedAt(manifest);
+    res.json({
+      ok: true,
+      manifest: { ...manifest, children, finished_at },
+      cost_usd,
+    });
   });
 
   // ── DELETE /api/workspace-runs/:id ────────────────────────────────────

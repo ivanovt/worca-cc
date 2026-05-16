@@ -62,7 +62,11 @@ function _wallEndedAt(ws) {
   ) {
     return null;
   }
-  return ws.halted_at || ws.updated_at || null;
+  // finished_at is preferred — the server synthesizes it from the maximum
+  // child status.json updated_at when the manifest doesn't write one
+  // explicitly. halted_at / updated_at are kept as additional fallbacks
+  // for older manifests and for the user-halt path.
+  return ws.finished_at || ws.halted_at || ws.updated_at || null;
 }
 
 function _guideConflictsAggregate(children) {
@@ -133,7 +137,15 @@ function _overviewSection(ws) {
   const duration = startedAt
     ? formatDuration(elapsed(startedAt, isActive ? null : endedAt))
     : 'N/A';
-  const cost = _computeTotalCost(ws.children, ws.master_planner_cost);
+  // Cost source-of-truth: the server's GET /api/workspace-runs/:id response
+  // includes a top-level `cost_usd` aggregated by reading each child's
+  // status.json. Prefer that. Fall back to the (always-zero in practice)
+  // client-side walk only if it isn't surfaced — keeps tests + offline
+  // renders working.
+  const cost =
+    typeof ws.cost_usd === 'number'
+      ? ws.cost_usd
+      : _computeTotalCost(ws.children, ws.master_planner_cost);
   const editHref = ws.workspace_json_name
     ? `#/workspaces/${ws.workspace_json_name}/edit`
     : null;
@@ -163,11 +175,11 @@ function _overviewSection(ws) {
         <div class="fleet-meta-line">
           <span class="fleet-meta-item">
             <span class="meta-label">Name:</span>
-            <span class="meta-value">${ws.name || '—'}</span>
+            <span class="meta-value">${ws.workspace_name || ws.name || '—'}</span>
           </span>
           <span class="fleet-meta-item">
             <span class="meta-label">Tiers:</span>
-            <span class="meta-value">${_tierProgress(ws.tiers)}</span>
+            <span class="meta-value">${_tierProgress(ws.dag?.tiers ?? ws.tiers)}</span>
           </span>
         </div>
 
@@ -214,13 +226,22 @@ function _dagPanel(ws) {
 
 function _workRequestSection(ws) {
   const wr = ws.work_request || {};
+  // Most workspace launches don't carry a separate title — the prompt is
+  // the description. Showing a `Title — —` row in that case is just
+  // visual clutter, so omit it entirely when empty.
   return html`
     <div class="new-run-section">
       <h3 class="new-run-section-title">Work Request</h3>
-      <div class="settings-field">
-        <label class="settings-label">Title</label>
-        <strong class="workspace-wr-title">${wr.title || '—'}</strong>
-      </div>
+      ${
+        wr.title
+          ? html`
+            <div class="settings-field">
+              <label class="settings-label">Title</label>
+              <strong class="workspace-wr-title">${wr.title}</strong>
+            </div>
+          `
+          : nothing
+      }
       ${
         wr.description
           ? html`
@@ -235,16 +256,69 @@ function _workRequestSection(ws) {
   `;
 }
 
+// Cache of fetched plan content keyed by workspace id. The manifest only
+// carries a path (`ws.plan.workspace_plan_path`) — the markdown lives at
+// GET /api/workspace-runs/:id/plan, which the panel pulls on demand.
+const _planContentCache = new Map();
+const _planFetchInFlight = new Set();
+
+export function resetWorkspacePlanCache() {
+  _planContentCache.clear();
+  _planFetchInFlight.clear();
+}
+
+function _ensurePlanFetched(ws, rerender) {
+  const id = ws.workspace_id;
+  if (!id) return;
+  if (_planContentCache.has(id)) return;
+  if (_planFetchInFlight.has(id)) return;
+  _planFetchInFlight.add(id);
+  fetch(`/api/workspace-runs/${encodeURIComponent(id)}/plan`, {
+    headers: { Accept: 'text/markdown' },
+  })
+    .then(async (r) => {
+      _planFetchInFlight.delete(id);
+      if (!r.ok) {
+        _planContentCache.set(id, null);
+        return;
+      }
+      _planContentCache.set(id, await r.text());
+      rerender?.();
+    })
+    .catch(() => {
+      _planFetchInFlight.delete(id);
+      _planContentCache.set(id, null);
+    });
+}
+
 function _planPanel(ws, { rerender, onSavePlan } = {}) {
   const canEdit = PLAN_EDITABLE.has(ws.status);
-  const hasPlan = ws.workspace_plan != null && ws.workspace_plan !== '';
+  // Plan content comes from one of three sources, in priority order:
+  //   1. ws.workspace_plan — populated by tests and any caller that
+  //      inlines the plan text on the manifest object.
+  //   2. _planContentCache — populated by the on-demand fetch below.
+  //   3. ws.plan.workspace_plan_path — manifest path that triggers the
+  //      fetch the first time the panel renders for this workspace.
+  // If none yield content, fall back to the "No workspace plan" hint.
+  if (
+    (ws.workspace_plan == null || ws.workspace_plan === '') &&
+    ws.plan?.workspace_plan_path
+  ) {
+    _ensurePlanFetched(ws, rerender);
+  }
+  const cached = _planContentCache.get(ws.workspace_id);
+  const planText =
+    ws.workspace_plan != null && ws.workspace_plan !== ''
+      ? ws.workspace_plan
+      : cached || '';
+  const hasPlan = planText !== '';
 
   return html`
     <div class="new-run-section workspace-plan-panel">
       <h3 class="new-run-section-title">Workspace Plan</h3>
       ${
         hasPlan
-          ? html`<pre class="workspace-plan-content">${ws.workspace_plan}</pre>`
+          ? html`<pre class="workspace-plan-content">${planText}</pre>`
           : html`<div class="settings-field"><span class="settings-field-hint">No workspace plan available.</span></div>`
       }
       ${
@@ -258,7 +332,7 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
                   rerender
                     ? () => {
                         planEditDialogOpen = true;
-                        planEditContent = ws.workspace_plan || '';
+                        planEditContent = planText;
                         rerender();
                       }
                     : null

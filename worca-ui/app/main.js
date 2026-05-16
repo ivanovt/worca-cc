@@ -3362,7 +3362,15 @@ function mainContentView() {
               _wsDetailFetching = null;
               if (data?.ok && data.manifest) {
                 _wsDetailMissing.delete(route.runId);
-                _wsDetailCache[route.runId] = data.manifest;
+                // Pin the server-computed cost_usd onto the cached
+                // manifest so _overviewSection can read it without an
+                // extra fetch. Without this, the client falls back to a
+                // walk over `child.stages` (always empty in the manifest)
+                // and prints $0.00 for every workspace run.
+                _wsDetailCache[route.runId] = {
+                  ...data.manifest,
+                  cost_usd: data.cost_usd,
+                };
                 rerender();
               } else if (status === 404 || data?.ok === false) {
                 _wsDetailMissing.add(route.runId);
