@@ -1004,7 +1004,7 @@ ws.on('fleet-update', () => {
   fetch('/api/fleet-runs')
     .then((r) => r.json())
     .then((data) => {
-      store.setState({ fleets: data?.fleets || [] });
+      store.setState({ fleets: data?.fleets || [], fleetsLoaded: true });
       // Invalidate cached detail manifests so the next view fetch is fresh.
       // Drop missing markers in the same step — a fleet-list refresh implies
       // any negative caches may be stale (manifest could have been restored).
@@ -1168,21 +1168,31 @@ function handleHello(_payload) {
   }
 
   // Fetch fleets list (used by sidebar's Fleets entry + count badge). Best-effort.
+  // Flip fleetsLoaded on success AND failure so the sidebar spinner stops
+  // even when the endpoint is missing in older clones — same UX contract
+  // worktreesLoaded / runsLoaded follow.
   fetch('/api/fleet-runs')
     .then((r) => r.json())
     .then((data) => {
-      store.setState({ fleets: data?.fleets || [] });
+      store.setState({ fleets: data?.fleets || [], fleetsLoaded: true });
     })
-    .catch(() => {});
+    .catch(() => {
+      store.setState({ fleetsLoaded: true });
+    });
 
   // Fetch workspace runs list (used by sidebar's Workspaces entry + count badge).
   // Best-effort — server may not be wired in older clones.
   fetch('/api/workspace-runs')
     .then((r) => r.json())
     .then((data) => {
-      store.setState({ workspaceRuns: data?.workspace_runs || [] });
+      store.setState({
+        workspaceRuns: data?.workspace_runs || [],
+        workspaceRunsLoaded: true,
+      });
     })
-    .catch(() => {});
+    .catch(() => {
+      store.setState({ workspaceRunsLoaded: true });
+    });
 
   // Fetch workspace definitions (used by the launcher's "Select workspace"
   // dropdown). Distinct from workspace runs — see state.js comment.
@@ -1971,7 +1981,7 @@ async function _refreshFleets() {
   try {
     const res = await fetch('/api/fleet-runs');
     const data = await res.json();
-    store.setState({ fleets: data?.fleets || [] });
+    store.setState({ fleets: data?.fleets || [], fleetsLoaded: true });
   } catch {
     // Non-fatal — the WS fleet-update handler will reconcile shortly.
   }
@@ -1981,7 +1991,10 @@ async function _refreshWorkspaces() {
   try {
     const res = await fetch('/api/workspace-runs');
     const data = await res.json();
-    store.setState({ workspaceRuns: data?.workspace_runs || [] });
+    store.setState({
+      workspaceRuns: data?.workspace_runs || [],
+      workspaceRunsLoaded: true,
+    });
   } catch {
     // Non-fatal — bootstrap and next user navigation will reconcile.
   }

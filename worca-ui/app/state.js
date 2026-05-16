@@ -45,6 +45,10 @@ export function createStore(initial = {}) {
     worktrees: initial.worktrees ?? [],
     worktreesLoaded: initial.worktreesLoaded ?? false,
     fleets: initial.fleets ?? [],
+    // Loaded flags let the sidebar distinguish "loading from server" from
+    // "loaded and empty" — without this, both render an empty array and
+    // the sidebar can't show a spinner during the first hydration.
+    fleetsLoaded: initial.fleetsLoaded ?? false,
     // `workspaces` are definitions ({ name, path, repos }) used by the
     // launcher dropdown; `workspaceRuns` are pipeline executions
     // ({ workspace_id, status, ... }) counted by the sidebar badge. They were
@@ -52,6 +56,7 @@ export function createStore(initial = {}) {
     // launcher when sidebar code mutated state.workspaces with run shape.
     workspaces: initial.workspaces ?? [],
     workspaceRuns: initial.workspaceRuns ?? [],
+    workspaceRunsLoaded: initial.workspaceRunsLoaded ?? false,
     worktreeDiskWarningBytes: initial.worktreeDiskWarningBytes ?? 2_000_000_000,
     classifierModel: initial.classifierModel ?? 'haiku',
     cleanupPolicy: initial.cleanupPolicy ?? 'never',
@@ -99,8 +104,10 @@ export function createStore(initial = {}) {
         next.addProjectDialogOpen === state.addProjectDialogOpen &&
         next.worktrees === state.worktrees &&
         next.fleets === state.fleets &&
+        next.fleetsLoaded === state.fleetsLoaded &&
         next.workspaces === state.workspaces &&
         next.workspaceRuns === state.workspaceRuns &&
+        next.workspaceRunsLoaded === state.workspaceRunsLoaded &&
         next.runsLoaded === state.runsLoaded &&
         next.worktreeDiskWarningBytes === state.worktreeDiskWarningBytes &&
         next.classifierModel === state.classifierModel &&

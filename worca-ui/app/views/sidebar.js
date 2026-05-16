@@ -86,9 +86,11 @@ export function sidebarView(
     currentProjectId,
     worktrees = [],
     fleets = [],
+    fleetsLoaded = false,
     // Sidebar counts pipeline executions (workspaceRuns), not definitions.
     // state.workspaces is reserved for the launcher's dropdown.
     workspaceRuns = [],
+    workspaceRunsLoaded = false,
     worktreeDiskWarningBytes = 2_000_000_000,
     totalRunning = 0,
     maxConcurrentPipelines = 10,
@@ -124,43 +126,28 @@ export function sidebarView(
   );
   const worktreeDiskWarning = totalWorktreeDisk > diskWarningThreshold;
 
-  // Archived fleets never contribute to the attention badge — they're
-  // explicitly out-of-sight (parity with archived pipeline runs).
+  // Archived fleets never contribute to the badge — they're explicitly
+  // out-of-sight (parity with archived pipeline runs).
   const liveFleets = fleets.filter((f) => !f.archived);
-  const runningFleetCount = liveFleets.filter(
-    (f) => f.status === 'running',
-  ).length;
   const haltedFleetCount = liveFleets.filter(
     (f) => f.status === 'halted',
   ).length;
-  // Badge surfaces fleets that need operator attention: running (active work)
-  // + halted (awaiting resume/cleanup decision). Completed/failed fleets are
-  // terminal — they don't add to the count.
-  const fleetBadgeCount = runningFleetCount + haltedFleetCount;
+  // History/Worktrees show a total count and escalate the colour when
+  // attention is warranted. Match that for Fleets: badge surfaces the
+  // total live count, variant flips to warning when any fleet is halted.
+  const fleetBadgeCount = liveFleets.length;
   const showFleetBadge = fleetBadgeCount > 0;
-  // Variant follows the convention used by History/Worktrees: neutral grey
-  // by default, escalates to warning only when there's a "needs attention"
-  // condition. For Fleets the trigger is any halted fleet (matches the
-  // Worktrees disk-threshold warning shape).
   const fleetBadgeVariant = haltedFleetCount > 0 ? 'warning' : 'neutral';
 
   const liveWorkspaces = workspaceRuns.filter((w) => !w.archived);
-  const WORKSPACE_ACTIVE = { running: 1, planning: 1, integration_testing: 1 };
-  const WORKSPACE_ATTENTION = { halted: 1, integration_failed: 1 };
-  const activeWorkspaceCount = liveWorkspaces.filter(
-    (w) => WORKSPACE_ACTIVE[w.status],
-  ).length;
+  const WORKSPACE_ATTENTION = { halted: 1, integration_failed: 1, failed: 1 };
   const attentionWorkspaceCount = liveWorkspaces.filter(
     (w) => WORKSPACE_ATTENTION[w.status],
   ).length;
-  const blockedWorkspaceCount = liveWorkspaces.filter(
-    (w) => w.status === 'blocked',
-  ).length;
-  const workspaceBadgeCount =
-    activeWorkspaceCount + attentionWorkspaceCount + blockedWorkspaceCount;
+  // Mirror Fleets: total live count, warning variant when any workspace
+  // needs operator attention (halted / integration_failed / failed).
+  const workspaceBadgeCount = liveWorkspaces.length;
   const showWorkspaceBadge = workspaceBadgeCount > 0;
-  // Match Fleets: neutral when only running/blocked, escalate to warning when
-  // attention conditions (halted, integration_failed) are present.
   const workspaceBadgeVariant =
     attentionWorkspaceCount > 0 ? 'warning' : 'neutral';
 
@@ -332,9 +319,11 @@ export function sidebarView(
             <span>Fleets</span>
           </span>
           ${
-            showFleetBadge
-              ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
-              : ''
+            !fleetsLoaded
+              ? html`<sl-spinner class="sidebar-loading-spinner" data-testid="sidebar-fleets-loading"></sl-spinner>`
+              : showFleetBadge
+                ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
+                : ''
           }
         </div>
         <div class="sidebar-item ${route.section === 'workspace-runs' ? 'active' : ''}"
@@ -344,9 +333,11 @@ export function sidebarView(
             <span>Workspaces</span>
           </span>
           ${
-            showWorkspaceBadge
-              ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
-              : ''
+            !workspaceRunsLoaded
+              ? html`<sl-spinner class="sidebar-loading-spinner" data-testid="sidebar-workspaces-loading"></sl-spinner>`
+              : showWorkspaceBadge
+                ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
+                : ''
           }
         </div>
       </div>

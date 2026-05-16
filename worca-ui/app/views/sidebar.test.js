@@ -34,6 +34,11 @@ function makeState(overrides = {}) {
     webhookInbox: { events: [] },
     worktrees: [],
     worktreeDiskWarningBytes: 2_000_000_000,
+    // Default Fleets / Workspaces to "loaded" so badge assertions don't
+    // see a spinner. Individual tests still override either flag to
+    // exercise the spinner branch explicitly.
+    fleetsLoaded: true,
+    workspaceRunsLoaded: true,
     ...overrides,
   };
 }
@@ -126,11 +131,43 @@ describe('sidebar - loading spinners', () => {
     expect(output).toContain('sidebar-worktrees-loading');
   });
 
+  it('shows spinner for Fleets when fleets not yet loaded', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      runsLoaded: true,
+      worktreesLoaded: true,
+      fleetsLoaded: false,
+      workspaceRunsLoaded: true,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-fleets-loading');
+    expect(output).not.toContain('sidebar-workspaces-loading');
+  });
+
+  it('shows spinner for Workspaces when workspace runs not yet loaded', async () => {
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      runsLoaded: true,
+      worktreesLoaded: true,
+      fleetsLoaded: true,
+      workspaceRunsLoaded: false,
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('sidebar-workspaces-loading');
+    expect(output).not.toContain('sidebar-fleets-loading');
+  });
+
   it('shows no spinners once everything is loaded', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runsLoaded: true,
       worktreesLoaded: true,
+      fleetsLoaded: true,
+      workspaceRunsLoaded: true,
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -328,9 +365,10 @@ describe('sidebar - Fleets nav entry', () => {
     expect(output).toContain('>Fleets<');
   });
 
-  it('Fleets badge hidden when no running/halted fleets exist', async () => {
-    // Empty / terminal-only fleet sets produce no badge — the entry stays
-    // visible but stays quiet (matches Worktrees/History when at zero).
+  it('Fleets badge hidden only when zero live fleets', async () => {
+    // After moving to the total-count convention, terminal-only fleets
+    // still get a badge (they're live). The badge hides only when there
+    // are literally no live fleets.
     const { sidebarView } = await import('./sidebar.js');
     const stateEmpty = makeState({ fleets: [] });
     const out1 = renderToString(
@@ -344,11 +382,23 @@ describe('sidebar - Fleets nav entry', () => {
     const out2 = renderToString(
       sidebarView(stateTerminal, route, 'open', defaultOpts()),
     );
-    expect(out2).not.toContain('fleets-count-badge');
+    expect(out2).toContain('fleets-count-badge');
+    expect(out2).toContain('>1<');
+
+    const stateArchived = makeState({
+      fleets: [{ fleet_id: 'f1', status: 'completed', archived: true }],
+    });
+    const out3 = renderToString(
+      sidebarView(stateArchived, route, 'open', defaultOpts()),
+    );
+    // Archived fleets are filtered out, so the live count drops to zero.
+    expect(out3).not.toContain('fleets-count-badge');
   });
 
-  it('Fleets badge counts running + halted (the attention set)', async () => {
-    // Terminal fleets (completed/failed) don't add to the count.
+  it('Fleets badge counts ALL live fleets (matches History / Worktrees)', async () => {
+    // History/Worktrees show a total count; Fleets does the same for
+    // parity. Archived fleets are excluded; everything else (running,
+    // halted, completed, failed) counts.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
@@ -362,14 +412,13 @@ describe('sidebar - Fleets nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('fleets-count-badge');
-    // 2 running + 1 halted = 3, completed excluded
-    expect(output).toContain('>3<');
+    // 4 live fleets, none archived
+    expect(output).toContain('>4<');
   });
 
-  it('Fleets badge variant is neutral when only running fleets exist', async () => {
-    // Sidebar count badges follow the History/Worktrees convention: neutral
-    // grey by default, escalates only on the "needs attention" trigger.
-    // Running fleets are normal active work — no escalation.
+  it('Fleets badge variant is neutral when no fleet is halted', async () => {
+    // Color escalates only on the "needs attention" trigger (halted).
+    // Running / completed fleets keep the badge neutral.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
@@ -384,9 +433,6 @@ describe('sidebar - Fleets nav entry', () => {
     expect(output).toContain('class="fleets-count-badge"');
     expect(output).toContain('variant="neutral"');
     expect(output).not.toContain('variant="warning"');
-    expect(output).not.toContain(
-      'variant="primary" pill class="fleets-count-badge"',
-    );
   });
 
   it('Fleets badge variant flips to warning when any fleet is halted', async () => {
@@ -394,8 +440,6 @@ describe('sidebar - Fleets nav entry', () => {
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'halted' },
-        // a completed fleet is terminal and excluded from the badge count,
-        // but its presence must not change the variant logic
         { fleet_id: 'f2', status: 'completed' },
       ],
     });
@@ -404,13 +448,14 @@ describe('sidebar - Fleets nav entry', () => {
     );
     expect(output).toContain('fleets-count-badge');
     expect(output).toContain('variant="warning"');
-    // halted = 1 fleet that needs attention
-    expect(output).toContain('>1<');
+    // 2 live fleets total (1 halted + 1 completed) — total count, not
+    // attention-only.
+    expect(output).toContain('>2<');
   });
 
-  it('Fleets badge hidden when only terminal fleets exist', async () => {
-    // The entry itself is shown (any fleet exists) but the count badge is
-    // not — neither running nor halted needs operator action.
+  it('Fleets badge is shown for terminal-only fleets (total count)', async () => {
+    // Always-show-total convention: even when nothing needs attention,
+    // the count is visible (neutral). Hides only when zero live fleets.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
@@ -422,7 +467,9 @@ describe('sidebar - Fleets nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('>Fleets<');
-    expect(output).not.toContain('fleets-count-badge');
+    expect(output).toContain('fleets-count-badge');
+    expect(output).toContain('variant="neutral"');
+    expect(output).toContain('>2<');
   });
 
   it('Fleets entry is active when route section is fleet-runs', async () => {
@@ -480,7 +527,10 @@ describe('sidebar - Workspaces nav entry', () => {
     expect(output).toContain('>Workspaces<');
   });
 
-  it('Workspaces badge hidden when no active/halted/integration_failed workspaces exist', async () => {
+  it('Workspaces badge stays visible for terminal workspaces (total count, no attention)', async () => {
+    // After moving to the total-count convention, completed workspaces
+    // still get counted — the badge stays visible with a neutral
+    // variant. Hides only when there are literally no live runs.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'completed' }],
@@ -489,10 +539,12 @@ describe('sidebar - Workspaces nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('>Workspaces<');
-    expect(output).not.toContain('workspaces-count-badge');
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="neutral"');
+    expect(output).toContain('>1<');
   });
 
-  it('Workspaces badge counts active workspaces (running + planning + integration_testing)', async () => {
+  it('Workspaces badge counts ALL live workspace runs (matches History / Worktrees / Fleets)', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
@@ -506,10 +558,11 @@ describe('sidebar - Workspaces nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    expect(output).toContain('>3<');
+    // 4 live workspaces (none archived) — total count, not attention-only
+    expect(output).toContain('>4<');
   });
 
-  it('Workspaces badge variant is neutral when only active workspaces exist (matches Fleets)', async () => {
+  it('Workspaces badge variant is neutral when nothing needs attention', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
@@ -554,7 +607,7 @@ describe('sidebar - Workspaces nav entry', () => {
     expect(output).toContain('variant="warning"');
   });
 
-  it('Workspaces badge includes halted + integration_failed in the attention count', async () => {
+  it('Workspaces badge totals every live run regardless of attention state', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
@@ -568,11 +621,13 @@ describe('sidebar - Workspaces nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    // 1 running + 1 halted + 1 integration_failed = 3 attention items
-    expect(output).toContain('>3<');
+    // 4 live workspaces — all non-archived ones count toward the badge
+    expect(output).toContain('>4<');
+    // Variant escalates to warning because of halted + integration_failed
+    expect(output).toContain('variant="warning"');
   });
 
-  it('Workspaces badge hidden when only terminal workspaces exist', async () => {
+  it('Workspaces badge shown even when only terminal workspaces exist', async () => {
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
@@ -584,7 +639,10 @@ describe('sidebar - Workspaces nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('>Workspaces<');
-    expect(output).not.toContain('workspaces-count-badge');
+    expect(output).toContain('workspaces-count-badge');
+    // failed counts as attention → warning variant
+    expect(output).toContain('variant="warning"');
+    expect(output).toContain('>2<');
   });
 
   it('Workspaces entry is active when route section is workspace-runs', async () => {
@@ -599,7 +657,9 @@ describe('sidebar - Workspaces nav entry', () => {
     expect(output).toContain('sidebar-item active');
   });
 
-  it('Workspaces entry excludes archived workspaces from badge', async () => {
+  it('Workspaces entry excludes archived workspaces from badge total', async () => {
+    // Archived workspaces shouldn't contribute to the count. Here the
+    // only live run is completed → badge shows 1, neutral variant.
     const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
@@ -611,7 +671,10 @@ describe('sidebar - Workspaces nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('>Workspaces<');
-    expect(output).not.toContain('workspaces-count-badge');
+    expect(output).toContain('workspaces-count-badge');
+    // Only w2 (non-archived) contributes
+    expect(output).toContain('>1<');
+    expect(output).toContain('variant="neutral"');
   });
 });
 

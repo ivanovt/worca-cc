@@ -137,6 +137,12 @@ describe('workspace sidebar badge variant logic', () => {
       webhookInbox: { events: [] },
       worktrees: [],
       worktreeDiskWarningBytes: 2_000_000_000,
+      // Fleet / workspace badges render only once their data is loaded.
+      // Default both flags to true here so badge-variant assertions
+      // exercise the populated branch (a spinner replaces the badge
+      // otherwise).
+      fleetsLoaded: true,
+      workspaceRunsLoaded: true,
       ...overrides,
     };
   }
