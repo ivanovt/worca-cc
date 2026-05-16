@@ -943,6 +943,7 @@ export function createWorkspaceRouter({
           halt_reason: m.halt_reason ?? null,
           work_request: m.work_request,
           created_at: m.created_at,
+          finished_at: _synthesizeFinishedAt(m),
           dag: m.dag,
           children_count: (m.children ?? []).length,
         });

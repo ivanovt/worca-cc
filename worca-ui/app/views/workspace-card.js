@@ -74,12 +74,16 @@ export function workspaceCardView(ws, options = {}) {
   const prompt = ws.work_request?.title || ws.work_request?.description || '';
   const startedAt = ws.created_at || null;
   const lastActivityAt = ws.updated_at || null;
-  const duration =
-    startedAt && lastActivityAt
-      ? formatDuration(elapsed(startedAt, lastActivityAt))
-      : startedAt
-        ? formatDuration(elapsed(startedAt, null))
-        : null;
+  // For active runs we pass `null` as end → `elapsed` ticks against
+  // Date.now() so the displayed duration grows live. For terminal runs
+  // we freeze at `finished_at` (synthesized server-side from max child
+  // completed_at) falling back to `updated_at` for older manifests.
+  const terminalEndedAt = _isTerminal(status)
+    ? ws.finished_at || lastActivityAt
+    : null;
+  const duration = startedAt
+    ? formatDuration(elapsed(startedAt, terminalEndedAt))
+    : null;
 
   const tiers = _tierCount(ws.dag);
   const repoCount = ws.children_count ?? 0;
