@@ -138,18 +138,21 @@ function _overviewSection(ws) {
     ? `#/workspaces/${ws.workspace_json_name}/edit`
     : null;
 
+  // Reuse `.fleet-meta-line` / `.fleet-meta-item` classes so the workspace
+  // hero meta strip lays out identically to the fleet hero — horizontal
+  // wrap, 4px row gap × 20px column gap, label-then-value pairs. The hero
+  // breadcrumb and the body's `_actionsRow` were removed: the page-header
+  // bar now carries the status badge and Resume/Cleanup/Re-run buttons
+  // (mirrors fleet-runs/:id), so showing them twice is just noise.
   return html`
     <div
       class="run-detail-overview workspace-detail-overview"
       data-workspace-id="${ws.workspace_id}"
     >
-      <div class="workspace-breadcrumb">
-        <a href="#/">Dashboard</a> / <span>Workspace</span>
-      </div>
-      <div class="run-info-section workspace-info-section">
-        <div class="workspace-overview-status-row">
+      <div class="run-info-section fleet-info-section">
+        <div class="fleet-overview-status-row">
           <span class="meta-label">Workspace ID:</span>
-          <code class="workspace-id-chip">${ws.workspace_id}</code>
+          <code class="fleet-id-chip">${ws.workspace_id}</code>
           ${
             editHref
               ? html`<a href="${editHref}" class="edit-workspace-json">Edit workspace.json</a>`
@@ -157,42 +160,40 @@ function _overviewSection(ws) {
           }
         </div>
 
-        <div class="workspace-meta-line">
-          <span class="workspace-meta-item">
+        <div class="fleet-meta-line">
+          <span class="fleet-meta-item">
             <span class="meta-label">Name:</span>
             <span class="meta-value">${ws.name || '—'}</span>
           </span>
-          <span class="workspace-meta-item tier-progress">
+          <span class="fleet-meta-item">
             <span class="meta-label">Tiers:</span>
             <span class="meta-value">${_tierProgress(ws.tiers)}</span>
           </span>
         </div>
 
-        <div class="workspace-meta-line">
-          <span class="workspace-meta-item">
+        <div class="fleet-meta-line">
+          <span class="fleet-meta-item">
             <span class="meta-label">Started:</span>
             <span class="meta-value">${formatTimestamp(startedAt)}</span>
           </span>
           ${
             endedAt
-              ? html`<span class="workspace-meta-item">
+              ? html`<span class="fleet-meta-item">
                   <span class="meta-label">Finished:</span>
                   <span class="meta-value">${formatTimestamp(endedAt)}</span>
                 </span>`
               : nothing
           }
-          <span class="workspace-meta-item">
+          <span class="fleet-meta-item">
             <span class="meta-label">Duration:</span>
             <span class="meta-value">${duration}</span>
           </span>
-        </div>
-
-        <div class="pipeline-cost-strip workspace-cost-strip">
-          <span class="pipeline-cost-item">
+          <span class="fleet-meta-item">
             <span class="meta-label">Cost:</span>
             <span class="meta-value">${_formatCost(cost)}</span>
           </span>
         </div>
+
         ${_guideConflictsAggregate(ws.children)}
       </div>
     </div>
@@ -640,10 +641,14 @@ export function workspaceDetailView(
     rerender,
     missing,
     workspaceId,
-    onHalt,
-    onResume,
-    onCleanup,
-    onRerun,
+    // onHalt / onResume / onCleanup / onRerun were consumed by the
+    // bottom-of-body `_actionsRow`. Those buttons live in the page-header
+    // bar now (driven by main.js' contentHeaderView for workspace-runs/:id),
+    // so the callbacks are accepted-but-unused here for API compatibility.
+    onHalt: _onHalt,
+    onResume: _onResume,
+    onCleanup: _onCleanup,
+    onRerun: _onRerun,
     onSavePlan,
     onSelectRun: _onSelectRun,
   } = {},
@@ -673,6 +678,12 @@ export function workspaceDetailView(
     return html`<div class="workspace-detail-loading"><sl-spinner></sl-spinner> Loading workspace…</div>`;
   }
 
+  // Header actions (Resume / Cleanup / Re-run) live in the page-header bar
+  // for visual parity with /fleet-runs/:id and /history/:id — the previous
+  // bottom-of-body `_actionsRow` is intentionally dropped. The cost meta
+  // moved into the hero meta strip, so `_aggregateCostSection` is dropped
+  // too. Both onHalt/onResume/onCleanup/onRerun callbacks remain in the
+  // signature so callers don't break; they're just unused here now.
   return html`
     <div class="new-run-page workspace-detail-page">
       ${_overviewSection(workspace)}
@@ -683,10 +694,8 @@ export function workspaceDetailView(
         ${_workRequestSection(workspace)}
         ${_planPanel(workspace, { rerender, onSavePlan })}
         ${_contextArtifactsPanel(workspace)}
-        ${_aggregateCostSection(workspace)}
         ${_integrationTestPanel(workspace)}
         ${_prTable(workspace)}
-        ${_actionsRow(workspace, { rerender, onHalt, onResume, onCleanup, onRerun })}
       </div>
     </div>
   `;

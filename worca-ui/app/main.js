@@ -1890,6 +1890,79 @@ function handleCleanupFleet(fleetId) {
   );
 }
 
+// ── Workspace-run actions (mirror the fleet handlers above) ────────────
+async function handleResumeWorkspace(workspaceId) {
+  try {
+    const res = await fetch(
+      `/api/workspace-runs/${encodeURIComponent(workspaceId)}/resume`,
+      { method: 'POST' },
+    );
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to resume workspace');
+      return;
+    }
+    delete _wsDetailCache[workspaceId];
+    await _refreshWorkspaces();
+    rerender();
+  } catch (err) {
+    showActionError(err?.message || 'Failed to resume workspace');
+  }
+}
+
+function handleCleanupWorkspaceRun(workspaceId) {
+  showConfirm(
+    {
+      label: 'Cleanup Workspace Run',
+      message:
+        'Removes the workspace run manifest, pointer file, and any on-disk child worktree state. Per-repo PRs are NOT touched. Irreversible.',
+      confirmLabel: 'Cleanup',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(
+            `/api/workspace-runs/${encodeURIComponent(workspaceId)}`,
+            { method: 'DELETE' },
+          );
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to clean up workspace');
+            return;
+          }
+          delete _wsDetailCache[workspaceId];
+          await _refreshWorkspaces();
+          navigate('workspace-runs', null, null);
+        } catch (err) {
+          showActionError(err?.message || 'Failed to clean up workspace');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+async function handleRerunWorkspace(workspaceId) {
+  try {
+    const res = await fetch(
+      `/api/workspace-runs/${encodeURIComponent(workspaceId)}/relaunch`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      },
+    );
+    const data = await res.json();
+    if (!data.ok || !data.workspace_id) {
+      showActionError(data.error || 'Failed to re-run workspace');
+      return;
+    }
+    await _refreshWorkspaces();
+    navigate('workspace-runs', data.workspace_id, null);
+  } catch (err) {
+    showActionError(err?.message || 'Failed to re-run workspace');
+  }
+}
+
 // Re-fetch /api/fleet-runs and replace state.fleets. Used after a fleet
 // archive / unarchive so the list + sidebar count update immediately —
 // the WS `fleet-update` watcher also fires, but an explicit refetch gives
@@ -2702,14 +2775,9 @@ function contentHeaderView() {
         New Workspace
       </button>`;
   } else if (route.section === 'workspace-runs') {
-    title =
-      route.runId === 'new'
-        ? 'New Workspace'
-        : route.runId
-          ? `Workspace ${route.runId.split('_').pop() || route.runId}`
-          : 'Workspaces';
     showBack = true;
     if (route.runId === 'new') {
+      title = 'New Workspace';
       // Reuse fleet-launcher's submit state — it dispatches based on
       // launcherMode, so workspace mode hits POST /api/workspace-runs and
       // returns data.workspace_id on success.
@@ -2728,6 +2796,69 @@ function contentHeaderView() {
           ${unsafeHTML(iconSvg(Play, 14))}
           ${fls.isSubmitting ? 'Launching…' : 'Launch'}
         </button>`;
+    } else if (route.runId) {
+      // Mirror the fleet-runs/:id header: badge LEFT of title (semantic
+      // pill + spinner/glyph), action buttons RIGHT (Resume/Cleanup/Re-run
+      // gated on terminal/halted/in-flight). Pull the cached manifest the
+      // detail view already fetched.
+      const ws = _wsDetailCache[route.runId];
+      const shortId = route.runId.split('_').pop() || route.runId;
+      title = ws?.workspace_name
+        ? `${ws.workspace_name} (${shortId})`
+        : `Workspace ${shortId}`;
+
+      if (ws) {
+        const wsStatus = ws.status || 'running';
+        const variantMap = {
+          planning: 'primary',
+          running: 'primary',
+          integration_testing: 'primary',
+          completed: 'success',
+          failed: 'danger',
+          integration_failed: 'warning',
+          halted: 'warning',
+          blocked: 'neutral',
+        };
+        badge = html`<sl-badge variant="${variantMap[wsStatus] || 'neutral'}" pill>
+          ${unsafeHTML(statusIcon(wsStatus, 12))}
+          ${wsStatus.charAt(0).toUpperCase() + wsStatus.slice(1).replace(/_/g, ' ')}
+        </sl-badge>`;
+
+        const isResumable =
+          wsStatus === 'halted' ||
+          wsStatus === 'failed' ||
+          wsStatus === 'integration_failed';
+        const isRunning =
+          wsStatus === 'running' ||
+          wsStatus === 'planning' ||
+          wsStatus === 'integration_testing';
+        const isTerminal = !isRunning;
+
+        // Workspaces don't yet have a halt/pause/stop endpoint — only
+        // resume/cleanup/relaunch (W-047 §10.10). Re-run uses the
+        // /relaunch endpoint which forks a fresh ws_id.
+        const resumeBtn = isResumable
+          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeWorkspace(route.runId)}>
+              ${unsafeHTML(iconSvg(Play, 14))} Resume
+            </button>`
+          : nothing;
+        const cleanupBtn = isTerminal
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCleanupWorkspaceRun(route.runId)}>
+              ${unsafeHTML(iconSvg(Trash2, 14))} Cleanup
+            </button>`
+          : nothing;
+        const rerunBtn = isTerminal
+          ? html`<button class="action-btn action-btn--teal" @click=${() => handleRerunWorkspace(route.runId)}>
+              ${unsafeHTML(iconSvg(RotateCcw, 14))} Re-run
+            </button>`
+          : nothing;
+        const btns = [resumeBtn, cleanupBtn, rerunBtn].filter(
+          (b) => b !== nothing,
+        );
+        if (btns.length) actionButton = html`${btns}`;
+      }
+    } else {
+      title = 'Workspaces';
     }
   } else if (route.runId) {
     const run = store.getRunById(route.runId);

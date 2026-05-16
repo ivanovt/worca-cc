@@ -182,12 +182,14 @@ describe('workspaceDetailView — header strip', () => {
   it('renders the workspace ID label + chip', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
     expect(out).toContain('>Workspace ID:<');
-    expect(out).toContain('workspace-id-chip');
+    // Reuses the shared `.fleet-id-chip` styling so the workspace and
+    // fleet hero pages display the id identically.
+    expect(out).toContain('fleet-id-chip');
   });
 
   it('renders tier progress', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('tier-progress');
+    expect(out).toContain('>Tiers:<');
     expect(out).toContain('1 / 3');
   });
 
@@ -208,9 +210,9 @@ describe('workspaceDetailView — header strip', () => {
     expect(out).toContain('#/workspaces/auth-migration/edit');
   });
 
-  it('renders breadcrumb back to dashboard', () => {
+  it('does not render the breadcrumb (sidebar nav is the breadcrumb — matches fleet/run detail)', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('workspace-breadcrumb');
+    expect(out).not.toContain('workspace-breadcrumb');
   });
 });
 
@@ -324,18 +326,22 @@ describe('workspaceDetailView — context artifacts panel', () => {
   });
 });
 
-// ─── aggregate cost panel ────────────────────────────────────────────────────
+// ─── cost (now inline in the hero meta strip) ─────────────────────────────
 
-describe('workspaceDetailView — aggregate cost panel', () => {
+describe('workspaceDetailView — cost (inline)', () => {
+  // The standalone AGGREGATE COST panel was folded into the hero meta
+  // strip for visual parity with /fleet-runs/:id. These assertions check
+  // the inline rendering instead.
   beforeEach(() => resetWorkspaceDetailState());
 
-  it('renders workspace-aggregate-cost panel', () => {
+  it('no longer renders a separate aggregate-cost panel', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('workspace-aggregate-cost');
+    expect(out).not.toContain('workspace-aggregate-cost');
   });
 
-  it('shows total cost summed across children + master planner', () => {
+  it('shows total cost in the hero meta strip', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
+    expect(out).toContain('>Cost:<');
     // shared-lib: 0.05+0.12=0.17, backend: 0.04, frontend: 0, master: 0.08 → 0.29
     expect(out).toContain('$0.29');
   });
@@ -489,126 +495,40 @@ describe('workspaceDetailView — PR table', () => {
   });
 });
 
-// ─── actions row ─────────────────────────────────────────────────────────────
+// ─── actions moved to page-header bar ────────────────────────────────────────
 
-describe('workspaceDetailView — actions row', () => {
+describe('workspaceDetailView — body has no action affordances', () => {
+  // Resume / Cleanup / Re-run buttons + their confirm dialogs were moved
+  // to the page-header bar (driven by main.js' contentHeaderView for
+  // workspace-runs/:id), parallel to the fleet detail page. The body no
+  // longer carries any of them — these negative assertions lock that in
+  // so the duplication can't reappear by accident.
   beforeEach(() => resetWorkspaceDetailState());
 
-  it('renders actions row section', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('workspace-actions');
-  });
-
-  it('shows Halt button when running', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('btn-halt');
-    expect(out).toContain('Halt workspace');
-  });
-
-  it('shows Halt button when status is planning', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'planning' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-halt');
-  });
-
-  it('shows Halt button when status is integration_testing', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'integration_testing' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-halt');
-  });
-
-  it('hides Halt button when status is completed', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'completed' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).not.toContain('btn-halt');
-  });
-
-  it('shows Resume button when halted', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'halted' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-resume');
-    expect(out).toContain('Resume workspace');
-  });
-
-  it('shows Resume button when failed', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'failed' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-resume');
-  });
-
-  it('shows Resume button when integration_failed', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'integration_failed' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-resume');
-  });
-
-  it('hides Resume button when running', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).not.toContain('btn-resume');
-  });
-
-  it('shows Cleanup button when terminal (completed)', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'completed' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-cleanup');
-    expect(out).toContain('Cleanup workspace');
-  });
-
-  it('shows Cleanup button when terminal (failed)', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'failed' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-cleanup');
-  });
-
-  it('shows Cleanup button when halted', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'halted' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-cleanup');
-  });
-
-  it('hides Cleanup button when running', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).not.toContain('btn-cleanup');
-  });
-
-  it('shows Re-run button when terminal', () => {
-    const ws = { ...BASE_WORKSPACE, status: 'completed' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('btn-rerun');
-    expect(out).toContain('Re-run workspace');
-  });
-
-  it('hides Re-run button when running', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).not.toContain('btn-rerun');
-  });
-
-  it('shows halt confirmation dialog', () => {
-    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
-    expect(out).toContain('halt-confirm-dialog');
-  });
-});
-
-// ─── cleanup resume-loss warning ─────────────────────────────────────────────
-
-describe('workspaceDetailView — cleanup resume-loss warning', () => {
-  beforeEach(() => resetWorkspaceDetailState());
-
-  it('shows resume-loss warning checkbox when cleaning up non-completed workspace', () => {
-    resetWorkspaceDetailState({ cleanupDialogOpen: true });
-    const ws = { ...BASE_WORKSPACE, status: 'halted' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('cleanup-confirm-dialog');
-    expect(out).toContain('resume-loss-warning');
-  });
-
-  it('does not show resume-loss warning when cleaning up completed workspace', () => {
-    resetWorkspaceDetailState({ cleanupDialogOpen: true });
-    const ws = { ...BASE_WORKSPACE, status: 'completed' };
-    const out = renderToString(workspaceDetailView(ws, {}));
-    expect(out).toContain('cleanup-confirm-dialog');
-    expect(out).not.toContain('resume-loss-warning');
-  });
+  for (const status of [
+    'running',
+    'planning',
+    'integration_testing',
+    'completed',
+    'failed',
+    'integration_failed',
+    'halted',
+  ]) {
+    it(`emits no in-body action buttons for status="${status}"`, () => {
+      const ws = { ...BASE_WORKSPACE, status };
+      const out = renderToString(workspaceDetailView(ws, {}));
+      expect(out).not.toContain('workspace-actions');
+      expect(out).not.toContain('class="btn-halt"');
+      expect(out).not.toContain('class="btn-resume"');
+      expect(out).not.toContain('class="btn-cleanup"');
+      // `btn-rerun` is a substring of `btn-rerun-integration` (the
+      // integration-test panel's button, which stays in the body), so
+      // anchor to the exact workspace re-run class.
+      expect(out).not.toContain('class="btn-rerun"');
+      expect(out).not.toContain('halt-confirm-dialog');
+      expect(out).not.toContain('cleanup-confirm-dialog');
+    });
+  }
 });
 
 // ─── circuit breaker + user halt alerts ──────────────────────────────────────
