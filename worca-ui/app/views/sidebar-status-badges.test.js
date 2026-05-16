@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { projectStatus } from './sidebar.js';
+import { projectStatus, sidebarView } from './sidebar.js';
 
 describe('projectStatus', () => {
   it('returns idle when no runs exist', () => {
@@ -151,7 +151,6 @@ describe('workspace sidebar badge variant logic', () => {
   const defaultOpts = () => ({ onNavigate: vi.fn() });
 
   it('workspace badge is neutral for planning workspaces (no halted/integration_failed)', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'planning' }],
     });
@@ -163,7 +162,6 @@ describe('workspace sidebar badge variant logic', () => {
   });
 
   it('workspace badge is neutral for integration_testing workspaces (no halted/integration_failed)', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'integration_testing' }],
     });
@@ -175,7 +173,6 @@ describe('workspace sidebar badge variant logic', () => {
   });
 
   it('workspace badge flips to warning when any workspace is integration_failed', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
@@ -190,7 +187,6 @@ describe('workspace sidebar badge variant logic', () => {
   });
 
   it('workspace badge flips to warning when any workspace is halted', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'planning' },
@@ -205,7 +201,6 @@ describe('workspace sidebar badge variant logic', () => {
   });
 
   it('blocked workspace counts toward badge total but does not trigger warning', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'blocked' }],
     });

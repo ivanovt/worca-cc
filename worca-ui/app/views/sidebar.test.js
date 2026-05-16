@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { sidebarView } from './sidebar.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -48,7 +49,6 @@ const defaultOpts = () => ({ onNavigate: vi.fn() });
 
 describe('sidebar - Worktrees nav entry visibility', () => {
   it('shows Worktrees entry with no badge when loaded and empty', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({ worktrees: [], worktreesLoaded: true });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -59,7 +59,6 @@ describe('sidebar - Worktrees nav entry visibility', () => {
   });
 
   it('shows Worktrees entry when worktrees array is non-empty', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       worktrees: [
         { run_id: 'r1', disk_bytes: 100_000_000, status: 'completed' },
@@ -73,7 +72,6 @@ describe('sidebar - Worktrees nav entry visibility', () => {
   });
 
   it('shows worktree count in badge', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       worktrees: [
         { run_id: 'r1', disk_bytes: 100_000_000, status: 'completed' },
@@ -89,7 +87,6 @@ describe('sidebar - Worktrees nav entry visibility', () => {
   });
 
   it('Worktrees entry is active when route section is worktrees', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       worktrees: [{ run_id: 'r1', disk_bytes: 100_000_000, status: 'running' }],
       worktreesLoaded: true,
@@ -104,7 +101,6 @@ describe('sidebar - Worktrees nav entry visibility', () => {
 
 describe('sidebar - loading spinners', () => {
   it('shows spinner for Running/History when runs not yet loaded', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runsLoaded: false,
       worktreesLoaded: true,
@@ -118,7 +114,6 @@ describe('sidebar - loading spinners', () => {
   });
 
   it('shows spinner for Worktrees when worktrees not yet loaded', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runsLoaded: true,
       worktreesLoaded: false,
@@ -132,7 +127,6 @@ describe('sidebar - loading spinners', () => {
   });
 
   it('shows spinner for Fleets when fleets not yet loaded', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runsLoaded: true,
       worktreesLoaded: true,
@@ -147,7 +141,6 @@ describe('sidebar - loading spinners', () => {
   });
 
   it('shows spinner for Workspaces when workspace runs not yet loaded', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runsLoaded: true,
       worktreesLoaded: true,
@@ -162,7 +155,6 @@ describe('sidebar - loading spinners', () => {
   });
 
   it('shows no spinners once everything is loaded', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runsLoaded: true,
       worktreesLoaded: true,
@@ -178,7 +170,6 @@ describe('sidebar - loading spinners', () => {
 
 describe('sidebar - Worktrees badge disk-pressure threshold', () => {
   it('badge variant is neutral when total disk is below 2GB default threshold', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runs: {},
       worktrees: [
@@ -195,7 +186,6 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
   });
 
   it('badge variant flips to warning when total disk exceeds 2GB default threshold', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runs: {},
       worktrees: [
@@ -211,7 +201,6 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
   });
 
   it('badge variant flips to warning when custom threshold is exceeded', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runs: {},
       worktrees: [
@@ -227,7 +216,6 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
   });
 
   it('badge stays neutral when custom threshold is not exceeded', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       runs: {},
       worktrees: [
@@ -246,7 +234,6 @@ describe('sidebar - Worktrees badge disk-pressure threshold', () => {
 
 describe('sidebar - New Pipeline button capacity gating', () => {
   it('disables New Pipeline button when at capacity', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       totalRunning: 10,
       maxConcurrentPipelines: 10,
@@ -263,7 +250,6 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
   // "New Pipeline" + chevron dropdown for the multi-project alternatives.
 
   it('renders the primary "New Pipeline" button alongside a chevron dropdown', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -275,7 +261,6 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
   });
 
   it('chevron dropdown exposes New Fleet as a menu item', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -294,7 +279,6 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
     // renderToString string form (lit-html's ?attr= literal stays in the
     // source); the user-visible signal we *can* check is the project-gate
     // tooltip — if the gate is gone the tooltip text shouldn't render.
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       currentProjectId: null,
       projects: [
@@ -316,7 +300,6 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
     // ?attr= syntax doesn't evaluate to a DOM attribute in the string
     // form), so we settle for presence — the actual disabled-on-capacity
     // gating is exercised in the existing atCapacity tests.
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       currentProjectId: null,
       projects: [
@@ -337,7 +320,6 @@ describe('sidebar - Fleets nav entry', () => {
   // entries (Running, History, Worktrees) — the empty-state experience is
   // owned by the /fleet-runs view, not by hiding the navigation.
   it('Fleets entry visible when state.fleets is absent', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -346,7 +328,6 @@ describe('sidebar - Fleets nav entry', () => {
   });
 
   it('Fleets entry visible when state.fleets is empty', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({ fleets: [] });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -355,7 +336,6 @@ describe('sidebar - Fleets nav entry', () => {
   });
 
   it('Fleets entry visible when fleets array is non-empty', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [{ fleet_id: 'f1', status: 'completed' }],
     });
@@ -369,7 +349,6 @@ describe('sidebar - Fleets nav entry', () => {
     // After moving to the total-count convention, terminal-only fleets
     // still get a badge (they're live). The badge hides only when there
     // are literally no live fleets.
-    const { sidebarView } = await import('./sidebar.js');
     const stateEmpty = makeState({ fleets: [] });
     const out1 = renderToString(
       sidebarView(stateEmpty, route, 'open', defaultOpts()),
@@ -399,7 +378,6 @@ describe('sidebar - Fleets nav entry', () => {
     // History/Worktrees show a total count; Fleets does the same for
     // parity. Archived fleets are excluded; everything else (running,
     // halted, completed, failed) counts.
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'running' },
@@ -419,7 +397,6 @@ describe('sidebar - Fleets nav entry', () => {
   it('Fleets badge variant is neutral when no fleet is halted', async () => {
     // Color escalates only on the "needs attention" trigger (halted).
     // Running / completed fleets keep the badge neutral.
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'running' },
@@ -436,7 +413,6 @@ describe('sidebar - Fleets nav entry', () => {
   });
 
   it('Fleets badge variant flips to warning when any fleet is halted', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'halted' },
@@ -456,7 +432,6 @@ describe('sidebar - Fleets nav entry', () => {
   it('Fleets badge is shown for terminal-only fleets (total count)', async () => {
     // Always-show-total convention: even when nothing needs attention,
     // the count is visible (neutral). Hides only when zero live fleets.
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'completed' },
@@ -473,7 +448,6 @@ describe('sidebar - Fleets nav entry', () => {
   });
 
   it('Fleets entry is active when route section is fleet-runs', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       fleets: [{ fleet_id: 'f1', status: 'running' }],
     });
@@ -487,7 +461,6 @@ describe('sidebar - Fleets nav entry', () => {
 
 describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces entry always visible when state.workspaces is absent', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -496,7 +469,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces entry always visible when state.workspaces is empty', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({ workspaceRuns: [] });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
@@ -505,7 +477,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces entry visible when workspaces array is non-empty', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'completed' }],
     });
@@ -516,7 +487,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces entry is a flat sibling under Pipeline (not nested under Multi-Repo)', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'running' }],
     });
@@ -531,7 +501,6 @@ describe('sidebar - Workspaces nav entry', () => {
     // After moving to the total-count convention, completed workspaces
     // still get counted — the badge stays visible with a neutral
     // variant. Hides only when there are literally no live runs.
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'completed' }],
     });
@@ -545,7 +514,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces badge counts ALL live workspace runs (matches History / Worktrees / Fleets)', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
@@ -563,7 +531,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces badge variant is neutral when nothing needs attention', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
@@ -578,7 +545,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces badge variant flips to warning when any workspace is halted', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
@@ -593,7 +559,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces badge variant flips to warning when any workspace is integration_failed', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'planning' },
@@ -608,7 +573,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces badge totals every live run regardless of attention state', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
@@ -628,7 +592,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces badge shown even when only terminal workspaces exist', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'completed' },
@@ -646,7 +609,6 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 
   it('Workspaces entry is active when route section is workspace-runs', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'running' }],
     });
@@ -660,7 +622,6 @@ describe('sidebar - Workspaces nav entry', () => {
   it('Workspaces entry excludes archived workspaces from badge total', async () => {
     // Archived workspaces shouldn't contribute to the count. Here the
     // only live run is completed → badge shows 1, neutral variant.
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'running', archived: true },
@@ -680,7 +641,6 @@ describe('sidebar - Workspaces nav entry', () => {
 
 describe('sidebar - New Workspace in dropdown', () => {
   it('chevron dropdown includes New Workspace menu item', async () => {
-    const { sidebarView } = await import('./sidebar.js');
     const state = makeState();
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),
