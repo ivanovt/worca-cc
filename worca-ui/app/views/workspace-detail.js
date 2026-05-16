@@ -793,22 +793,22 @@ function _childrenSection(ws, { runsById, onSelectRun } = {}) {
   if (children.length === 0) {
     return html`
       <div class="new-run-section">
-        <h3 class="new-run-section-title">Repos</h3>
+        <h3 class="new-run-section-title">Projects</h3>
         <div class="settings-field">
-          <span class="settings-field-hint">No repos dispatched yet — workspace orchestrator may still be planning or provisioning.</span>
+          <span class="settings-field-hint">No projects dispatched yet — workspace orchestrator may still be planning or provisioning.</span>
         </div>
       </div>
     `;
   }
 
-  const headerCount = `${children.length} ${children.length === 1 ? 'repo' : 'repos'}`;
+  const headerCount = `${children.length} ${children.length === 1 ? 'project' : 'projects'}`;
   const anyHavePr = children.some((c) => c.pr_url);
   const runs = runsById || {};
 
   return html`
     <div class="new-run-section fleet-children-section workspace-children-section">
       <div class="fleet-children-header">
-        <h3 class="new-run-section-title">Repos · ${headerCount}</h3>
+        <h3 class="new-run-section-title">Projects · ${headerCount}</h3>
         ${
           anyHavePr
             ? html`<sl-button size="small" class="btn-copy-all-pr-urls">Copy all PR URLs</sl-button>`
