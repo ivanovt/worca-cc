@@ -79,6 +79,7 @@ import {
 import { sidebarView } from './views/sidebar.js';
 import { tokenCostsView } from './views/token-costs.js';
 import { webhookInboxView } from './views/webhook-inbox.js';
+import { workspaceCardView } from './views/workspace-card.js';
 import {
   getWorkspaceCreateSubmitState,
   resetWorkspaceCreateState,
@@ -361,9 +362,49 @@ function _fleetListView() {
   `;
 }
 
-// Compact, fleet-list-styled view for workspace runs. Workspaces don't yet
-// have card components or filter chips like fleets — this gives the route a
-// real list rendering until they're added.
+// Workspace-list filters — mirror _fleetStatusFilter / _fleetTextFilter so
+// both list pages have the same filter UX (chips + text input).
+let _wsStatusFilter = 'all';
+let _wsTextFilter = '';
+
+// Free-text match for a workspace run — name, workspace id, and prompt.
+// Same shape as _fleetMatchesText so the two filters behave identically.
+function _wsMatchesText(ws, q) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  const name = ws.workspace_name || '';
+  const prompt = ws.work_request?.title || ws.work_request?.description || '';
+  return (
+    name.toLowerCase().includes(needle) ||
+    (ws.workspace_id || '').toLowerCase().includes(needle) ||
+    prompt.toLowerCase().includes(needle)
+  );
+}
+
+// Status chips for /#/workspace-runs. `halted` and `integration_failed` are
+// included because they're the workspace-specific terminal-but-stopped
+// states (vs fleet's just `halted`). `planning`/`integration_testing` roll
+// up into the `running` bucket so the chip set stays compact.
+const _WS_FILTER_STATUSES = [
+  'all',
+  'running',
+  'completed',
+  'failed',
+  'halted',
+  'integration_failed',
+];
+
+const _WS_ACTIVE_STATUSES = new Set([
+  'running',
+  'planning',
+  'integration_testing',
+]);
+
+function _wsBucket(status, bucket) {
+  if (bucket === 'running') return _WS_ACTIVE_STATUSES.has(status);
+  return status === bucket;
+}
+
 function _workspaceListView() {
   const workspaces = store.getState().workspaceRuns;
   if (workspaces === undefined) {
@@ -379,28 +420,73 @@ function _workspaceListView() {
       </div>
     `;
   }
+
+  // Per-chip counts. Every workspace is live (no archive concept yet, so
+  // skip the archived bucket — when archive lands the shape becomes
+  // identical to fleets and this loop just gains an extra arm).
+  const counts = { all: workspaces.length };
+  for (const s of _WS_FILTER_STATUSES.slice(1)) {
+    counts[s] = workspaces.filter((w) => _wsBucket(w.status, s)).length;
+  }
+
+  let displayed =
+    _wsStatusFilter === 'all'
+      ? workspaces
+      : workspaces.filter((w) => _wsBucket(w.status, _wsStatusFilter));
+
+  const textQ = (_wsTextFilter || '').trim();
+  if (textQ) {
+    displayed = displayed.filter((w) => _wsMatchesText(w, textQ));
+  }
+
+  const cardOptions = {
+    onClick: (id) => navigate('workspace-runs', id, null),
+    // Re-run / cleanup wiring is intentionally deferred — the per-row
+    // actions render only when these callbacks are supplied. Re-run needs a
+    // POST /api/workspace-runs/:id/relaunch flow + UI confirm; cleanup
+    // needs the worca-cleanup-by-workspace-id story finished. Both can land
+    // independently once their backend contracts settle.
+  };
+
   return html`
-    <div class="fleet-list">
-      ${workspaces.map(
-        (w) => html`
-          <div
-            class="fleet-card"
-            @click=${() => navigate('workspace-runs', w.workspace_id, null)}
-          >
-            <div class="fleet-card-header">
-              <strong>${w.workspace_name || w.workspace_id}</strong>
-              <sl-badge variant="neutral">${w.status || 'unknown'}</sl-badge>
-            </div>
-            <div class="fleet-card-meta">
-              ${w.work_request?.title || w.work_request?.description || ''}
-            </div>
-            <div class="fleet-card-meta">
-              ${w.children_count || 0} repo(s) · ${w.workspace_id}
-            </div>
-          </div>
-        `,
-      )}
+    <div class="filter-chips">
+      ${_WS_FILTER_STATUSES
+        .filter((s) => s === 'all' || counts[s])
+        .map(
+          (s) => html`
+            <button
+              class="filter-chip ${(_wsStatusFilter || 'all') === s ? 'active' : ''} filter-chip-${s}"
+              @click=${() => {
+                _wsStatusFilter = s;
+                rerender();
+              }}
+            >
+              ${s === 'all' ? 'All' : s.replace(/_/g, ' ')}
+              <span class="chip-count">${counts[s] || 0}</span>
+            </button>
+          `,
+        )}
     </div>
+    <div class="list-filter-row">
+      <sl-input
+        size="small"
+        class="list-text-filter"
+        type="text"
+        placeholder="Filter by name, workspace id, or prompt…"
+        value="${_wsTextFilter || ''}"
+        @sl-input=${(e) => {
+          _wsTextFilter = e.target.value;
+          rerender();
+        }}
+      ></sl-input>
+    </div>
+    ${
+      displayed.length === 0
+        ? html`<div class="empty-state">No ${_wsStatusFilter.replace(/_/g, ' ')} workspace runs</div>`
+        : html`<div class="fleet-list">
+            ${displayed.map((w) => workspaceCardView(w, cardOptions))}
+          </div>`
+    }
   `;
 }
 

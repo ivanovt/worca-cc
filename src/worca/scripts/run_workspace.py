@@ -338,7 +338,18 @@ def run_workspace_planner(
         log_path=log_path,
     )
 
-    result_text = event.get("result", "")
+    # Claude CLI returns the schema-constrained JSON in `structured_output`
+    # (matches what orchestrator/runner.py does for every other agent stage).
+    # The `result` field carries the model's natural-language summary, which
+    # is NOT valid JSON for the workspace_plan schema. Reading `result` here
+    # caused "Expecting value: line 1 column 1 (char 0)" on every workspace
+    # run — the planner appeared to succeed in the log but the parse failed.
+    if isinstance(event, dict) and event.get("structured_output"):
+        return event["structured_output"]
+
+    # Fallback for older Claude CLI versions that don't surface
+    # structured_output: try to parse the result field as JSON anyway.
+    result_text = event.get("result", "") if isinstance(event, dict) else ""
     return json.loads(result_text)
 
 
