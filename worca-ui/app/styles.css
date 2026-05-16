@@ -5808,6 +5808,36 @@ sl-tooltip.bead-tooltip::part(body) {
 
 /* --- Workspace run card --- */
 
+/* --- Plan stage artifact strip (run-detail) --- */
+
+.plan-artifact-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.plan-artifact-strip .plan-file-chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: var(--bg-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-loading,
+.plan-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--fg-muted);
+}
+
 /* --- sl-dialog: wider markdown-body dialogs (plan, guide) --- */
 
 sl-dialog.markdown-dialog::part(panel) {

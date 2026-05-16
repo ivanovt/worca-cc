@@ -3193,6 +3193,9 @@ function mainContentView() {
       onRestartStage: handleRestartStage,
       stageIterationTab,
       onStageTabChange: handleStageTabChange,
+      // Plan-stage View plan dialog needs to redraw when the modal
+      // toggles open/closed and when the lazy plan fetch resolves.
+      rerender,
     });
     return html`
       <div class="run-detail run-detail-layout">

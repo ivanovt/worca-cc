@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import {
   AlertTriangle,
@@ -31,6 +32,158 @@ import {
 } from './beads-panel.js';
 import { resolveIterationTab } from './stage-tab-memory.js';
 import { stageTimelineView } from './stage-timeline.js';
+
+// ── plan artifact: lazy fetch + dialog state ─────────────────────────────
+// The PLAN stage's plan_file (or {worktree}/MASTER_PLAN.md) is fetched from
+// GET /api/projects/:project/runs/:run_id/plan on first dialog open and
+// cached per-run. Same UX shape as the workspace-detail plan dialog: marked
+// renders the markdown, .markdown-dialog widens the panel, Copy footer
+// hands the raw source back to the user.
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+  mangle: false,
+  headerIds: false,
+});
+
+const _runPlanCache = new Map(); // run_id -> markdown text | null (404)
+const _runPlanFetching = new Set();
+let _planDialogRunId = null; // null when closed; run_id when open
+
+function _renderMarkdown(text) {
+  if (!text) return '';
+  try {
+    return marked.parse(text);
+  } catch {
+    const esc = String(text)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return `<pre>${esc}</pre>`;
+  }
+}
+
+function _ensureRunPlanFetched(run, rerender) {
+  const runId = run?.id;
+  if (!runId) return;
+  if (_runPlanCache.has(runId)) return;
+  if (_runPlanFetching.has(runId)) return;
+  // The run's project name is needed because the endpoint is mounted under
+  // /api/projects/:projectId. Run objects carry it as `project` or
+  // `_project`; fall back to the legacy /api/runs path for single-project
+  // mode where projectId isn't set.
+  const project = run.project || run._project || null;
+  const url = project
+    ? `/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/plan`
+    : `/api/runs/${encodeURIComponent(runId)}/plan`;
+  _runPlanFetching.add(runId);
+  fetch(url, { headers: { Accept: 'text/markdown' } })
+    .then(async (r) => {
+      _runPlanFetching.delete(runId);
+      if (!r.ok) {
+        _runPlanCache.set(runId, null);
+        rerender?.();
+        return;
+      }
+      _runPlanCache.set(runId, await r.text());
+      rerender?.();
+    })
+    .catch(() => {
+      _runPlanFetching.delete(runId);
+      _runPlanCache.set(runId, null);
+      rerender?.();
+    });
+}
+
+function _copyToClipboardSimple(text) {
+  if (!text) return;
+  navigator.clipboard?.writeText(text).catch(() => {});
+}
+
+// Plan-stage extension: small chip strip + View plan button that opens
+// the shared markdown dialog. Wired into the stage panel for key==='plan'.
+function _planArtifactView(stage, run, rerender) {
+  if (!run?.id) return nothing;
+  const planFile = stage?.plan_file || null;
+  const skipped = stage?.skipped === true;
+  // Show the strip whenever the stage has a plan file path OR a worktree
+  // (which lets the server fall back to MASTER_PLAN.md). Hiding it
+  // entirely on a stage with no path at all matches the "nothing to
+  // show" intent for stages where planning never ran.
+  if (!planFile && !run.worktree_path) return nothing;
+  return html`
+    <div class="plan-artifact-strip">
+      ${
+        skipped
+          ? html`<sl-tag size="small" pill variant="neutral" class="plan-skipped-tag">Skipped — plan supplied by workspace</sl-tag>`
+          : nothing
+      }
+      ${
+        planFile
+          ? html`<code class="plan-file-chip" title="${planFile}">${planFile.split('/').pop()}</code>`
+          : nothing
+      }
+      <sl-button
+        size="small"
+        class="btn-view-run-plan"
+        @click=${
+          rerender
+            ? () => {
+                _planDialogRunId = run.id;
+                _ensureRunPlanFetched(run, rerender);
+                rerender();
+              }
+            : null
+        }
+      >View plan</sl-button>
+    </div>
+  `;
+}
+
+function _planArtifactDialog(run, rerender) {
+  if (!run?.id) return nothing;
+  const isOpen = _planDialogRunId === run.id;
+  const planText = _runPlanCache.get(run.id) ?? null;
+  const fetching = _runPlanFetching.has(run.id);
+  const body = (() => {
+    if (fetching || (isOpen && planText === undefined)) {
+      return html`<div class="plan-loading"><sl-spinner></sl-spinner> Loading plan…</div>`;
+    }
+    if (planText === null) {
+      return html`<div class="plan-error">No plan file found for this run.</div>`;
+    }
+    return html`<div class="markdown-body">${unsafeHTML(_renderMarkdown(planText || ''))}</div>`;
+  })();
+  return html`
+    <sl-dialog
+      label="Plan"
+      class="run-plan-dialog markdown-dialog"
+      ?open=${isOpen}
+      @sl-after-hide=${
+        rerender
+          ? () => {
+              _planDialogRunId = null;
+              rerender();
+            }
+          : null
+      }
+    >
+      ${body}
+      ${
+        planText
+          ? html`
+            <div slot="footer">
+              <sl-button
+                class="btn-copy-run-plan"
+                @click=${() => _copyToClipboardSimple(planText)}
+              >Copy</sl-button>
+            </div>
+          `
+          : nothing
+      }
+    </sl-dialog>
+  `;
+}
 
 function _sortedEntries(stages) {
   return sortByStageOrder(Object.entries(stages));
@@ -1004,6 +1157,8 @@ export function runDetailView(run, settings = {}, options = {}) {
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
+                      ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -1058,6 +1213,8 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
+                      ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
+                      ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
                   </div>
