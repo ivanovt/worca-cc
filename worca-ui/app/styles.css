@@ -5913,21 +5913,6 @@ sl-dialog.markdown-dialog::part(body) {
   text-align: left;
 }
 
-.workspace-run-card .workspace-card-prompt {
-  /* Match .run-card-meta padding so the prompt visually hangs under the
-     title text (which sits after the 16px status icon + 10px gap),
-     instead of slamming to the card's left edge. */
-  padding-left: 26px;
-  margin: 6px 0 10px;
-  color: var(--fg);
-  font-size: 14px;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
 .workspace-run-card .workspace-card-root,
 .workspace-run-card .workspace-card-name {
   font-family: var(--font-mono);

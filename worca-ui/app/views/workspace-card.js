@@ -46,14 +46,15 @@ function _failedCount(children) {
  * Card-per-workspace-run component. Structural mirror of fleetCardView:
  *
  *   1. .run-card-top         — status icon + title + status badge
- *   2. .workspace-card-prompt — work-request prompt (workspace-specific;
- *                              fleet folds prompt into title, workspace
- *                              uses ID-only title so prompt sits below)
- *   3. .fleet-card-progress  — "Projects:" + per-child name badges
+ *   2. .fleet-card-progress  — "Projects:" + per-child name badges
  *                              (reuses fleet's projectBadgesView for
  *                              identical chip styling) + failed count
- *   4. .run-card-meta        — Started · Last activity · Duration
- *   5. .run-card-actions     — Re-run / Cleanup (terminal only)
+ *   3. .run-card-meta        — Started · Last activity · Duration
+ *   4. .run-card-actions     — Re-run / Cleanup (terminal only)
+ *
+ * No prompt row — prompts can be arbitrarily long and we don't surface
+ * them on the fleet card or the pipeline run card either. The prompt
+ * lives on the workspace detail page's Work Request section.
  *
  * @param {{
  *   workspace_id: string,
@@ -86,7 +87,6 @@ export function workspaceCardView(ws, options = {}) {
   const idShort =
     ws.workspace_id_short || ws.workspace_id?.split('_').pop() || '';
   const title = `Workspace ${idShort}`;
-  const prompt = ws.work_request?.title || ws.work_request?.description || '';
   const startedAt = ws.created_at || null;
   const lastActivityAt = ws.updated_at || null;
   // For active runs we pass `null` as end → `elapsed` ticks against
@@ -131,16 +131,6 @@ export function workspaceCardView(ws, options = {}) {
           class="workspace-card-status-badge status-badge-${status}"
         >${status}</sl-badge>
       </div>
-
-      ${
-        prompt
-          ? html`
-            <div class="workspace-card-prompt" title="${prompt}">
-              ${prompt}
-            </div>
-          `
-          : nothing
-      }
 
       <div class="fleet-card-progress">
         <span class="meta-label fleet-card-children-label">Projects:</span>
