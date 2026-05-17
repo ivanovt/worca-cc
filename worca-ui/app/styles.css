@@ -2601,6 +2601,30 @@ sl-details.live-output-panel::part(content) {
   width: 100%;
 }
 
+/* Project picker in new-run form */
+.new-run-project-section {
+  border-color: var(--accent, #3b82f6);
+  border-width: 1px;
+}
+.project-readonly {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
+}
+.project-change-link {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--accent, #3b82f6);
+  text-decoration: none;
+  cursor: pointer;
+}
+.project-change-link:hover {
+  text-decoration: underline;
+}
+
 /* Template group labels */
 .template-group-label {
   display: block;

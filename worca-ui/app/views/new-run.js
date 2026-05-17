@@ -1,7 +1,9 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { FileText, iconSvg } from '../utils/icons.js';
+import { statusDotClass } from '../utils/status-badge.js';
 import { getDefaults } from './settings.js';
+import { projectStatus } from './sidebar.js';
 
 // Module-level state
 let sourceType = 'none';
@@ -17,6 +19,8 @@ let templates = null; // null = not fetched
 let selectedTemplate = 'default'; // 'default' = built-in worca pipeline
 let prBaseBranch = '';
 let prBaseBranchError = '';
+let selectedProject = null; // project picked in All Projects mode
+let projectEditable = false; // Change link toggles read-only → editable
 
 // Dismissable worktree info banner — persisted via localStorage
 let bannerDismissed = (() => {
@@ -40,6 +44,8 @@ export function resetNewRunState(overrides = {}) {
   prBaseBranch = overrides.prBaseBranch ?? '';
   prBaseBranchError = overrides.prBaseBranchError ?? '';
   selectedTemplate = overrides.selectedTemplate ?? 'default';
+  selectedProject = overrides.selectedProject ?? null;
+  projectEditable = overrides.projectEditable ?? false;
   if ('bannerDismissed' in overrides)
     bannerDismissed = overrides.bannerDismissed;
 }
@@ -133,11 +139,37 @@ function templatesByTier() {
   return result;
 }
 
-export function getNewRunSubmitState() {
-  return { submitStatus, isSubmitting: submitStatus === 'submitting' };
+export function getNewRunSubmitState(appState) {
+  const effectiveCurrentProject =
+    !projectEditable && appState?.currentProjectId;
+  const noProject =
+    appState?.hasProjects && !selectedProject && !effectiveCurrentProject;
+  return {
+    submitStatus,
+    isSubmitting: submitStatus === 'submitting',
+    noProject: !!noProject,
+  };
 }
 
-export async function submitNewRun({ rerender, onStarted, projectId }) {
+export function getEffectiveProjectId(state) {
+  if (selectedProject) return selectedProject;
+  if (!projectEditable && state.currentProjectId) return state.currentProjectId;
+  return null;
+}
+
+export async function submitNewRun({
+  rerender,
+  onStarted,
+  projectId,
+  hasProjects,
+}) {
+  if (hasProjects && !projectId) {
+    submitStatus = 'error';
+    submitError = 'Please select a project.';
+    rerender();
+    return;
+  }
+
   const sourceValueEl = document.getElementById('new-run-source-value');
   const promptEl = document.getElementById('new-run-prompt');
   const msizeEl = document.getElementById('new-run-msize');
@@ -212,9 +244,11 @@ export async function submitNewRun({ rerender, onStarted, projectId }) {
     }
     if (data.ok) {
       submitStatus = null;
-      // Don't call refreshRuns() here — the Python process hasn't written
-      // status files yet, so discoverRuns() returns stale data that wipes
-      // state.runs. The 'run-started' WS event + its 2s retry handles it.
+      if (projectId) {
+        try {
+          localStorage.setItem('worca.lastLaunchedProject', projectId);
+        } catch {}
+      }
       onStarted();
     } else {
       submitStatus = 'error';
@@ -244,27 +278,62 @@ export function isAtCapacity(state) {
 }
 
 export function newRunView(_state, { rerender }) {
-  const projectId = _state.currentProjectId || null;
   const atCapacity = isAtCapacity(_state);
+
+  // Seed selectedProject from localStorage in All Projects mode
+  if (
+    !_state.currentProjectId &&
+    !selectedProject &&
+    _state.projects?.length > 0
+  ) {
+    try {
+      const last = localStorage.getItem('worca.lastLaunchedProject');
+      if (last && _state.projects.some((p) => p.name === last)) {
+        selectedProject = last;
+      }
+    } catch {}
+  }
+
+  const effectiveId = getEffectiveProjectId(_state);
 
   function handleSourceTypeChange(e) {
     sourceType = e.target.value;
     rerender();
   }
 
-  // Reset caches when project changes (before fetchBranches updates _lastProjectId)
-  if (_lastProjectId !== projectId) {
+  function handleProjectChange(e) {
+    selectedProject = e.target.value || null;
+    branches = null;
+    templates = null;
+    planFiles = null;
+    const newId = selectedProject;
+    if (newId) {
+      fetchBranches(newId).then(() => rerender());
+      fetchTemplates(newId).then(() => rerender());
+    }
+    rerender();
+  }
+
+  function handleProjectChangeLink(e) {
+    e.preventDefault();
+    projectEditable = true;
+    selectedProject = _state.currentProjectId;
+    rerender();
+  }
+
+  // Reset caches when effective project changes (before fetchBranches updates _lastProjectId)
+  if (_lastProjectId !== effectiveId) {
     templates = null;
   }
 
   // Fetch branches once (null = not yet fetched, or project changed)
-  if (branches === null || _lastProjectId !== projectId) {
-    fetchBranches(projectId).then(() => rerender());
+  if (branches === null || _lastProjectId !== effectiveId) {
+    fetchBranches(effectiveId).then(() => rerender());
   }
 
   // Fetch templates once
   if (templates === null) {
-    fetchTemplates(projectId).then(() => rerender());
+    fetchTemplates(effectiveId).then(() => rerender());
   }
 
   function handleTemplateChange(e) {
@@ -278,7 +347,7 @@ export function newRunView(_state, { rerender }) {
   }
 
   function handlePlanFocus() {
-    fetchPlanFiles(projectId).then(() => {
+    fetchPlanFiles(effectiveId).then(() => {
       planDropdownOpen = true;
       rerender();
     });
@@ -363,6 +432,50 @@ export function newRunView(_state, { rerender }) {
       ${submitStatus === 'error' ? html`<div class="new-run-error">${submitError}</div>` : nothing}
 
       <div class="new-run-form">
+        <!-- Section 0: Project -->
+        ${
+          _state.projects && _state.projects.length > 0
+            ? html`
+          <div class="new-run-section new-run-project-section">
+            <h3 class="new-run-section-title">Project</h3>
+            ${
+              _state.currentProjectId && !projectEditable
+                ? html`
+                <div class="project-readonly">
+                  <span>${_state.currentProjectId}</span>
+                  <a class="project-change-link" href="#" @click=${handleProjectChangeLink}>Change</a>
+                </div>
+                <span class="settings-field-hint">Pipeline will run against this project's <code>.claude/worca/</code> runtime.</span>
+              `
+                : html`
+                <div class="settings-field">
+                  <sl-select id="new-run-project" placeholder="Select a project..." value=${selectedProject || ''} @sl-change=${handleProjectChange}>
+                    ${_state.projects.map((p) => {
+                      const pStatus = projectStatus(
+                        p.name,
+                        _state.runs,
+                        _state.currentProjectId,
+                      );
+                      const dotClass = statusDotClass(pStatus);
+                      return html`
+                        <sl-option value=${p.name}>
+                          <span class="project-option-label">
+                            <span class="project-status-dot ${dotClass}"></span>
+                            ${p.name}
+                          </span>
+                        </sl-option>
+                      `;
+                    })}
+                  </sl-select>
+                  <span class="settings-field-hint">Pipeline will run against this project's <code>.claude/worca/</code> runtime.</span>
+                </div>
+              `
+            }
+          </div>
+        `
+            : nothing
+        }
+
         <!-- Section 1: Work Source -->
         <div class="new-run-section">
           <h3 class="new-run-section-title">Work Source</h3>
