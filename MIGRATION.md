@@ -419,6 +419,109 @@ Both keys are additive. Existing installs pick them up as defaults on the next `
 
 **Full walkthrough:** [`docs/fleet-runs.md`](./docs/fleet-runs.md).
 
+### 0.28.x → 0.29.0
+
+W-047: Multi-repo coordinated pipelines (workspace runs).
+
+**New features:**
+
+- **`run_workspace.py`** — new entry point that coordinates changes across interdependent repos with dependency-ordered execution. Unlike fleet runs (same prompt to N repos), workspace runs decompose one prompt into repo-specific sub-plans, execute them in DAG tier order, run cross-repo integration tests, and create linked PRs with dependency metadata.
+
+  ```bash
+  python .claude/scripts/run_workspace.py /path/to/parent \
+    --prompt "Add user authentication across all services"
+  ```
+
+- **`worca workspace init`** — scaffolds a `workspace.json` from sibling git repos in a parent directory. Scans child directories for `.git/`, generates the workspace definition with defaults (`depends_on: []`, `role: "service"`), and creates the `.worca/` directory.
+
+  ```bash
+  worca workspace init /path/to/parent         # Scan child dirs, create workspace.json
+  worca workspace init /path/to/parent --force  # Overwrite existing workspace.json
+  ```
+
+- **`workspace.json`** — persistent workspace definition listing repos, their roles, dependency relationships, an optional integration test command, and an optional `umbrella_repo` for the umbrella issue. Lives in the parent directory containing sibling repos.
+
+- **Master planner** — an Opus agent that reads all repos' `CLAUDE.md` files, workspace topology, and the work request, then produces a structured workspace plan with per-repo sub-plans. Skip with `--skip-planning` to let each repo plan independently.
+
+- **DAG executor** — replaces fleet's all-at-once parallel dispatch with tier-based dependency-ordered execution. Repos within the same tier run in parallel (up to `--max-parallel`); tiers execute sequentially. Context artifacts (diff summaries, capped at 8 KB per dependency) are injected as `--guide` files between tiers so downstream repos know what upstream changed.
+
+- **Cross-repo integration test** — after all DAG tiers complete, runs a user-defined `integration_test.command` from `workspace.json`. Creates temporary parallel worktrees for all completed children. On failure, workspace status is set to `integration_failed` and no PRs are created. Skip with `--skip-integration`.
+
+- **Linked PR creation** — each completed child gets a PR titled `[workspace:<ws_short>] <work_title>` with dependency comments (`Depends on: org/lib#15`, `Blocks: org/frontend#43`). An umbrella issue in `umbrella_repo` lists all PRs as a checklist in merge order.
+
+- **`--resume WORKSPACE_ID`** — resume a failed, halted, or `integration_failed` workspace run. Completed children are skipped; failed/blocked/halted children are re-dispatched. For `integration_failed`, resume re-runs the integration test without re-dispatching children.
+
+- **`--dry-run`** — print the DAG and exit without launching children.
+
+- **`workspace_id` in `pipelines.d/`** — each child pipeline's registry entry carries `workspace_id` and `group_type: "workspace"`. The UI reads these fields to group runs under a shared workspace header.
+
+- **Workspace manifest** — workspace-level state is tracked at `{workspace_root}/.worca/workspace-runs/{workspace_id}/workspace-manifest.json`. A pointer file at `~/.worca/workspace-runs/{workspace_id}.json` enables global UI discovery.
+
+- **`worca cleanup --workspace-id WORKSPACE_ID`** — remove all child worktrees, their `pipelines.d/` entries, and the workspace run directory in one command.
+
+- **Workspace events** — new event types emitted via the universal dispatch pipeline: `workspace.launched`, `workspace.halted`, `workspace.completed`, `workspace.failed`, `workspace.tier.started`, `workspace.tier.completed`, `workspace.guide_conflict`. Webhook subscribers receive these automatically.
+
+**New workspace status values:**
+
+| Status | Meaning |
+|--------|---------|
+| `planning` | Master planner is running |
+| `running` | DAG tier execution in progress |
+| `integration_testing` | All children completed; integration test running |
+| `completed` | All children + integration passed; PRs created |
+| `failed` | Tier failure — at least one child failed |
+| `integration_failed` | Children completed but integration test failed; no PRs created |
+| `halted` | User halted or circuit breaker tripped |
+| `blocked` | Per-child status — a dependency failed |
+
+**New status enums:**
+
+`PipelineStatus`, `FleetStatus`, and `WorkspaceStatus` enums added to `src/worca/state/status.py`. All status read sites migrate to enum-based checks in this release.
+
+**New CLI flags on `run_workspace.py`:**
+
+| Flag | Description |
+|------|-------------|
+| `WORKSPACE_ROOT` | Positional: path to parent directory containing `workspace.json` |
+| `--prompt TEXT` | Work-request prompt (mutually exclusive with `--source`) |
+| `--source REF` | Source reference (`gh:issue:42`, `bd:bd-abc`) |
+| `--guide PATH` | Normative reference guide (repeatable) |
+| `--branch TEMPLATE` | Branch name template with `{workspace}`, `{repo}`, `{slug}` placeholders |
+| `--skip-integration` | Skip the cross-repo integration test phase |
+| `--skip-planning` | Skip the master planner; each repo plans independently |
+| `--resume WORKSPACE_ID` | Resume a failed/halted workspace run |
+| `--max-parallel N` | Max concurrent children within a tier (default: 5) |
+| `--dry-run` | Print the DAG and exit |
+
+**New UI surfaces:**
+
+- **Dashboard workspace grouping** — the worca-ui dashboard groups workspace children under a collapsible workspace header showing an aggregate status badge, DAG progress by tier, and a link to the workspace detail view. Requires **global mode** (`pnpm worca:ui` without `--project`).
+
+- **Workspace detail view** — per-workspace page showing DAG visualization, master plan, per-repo status cards, context artifacts, integration test log, PR table with dependency links, and lifecycle actions (Halt / Pause / Stop / Resume / Cleanup).
+
+- **Workspace launcher** — form to create and launch a workspace run from the UI: workspace root selection, prompt, guide upload, planning/integration toggles.
+
+- **WebSocket events** — `workspace-update`, `workspace-tier-update`, and `guide-conflict` message types added to `protocol.js` allowlist.
+
+**New settings:**
+
+```jsonc
+"worca": {
+  "workspace": {
+    "init_timeout_seconds": 60,      // per-target worca init --upgrade timeout
+    "max_parallel": 5,               // max concurrent children within a tier
+    "context_cap_bytes": 8192,       // 8 KB cap on inter-tier context artifacts
+    "failure_threshold": 0.30        // circuit breaker failure ratio
+  }
+}
+```
+
+All keys under `worca.workspace` are additive. Existing installs pick them up as defaults on the next `worca init --upgrade`.
+
+**No automatic migration required.** All changes are additive — no breaking changes, no settings path migrations, no removed commands. Run `worca init --upgrade` once to pull the new `worca.workspace.*` defaults into your project's `settings.json`.
+
+**Full walkthrough:** [`docs/workspace-runs.md`](./docs/workspace-runs.md).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

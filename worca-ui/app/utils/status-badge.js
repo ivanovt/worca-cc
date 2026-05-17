@@ -19,6 +19,11 @@ const CLASS_MAP = {
   halted: 'status-halted',
   setup_failed: 'status-setup-failed',
   unrecoverable: 'status-unrecoverable',
+  // workspace statuses
+  planning: 'status-planning',
+  integration_testing: 'status-integration-testing',
+  integration_failed: 'status-integration-failed',
+  blocked: 'status-blocked',
   // legacy aliases
   in_progress: 'status-in-progress',
   error: 'status-error',
@@ -36,6 +41,11 @@ const ICON_DATA = {
   halted: CircleSlash,
   setup_failed: CircleAlert,
   unrecoverable: CircleAlert,
+  // workspace statuses
+  planning: Loader,
+  integration_testing: Loader,
+  integration_failed: CircleAlert,
+  blocked: Pause,
   // legacy aliases
   in_progress: Loader,
   error: CircleAlert,
@@ -57,7 +67,11 @@ export function statusClass(status) {
 export function statusIcon(status, size = 14) {
   const data = ICON_DATA[status];
   if (!data) return '?';
-  const className =
-    status === 'in_progress' || status === 'running' ? 'icon-spin' : '';
+  const isActive =
+    status === 'in_progress' ||
+    status === 'running' ||
+    status === 'planning' ||
+    status === 'integration_testing';
+  const className = isActive ? 'icon-spin' : '';
   return iconSvg(data, size, className);
 }

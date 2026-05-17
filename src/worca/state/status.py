@@ -3,7 +3,66 @@
 import json
 import os
 from datetime import datetime, timezone
+from enum import Enum
 from pathlib import Path
+
+
+class PipelineStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INTERRUPTED = "interrupted"
+    RESUMING = "resuming"
+    SETUP_FAILED = "setup_failed"
+    UNRECOVERABLE = "unrecoverable"
+    CANCELLED = "cancelled"
+
+
+class FleetStatus(str, Enum):
+    RUNNING = "running"
+    PAUSED = "paused"
+    HALTED = "halted"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    RESUMING = "resuming"
+
+
+class WorkspaceStatus(str, Enum):
+    PLANNING = "planning"
+    RUNNING = "running"
+    PAUSED = "paused"
+    HALTED = "halted"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    INTEGRATION_TESTING = "integration_testing"
+    INTEGRATION_FAILED = "integration_failed"
+    BLOCKED = "blocked"
+
+
+PIPELINE_TERMINAL = frozenset({PipelineStatus.COMPLETED, PipelineStatus.INTERRUPTED})
+PIPELINE_FAILURE = frozenset({
+    PipelineStatus.FAILED, PipelineStatus.SETUP_FAILED, PipelineStatus.UNRECOVERABLE,
+})
+PIPELINE_ALL_TERMINAL = (
+    frozenset({PipelineStatus.COMPLETED, PipelineStatus.INTERRUPTED, PipelineStatus.CANCELLED})
+    | PIPELINE_FAILURE
+)
+PIPELINE_ACTIVE = frozenset({
+    PipelineStatus.RUNNING, PipelineStatus.RESUMING, PipelineStatus.PAUSED,
+})
+PIPELINE_IN_FLIGHT = frozenset({PipelineStatus.RUNNING, PipelineStatus.RESUMING})
+
+FLEET_STICKY = frozenset({FleetStatus.HALTED, FleetStatus.PAUSED})
+FLEET_TERMINAL = frozenset({FleetStatus.COMPLETED, FleetStatus.FAILED, FleetStatus.HALTED})
+
+WORKSPACE_TERMINAL = frozenset({
+    WorkspaceStatus.COMPLETED,
+    WorkspaceStatus.FAILED,
+    WorkspaceStatus.INTEGRATION_FAILED,
+    WorkspaceStatus.HALTED,
+})
 
 
 PIPELINE_STAGES = ["preflight", "plan", "coordinate", "implement", "test", "review", "pr"]
@@ -222,7 +281,7 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
     status = {
         "schema_version": 1,
         "work_request": work_request,
-        "pipeline_status": "pending",
+        "pipeline_status": PipelineStatus.PENDING,
         "stage": "plan",
         "run_id": None,
         "branch": branch,

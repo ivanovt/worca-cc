@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { projectStatus } from './sidebar.js';
+import { describe, expect, it, vi } from 'vitest';
+import { projectStatus, sidebarView } from './sidebar.js';
 
 describe('projectStatus', () => {
   it('returns idle when no runs exist', () => {
@@ -75,5 +75,164 @@ describe('projectStatus', () => {
     expect(projectStatus('proj-2', runs)).toBe('idle');
     // proj-1 has a running run, so it should be running
     expect(projectStatus('proj-1', runs)).toBe('running');
+  });
+
+  // workspace statuses (W-047 §10.7)
+  it('returns running when any run has pipeline_status planning', () => {
+    const runs = { r1: { pipeline_status: 'planning', active: true } };
+    expect(projectStatus('proj-1', runs)).toBe('running');
+  });
+
+  it('returns running when any run has pipeline_status integration_testing', () => {
+    const runs = {
+      r1: { pipeline_status: 'integration_testing', active: true },
+    };
+    expect(projectStatus('proj-1', runs)).toBe('running');
+  });
+
+  it('returns error when any run has pipeline_status integration_failed', () => {
+    const runs = {
+      r1: { pipeline_status: 'integration_failed', active: false },
+    };
+    expect(projectStatus('proj-1', runs)).toBe('error');
+  });
+
+  it('returns paused when any run has pipeline_status blocked', () => {
+    const runs = { r1: { pipeline_status: 'blocked', active: false } };
+    expect(projectStatus('proj-1', runs)).toBe('paused');
+  });
+});
+
+describe('workspace sidebar badge variant logic', () => {
+  function renderToString(template) {
+    if (!template) return '';
+    if (typeof template === 'string') return template;
+    if (!template.strings) return String(template);
+    let result = '';
+    template.strings.forEach((s, i) => {
+      result += s;
+      if (i < template.values.length) {
+        const v = template.values[i];
+        if (typeof v === 'string') result += v;
+        else if (typeof v === 'number') result += String(v);
+        else if (Array.isArray(v)) result += v.map(renderToString).join('');
+        else if (v?.strings) result += renderToString(v);
+      }
+    });
+    return result;
+  }
+
+  function makeState(overrides = {}) {
+    return {
+      runs: {},
+      preferences: {
+        theme: 'light',
+        sidebarCollapsed: false,
+        notifications: null,
+      },
+      projectName: 'test-project',
+      currentProjectId: null,
+      projects: [],
+      beads: { issues: [], dbExists: false },
+      webhookInbox: { events: [] },
+      worktrees: [],
+      worktreeDiskWarningBytes: 2_000_000_000,
+      // Fleet / workspace badges render only once their data is loaded.
+      // Default both flags to true here so badge-variant assertions
+      // exercise the populated branch (a spinner replaces the badge
+      // otherwise).
+      fleetsLoaded: true,
+      workspaceRunsLoaded: true,
+      ...overrides,
+    };
+  }
+
+  const route = { section: 'active' };
+  const defaultOpts = () => ({ onNavigate: vi.fn() });
+
+  it('workspace badge is primary (blue) for planning workspaces', async () => {
+    // planning is an orchestrator in-flight phase → matches the
+    // Running sidebar row's "active" colour.
+    const state = makeState({
+      workspaceRuns: [{ workspace_id: 'w1', status: 'planning' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+  });
+
+  it('workspace badge is primary (blue) for integration_testing workspaces', async () => {
+    const state = makeState({
+      workspaceRuns: [{ workspace_id: 'w1', status: 'integration_testing' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+  });
+
+  it('workspace badge is primary (blue) for running workspaces', async () => {
+    const state = makeState({
+      workspaceRuns: [{ workspace_id: 'w1', status: 'running' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+  });
+
+  it('workspace badge is neutral when all workspaces are completed', async () => {
+    const state = makeState({
+      workspaceRuns: [{ workspace_id: 'w1', status: 'completed' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="neutral"');
+  });
+
+  it('workspace badge flips to warning when any workspace is integration_failed', async () => {
+    const state = makeState({
+      workspaceRuns: [
+        { workspace_id: 'w1', status: 'running' },
+        { workspace_id: 'w2', status: 'integration_failed' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="warning"');
+  });
+
+  it('workspace badge flips to warning when any workspace is halted', async () => {
+    const state = makeState({
+      workspaceRuns: [
+        { workspace_id: 'w1', status: 'planning' },
+        { workspace_id: 'w2', status: 'halted' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="warning"');
+  });
+
+  it('blocked workspace counts toward badge total but does not trigger warning', async () => {
+    const state = makeState({
+      workspaceRuns: [{ workspace_id: 'w1', status: 'blocked' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="neutral"');
+    expect(output).toContain('>1<');
   });
 });

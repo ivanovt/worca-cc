@@ -56,11 +56,30 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 
 ### Parallel Pipelines
 
-- **Worktree-isolated runs** — `worca run --worktree` (or the UI's "New Pipeline" button) launches each pipeline into its own git worktree with independent `.worca/` state, `.beads/` database, and git branch
+- **Worktree-isolated runs** — `worca run --worktree` (or the UI's "Run Pipeline" button) launches each pipeline into its own git worktree with independent `.worca/` state, `.beads/` database, and git branch
 - **Concurrency cap** — server-enforced `max_concurrent_pipelines` with launch mutex (returns 409 when at capacity); configurable in the global Preferences tab
 - **Three-level UI** — projects → pipelines → stages, with per-pipeline pause/stop/resume controls
 - **Configurable cleanup** — `on-success` (remove successful worktrees), `always`, or `never`; default is `never` to preserve worktrees for inspection. Use `worca cleanup` to prune on demand
 - **Registry tracking** — all running pipelines are tracked in `.worca/multi/pipelines.d/` for monitoring and stale process recovery
+
+### Fleet Runs
+
+- **Fan-out to N projects** — `worca run` the same work-request across many independent projects in parallel via `run_fleet.py --projects /path/a /path/b /path/c`
+- **Shared plan or per-child planning** — supply a single `--plan` for every child, run a `--plan-first` reference plan that others inherit, or let each child plan independently
+- **Lifecycle controls** — `--pause`, `--stop`, and `--resume` operate on the whole fleet; circuit breaker auto-halts when the failure ratio crosses `--fleet-failure-threshold`
+- **Cross-host PR linking** — each child opens its own PR; the fleet dashboard aggregates per-child status with name chips and a "N failed" counter
+
+![Fleet runs list — fleet card with per-project chips and aggregate status](docs/screenshots/fleet-runs.png)
+
+### Workspace Runs
+
+- **Coordinated multi-project pipeline** — `worca workspace init <parent>` scaffolds a `workspace.json` from sibling git projects; `run_workspace.py` decomposes one prompt into per-project sub-plans and executes them in DAG tier order
+- **Tier-based execution** — projects within a tier run in parallel, tiers wait for prerequisites; between tiers, completed projects' diffs are injected as `--guide` so downstream projects see what changed upstream
+- **Cross-project integration test** — optional user-defined command runs after all tiers complete; on failure, no PRs are created
+- **Linked PR set** — per-project PRs are created with `Depends on:` / `Blocks:` comments + an umbrella issue listing all PRs in merge order
+- **Hard-cut schema** — `workspace.json` uses `projects[]`; a `worca workspace migrate <path>` helper converts legacy `repos[]` files in place
+
+![Workspace detail — dependency graph with arrowheads and per-project run cards](docs/screenshots/workspace-detail-dag.png)
 
 ## Architecture
 
@@ -147,7 +166,7 @@ worca run --worktree --source gh:issue:42 --template feature
 claude
 /worca-analyze 42
 
-# From the dashboard — click "New Pipeline" in worca-ui
+# From the dashboard — click "Run Pipeline" in worca-ui
 worca-ui                         # monitor all projects (default)
 worca-ui --project /path         # monitor single project
 worca-ui --help                  # show all commands and options

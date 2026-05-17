@@ -9,7 +9,9 @@ import {
   Zap,
 } from '../utils/icons.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
+import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { fleetCardView } from './fleet-card.js';
+import { fleetStatusVariant } from './group-rendering.js';
 import { runCardView } from './run-card.js';
 
 // Bucket fleets by their canonical (server-derived) status so the
@@ -100,9 +102,158 @@ function _activeGroup(runs, statuses) {
 // Returns true for Runs that should render as standalone pipeline cards on
 // the dashboard. Anything that belongs to a known fleet is represented by
 // the fleet's card (with the children-strip) — don't double-list those.
-function _isStandaloneRun(run, fleetIdSet) {
+// Similarly, workspace children are represented by the workspace card.
+function _isStandaloneRun(run, fleetIdSet, wsChildRunIds) {
+  if (wsChildRunIds.has(run.id)) return false;
   if (!run.fleet_id) return true;
   return !fleetIdSet.has(run.fleet_id);
+}
+
+// ─── Workspace bucketing ─────────────────────────────────────────────────────
+
+const _WS_ACTIVE_STATUSES = new Set([
+  'running',
+  'resuming',
+  'planning',
+  'integration_testing',
+]);
+const _WS_PAUSED_HALT_REASONS = new Set(['user']);
+
+const _WS_FAILED_STATUSES = new Set(['failed', 'integration_failed']);
+
+function _isWsPaused(ws) {
+  if (ws.status === 'paused') return true;
+  if (ws.status !== 'halted') return false;
+  return _WS_PAUSED_HALT_REASONS.has(ws.halt_reason);
+}
+
+function _isWsFailed(ws) {
+  if (_WS_FAILED_STATUSES.has(ws.status)) return true;
+  if (ws.status !== 'halted') return false;
+  return !_WS_PAUSED_HALT_REASONS.has(ws.halt_reason);
+}
+
+function _sortByActivityDesc(items) {
+  return [...items].sort((a, b) => {
+    const ta = a.last_activity_at || a.updated_at || a.created_at || '';
+    const tb = b.last_activity_at || b.updated_at || b.created_at || '';
+    return tb.localeCompare(ta);
+  });
+}
+
+function _wsChildRunIdSet(workspaces) {
+  const ids = new Set();
+  for (const ws of workspaces) {
+    for (const child of ws.children || []) {
+      if (child.run_id) ids.add(child.run_id);
+    }
+  }
+  return ids;
+}
+
+// Build a blocked-child tooltip: find failed repos in prior tiers that this
+// child's tier depends on (any tier with index < child.tier).
+function _blockedTooltip(child, ws) {
+  if (child.status !== 'blocked') return null;
+  const failedProjects = [];
+  for (const c of ws.children || []) {
+    if (
+      c.tier < child.tier &&
+      (c.status === 'failed' || c.status === 'setup_failed')
+    ) {
+      failedProjects.push(c.project);
+    }
+  }
+  if (failedProjects.length === 0) return 'Blocked by upstream dependency';
+  return `Blocked: depends on ${failedProjects.join(', ')}`;
+}
+
+function _integrationTestVariant(status) {
+  if (status === 'passed') return 'success';
+  if (status === 'failed') return 'danger';
+  if (status === 'running') return 'primary';
+  return 'neutral';
+}
+
+function _renderWorkspaceCard(ws, { onNavigate } = {}) {
+  const status = ws.status || 'running';
+  const variant = fleetStatusVariant(status, ws.halt_reason);
+  const children = ws.children || [];
+  const tiers = ws.dag?.tiers || [];
+  const completedCount = children.filter(
+    (c) => c.status === 'completed',
+  ).length;
+  const title = ws.workspace_name || `Workspace ${ws.workspace_id || ''}`;
+
+  const handleClick = onNavigate
+    ? (e) => {
+        if (e.target.closest('button, a, sl-button')) return;
+        onNavigate('workspace-runs', ws.workspace_id);
+      }
+    : null;
+
+  return html`
+    <div
+      class="run-card workspace-card ${statusClass(status)}"
+      data-workspace-id="${ws.workspace_id || ''}"
+      @click=${handleClick}
+    >
+      <div class="run-card-top">
+        <span class="run-card-status">
+          ${unsafeHTML(statusIcon(status, 16))}
+        </span>
+        <span class="run-card-title">${title}</span>
+        <sl-badge
+          variant="${variant}"
+          pill
+          class="workspace-card-status-badge"
+        >${status}</sl-badge>
+      </div>
+
+      <div class="workspace-card-progress">
+        <span class="meta-label">Progress:</span>
+        <span class="meta-value">${completedCount}/${children.length} completed</span>
+      </div>
+
+      <div class="workspace-card-tiers">
+        ${tiers.map((tier) => {
+          const tierChildren = children.filter((c) => c.tier === tier.tier);
+          return html`
+            <div class="workspace-tier-row">
+              <span class="tier-label">Tier ${tier.tier}</span>
+              <span class="tier-status">${unsafeHTML(statusIcon(tier.status, 12))}</span>
+              <div class="tier-children">
+                ${tierChildren.map((c) => {
+                  const tooltip = _blockedTooltip(c, ws);
+                  return html`
+                    <span
+                      class="tier-child ${statusClass(c.status)}"
+                      title="${tooltip || c.status}"
+                    >${c.project}</span>
+                  `;
+                })}
+              </div>
+            </div>
+          `;
+        })}
+      </div>
+
+      ${
+        ws.integration_test
+          ? html`
+            <div class="workspace-tier-row integration-test-row">
+              <span class="tier-label">Integration test</span>
+              <sl-badge
+                variant="${_integrationTestVariant(ws.integration_test.status)}"
+                pill
+                class="integration-test-badge"
+              >${ws.integration_test.status}</sl-badge>
+            </div>
+          `
+          : nothing
+      }
+    </div>
+  `;
 }
 
 // Project cards (per-project summary tiles) were removed: the sidebar's
@@ -143,8 +294,14 @@ export function dashboardView(
   const fleets = (state.fleets || []).filter((f) => !f.archived);
   const fleetIdSet = new Set(fleets.map((f) => f.fleet_id));
 
-  // Standalone runs = runs that aren't represented by a fleet card.
-  const standaloneRuns = allRuns.filter((r) => _isStandaloneRun(r, fleetIdSet));
+  // Workspaces — bucketed by group_type === 'workspace' (W-048 §5 rule).
+  const workspaces = (state.workspaces || []).filter((w) => !w.archived);
+  const wsChildRunIds = _wsChildRunIdSet(workspaces);
+
+  // Standalone runs = runs that aren't represented by a fleet or workspace card.
+  const standaloneRuns = allRuns.filter((r) =>
+    _isStandaloneRun(r, fleetIdSet, wsChildRunIds),
+  );
 
   // Stats card totals still count *every* run (including fleet children).
   const active = allRuns.filter((r) => r.active);
@@ -173,6 +330,15 @@ export function dashboardView(
     _filterFleets(fleets, (f) => f.status === 'completed'),
   );
 
+  const activeWorkspaces = _sortByActivityDesc(
+    workspaces.filter((w) => _WS_ACTIVE_STATUSES.has(w.status)),
+  );
+  const pausedWorkspaces = _sortByActivityDesc(workspaces.filter(_isWsPaused));
+  const failedWorkspaces = _sortByActivityDesc(workspaces.filter(_isWsFailed));
+  const completedWorkspaces = _sortByActivityDesc(
+    workspaces.filter((w) => w.status === 'completed'),
+  );
+
   const activeStandalone = sortByStartDesc(
     standaloneRuns.filter((r) => r.active),
   );
@@ -193,13 +359,26 @@ export function dashboardView(
     MAX_RECENT,
   );
 
-  const activeAny = activeFleets.length + activeStandalone.length > 0;
-  const failedAny = failedFleets.length + failedStandalonePreview.length > 0;
+  const activeAny =
+    activeFleets.length + activeWorkspaces.length + activeStandalone.length > 0;
+  const pausedAny =
+    pausedFleets.length + pausedWorkspaces.length + pausedStandalone.length > 0;
+  const failedAny =
+    failedFleets.length +
+      failedWorkspaces.length +
+      failedStandalonePreview.length >
+    0;
   const completedAny =
-    completedFleets.length + completedStandalonePreview.length > 0;
-  const failedAllCount = failedFleets.length + allFailedStandalone.length;
+    completedFleets.length +
+      completedWorkspaces.length +
+      completedStandalonePreview.length >
+    0;
+  const failedAllCount =
+    failedFleets.length + failedWorkspaces.length + allFailedStandalone.length;
   const completedAllCount =
-    completedFleets.length + allCompletedStandalone.length;
+    completedFleets.length +
+    completedWorkspaces.length +
+    allCompletedStandalone.length;
 
   // Project cards used to appear here in global mode as a grid of
   // per-project summary tiles. Removed: the sidebar's project dropdown
@@ -252,6 +431,7 @@ export function dashboardView(
         <div class="active-group">
           <div class="run-list">
             ${activeFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
+            ${activeWorkspaces.map((w) => _renderWorkspaceCard(w, { onNavigate }))}
             ${activeStandalone.map((r) =>
               _renderRunCard(r, {
                 onSelectRun,
@@ -268,15 +448,16 @@ export function dashboardView(
       }
 
       ${
-        pausedFleets.length + pausedStandalone.length > 0
+        pausedAny
           ? html`
         <h3 class="dashboard-section-title">
           Paused
-          <span class="dashboard-section-count">${pausedFleets.length + pausedStandalone.length}</span>
+          <span class="dashboard-section-count">${pausedFleets.length + pausedWorkspaces.length + pausedStandalone.length}</span>
         </h3>
         <div class="active-group active-group-paused">
           <div class="run-list">
             ${pausedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
+            ${pausedWorkspaces.map((w) => _renderWorkspaceCard(w, { onNavigate }))}
             ${pausedStandalone.map((r) =>
               _renderRunCard(r, { onSelectRun, onResume, onCancel }),
             )}
@@ -302,6 +483,7 @@ export function dashboardView(
         <div class="active-group active-group-failed">
           <div class="run-list">
             ${failedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
+            ${failedWorkspaces.map((w) => _renderWorkspaceCard(w, { onNavigate }))}
             ${failedStandalonePreview.map((r) =>
               _renderRunCard(r, {
                 onSelectRun,
@@ -332,6 +514,7 @@ export function dashboardView(
         <div class="active-group active-group-completed">
           <div class="run-list">
             ${completedFleets.map((f) => _renderFleetCard(f, { onSelectRun, onNavigate, ...fleetCardOpts }))}
+            ${completedWorkspaces.map((w) => _renderWorkspaceCard(w, { onNavigate }))}
             ${completedStandalonePreview.map((r) =>
               _renderRunCard(r, { onSelectRun }),
             )}

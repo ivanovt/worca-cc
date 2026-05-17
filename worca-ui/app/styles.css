@@ -535,14 +535,13 @@ h1, h2, h3, h4, h5, h6 {
   gap: 6px;
 }
 
-.run-branch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.run-template {
+/* Project / Branch / Pipeline-Template / Worktree rows inside
+   `.run-info-section` all share the same label-value typography so the
+   block reads as a uniform stack. Mirror .run-group below it. */
+.run-project,
+.run-branch,
+.run-template,
+.run-worktree {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1162,6 +1161,22 @@ sl-input [slot="prefix"] {
   color: var(--status-failed);
 }
 
+.status-planning {
+  color: var(--status-running);
+}
+
+.status-integration-testing {
+  color: var(--status-running);
+}
+
+.status-integration-failed {
+  color: var(--status-failed);
+}
+
+.status-blocked {
+  color: var(--status-paused);
+}
+
 /* --- 18b. Control Buttons --- */
 .action-btn--amber {
   border-color: var(--status-paused);
@@ -1339,6 +1354,10 @@ sl-input [slot="prefix"] {
 .run-card.status-halted   { border-left: 3px solid var(--status-paused); }
 .run-card.status-setup-failed { border-left: 3px solid var(--status-failed); }
 .run-card.status-unrecoverable { border-left: 3px solid var(--status-failed); }
+.run-card.status-planning { border-left: 3px solid var(--status-running); }
+.run-card.status-integration-testing { border-left: 3px solid var(--status-running); }
+.run-card.status-integration-failed { border-left: 3px solid var(--status-failed); }
+.run-card.status-blocked { border-left: 3px solid var(--status-paused); }
 
 /* ── Fleet card (shared component for Dashboard + Fleet list) ───────────
    The fleet card reuses the `.run-card` base class and its shared
@@ -4226,6 +4245,8 @@ sl-details.learnings-panel::part(content) {
 .filter-chip-paused.active { background: var(--status-paused); border-color: var(--status-paused); }
 .filter-chip-error.active { background: var(--status-failed); border-color: var(--status-failed); }
 .filter-chip-halted.active { background: var(--status-paused); border-color: var(--status-paused); }
+.filter-chip-integration-failed.active,
+.filter-chip-integration_failed.active { background: var(--status-failed); border-color: var(--status-failed); }
 .filter-chip .chip-count {
   font-size: 0.68rem;
   opacity: 0.7;
@@ -4341,6 +4362,10 @@ sl-details.learnings-panel::part(content) {
 .pipeline-failed { border-left-color: var(--status-failed); }
 .pipeline-paused { border-left-color: var(--status-paused); }
 .pipeline-cancelled { border-left-color: var(--status-cancelled); }
+.pipeline-planning { border-left-color: var(--status-running); }
+.pipeline-integration-testing { border-left-color: var(--status-running); }
+.pipeline-integration-failed { border-left-color: var(--status-failed); }
+.pipeline-blocked { border-left-color: var(--status-paused); }
 .pipeline-unknown { border-left-color: var(--muted); }
 
 .pipeline-card-header {
@@ -5707,4 +5732,417 @@ sl-tooltip.bead-tooltip::part(body) {
 
 .fleet-detail-empty-hint a {
   color: var(--accent, var(--fg));
+}
+
+/* --- Workspace: tier styling --- */
+
+.workspace-card-tiers {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.workspace-tier-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tier-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.tier-status {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.tier-children {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tier-child {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+}
+
+/* --- Workspace: DAG graph --- */
+
+.dag-preview {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-secondary);
+  padding: 16px;
+}
+
+.dag-preview svg {
+  display: block;
+}
+
+.workspace-dag-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+
+
+.workspace-dag-svg {
+  overflow-x: auto;
+}
+
+/* --- Workspace run card --- */
+
+/* --- Plan stage artifact strip (run-detail) --- */
+
+.plan-artifact-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+.plan-artifact-strip .plan-file-chip {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: var(--bg-secondary);
+  padding: 2px 6px;
+  border-radius: 4px;
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-loading,
+.plan-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 20px;
+  color: var(--fg-muted);
+}
+
+/* --- sl-dialog: wider markdown-body dialogs (plan, guide) --- */
+
+sl-dialog.markdown-dialog::part(panel) {
+  /* Default sl-dialog is ~31rem wide — too narrow for prose with code
+     blocks. Cap at 90vw so it stays comfortable on small viewports. */
+  width: min(960px, 90vw);
+  max-width: min(960px, 90vw);
+}
+sl-dialog.markdown-dialog::part(body) {
+  /* Give the body breathing room and let it scroll vertically instead
+     of the whole dialog growing without bound. */
+  max-height: 70vh;
+  overflow: auto;
+}
+
+/* --- Markdown body styling (used by guide-content + workspace-plan-content) --- */
+
+.markdown-body {
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--fg);
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.2em 0 0.5em;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.markdown-body h1 { font-size: 1.5em; }
+.markdown-body h2 { font-size: 1.25em; border-bottom: 1px solid var(--border-subtle); padding-bottom: 4px; }
+.markdown-body h3 { font-size: 1.1em; }
+.markdown-body p { margin: 0.6em 0; }
+.markdown-body ul,
+.markdown-body ol { margin: 0.6em 0; padding-left: 1.5em; }
+.markdown-body li { margin: 0.25em 0; }
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.markdown-body pre {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  font-size: 12.5px;
+}
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+}
+.markdown-body blockquote {
+  border-left: 3px solid var(--border);
+  padding: 4px 12px;
+  margin: 0.6em 0;
+  color: var(--fg-muted);
+}
+.markdown-body a { color: var(--accent); }
+.markdown-body table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+}
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border-subtle);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.workspace-run-card .workspace-card-root,
+.workspace-run-card .workspace-card-name {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+/* --- Workspace forms: external-repo picker --- */
+
+.repo-checklist-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.ws-external-tag {
+  margin-left: 8px;
+}
+
+/* --- Workspace forms: Dependency Graph label --- */
+
+.dag-preview-block {
+  margin-top: 16px;
+}
+.dag-preview-label {
+  display: block;
+  margin-bottom: 8px;
+}
+
+/* --- Workspace edit: scan-for-additions status + Available tag --- */
+
+.ws-edit-scan-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  margin-bottom: 12px;
+}
+.ws-edit-scan-error {
+  margin-bottom: 12px;
+}
+.ws-edit-new-tag {
+  margin-left: 8px;
+}
+
+/* --- Workspace create: Parent Directory row --- */
+
+.parent-dir-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.parent-dir-row .input-parent-dir {
+  flex: 1;
+}
+.parent-dir-suggestions {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  overflow: hidden;
+}
+.parent-dir-suggestions-label {
+  padding: 6px 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.parent-dir-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--fg);
+  text-align: left;
+}
+.parent-dir-suggestion-item:last-child {
+  border-bottom: none;
+}
+.parent-dir-suggestion-item:hover {
+  background: var(--bg-hover);
+}
+.parent-dir-suggestion-item svg {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+
+/* --- Configuration → Workspaces list --- */
+
+.workspaces-config-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 64px 24px;
+  gap: 12px;
+  color: var(--fg-muted);
+}
+.workspaces-config-empty .empty-icon {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  margin-bottom: 8px;
+}
+.workspaces-config-empty h3 {
+  margin: 0;
+  color: var(--fg);
+}
+.workspaces-config-empty p {
+  max-width: 480px;
+  margin: 0 0 12px;
+  line-height: 1.5;
+}
+
+.workspaces-config-table {
+  padding: 16px;
+  overflow-x: auto;
+}
+.workspaces-config-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.workspaces-config-table thead th {
+  text-align: left;
+  font-weight: 600;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.workspaces-config-table tbody td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.workspaces-config-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+.workspaces-config-table .ws-name strong {
+  font-weight: 600;
+}
+.workspaces-config-table .ws-path code,
+.workspaces-config-table .ws-umbrella {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+.workspaces-config-table .ws-tiers {
+  color: var(--fg-muted);
+  font-size: 12px;
+  margin-left: 4px;
+}
+.workspaces-config-table .ws-dash {
+  color: var(--fg-muted);
+  opacity: 0.5;
+}
+.workspaces-config-table .actions-col {
+  text-align: right;
+}
+.workspaces-config-table .ws-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+.ws-action-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  cursor: pointer;
+  color: var(--fg);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ws-action-btn:hover {
+  background: var(--bg-hover);
+}
+.ws-action-btn--danger:hover {
+  background: rgba(220, 38, 38, 0.1);
+  color: rgb(220, 38, 38);
+  border-color: rgba(220, 38, 38, 0.4);
+}
+
+.dag-graph-node rect {
+  rx: 6;
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.dag-graph-node text {
+  font-size: 12px;
+  font-family: var(--sl-font-sans);
+  fill: var(--fg);
+}
+
+.dag-graph-edge {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+}
+
+.dag-graph-node--status-pending rect { stroke: var(--status-pending); }
+.dag-graph-node--status-running rect { stroke: var(--status-running); }
+.dag-graph-node--status-completed rect { stroke: var(--status-completed); }
+.dag-graph-node--status-failed rect { stroke: var(--status-failed); }
+.dag-graph-node--status-paused rect { stroke: var(--status-paused); }
+.dag-graph-node--status-blocked rect { stroke: var(--status-blocked); }
+.dag-graph-node--status-planning rect { stroke: var(--status-running); }
+.dag-graph-node--status-integration-testing rect { stroke: var(--status-running); }
+.dag-graph-node--status-integration-failed rect { stroke: var(--status-failed); }
+
+/* --- Workspace: conflict icon --- */
+
+.conflict-icon {
+  color: var(--status-blocked);
 }

@@ -18,6 +18,7 @@ import { createClientManager } from './ws-client-manager.js';
 import { createFleetManifestWatcher } from './ws-fleet-manifest-watcher.js';
 import { createMessageRouter } from './ws-message-router.js';
 import { resolveLatestRunDir } from './ws-status-watcher.js';
+import { createWorkspaceManifestWatcher } from './ws-workspace-manifest-watcher.js';
 
 export { resolveLatestRunDir };
 
@@ -51,6 +52,12 @@ export function attachWsServer(httpServer, config) {
   const fleetManifestWatcher = createFleetManifestWatcher({
     broadcaster,
     fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
+  });
+
+  // 3a-ws. Workspace manifest watcher — global, separate from fleet (W-047 §13.5)
+  const workspaceManifestWatcher = createWorkspaceManifestWatcher({
+    broadcaster,
+    workspaceRunsDir: join(homedir(), '.worca', 'workspace-runs'),
   });
 
   // 3b. Create WatcherSet(s) — one per project
@@ -278,6 +285,7 @@ export function attachWsServer(httpServer, config) {
   wss.on('close', () => {
     clientManager.destroy();
     fleetManifestWatcher.destroy();
+    workspaceManifestWatcher.destroy();
     if (dirWatcher) {
       try {
         dirWatcher.close();

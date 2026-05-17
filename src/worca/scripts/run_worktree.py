@@ -197,6 +197,7 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to a reference guide (repeatable); resolved to absolute path",
     )
     parser.add_argument("--fleet-id", help="Fleet group ID (from run_fleet.py)")
+    parser.add_argument("--workspace-id", help="Workspace group ID (from run_workspace.py)")
     parser.add_argument(
         "--msize",
         type=int,
@@ -291,7 +292,8 @@ def main(argv=None) -> int:
         pid=os.getpid(),
         branch=f"worca/{slug}-{run_id}",
         fleet_id=args.fleet_id,
-        group_type="fleet" if args.fleet_id else None,
+        workspace_id=args.workspace_id,
+        group_type="fleet" if args.fleet_id else "workspace" if args.workspace_id else None,
         target_branch=args.branch,
     )
 

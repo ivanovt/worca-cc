@@ -379,3 +379,95 @@ class TestParallelSettings:
             "global-only key max_concurrent_pipelines should not be in project template"
         assert "cleanup_policy" not in p, \
             "global-only key cleanup_policy should not be in project template"
+
+
+# ---------------------------------------------------------------------------
+# TestWorkspaceSettings
+# ---------------------------------------------------------------------------
+
+
+class TestWorkspaceSettings:
+    """Tests for the worca.workspace settings section (W-047 §8 / Phase 1)."""
+
+    WORKSPACE_DEFAULTS = {
+        "init_timeout_seconds": 60,
+        "max_parallel": 5,
+        "context_cap_bytes": 8192,
+        "failure_threshold": 0.30,
+    }
+
+    def test_real_settings_has_workspace_section(self):
+        """The src/worca/settings.json contains the workspace section."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert "workspace" in result.get("worca", {}), \
+            "worca.workspace section missing from src/worca/settings.json"
+
+    def test_workspace_defaults_values(self):
+        """Workspace defaults have the expected keys and values."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        ws = result["worca"]["workspace"]
+
+        assert ws["init_timeout_seconds"] == 60
+        assert ws["max_parallel"] == 5
+        assert ws["context_cap_bytes"] == 8192
+        assert ws["failure_threshold"] == 0.30
+
+    def test_workspace_defaults_match_code_constants(self):
+        """Settings defaults match the hardcoded constants in workspace code."""
+        from worca.workspace.init import _DEFAULT_TIMEOUT
+        from worca.workspace.dag_executor import CONTEXT_CAP_BYTES
+
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        ws = result["worca"]["workspace"]
+
+        assert ws["init_timeout_seconds"] == _DEFAULT_TIMEOUT
+        assert ws["context_cap_bytes"] == CONTEXT_CAP_BYTES
+
+    def test_local_override_init_timeout(self, tmp_path):
+        """Local override can change init_timeout_seconds."""
+        base = {"worca": {"workspace": dict(self.WORKSPACE_DEFAULTS)}}
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(base))
+        local_file = tmp_path / "settings.local.json"
+        local_file.write_text(json.dumps({
+            "worca": {"workspace": {"init_timeout_seconds": 120}}
+        }))
+
+        result = load_settings(str(settings_file))
+        ws = result["worca"]["workspace"]
+
+        assert ws["init_timeout_seconds"] == 120
+        assert ws["max_parallel"] == 5
+        assert ws["context_cap_bytes"] == 8192
+        assert ws["failure_threshold"] == 0.30
+
+    def test_workspace_merge_preserves_siblings(self, tmp_path):
+        """Overriding workspace keys does not affect sibling worca sections."""
+        base = {
+            "worca": {
+                "workspace": dict(self.WORKSPACE_DEFAULTS),
+                "fleet": {"max_parallel": 5, "failure_threshold": 0.30},
+            }
+        }
+        local = {
+            "worca": {"workspace": {"max_parallel": 3}}
+        }
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(base))
+        local_file = tmp_path / "settings.local.json"
+        local_file.write_text(json.dumps(local))
+
+        result = load_settings(str(settings_file))
+        assert result["worca"]["workspace"]["max_parallel"] == 3
+        assert result["worca"]["fleet"]["max_parallel"] == 5
+        assert result["worca"]["fleet"]["failure_threshold"] == 0.30

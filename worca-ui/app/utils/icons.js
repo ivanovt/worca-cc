@@ -10,6 +10,7 @@ import ArrowDown from 'lucide/dist/esm/icons/arrow-down';
 import ArrowLeft from 'lucide/dist/esm/icons/arrow-left';
 import ArrowRight from 'lucide/dist/esm/icons/arrow-right';
 import Bell from 'lucide/dist/esm/icons/bell';
+import Boxes from 'lucide/dist/esm/icons/boxes';
 import ChevronDown from 'lucide/dist/esm/icons/chevron-down';
 import ChevronRight from 'lucide/dist/esm/icons/chevron-right';
 import Circle from 'lucide/dist/esm/icons/circle';
@@ -35,6 +36,7 @@ import Loader from 'lucide/dist/esm/icons/loader';
 import Lock from 'lucide/dist/esm/icons/lock';
 import Moon from 'lucide/dist/esm/icons/moon';
 import Pause from 'lucide/dist/esm/icons/pause';
+import Pencil from 'lucide/dist/esm/icons/pencil';
 import Play from 'lucide/dist/esm/icons/play';
 import Plus from 'lucide/dist/esm/icons/plus';
 import RefreshCw from 'lucide/dist/esm/icons/refresh-cw';
@@ -91,6 +93,7 @@ export {
   RefreshCw,
   ArrowDown,
   Pause,
+  Pencil,
   Zap,
   Clock,
   AlertTriangle,
@@ -118,6 +121,7 @@ export {
   Copy,
   Coins,
   Bell,
+  Boxes,
   Plus,
   RotateCcw,
   List,

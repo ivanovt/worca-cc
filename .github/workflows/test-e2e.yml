@@ -23,6 +23,17 @@ jobs:
           cache: 'npm'
           cache-dependency-path: worca-ui/package-lock.json
 
+      # `npm run build` codegens worca-ui/app/utils/status-constants.js
+      # from src/worca/state/status.py (see scripts/build-frontend.js), so
+      # Python + worca-cc must be importable before the build can succeed.
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install worca-cc (for status-constants codegen)
+        run: pip install -e .
+
       - name: Install dependencies
         working-directory: worca-ui
         run: npm ci

@@ -17,7 +17,7 @@ import os
 from typing import Optional
 
 from worca.orchestrator.stages import Stage, STAGE_ORDER
-from worca.state.status import load_status
+from worca.state.status import load_status, PipelineStatus, PIPELINE_TERMINAL
 from worca.utils.git import get_current_git_head
 
 
@@ -33,7 +33,7 @@ def find_last_completed_iteration(stage_data: dict) -> Optional[int]:
     iterations = stage_data.get("iterations") or []
     last_completed = None
     for it in iterations:
-        if it.get("status") == "completed":
+        if it.get("status") == PipelineStatus.COMPLETED:
             last_completed = it.get("number")
     return last_completed
 
@@ -74,7 +74,7 @@ def find_resume_point(status: dict) -> Optional[Stage]:
     milestones = status.get("milestones", {})
 
     all_stages_done = all(
-        stages.get(stage.value, {}).get("status", "pending") == "completed"
+        stages.get(stage.value, {}).get("status", "pending") == PipelineStatus.COMPLETED
         for stage in STAGE_ORDER
     )
     if not all_stages_done:
@@ -107,7 +107,7 @@ def reconstruct_context(status: dict, logs_dir: str = None) -> dict:
     for stage in STAGE_ORDER:
         stage_data = stages.get(stage.value, {})
         stage_status = stage_data.get("status", "pending")
-        if stage_status == "completed":
+        if stage_status == PipelineStatus.COMPLETED:
             # Try nested per-iteration log files first
             stage_dir = os.path.join(logs_dir, stage.value)
             if os.path.isdir(stage_dir):
@@ -121,7 +121,7 @@ def reconstruct_context(status: dict, logs_dir: str = None) -> dict:
             if os.path.exists(log_path):
                 with open(log_path) as f:
                     context[stage.value] = json.load(f)
-        elif stage_status == "in_progress":
+        elif stage_status == "in_progress":  # legacy iteration status
             # Find last completed iteration and read its specific log file.
             # The last iter file in the directory may be dirty (in_progress),
             # so we look up the exact completed iteration number from status.
@@ -217,8 +217,7 @@ def check_git_divergence(status: dict, current_head: str = None) -> dict:
     return {"diverged": diverged, "stored": stored, "current": current_head}
 
 
-# 'failed' excluded: failed runs are resumable (scanned by can_resume without run_id).
-_TERMINAL_STATUSES = {"completed", "interrupted"}
+_TERMINAL_STATUSES = PIPELINE_TERMINAL
 
 
 def can_resume(status_path: str = ".worca/status.json", run_id: str | None = None) -> bool:
@@ -249,4 +248,4 @@ def can_resume(status_path: str = ".worca/status.json", run_id: str | None = Non
     if not status:
         return False
     stages = status.get("stages", {})
-    return any(s.get("status") == "completed" for s in stages.values())
+    return any(s.get("status") == PipelineStatus.COMPLETED for s in stages.values())

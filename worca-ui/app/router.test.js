@@ -6,16 +6,19 @@ describe('router', () => {
     expect(parseHash('#/active')).toEqual({
       section: 'active',
       runId: null,
+      action: null,
       projectId: null,
     });
     expect(parseHash('#/history')).toEqual({
       section: 'history',
       runId: null,
+      action: null,
       projectId: null,
     });
     expect(parseHash('')).toEqual({
       section: 'active',
       runId: null,
+      action: null,
       projectId: null,
     });
   });
@@ -24,6 +27,7 @@ describe('router', () => {
     expect(parseHash('#/active/run-123')).toEqual({
       section: 'active',
       runId: 'run-123',
+      action: null,
       projectId: null,
     });
   });
@@ -32,6 +36,7 @@ describe('router', () => {
     expect(parseHash('#/project/my-proj/active')).toEqual({
       section: 'active',
       runId: null,
+      action: null,
       projectId: 'my-proj',
     });
   });
@@ -40,6 +45,7 @@ describe('router', () => {
     expect(parseHash('#/project/my-proj')).toEqual({
       section: 'active',
       runId: null,
+      action: null,
       projectId: 'my-proj',
     });
   });
@@ -48,6 +54,25 @@ describe('router', () => {
     expect(parseHash('#/project/proj-a/active/run-1')).toEqual({
       section: 'active',
       runId: 'run-1',
+      action: null,
+      projectId: 'proj-a',
+    });
+  });
+
+  it('parseHash extracts an optional action segment (e.g. /:name/edit)', () => {
+    expect(parseHash('#/workspaces/my-ws/edit')).toEqual({
+      section: 'workspaces',
+      runId: 'my-ws',
+      action: 'edit',
+      projectId: null,
+    });
+  });
+
+  it('parseHash extracts action under project-prefixed path', () => {
+    expect(parseHash('#/project/proj-a/workspaces/my-ws/edit')).toEqual({
+      section: 'workspaces',
+      runId: 'my-ws',
+      action: 'edit',
       projectId: 'proj-a',
     });
   });
@@ -82,6 +107,7 @@ describe('router', () => {
     expect(parseHash('#/active?run=abc')).toEqual({
       section: 'active',
       runId: 'abc',
+      action: null,
       projectId: null,
     });
   });
@@ -90,6 +116,7 @@ describe('router', () => {
     expect(parseHash('#/active?project=my-proj')).toEqual({
       section: 'active',
       runId: null,
+      action: null,
       projectId: 'my-proj',
     });
   });
@@ -98,7 +125,17 @@ describe('router', () => {
     expect(parseHash('#/active')).toEqual({
       section: 'active',
       runId: null,
+      action: null,
       projectId: null,
     });
+  });
+
+  it('buildHash includes action as 3rd segment when supplied', () => {
+    expect(buildHash('workspaces', 'my-ws', null, 'edit')).toBe(
+      '#/workspaces/my-ws/edit',
+    );
+    expect(buildHash('workspaces', 'my-ws', 'proj-a', 'edit')).toBe(
+      '#/project/proj-a/workspaces/my-ws/edit',
+    );
   });
 });

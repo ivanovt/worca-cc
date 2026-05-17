@@ -573,6 +573,78 @@ describe('runCardView - Finished timestamp visibility', () => {
   });
 });
 
+describe('runCardView - guide conflict icon', () => {
+  it('shows exclamation-triangle icon when guide_conflicts is non-empty', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      guide_conflicts: [
+        {
+          stage: 'plan',
+          message: 'Description asks for X but guide forbids it',
+          source: 'description',
+        },
+      ],
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('exclamation-triangle');
+  });
+
+  it('shows conflict count in tooltip', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      guide_conflicts: [
+        { stage: 'plan', message: 'Conflict A', source: 'description' },
+        { stage: 'review', message: 'Conflict B', source: 'plan' },
+      ],
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('Guide conflicts flagged (2)');
+  });
+
+  it('does not show conflict icon when guide_conflicts is empty', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      guide_conflicts: [],
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('exclamation-triangle');
+  });
+
+  it('does not show conflict icon when guide_conflicts is absent', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).not.toContain('exclamation-triangle');
+  });
+
+  it('applies conflict-icon class for styling', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'completed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+      guide_conflicts: [
+        { stage: 'test', message: 'Guide says prod-like env', source: 'plan' },
+      ],
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('conflict-icon');
+  });
+});
+
 describe('runCardView - beads badge', () => {
   const baseRun = {
     id: '1',

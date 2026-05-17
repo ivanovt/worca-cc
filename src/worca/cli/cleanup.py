@@ -23,12 +23,11 @@ from datetime import datetime, timedelta, timezone
 
 from worca.cli.main import _find_git_root
 from worca.orchestrator.registry import deregister_pipeline, get_pipeline, list_pipelines
+from worca.state.status import PipelineStatus, PIPELINE_ACTIVE
 from worca.utils.git import remove_pipeline_worktree
 
 
-# Cleanup-specific: 'failed' is terminal here so failed runs can be reaped.
-# Differs from runner/resume, which exclude 'failed' so failed runs stay resumable.
-_TERMINAL_STATUSES = {"completed", "failed"}
+_TERMINAL_STATUSES = frozenset({PipelineStatus.COMPLETED, PipelineStatus.FAILED})
 
 
 def _parse_duration(value: str) -> timedelta:
@@ -137,7 +136,7 @@ class WorktreeSource:
                         the inverse (run_id without fleet_id).
           older_than  — timedelta; only include entries started before now - delta
         """
-        if "fleet_id" in filters and "run_id" not in filters:
+        if ("fleet_id" in filters or "workspace_id" in filters) and "run_id" not in filters:
             return []
 
         eligible = []
@@ -204,7 +203,7 @@ class WorktreeSource:
         return True
 
 
-_FLEET_RUNNING_STATUSES = frozenset({"running", "resuming", "paused"})
+_FLEET_RUNNING_STATUSES = PIPELINE_ACTIVE
 
 
 class FleetSource:
@@ -331,15 +330,158 @@ class FleetSource:
         return all_ok
 
 
-# WorkspaceSource is a stub for W-047.
-# class WorkspaceSource:
-#     """W-047: cleanup workspace run directories."""
-#     def list_eligible(self, filters): return []
-#     def remove(self, entry): return True
+_WORKSPACE_RUNNING_STATUSES = frozenset({
+    "planning", "running", "paused", "halted", "resuming",
+    "integration_testing", "blocked",
+})
+
+
+class WorkspaceSource:
+    """Cleanup source for workspace runs and their child worktrees (W-047)."""
+
+    def __init__(self, pointer_dir: str = None):
+        if pointer_dir is None:
+            pointer_dir = os.path.expanduser("~/.worca/workspace-runs")
+        self.pointer_dir = pointer_dir
+
+    def list_eligible(self, filters: dict) -> list[dict]:
+        """Return workspace entries eligible for cleanup.
+
+        Enumerates pointer files at pointer_dir/*.json and follows them to
+        the workspace manifest. Skips active workspaces.
+
+        Filter keys (all optional):
+          workspace_id — only include this specific workspace
+          older_than   — timedelta; only include workspaces created before now - delta
+
+        Guard: when run_id or fleet_id is present without workspace_id,
+        returns [] to prevent cross-source interference.
+        """
+        if ("run_id" in filters or "fleet_id" in filters) and "workspace_id" not in filters:
+            return []
+
+        if not os.path.isdir(self.pointer_dir):
+            return []
+
+        eligible = []
+        for fname in sorted(os.listdir(self.pointer_dir)):
+            if not fname.endswith(".json"):
+                continue
+
+            workspace_id = fname[:-5]
+            if "workspace_id" in filters and filters["workspace_id"] != workspace_id:
+                continue
+
+            pointer_path = os.path.join(self.pointer_dir, fname)
+            try:
+                with open(pointer_path) as f:
+                    pointer = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            workspace_root = pointer.get("workspace_root")
+            if not workspace_root:
+                continue
+
+            manifest_path = os.path.join(
+                workspace_root, ".worca", "workspace-runs", workspace_id,
+                "workspace-manifest.json",
+            )
+            try:
+                with open(manifest_path) as f:
+                    manifest = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                continue
+
+            status = manifest.get("status", "")
+            if status in _WORKSPACE_RUNNING_STATUSES:
+                continue
+
+            if "older_than" in filters and filters["older_than"] is not None:
+                created_at = (
+                    manifest.get("started_at") or manifest.get("created_at")
+                )
+                if created_at:
+                    started = datetime.fromisoformat(created_at)
+                    if started.tzinfo is None:
+                        started = started.replace(tzinfo=timezone.utc)
+                    cutoff = datetime.now(timezone.utc) - filters["older_than"]
+                    if started >= cutoff:
+                        continue
+
+            run_dir = os.path.join(
+                workspace_root, ".worca", "workspace-runs", workspace_id,
+            )
+
+            eligible.append({
+                "workspace_id": workspace_id,
+                "run_id": workspace_id,
+                "title": manifest.get("workspace_name", workspace_id),
+                "workspace_root": workspace_root,
+                "worktree_path": run_dir,
+                "run_dir": run_dir,
+                "pointer_path": pointer_path,
+                "children": manifest.get("children", []),
+            })
+
+        return eligible
+
+    def remove(self, entry: dict) -> bool:
+        """Remove workspace: child worktrees, pipelines.d/ entries, integration-env,
+        workspace run directory, and pointer file.
+
+        Returns True if all steps succeeded. Returns False if any child worktree
+        removal fails (remaining artifacts are still cleaned up).
+        """
+        workspace_root = entry["workspace_root"]
+        children = entry.get("children", [])
+        all_ok = True
+
+        for child in children:
+            project_path = child.get("project_path")
+            run_id = child.get("run_id")
+            if not project_path or not run_id:
+                continue
+
+            child_base = os.path.join(project_path, ".worca")
+            reg = get_pipeline(run_id, base=child_base)
+            if reg:
+                child_source = WorktreeSource(base=child_base)
+                child_entry = {
+                    "run_id": run_id,
+                    "worktree_path": reg.get("worktree_path", ""),
+                }
+                if not child_source.remove(child_entry):
+                    all_ok = False
+            else:
+                deregister_pipeline(run_id, base=child_base)
+
+        integration_env_dir = os.path.join(workspace_root, ".worca", "integration-env")
+        if os.path.isdir(integration_env_dir):
+            try:
+                shutil.rmtree(integration_env_dir)
+            except OSError:
+                all_ok = False
+
+        run_dir = entry.get("run_dir")
+        if run_dir and os.path.isdir(run_dir):
+            try:
+                shutil.rmtree(run_dir)
+            except OSError:
+                all_ok = False
+
+        pointer_path = entry.get("pointer_path")
+        if pointer_path and os.path.isfile(pointer_path):
+            try:
+                os.unlink(pointer_path)
+            except OSError:
+                all_ok = False
+
+        return all_ok
 
 
 def _build_sources(base: str) -> list:
-    return [WorktreeSource(base=base), FleetSource()]
+    return [WorktreeSource(base=base), FleetSource(), WorkspaceSource()]
 
 
 def cmd_cleanup(args: argparse.Namespace) -> None:
@@ -352,6 +494,8 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
         filters["run_id"] = args.run_id
     if getattr(args, "fleet_id", None):
         filters["fleet_id"] = args.fleet_id
+    if getattr(args, "workspace_id", None):
+        filters["workspace_id"] = args.workspace_id
     if getattr(args, "older_than", None) is not None:
         filters["older_than"] = args.older_than
 
@@ -373,7 +517,7 @@ def cmd_cleanup(args: argparse.Namespace) -> None:
             print(f"  {entry['run_id']}  {entry['title']}  ({_format_bytes(size)})")
         return
 
-    proceed = args.all or bool(getattr(args, "run_id", None)) or bool(getattr(args, "fleet_id", None))
+    proceed = args.all or bool(getattr(args, "run_id", None)) or bool(getattr(args, "fleet_id", None)) or bool(getattr(args, "workspace_id", None))
     if not proceed:
         print(f"Found {len(eligible)} eligible worktree(s):")
         for _, entry in eligible:
@@ -424,6 +568,12 @@ def register_subcommand(sub) -> None:
         default=None,
         metavar="ID",
         help="Remove a specific fleet and all its child worktrees by fleet ID",
+    )
+    p.add_argument(
+        "--workspace-id",
+        default=None,
+        metavar="ID",
+        help="Remove a specific workspace and all its child worktrees by workspace ID",
     )
     p.add_argument(
         "--dry-run",

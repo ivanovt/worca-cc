@@ -19,6 +19,17 @@
     "proof_artifacts": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "guide_conflicts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["message", "source"],
+        "properties": {
+          "message": { "type": "string" },
+          "source": { "type": "string", "enum": ["plan", "description"] }
+        }
+      }
     }
   }
 }

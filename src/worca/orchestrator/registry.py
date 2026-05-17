@@ -10,6 +10,8 @@ import os
 import tempfile
 from datetime import datetime, timezone
 
+from worca.state.status import PipelineStatus
+
 
 _DEFAULT_BASE = ".worca"
 
@@ -78,7 +80,7 @@ def register_pipeline(
         "worktree_path": worktree_path,
         "title": title,
         "pid": pid,
-        "status": "running",
+        "status": PipelineStatus.RUNNING,
         "started_at": now,
         "updated_at": now,
     }
@@ -193,7 +195,7 @@ def reconcile_stale(base=_DEFAULT_BASE):
     """
     stale_ids = []
     for entry in list_pipelines(base=base):
-        if entry.get("status") != "running":
+        if entry.get("status") != PipelineStatus.RUNNING:
             continue
         pid = entry.get("pid")
         if pid is None:
@@ -212,7 +214,7 @@ def reconcile_stale(base=_DEFAULT_BASE):
         # Process is dead — mark as stale
         run_id = entry["run_id"]
         path = _pipeline_path(run_id, base=base)
-        entry["status"] = "failed"
+        entry["status"] = PipelineStatus.FAILED
         entry["note"] = "stale - process not running"
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
         _atomic_write(path, entry)
@@ -220,7 +222,7 @@ def reconcile_stale(base=_DEFAULT_BASE):
     return stale_ids
 
 
-def reconcile_orphan_groups(base=_DEFAULT_BASE, *, fleet_manifest_base_dir=None):
+def reconcile_orphan_groups(base=_DEFAULT_BASE, *, fleet_manifest_base_dir=None, workspace_pointer_dir=None):
     """Strip fleet_id/group_type from registry entries whose fleet manifest is gone.
 
     For each entry with a fleet_id, checks whether
@@ -240,6 +242,21 @@ def reconcile_orphan_groups(base=_DEFAULT_BASE, *, fleet_manifest_base_dir=None)
             continue
         run_id = entry["run_id"]
         entry.pop("fleet_id", None)
+        entry.pop("group_type", None)
+        entry["updated_at"] = datetime.now(timezone.utc).isoformat()
+        _atomic_write(_pipeline_path(run_id, base=base), entry)
+        orphaned_ids.append(run_id)
+    if workspace_pointer_dir is None:
+        workspace_pointer_dir = os.path.expanduser("~/.worca/workspace-runs")
+    for entry in list_pipelines(base=base):
+        workspace_id = entry.get("workspace_id")
+        if not workspace_id:
+            continue
+        pointer_path = os.path.join(workspace_pointer_dir, f"{workspace_id}.json")
+        if os.path.exists(pointer_path):
+            continue
+        run_id = entry["run_id"]
+        entry.pop("workspace_id", None)
         entry.pop("group_type", None)
         entry["updated_at"] = datetime.now(timezone.utc).isoformat()
         _atomic_write(_pipeline_path(run_id, base=base), entry)

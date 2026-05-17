@@ -44,7 +44,7 @@ After a run completes, the LEARN stage produces ranked observations and actionab
 
 ## Global Dashboard
 
-In global mode (the default), the sidebar shows a project picker with all registered projects, live status indicators, and a "New Pipeline" button. Select a project to see its runs, beads, costs, and settings.
+In global mode (the default), the sidebar shows a project picker with all registered projects, live status indicators, and a "Run Pipeline" split-button (chevron exposes "Run Fleet" / "Run Workspace"). Select a project to see its runs, beads, costs, and settings.
 
 ![Global dashboard — project-scoped history view with sidebar navigation](screenshots/global-dashboard.png)
 
@@ -64,11 +64,11 @@ Browse completed and interrupted runs sorted newest-first. Each card shows the b
 
 ![Run History](screenshots/history.png)
 
-## New Pipeline
+## Run Pipeline
 
-Start a run from a prompt, GitHub issue, or spec file. Advanced options for size/loop multipliers, branch selection, and pre-made plan files.
+Start a single-project pipeline run from a prompt, GitHub issue, or spec file. Advanced options for size/loop multipliers, branch selection, and pre-made plan files.
 
-![New Pipeline](screenshots/new-pipeline.png)
+![Run Pipeline — launcher form for a single-project pipeline](screenshots/new-pipeline.png)
 
 ## Beads Issues
 
@@ -112,3 +112,53 @@ A card-catalog UI for chat integrations (Telegram, Discord, Slack, generic webho
 ![Integrations card catalog — Telegram connected and enabled, Discord and Slack configured but disabled](screenshots/integrations.png)
 
 See the [Chat Integrations Setup Guide](spec/integrations/README.md) for the full configuration model and security details.
+
+## Sidebar Badges
+
+The sidebar count badges follow a three-tier escalation that mirrors the badge-color-language guide:
+
+- 🔵 **primary (blue)** — at least one item is actively in flight (running / resuming; for workspaces also `planning` / `integration_testing`)
+- 🟠 **warning (orange)** — at least one item needs operator attention (halted, integration_failed, failed, or worktree disk pressure)
+- ⚪ **neutral (grey)** — all items are idle / terminal
+
+Running, Worktrees, Fleets, and Workspaces all use the same priority. A running fleet badge reads blue at a glance; a halted one flips to orange. The History row is always grey — it's an archive count.
+
+## Fleet Runs
+
+Fan a single work-request across N independent projects in parallel. The list view shows one card per fleet with project-name chips, status badge, and aggregate timing.
+
+![Fleet runs list — one card per fleet with per-project chips](screenshots/fleet-runs.png)
+
+Click into a fleet to see the per-child run cards, the work request, the attached guide (if any), and lifecycle controls (Pause / Halt / Stop / Resume / Cleanup / Re-run).
+
+![Fleet detail — halted fleet with circuit-breaker banner and child summary](screenshots/fleet-detail.png)
+
+See [Fleet Runs](fleet-runs.md) for the full CLI and orchestrator reference.
+
+## Workspace Runs
+
+Coordinate changes across interdependent projects with dependency-ordered execution. Workspace runs decompose one prompt into per-project sub-plans, execute them in DAG tier order, run cross-project integration tests, and create linked PRs.
+
+The workspace list shows one card per run with the project-name chips that come from the workspace's `projects[]`. Same shape as the fleet card so the two surfaces read as siblings.
+
+![Workspace runs list — one card per workspace with per-project chips](screenshots/workspace-runs.png)
+
+The detail page surfaces the dependency graph (arrowheads show propagation order), the work request, the optional reference guide, and a per-project run card list with live status.
+
+![Workspace detail — dependency graph with arrowheads and per-project run cards](screenshots/workspace-detail-dag.png)
+
+Launch new workspace runs from the **+ Run Workspace** entry in the sidebar split-button. The launcher picks a registered workspace definition, accepts a prompt or `--source` reference, supports normative guide attachment, and exposes per-tier concurrency / planning options.
+
+![Workspace launcher — prompt + guide + plan-mode form for starting a workspace run](screenshots/workspace-launcher.png)
+
+Workspace definitions live in **Configuration → Workspaces**. Each row carries the parent path, project count, whether an integration test is configured, the umbrella GitHub repository, and quick actions (Launch / Edit / Delete).
+
+![Workspaces configuration — table of registered workspace definitions](screenshots/workspaces-config.png)
+
+See [Workspace Runs](workspace-runs.md) for the full schema, lifecycle, and DAG executor reference.
+
+## Worktrees
+
+Every parallel pipeline runs in its own git worktree under `<project>/.worktrees/pipeline-<run_id>/` with independent `.worca/` state. The Worktrees view shows every worktree across registered projects with disk usage, age, and one-click cleanup. The sidebar badge flips to orange when total disk usage crosses the warning threshold (default 2 GB).
+
+![Worktrees view — list of worktrees with disk usage, age, and Cleanup actions](screenshots/worktrees.png)

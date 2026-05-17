@@ -154,6 +154,39 @@ FLEET_FAILED                    = "fleet.failed"
 FLEET_CIRCUIT_BREAKER_TRIPPED   = "fleet.circuit_breaker.tripped"
 
 
+# ---------------------------------------------------------------------------
+# Workspace (multi-project coordinated pipeline) lifecycle events (18 events)
+# ---------------------------------------------------------------------------
+# Workspace events complement the per-child pipeline.run.* stream with
+# coordinator-layer transitions (planning, tier execution, integration test,
+# umbrella issue creation) that a subscriber would otherwise have to
+# reconstruct from N children + a workspace.json read. See
+# src/worca/events/workspace_emitter.py for the emit path.
+#
+# Every payload carries `workspace_id` + `workspace_name` for filterability.
+# Per-project fields use `project` (the name from workspace.json:projects[])
+# and `project_path` — never `child` or `repo` (W-047 terminology).
+
+WORKSPACE_LAUNCHED               = "workspace.launched"
+WORKSPACE_COMPLETED              = "workspace.completed"
+WORKSPACE_FAILED                 = "workspace.failed"
+WORKSPACE_HALTED                 = "workspace.halted"
+WORKSPACE_PAUSED                 = "workspace.paused"
+WORKSPACE_RESUMED                = "workspace.resumed"
+WORKSPACE_PLAN_STARTED           = "workspace.plan.started"
+WORKSPACE_PLAN_COMPLETED         = "workspace.plan.completed"
+WORKSPACE_PLAN_FAILED            = "workspace.plan.failed"
+WORKSPACE_TIER_STARTED           = "workspace.tier.started"
+WORKSPACE_TIER_COMPLETED         = "workspace.tier.completed"
+WORKSPACE_TIER_FAILED            = "workspace.tier.failed"
+WORKSPACE_INTEGRATION_STARTED    = "workspace.integration_test.started"
+WORKSPACE_INTEGRATION_PASSED     = "workspace.integration_test.passed"
+WORKSPACE_INTEGRATION_FAILED     = "workspace.integration_test.failed"
+WORKSPACE_UMBRELLA_ISSUE_CREATED = "workspace.umbrella_issue.created"
+WORKSPACE_CIRCUIT_BREAKER_TRIPPED = "workspace.circuit_breaker.tripped"
+GUIDE_CONFLICT                   = "workspace.guide_conflict"
+
+
 # ===========================================================================
 # Payload builder helpers
 # ===========================================================================
@@ -944,3 +977,339 @@ def fleet_circuit_breaker_tripped_payload(
         "threshold": threshold,
         "failure_ratio": (failed_count / terminal_count) if terminal_count else 0.0,
     }
+
+
+# ---------------------------------------------------------------------------
+# Workspace event payload builders
+# ---------------------------------------------------------------------------
+# Every payload carries enough context that a subscriber can act on it
+# without re-reading the manifest. workspace_name is always included so
+# chat renderers can write "Workspace my-platform completed" without a
+# second lookup. Per-project lists carry the names from
+# workspace.json:projects[].name (NOT paths) — paths are only attached
+# when explicitly needed for filesystem operations.
+
+
+def workspace_launched_payload(
+    projects: list,
+    workspace_name: str,
+    *,
+    branch_template: str = None,
+    guide_attached: bool = False,
+    max_parallel: int = None,
+    skip_planning: bool = False,
+    tier_count: int = None,
+) -> dict:
+    p: dict = {
+        "projects": projects,
+        "workspace_name": workspace_name,
+        "guide_attached": guide_attached,
+        "skip_planning": skip_planning,
+    }
+    if branch_template is not None:
+        p["branch_template"] = branch_template
+    if max_parallel is not None:
+        p["max_parallel"] = max_parallel
+    if tier_count is not None:
+        p["tier_count"] = tier_count
+    return p
+
+
+def workspace_completed_payload(
+    workspace_name: str,
+    *,
+    tier_count: int,
+    child_count: int,
+    integration_passed: bool,
+    duration_ms: int = None,
+    umbrella_issue_url: str = None,
+) -> dict:
+    p: dict = {
+        "workspace_name": workspace_name,
+        "tier_count": tier_count,
+        "child_count": child_count,
+        "integration_passed": integration_passed,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    if umbrella_issue_url is not None:
+        p["umbrella_issue_url"] = umbrella_issue_url
+    return p
+
+
+def workspace_failed_payload(
+    workspace_name: str,
+    *,
+    tier_count: int,
+    completed_count: int,
+    failed_count: int,
+    duration_ms: int = None,
+    failed_tier: int = None,
+    failed_projects: list = None,
+) -> dict:
+    p: dict = {
+        "workspace_name": workspace_name,
+        "tier_count": tier_count,
+        "completed_count": completed_count,
+        "failed_count": failed_count,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    if failed_tier is not None:
+        p["failed_tier"] = failed_tier
+    if failed_projects is not None:
+        p["failed_projects"] = failed_projects
+    return p
+
+
+def workspace_halted_payload(
+    workspace_name: str,
+    halt_reason: str,
+    *,
+    completed_tiers: int = None,
+    pending_tiers: int = None,
+) -> dict:
+    """halt_reason: 'user' | 'circuit_breaker' | 'stopped'."""
+    p: dict = {"workspace_name": workspace_name, "halt_reason": halt_reason}
+    if completed_tiers is not None:
+        p["completed_tiers"] = completed_tiers
+    if pending_tiers is not None:
+        p["pending_tiers"] = pending_tiers
+    return p
+
+
+def workspace_paused_payload(
+    workspace_name: str,
+    *,
+    reason: str = None,
+) -> dict:
+    """Defined for catalog parity with fleet/pipeline pause; emit-site
+    is added when workspace pause infrastructure lands."""
+    p: dict = {"workspace_name": workspace_name}
+    if reason is not None:
+        p["reason"] = reason
+    return p
+
+
+def workspace_resumed_payload(
+    workspace_name: str,
+    *,
+    from_state: str = None,
+    redispatch_count: int = None,
+    skip_count: int = None,
+) -> dict:
+    """from_state: 'halted' | 'paused' | 'failed' | 'integration_failed'."""
+    p: dict = {"workspace_name": workspace_name}
+    if from_state is not None:
+        p["from_state"] = from_state
+    if redispatch_count is not None:
+        p["redispatch_count"] = redispatch_count
+    if skip_count is not None:
+        p["skip_count"] = skip_count
+    return p
+
+
+def workspace_plan_started_payload(
+    workspace_name: str,
+    *,
+    project_count: int = None,
+    model: str = None,
+) -> dict:
+    p: dict = {"workspace_name": workspace_name}
+    if project_count is not None:
+        p["project_count"] = project_count
+    if model is not None:
+        p["model"] = model
+    return p
+
+
+def workspace_plan_completed_payload(
+    workspace_name: str,
+    *,
+    project_count: int,
+    skipped_count: int = 0,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {
+        "workspace_name": workspace_name,
+        "project_count": project_count,
+        "skipped_count": skipped_count,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def workspace_plan_failed_payload(
+    workspace_name: str,
+    error: str,
+    *,
+    error_type: str = None,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {"workspace_name": workspace_name, "error": error}
+    if error_type is not None:
+        p["error_type"] = error_type
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def workspace_tier_started_payload(
+    workspace_name: str,
+    tier: int,
+    projects: list,
+) -> dict:
+    return {
+        "workspace_name": workspace_name,
+        "tier": tier,
+        "projects": projects,
+    }
+
+
+def workspace_tier_completed_payload(
+    workspace_name: str,
+    tier: int,
+    projects: list,
+    status: str,
+    *,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {
+        "workspace_name": workspace_name,
+        "tier": tier,
+        "projects": projects,
+        "status": status,
+    }
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def workspace_tier_failed_payload(
+    workspace_name: str,
+    tier: int,
+    *,
+    failed_projects: list,
+    blocked_projects: list = None,
+    duration_ms: int = None,
+) -> dict:
+    p: dict = {
+        "workspace_name": workspace_name,
+        "tier": tier,
+        "failed_projects": failed_projects,
+    }
+    if blocked_projects is not None:
+        p["blocked_projects"] = blocked_projects
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    return p
+
+
+def workspace_integration_started_payload(
+    workspace_name: str,
+    command: str,
+    *,
+    working_dir: str = None,
+) -> dict:
+    p: dict = {"workspace_name": workspace_name, "command": command}
+    if working_dir is not None:
+        p["working_dir"] = working_dir
+    return p
+
+
+def workspace_integration_passed_payload(
+    workspace_name: str,
+    *,
+    duration_ms: int = None,
+    log_path: str = None,
+) -> dict:
+    p: dict = {"workspace_name": workspace_name}
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    if log_path is not None:
+        p["log_path"] = log_path
+    return p
+
+
+def workspace_integration_failed_payload(
+    workspace_name: str,
+    *,
+    exit_code: int = None,
+    duration_ms: int = None,
+    log_path: str = None,
+    log_tail: str = None,
+) -> dict:
+    """log_tail: last ~10 lines of integration-test output (capped at 2 KB)."""
+    p: dict = {"workspace_name": workspace_name}
+    if exit_code is not None:
+        p["exit_code"] = exit_code
+    if duration_ms is not None:
+        p["duration_ms"] = duration_ms
+    if log_path is not None:
+        p["log_path"] = log_path
+    if log_tail is not None:
+        # Cap defensively — subscribers shouldn't have to handle huge payloads.
+        p["log_tail"] = log_tail[:2048]
+    return p
+
+
+def workspace_umbrella_issue_created_payload(
+    workspace_name: str,
+    *,
+    issue_url: str,
+    issue_number: int = None,
+    nwo: str = None,
+    child_pr_count: int = None,
+) -> dict:
+    p: dict = {"workspace_name": workspace_name, "issue_url": issue_url}
+    if issue_number is not None:
+        p["issue_number"] = issue_number
+    if nwo is not None:
+        p["nwo"] = nwo
+    if child_pr_count is not None:
+        p["child_pr_count"] = child_pr_count
+    return p
+
+
+def workspace_circuit_breaker_tripped_payload(
+    workspace_name: str,
+    *,
+    failed_count: int,
+    terminal_count: int,
+    total_count: int,
+    threshold: float,
+) -> dict:
+    return {
+        "workspace_name": workspace_name,
+        "failed_count": failed_count,
+        "terminal_count": terminal_count,
+        "total_count": total_count,
+        "threshold": threshold,
+        "failure_ratio": (failed_count / terminal_count) if terminal_count else 0.0,
+    }
+
+
+def guide_conflict_payload(
+    run_id: str,
+    stage: str,
+    message: str,
+    source: str,
+    *,
+    workspace_id: str = None,
+    workspace_name: str = None,
+    fleet_id: str = None,
+) -> dict:
+    p: dict = {
+        "run_id": run_id,
+        "stage": stage,
+        "message": message,
+        "source": source,
+    }
+    if workspace_id is not None:
+        p["workspace_id"] = workspace_id
+    if workspace_name is not None:
+        p["workspace_name"] = workspace_name
+    if fleet_id is not None:
+        p["fleet_id"] = fleet_id
+    return p

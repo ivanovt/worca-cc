@@ -193,6 +193,118 @@ describe('runDetailView - worktree metadata row', () => {
   });
 });
 
+describe('runDetailView - guide conflicts panel', () => {
+  function render(template) {
+    return renderToString(template?.overview ?? template);
+  }
+
+  it('renders guide conflicts panel when guide_conflicts is non-empty', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      completed_at: '2026-04-10T11:00:00Z',
+      guide_conflicts: [
+        {
+          stage: 'plan',
+          message: 'Description asks for X but guide forbids it',
+          source: 'description',
+        },
+      ],
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('guide-conflicts-panel');
+    expect(out).toContain('Guide Conflicts');
+  });
+
+  it('lists each conflict with stage, message, and source', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      guide_conflicts: [
+        {
+          stage: 'plan',
+          message: 'Uses REST but guide mandates gRPC',
+          source: 'description',
+        },
+        {
+          stage: 'review',
+          message: 'Plan diverges from guide on auth',
+          source: 'plan',
+        },
+      ],
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Uses REST but guide mandates gRPC');
+    expect(out).toContain('Plan diverges from guide on auth');
+    expect(out).toContain('>plan<');
+    expect(out).toContain('>review<');
+  });
+
+  it('shows source badge for each conflict', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      guide_conflicts: [
+        { stage: 'plan', message: 'Conflict', source: 'description' },
+      ],
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('description');
+  });
+
+  it('renders View source button per conflict', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      guide_conflicts: [
+        { stage: 'review', message: 'Conflict', source: 'plan' },
+      ],
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('View source');
+  });
+
+  it('does not render guide conflicts panel when guide_conflicts is empty', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      guide_conflicts: [],
+    };
+    const out = render(runDetailView(run));
+    expect(out).not.toContain('guide-conflicts-panel');
+  });
+
+  it('does not render guide conflicts panel when guide_conflicts is absent', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+    };
+    const out = render(runDetailView(run));
+    expect(out).not.toContain('guide-conflicts-panel');
+  });
+
+  it('shows conflict count in panel header badge', () => {
+    const run = {
+      id: 'r1',
+      active: false,
+      started_at: '2026-04-10T10:00:00Z',
+      guide_conflicts: [
+        { stage: 'plan', message: 'A', source: 'description' },
+        { stage: 'review', message: 'B', source: 'plan' },
+        { stage: 'test', message: 'C', source: 'plan' },
+      ],
+    };
+    const out = render(runDetailView(run));
+    expect(out).toMatch(/warning[^>]*>3</);
+  });
+});
+
 describe('prApprovalPanelView', () => {
   function render(template) {
     return renderToString(template);

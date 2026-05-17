@@ -38,6 +38,7 @@
     "app/protocol.js",
     "app/utils/stage-order.js",
     "app/utils/state-actions.js",
+    "app/utils/status-constants.js",
     "scripts/build-frontend.js"
   ],
   "engines": {

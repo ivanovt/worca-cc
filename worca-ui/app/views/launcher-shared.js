@@ -1,12 +1,17 @@
 import { html, nothing } from 'lit-html';
 
 const DEFAULT_GUIDE_CAP = 128 * 1024; // matches worca.guide.max_bytes default in src/worca/settings.json
+const DEFAULT_TOKEN_THRESHOLD = 1_000_000;
 
 function _formatBytes(bytes) {
   if (!bytes || bytes < 0) return '0 B';
   if (bytes >= 1e6) return `${(bytes / 1e6).toFixed(1)} MB`;
   if (bytes >= 1e3) return `${(bytes / 1e3).toFixed(1)} KB`;
   return `${bytes} B`;
+}
+
+function _formatTokens(n) {
+  return Math.round(n).toLocaleString('en-US');
 }
 
 function _slugify(str) {
@@ -266,6 +271,98 @@ export function planModeRadio(state, { options, onChange } = {}) {
           `
           : nothing
       }
+    </div>
+  `;
+}
+
+/**
+ * @param {{ targets: Array<{name: string, status: string}> }} state
+ * @param {{ onCancel?: function, dispatched?: boolean }} opts
+ */
+export function initProgressStrip(
+  state,
+  { onCancel, dispatched = false } = {},
+) {
+  const targets = state.targets || [];
+  if (targets.length === 0) return nothing;
+
+  const cancelLabel = dispatched ? 'Halt workspace' : 'Cancel launch';
+
+  return html`
+    <div class="init-progress-strip">
+      ${targets.map(
+        (t) => html`
+          <div class="init-target-row init-target-${t.status}">
+            <span class="init-target-name">${t.name}</span>
+            ${
+              t.status === 'initializing'
+                ? html`<sl-progress-bar indeterminate></sl-progress-bar>`
+                : html`<span class="init-target-status">${t.status}</span>`
+            }
+          </div>
+        `,
+      )}
+      ${
+        onCancel
+          ? html`
+            <sl-button
+              size="small"
+              variant="danger"
+              outline
+              class="btn-cancel-init"
+              @click=${onCancel}
+            >${cancelLabel}</sl-button>
+          `
+          : nothing
+      }
+    </div>
+  `;
+}
+
+/**
+ * @param {{ estimated: boolean, tokenEstimate?: number }} state
+ * @param {{ estimateFn?: function, threshold?: number, onChange?: function }} opts
+ */
+export function tokenOverheadGate(
+  state,
+  { estimateFn, threshold = DEFAULT_TOKEN_THRESHOLD, onChange } = {},
+) {
+  const estimated = state.estimated || false;
+  const rawEstimate = state.tokenEstimate || 0;
+  const displayTokens = estimateFn ? estimateFn(state) : rawEstimate;
+  const overThreshold = estimated && displayTokens > threshold;
+
+  if (!estimated) {
+    return html`
+      <div class="token-overhead-gate">
+        <sl-button
+          size="small"
+          variant="default"
+          class="btn-estimate-cost"
+          @click=${onChange ? () => onChange({ type: 'estimate-request' }) : null}
+        >Estimate cost</sl-button>
+      </div>
+    `;
+  }
+
+  return html`
+    <div class="token-overhead-gate">
+      <div class="token-overhead-result ${overThreshold ? 'token-overhead-ack' : 'token-overhead-ok'}">
+        <span class="token-overhead-value">${_formatTokens(displayTokens)} input tokens</span>
+        ${
+          overThreshold
+            ? html`
+              <sl-alert variant="warning" open class="token-overhead-warning">
+                Estimated overhead exceeds ${_formatTokens(threshold)} tokens.
+              </sl-alert>
+              <sl-checkbox
+                class="checkbox-ack-cost"
+                @sl-change=${onChange ? (e) => onChange({ type: 'ack-toggle', checked: e.target.checked }) : null}
+              >I understand the cost</sl-checkbox>
+            `
+            : nothing
+        }
+      </div>
     </div>
   `;
 }

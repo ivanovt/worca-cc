@@ -16,6 +16,7 @@ import {
   Play,
   Plus,
   RotateCcw,
+  Save,
   Square,
   Trash2,
 } from './utils/icons.js';
@@ -35,6 +36,7 @@ import { fleetDetailView } from './views/fleet-detail.js';
 import {
   fleetLauncherView,
   getFleetLauncherSubmitState,
+  resetLauncherState,
   submitFleetLauncher,
 } from './views/fleet-launcher.js';
 import { learningsSectionView } from './views/learnings-panel.js';
@@ -77,6 +79,21 @@ import {
 import { sidebarView } from './views/sidebar.js';
 import { tokenCostsView } from './views/token-costs.js';
 import { webhookInboxView } from './views/webhook-inbox.js';
+import { workspaceCardView } from './views/workspace-card.js';
+import {
+  getWorkspaceCreateSubmitState,
+  resetWorkspaceCreateState,
+  submitWorkspaceCreate,
+  workspaceCreateView,
+} from './views/workspace-create.js';
+import { workspaceDetailView } from './views/workspace-detail.js';
+import {
+  getWorkspaceEditSubmitState,
+  loadWorkspace,
+  submitWorkspaceEdit,
+  workspaceEditView,
+} from './views/workspace-edit.js';
+import { workspacesConfigView } from './views/workspaces-config.js';
 import { worktreesView } from './views/worktrees.js';
 import { createWsClient } from './ws.js';
 
@@ -200,6 +217,26 @@ const _fleetDetailMissing = new Set();
 let _fleetStatusFilter = 'all'; // /#/fleet-runs filter chip selection
 let _fleetTextFilter = ''; // /#/fleet-runs free-text filter
 
+// -- Workspace views -- (mirror fleet detail-cache pattern)
+const _wsDetailCache = {}; // { workspaceId: manifest }
+let _wsDetailFetching = null;
+const _wsDetailMissing = new Set();
+
+// Tracks which section last entered the launcher's "new" route so we only
+// reset launcherMode on transitions between fleet-runs and workspace-runs.
+// Without this, every rerender would clobber user edits inside the form.
+let _lastLauncherSection = null;
+// Same idea for the workspace-create form — reset on first entry, persist
+// across in-route rerenders so user input survives keystrokes.
+let _lastCreateSection = null;
+// Track the workspace name currently loaded into the edit form so we only
+// re-fetch when navigating to a different workspace, not on every rerender.
+let _lastEditWorkspace = null;
+// When the user clicks "Launch" in the workspaces-config list, we stash the
+// chosen workspace name here. The launcher consumes it on mount, presetting
+// the dropdown so the user lands ready to submit instead of re-selecting.
+let _pendingLaunchWorkspace = null;
+
 // Free-text match for a fleet — title, fleet id, and member project
 // names. Mirrors `_runMatchesText` (run-list) and `_matchesFilter`
 // (worktrees) so all three list pages search consistently.
@@ -246,7 +283,7 @@ function _fleetListView() {
       <div class="fleet-list-empty">
         <p>No fleet runs yet.</p>
         <sl-button variant="primary" @click=${() => navigate('fleet-runs', 'new', null)}>
-          + New Fleet
+          + Run Fleet
         </sl-button>
       </div>
     `;
@@ -320,6 +357,134 @@ function _fleetListView() {
             ${displayed.map((f) =>
               fleetCardView(f, f.children || [], cardOptions),
             )}
+          </div>`
+    }
+  `;
+}
+
+// Workspace-list filters — mirror _fleetStatusFilter / _fleetTextFilter so
+// both list pages have the same filter UX (chips + text input).
+let _wsStatusFilter = 'all';
+let _wsTextFilter = '';
+
+// Free-text match for a workspace run — name, workspace id, and prompt.
+// Same shape as _fleetMatchesText so the two filters behave identically.
+function _wsMatchesText(ws, q) {
+  if (!q) return true;
+  const needle = q.toLowerCase();
+  const name = ws.workspace_name || '';
+  const prompt = ws.work_request?.title || ws.work_request?.description || '';
+  return (
+    name.toLowerCase().includes(needle) ||
+    (ws.workspace_id || '').toLowerCase().includes(needle) ||
+    prompt.toLowerCase().includes(needle)
+  );
+}
+
+// Status chips for /#/workspace-runs. `halted` and `integration_failed` are
+// included because they're the workspace-specific terminal-but-stopped
+// states (vs fleet's just `halted`). `planning`/`integration_testing` roll
+// up into the `running` bucket so the chip set stays compact.
+const _WS_FILTER_STATUSES = [
+  'all',
+  'running',
+  'completed',
+  'failed',
+  'halted',
+  'integration_failed',
+];
+
+const _WS_ACTIVE_STATUSES = new Set([
+  'running',
+  'planning',
+  'integration_testing',
+]);
+
+function _wsBucket(status, bucket) {
+  if (bucket === 'running') return _WS_ACTIVE_STATUSES.has(status);
+  return status === bucket;
+}
+
+function _workspaceListView() {
+  const workspaces = store.getState().workspaceRuns;
+  if (workspaces === undefined) {
+    return html`<div class="fleet-list-loading"><sl-spinner></sl-spinner> Loading workspace runs…</div>`;
+  }
+  if (workspaces.length === 0) {
+    return html`
+      <div class="fleet-list-empty">
+        <p>No workspace runs yet.</p>
+        <sl-button variant="primary" @click=${() => navigate('workspace-runs', 'new', null)}>
+          + Run Workspace
+        </sl-button>
+      </div>
+    `;
+  }
+
+  // Per-chip counts. Every workspace is live (no archive concept yet, so
+  // skip the archived bucket — when archive lands the shape becomes
+  // identical to fleets and this loop just gains an extra arm).
+  const counts = { all: workspaces.length };
+  for (const s of _WS_FILTER_STATUSES.slice(1)) {
+    counts[s] = workspaces.filter((w) => _wsBucket(w.status, s)).length;
+  }
+
+  let displayed =
+    _wsStatusFilter === 'all'
+      ? workspaces
+      : workspaces.filter((w) => _wsBucket(w.status, _wsStatusFilter));
+
+  const textQ = (_wsTextFilter || '').trim();
+  if (textQ) {
+    displayed = displayed.filter((w) => _wsMatchesText(w, textQ));
+  }
+
+  const cardOptions = {
+    onClick: (id) => navigate('workspace-runs', id, null),
+    // Re-run / cleanup wiring is intentionally deferred — the per-row
+    // actions render only when these callbacks are supplied. Re-run needs a
+    // POST /api/workspace-runs/:id/relaunch flow + UI confirm; cleanup
+    // needs the worca-cleanup-by-workspace-id story finished. Both can land
+    // independently once their backend contracts settle.
+  };
+
+  return html`
+    <div class="filter-chips">
+      ${_WS_FILTER_STATUSES
+        .filter((s) => s === 'all' || counts[s])
+        .map(
+          (s) => html`
+            <button
+              class="filter-chip ${(_wsStatusFilter || 'all') === s ? 'active' : ''} filter-chip-${s}"
+              @click=${() => {
+                _wsStatusFilter = s;
+                rerender();
+              }}
+            >
+              ${s === 'all' ? 'All' : s.replace(/_/g, ' ')}
+              <span class="chip-count">${counts[s] || 0}</span>
+            </button>
+          `,
+        )}
+    </div>
+    <div class="list-filter-row">
+      <sl-input
+        size="small"
+        class="list-text-filter"
+        type="text"
+        placeholder="Filter by name, workspace id, or prompt…"
+        value="${_wsTextFilter || ''}"
+        @sl-input=${(e) => {
+          _wsTextFilter = e.target.value;
+          rerender();
+        }}
+      ></sl-input>
+    </div>
+    ${
+      displayed.length === 0
+        ? html`<div class="empty-state">No ${_wsStatusFilter.replace(/_/g, ' ')} workspace runs</div>`
+        : html`<div class="fleet-list">
+            ${displayed.map((w) => workspaceCardView(w, cardOptions))}
           </div>`
     }
   `;
@@ -839,7 +1004,7 @@ ws.on('fleet-update', () => {
   fetch('/api/fleet-runs')
     .then((r) => r.json())
     .then((data) => {
-      store.setState({ fleets: data?.fleets || [] });
+      store.setState({ fleets: data?.fleets || [], fleetsLoaded: true });
       // Invalidate cached detail manifests so the next view fetch is fresh.
       // Drop missing markers in the same step — a fleet-list refresh implies
       // any negative caches may be stale (manifest could have been restored).
@@ -1003,10 +1168,38 @@ function handleHello(_payload) {
   }
 
   // Fetch fleets list (used by sidebar's Fleets entry + count badge). Best-effort.
+  // Flip fleetsLoaded on success AND failure so the sidebar spinner stops
+  // even when the endpoint is missing in older clones — same UX contract
+  // worktreesLoaded / runsLoaded follow.
   fetch('/api/fleet-runs')
     .then((r) => r.json())
     .then((data) => {
-      store.setState({ fleets: data?.fleets || [] });
+      store.setState({ fleets: data?.fleets || [], fleetsLoaded: true });
+    })
+    .catch(() => {
+      store.setState({ fleetsLoaded: true });
+    });
+
+  // Fetch workspace runs list (used by sidebar's Workspaces entry + count badge).
+  // Best-effort — server may not be wired in older clones.
+  fetch('/api/workspace-runs')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({
+        workspaceRuns: data?.workspace_runs || [],
+        workspaceRunsLoaded: true,
+      });
+    })
+    .catch(() => {
+      store.setState({ workspaceRunsLoaded: true });
+    });
+
+  // Fetch workspace definitions (used by the launcher's "Select workspace"
+  // dropdown). Distinct from workspace runs — see state.js comment.
+  fetch('/api/workspaces')
+    .then((r) => r.json())
+    .then((data) => {
+      store.setState({ workspaces: data?.workspaces || [] });
     })
     .catch(() => {});
 
@@ -1707,6 +1900,79 @@ function handleCleanupFleet(fleetId) {
   );
 }
 
+// ── Workspace-run actions (mirror the fleet handlers above) ────────────
+async function handleResumeWorkspace(workspaceId) {
+  try {
+    const res = await fetch(
+      `/api/workspace-runs/${encodeURIComponent(workspaceId)}/resume`,
+      { method: 'POST' },
+    );
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to resume workspace');
+      return;
+    }
+    delete _wsDetailCache[workspaceId];
+    await _refreshWorkspaces();
+    rerender();
+  } catch (err) {
+    showActionError(err?.message || 'Failed to resume workspace');
+  }
+}
+
+function handleCleanupWorkspaceRun(workspaceId) {
+  showConfirm(
+    {
+      label: 'Cleanup Workspace Run',
+      message:
+        'Removes the workspace run manifest, pointer file, and any on-disk child worktree state. Per-repo PRs are NOT touched. Irreversible.',
+      confirmLabel: 'Cleanup',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(
+            `/api/workspace-runs/${encodeURIComponent(workspaceId)}`,
+            { method: 'DELETE' },
+          );
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to clean up workspace');
+            return;
+          }
+          delete _wsDetailCache[workspaceId];
+          await _refreshWorkspaces();
+          navigate('workspace-runs', null, null);
+        } catch (err) {
+          showActionError(err?.message || 'Failed to clean up workspace');
+        }
+      },
+    },
+    rerender,
+  );
+}
+
+async function handleRerunWorkspace(workspaceId) {
+  try {
+    const res = await fetch(
+      `/api/workspace-runs/${encodeURIComponent(workspaceId)}/relaunch`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      },
+    );
+    const data = await res.json();
+    if (!data.ok || !data.workspace_id) {
+      showActionError(data.error || 'Failed to re-run workspace');
+      return;
+    }
+    await _refreshWorkspaces();
+    navigate('workspace-runs', data.workspace_id, null);
+  } catch (err) {
+    showActionError(err?.message || 'Failed to re-run workspace');
+  }
+}
+
 // Re-fetch /api/fleet-runs and replace state.fleets. Used after a fleet
 // archive / unarchive so the list + sidebar count update immediately —
 // the WS `fleet-update` watcher also fires, but an explicit refetch gives
@@ -1715,10 +1981,67 @@ async function _refreshFleets() {
   try {
     const res = await fetch('/api/fleet-runs');
     const data = await res.json();
-    store.setState({ fleets: data?.fleets || [] });
+    store.setState({ fleets: data?.fleets || [], fleetsLoaded: true });
   } catch {
     // Non-fatal — the WS fleet-update handler will reconcile shortly.
   }
+}
+
+async function _refreshWorkspaces() {
+  try {
+    const res = await fetch('/api/workspace-runs');
+    const data = await res.json();
+    store.setState({
+      workspaceRuns: data?.workspace_runs || [],
+      workspaceRunsLoaded: true,
+    });
+  } catch {
+    // Non-fatal — bootstrap and next user navigation will reconcile.
+  }
+}
+
+async function _refreshWorkspaceDefinitions() {
+  try {
+    const res = await fetch('/api/workspaces');
+    const data = await res.json();
+    store.setState({ workspaces: data?.workspaces || [] });
+  } catch {
+    // Non-fatal.
+  }
+}
+
+function handleLaunchWorkspace(name) {
+  // Stash for the launcher to consume on its first render in workspace mode.
+  _pendingLaunchWorkspace = name;
+  navigate('workspace-runs', 'new', null);
+}
+
+function handleDeleteWorkspace(name) {
+  showConfirm(
+    {
+      label: 'Delete Workspace',
+      message: `This removes the registration AND the workspace.json topology file. The repos themselves are untouched. Cannot be undone.`,
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: async () => {
+        try {
+          const res = await fetch(
+            `/api/workspaces/${encodeURIComponent(name)}`,
+            { method: 'DELETE' },
+          );
+          const data = await res.json();
+          if (!data.ok) {
+            showActionError(data.error || 'Failed to delete workspace');
+            return;
+          }
+          await _refreshWorkspaceDefinitions();
+        } catch (err) {
+          showActionError(err?.message || 'Failed to delete workspace');
+        }
+      },
+    },
+    rerender,
+  );
 }
 
 function archiveFleet(fleetId) {
@@ -2322,7 +2645,7 @@ function contentHeaderView() {
   } else if (route.section === 'fleet-runs') {
     title =
       route.runId === 'new'
-        ? 'New Fleet'
+        ? 'Run Fleet'
         : route.runId
           ? `Fleet ${route.runId.split('_').pop() || route.runId}`
           : 'Fleets';
@@ -2410,6 +2733,146 @@ function contentHeaderView() {
         ].filter((b) => b !== nothing);
         if (btns.length) actionButton = html`${btns}`;
       }
+    }
+  } else if (route.section === 'workspaces' && route.runId === 'new') {
+    title = 'New Workspace';
+    showBack = true;
+    const wcs = getWorkspaceCreateSubmitState();
+    actionButton = html`
+      <button class="action-btn action-btn--primary" ?disabled=${wcs.isSubmitting || !wcs.canSubmit}
+        @click=${() =>
+          submitWorkspaceCreate({
+            rerender,
+            onCreated: (name) => {
+              _refreshWorkspaceDefinitions();
+              resetWorkspaceCreateState();
+              // After creating, drop the user back at the workspaces list so
+              // they can see their new definition and decide what to do next
+              // (launch it, edit it, create another). The launcher remains
+              // one click away via the row's Launch action.
+              navigate('workspaces', null, null);
+              return name;
+            },
+          })}>
+        ${unsafeHTML(iconSvg(Plus, 14))}
+        ${wcs.isSubmitting ? 'Creating…' : 'Create'}
+      </button>`;
+  } else if (
+    route.section === 'workspaces' &&
+    route.runId &&
+    route.action === 'edit'
+  ) {
+    title = `Edit Workspace: ${route.runId}`;
+    showBack = true;
+    const wes = getWorkspaceEditSubmitState();
+    actionButton = html`
+      <button class="action-btn action-btn--primary" ?disabled=${wes.isSubmitting || !wes.canSubmit}
+        @click=${() =>
+          submitWorkspaceEdit({
+            rerender,
+            onUpdated: () => {
+              _refreshWorkspaceDefinitions();
+              _lastEditWorkspace = null;
+              navigate('workspaces', null, null);
+            },
+          })}>
+        ${unsafeHTML(iconSvg(Save, 14))}
+        ${wes.isSubmitting ? 'Saving…' : 'Save'}
+      </button>`;
+  } else if (route.section === 'workspaces') {
+    title = 'Workspaces';
+    actionButton = html`
+      <button class="action-btn action-btn--primary"
+        @click=${() => navigate('workspaces', 'new', null)}>
+        ${unsafeHTML(iconSvg(Plus, 14))}
+        New Workspace
+      </button>`;
+  } else if (route.section === 'workspace-runs') {
+    showBack = true;
+    if (route.runId === 'new') {
+      title = 'Run Workspace';
+      // Reuse fleet-launcher's submit state — it dispatches based on
+      // launcherMode, so workspace mode hits POST /api/workspace-runs and
+      // returns data.workspace_id on success.
+      const fls = getFleetLauncherSubmitState();
+      const capReached = isAtCapacity(state);
+      actionButton = html`
+        <button class="action-btn action-btn--primary" ?disabled=${fls.isSubmitting || !fls.canLaunch || capReached}
+          @click=${() =>
+            submitFleetLauncher({
+              rerender,
+              onStarted: (workspaceId) => {
+                _refreshWorkspaces();
+                navigate('workspace-runs', workspaceId, null);
+              },
+            })}>
+          ${unsafeHTML(iconSvg(Play, 14))}
+          ${fls.isSubmitting ? 'Launching…' : 'Launch'}
+        </button>`;
+    } else if (route.runId) {
+      // Mirror the fleet-runs/:id header: badge LEFT of title (semantic
+      // pill + spinner/glyph), action buttons RIGHT (Resume/Cleanup/Re-run
+      // gated on terminal/halted/in-flight). Pull the cached manifest the
+      // detail view already fetched.
+      const ws = _wsDetailCache[route.runId];
+      const shortId = route.runId.split('_').pop() || route.runId;
+      // Mirror workspace-card / fleet-card: title is always
+      // `Workspace <id_short>`. The workspace_name (e.g. "test-multi")
+      // is surfaced inside the detail page body, not the header.
+      title = `Workspace ${shortId}`;
+
+      if (ws) {
+        const wsStatus = ws.status || 'running';
+        const variantMap = {
+          planning: 'primary',
+          running: 'primary',
+          integration_testing: 'primary',
+          completed: 'success',
+          failed: 'danger',
+          integration_failed: 'warning',
+          halted: 'warning',
+          blocked: 'neutral',
+        };
+        badge = html`<sl-badge variant="${variantMap[wsStatus] || 'neutral'}" pill>
+          ${unsafeHTML(statusIcon(wsStatus, 12))}
+          ${wsStatus.charAt(0).toUpperCase() + wsStatus.slice(1).replace(/_/g, ' ')}
+        </sl-badge>`;
+
+        const isResumable =
+          wsStatus === 'halted' ||
+          wsStatus === 'failed' ||
+          wsStatus === 'integration_failed';
+        const isRunning =
+          wsStatus === 'running' ||
+          wsStatus === 'planning' ||
+          wsStatus === 'integration_testing';
+        const isTerminal = !isRunning;
+
+        // Workspaces don't yet have a halt/pause/stop endpoint — only
+        // resume/cleanup/relaunch (W-047 §10.10). Re-run uses the
+        // /relaunch endpoint which forks a fresh ws_id.
+        const resumeBtn = isResumable
+          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeWorkspace(route.runId)}>
+              ${unsafeHTML(iconSvg(Play, 14))} Resume
+            </button>`
+          : nothing;
+        const cleanupBtn = isTerminal
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCleanupWorkspaceRun(route.runId)}>
+              ${unsafeHTML(iconSvg(Trash2, 14))} Cleanup
+            </button>`
+          : nothing;
+        const rerunBtn = isTerminal
+          ? html`<button class="action-btn action-btn--teal" @click=${() => handleRerunWorkspace(route.runId)}>
+              ${unsafeHTML(iconSvg(RotateCcw, 14))} Re-run
+            </button>`
+          : nothing;
+        const btns = [resumeBtn, cleanupBtn, rerunBtn].filter(
+          (b) => b !== nothing,
+        );
+        if (btns.length) actionButton = html`${btns}`;
+      }
+    } else {
+      title = 'Workspaces';
     }
   } else if (route.runId) {
     const run = store.getRunById(route.runId);
@@ -2544,7 +3007,7 @@ function contentHeaderView() {
       }
     }
   } else if (route.section === 'new-run') {
-    title = 'New Pipeline';
+    title = 'Run Pipeline';
     showBack = true;
     const nrs = getNewRunSubmitState();
     const capReached = isAtCapacity(state);
@@ -2577,12 +3040,12 @@ function contentHeaderView() {
     showBack = true;
   }
 
-  // Dashboard gets a "New Pipeline" button in the header
+  // Dashboard gets a "Run Pipeline" button in the header
   if (!route.section && !route.runId) {
     actionButton = html`
       <button class="action-btn action-btn--primary" @click=${() => navigate('new-run', null, route.projectId)}>
         ${unsafeHTML(iconSvg(Plus, 14))}
-        New Pipeline
+        Run Pipeline
       </button>`;
   }
 
@@ -2669,8 +3132,14 @@ function mainContentView() {
   }
 
   // The runId catch-all renders the per-run pipeline detail view. Exclude
-  // sections that own their own :id sub-route (fleet-runs).
-  if (route.runId && route.section !== 'fleet-runs') {
+  // sections that own their own :id sub-route (fleet-runs, workspace-runs,
+  // workspaces — the create-definition flow).
+  if (
+    route.runId &&
+    route.section !== 'fleet-runs' &&
+    route.section !== 'workspace-runs' &&
+    route.section !== 'workspaces'
+  ) {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
     // switch), redirect to the section root instead of showing a stale view.
@@ -2725,6 +3194,9 @@ function mainContentView() {
       onRestartStage: handleRestartStage,
       stageIterationTab,
       onStageTabChange: handleStageTabChange,
+      // Plan-stage View plan dialog needs to redraw when the modal
+      // toggles open/closed and when the lazy plan fetch resolves.
+      rerender,
     });
     return html`
       <div class="run-detail run-detail-layout">
@@ -2793,6 +3265,10 @@ function mainContentView() {
     // /fleet-runs/new → launcher (Launch button lives in the page header,
     // wired to submitFleetLauncher above).
     if (route.runId === 'new') {
+      if (_lastLauncherSection !== 'fleet-runs') {
+        resetLauncherState({ launcherMode: 'fleet' });
+        _lastLauncherSection = 'fleet-runs';
+      }
       return fleetLauncherView(viewState, { rerender });
     }
     // /fleet-runs/:id → detail (fetch on demand, cache result)
@@ -2834,6 +3310,107 @@ function mainContentView() {
     }
     // /fleet-runs → list of fleets
     return _fleetListView(rerender);
+  }
+
+  if (route.section === 'workspaces') {
+    // /workspaces/new → create a workspace definition.
+    if (route.runId === 'new') {
+      if (_lastCreateSection !== 'workspaces') {
+        resetWorkspaceCreateState();
+        _lastCreateSection = 'workspaces';
+      }
+      return workspaceCreateView(viewState, { rerender });
+    }
+    // /workspaces/:name/edit → edit an existing definition. workspaceEditView
+    // owns its own load state — kick off the fetch on first entry so the
+    // form populates with the current workspace.json.
+    if (route.runId && route.action === 'edit') {
+      if (_lastEditWorkspace !== route.runId) {
+        _lastEditWorkspace = route.runId;
+        loadWorkspace({ name: route.runId, rerender });
+      }
+      return workspaceEditView(viewState, { rerender });
+    }
+    // Bare /workspaces → list view (CRUD surface for definitions).
+    return workspacesConfigView(viewState, {
+      onCreate: () => navigate('workspaces', 'new', null),
+      onLaunch: handleLaunchWorkspace,
+      onEdit: (name) => navigate('workspaces', name, null, 'edit'),
+      onDelete: handleDeleteWorkspace,
+      onOpenRuns: () => navigate('workspace-runs', null, null),
+    });
+  }
+
+  if (route.section === 'workspace-runs') {
+    // /workspace-runs/new → launcher in workspace mode. Fleet launcher is the
+    // shared launch surface for both fleets and workspaces; preset the mode
+    // once on entry, then defer to its own state on subsequent renders.
+    if (route.runId === 'new') {
+      // A pending launch from the Configuration → Workspaces list takes
+      // priority over the normal mode-reset: we want to land with the
+      // chosen workspace already selected and its DAG visible.
+      if (_pendingLaunchWorkspace) {
+        const ws = (store.getState().workspaces || []).find(
+          (w) => w.name === _pendingLaunchWorkspace,
+        );
+        resetLauncherState({
+          launcherMode: 'workspace',
+          selectedWorkspace: _pendingLaunchWorkspace,
+          workspaceData: ws || null,
+        });
+        _lastLauncherSection = 'workspace-runs';
+        _pendingLaunchWorkspace = null;
+      } else if (_lastLauncherSection !== 'workspace-runs') {
+        resetLauncherState({ launcherMode: 'workspace' });
+        _lastLauncherSection = 'workspace-runs';
+      }
+      return fleetLauncherView(viewState, { rerender });
+    }
+    // /workspace-runs/:id → detail (fetch on demand, mirror fleet pattern)
+    if (route.runId) {
+      const ws = _wsDetailCache[route.runId];
+      const isMissing = _wsDetailMissing.has(route.runId);
+      if (!ws && !isMissing) {
+        if (_wsDetailFetching !== route.runId) {
+          _wsDetailFetching = route.runId;
+          fetch(`/api/workspace-runs/${route.runId}`)
+            .then(async (r) => ({ status: r.status, data: await r.json() }))
+            .then(({ status, data }) => {
+              _wsDetailFetching = null;
+              if (data?.ok && data.manifest) {
+                _wsDetailMissing.delete(route.runId);
+                // Pin the server-computed cost_usd onto the cached
+                // manifest so _overviewSection can read it without an
+                // extra fetch. Without this, the client falls back to a
+                // walk over `child.stages` (always empty in the manifest)
+                // and prints $0.00 for every workspace run.
+                _wsDetailCache[route.runId] = {
+                  ...data.manifest,
+                  cost_usd: data.cost_usd,
+                };
+                rerender();
+              } else if (status === 404 || data?.ok === false) {
+                _wsDetailMissing.add(route.runId);
+                rerender();
+              }
+            })
+            .catch(() => {
+              _wsDetailFetching = null;
+            });
+        }
+      }
+      return workspaceDetailView(ws || null, {
+        rerender,
+        missing: isMissing,
+        workspaceId: route.runId,
+        // Mirror /fleet-runs/:id call site so _childrenSection can render
+        // rich runCardView's for each child instead of a sparse PR table.
+        runsById: state.runs,
+        onSelectRun: (id) => navigate('history', id, null),
+      });
+    }
+    // /workspace-runs → list of workspace runs
+    return _workspaceListView(rerender);
   }
 
   if (route.section === 'project-settings') {

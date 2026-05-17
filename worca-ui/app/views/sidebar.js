@@ -3,6 +3,7 @@ import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Activity,
   Archive,
+  Boxes,
   ChevronDown,
   Coins,
   GitBranch,
@@ -41,9 +42,12 @@ export function projectStatus(projectId, runs, currentProjectId) {
 
   for (const r of projectRuns) {
     const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
-    if (ps === 'running') hasRunning = true;
-    else if (ps === 'failed' || ps === 'error') hasError = true;
-    else if (ps === 'paused' || ps === 'approval_needed') hasPaused = true;
+    if (ps === 'running' || ps === 'planning' || ps === 'integration_testing')
+      hasRunning = true;
+    else if (ps === 'failed' || ps === 'error' || ps === 'integration_failed')
+      hasError = true;
+    else if (ps === 'paused' || ps === 'approval_needed' || ps === 'blocked')
+      hasPaused = true;
   }
 
   if (hasRunning) return 'running';
@@ -82,6 +86,11 @@ export function sidebarView(
     currentProjectId,
     worktrees = [],
     fleets = [],
+    fleetsLoaded = false,
+    // Sidebar counts pipeline executions (workspaceRuns), not definitions.
+    // state.workspaces is reserved for the launcher's dropdown.
+    workspaceRuns = [],
+    workspaceRunsLoaded = false,
     worktreeDiskWarningBytes = 2_000_000_000,
     totalRunning = 0,
     maxConcurrentPipelines = 10,
@@ -117,25 +126,52 @@ export function sidebarView(
   );
   const worktreeDiskWarning = totalWorktreeDisk > diskWarningThreshold;
 
-  // Archived fleets never contribute to the attention badge — they're
-  // explicitly out-of-sight (parity with archived pipeline runs).
+  // Archived fleets never contribute to the badge — they're explicitly
+  // out-of-sight (parity with archived pipeline runs).
   const liveFleets = fleets.filter((f) => !f.archived);
-  const runningFleetCount = liveFleets.filter(
-    (f) => f.status === 'running',
-  ).length;
   const haltedFleetCount = liveFleets.filter(
     (f) => f.status === 'halted',
   ).length;
-  // Badge surfaces fleets that need operator attention: running (active work)
-  // + halted (awaiting resume/cleanup decision). Completed/failed fleets are
-  // terminal — they don't add to the count.
-  const fleetBadgeCount = runningFleetCount + haltedFleetCount;
+  const activeFleetCount = liveFleets.filter(
+    (f) => f.status === 'running' || f.status === 'resuming',
+  ).length;
+  // Three-tier variant matching the badge-color-language guide:
+  //   warning (orange) > primary (blue) > neutral (grey)
+  // — attention beats in-flight beats idle. Aligns with the Running
+  // sidebar row, which uses `primary` for any active count.
+  const fleetBadgeCount = liveFleets.length;
   const showFleetBadge = fleetBadgeCount > 0;
-  // Variant follows the convention used by History/Worktrees: neutral grey
-  // by default, escalates to warning only when there's a "needs attention"
-  // condition. For Fleets the trigger is any halted fleet (matches the
-  // Worktrees disk-threshold warning shape).
-  const fleetBadgeVariant = haltedFleetCount > 0 ? 'warning' : 'neutral';
+  const fleetBadgeVariant =
+    haltedFleetCount > 0
+      ? 'warning'
+      : activeFleetCount > 0
+        ? 'primary'
+        : 'neutral';
+
+  const liveWorkspaces = workspaceRuns.filter((w) => !w.archived);
+  const WORKSPACE_ATTENTION = { halted: 1, integration_failed: 1, failed: 1 };
+  // planning / running / integration_testing are all orchestrator-driven
+  // in-flight phases; resuming is included for parity with fleets.
+  const WORKSPACE_ACTIVE = {
+    planning: 1,
+    running: 1,
+    integration_testing: 1,
+    resuming: 1,
+  };
+  const attentionWorkspaceCount = liveWorkspaces.filter(
+    (w) => WORKSPACE_ATTENTION[w.status],
+  ).length;
+  const activeWorkspaceCount = liveWorkspaces.filter(
+    (w) => WORKSPACE_ACTIVE[w.status],
+  ).length;
+  const workspaceBadgeCount = liveWorkspaces.length;
+  const showWorkspaceBadge = workspaceBadgeCount > 0;
+  const workspaceBadgeVariant =
+    attentionWorkspaceCount > 0
+      ? 'warning'
+      : activeWorkspaceCount > 0
+        ? 'primary'
+        : 'neutral';
 
   const connClass =
     connectionState === 'open'
@@ -215,7 +251,7 @@ export function sidebarView(
                 @click=${atCapacity ? null : () => onNavigate('new-run')}
               >
                 ${unsafeHTML(iconSvg(Plus, 14))}
-                <span>New Pipeline</span>
+                <span>Run Pipeline</span>
               </button>
               <sl-dropdown
                 class="sidebar-new-run-chevron-dropdown"
@@ -238,10 +274,15 @@ export function sidebarView(
                     @click=${() => onNavigate('fleet-runs/new')}
                   >
                     ${unsafeHTML(iconSvg(Workflow, 14))}
-                    New Fleet
+                    Run Fleet
                   </sl-menu-item>
-                  <!-- W-047 (multi-repo workspace) will add: -->
-                  <!-- <sl-menu-item class="menu-item-new-workspace" @click=...>New Workspace</sl-menu-item> -->
+                  <sl-menu-item
+                    class="menu-item-new-workspace"
+                    @click=${() => onNavigate('workspace-runs/new')}
+                  >
+                    ${unsafeHTML(iconSvg(Boxes, 14))}
+                    Run Workspace
+                  </sl-menu-item>
                 </sl-menu>
               </sl-dropdown>
             </div>
@@ -300,9 +341,25 @@ export function sidebarView(
             <span>Fleets</span>
           </span>
           ${
-            showFleetBadge
-              ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
-              : ''
+            !fleetsLoaded
+              ? html`<sl-spinner class="sidebar-loading-spinner" data-testid="sidebar-fleets-loading"></sl-spinner>`
+              : showFleetBadge
+                ? html`<sl-badge variant="${fleetBadgeVariant}" pill class="fleets-count-badge">${fleetBadgeCount}</sl-badge>`
+                : ''
+          }
+        </div>
+        <div class="sidebar-item ${route.section === 'workspace-runs' ? 'active' : ''}"
+             @click=${() => onNavigate('workspace-runs')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Boxes, 16))}
+            <span>Workspaces</span>
+          </span>
+          ${
+            !workspaceRunsLoaded
+              ? html`<sl-spinner class="sidebar-loading-spinner" data-testid="sidebar-workspaces-loading"></sl-spinner>`
+              : showWorkspaceBadge
+                ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
+                : ''
           }
         </div>
       </div>
@@ -345,6 +402,13 @@ export function sidebarView(
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(SlidersHorizontal, 16))}
             <span>Project Settings</span>
+          </span>
+        </div>
+        <div class="sidebar-item ${route.section === 'workspaces' ? 'active' : ''}"
+             @click=${() => onNavigate('workspaces')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(Boxes, 16))}
+            <span>Workspaces</span>
           </span>
         </div>
       </div>
