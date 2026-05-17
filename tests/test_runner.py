@@ -95,6 +95,51 @@ def test_run_stage_passes_none_model_when_missing():
     assert mock_run.call_args.kwargs.get("model") is None
 
 
+class TestPRSchemaSelection:
+    """PR stage picks pr-deferred.json when WORCA_DEFER_PR=1, else pr.json.
+    Two schemas keep each flat so the Claude API accepts both as
+    custom-tool input_schemas (top-level allOf/oneOf/anyOf is rejected)."""
+
+    _PR_CONFIG = {"agent": "guardian", "model": "claude-opus-4-6", "max_turns": 40, "schema": "pr.json"}
+
+    def _invoke(self, env):
+        with patch.dict(os.environ, env, clear=False):
+            with patch("worca.orchestrator.runner.get_stage_config", return_value=dict(self._PR_CONFIG)):
+                with patch("worca.orchestrator.runner.run_agent", return_value={"ok": True}) as mock_run:
+                    run_stage(Stage.PR, {"prompt": "ship it"})
+        return str(mock_run.call_args)
+
+    def test_pr_stage_uses_default_schema_when_defer_pr_unset(self):
+        env = {k: v for k, v in os.environ.items() if k != "WORCA_DEFER_PR"}
+        with patch.dict(os.environ, env, clear=True):
+            call_str = self._invoke({})
+        assert ".claude/worca/schemas/pr.json" in call_str
+        assert "pr-deferred.json" not in call_str
+
+    def test_pr_stage_uses_deferred_schema_when_defer_pr_is_one(self):
+        call_str = self._invoke({"WORCA_DEFER_PR": "1"})
+        assert ".claude/worca/schemas/pr-deferred.json" in call_str
+
+    def test_pr_stage_uses_default_schema_when_defer_pr_is_zero(self):
+        """Only the exact string "1" opts in — matches compute_defer_pr's
+        contract that "0", "true", or any other value does not defer."""
+        call_str = self._invoke({"WORCA_DEFER_PR": "0"})
+        assert ".claude/worca/schemas/pr.json" in call_str
+        assert "pr-deferred.json" not in call_str
+
+    def test_non_pr_stage_never_uses_deferred_schema(self):
+        """Defensive: even if WORCA_DEFER_PR is set, non-PR stages must use
+        their own schema. The override is gated on stage == Stage.PR."""
+        plan_config = {"agent": "planner", "model": "claude-opus-4-6", "max_turns": 40, "schema": "plan.json"}
+        with patch.dict(os.environ, {"WORCA_DEFER_PR": "1"}, clear=False):
+            with patch("worca.orchestrator.runner.get_stage_config", return_value=plan_config):
+                with patch("worca.orchestrator.runner.run_agent", return_value={"ok": True}) as mock_run:
+                    run_stage(Stage.PLAN, {"prompt": "plan it"})
+        call_str = str(mock_run.call_args)
+        assert ".claude/worca/schemas/plan.json" in call_str
+        assert "pr-deferred.json" not in call_str
+
+
 def test_check_loop_limit_within_limit(tmp_path):
     settings = tmp_path / "settings.json"
     settings.write_text(json.dumps({"worca": {"loops": {"implement_test": 10}}}))

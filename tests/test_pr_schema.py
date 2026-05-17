@@ -8,13 +8,25 @@ import pytest
 import worca
 
 SCHEMA_PATH = os.path.join(os.path.dirname(worca.__file__), "schemas", "pr.json")
+DEFERRED_SCHEMA_PATH = os.path.join(os.path.dirname(worca.__file__), "schemas", "pr-deferred.json")
 
 PROVIDER_ENUM = ["github", "gitlab", "bitbucket", "azure_devops", "gitea", "gerrit", "other"]
+
+# The Claude API rejects custom-tool input_schemas with top-level allOf/oneOf/anyOf.
+# Both pr.json and pr-deferred.json are sent to the API as structured-output tools,
+# so neither may use these keywords at the root.
+FORBIDDEN_TOP_LEVEL_COMBINATORS = ("allOf", "oneOf", "anyOf")
 
 
 @pytest.fixture
 def schema():
     with open(SCHEMA_PATH) as f:
+        return json.load(f)
+
+
+@pytest.fixture
+def deferred_schema():
+    with open(DEFERRED_SCHEMA_PATH) as f:
         return json.load(f)
 
 
@@ -146,11 +158,25 @@ class TestSuccessOutcome:
         jsonschema.validate(doc, schema)
 
 
+class TestNonDeferredSuccessOnDefaultSchema:
+    """pr.json is the standalone/fleet schema. It must still require
+    pr_number+pr_url on success even when the deferred field is absent or
+    explicitly false — those runs were never deferred."""
+
+    def test_non_deferred_success_still_requires_pr_fields(self, schema):
+        doc = {
+            "outcome": "success",
+            "commit_sha": "abc1234",
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, schema)
+
+
 class TestDeferredOutcome:
     """Workspace child guardian short-circuits PR creation (WORCA_DEFER_PR=1).
-    Schema must accept `deferred: true` outputs that have commit_sha but no
-    pr_number/pr_url, while still rejecting non-deferred success outputs
-    that are missing those fields."""
+    The orchestrator selects pr-deferred.json instead of pr.json for these
+    runs — the two-schema split keeps each schema flat so the Claude API
+    accepts both as custom-tool input_schemas."""
 
     def _deferred_doc(self):
         return {
@@ -159,55 +185,64 @@ class TestDeferredOutcome:
             "commit_sha": "abc1234",
         }
 
-    def test_deferred_success_without_pr_fields_valid(self, schema):
-        jsonschema.validate(self._deferred_doc(), schema)
+    def test_deferred_success_without_pr_fields_valid(self, deferred_schema):
+        jsonschema.validate(self._deferred_doc(), deferred_schema)
 
-    def test_deferred_success_still_requires_commit_sha(self, schema):
+    def test_deferred_success_still_requires_commit_sha(self, deferred_schema):
         doc = self._deferred_doc()
         del doc["commit_sha"]
         with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+            jsonschema.validate(doc, deferred_schema)
 
-    def test_deferred_success_must_not_include_pr_number(self, schema):
-        """Belt-and-suspenders: `deferred: true` semantically means no PR
-        was created here. Including pr_number would contradict the
-        discriminator. Schema enforces 'not' to catch a misbehaving agent."""
+    def test_deferred_success_must_not_include_pr_number(self, deferred_schema):
+        """`deferred: true` semantically means no PR was created here.
+        Including pr_number would contradict the discriminator. Enforced
+        via additionalProperties:false — pr_number/pr_url aren't declared
+        on this schema, so any extra field is rejected."""
         doc = self._deferred_doc()
         doc["pr_number"] = 7
         with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+            jsonschema.validate(doc, deferred_schema)
 
-    def test_deferred_success_must_not_include_pr_url(self, schema):
+    def test_deferred_success_must_not_include_pr_url(self, deferred_schema):
         doc = self._deferred_doc()
         doc["pr_url"] = "https://github.com/org/repo/pull/7"
         with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+            jsonschema.validate(doc, deferred_schema)
 
-    def test_deferred_false_requires_pr_fields_like_normal_success(self, schema):
-        """`deferred: false` must NOT relax the contract — only `true` opts
-        in. Catches a misconfigured guardian that emits the flag without
-        actually deferring."""
+    def test_deferred_must_be_true_not_false(self, deferred_schema):
+        """`deferred: false` is rejected by the deferred schema — the
+        orchestrator only routes a run here when it intends to defer, and
+        the discriminator must echo that. Catches a misbehaving agent that
+        emits the wrong flag on this branch."""
         doc = {
             "outcome": "success",
             "deferred": False,
             "commit_sha": "abc1234",
         }
         with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+            jsonschema.validate(doc, deferred_schema)
 
-    def test_non_deferred_success_still_requires_pr_fields(self, schema):
-        """Regression: dropping deferred entirely must still require
-        pr_number + pr_url for outcome=success."""
-        doc = {
-            "outcome": "success",
-            "commit_sha": "abc1234",
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(doc, schema)
+    def test_deferred_property_required_const_true(self, deferred_schema):
+        assert "deferred" in deferred_schema["properties"]
+        assert deferred_schema["properties"]["deferred"]["type"] == "boolean"
+        assert deferred_schema["properties"]["deferred"]["const"] is True
 
-    def test_deferred_property_documented(self, schema):
-        assert "deferred" in schema["properties"]
-        assert schema["properties"]["deferred"]["type"] == "boolean"
+
+class TestAPICompatibility:
+    """Both schemas must be acceptable as custom-tool input_schemas for the
+    Claude API. The API rejects any top-level allOf/oneOf/anyOf — regression
+    guard against re-introducing them."""
+
+    @pytest.mark.parametrize("path", [SCHEMA_PATH, DEFERRED_SCHEMA_PATH])
+    def test_no_top_level_forbidden_combinators(self, path):
+        with open(path) as f:
+            doc = json.load(f)
+        for kw in FORBIDDEN_TOP_LEVEL_COMBINATORS:
+            assert kw not in doc, (
+                f"{os.path.basename(path)} has top-level '{kw}', which the "
+                f"Claude API rejects on custom-tool input_schemas"
+            )
 
 
 class TestRejectOutcome:

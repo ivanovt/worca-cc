@@ -16,7 +16,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from worca.orchestrator.guardian_context import build_guardian_context
+from worca.orchestrator.guardian_context import build_guardian_context, compute_defer_pr
 from worca.orchestrator.error_classifier import (
     classify_error, record_failure, record_success,
     should_halt, get_retry_delay, get_circuit_breaker_state,
@@ -1078,6 +1078,12 @@ def run_stage(
     is the full claude CLI JSON response for logging.
     """
     config = get_stage_config(stage, settings_path=settings_path)
+    # PR stage uses a different schema when the run defers PR creation to a
+    # parent orchestrator (workspace child). Two schemas instead of one
+    # conditional schema keeps each flat — the Claude API rejects custom
+    # tools whose input_schema has top-level allOf/oneOf/anyOf.
+    if stage == Stage.PR and compute_defer_pr(os.environ):
+        config = {**config, "schema": "pr-deferred.json"}
     max_turns = config["max_turns"] * msize
     raw_prompt = context.get("prompt", "")
     prompt = prompt_override if prompt_override is not None else raw_prompt
