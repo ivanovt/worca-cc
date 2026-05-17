@@ -15,7 +15,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createWorkspaceRouter } from './workspace-routes.js';
+import {
+  createWorkspaceRouter,
+  deriveWorkspaceStatus,
+  effectiveWorkspaceStatus,
+} from './workspace-routes.js';
 
 const VALID_WS_ID = 'ws_202605120809_abcdef01';
 
@@ -1096,6 +1100,138 @@ describe('Workspace Routes', () => {
       expect(res.status).toBe(200);
       const text = await res.text();
       expect(text).toContain('Context for api');
+    });
+  });
+});
+
+// ─── status derivation (parity with fleet) ──────────────────────────────
+
+describe('deriveWorkspaceStatus', () => {
+  it('returns "running" for empty list (children not yet dispatched)', () => {
+    expect(deriveWorkspaceStatus([])).toBe('running');
+  });
+
+  it('returns "running" when any child is in flight', () => {
+    expect(deriveWorkspaceStatus(['running', 'completed'])).toBe('running');
+    expect(deriveWorkspaceStatus(['paused', 'completed'])).toBe('running');
+    expect(deriveWorkspaceStatus(['resuming', 'completed'])).toBe('running');
+  });
+
+  it('returns "completed" only when every child is completed', () => {
+    expect(deriveWorkspaceStatus(['completed', 'completed', 'completed'])).toBe(
+      'completed',
+    );
+  });
+
+  it('returns "failed" when any child failed and none are running', () => {
+    expect(deriveWorkspaceStatus(['completed', 'failed', 'completed'])).toBe(
+      'failed',
+    );
+    expect(
+      deriveWorkspaceStatus(['completed', 'setup_failed', 'completed']),
+    ).toBe('failed');
+    expect(
+      deriveWorkspaceStatus(['completed', 'unrecoverable', 'completed']),
+    ).toBe('failed');
+  });
+
+  it('returns "failed" when any child is blocked and none running', () => {
+    // blocked children are terminal (an upstream dep failed) → workspace
+    // can't be "completed" while one is blocked
+    expect(deriveWorkspaceStatus(['completed', 'blocked', 'completed'])).toBe(
+      'failed',
+    );
+  });
+
+  it('treats interrupted / cancelled as terminal-but-not-failure', () => {
+    // all terminal, no completed and no failed → not 'completed' but
+    // not 'failed' either; falls through to 'failed' in our model since
+    // the workspace can't have succeeded
+    expect(
+      deriveWorkspaceStatus(['interrupted', 'completed', 'completed']),
+    ).toBe('failed');
+  });
+
+  it('returns "running" when some children are pending (not yet dispatched)', () => {
+    // empty/unknown status counts as not-yet-dispatched → still running
+    expect(deriveWorkspaceStatus(['completed', 'pending'])).toBe('running');
+  });
+});
+
+describe('effectiveWorkspaceStatus', () => {
+  it('preserves sticky `planning` regardless of child state', () => {
+    expect(
+      effectiveWorkspaceStatus({ status: 'planning' }, ['running']),
+    ).toEqual({ status: 'planning', halt_reason: null });
+  });
+
+  it('preserves sticky `integration_testing` regardless of child state', () => {
+    expect(
+      effectiveWorkspaceStatus({ status: 'integration_testing' }, [
+        'completed',
+        'completed',
+      ]),
+    ).toEqual({ status: 'integration_testing', halt_reason: null });
+  });
+
+  it('preserves sticky `completed` even if a child polls as running', () => {
+    // Mirrors fleet: once the orchestrator marked the workspace done, a
+    // late child write doesn't reopen it. Resume / Re-run is the only
+    // way out of a terminal state.
+    expect(
+      effectiveWorkspaceStatus({ status: 'completed' }, ['running']),
+    ).toEqual({ status: 'completed', halt_reason: null });
+  });
+
+  it('preserves sticky `failed`', () => {
+    expect(effectiveWorkspaceStatus({ status: 'failed' }, ['running'])).toEqual(
+      { status: 'failed', halt_reason: null },
+    );
+  });
+
+  it('preserves sticky `integration_failed`', () => {
+    expect(
+      effectiveWorkspaceStatus({ status: 'integration_failed' }, [
+        'completed',
+      ]),
+    ).toEqual({ status: 'integration_failed', halt_reason: null });
+  });
+
+  it('preserves sticky `halted` with halt_reason', () => {
+    expect(
+      effectiveWorkspaceStatus(
+        { status: 'halted', halt_reason: 'circuit_breaker' },
+        ['running'],
+      ),
+    ).toEqual({ status: 'halted', halt_reason: 'circuit_breaker' });
+  });
+
+  it('preserves sticky `paused`', () => {
+    expect(effectiveWorkspaceStatus({ status: 'paused' }, ['running'])).toEqual(
+      { status: 'paused', halt_reason: null },
+    );
+  });
+
+  it('re-derives only when current status is `running`', () => {
+    expect(
+      effectiveWorkspaceStatus({ status: 'running' }, [
+        'completed',
+        'completed',
+        'completed',
+      ]),
+    ).toEqual({ status: 'completed', halt_reason: null });
+    expect(
+      effectiveWorkspaceStatus({ status: 'running' }, ['running']),
+    ).toEqual({ status: 'running', halt_reason: null });
+    expect(
+      effectiveWorkspaceStatus({ status: 'running' }, ['failed', 'completed']),
+    ).toEqual({ status: 'failed', halt_reason: null });
+  });
+
+  it('treats missing manifest.status as `running`', () => {
+    expect(effectiveWorkspaceStatus({}, ['completed', 'completed'])).toEqual({
+      status: 'completed',
+      halt_reason: null,
     });
   });
 });

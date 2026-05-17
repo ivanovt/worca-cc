@@ -298,6 +298,149 @@ function _readChildStatus(child) {
   }
 }
 
+// ─── workspace status derivation ────────────────────────────────────────
+// Mirrors fleet-routes.js deriveFleetStatus / effectiveFleetStatus /
+// reconcileFleetStatus. The workspace orchestrator only writes status at
+// a handful of fixed points (DagExecutor finishing, integration test
+// finishing). If anything happens to child states between those writes —
+// a child re-launches, a sibling pipeline lands late, the orchestrator
+// process dies after marking COMPLETED — the stored manifest goes stale
+// and the badge lies. Re-derive on every GET, persist on change, treat
+// sticky states as already-decided.
+//
+// The workspace state machine has more phases than fleet:
+//   - `planning` and `integration_testing` are orchestrator-driven phases
+//     that should NOT be overridden by child polling (the children's
+//     statuses don't change during these phases, but the orchestrator's
+//     phase semantics do)
+//   - `integration_failed` is sticky like `failed` — children all done,
+//     integration test was the failure
+// Only `running` reconciles against live children, same as fleet's
+// `running` / `resuming`.
+
+const _CHILD_RUNNING_STATES = new Set(['running', 'resuming', 'paused']);
+const _CHILD_FAILURE_STATES = new Set([
+  'failed',
+  'setup_failed',
+  'unrecoverable',
+]);
+const _CHILD_TERMINAL_STATES = new Set([
+  'completed',
+  'interrupted',
+  'cancelled',
+  'blocked',
+  ..._CHILD_FAILURE_STATES,
+]);
+
+// Statuses we never re-derive — once the orchestrator (or operator) has
+// declared them, the value sticks until a Resume / Re-run flow clears it.
+const _STICKY_WORKSPACE_STATES = new Set([
+  'planning',
+  'integration_testing',
+  'completed',
+  'failed',
+  'integration_failed',
+  'halted',
+  'paused',
+  'blocked',
+]);
+
+/**
+ * Pure derivation of workspace status from a flat list of child statuses.
+ * Used only when the manifest's current status is `running` — every other
+ * state is sticky.
+ *
+ * @param {string[]} childStatuses
+ * @returns {string} 'running' | 'completed' | 'failed'
+ */
+export function deriveWorkspaceStatus(childStatuses) {
+  if (!childStatuses.length) return 'running';
+  const total = childStatuses.length;
+  const runningCount = childStatuses.filter((s) =>
+    _CHILD_RUNNING_STATES.has(s),
+  ).length;
+  const completedCount = childStatuses.filter((s) => s === 'completed').length;
+  const failedCount = childStatuses.filter((s) =>
+    _CHILD_FAILURE_STATES.has(s),
+  ).length;
+  const terminalCount = childStatuses.filter((s) =>
+    _CHILD_TERMINAL_STATES.has(s),
+  ).length;
+
+  // Any child still in flight → workspace is still running.
+  if (runningCount > 0) return 'running';
+
+  // All dispatched children are terminal.
+  if (terminalCount === total) {
+    // `failed` wins over `completed` even if just one child failed —
+    // matches fleet behaviour and the orchestrator's own DAG executor
+    // logic (any child failure in any tier flips the workspace to
+    // failed).
+    if (failedCount > 0 || completedCount < total) return 'failed';
+    return 'completed';
+  }
+
+  // Pending / untracked children not yet dispatched.
+  return 'running';
+}
+
+/**
+ * Combine stored manifest status with live child statuses to get the
+ * value the API should report. Sticky states pass through unchanged.
+ * Persists nothing — see reconcileWorkspaceStatus for the write variant.
+ *
+ * @param {object} manifest
+ * @param {string[]} childStatuses
+ * @returns {{ status: string, halt_reason: string|null }}
+ */
+export function effectiveWorkspaceStatus(manifest, childStatuses) {
+  const current = manifest.status ?? 'running';
+  if (_STICKY_WORKSPACE_STATES.has(current)) {
+    return { status: current, halt_reason: manifest.halt_reason ?? null };
+  }
+  // current === 'running' — derive from children.
+  return {
+    status: deriveWorkspaceStatus(childStatuses),
+    halt_reason: manifest.halt_reason ?? null,
+  };
+}
+
+/**
+ * Reconcile manifest.status against live child statuses and persist when
+ * the derived value differs from what's stored. Returns the effective
+ * status so callers can fold it into their response.
+ *
+ * @param {object} manifest
+ * @returns {{ status: string, halt_reason: string|null }}
+ */
+function reconcileWorkspaceStatus(manifest) {
+  const childStatuses = (manifest.children ?? [])
+    .map((c) => enrichChildStatus(c).status)
+    .filter(Boolean);
+  const current = manifest.status ?? 'running';
+  const { status, halt_reason } = effectiveWorkspaceStatus(
+    manifest,
+    childStatuses,
+  );
+  const storedHalt = manifest.halt_reason ?? null;
+  if (status !== current || halt_reason !== storedHalt) {
+    manifest.status = status;
+    if (halt_reason != null) {
+      manifest.halt_reason = halt_reason;
+    } else if (status !== 'halted') {
+      manifest.halt_reason = null;
+    }
+    manifest.updated_at = new Date().toISOString();
+    try {
+      saveManifest(manifest);
+    } catch {
+      // Best-effort persistence — the derived value is still returned,
+      // and the next read re-derives it anyway.
+    }
+  }
+  return { status, halt_reason };
+}
+
 function aggregateCost(manifest) {
   let cost = 0;
   for (const child of manifest.children ?? []) {
@@ -929,12 +1072,18 @@ export function createWorkspaceRouter({
       for (const pointer of pointers) {
         const m = readManifest(workspaceRunsDir, pointer.workspace_id);
         if (!m) continue;
+        // Reconcile against live child statuses so the badge reflects
+        // what's actually happening instead of the orchestrator's last
+        // write. Sticky states (planning / integration_testing /
+        // completed / failed / halted / paused / integration_failed)
+        // pass through unchanged.
+        const { status, halt_reason } = reconcileWorkspaceStatus(m);
         runs.push({
           workspace_id: m.workspace_id,
           workspace_name: m.workspace_name,
           workspace_root: m.workspace_root,
-          status: m.status,
-          halt_reason: m.halt_reason ?? null,
+          status,
+          halt_reason,
           work_request: m.work_request,
           created_at: m.created_at,
           finished_at: _synthesizeFinishedAt(m),
@@ -960,6 +1109,11 @@ export function createWorkspaceRouter({
         .status(404)
         .json({ ok: false, error: `Workspace run "${id}" not found` });
     }
+    // Reconcile status against live child statuses before responding so
+    // detail-view consumers see the same effective status as the list.
+    // reconcileWorkspaceStatus mutates manifest.status / halt_reason in
+    // place and persists when changed.
+    reconcileWorkspaceStatus(manifest);
     const children = (manifest.children ?? []).map(enrichChildStatus);
     const cost_usd = aggregateCost(manifest);
     // Synthesize finished_at for terminal manifests so the UI can compute
