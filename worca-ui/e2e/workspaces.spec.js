@@ -269,8 +269,8 @@ test.describe('workspace creation flow', () => {
       repoParent,
     );
     expect(scanRes.ok).toBe(true);
-    expect(scanRes.repos).toHaveLength(3);
-    const repoNames = scanRes.repos.map((r) => r.name).sort();
+    expect(scanRes.projects).toHaveLength(3);
+    const repoNames = scanRes.projects.map((r) => r.name).sort();
     expect(repoNames).toEqual(['api-svc', 'shared-lib', 'web-app']);
 
     // Step 3: Create workspace with dependency graph
@@ -286,7 +286,7 @@ test.describe('workspace creation flow', () => {
       {
         name: 'my-first-workspace',
         parent_path: repoParent,
-        repos: [
+        projects: [
           { name: 'shared-lib', path: 'shared-lib', role: 'library', depends_on: [] },
           { name: 'api-svc', path: 'api-svc', role: 'service', depends_on: ['shared-lib'] },
           { name: 'web-app', path: 'web-app', role: 'frontend', depends_on: ['api-svc'] },
@@ -300,7 +300,7 @@ test.describe('workspace creation flow', () => {
       readFileSync(join(repoParent, 'workspace.json'), 'utf8'),
     );
     expect(wsJson.name).toBe('my-first-workspace');
-    expect(wsJson.repos).toHaveLength(3);
+    expect(wsJson.projects).toHaveLength(3);
 
     // Step 5: Verify the workspace appears in the listing
     const listRes = await page.evaluate(async () => {
@@ -310,7 +310,7 @@ test.describe('workspace creation flow', () => {
     expect(listRes.ok).toBe(true);
     expect(listRes.workspaces).toHaveLength(1);
     expect(listRes.workspaces[0].name).toBe('my-first-workspace');
-    expect(listRes.workspaces[0].repos).toHaveLength(3);
+    expect(listRes.workspaces[0].projects).toHaveLength(3);
   });
 });
 
@@ -392,8 +392,8 @@ test.describe('workspace run launch with guide upload', () => {
     expect(manifest.workspace_name).toBe('guided-ws');
     expect(manifest.status).toBe('planning');
     expect(manifest.dag.tiers).toHaveLength(2);
-    expect(manifest.dag.tiers[0].repos).toEqual(['backend']);
-    expect(manifest.dag.tiers[1].repos).toEqual(['frontend']);
+    expect(manifest.dag.tiers[0].projects).toEqual(['backend']);
+    expect(manifest.dag.tiers[1].projects).toEqual(['frontend']);
 
     // Verify guide was uploaded
     expect(manifest.guide).toBeTruthy();
@@ -450,9 +450,9 @@ test.describe('workspace tier progression on dashboard', () => {
       halt_reason: null,
       dag: {
         tiers: [
-          { tier: 0, repos: ['lib'], status: 'completed' },
-          { tier: 1, repos: ['api'], status: 'running' },
-          { tier: 2, repos: ['web'], status: 'pending' },
+          { tier: 0, projects: ['lib'], status: 'completed' },
+          { tier: 1, projects: ['api'], status: 'running' },
+          { tier: 2, projects: ['web'], status: 'pending' },
         ],
       },
       children: [
@@ -476,9 +476,9 @@ test.describe('workspace tier progression on dashboard', () => {
 
     // 3 tiers with correct ordering
     expect(m.dag.tiers).toHaveLength(3);
-    expect(m.dag.tiers[0]).toMatchObject({ tier: 0, repos: ['lib'], status: 'completed' });
-    expect(m.dag.tiers[1]).toMatchObject({ tier: 1, repos: ['api'], status: 'running' });
-    expect(m.dag.tiers[2]).toMatchObject({ tier: 2, repos: ['web'], status: 'pending' });
+    expect(m.dag.tiers[0]).toMatchObject({ tier: 0, projects: ['lib'], status: 'completed' });
+    expect(m.dag.tiers[1]).toMatchObject({ tier: 1, projects: ['api'], status: 'running' });
+    expect(m.dag.tiers[2]).toMatchObject({ tier: 2, projects: ['web'], status: 'pending' });
 
     // Children have correct tier assignments and statuses
     expect(m.children).toHaveLength(3);
@@ -552,8 +552,8 @@ test.describe('workspace halt, plan edit, and resume', () => {
       halt_reason: null,
       dag: {
         tiers: [
-          { tier: 0, repos: ['svc-a'], status: 'running' },
-          { tier: 1, repos: ['svc-b'], status: 'pending' },
+          { tier: 0, projects: ['svc-a'], status: 'running' },
+          { tier: 1, projects: ['svc-b'], status: 'pending' },
         ],
       },
       children: [
@@ -591,7 +591,7 @@ test.describe('workspace halt, plan edit, and resume', () => {
 
     // Step 2: Edit the plan via PUT endpoint
     const editedPlan = {
-      repos: [
+      projects: [
         { name: 'svc-a', instructions: 'Updated: Build v2 API endpoint.' },
         { name: 'svc-b', instructions: 'Updated: Build v2 consumer.' },
       ],
@@ -614,7 +614,7 @@ test.describe('workspace halt, plan edit, and resume', () => {
     const savedPlanPath = join(runDir, 'workspace-plan.json');
     expect(existsSync(savedPlanPath)).toBe(true);
     const savedPlan = JSON.parse(readFileSync(savedPlanPath, 'utf8'));
-    expect(savedPlan.repos[0].instructions).toBe(
+    expect(savedPlan.projects[0].instructions).toBe(
       'Updated: Build v2 API endpoint.',
     );
 
@@ -680,8 +680,8 @@ test.describe('workspace PR table', () => {
       halt_reason: null,
       dag: {
         tiers: [
-          { tier: 0, repos: ['api'], status: 'completed' },
-          { tier: 1, repos: ['web'], status: 'completed' },
+          { tier: 0, projects: ['api'], status: 'completed' },
+          { tier: 1, projects: ['web'], status: 'completed' },
         ],
       },
       children: [
@@ -777,8 +777,8 @@ test.describe('edit workspace.json flow', () => {
       return resp.json();
     });
     expect(initialRes.ok).toBe(true);
-    expect(initialRes.workspace.repos).toHaveLength(1);
-    expect(initialRes.workspace.repos[0].name).toBe('core');
+    expect(initialRes.workspace.projects).toHaveLength(1);
+    expect(initialRes.workspace.projects[0].name).toBe('core');
 
     // Edit workspace: add "cli" repo
     const editRes = await page.evaluate(async () => {
@@ -787,7 +787,7 @@ test.describe('edit workspace.json flow', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: 'edit-ws',
-          repos: [
+          projects: [
             { name: 'core', path: 'core', role: 'library', depends_on: [] },
             {
               name: 'cli',
@@ -806,8 +806,8 @@ test.describe('edit workspace.json flow', () => {
     const updatedWs = JSON.parse(
       readFileSync(join(repoParent, 'workspace.json'), 'utf8'),
     );
-    expect(updatedWs.repos).toHaveLength(2);
-    expect(updatedWs.repos.map((r) => r.name).sort()).toEqual(['cli', 'core']);
+    expect(updatedWs.projects).toHaveLength(2);
+    expect(updatedWs.projects.map((r) => r.name).sort()).toEqual(['cli', 'core']);
 
     // Launch a new workspace run — tiers should reflect the added repo
     const launchRes = await page.evaluate(async () => {
@@ -833,8 +833,8 @@ test.describe('edit workspace.json flow', () => {
     const m = manifestRes.manifest;
     // 2 tiers: core (no deps) in tier 0, cli (depends on core) in tier 1
     expect(m.dag.tiers).toHaveLength(2);
-    expect(m.dag.tiers[0].repos).toEqual(['core']);
-    expect(m.dag.tiers[1].repos).toEqual(['cli']);
+    expect(m.dag.tiers[0].projects).toEqual(['core']);
+    expect(m.dag.tiers[1].projects).toEqual(['cli']);
   });
 });
 
@@ -876,7 +876,7 @@ test.describe('sidebar workspace badge', () => {
       status: 'running',
       halt_reason: null,
       dag: {
-        tiers: [{ tier: 0, repos: ['svc'], status: 'running' }],
+        tiers: [{ tier: 0, projects: ['svc'], status: 'running' }],
       },
       children: [
         { repo: 'svc', run_id: 'run-svc-01', status: 'running', tier: 0 },
@@ -949,7 +949,7 @@ test.describe('workspace integration test re-run', () => {
       status: 'integration_failed',
       halt_reason: null,
       dag: {
-        tiers: [{ tier: 0, repos: ['svc'], status: 'completed' }],
+        tiers: [{ tier: 0, projects: ['svc'], status: 'completed' }],
       },
       children: [
         { repo: 'svc', run_id: 'run-svc-02', status: 'completed', tier: 0 },
@@ -1033,8 +1033,8 @@ test.describe('workspace context artifacts', () => {
       halt_reason: null,
       dag: {
         tiers: [
-          { tier: 0, repos: ['api'], status: 'completed' },
-          { tier: 1, repos: ['web'], status: 'running' },
+          { tier: 0, projects: ['api'], status: 'completed' },
+          { tier: 1, projects: ['web'], status: 'running' },
         ],
       },
       children: [
@@ -1110,7 +1110,7 @@ test.describe('workspace run relaunch', () => {
       status: 'completed',
       halt_reason: null,
       dag: {
-        tiers: [{ tier: 0, repos: ['svc'], status: 'completed' }],
+        tiers: [{ tier: 0, projects: ['svc'], status: 'completed' }],
       },
       children: [
         { repo: 'svc', run_id: 'run-svc-rl', status: 'completed', tier: 0 },
@@ -1177,7 +1177,7 @@ test.describe('workspace cycle detection', () => {
           body: JSON.stringify({
             name: 'cyclic-ws',
             parent_path,
-            repos: [
+            projects: [
               { name: 'a', path: 'a', role: 'default', depends_on: ['c'] },
               { name: 'b', path: 'b', role: 'default', depends_on: ['a'] },
               { name: 'c', path: 'c', role: 'default', depends_on: ['b'] },
@@ -1213,7 +1213,7 @@ test.describe('workspace cycle detection', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: 'cycle-edit-ws',
-          repos: [
+          projects: [
             { name: 'x', path: 'x', role: 'default', depends_on: ['y'] },
             { name: 'y', path: 'y', role: 'default', depends_on: ['x'] },
           ],
@@ -1270,7 +1270,7 @@ test.describe('workspace edit blocked by active runs', () => {
       status: 'running',
       halt_reason: null,
       dag: {
-        tiers: [{ tier: 0, repos: ['svc'], status: 'running' }],
+        tiers: [{ tier: 0, projects: ['svc'], status: 'running' }],
       },
       children: [],
       integration_test: { status: 'pending', exit_code: null, log_path: null },
@@ -1284,7 +1284,7 @@ test.describe('workspace edit blocked by active runs', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: 'active-ws',
-          repos: [
+          projects: [
             { name: 'svc', path: 'svc', role: 'service', depends_on: [] },
           ],
         }),
