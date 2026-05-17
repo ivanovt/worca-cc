@@ -166,7 +166,7 @@ Guide paths are resolved to absolute paths before dispatch. The guide is injecte
 |---|-------|--------------|
 | 1 | **Load** | `workspace.json` loaded, validated against schema, DAG computed |
 | 2 | **Manifest write** | Workspace ID generated (`ws_<yyyymmddhhmm>_<hex>`), manifest + pointer file written. From here the workspace is observable in the UI. |
-| 3 | **Master planner** | Opus agent reads every project's `CLAUDE.md` (capped at 4 KB per project), workspace topology, and work request. Produces a structured workspace plan with per-project sub-plans. Status: `planning` |
+| 3 | **Master planner** | A planner agent reads every project's `CLAUDE.md` (capped at 4 KB per project), workspace topology, and work request. Produces a structured workspace plan with per-project sub-plans. Status: `planning`. Agent and model configurable via `worca.agents.workspace_planner` in settings. |
 | 4 | **Plan validation** | Planner output validated against `workspace_plan.json` schema. Project names cross-checked against `workspace.json`. Plan files written to run directory. |
 | 5 | **DAG execution** | Tiers dispatched sequentially. Within each tier, child pipelines run in parallel via `run_worktree.py`. Between tiers, context artifacts are extracted and injected. Status: `running` |
 | 6 | **Integration test** | After all tiers complete, the user-defined integration test runs. Status: `integration_testing`. Failure → `integration_failed` (no PRs created). |
