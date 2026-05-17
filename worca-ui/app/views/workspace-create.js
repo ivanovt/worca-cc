@@ -369,11 +369,11 @@ function _parentDirSection(appState, { rerender } = {}) {
             `
             : nothing
         }
-        <span class="settings-field-hint">Directory containing all repositories in this workspace.</span>
+        <span class="settings-field-hint">Directory containing all projects in this workspace.</span>
       </div>
       ${
         scanStatus === 'scanning'
-          ? html`<div class="scan-spinner"><sl-spinner></sl-spinner> Scanning for git repositories…</div>`
+          ? html`<div class="scan-spinner"><sl-spinner></sl-spinner> Scanning for projects…</div>`
           : nothing
       }
       ${
@@ -390,7 +390,7 @@ function _repoChecklistSection({ rerender } = {}) {
 
   return html`
     <div class="new-run-section">
-      <h3 class="new-run-section-title">Repositories</h3>
+      <h3 class="new-run-section-title">Projects</h3>
       <div class="project-checklist">
         ${scannedProjects.map(
           (project) => html`
@@ -541,7 +541,7 @@ function _integrationSection({ rerender } = {}) {
               : null
           }
         ></sl-input>
-        <span class="settings-field-hint">Shell command run after all repos complete. Exit 0 = pass.</span>
+        <span class="settings-field-hint">Shell command run after all projects complete. Exit 0 = pass.</span>
       </div>
       <div class="settings-field">
         <label class="settings-label">Working directory (optional)</label>

@@ -155,17 +155,17 @@ function _wsChildRunIdSet(workspaces) {
 // child's tier depends on (any tier with index < child.tier).
 function _blockedTooltip(child, ws) {
   if (child.status !== 'blocked') return null;
-  const failedRepos = [];
+  const failedProjects = [];
   for (const c of ws.children || []) {
     if (
       c.tier < child.tier &&
       (c.status === 'failed' || c.status === 'setup_failed')
     ) {
-      failedRepos.push(c.repo);
+      failedProjects.push(c.project);
     }
   }
-  if (failedRepos.length === 0) return 'Blocked by upstream dependency';
-  return `Blocked: depends on ${failedRepos.join(', ')}`;
+  if (failedProjects.length === 0) return 'Blocked by upstream dependency';
+  return `Blocked: depends on ${failedProjects.join(', ')}`;
 }
 
 function _integrationTestVariant(status) {
@@ -229,7 +229,7 @@ function _renderWorkspaceCard(ws, { onNavigate } = {}) {
                     <span
                       class="tier-child ${statusClass(c.status)}"
                       title="${tooltip || c.status}"
-                    >${c.repo}</span>
+                    >${c.project}</span>
                   `;
                 })}
               </div>

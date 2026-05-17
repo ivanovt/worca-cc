@@ -360,7 +360,7 @@ function _projectsSection(appProjects, { rerender } = {}) {
             `,
           )}
         </sl-select>
-        <span class="settings-field-hint">Choose 2+ registered projects. Fleet runs apply one work-request to each, isolated per repo.</span>
+        <span class="settings-field-hint">Choose 2+ registered projects. Fleet runs apply one work-request to each, isolated per project.</span>
       </div>
     </div>
   `;
@@ -551,7 +551,7 @@ function _advancedSection({ rerender } = {}) {
                 : null
             }
           ></sl-input>
-          <span class="settings-field-hint">Branch the worktrees fork from and PRs target. Leave blank to use each repo's default.</span>
+          <span class="settings-field-hint">Branch the worktrees fork from and PRs target. Leave blank to use each project's default.</span>
           ${
             baseBranchValidating
               ? html`<div class="base-branch-validating"><sl-spinner></sl-spinner> Checking…</div>`
@@ -724,14 +724,14 @@ function _workspaceSelectSection(appState, { rerender } = {}) {
                 <a href="#/workspaces">Configuration → Workspaces</a>.
               </span>
             `
-            : html`<span class="settings-field-hint">Choose a workspace definition. Repos and dependencies are determined by the workspace.</span>`
+            : html`<span class="settings-field-hint">Choose a workspace definition. Projects and dependencies are determined by the workspace.</span>`
         }
       </div>
       ${
         workspaceData
           ? html`
             <div class="workspace-pinned-repos">
-              <label class="settings-label">Repositories (from workspace)</label>
+              <label class="settings-label">Projects (from workspace)</label>
               <div class="workspace-repo-tags">
                 ${workspaceData.projects.map(
                   (r) =>
@@ -908,7 +908,7 @@ function _initTimeoutSection({ rerender } = {}) {
             : null
         }
       ></sl-input>
-      <span class="settings-field-hint">Maximum time to wait for each repo's worca init to complete.</span>
+      <span class="settings-field-hint">Maximum time to wait for each project's worca init to complete.</span>
     </div>
   `;
 }
@@ -992,7 +992,7 @@ function _advancedWorkspaceSection({ rerender } = {}) {
                   : null
               }
             ></sl-input>
-            <span class="settings-field-hint">Branch the worktrees fork from and PRs target. Leave blank to use each repo's default.</span>
+            <span class="settings-field-hint">Branch the worktrees fork from and PRs target. Leave blank to use each project's default.</span>
           </div>
           ${
             nothing /* Branch template hidden — workspace branch_template

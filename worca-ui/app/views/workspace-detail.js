@@ -391,7 +391,7 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
   // button that opens the full content in a modal. Keeps the body
   // scannable instead of letting a multi-page <pre> dominate it.
   const summary = hasPlan
-    ? html`<span class="settings-field-hint">Generated workspace plan with per-repo breakdown.</span>`
+    ? html`<span class="settings-field-hint">Generated workspace plan with per-project breakdown.</span>`
     : html`<span class="settings-field-hint">No workspace plan available.</span>`;
 
   const planBody = planEditMode

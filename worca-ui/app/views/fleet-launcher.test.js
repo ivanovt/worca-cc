@@ -150,7 +150,7 @@ describe('fleetLauncherView — branch inputs', () => {
   it('base branch input has helper text about default branch', () => {
     resetLauncherState();
     const out = renderToString(fleetLauncherView({ projects: [] }, {}));
-    expect(out).toContain("each repo's default");
+    expect(out).toContain("each project's default");
   });
 });
 

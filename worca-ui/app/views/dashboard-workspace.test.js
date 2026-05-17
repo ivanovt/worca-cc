@@ -35,10 +35,10 @@ const runningWorkspace = {
     ],
   },
   children: [
-    { repo: 'shared-lib', run_id: 'ws-r1', status: 'completed', tier: 0 },
-    { repo: 'backend', run_id: 'ws-r2', status: 'completed', tier: 1 },
-    { repo: 'frontend', run_id: 'ws-r3', status: 'running', tier: 2 },
-    { repo: 'admin-app', run_id: 'ws-r4', status: 'running', tier: 2 },
+    { project: 'shared-lib', run_id: 'ws-r1', status: 'completed', tier: 0 },
+    { project: 'backend', run_id: 'ws-r2', status: 'completed', tier: 1 },
+    { project: 'frontend', run_id: 'ws-r3', status: 'running', tier: 2 },
+    { project: 'admin-app', run_id: 'ws-r4', status: 'running', tier: 2 },
   ],
   integration_test: null,
   created_at: '2026-04-01T10:00:00Z',
@@ -59,8 +59,8 @@ const completedWorkspace = {
     ],
   },
   children: [
-    { repo: 'types', run_id: 'ws-c1', status: 'completed', tier: 0 },
-    { repo: 'api', run_id: 'ws-c2', status: 'completed', tier: 1 },
+    { project: 'types', run_id: 'ws-c1', status: 'completed', tier: 0 },
+    { project: 'api', run_id: 'ws-c2', status: 'completed', tier: 1 },
   ],
   integration_test: { status: 'passed', exit_code: 0 },
   created_at: '2026-03-01T10:00:00Z',
@@ -81,8 +81,8 @@ const failedWorkspace = {
     ],
   },
   children: [
-    { repo: 'lib-a', run_id: 'ws-f1', status: 'completed', tier: 0 },
-    { repo: 'service-b', run_id: 'ws-f2', status: 'failed', tier: 1 },
+    { project: 'lib-a', run_id: 'ws-f1', status: 'completed', tier: 0 },
+    { project: 'service-b', run_id: 'ws-f2', status: 'failed', tier: 1 },
   ],
   integration_test: null,
   created_at: '2026-03-15T10:00:00Z',
@@ -260,8 +260,8 @@ describe('dashboardView - workspace blocked children', () => {
         ],
       },
       children: [
-        { repo: 'lib-core', run_id: 'br1', status: 'failed', tier: 0 },
-        { repo: 'web-app', run_id: 'br2', status: 'blocked', tier: 1 },
+        { project: 'lib-core', run_id: 'br1', status: 'failed', tier: 0 },
+        { project: 'web-app', run_id: 'br2', status: 'blocked', tier: 1 },
       ],
     };
     const state = { runs: {}, workspaces: [ws] };

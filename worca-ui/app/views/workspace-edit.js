@@ -310,10 +310,10 @@ function _repoChecklistSection({ rerender } = {}) {
 
   return html`
     <div class="new-run-section">
-      <h3 class="new-run-section-title">Repositories</h3>
+      <h3 class="new-run-section-title">Projects</h3>
       ${
         scanStatus === 'scanning'
-          ? html`<div class="ws-edit-scan-status"><sl-spinner></sl-spinner> Scanning ${parentPath} for additional repositories…</div>`
+          ? html`<div class="ws-edit-scan-status"><sl-spinner></sl-spinner> Scanning ${parentPath} for additional projects…</div>`
           : nothing
       }
       ${
@@ -477,7 +477,7 @@ function _integrationSection({ rerender } = {}) {
               : null
           }
         ></sl-input>
-        <span class="settings-field-hint">Shell command run after all repos complete. Exit 0 = pass.</span>
+        <span class="settings-field-hint">Shell command run after all projects complete. Exit 0 = pass.</span>
       </div>
       <div class="settings-field">
         <label class="settings-label">Working directory (optional)</label>
