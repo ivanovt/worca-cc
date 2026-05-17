@@ -32,15 +32,19 @@ import uuid
 from datetime import datetime, timezone
 
 from worca.orchestrator.events import dispatch_shell_hooks
+from worca.utils.paths import fleet_runs_dir as resolve_fleet_runs_dir
 from worca.utils.settings import load_settings
 
-_DEFAULT_FLEET_RUNS_DIR = os.path.expanduser("~/.worca/fleet-runs")
+# Module-level override slot.  See worca.utils.paths.fleet_runs_dir for
+# resolution precedence.  Defaulted to None and resolved lazily so tests
+# can set $WORCA_HOME (or patch this attribute) after import (issue #162).
+_DEFAULT_FLEET_RUNS_DIR: str | None = None
 
 
 def fleet_events_path(fleet_id: str, base_dir: str | None = None) -> str:
     """Return the absolute path to a fleet's event log."""
     if base_dir is None:
-        base_dir = _DEFAULT_FLEET_RUNS_DIR
+        base_dir = resolve_fleet_runs_dir(_DEFAULT_FLEET_RUNS_DIR)
     return os.path.join(base_dir, f"{fleet_id}.events.jsonl")
 
 

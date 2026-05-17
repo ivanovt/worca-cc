@@ -7,11 +7,10 @@
  */
 
 import { existsSync, readFileSync, watch } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { workspaceRunsDir as resolveWorkspaceRunsDir } from './paths.js';
 
 const WS_DEBOUNCE_MS = 200;
-const DEFAULT_WS_RUNS_DIR = join(homedir(), '.worca', 'workspace-runs');
 
 function readJson(path) {
   try {
@@ -39,8 +38,11 @@ function readManifestFromPointer(wsRunsDir, wsId) {
  */
 export function createWorkspaceManifestWatcher({
   broadcaster,
-  workspaceRunsDir = DEFAULT_WS_RUNS_DIR,
+  workspaceRunsDir: workspaceRunsDirArg,
 }) {
+  // Lazy resolution honors $WORCA_HOME (issue #162).
+  const workspaceRunsDir = resolveWorkspaceRunsDir(workspaceRunsDirArg);
+
   let fsWatcher = null;
   /** @type {Map<string, ReturnType<typeof setTimeout>>} */
   const debounceTimers = new Map();

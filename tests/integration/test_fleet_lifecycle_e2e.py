@@ -456,7 +456,11 @@ def test_fleet_pause_resume(tmp_path):
     env = _build_child_env(scenario)
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(fleet_runs_dir, fleet_id, fleet_id_short)
 
     children = []
@@ -545,7 +549,11 @@ def test_fleet_stop_then_resume(tmp_path):
     env = _build_child_env(scenario)
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(fleet_runs_dir, fleet_id, fleet_id_short)
 
     children = []
@@ -659,7 +667,11 @@ def test_fleet_circuit_breaker_trips_with_running_children(tmp_path):
     )
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(
         fleet_runs_dir, fleet_id, fleet_id_short, threshold=0.30, max_parallel=5
     )
@@ -745,7 +757,11 @@ def test_fleet_circuit_breaker_does_not_trip_below_threshold(tmp_path):
     )
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(
         fleet_runs_dir, fleet_id, fleet_id_short, threshold=0.30, max_parallel=5
     )
@@ -807,7 +823,11 @@ def test_fleet_interrupted_child_does_not_trip_breaker(tmp_path):
     env = _build_child_env(scenario)
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(
         fleet_runs_dir, fleet_id, fleet_id_short, threshold=0.30, max_parallel=3
     )
@@ -998,7 +1018,11 @@ def test_fleet_plan_propagates_to_children(tmp_path):
     env = _build_child_env(scenario)
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(fleet_runs_dir, fleet_id, fleet_id_short)
 
     children = []
@@ -1058,7 +1082,11 @@ def test_fleet_guide_injected_into_every_child(tmp_path):
     env = _build_child_env(scenario)
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(
         fleet_runs_dir, fleet_id, fleet_id_short, guide_paths=[str(guide)]
     )
@@ -1146,7 +1174,11 @@ def test_fleet_stale_pid_regression(tmp_path):
     env = _build_child_env(scenario)
 
     fleet_id, fleet_id_short = generate_fleet_id()
-    fleet_runs_dir = Path.home() / ".worca" / "fleet-runs"
+    # Resolve via the same lazy helper subprocesses use, so $WORCA_HOME
+    # (set by tests/conftest.py to a session tmp dir) keeps writes out
+    # of the developer's real ~/.worca/ (issue #162).
+    from worca.utils.paths import fleet_runs_dir as _resolve_fleet_runs_dir
+    fleet_runs_dir = Path(_resolve_fleet_runs_dir())
     manifest = _write_initial_manifest(fleet_runs_dir, fleet_id, fleet_id_short)
 
     run_id = None

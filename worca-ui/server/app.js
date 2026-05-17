@@ -13,6 +13,7 @@ import { createFleetRouter } from './fleet-routes.js';
 import { RAW_BODY } from './integrations/index.js';
 import { verify } from './integrations/verify.js';
 import { LaunchLock } from './launch-lock.js';
+import { fleetRunsDir, workspaceRunsDir, workspacesDir } from './paths.js';
 import { createPreferencesRouter } from './preferences-routes.js';
 import { ProcessManager } from './process-manager.js';
 import { scanDirectory } from './project-registry.js';
@@ -578,7 +579,7 @@ export function createApp(options = {}) {
     app.use(
       '/api/fleet-runs',
       createFleetRouter({
-        fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
+        fleetRunsDir: fleetRunsDir(),
         prefsDir,
         runCleanup: (id) => runWorcaCleanupSubprocess('--fleet-id', id),
         // Spawn run_fleet.py in a detached subprocess so the route can return
@@ -646,8 +647,8 @@ export function createApp(options = {}) {
     // Workspace routers — both definitions (/api/workspaces) and runs
     // (/api/workspace-runs). The router factory exposes them as a pair.
     const workspaceRouters = createWorkspaceRouter({
-      workspaceRunsDir: join(homedir(), '.worca', 'workspace-runs'),
-      workspacesDir: join(homedir(), '.worca', 'workspaces.d'),
+      workspaceRunsDir: workspaceRunsDir(),
+      workspacesDir: workspacesDir(),
       runCleanup: (id) => runWorcaCleanupSubprocess('--workspace-id', id),
       // Spawn run_workspace.py in a detached subprocess, mirroring the fleet
       // dispatcher. We pass --workspace-id so the script reuses the manifest

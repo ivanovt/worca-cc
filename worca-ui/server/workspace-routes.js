@@ -20,13 +20,14 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Router } from 'express';
 import { WORKSPACE_TERMINAL } from '../app/utils/status-constants.js';
+import {
+  workspaceRunsDir as resolveWorkspaceRunsDir,
+  workspacesDir as resolveWorkspacesDir,
+} from './paths.js';
 
-const DEFAULT_WS_RUNS_DIR = join(homedir(), '.worca', 'workspace-runs');
-const DEFAULT_WORKSPACES_DIR = join(homedir(), '.worca', 'workspaces.d');
 const GUIDE_CAP_BYTES_DEFAULT = 64 * 1024;
 
 const WS_ID_RE = /^ws_\d{12}_[0-9a-f]{1,32}$/;
@@ -594,8 +595,8 @@ function defaultRunIntegrationTest(_manifest) {
 // ─── router factory ────────────────────────────────────────────────────────
 
 export function createWorkspaceRouter({
-  workspaceRunsDir = DEFAULT_WS_RUNS_DIR,
-  workspacesDir = DEFAULT_WORKSPACES_DIR,
+  workspaceRunsDir: workspaceRunsDirArg,
+  workspacesDir: workspacesDirArg,
   dispatchWorkspace = null,
   haltWorkspace = defaultHaltWorkspace,
   runCleanup = defaultRunCleanup,
@@ -604,6 +605,10 @@ export function createWorkspaceRouter({
   runIntegrationTest = defaultRunIntegrationTest,
   guideCapBytes = GUIDE_CAP_BYTES_DEFAULT,
 } = {}) {
+  // Lazy resolution honors $WORCA_HOME (issue #162).
+  const workspaceRunsDir = resolveWorkspaceRunsDir(workspaceRunsDirArg);
+  const workspacesDir = resolveWorkspacesDir(workspacesDirArg);
+
   const workspaces = Router();
   const workspaceRuns = Router();
 

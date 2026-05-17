@@ -6,6 +6,8 @@ import os
 import re
 import tempfile
 
+from worca.utils.paths import worca_home
+
 logger = logging.getLogger(__name__)
 
 _SLUG_RE = re.compile(r"^[a-z0-9_-]{1,64}$", re.IGNORECASE)
@@ -18,13 +20,21 @@ def slugify(name: str) -> str:
     return slug[:64]
 
 
-def auto_register_project(project_root: str, prefs_dir: str = "~/.worca") -> None:
+def auto_register_project(project_root: str, prefs_dir: str | None = None) -> None:
     """Register the current project in ~/.worca/projects.d/ if not already registered.
+
+    ``prefs_dir`` defaults to ``$WORCA_HOME`` (falling back to ``~/.worca``)
+    via the lazy resolver in ``worca.utils.paths``.  Honoring the env var
+    keeps subprocess-spawned pipelines from writing into the developer's
+    real home directory during test runs (issue #162).
 
     Non-fatal — catches and logs all errors.
     """
     try:
-        prefs_dir = os.path.expanduser(prefs_dir)
+        if prefs_dir is None:
+            prefs_dir = worca_home()
+        else:
+            prefs_dir = os.path.expanduser(prefs_dir)
         projects_dir = os.path.join(prefs_dir, "projects.d")
         os.makedirs(projects_dir, exist_ok=True)
 

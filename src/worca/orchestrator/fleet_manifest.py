@@ -14,9 +14,17 @@ from worca.state.status import (
     PipelineStatus, FleetStatus, FLEET_STICKY,
     PIPELINE_ACTIVE, PIPELINE_FAILURE, PIPELINE_ALL_TERMINAL,
 )
+from worca.utils.paths import fleet_runs_dir
 
 
-_FLEET_RUNS_DIR = os.path.expanduser("~/.worca/fleet-runs")
+# Module-level override slot.  Resolution precedence (see paths.fleet_runs_dir):
+#   1. _FLEET_RUNS_DIR if set (typically via ``mock.patch`` in tests)
+#   2. $WORCA_HOME/fleet-runs
+#   3. ~/.worca/fleet-runs
+# Defaulting to None — and resolving lazily inside the helpers below — avoids
+# the module-load-time capture that leaked test state into the real home
+# directory (issue #162).
+_FLEET_RUNS_DIR: str | None = None
 
 _RUNNING_STATES = PIPELINE_ACTIVE
 _FAILURE_STATES = PIPELINE_FAILURE
@@ -40,7 +48,7 @@ def generate_fleet_id(*, now=None) -> tuple:
 def fleet_manifest_path(fleet_id: str, base_dir: str = None) -> str:
     """Return absolute path to the fleet manifest JSON file."""
     if base_dir is None:
-        base_dir = _FLEET_RUNS_DIR
+        base_dir = fleet_runs_dir(_FLEET_RUNS_DIR)
     return os.path.join(base_dir, f"{fleet_id}.json")
 
 

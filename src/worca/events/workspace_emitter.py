@@ -27,9 +27,13 @@ import uuid
 from datetime import datetime, timezone
 
 from worca.orchestrator.events import dispatch_shell_hooks
+from worca.utils.paths import workspace_runs_dir as resolve_workspace_runs_dir
 from worca.utils.settings import load_settings
 
-_DEFAULT_WORKSPACE_RUNS_DIR = os.path.expanduser("~/.worca/workspace-runs")
+# Module-level override slot.  See worca.utils.paths.workspace_runs_dir for
+# resolution precedence.  Defaulted to None and resolved lazily so tests
+# can set $WORCA_HOME (or patch this attribute) after import (issue #162).
+_DEFAULT_WORKSPACE_RUNS_DIR: str | None = None
 
 
 def workspace_events_path(
@@ -37,7 +41,7 @@ def workspace_events_path(
 ) -> str:
     """Return the absolute path to a workspace's event log."""
     if base_dir is None:
-        base_dir = _DEFAULT_WORKSPACE_RUNS_DIR
+        base_dir = resolve_workspace_runs_dir(_DEFAULT_WORKSPACE_RUNS_DIR)
     return os.path.join(base_dir, f"{workspace_id}.events.jsonl")
 
 
