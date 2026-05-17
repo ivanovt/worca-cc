@@ -146,6 +146,70 @@ class TestSuccessOutcome:
         jsonschema.validate(doc, schema)
 
 
+class TestDeferredOutcome:
+    """Workspace child guardian short-circuits PR creation (WORCA_DEFER_PR=1).
+    Schema must accept `deferred: true` outputs that have commit_sha but no
+    pr_number/pr_url, while still rejecting non-deferred success outputs
+    that are missing those fields."""
+
+    def _deferred_doc(self):
+        return {
+            "outcome": "success",
+            "deferred": True,
+            "commit_sha": "abc1234",
+        }
+
+    def test_deferred_success_without_pr_fields_valid(self, schema):
+        jsonschema.validate(self._deferred_doc(), schema)
+
+    def test_deferred_success_still_requires_commit_sha(self, schema):
+        doc = self._deferred_doc()
+        del doc["commit_sha"]
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, schema)
+
+    def test_deferred_success_must_not_include_pr_number(self, schema):
+        """Belt-and-suspenders: `deferred: true` semantically means no PR
+        was created here. Including pr_number would contradict the
+        discriminator. Schema enforces 'not' to catch a misbehaving agent."""
+        doc = self._deferred_doc()
+        doc["pr_number"] = 7
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, schema)
+
+    def test_deferred_success_must_not_include_pr_url(self, schema):
+        doc = self._deferred_doc()
+        doc["pr_url"] = "https://github.com/org/repo/pull/7"
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, schema)
+
+    def test_deferred_false_requires_pr_fields_like_normal_success(self, schema):
+        """`deferred: false` must NOT relax the contract — only `true` opts
+        in. Catches a misconfigured guardian that emits the flag without
+        actually deferring."""
+        doc = {
+            "outcome": "success",
+            "deferred": False,
+            "commit_sha": "abc1234",
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, schema)
+
+    def test_non_deferred_success_still_requires_pr_fields(self, schema):
+        """Regression: dropping deferred entirely must still require
+        pr_number + pr_url for outcome=success."""
+        doc = {
+            "outcome": "success",
+            "commit_sha": "abc1234",
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, schema)
+
+    def test_deferred_property_documented(self, schema):
+        assert "deferred" in schema["properties"]
+        assert schema["properties"]["deferred"]["type"] == "boolean"
+
+
 class TestRejectOutcome:
     def test_reject_without_commit_sha_valid(self, schema):
         jsonschema.validate(_reject_doc(), schema)

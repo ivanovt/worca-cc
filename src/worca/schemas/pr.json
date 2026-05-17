@@ -2,9 +2,13 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PROutput",
   "type": "object",
-  "required": ["outcome", "pr_number", "pr_url"],
+  "required": ["outcome"],
   "properties": {
     "outcome": { "type": "string", "enum": ["success", "reject"] },
+    "deferred": {
+      "type": "boolean",
+      "description": "True when the run defers PR creation to a parent orchestrator (workspace child with WORCA_DEFER_PR=1). When true, pr_number and pr_url are not produced by this run."
+    },
     "pr_number": { "type": "integer" },
     "pr_url": { "type": "string" },
     "commit_sha": { "type": "string", "minLength": 7 },
@@ -19,10 +23,41 @@
       "enum": ["pending", "approved", "changes_requested", "rejected"]
     }
   },
-  "if": {
-    "properties": { "outcome": { "const": "success" } }
-  },
-  "then": {
-    "required": ["commit_sha"]
-  }
+  "allOf": [
+    {
+      "if": {
+        "properties": { "outcome": { "const": "success" } },
+        "required": ["outcome"]
+      },
+      "then": {
+        "required": ["commit_sha"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": { "const": "success" },
+          "deferred": { "const": true }
+        },
+        "required": ["outcome", "deferred"]
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["pr_number"] },
+            { "required": ["pr_url"] }
+          ]
+        }
+      },
+      "else": {
+        "if": {
+          "properties": { "outcome": { "const": "success" } },
+          "required": ["outcome"]
+        },
+        "then": {
+          "required": ["pr_number", "pr_url"]
+        }
+      }
+    }
+  ]
 }

@@ -83,6 +83,21 @@ class TestDeferPrRendering:
         # The skip-instruction must be explicit and unambiguous
         assert "Do not" in rendered or "do not" in rendered
 
+    def test_defer_pr_specifies_deferred_output_shape(self):
+        """The deferred branch must spec the JSON shape the orchestrator
+        expects: deferred:true + commit_sha, no pr_number/pr_url. Without
+        this the guardian would emit a malformed output that fails
+        pr.json validation and _verify_pr_stage."""
+        rendered = _render({"WORCA_DEFER_PR": "1"})
+        # Tells the model the discriminator field
+        assert "deferred: true" in rendered or "deferred=true" in rendered or "`deferred`" in rendered
+        # Tells the model to include commit_sha
+        assert "commit_sha" in rendered
+        # Tells the model NOT to include pr_number / pr_url
+        assert "pr_number" in rendered  # mentioned as "do not include"
+        assert "pr_url" in rendered
+        assert "Do NOT" in rendered or "Do not" in rendered or "do not" in rendered
+
     def test_defer_pr_zero_does_not_defer(self):
         """Only literal '1' should defer — '0' must render the PR-creation
         branch normally."""

@@ -19,7 +19,16 @@ Run `git add -A`, commit with a scoped conventional message (see CLAUDE.md for t
 {{#if defer_pr}}
 ### Step 2 — PR creation is deferred
 
-PR creation for this run is handled by a parent orchestrator after downstream gates complete. **Do not** call `gh pr create` (or any host equivalent). Return `outcome: success` once the commit and push have landed.
+PR creation for this run is handled by a parent orchestrator after downstream gates complete. **Do not** call `gh pr create` (or any host equivalent).
+
+Once the commit and push have landed, return this structured output:
+
+- `outcome: "success"`
+- `deferred: true` — discriminator; tells the orchestrator to skip pr_number/pr_url verification because no PR was created by this run.
+- `commit_sha: "<short or full SHA of the commit you made>"` — required so the orchestrator can verify HEAD actually moved.
+- Do NOT include `pr_number` or `pr_url`. The parent orchestrator creates the PR later and fills those in centrally.
+
+If the commit or push failed, return `outcome: "reject"` with a descriptive reason.
 {{else}}
 ### Step 2 — Open the PR
 

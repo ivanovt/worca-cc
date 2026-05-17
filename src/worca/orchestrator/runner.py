@@ -1187,11 +1187,19 @@ def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> O
 def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVerification:
     """Post-condition check after the PR stage reports success.
 
-    Validates four invariants:
-    1. stage_output is a structured dict carrying commit_sha, pr_url, pr_number.
+    Validates these invariants:
+    1. stage_output is a structured dict.
     2. git HEAD changed from baseline_head (a new commit was made).
     3. The reported commit_sha is a prefix of (or equal to) the actual HEAD SHA.
-    4. (Best-effort) `gh pr view <pr_number>` confirms the PR exists and its
+
+    When `stage_output.deferred is True` (workspace child with WORCA_DEFER_PR=1
+    — the parent orchestrator creates the PR centrally after the integration
+    test passes), only the three invariants above are checked. The guardian
+    legitimately has no pr_number / pr_url to report.
+
+    Otherwise the PR-creation invariants also apply:
+    4. stage_output carries pr_url + pr_number.
+    5. (Best-effort) `gh pr view <pr_number>` confirms the PR exists and its
        URL matches `pr_url`. Skipped silently when gh cannot run.
 
     Args:
@@ -1207,7 +1215,10 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
     if not isinstance(stage_output, dict):
         return PRVerification(ok=False, reason="stage output is not a structured dict")
 
-    for field in ("commit_sha", "pr_url", "pr_number"):
+    deferred = stage_output.get("deferred") is True
+
+    required = ["commit_sha"] if deferred else ["commit_sha", "pr_url", "pr_number"]
+    for field in required:
         if field not in stage_output:
             return PRVerification(ok=False, reason=f"missing required field: {field}")
 
@@ -1222,6 +1233,11 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
             ok=False,
             reason=f"commit sha mismatch: reported {reported_sha!r} but HEAD is {actual_head!r}",
         )
+
+    if deferred:
+        # Parent orchestrator will create + verify the PR centrally; no
+        # pr_number/pr_url to check here.
+        return PRVerification(ok=True, reason="")
 
     if gh_lookup is None:
         gh_lookup = _verify_pr_via_gh
