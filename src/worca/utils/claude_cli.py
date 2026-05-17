@@ -250,6 +250,7 @@ def process_stream(
     """
     result_event = None
     resolved_model = None
+    sticky_structured_output = None
 
     for raw_line in stdout:
         line = raw_line.strip()
@@ -279,10 +280,20 @@ def process_stream(
                 log_file.flush()
 
         if event.get("type") == "result":
+            # Task-notification auto-resumes (e.g. long pytest run dispatched
+            # as `run_in_background` Bash) emit extra `result` events with no
+            # structured_output. Keep the last one we saw so the silent
+            # resume can't clobber the real agent output (issue #163).
+            so = event.get("structured_output")
+            if so:
+                sticky_structured_output = so
             result_event = event
 
     if result_event is None:
         raise RuntimeError("No result event found in stream-json output")
+
+    if sticky_structured_output and not result_event.get("structured_output"):
+        result_event["structured_output"] = sticky_structured_output
 
     # Attach resolved model to result event if not already present
     if resolved_model and "model" not in result_event:

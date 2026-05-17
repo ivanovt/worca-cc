@@ -2,9 +2,15 @@
 
 import json
 import subprocess
+from io import StringIO
 from unittest.mock import patch, MagicMock
 
-from worca.utils.claude_cli import run_agent, build_command, AgentSubprocessError
+from worca.utils.claude_cli import (
+    AgentSubprocessError,
+    build_command,
+    process_stream,
+    run_agent,
+)
 
 
 # --- WORCA_CLAUDE_BIN env var override ---
@@ -389,3 +395,113 @@ def test_run_agent_handles_wait_timeout_after_stream_failure():
     # Critical: kill() was called, and wait() ran at least twice.
     assert mock_proc.kill.called
     assert len(wait_calls) >= 2
+
+
+# ---------------------------------------------------------------------------
+# process_stream: sticky structured_output across multiple result events
+# (Regression coverage for issue #163 — task-notification auto-resume.)
+# ---------------------------------------------------------------------------
+
+
+def _stream(*events) -> StringIO:
+    """Wrap a list of event dicts into an NDJSON StringIO for process_stream."""
+    return StringIO("\n".join(json.dumps(e) for e in events) + "\n")
+
+
+def test_process_stream_preserves_structured_output_across_task_notification_resume():
+    """Bug #163: when the tester dispatches long pytest runs as
+    `run_in_background` Bash tasks, the Claude CLI auto-resumes the session
+    on each task-notification, emitting an extra `result` event with no
+    `structured_output`. The previous implementation overwrote result_event
+    every time, so the silent task-notification event clobbered the real one
+    and downstream code defaulted `passed=False` / `failures=[]`.
+    """
+    first = {
+        "type": "result",
+        "structured_output": {"passed": True, "failures": []},
+        "total_cost_usd": 0.12,
+        "num_turns": 8,
+    }
+    task_notification_resume = {
+        "type": "result",
+        "origin": {"kind": "task-notification"},
+        "total_cost_usd": 0.13,
+        "num_turns": 9,
+        # NOTE: no structured_output — this is the bug trigger.
+    }
+    result = process_stream(_stream(first, task_notification_resume))
+
+    # structured_output must stick from the first result event
+    assert result["structured_output"] == {"passed": True, "failures": []}
+    # but cost / turns continue updating from the latest event
+    assert result["total_cost_usd"] == 0.13
+    assert result["num_turns"] == 9
+
+
+def test_process_stream_single_result_with_structured_output_passthrough():
+    """Sanity: the single-result happy path is unchanged."""
+    event = {
+        "type": "result",
+        "structured_output": {"passed": True, "failures": []},
+        "total_cost_usd": 0.05,
+    }
+    result = process_stream(_stream(event))
+    assert result["structured_output"] == {"passed": True, "failures": []}
+    assert result["total_cost_usd"] == 0.05
+
+
+def test_process_stream_no_structured_output_in_any_result():
+    """If no result event ever carries structured_output, we must NOT
+    invent one — the returned envelope simply lacks the key, exactly as
+    before. Stages that depend on it (e.g. Guardian prose fallback) will
+    handle it themselves.
+    """
+    first = {"type": "result", "total_cost_usd": 0.01}
+    second = {"type": "result", "total_cost_usd": 0.02}
+    result = process_stream(_stream(first, second))
+    assert "structured_output" not in result
+    # latest envelope wins for cost / turns
+    assert result["total_cost_usd"] == 0.02
+
+
+def test_process_stream_latest_structured_output_wins_when_both_have_one():
+    """If a later result event also carries a structured_output, it must
+    win — stickiness only kicks in when later events LACK one. Otherwise
+    we'd freeze the first SO forever and break legitimate updates.
+    """
+    first = {
+        "type": "result",
+        "structured_output": {"passed": False, "failures": ["x"]},
+        "total_cost_usd": 0.10,
+    }
+    second = {
+        "type": "result",
+        "structured_output": {"passed": True, "failures": []},
+        "total_cost_usd": 0.20,
+    }
+    result = process_stream(_stream(first, second))
+    assert result["structured_output"] == {"passed": True, "failures": []}
+    assert result["total_cost_usd"] == 0.20
+
+
+def test_process_stream_third_event_with_new_structured_output_wins():
+    """Three-result sequence: SO present, SO absent, SO present again.
+    The third event's SO wins — stickiness only fills the gap when later
+    events lack one, it doesn't permanently pin the first.
+    """
+    first = {
+        "type": "result",
+        "structured_output": {"passed": True, "failures": []},
+    }
+    second = {
+        "type": "result",
+        "origin": {"kind": "task-notification"},
+    }
+    third = {
+        "type": "result",
+        "structured_output": {"passed": False, "failures": ["regressed"]},
+        "total_cost_usd": 0.30,
+    }
+    result = process_stream(_stream(first, second, third))
+    assert result["structured_output"] == {"passed": False, "failures": ["regressed"]}
+    assert result["total_cost_usd"] == 0.30
