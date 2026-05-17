@@ -41,8 +41,7 @@ description, and surface it rather than silently resolving it.
 {{/if}}
 
 Address each issue above. Preserve all parts of the plan that were not flagged.
-Write the updated plan. In your JSON output, set `approved: true` to signal
-that the revised plan is ready for review.
+Write the updated plan.
 {{else}}
 Create a detailed implementation plan for the following work request.
 Start by reading CLAUDE.md for project context (tech stack, build/test commands, conventions).

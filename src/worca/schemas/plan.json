@@ -19,7 +19,6 @@
     },
     "test_strategy": { "type": "string" },
     "branch_name": { "type": "string" },
-    "approved": { "type": "boolean" },
     "guide_conflicts": {
       "type": "array",
       "items": {

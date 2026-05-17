@@ -372,8 +372,9 @@ def test_pipeline_calls_learn_on_pipeline_error(
 ):
     """On PipelineError, _run_learn_stage should be called with 'failure'."""
     settings_path, status_path = _setup_pipeline_mocks(tmp_path)
-    # Plan stage returns rejected → PipelineError("Plan not approved")
-    mock_run_stage.return_value = ({"approved": False}, {})
+    # Force the plan stage to raise PipelineError; the trigger doesn't matter,
+    # only that learn sees termination_type='failure'.
+    mock_run_stage.side_effect = PipelineError("Plan stage failed")
 
     with pytest.raises(PipelineError):
         run_pipeline(
