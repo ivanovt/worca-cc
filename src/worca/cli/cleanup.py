@@ -212,7 +212,8 @@ class FleetSource:
     def __init__(self, fleet_runs_dir: str = None):
         if fleet_runs_dir is None:
             from worca.orchestrator.fleet_manifest import _FLEET_RUNS_DIR
-            fleet_runs_dir = _FLEET_RUNS_DIR
+            from worca.utils.paths import fleet_runs_dir as resolve_fleet_runs_dir
+            fleet_runs_dir = resolve_fleet_runs_dir(_FLEET_RUNS_DIR)
         self.fleet_runs_dir = fleet_runs_dir
 
     def list_eligible(self, filters: dict) -> list[dict]:

@@ -3,32 +3,56 @@
 Prevents test runs from polluting ~/.worca/projects.d/ with temporary project
 entries that would then show up in the global worca-ui.
 """
+import atexit
 import os
+import shutil
+import tempfile
 
 import pytest
 
 
-_WORCA_HOME = os.path.expanduser("~/.worca")
+# Snapshot the *real* ~/.worca/ root for the leak detector before we
+# redirect the env var.  The detector compares against this path; the
+# WORCA_HOME redirect protects the tests that use the lazy resolvers
+# in worca.utils.paths.
+_REAL_WORCA_HOME = os.path.expanduser("~/.worca")
+
+# Redirect $WORCA_HOME to a session-scoped tmp dir so any code path that
+# resolves through worca.utils.paths.worca_home() (including the lazy
+# fleet_runs_dir / workspace_runs_dir helpers) writes into the tmp dir
+# instead of the developer's real ~/.worca/.  Set unconditionally at
+# conftest import time — before any test module is collected — so that
+# even tests that read the env var at module load see the override.
+# Honors a caller-supplied WORCA_HOME (e.g. CI) instead of overriding it.
+if "WORCA_HOME" not in os.environ:
+    _session_worca_home = tempfile.mkdtemp(prefix="worca-test-home-")
+    os.environ["WORCA_HOME"] = _session_worca_home
+    atexit.register(shutil.rmtree, _session_worca_home, ignore_errors=True)
+
+
 _leak_baseline: dict | None = None
 
 
 def _snapshot_worca_home() -> dict:
-    """Return {relative_path: (size, mtime_ns)} for every file under ~/.worca/.
+    """Return {relative_path: (size, mtime_ns)} for every file under the
+    real ~/.worca/.
 
     Cheap stat-only scan — does not read file contents. Returns {} when the
     directory does not exist.
     """
-    if not os.path.isdir(_WORCA_HOME):
+    if not os.path.isdir(_REAL_WORCA_HOME):
         return {}
     snap: dict = {}
-    for dirpath, _, filenames in os.walk(_WORCA_HOME):
+    for dirpath, _, filenames in os.walk(_REAL_WORCA_HOME):
         for name in filenames:
             full = os.path.join(dirpath, name)
             try:
                 st = os.stat(full)
             except FileNotFoundError:
                 continue
-            snap[os.path.relpath(full, _WORCA_HOME)] = (st.st_size, st.st_mtime_ns)
+            snap[os.path.relpath(full, _REAL_WORCA_HOME)] = (
+                st.st_size, st.st_mtime_ns
+            )
     return snap
 
 

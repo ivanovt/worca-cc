@@ -24,6 +24,7 @@ from worca.events import types as event_types
 from worca.events.workspace_emitter import emit_workspace_event
 from worca.state.status import WorkspaceStatus
 from worca.utils.claude_cli import run_agent
+from worca.utils.paths import workspace_runs_dir as resolve_workspace_runs_dir
 from worca.workspace.manifest import Workspace
 
 
@@ -180,7 +181,10 @@ _AGENTS_DIR = os.path.join(os.path.dirname(worca.__file__), "agents", "core")
 _SCHEMAS_DIR = os.path.join(os.path.dirname(worca.__file__), "schemas")
 
 
-_POINTER_DIR_DEFAULT = os.path.expanduser("~/.worca/workspace-runs")
+# Module-level override slot.  Resolves lazily via
+# worca.utils.paths.workspace_runs_dir — None means "use $WORCA_HOME or
+# ~/.worca" (issue #162).
+_POINTER_DIR_DEFAULT: str | None = None
 
 
 def generate_workspace_id(*, now=None) -> tuple:
@@ -212,7 +216,7 @@ def write_pointer_file(
     every project directory.
     """
     if pointer_dir is None:
-        pointer_dir = _POINTER_DIR_DEFAULT
+        pointer_dir = resolve_workspace_runs_dir(_POINTER_DIR_DEFAULT)
     os.makedirs(pointer_dir, exist_ok=True)
 
     pointer_path = os.path.join(pointer_dir, f"{workspace_id}.json")
@@ -517,7 +521,7 @@ def load_workspace_manifest(
     file is missing/corrupt.
     """
     if pointer_dir is None:
-        pointer_dir = _POINTER_DIR_DEFAULT
+        pointer_dir = resolve_workspace_runs_dir(_POINTER_DIR_DEFAULT)
 
     pointer_path = os.path.join(pointer_dir, f"{workspace_id}.json")
     try:

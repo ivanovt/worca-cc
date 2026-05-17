@@ -21,6 +21,7 @@ from worca.orchestrator.fleet_manifest import (
     update_fleet_status,
 )
 from worca.state.status import PipelineStatus, FleetStatus
+from worca.utils.paths import fleet_runs_dir as resolve_fleet_runs_dir
 
 # Per W-040 §5: the fleet scrub list is fleet-specific. It is NOT the same as
 # `worca.utils.env.RESERVED_ENV_KEYS` (which is the denylist for per-model env
@@ -36,7 +37,10 @@ _FLEET_SCRUB_KEYS = frozenset({
 })
 _FLEET_SCRUB_PREFIXES = ("WORCA_",)
 
-_FLEET_RUNS_DEFAULT = os.path.expanduser("~/.worca/fleet-runs")
+# Module-level override slot.  Resolves lazily via
+# worca.utils.paths.fleet_runs_dir — None means "use $WORCA_HOME or ~/.worca"
+# (issue #162).
+_FLEET_RUNS_DEFAULT: str | None = None
 
 
 _BRANCH_REJECTION_MSG = (
@@ -268,7 +272,7 @@ def run_plan_first(
         return None
 
     if fleet_runs_base is None:
-        fleet_runs_base = _FLEET_RUNS_DEFAULT
+        fleet_runs_base = resolve_fleet_runs_dir(_FLEET_RUNS_DEFAULT)
     fleet_dir = os.path.join(fleet_runs_base, fleet_id)
     os.makedirs(fleet_dir, exist_ok=True)
     shared_plan = os.path.join(fleet_dir, "shared-plan.md")

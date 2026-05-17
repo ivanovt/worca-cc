@@ -84,16 +84,20 @@ class TestFleetManifestPath:
         path = fleet_manifest_path("f_202605120809_abc123", base_dir=str(tmp_path))
         assert path.startswith(str(tmp_path))
 
-    def test_default_base_dir_expands_home(self):
+    def test_default_base_dir_falls_back_to_real_home(self, monkeypatch):
+        """When $WORCA_HOME is unset, the default resolves to ~/.worca/fleet-runs."""
+        monkeypatch.delenv("WORCA_HOME", raising=False)
         from worca.orchestrator.fleet_manifest import fleet_manifest_path
         path = fleet_manifest_path("f_202605120809_abc123")
-        expanded_home = os.path.expanduser("~")
-        assert path.startswith(expanded_home)
+        expected = os.path.expanduser("~/.worca/fleet-runs")
+        assert path.startswith(expected)
 
-    def test_default_base_dir_is_worca_fleet_runs(self):
+    def test_default_base_dir_honors_worca_home(self, monkeypatch, tmp_path):
+        """$WORCA_HOME redirects the default base dir at call time."""
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path))
         from worca.orchestrator.fleet_manifest import fleet_manifest_path
         path = fleet_manifest_path("f_202605120809_abc123")
-        assert ".worca/fleet-runs" in path
+        assert path.startswith(str(tmp_path / "fleet-runs"))
 
 
 # ---------------------------------------------------------------------------
