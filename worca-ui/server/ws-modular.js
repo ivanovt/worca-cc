@@ -7,9 +7,9 @@
  */
 
 import { existsSync, watch } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
+import { fleetRunsDir, workspaceRunsDir } from './paths.js';
 import { readProjects, synthesizeDefaultProject } from './project-registry.js';
 import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
 import { readProjectWorcaVersion } from './worca-setup.js';
@@ -51,13 +51,13 @@ export function attachWsServer(httpServer, config) {
   // 3a. Fleet manifest watcher — global, not per-project (§13.5)
   const fleetManifestWatcher = createFleetManifestWatcher({
     broadcaster,
-    fleetRunsDir: join(homedir(), '.worca', 'fleet-runs'),
+    fleetRunsDir: fleetRunsDir(),
   });
 
   // 3a-ws. Workspace manifest watcher — global, separate from fleet (W-047 §13.5)
   const workspaceManifestWatcher = createWorkspaceManifestWatcher({
     broadcaster,
-    workspaceRunsDir: join(homedir(), '.worca', 'workspace-runs'),
+    workspaceRunsDir: workspaceRunsDir(),
   });
 
   // 3b. Create WatcherSet(s) — one per project

@@ -4,12 +4,11 @@
  */
 
 import { existsSync, readFileSync, watch } from 'node:fs';
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { effectiveFleetStatus } from './fleet-routes.js';
+import { fleetRunsDir as resolveFleetRunsDir } from './paths.js';
 
 const FLEET_DEBOUNCE_MS = 200;
-const DEFAULT_FLEET_RUNS_DIR = join(homedir(), '.worca', 'fleet-runs');
 
 const FAILURE_STATES = new Set(['failed', 'setup_failed', 'unrecoverable']);
 
@@ -40,8 +39,10 @@ function resolveChildStatus(child) {
  */
 export function createFleetManifestWatcher({
   broadcaster,
-  fleetRunsDir = DEFAULT_FLEET_RUNS_DIR,
+  fleetRunsDir: fleetRunsDirArg,
 }) {
+  // Lazy resolution honors $WORCA_HOME (issue #162).
+  const fleetRunsDir = resolveFleetRunsDir(fleetRunsDirArg);
   let fsWatcher = null;
   /** @type {Map<string, ReturnType<typeof setTimeout>>} */
   const debounceTimers = new Map();

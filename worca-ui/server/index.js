@@ -1,11 +1,12 @@
 // server/index.js
 import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { homedir, platform } from 'node:os';
+import { platform } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './app.js';
 import { parseServerArgv } from './argv-parser.js';
 import { createIntegrations } from './integrations/index.js';
+import { preferencesPath, prefsDir as resolvePrefsDir } from './paths.js';
 import { attachWsServer } from './ws.js';
 
 // Parse argv (env vars provide defaults; argv flags take precedence)
@@ -49,7 +50,7 @@ if (isGlobal) {
   settingsPath = join(projectRoot, '.claude', 'settings.json');
 }
 
-const prefsDir = join(homedir(), '.worca');
+const prefsDir = resolvePrefsDir();
 const webhookInbox = createInbox();
 const app = createApp({
   settingsPath,
@@ -94,7 +95,7 @@ const { broadcast, scheduleRefresh, resolveRunProject } = attachWsServer(
   {
     worcaDir,
     settingsPath,
-    prefsPath: join(homedir(), '.worca', 'preferences.json'),
+    prefsPath: preferencesPath(),
     prefsDir,
     webhookInbox,
     projectRoot,

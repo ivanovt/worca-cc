@@ -15,11 +15,10 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { Router } from 'express';
+import { fleetRunsDir as resolveFleetRunsDir } from './paths.js';
 
-const DEFAULT_FLEET_RUNS_DIR = join(homedir(), '.worca', 'fleet-runs');
 const GUIDE_CAP_BYTES_DEFAULT = 64 * 1024; // 64 KB
 
 // Fleet IDs have the form f_<12 digits>_<hex>  — enforces no path traversal.
@@ -513,7 +512,7 @@ function defaultStopFleet(fleetId) {
  * entries that reference the fleet_id and includes them in the response.
  */
 export function createFleetRouter({
-  fleetRunsDir = DEFAULT_FLEET_RUNS_DIR,
+  fleetRunsDir: fleetRunsDirArg,
   prefsDir = null,
   dispatchFleet = null,
   runCleanup = defaultRunCleanup,
@@ -522,6 +521,9 @@ export function createFleetRouter({
   validateBaseBranch = defaultValidateBaseBranch,
   guideCapBytes = GUIDE_CAP_BYTES_DEFAULT,
 } = {}) {
+  // Lazy resolution honors $WORCA_HOME at router-construction time, falling
+  // back to ~/.worca/fleet-runs.  Issue #162.
+  const fleetRunsDir = resolveFleetRunsDir(fleetRunsDirArg);
   const router = Router();
 
   // ── GET /api/fleet-runs ─────────────────────────────────────────────────

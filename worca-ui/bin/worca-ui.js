@@ -12,9 +12,9 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { connect, createServer } from 'node:net';
-import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { worcaHome } from '../server/paths.js';
 import {
   readProjects,
   removeProject,
@@ -37,7 +37,7 @@ function findProjectRoot(startDir) {
   return startDir;
 }
 
-const PREFS_DIR = join(homedir(), '.worca');
+const PREFS_DIR = worcaHome();
 const SERVER_SCRIPT = join(__dirname, '..', 'server', 'index.js');
 
 /** Exported for testing */

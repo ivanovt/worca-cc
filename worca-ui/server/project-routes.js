@@ -16,7 +16,6 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Router } from 'express';
 import lockfile from 'proper-lockfile';
@@ -28,6 +27,7 @@ import { ensureWebhookForUi } from './ensure-webhook.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
 import { createModelEnvRouter } from './model-env-routes.js';
+import { preferencesPath, templatesDir } from './paths.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import { countRunningPipelinesAcrossProjects } from './process-registry.js';
@@ -1532,7 +1532,7 @@ export function createProjectScopedRoutes({
     const tiers = [
       { tier: 'worca', dir: join(root, '.claude', 'worca', 'templates') },
       { tier: 'project', dir: join(root, '.claude', 'templates') },
-      { tier: 'user', dir: join(homedir(), '.worca', 'templates') },
+      { tier: 'user', dir: templatesDir() },
     ];
 
     const templates = [];
@@ -1604,9 +1604,7 @@ export function createProjectScopedRoutes({
     // Fall back to source_repo from global preferences
     if (!source) {
       try {
-        const prefs = readPreferences(
-          join(homedir(), '.worca', 'preferences.json'),
-        );
+        const prefs = readPreferences(preferencesPath());
         source = prefs.source_repo || undefined;
       } catch {
         /* ignore — worca init will use its own resolution chain */
