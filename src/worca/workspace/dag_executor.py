@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from worca.state.status import WorkspaceStatus
@@ -45,6 +45,11 @@ def _build_child_env(
     workspace_id: str,
     workspace_name: str,
 ) -> dict:
+    # Strip-then-inject: first drop every WORCA_* var the parent inherited
+    # (stage-scoped state from any outer pipeline must not leak into child
+    # subprocesses), then add back the workspace-scoped vars that downstream
+    # children legitimately need. If you add a new WORCA_* var that children
+    # must see, add it after the scrub loop or it will be filtered out.
     result = {}
     for key, value in base_env.items():
         if key in _SCRUB_KEYS:
@@ -336,6 +341,26 @@ class DagExecutor:
             results: dict = {}
             if runnable:
                 tier_info["status"] = "running"
+
+                # Pre-register runnable children as "running" so a SIGKILL /
+                # SIGTERM that arrives while `_dispatch_tier` is blocked in
+                # `subprocess.run` still leaves a manifest trace. Without
+                # this, in-flight projects are invisible to `--resume` and
+                # get re-dispatched fresh, potentially producing duplicate
+                # pipelines for the same project in the same workspace.
+                running_entries: dict[str, dict] = {}
+                for project in runnable:
+                    project_path = self._projects_by_name.get(project, project)
+                    entry = {
+                        "project": project,
+                        "run_id": None,
+                        "worktree_path": None,
+                        "project_path": os.path.join(self._workspace_root, project_path),
+                        "status": "running",
+                        "tier": tier_idx,
+                    }
+                    self._manifest["children"].append(entry)
+                    running_entries[project] = entry
                 self._write_manifest()
 
                 results = self._dispatch_tier(runnable)
@@ -348,15 +373,10 @@ class DagExecutor:
                     tier_info["status"] = "completed"
 
                 for project, result in results.items():
-                    project_path = self._projects_by_name.get(project, project)
-                    self._manifest["children"].append({
-                        "project": project,
-                        "run_id": result.get("run_id"),
-                        "worktree_path": result.get("worktree_path"),
-                        "project_path": os.path.join(self._workspace_root, project_path),
-                        "status": result["status"],
-                        "tier": tier_idx,
-                    })
+                    entry = running_entries[project]
+                    entry["run_id"] = result.get("run_id")
+                    entry["worktree_path"] = result.get("worktree_path")
+                    entry["status"] = result["status"]
                     self._terminal_count += 1
                     if result["status"] == "failed":
                         self._failed_projects.add(project)
@@ -523,9 +543,21 @@ class DagExecutor:
             futures = {
                 pool.submit(self._run_child, project): project for project in projects
             }
-            for future in futures:
+            # Iterate in completion order so a stuck/slow project doesn't block
+            # collection of already-finished results, and so an unhandled
+            # exception from one child surfaces without silently dropping the
+            # results of children that finished after it.
+            for future in as_completed(futures):
                 project = futures[future]
-                results[project] = future.result()
+                try:
+                    results[project] = future.result()
+                except Exception as e:
+                    results[project] = {
+                        "status": "failed",
+                        "run_id": None,
+                        "worktree_path": None,
+                        "error": f"{type(e).__name__}: {e}",
+                    }
 
         return results
 

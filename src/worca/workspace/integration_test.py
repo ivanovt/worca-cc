@@ -91,6 +91,15 @@ def run_integration_test(
 
     Returns {"status": "passed"|"failed"|"skipped",
              "exit_code": int|None, "log_path": str|None}.
+
+    Security/trust model: `workspace.integration_test.command` is read from
+    `workspace.json`, treated as trusted project configuration (same trust
+    level as `.claude/settings.json`, `CLAUDE.md`, and the project's
+    `package.json` scripts), and executed via `shell=True` so users can
+    write natural pipelines like `docker compose run tests && ./verify.sh`.
+    A malicious `workspace.json` can therefore execute arbitrary shell
+    commands as the running user. Treat `workspace.json` accordingly —
+    do not load one from an untrusted source.
     """
     result: dict = {"status": "skipped", "exit_code": None, "log_path": None}
 

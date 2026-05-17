@@ -206,7 +206,12 @@ def build_dependency_comment(
 
 
 def post_dependency_comments(manifest: dict, workspace: Workspace) -> None:
-    """Post dependency comments on each workspace PR via gh pr comment."""
+    """Post dependency comments on each workspace PR via gh pr comment.
+
+    Idempotent: a child's `dependency_comment_posted` flag is set after a
+    successful `gh pr comment` so a re-invocation (e.g. resume after a
+    partial-failure during PR linking) does not duplicate comments.
+    """
     workspace_id = manifest["workspace_id"]
 
     all_pr_info: dict[str, dict] = {}
@@ -221,12 +226,14 @@ def post_dependency_comments(manifest: dict, workspace: Workspace) -> None:
     for child in manifest["children"]:
         if not child.get("pr_number") or not child.get("nwo"):
             continue
+        if child.get("dependency_comment_posted"):
+            continue
 
         comment = build_dependency_comment(
             child["project"], all_pr_info, workspace, workspace_id,
         )
 
-        subprocess.run(
+        proc = subprocess.run(
             [
                 "gh", "pr", "comment",
                 str(child["pr_number"]),
@@ -235,6 +242,9 @@ def post_dependency_comments(manifest: dict, workspace: Workspace) -> None:
             ],
             capture_output=True, text=True,
         )
+
+        if proc.returncode == 0:
+            child["dependency_comment_posted"] = True
 
 
 def build_umbrella_body(manifest: dict, workspace: Workspace) -> str:

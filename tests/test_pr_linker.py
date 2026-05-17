@@ -255,6 +255,40 @@ class TestDependencyComments:
 
         assert len(calls) == 2
 
+    def test_idempotent_on_second_invocation(self):
+        """A re-run (e.g. resume after partial PR-linking failure) must not
+        duplicate dependency comments on PRs that already received one."""
+        ws = _make_workspace()
+        manifest = _make_manifest_with_prs()
+
+        calls = []
+
+        def mock_run(cmd, **kwargs):
+            calls.append(list(cmd))
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+        with patch("worca.workspace.pr_linker.subprocess.run", side_effect=mock_run):
+            post_dependency_comments(manifest, ws)
+            assert len(calls) == 3
+            assert all(c.get("dependency_comment_posted") for c in manifest["children"])
+
+            post_dependency_comments(manifest, ws)
+            assert len(calls) == 3
+
+    def test_does_not_mark_posted_on_failure(self):
+        """If gh pr comment fails, the child must remain un-marked so the next
+        attempt re-posts."""
+        ws = _make_workspace()
+        manifest = _make_manifest_with_prs()
+
+        def mock_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(args=cmd, returncode=1, stdout="", stderr="boom")
+
+        with patch("worca.workspace.pr_linker.subprocess.run", side_effect=mock_run):
+            post_dependency_comments(manifest, ws)
+
+        assert not any(c.get("dependency_comment_posted") for c in manifest["children"])
+
 
 # -- umbrella issue (test_umbrella_issue) ------------------------------------
 

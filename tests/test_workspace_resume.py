@@ -171,6 +171,162 @@ class TestClassifyChildrenForResume:
         skip, redispatch = classify_children_for_resume(children)
         assert "lib" in redispatch
 
+    def test_running_children_redispatched(self):
+        """SIGTERM handler leaves in-flight children as status='running' —
+        resume must redispatch them, not leave them stuck."""
+        from worca.scripts.run_workspace import classify_children_for_resume
+
+        children = [
+            {"project": "lib", "run_id": "r1", "status": "completed", "tier": 0},
+            {"project": "backend", "run_id": None, "status": "running", "tier": 1},
+        ]
+        skip, redispatch = classify_children_for_resume(children)
+        assert "lib" in skip
+        assert "backend" in redispatch
+
+    def test_interrupted_children_redispatched(self):
+        from worca.scripts.run_workspace import classify_children_for_resume
+
+        children = [
+            {"project": "backend", "run_id": None, "status": "interrupted", "tier": 1},
+        ]
+        skip, redispatch = classify_children_for_resume(children)
+        assert "backend" in redispatch
+
+
+# ---- stale worktree cleanup -------------------------------------------------
+
+
+class TestCollectAndCleanupStaleWorktrees:
+    def test_collect_captures_redispatch_worktree_paths(self):
+        from worca.scripts.run_workspace import collect_stale_worktrees
+
+        children = [
+            {
+                "project": "lib", "status": "completed",
+                "worktree_path": "/tmp/lib-wt", "project_path": "/repos/lib",
+            },
+            {
+                "project": "backend", "status": "running",
+                "worktree_path": "/tmp/backend-wt", "project_path": "/repos/backend",
+            },
+            {
+                "project": "frontend", "status": "interrupted",
+                "worktree_path": None, "project_path": "/repos/frontend",
+            },
+        ]
+        stale = collect_stale_worktrees(children, {"backend", "frontend"})
+        names = [s[0] for s in stale]
+        assert "lib" not in names
+        assert "backend" in names
+        assert "frontend" in names
+
+    def test_cleanup_invokes_git_worktree_remove_and_prune(self):
+        from worca.scripts.run_workspace import cleanup_stale_worktrees
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append((tuple(cmd), kwargs.get("cwd")))
+
+            class _R:
+                returncode = 0
+            return _R()
+
+        with patch("subprocess.run", side_effect=fake_run):
+            cleanup_stale_worktrees([
+                ("backend", "/tmp/backend-wt", "/repos/backend"),
+                ("frontend", None, "/repos/frontend"),
+            ])
+
+        cmds = [c[0] for c in calls]
+        assert ("git", "worktree", "remove", "--force", "/tmp/backend-wt") in cmds
+        assert any(c[:3] == ("git", "worktree", "prune") for c in cmds)
+
+    def test_cleanup_swallows_subprocess_errors(self):
+        from worca.scripts.run_workspace import cleanup_stale_worktrees
+
+        def fake_run(cmd, **kwargs):
+            raise RuntimeError("boom")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            cleanup_stale_worktrees([("backend", "/tmp/wt", "/repos/backend")])
+
+    def test_cleanup_skips_when_project_path_missing(self):
+        from worca.scripts.run_workspace import cleanup_stale_worktrees
+
+        calls = []
+
+        def fake_run(cmd, **kwargs):
+            calls.append(tuple(cmd))
+
+            class _R:
+                returncode = 0
+            return _R()
+
+        with patch("subprocess.run", side_effect=fake_run):
+            cleanup_stale_worktrees([("orphan", "/tmp/wt", None)])
+
+        assert calls == []
+
+
+# ---- signal handler ---------------------------------------------------------
+
+
+class TestSignalHandler:
+    def test_on_signal_flush_marks_running_children_interrupted(self, tmp_path):
+        from worca.scripts import run_workspace
+
+        ws_root = str(tmp_path)
+        ws_id = "ws_202601011200_signal01"
+        run_dir = os.path.join(ws_root, ".worca", "workspace-runs", ws_id)
+        os.makedirs(run_dir, exist_ok=True)
+
+        manifest = {
+            "workspace_id": ws_id,
+            "workspace_name": "sig-test",
+            "workspace_root": ws_root,
+            "status": "running",
+            "halt_reason": None,
+            "dag": {"tiers": [{"tier": 0, "projects": ["a"], "status": "running"}]},
+            "children": [
+                {"project": "a", "status": "running", "run_id": None,
+                 "worktree_path": None, "project_path": "/repos/a", "tier": 0},
+            ],
+        }
+
+        run_workspace._register_active_run(
+            workspace_id=ws_id,
+            workspace_name="sig-test",
+            run_dir=run_dir,
+            manifest=manifest,
+            settings_path=os.path.join(ws_root, ".claude", "settings.json"),
+        )
+
+        try:
+            with patch.object(run_workspace, "emit_workspace_event"):
+                try:
+                    run_workspace._on_signal_flush(15)
+                except SystemExit as exc:
+                    assert exc.code == 128 + 15
+
+            with open(os.path.join(run_dir, "workspace-manifest.json")) as f:
+                persisted = json.load(f)
+            assert persisted["status"] == "halted"
+            assert persisted["halt_reason"] == "signal"
+            assert persisted["children"][0]["status"] == "interrupted"
+        finally:
+            run_workspace._clear_active_run()
+
+    def test_on_signal_flush_with_no_active_run_just_exits(self):
+        from worca.scripts import run_workspace
+
+        run_workspace._clear_active_run()
+        try:
+            run_workspace._on_signal_flush(15)
+        except SystemExit as exc:
+            assert exc.code == 128 + 15
+
 
 # ---- rebuild_resume_manifest ------------------------------------------------
 

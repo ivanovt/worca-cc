@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import secrets
+import signal
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -24,6 +25,112 @@ from worca.events.workspace_emitter import emit_workspace_event
 from worca.state.status import WorkspaceStatus
 from worca.utils.claude_cli import run_agent
 from worca.workspace.manifest import Workspace
+
+
+# Module-level state for the SIGTERM/SIGINT handler. Set when a workspace run
+# becomes "owned" by this process (after manifest creation / resume load) so
+# the handler can flush manifest state if the coordinator is killed mid-run.
+_active_run_state: dict | None = None
+
+
+def _install_signal_handlers() -> None:
+    """Install SIGTERM and SIGINT handlers that flush manifest state on kill.
+
+    When the workspace coordinator is killed while children are in-flight
+    (e.g. operator stop, OOM killer, deploy bouncing the host), the default
+    Python handler terminates without writing anything. That leaves child
+    pipelines orphaned and the next `--resume` cannot tell they were ever
+    dispatched. The handler installed here marks the workspace as halted
+    with halt_reason="signal", flips any in-flight children to
+    "interrupted", and writes the manifest before exiting. Resume then
+    treats those children as needing redispatch + worktree cleanup.
+
+    Re-raises via sys.exit(128+signum) so the parent shell still sees a
+    signal-style exit code.
+    """
+    def _handler(signum, _frame):
+        _on_signal_flush(signum)
+
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+        signal.signal(signal.SIGINT, _handler)
+    except (ValueError, OSError):
+        # signal.signal only works on the main thread; in test/embedded
+        # contexts it may raise — silently skip rather than block startup.
+        pass
+
+
+def _on_signal_flush(signum: int) -> None:
+    """Best-effort manifest flush before exit. Never raises."""
+    state = _active_run_state
+    if state is None:
+        sys.exit(128 + signum)
+
+    workspace_id = state.get("workspace_id")
+    run_dir = state.get("run_dir")
+    manifest = state.get("manifest")
+    settings_path = state.get("settings_path")
+    workspace_name = state.get("workspace_name", "")
+
+    try:
+        if manifest is not None and run_dir:
+            for child in manifest.get("children", []):
+                if child.get("status") == "running":
+                    child["status"] = "interrupted"
+            manifest["status"] = WorkspaceStatus.HALTED
+            manifest["halt_reason"] = "signal"
+            write_workspace_manifest(manifest, run_dir)
+    except Exception:
+        pass
+
+    try:
+        if workspace_id and settings_path:
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_HALTED,
+                event_types.workspace_halted_payload(
+                    workspace_name=workspace_name,
+                    halt_reason="signal",
+                    completed_tiers=sum(
+                        1 for t in (manifest or {}).get("dag", {}).get("tiers", [])
+                        if t.get("status") == "completed"
+                    ),
+                    pending_tiers=sum(
+                        1 for t in (manifest or {}).get("dag", {}).get("tiers", [])
+                        if t.get("status") in ("pending", "halted", "running")
+                    ),
+                ),
+                settings_path=settings_path,
+            )
+    except Exception:
+        pass
+
+    sys.exit(128 + signum)
+
+
+def _register_active_run(
+    *,
+    workspace_id: str,
+    workspace_name: str,
+    run_dir: str,
+    manifest: dict,
+    settings_path: str,
+) -> None:
+    """Tell the signal handler which run to flush if a signal arrives."""
+    global _active_run_state
+    _active_run_state = {
+        "workspace_id": workspace_id,
+        "workspace_name": workspace_name,
+        "run_dir": run_dir,
+        "manifest": manifest,
+        "settings_path": settings_path,
+    }
+
+
+def _clear_active_run() -> None:
+    """Clear the active-run state after a clean exit (no signal flush needed)."""
+    global _active_run_state
+    _active_run_state = None
 
 
 def _settings_path_for_workspace(workspace_root: str, settings_arg: str) -> str:
@@ -440,7 +547,9 @@ def classify_children_for_resume(
 
     Returns (skip_projects, redispatch_projects).
     - skip: completed children — left as-is, worktrees retained for context.
-    - redispatch: failed/blocked/halted children — re-dispatched fresh.
+    - redispatch: everything else (failed/blocked/halted/running/interrupted)
+      — re-dispatched fresh. "running" and "interrupted" entries are produced
+      by the SIGTERM/SIGINT handler in `run_workspace.main`.
     """
     skip: set[str] = set()
     redispatch: set[str] = set()
@@ -454,6 +563,66 @@ def classify_children_for_resume(
             redispatch.add(project)
 
     return skip, redispatch
+
+
+def collect_stale_worktrees(
+    children: list[dict],
+    redispatch_projects: set[str],
+) -> list[tuple[str, str | None, str | None]]:
+    """Capture (project, worktree_path, project_path) for redispatch children.
+
+    Called BEFORE `rebuild_resume_manifest` filters non-completed children
+    out of the manifest, so the resume path still knows which worktrees
+    need cleanup before re-dispatch can create fresh ones at the same
+    branch.
+    """
+    stale: list[tuple[str, str | None, str | None]] = []
+    for child in children:
+        project = child["project"]
+        if project not in redispatch_projects:
+            continue
+        stale.append((
+            project,
+            child.get("worktree_path"),
+            child.get("project_path"),
+        ))
+    return stale
+
+
+def cleanup_stale_worktrees(
+    stale: list[tuple[str, str | None, str | None]],
+) -> None:
+    """Best-effort removal of worktrees left behind by interrupted children.
+
+    Without this, a subsequent `git worktree add <path> <branch>` for the
+    re-dispatched project hits either "already exists" (if the path is
+    still there) or "branch already used by worktree" (if the registration
+    survived but the path was reaped). We do `git worktree remove --force`
+    on the known path, then `git worktree prune` in the project checkout
+    so any leftover registrations are dropped. All failures are swallowed
+    — the worst case is the re-dispatch surfaces the real error.
+    """
+    import subprocess
+
+    for project, worktree_path, project_path in stale:
+        if not project_path:
+            continue
+        try:
+            if worktree_path:
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", worktree_path],
+                    cwd=project_path,
+                    capture_output=True,
+                    text=True,
+                )
+            subprocess.run(
+                ["git", "worktree", "prune"],
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+            )
+        except Exception:
+            continue
 
 
 def rebuild_resume_manifest(
@@ -478,6 +647,12 @@ def rebuild_resume_manifest(
     else:
         manifest["status"] = WorkspaceStatus.RUNNING
 
+    # A tier that was mid-run at crash time (some children completed, some
+    # in-flight) is reset to "pending" here. That tier status is cosmetic —
+    # DagExecutor uses its own _completed_projects set (derived from
+    # manifest["children"]) as the authoritative source for which projects
+    # to skip on re-dispatch, so already-completed children within a
+    # "pending" tier will not be re-run.
     for tier in manifest["dag"]["tiers"]:
         tier_projects = set(tier["projects"])
         if tier_projects <= skip_projects:
@@ -650,11 +825,27 @@ def _resume_workspace(workspace_root: str, workspace_id: str) -> int:
 
     from_state = status
 
+    # Capture worktree paths of redispatch children before rebuild_resume_manifest
+    # filters them out, then clean them up so re-dispatch's `git worktree add`
+    # does not collide with the prior partial run.
+    stale = collect_stale_worktrees(manifest["children"], redispatch)
+
     rebuild_resume_manifest(manifest, skip, redispatch)
     write_workspace_manifest(manifest, run_dir)
 
+    if stale:
+        cleanup_stale_worktrees(stale)
+
     settings_path = _settings_path_for_workspace(workspace_root, ".claude/settings.json")
     resume_started_at = datetime.now(timezone.utc).isoformat()
+
+    _register_active_run(
+        workspace_id=workspace_id,
+        workspace_name=ws.name,
+        run_dir=run_dir,
+        manifest=manifest,
+        settings_path=settings_path,
+    )
 
     emit_workspace_event(
         workspace_id,
@@ -873,6 +1064,8 @@ def main(argv=None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
+    _install_signal_handlers()
+
     workspace_root = os.path.abspath(args.workspace_root)
 
     if not args.resume and not args.prompt and not args.source:
@@ -944,6 +1137,14 @@ def main(argv=None) -> int:
 
     settings_path = _settings_path_for_workspace(workspace_root, args.settings)
     workspace_started_at = manifest["created_at"]
+
+    _register_active_run(
+        workspace_id=ws_id,
+        workspace_name=ws.name,
+        run_dir=run_dir,
+        manifest=manifest,
+        settings_path=settings_path,
+    )
 
     emit_workspace_event(
         ws_id,

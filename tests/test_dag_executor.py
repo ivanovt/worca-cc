@@ -163,6 +163,10 @@ class TestDagExecutorTierOrdering:
             patch(
                 "worca.workspace.dag_executor.ThreadPoolExecutor"
             ) as mock_tpe_cls,
+            patch(
+                "worca.workspace.dag_executor.as_completed",
+                side_effect=lambda fs: list(fs),
+            ),
         ):
             mock_tpe = MagicMock()
             mock_tpe.__enter__ = MagicMock(return_value=mock_tpe)
@@ -571,6 +575,72 @@ class TestDagExecutorManifestUpdates:
         assert captured_cwd == ["/projects/my-lib"]
 
 
+class TestDagExecutorPreRegisterRunning:
+    """Children are pre-registered as 'running' before dispatch so a signal /
+    crash mid-tier leaves a manifest trace for resume to find."""
+
+    def test_children_visible_as_running_before_subprocess_returns(self):
+        import copy
+
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["a", "b"], "status": "pending"}],
+        )
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        snapshots = []
+
+        def capture_manifest(m, rd):
+            snapshots.append(copy.deepcopy(m))
+
+        # Inspect the manifest the moment subprocess.run is called — the
+        # children entries must already exist with status="running".
+        observed_during_dispatch = []
+
+        def mock_run(cmd, **kwargs):
+            observed_during_dispatch.append(
+                [c.copy() for c in executor._manifest["children"]]
+            )
+            return _completed_proc()
+
+        with (
+            patch("subprocess.run", side_effect=mock_run),
+            patch(
+                "worca.scripts.run_workspace.write_workspace_manifest",
+                side_effect=capture_manifest,
+            ),
+        ):
+            executor.execute()
+
+        for snapshot in observed_during_dispatch:
+            statuses = {c["project"]: c["status"] for c in snapshot}
+            assert statuses == {"a": "running", "b": "running"}
+
+        final_children = snapshots[-1]["children"]
+        assert {c["project"] for c in final_children} == {"a", "b"}
+        assert all(c["status"] == "completed" for c in final_children)
+        assert len(final_children) == 2  # no duplicates from append + update
+
+    def test_children_updated_not_duplicated_after_dispatch(self):
+        from worca.workspace.dag_executor import DagExecutor
+
+        manifest = _make_manifest(
+            tiers=[{"tier": 0, "projects": ["a", "b", "c"], "status": "pending"}],
+        )
+        run_dir = "/tmp/run-dir"
+        executor = DagExecutor(manifest, run_dir)
+
+        with (
+            patch("subprocess.run", return_value=_completed_proc()),
+            patch("worca.scripts.run_workspace.write_workspace_manifest"),
+        ):
+            executor.execute()
+
+        assert len(manifest["children"]) == 3
+
+
 class TestDagExecutorMaxParallel:
     """max_parallel caps concurrent children within a tier."""
 
@@ -592,6 +662,10 @@ class TestDagExecutorMaxParallel:
             patch(
                 "worca.workspace.dag_executor.ThreadPoolExecutor"
             ) as mock_tpe_cls,
+            patch(
+                "worca.workspace.dag_executor.as_completed",
+                side_effect=lambda fs: list(fs),
+            ),
         ):
             mock_tpe = MagicMock()
             mock_tpe.__enter__ = MagicMock(return_value=mock_tpe)

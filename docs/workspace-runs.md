@@ -25,7 +25,7 @@ worca workspace init /path/to/parent         # Scan child dirs, create workspace
 worca workspace init /path/to/parent --force  # Overwrite existing workspace.json
 ```
 
-`worca workspace init` scans the parent directory for child directories containing `.git/`, generates a `workspace.json` with all discovered projects (role: `"service"`, `depends_on: []`), and creates a `.worca/` directory. Edit the generated file to define dependency relationships, roles, and an integration test command.
+`worca workspace init` scans the parent directory for child directories containing `.git/`, generates a `workspace.json` with all discovered projects (`depends_on: []`), and creates a `.worca/` directory. Edit the generated file to define dependency relationships and an integration test command.
 
 ## workspace.json format
 
@@ -38,19 +38,16 @@ The workspace definition lives at `{workspace_root}/workspace.json`:
     {
       "name": "shared-lib",
       "path": "shared-lib",
-      "role": "library",
       "depends_on": []
     },
     {
       "name": "backend",
       "path": "backend",
-      "role": "service",
       "depends_on": ["shared-lib"]
     },
     {
       "name": "frontend",
       "path": "frontend",
-      "role": "app",
       "depends_on": ["shared-lib"]
     }
   ],
@@ -70,10 +67,9 @@ The workspace definition lives at `{workspace_root}/workspace.json`:
 | `projects` | yes | Array of project entries (at least one) |
 | `projects[].name` | yes | Project identifier referenced in `depends_on` lists |
 | `projects[].path` | yes | Relative path from workspace root to the project directory |
-| `projects[].role` | yes | Freeform label (`library`, `service`, `app`, `infra`, etc.) — injected into the master planner prompt for context |
 | `projects[].depends_on` | yes | Array of project names that must complete before this project starts (empty array `[]` for tier-0 projects) |
 | `integration_test` | no | Cross-project integration test configuration |
-| `integration_test.command` | yes (if `integration_test` present) | Shell command to run |
+| `integration_test.command` | yes (if `integration_test` present) | Shell command to run. Executed via `shell=True` so pipelines like `make test && ./verify.sh` are supported — treat `workspace.json` as trusted project config (same trust level as `.claude/settings.json`) and do not load one from an untrusted source |
 | `integration_test.working_dir` | yes (if `integration_test` present) | Working directory relative to workspace root |
 | `umbrella_repo` | no | GitHub `org/repo` for the umbrella issue that links all workspace PRs (falls back to the first tier-0 project if omitted) |
 
