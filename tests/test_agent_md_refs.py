@@ -142,25 +142,56 @@ def test_guardian_output_references_pr_schema():
 # ---------------------------------------------------------------------------
 
 
+def _render_guardian(env: dict) -> str:
+    """Render the guardian prompt with the orchestrator-computed context.
+
+    After #165 the fleet/workspace branching lives in Python, so behavioral
+    assertions about fleet PR formatting must operate on the rendered
+    output, not the raw .md source. Source-level checks would pass on a
+    template that never resolves to anything useful.
+    """
+    from worca.orchestrator.guardian_context import build_guardian_context
+    from worca.orchestrator.overlay import resolve_placeholders
+
+    template = _read("guardian.md")
+    return resolve_placeholders(template, build_guardian_context(env))
+
+
 def test_guardian_fleet_pr_title_prefix_format():
-    content = _read("guardian.md")
-    assert "[fleet:" in content, (
-        "guardian.md must contain [fleet:<fleet_id_short>] prefix format for fleet PR titles (W-040 §11)"
+    """W-040 §11: fleet runs must produce a [fleet:<short>] title prefix.
+    After #165 this is verified against rendered output, not raw source."""
+    rendered = _render_guardian(
+        {"WORCA_FLEET_ID": "f_202601011200_a1b2c3d4"}
+    )
+    assert "[fleet:a1b2c3d4]" in rendered, (
+        "rendered guardian must include [fleet:<short>] prefix for fleet runs (W-040 §11)"
     )
 
 
 def test_guardian_fleet_manifest_footer():
-    content = _read("guardian.md")
-    assert "fleet-runs" in content, (
-        "guardian.md must reference fleet-runs manifest path for the PR footer (W-040 §11)"
+    """W-040 §11: fleet PR body must reference the fleet-runs manifest path."""
+    rendered = _render_guardian(
+        {"WORCA_FLEET_ID": "f_202601011200_a1b2c3d4"}
     )
+    assert "fleet-runs" in rendered, (
+        "rendered guardian must reference fleet-runs manifest path for the PR footer (W-040 §11)"
+    )
+    assert "f_202601011200_a1b2c3d4.json" in rendered
 
 
-def test_guardian_fleet_id_short_referenced():
-    content = _read("guardian.md")
-    assert "fleet_id_short" in content, (
-        "guardian.md must reference fleet_id_short for consistent fleet display (W-040 §11)"
+def test_guardian_fleet_id_short_extraction():
+    """W-040 §11: the fleet PR title and footer must use the short ID
+    (trailing underscore-delimited segment), not the full ID in the title.
+    After #165 the extraction lives in guardian_context._short_id; this
+    test asserts the rendered output matches the contract."""
+    rendered = _render_guardian(
+        {"WORCA_FLEET_ID": "f_202601011200_a1b2c3d4"}
     )
+    # Short form must be in the title prefix
+    assert "[fleet:a1b2c3d4]" in rendered
+    # Full ID is allowed in the footer (manifest path needs the full ID)
+    # but not as a bare title prefix
+    assert "[fleet:f_202601011200_a1b2c3d4]" not in rendered
 
 
 # ---------------------------------------------------------------------------

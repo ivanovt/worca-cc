@@ -112,6 +112,93 @@ class TestVerifyPRStageMissingFields:
         assert result.ok is False
 
 
+class TestVerifyPRStageDeferred:
+    """Deferred case: workspace child guardian short-circuits PR creation.
+
+    The runner must accept a stage_output that carries `deferred: true` and
+    `commit_sha` but is missing `pr_number` / `pr_url`, since the parent
+    workspace orchestrator creates the PR centrally after integration tests.
+    """
+
+    def _deferred_output(self):
+        return {
+            "outcome": "success",
+            "deferred": True,
+            "commit_sha": SHA_NEW,
+        }
+
+    def test_deferred_output_passes_with_only_commit_sha(self):
+        with patch("worca.orchestrator.runner.get_current_git_head", return_value=SHA_NEW):
+            result = _verify_pr_stage(self._deferred_output(), SHA_BASELINE)
+        assert result.ok is True
+        assert result.reason == ""
+
+    def test_deferred_output_still_requires_commit_sha(self):
+        output = self._deferred_output()
+        del output["commit_sha"]
+        with patch("worca.orchestrator.runner.get_current_git_head", return_value=SHA_NEW):
+            result = _verify_pr_stage(output, SHA_BASELINE)
+        assert result.ok is False
+        assert "commit_sha" in result.reason
+
+    def test_deferred_output_still_requires_head_to_move(self):
+        with patch("worca.orchestrator.runner.get_current_git_head", return_value=SHA_BASELINE):
+            result = _verify_pr_stage(self._deferred_output(), SHA_BASELINE)
+        assert result.ok is False
+        assert "commit" in result.reason.lower()
+
+    def test_deferred_output_still_verifies_sha_matches_head(self):
+        output = self._deferred_output()
+        output["commit_sha"] = "ccc2222222"
+        with patch("worca.orchestrator.runner.get_current_git_head", return_value=SHA_NEW):
+            result = _verify_pr_stage(output, SHA_BASELINE)
+        assert result.ok is False
+
+    def test_deferred_output_does_not_call_gh(self):
+        """gh_lookup must never be invoked for deferred outputs — no PR exists
+        yet for `gh pr view` to find."""
+        gh_calls = []
+
+        def _record_gh(pr_number, expected_url):
+            gh_calls.append((pr_number, expected_url))
+            return PRVerification(ok=True, reason="")
+
+        with patch("worca.orchestrator.runner.get_current_git_head", return_value=SHA_NEW):
+            result = _verify_pr_stage(self._deferred_output(), SHA_BASELINE, gh_lookup=_record_gh)
+        assert result.ok is True
+        assert gh_calls == []
+
+    def test_deferred_false_is_treated_as_non_deferred(self):
+        """`deferred: false` must require pr_number/pr_url just like an
+        absent `deferred` field — only `deferred: true` opts into the
+        relaxed contract."""
+        output = {
+            "outcome": "success",
+            "deferred": False,
+            "commit_sha": SHA_NEW,
+        }
+        with patch("worca.orchestrator.runner.get_current_git_head", return_value=SHA_NEW):
+            result = _verify_pr_stage(output, SHA_BASELINE)
+        assert result.ok is False
+        assert "pr_url" in result.reason or "pr_number" in result.reason
+
+    def test_deferred_truthy_non_bool_does_not_relax_contract(self):
+        """Only the literal `True` opts in. `deferred: 1` or `deferred: "yes"`
+        must NOT relax the contract — keeps the discriminator
+        unambiguous."""
+        for truthy in (1, "yes", "true", "1"):
+            output = {
+                "outcome": "success",
+                "deferred": truthy,
+                "commit_sha": SHA_NEW,
+            }
+            with patch("worca.orchestrator.runner.get_current_git_head", return_value=SHA_NEW):
+                result = _verify_pr_stage(output, SHA_BASELINE)
+            assert result.ok is False, (
+                f"deferred={truthy!r} must NOT bypass pr_number/pr_url requirement"
+            )
+
+
 class TestVerifyPRStageShaMismatch:
     def test_ok_false_when_reported_sha_differs_from_head(self):
         output = _full_output()

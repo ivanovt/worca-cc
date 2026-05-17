@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from worca.orchestrator.guardian_context import build_guardian_context
 from worca.orchestrator.error_classifier import (
     classify_error, record_failure, record_success,
     should_halt, get_retry_delay, get_circuit_breaker_state,
@@ -1186,11 +1187,19 @@ def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> O
 def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVerification:
     """Post-condition check after the PR stage reports success.
 
-    Validates four invariants:
-    1. stage_output is a structured dict carrying commit_sha, pr_url, pr_number.
+    Validates these invariants:
+    1. stage_output is a structured dict.
     2. git HEAD changed from baseline_head (a new commit was made).
     3. The reported commit_sha is a prefix of (or equal to) the actual HEAD SHA.
-    4. (Best-effort) `gh pr view <pr_number>` confirms the PR exists and its
+
+    When `stage_output.deferred is True` (workspace child with WORCA_DEFER_PR=1
+    — the parent orchestrator creates the PR centrally after the integration
+    test passes), only the three invariants above are checked. The guardian
+    legitimately has no pr_number / pr_url to report.
+
+    Otherwise the PR-creation invariants also apply:
+    4. stage_output carries pr_url + pr_number.
+    5. (Best-effort) `gh pr view <pr_number>` confirms the PR exists and its
        URL matches `pr_url`. Skipped silently when gh cannot run.
 
     Args:
@@ -1206,7 +1215,10 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
     if not isinstance(stage_output, dict):
         return PRVerification(ok=False, reason="stage output is not a structured dict")
 
-    for field in ("commit_sha", "pr_url", "pr_number"):
+    deferred = stage_output.get("deferred") is True
+
+    required = ["commit_sha"] if deferred else ["commit_sha", "pr_url", "pr_number"]
+    for field in required:
         if field not in stage_output:
             return PRVerification(ok=False, reason=f"missing required field: {field}")
 
@@ -1221,6 +1233,11 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
             ok=False,
             reason=f"commit sha mismatch: reported {reported_sha!r} but HEAD is {actual_head!r}",
         )
+
+    if deferred:
+        # Parent orchestrator will create + verify the PR centrally; no
+        # pr_number/pr_url to check here.
+        return PRVerification(ok=True, reason="")
 
     if gh_lookup is None:
         gh_lookup = _verify_pr_via_gh
@@ -1814,6 +1831,9 @@ def run_pipeline(
                     "agent_overrides_dir", ".claude/agents"
                 )
                 template_agents_dir = _render_worca.get("_template_agents_dir")
+                # Guardian template vars (#165) are threaded into PromptBuilder
+                # context below — _render_agent_templates only performs overlay
+                # merging, placeholders are resolved at agent-dispatch time.
                 _render_agent_templates(run_dir, {
                     "plan_file": status["plan_file"],
                     "run_id": status.get("run_id", ""),
@@ -1833,6 +1853,13 @@ def run_pipeline(
         prompt_builder.update_context("run_id", status.get("run_id", ""))
         prompt_builder.update_context("branch", branch_name)
         prompt_builder.update_context("title", work_request.title)
+        # Guardian template variables (issue #165): derived once here so the
+        # dispatch-time resolve_agent call resolves {{pr_title_prefix}},
+        # {{pr_footer}}, and {{#if defer_pr}} in guardian.md. Computed from
+        # the current process env, which carries the fleet/workspace child
+        # WORCA_* vars set by run_fleet.py / dag_executor.py.
+        for key, value in build_guardian_context(os.environ).items():
+            prompt_builder.update_context(key, value)
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
 
