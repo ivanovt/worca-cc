@@ -96,6 +96,17 @@ short-circuits with a fixed reason string. Settings override via
 `worca.governance.subagent_dispatch.<agent> = [...]` *replaces* the per-agent allow set
 (`tracking.py:76`).
 
+**Latent defect — `workspace_planner` missing from defaults.** The recently-landed
+workspace-runs feature (`src/worca/scripts/run_workspace.py:473-492`) invokes
+`workspace_planner.md` via `run_agent()`, which auto-sets `WORCA_AGENT=workspace_planner`
+in the subprocess env (`claude_cli.py:331-342`). The `SubagentStart` hook then calls
+`check_dispatch("workspace_planner", child)` → `rules.get("workspace_planner", set())`
+returns the empty set → workspace_planner can dispatch **nothing**, not even `Explore`.
+This is silent today because the agent does not currently attempt subagent dispatch, but
+any future revision that wants `Explore` for cross-repo orientation would fail with a
+confusing "Blocked: workspace_planner cannot dispatch Explore" message. W-054 fixes this
+as a side effect of broadening the defaults (see §5.4).
+
 #### 1.3 No skill governance layer
 
 The `Skill` tool is blanket-disallowed at the CLI level, so there is no settings key, no
@@ -269,6 +280,30 @@ explicit opt-in).
 tools (one subagent dispatch can do an arbitrary amount of work in a child context), so
 opt-in to broader access stays the rule. Developers who want all subagents available write
 `"_defaults": ["*"]` explicitly.
+
+#### 5.4 Agent roster — nine roles, not eight
+
+The dispatch defaults must cover every agent role that runs under `WORCA_AGENT`. As of the
+workspace-runs landing (commit `00b3c1b`), there are **nine** roles:
+
+| Role | Where invoked | Notes |
+|---|---|---|
+| `planner` | per-pipeline | existing |
+| `plan_reviewer` | per-pipeline | existing, gated off by default |
+| `coordinator` | per-pipeline | existing |
+| `implementer` | per-pipeline | existing |
+| `tester` | per-pipeline | existing |
+| `reviewer` | per-pipeline | existing |
+| `guardian` | per-pipeline | existing |
+| `learner` | per-pipeline | existing, gated off by default |
+| `workspace_planner` | per-workspace | **new — missing from current `DEFAULT_SUBAGENT_DISPATCH`** |
+
+`_defaults: ["Explore"]` covers all nine implicitly (no need to enumerate). The fix for
+the §1.2 defect is automatic: under the new resolution algorithm, an agent not listed in
+`per_agent_allow` falls through to `_defaults`, so workspace_planner gets `["Explore"]`
+without any special-casing. The migration in §9 preserves user-supplied per-agent values
+verbatim — a project that has explicitly enumerated all eight legacy agents will not
+automatically gain a workspace_planner entry, but the fallback to `_defaults` still applies.
 
 ### 6. Settings.json end-to-end shape
 
@@ -470,6 +505,16 @@ Old shapes that still pass through cleanly:
 
 ### 10. UI changes (worca-ui)
 
+#### 10.0 Agent roster source of truth
+
+The UI's `Xo` constant in `worca-ui/app/main.bundle.js:973` lists the legacy eight agents
+(`planner, plan_reviewer, coordinator, implementer, tester, reviewer, guardian, learner`)
+and does **not** include `workspace_planner`. Extend it to nine. The per-agent rows in the
+dispatch-section editor are driven by this list, so adding `workspace_planner` here makes
+it editable in the UI for all three sections automatically. The denylist-sync test
+(`tests/test_denylist_sync.py`, §10.5) is extended to assert the JS and Python agent
+rosters match too.
+
 #### 10.1 Settings page — full editor for all three sections
 
 Today `worca-ui/app/views/settings.js:1141-1200` renders one card per agent with a tag input
@@ -567,12 +612,14 @@ Same pattern as today's W-038 implicit-comment sync, but enforced.
 
 **Files:** `src/worca/hooks/tracking.py`, `tests/test_tracking.py`
 
-1. Add `_DISPATCH_DEFAULTS` constant with the three section defaults.
+1. Add `_DISPATCH_DEFAULTS` constant with the three section defaults — note `subagents._defaults`
+   uses `["Explore"]`, which covers `workspace_planner` automatically via fallback (§5.4).
 2. Add `_load_dispatch_section()` and `check_allowed()` per §7.1.
 3. Keep `check_dispatch()` as a shim over `check_allowed("subagents", ...)`.
 4. Add unit tests covering: wildcard expansion, mixed form, replace-not-union, always_disallowed
    short-circuit, default_denied not included in `*`, missing section falls back to defaults,
-   glob match on `worca-*`.
+   glob match on `worca-*`, **and `workspace_planner` resolves to `_defaults` when no
+   per-agent entry exists** (the §1.2 defect regression test).
 
 ### Phase 2: Python — wire skills hook + telemetry
 
@@ -606,12 +653,13 @@ Same pattern as today's W-038 implicit-comment sync, but enforced.
 `worca-ui/server/app.js`, `worca-ui/server/known-tools.json` (new),
 `worca-ui/server/known-skills.json` (new)
 
-1. Extract `dispatch-section.js` per §10.2.
-2. Replace the single subagent_dispatch card in `settings.js` with three section cards.
-3. Add `*` chip styling + mixed-form parsing in the tag input.
-4. Add `GET /api/tools` and `GET /api/skills` endpoints; extend autocomplete in
+1. Extend the `Xo` agent-roster constant to include `workspace_planner` (§10.0).
+2. Extract `dispatch-section.js` per §10.2.
+3. Replace the single subagent_dispatch card in `settings.js` with three section cards.
+4. Add `*` chip styling + mixed-form parsing in the tag input.
+5. Add `GET /api/tools` and `GET /api/skills` endpoints; extend autocomplete in
    `dispatch-section.js`.
-5. Save path: send the full `governance.dispatch` block; the server runs the same migration
+6. Save path: send the full `governance.dispatch` block; the server runs the same migration
    helper from Phase 3 before writing.
 
 ### Phase 5: UI — run detail wildcard counter
@@ -671,6 +719,9 @@ Same pattern as today's W-038 implicit-comment sync, but enforced.
   later.
 - **Unknown agent name.** If `WORCA_AGENT` is empty (interactive mode), all dispatches are
   allowed — matches today's `check_dispatch()` behavior. Hook tests assert this.
+- **Agent role not enumerated in `per_agent_allow`.** Falls through to `_defaults` (§2.1).
+  This fixes the §1.2 defect where `workspace_planner` silently couldn't dispatch anything;
+  any future new agent role gets sensible behavior without a code change.
 - **Settings file missing.** `_load_settings()` returns `{}` and the section falls back to
   bundled defaults. No crash.
 - **Empty `per_agent_allow` entry `[]`.** Means "lockdown for this agent" — explicit, no
@@ -717,6 +768,7 @@ migration (it was already an artifact of a previous migration).
 | Python | `test_check_allowed_default_denied_not_in_wildcard` | `["*"]` excludes default_denied items |
 | Python | `test_check_allowed_glob_worca_prefix` | `worca-install` matches `worca-*` |
 | Python | `test_check_allowed_missing_section_uses_defaults` | Empty config returns bundled defaults |
+| Python | `test_check_allowed_workspace_planner_falls_back_to_defaults` | Agent role not enumerated in `per_agent_allow` resolves via `_defaults` (regression test for §1.2 defect) |
 | Python | `test_check_allowed_via_field` | Returns `wildcard` or `explicit` correctly |
 | Python | `test_resolve_tool_disallows_drops_skill` | `Skill` never in returned disallow list |
 | Python | `test_resolve_tool_disallows_named_entries_warn` | Named tool entries get warning + ignored |
