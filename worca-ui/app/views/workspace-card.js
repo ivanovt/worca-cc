@@ -29,10 +29,6 @@ function _isTerminal(status) {
   return WORKSPACE_TERMINAL.has(status);
 }
 
-function _tierCount(dag) {
-  return Array.isArray(dag?.tiers) ? dag.tiers.length : 0;
-}
-
 /**
  * Card-per-workspace-run component. Same shape as fleetCardView so the
  * two list views look like siblings: status stripe on the left
@@ -64,9 +60,16 @@ export function workspaceCardView(ws, options = {}) {
 
   const status = ws.status || 'planning';
   const variant = _statusVariant(status);
-  const title =
-    ws.workspace_name ||
-    `Workspace ${ws.workspace_id_short || ws.workspace_id || ''}`;
+  // Mirror fleet-card: the workspace_id_short is the stable identifier in
+  // the title. The workspace_name (the "test-multi" label from
+  // workspace.json) moves into a meta row so titles can't blow out the
+  // header when work-request prompts are long-form. id_short is derived
+  // from the trailing hex segment of workspace_id when the server doesn't
+  // emit it directly (the list endpoint currently omits it).
+  const idShort =
+    ws.workspace_id_short || ws.workspace_id?.split('_').pop() || '';
+  const title = `Workspace ${idShort}`;
+  const workspaceName = ws.workspace_name || null;
   const prompt = ws.work_request?.title || ws.work_request?.description || '';
   const startedAt = ws.created_at || null;
   const lastActivityAt = ws.updated_at || null;
@@ -81,10 +84,7 @@ export function workspaceCardView(ws, options = {}) {
     ? formatDuration(elapsed(startedAt, terminalEndedAt))
     : null;
 
-  const tiers = _tierCount(ws.dag);
-  const repoCount = ws.children_count ?? 0;
-  const repoSummary =
-    tiers > 1 ? `${repoCount} (${tiers} tiers)` : `${repoCount}`;
+  const projectCount = ws.children_count ?? 0;
 
   const terminal = _isTerminal(status);
   const showRerun = onRerun && terminal;
@@ -126,9 +126,17 @@ export function workspaceCardView(ws, options = {}) {
       }
 
       <div class="run-card-meta">
+        ${
+          workspaceName
+            ? html`<span class="run-card-meta-item">
+                <span class="meta-label">Name:</span>
+                <span class="meta-value workspace-card-name">${workspaceName}</span>
+              </span>`
+            : nothing
+        }
         <span class="run-card-meta-item">
           <span class="meta-label">Projects:</span>
-          <span class="meta-value">${repoSummary}</span>
+          <span class="meta-value">${projectCount}</span>
         </span>
         ${
           ws.workspace_root
@@ -165,10 +173,6 @@ export function workspaceCardView(ws, options = {}) {
               </span>`
             : nothing
         }
-        <span class="run-card-meta-item workspace-card-id">
-          <span class="meta-label">ID:</span>
-          <code class="meta-value">${ws.workspace_id || '—'}</code>
-        </span>
       </div>
 
       ${

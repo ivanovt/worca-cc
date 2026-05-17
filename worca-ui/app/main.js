@@ -2816,9 +2816,10 @@ function contentHeaderView() {
       // detail view already fetched.
       const ws = _wsDetailCache[route.runId];
       const shortId = route.runId.split('_').pop() || route.runId;
-      title = ws?.workspace_name
-        ? `${ws.workspace_name} (${shortId})`
-        : `Workspace ${shortId}`;
+      // Mirror workspace-card / fleet-card: title is always
+      // `Workspace <id_short>`. The workspace_name (e.g. "test-multi")
+      // is surfaced inside the detail page body, not the header.
+      title = `Workspace ${shortId}`;
 
       if (ws) {
         const wsStatus = ws.status || 'running';
