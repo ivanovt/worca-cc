@@ -535,14 +535,13 @@ h1, h2, h3, h4, h5, h6 {
   gap: 6px;
 }
 
-.run-branch {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-}
-
-.run-template {
+/* Project / Branch / Pipeline-Template / Worktree rows inside
+   `.run-info-section` all share the same label-value typography so the
+   block reads as a uniform stack. Mirror .run-group below it. */
+.run-project,
+.run-branch,
+.run-template,
+.run-worktree {
   display: flex;
   align-items: center;
   gap: 6px;
