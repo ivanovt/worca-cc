@@ -2,7 +2,7 @@
 
 ## `worca run`
 
-Run a full pipeline from a prompt, spec file, or GitHub issue. By default the run lands in the current working tree; pass `--worktree` to spawn it in an isolated git worktree (parallel-safe; same path the UI's "New Pipeline" button uses).
+Run a full pipeline from a prompt, spec file, or GitHub issue. By default the run lands in the current working tree; pass `--worktree` to spawn it in an isolated git worktree (parallel-safe; same path the UI's "Run Pipeline" button uses).
 
 ```bash
 worca run --prompt "Add user authentication"
