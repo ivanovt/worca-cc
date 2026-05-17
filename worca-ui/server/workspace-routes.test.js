@@ -1174,26 +1174,35 @@ describe('effectiveWorkspaceStatus', () => {
     ).toEqual({ status: 'integration_testing', halt_reason: null });
   });
 
-  it('preserves sticky `completed` even if a child polls as running', () => {
-    // Mirrors fleet: once the orchestrator marked the workspace done, a
-    // late child write doesn't reopen it. Resume / Re-run is the only
-    // way out of a terminal state.
+  it('re-derives `completed` when a child polls as running', () => {
+    // Unlike fleet, workspace `completed` is NOT sticky — the orchestrator's
+    // fire-and-forget launcher pattern means it routinely marks children
+    // completed before they actually finish. The live child registry is
+    // the source of truth.
     expect(
       effectiveWorkspaceStatus({ status: 'completed' }, ['running']),
-    ).toEqual({ status: 'completed', halt_reason: null });
+    ).toEqual({ status: 'running', halt_reason: null });
   });
 
-  it('preserves sticky `failed`', () => {
+  it('re-derives `failed` when a child polls as running', () => {
     expect(effectiveWorkspaceStatus({ status: 'failed' }, ['running'])).toEqual(
-      { status: 'failed', halt_reason: null },
+      { status: 'running', halt_reason: null },
     );
+  });
+
+  it('keeps `completed` when all children are genuinely completed', () => {
+    expect(
+      effectiveWorkspaceStatus({ status: 'completed' }, [
+        'completed',
+        'completed',
+        'completed',
+      ]),
+    ).toEqual({ status: 'completed', halt_reason: null });
   });
 
   it('preserves sticky `integration_failed`', () => {
     expect(
-      effectiveWorkspaceStatus({ status: 'integration_failed' }, [
-        'completed',
-      ]),
+      effectiveWorkspaceStatus({ status: 'integration_failed' }, ['completed']),
     ).toEqual({ status: 'integration_failed', halt_reason: null });
   });
 

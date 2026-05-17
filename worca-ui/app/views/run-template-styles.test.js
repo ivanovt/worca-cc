@@ -9,7 +9,8 @@ const css = readFileSync(resolve(__dirname, '../styles.css'), 'utf-8');
 // selector list that contains `.run-template` somewhere — not just a
 // standalone block. Same intent: verify the row gets the shared flex
 // layout + 13px font-size.
-const TEMPLATE_BLOCK_RE = /(?:[\.a-zA-Z0-9_,\s-]*\.run-template[^{]*)\{([^}]+)\}/;
+const TEMPLATE_BLOCK_RE =
+  /(?:[.a-zA-Z0-9_,\s-]*\.run-template[^{]*)\{([^}]+)\}/;
 
 describe('.run-template CSS styles', () => {
   it('has .run-template with flex layout like .run-branch', () => {

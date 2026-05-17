@@ -260,9 +260,21 @@ function scanForProjects(parentPath) {
 }
 
 function enrichChildStatus(child) {
-  if (!child.run_id || !child.worktree_path) return child;
+  if (!child.run_id) return child;
+  // pipelines.d lives in the project root, NOT inside the worktree.
+  // Prefer `project_path` (set by DagExecutor on every child entry);
+  // fall back to deriving the project root from `worktree_path` for older
+  // manifests that didn't carry it. The worktree path is structured as
+  // `<project_root>/.worktrees/pipeline-<run_id>`, so the project root is
+  // two parent segments up.
+  let projectRoot = child.project_path;
+  if (!projectRoot && child.worktree_path) {
+    const idx = child.worktree_path.lastIndexOf('/.worktrees/');
+    if (idx > 0) projectRoot = child.worktree_path.slice(0, idx);
+  }
+  if (!projectRoot) return child;
   const regPath = join(
-    child.worktree_path,
+    projectRoot,
     '.worca',
     'multi',
     'pipelines.d',
@@ -332,13 +344,22 @@ const _CHILD_TERMINAL_STATES = new Set([
   ..._CHILD_FAILURE_STATES,
 ]);
 
-// Statuses we never re-derive — once the orchestrator (or operator) has
-// declared them, the value sticks until a Resume / Re-run flow clears it.
+// Statuses we never re-derive. Only orchestrator-phase markers
+// (planning / integration_testing) and operator/circuit-breaker decisions
+// (halted / paused / integration_failed / blocked) are sticky — the
+// workspace can't re-derive its way out of those without an explicit
+// Resume / Re-run.
+//
+// `running`, `completed`, and `failed` are NOT sticky. The orchestrator
+// uses run_worktree.py as a fire-and-forget launcher, so it can write
+// `completed` long before the actual pipeline finishes; re-deriving from
+// the live registry on every read is the only way to keep the badge
+// honest. (Fleet leaves completed/failed sticky because fleet runs
+// terminate atomically; workspace is a coordination layer over
+// independently-running pipelines and needs the looser semantics.)
 const _STICKY_WORKSPACE_STATES = new Set([
   'planning',
   'integration_testing',
-  'completed',
-  'failed',
   'integration_failed',
   'halted',
   'paused',
@@ -398,7 +419,10 @@ export function effectiveWorkspaceStatus(manifest, childStatuses) {
   if (_STICKY_WORKSPACE_STATES.has(current)) {
     return { status: current, halt_reason: manifest.halt_reason ?? null };
   }
-  // current === 'running' — derive from children.
+  // current is running / completed / failed — re-derive against live
+  // child statuses. If the orchestrator wrote `completed` based on the
+  // fire-and-forget launcher exit but the actual pipelines are still
+  // running, this flips the badge back to `running` to match reality.
   return {
     status: deriveWorkspaceStatus(childStatuses),
     halt_reason: manifest.halt_reason ?? null,
