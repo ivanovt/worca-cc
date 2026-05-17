@@ -191,13 +191,20 @@ def ui_server_single_project(ui_project, tmp_path):
     # Spawn server/index.js directly (rather than via bin/worca-ui.js, which
     # double-spawns + detaches and would leave us without a child PID to
     # cleanly kill in the finalizer).
+    # WORCA_HOME pins the prefs root to <fake_home>/.worca so the server
+    # honors the fake home in addition to HOME (issue #162).
     proc = subprocess.Popen(
         [_NODE_BIN, str(_UI_SERVER_SCRIPT),
          "--project", str(project),
          "--port", str(port),
          "--host", "127.0.0.1"],
         cwd=str(project),
-        env={**os.environ, "HOME": str(home_dir), "WORCA_NO_OPEN": "1"},
+        env={
+            **os.environ,
+            "HOME": str(home_dir),
+            "WORCA_HOME": str(home_dir / ".worca"),
+            "WORCA_NO_OPEN": "1",
+        },
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     base_url = f"http://127.0.0.1:{port}"
@@ -233,13 +240,21 @@ def ui_server_global(ui_project, tmp_path):
         json.dumps(project_entry)
     )
 
+    # WORCA_HOME pins the prefs root to <fake_home>/.worca so the server
+    # reads projects.d/ from the fake home, not the session tmp dir set
+    # by tests/conftest.py (issue #162).
     proc = subprocess.Popen(
         [_NODE_BIN, str(_UI_SERVER_SCRIPT),
          "--global",
          "--port", str(port),
          "--host", "127.0.0.1"],
         cwd=str(home_dir),
-        env={**os.environ, "HOME": str(home_dir), "WORCA_NO_OPEN": "1"},
+        env={
+            **os.environ,
+            "HOME": str(home_dir),
+            "WORCA_HOME": str(home_dir / ".worca"),
+            "WORCA_NO_OPEN": "1",
+        },
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
     )
     base_url = f"http://127.0.0.1:{port}"
