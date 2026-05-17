@@ -4,6 +4,7 @@ import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { iconSvg, RotateCcw, Trash2 } from '../utils/icons.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { WORKSPACE_TERMINAL } from '../utils/status-constants.js';
+import { projectBadgesView } from './fleet-card.js';
 
 // Workspace-run status → sl-badge variant. Mirrors fleetStatusVariant so
 // the two card types share their semantic colour grammar — primary for
@@ -21,6 +22,13 @@ const WS_STATUS_VARIANT = {
   paused: 'neutral',
 };
 
+const _FAILURE_CHILD_STATES = new Set([
+  'failed',
+  'setup_failed',
+  'unrecoverable',
+  'blocked',
+]);
+
 function _statusVariant(status) {
   return WS_STATUS_VARIANT[status] || 'neutral';
 }
@@ -29,12 +37,23 @@ function _isTerminal(status) {
   return WORKSPACE_TERMINAL.has(status);
 }
 
+function _failedCount(children) {
+  return (children || []).filter((c) => _FAILURE_CHILD_STATES.has(c.status))
+    .length;
+}
+
 /**
- * Card-per-workspace-run component. Same shape as fleetCardView so the
- * two list views look like siblings: status stripe on the left
- * (via .run-card + statusClass), status icon + bold title on top, pill
- * status badge in the top-right, label:value meta rows, and a small
- * action row at the bottom.
+ * Card-per-workspace-run component. Structural mirror of fleetCardView:
+ *
+ *   1. .run-card-top         — status icon + title + status badge
+ *   2. .workspace-card-prompt — work-request prompt (workspace-specific;
+ *                              fleet folds prompt into title, workspace
+ *                              uses ID-only title so prompt sits below)
+ *   3. .fleet-card-progress  — "Projects:" + per-child name badges
+ *                              (reuses fleet's projectBadgesView for
+ *                              identical chip styling) + failed count
+ *   4. .run-card-meta        — Started · Last activity · Duration
+ *   5. .run-card-actions     — Re-run / Cleanup (terminal only)
  *
  * @param {{
  *   workspace_id: string,
@@ -44,6 +63,7 @@ function _isTerminal(status) {
  *   status: string,
  *   halt_reason?: string | null,
  *   work_request?: { title?: string, description?: string },
+ *   children?: Array<{project?: string, project_path?: string, status?: string}>,
  *   children_count?: number,
  *   dag?: { tiers?: object[] },
  *   created_at?: string | null,
@@ -60,16 +80,12 @@ export function workspaceCardView(ws, options = {}) {
 
   const status = ws.status || 'planning';
   const variant = _statusVariant(status);
-  // Mirror fleet-card: the workspace_id_short is the stable identifier in
-  // the title. The workspace_name (the "test-multi" label from
-  // workspace.json) moves into a meta row so titles can't blow out the
-  // header when work-request prompts are long-form. id_short is derived
-  // from the trailing hex segment of workspace_id when the server doesn't
-  // emit it directly (the list endpoint currently omits it).
+  // workspace_id_short is the stable identifier in the title (mirrors
+  // fleet's `Fleet <id_short>` fallback). Derive it client-side from the
+  // trailing hex segment when the server doesn't emit it.
   const idShort =
     ws.workspace_id_short || ws.workspace_id?.split('_').pop() || '';
   const title = `Workspace ${idShort}`;
-  const workspaceName = ws.workspace_name || null;
   const prompt = ws.work_request?.title || ws.work_request?.description || '';
   const startedAt = ws.created_at || null;
   const lastActivityAt = ws.updated_at || null;
@@ -84,7 +100,8 @@ export function workspaceCardView(ws, options = {}) {
     ? formatDuration(elapsed(startedAt, terminalEndedAt))
     : null;
 
-  const projectCount = ws.children_count ?? 0;
+  const children = ws.children || [];
+  const failedCount = _failedCount(children);
 
   const terminal = _isTerminal(status);
   const showRerun = onRerun && terminal;
@@ -125,25 +142,16 @@ export function workspaceCardView(ws, options = {}) {
           : nothing
       }
 
-      <div class="run-card-meta">
+      <div class="fleet-card-progress">
+        <span class="meta-label fleet-card-children-label">Projects:</span>
         ${
-          workspaceName
-            ? html`<span class="run-card-meta-item">
-                <span class="meta-label">Name:</span>
-                <span class="meta-value workspace-card-name">${workspaceName}</span>
-              </span>`
-            : nothing
+          children.length > 0
+            ? projectBadgesView(children)
+            : html`<span class="fleet-card-children-empty">No projects dispatched yet</span>`
         }
-        <span class="run-card-meta-item">
-          <span class="meta-label">Projects:</span>
-          <span class="meta-value">${projectCount}</span>
-        </span>
         ${
-          ws.workspace_root
-            ? html`<span class="run-card-meta-item">
-                <span class="meta-label">Root:</span>
-                <span class="meta-value workspace-card-root">${ws.workspace_root}</span>
-              </span>`
+          failedCount > 0
+            ? html`<span class="fleet-card-failed-count">${failedCount} failed</span>`
             : nothing
         }
       </div>

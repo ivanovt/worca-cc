@@ -1089,6 +1089,11 @@ export function createWorkspaceRouter({
   });
 
   // ── GET /api/workspace-runs ───────────────────────────────────────────
+  //
+  // Returns a list of workspace summaries. The payload includes a compact
+  // `children` array (one slim record per dispatched child) so the card
+  // can render `projectBadgesView` without a separate detail fetch per
+  // workspace — mirrors fleet-routes.js.
   workspaceRuns.get('/', (_req, res) => {
     try {
       const pointers = listPointers(workspaceRunsDir);
@@ -1099,9 +1104,22 @@ export function createWorkspaceRouter({
         // Reconcile against live child statuses so the badge reflects
         // what's actually happening instead of the orchestrator's last
         // write. Sticky states (planning / integration_testing /
-        // completed / failed / halted / paused / integration_failed)
-        // pass through unchanged.
+        // halted / paused / integration_failed) pass through unchanged.
         const { status, halt_reason } = reconcileWorkspaceStatus(m);
+        // Slim child records for projectBadgesView. Pass project, project_path
+        // (used by fleet-card's _shortRepoName fallback), and the live status
+        // (reconcile already enriched it onto manifest.children via the
+        // mutation inside reconcileWorkspaceStatus → enrichChildStatus).
+        const children = (m.children ?? []).map((c) => {
+          const enriched = enrichChildStatus(c);
+          return {
+            project: enriched.project,
+            project_path: enriched.project_path,
+            run_id: enriched.run_id,
+            status: enriched.status,
+            tier: enriched.tier,
+          };
+        });
         runs.push({
           workspace_id: m.workspace_id,
           workspace_name: m.workspace_name,
@@ -1112,7 +1130,8 @@ export function createWorkspaceRouter({
           created_at: m.created_at,
           finished_at: _synthesizeFinishedAt(m),
           dag: m.dag,
-          children_count: (m.children ?? []).length,
+          children,
+          children_count: children.length,
         });
       }
       res.json({ ok: true, workspace_runs: runs });
