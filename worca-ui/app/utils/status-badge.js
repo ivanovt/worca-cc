@@ -64,6 +64,16 @@ export function statusClass(status) {
   return CLASS_MAP[status] || 'status-unknown';
 }
 
+const DOT_CLASS_MAP = {
+  running: 'project-status-running',
+  error: 'project-status-error',
+  paused: 'project-status-paused',
+};
+
+export function statusDotClass(status) {
+  return DOT_CLASS_MAP[status] || 'project-status-idle';
+}
+
 export function statusIcon(status, size = 14) {
   const data = ICON_DATA[status];
   if (!data) return '?';

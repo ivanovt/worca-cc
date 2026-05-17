@@ -12,6 +12,12 @@ vi.mock('lit-html/directives/unsafe-html.js', () => ({
 vi.mock('../utils/icons.js', () => ({
   iconSvg: () => '',
   FileText: 'FileText',
+  Circle: 'Circle',
+  CircleAlert: 'CircleAlert',
+  CircleCheck: 'CircleCheck',
+  CircleSlash: 'CircleSlash',
+  Loader: 'Loader',
+  Pause: 'Pause',
 }));
 
 function createDocStub() {
@@ -45,6 +51,12 @@ describe('new-run — template module state and submit', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Circle: 'Circle',
+      CircleAlert: 'CircleAlert',
+      CircleCheck: 'CircleCheck',
+      CircleSlash: 'CircleSlash',
+      Loader: 'Loader',
+      Pause: 'Pause',
     }));
     vi.doMock('./settings.js', () => ({
       getDefaults: () => ({ msize: 1, mloops: 1 }),
@@ -141,6 +153,12 @@ describe('new-run — fetchTemplates via newRunView', () => {
     vi.doMock('../utils/icons.js', () => ({
       iconSvg: () => '',
       FileText: 'FileText',
+      Circle: 'Circle',
+      CircleAlert: 'CircleAlert',
+      CircleCheck: 'CircleCheck',
+      CircleSlash: 'CircleSlash',
+      Loader: 'Loader',
+      Pause: 'Pause',
     }));
     vi.doMock('./settings.js', () => ({
       getDefaults: () => ({ msize: 1, mloops: 1 }),

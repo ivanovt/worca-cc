@@ -15,6 +15,7 @@ import {
   Workflow,
   Zap,
 } from '../utils/icons.js';
+import { statusDotClass } from '../utils/status-badge.js';
 
 /**
  * Derive aggregate status for a project from its runs.
@@ -54,22 +55,6 @@ export function projectStatus(projectId, runs, currentProjectId) {
   if (hasError) return 'error';
   if (hasPaused) return 'paused';
   return 'idle';
-}
-
-/**
- * Map project status to a CSS color class for the status dot.
- */
-function statusDotClass(status) {
-  switch (status) {
-    case 'running':
-      return 'project-status-running';
-    case 'error':
-      return 'project-status-error';
-    case 'paused':
-      return 'project-status-paused';
-    default:
-      return 'project-status-idle';
-  }
 }
 
 export function sidebarView(

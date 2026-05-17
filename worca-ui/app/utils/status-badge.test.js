@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { resolveStatus, statusClass, statusIcon } from './status-badge.js';
+import {
+  resolveStatus,
+  statusClass,
+  statusDotClass,
+  statusIcon,
+} from './status-badge.js';
 
 describe('status-badge', () => {
   it('maps pending to correct class', () => {
@@ -159,5 +164,24 @@ describe('status-badge', () => {
   });
   it('statusIcon does NOT add icon-spin for blocked', () => {
     expect(statusIcon('blocked')).not.toContain('icon-spin');
+  });
+
+  // statusDotClass — project-level aggregate status dot
+  describe('statusDotClass', () => {
+    it('maps running to project-status-running', () => {
+      expect(statusDotClass('running')).toBe('project-status-running');
+    });
+    it('maps error to project-status-error', () => {
+      expect(statusDotClass('error')).toBe('project-status-error');
+    });
+    it('maps paused to project-status-paused', () => {
+      expect(statusDotClass('paused')).toBe('project-status-paused');
+    });
+    it('returns project-status-idle for idle', () => {
+      expect(statusDotClass('idle')).toBe('project-status-idle');
+    });
+    it('returns project-status-idle for unknown status', () => {
+      expect(statusDotClass('whatever')).toBe('project-status-idle');
+    });
   });
 });

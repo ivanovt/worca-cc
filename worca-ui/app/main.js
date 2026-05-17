@@ -59,6 +59,7 @@ import {
   writeLogLine,
 } from './views/log-viewer.js';
 import {
+  getEffectiveProjectId,
   getNewRunSubmitState,
   isAtCapacity,
   newRunView,
@@ -3009,11 +3010,17 @@ function contentHeaderView() {
   } else if (route.section === 'new-run') {
     title = 'Run Pipeline';
     showBack = true;
-    const nrs = getNewRunSubmitState();
+    const hasProjects = (state.projects?.length ?? 0) > 0;
+    const nrs = getNewRunSubmitState({
+      hasProjects,
+      currentProjectId: state.currentProjectId,
+    });
     const capReached = isAtCapacity(state);
+    const btnDisabled = nrs.isSubmitting || capReached || nrs.noProject;
+    const btnTitle = nrs.noProject ? 'Select a project to launch.' : '';
     actionButton = html`
-      <button class="action-btn action-btn--primary" ?disabled=${nrs.isSubmitting || capReached}
-        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: store.getState().currentProjectId })}>
+      <button class="action-btn action-btn--primary" ?disabled=${btnDisabled} title=${btnTitle}
+        @click=${() => submitNewRun({ rerender, onStarted: () => navigate('active', null, route.projectId), projectId: getEffectiveProjectId(store.getState()), hasProjects })}>
 
         ${unsafeHTML(iconSvg(Play, 14))}
         ${nrs.isSubmitting ? 'Starting\u2026' : 'Start'}
