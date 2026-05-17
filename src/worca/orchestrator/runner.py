@@ -2443,12 +2443,11 @@ def run_pipeline(
 
             # Milestone gate after PLAN
             elif current_stage == Stage.PLAN:
-                _ms_cfg = load_settings(settings_path).get("worca", {}).get("milestones", {})
-                if _ms_cfg.get("plan_approval") is False:
-                    # Template disables plan approval gate — auto-approve
-                    approved = True
-                else:
-                    approved = result.get("approved", True)
+                # Plan approval is a webhook-controlled gate, not a planner
+                # self-assessment. Default to approved; the webhook (when
+                # plan_approval is enabled and a subscriber is connected) can
+                # override below via "reject".
+                approved = True
                 iter_extras["outcome"] = "success" if approved else "rejected"
                 complete_iteration(status, current_stage.value, **iter_extras)
                 update_stage(status, current_stage.value, **stage_extras)

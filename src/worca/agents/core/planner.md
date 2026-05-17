@@ -20,7 +20,6 @@ You receive a work request (hosted issue, Beads task, prompt, or spec file) and 
    - Task breakdown (high-level)
    - Test strategy (what to test and how — do NOT cite specific test counts or pass/fail numbers; those are discovered at runtime by the Tester)
    - Branch naming
-6. Set `approved: true` in your output — plan approval is handled by the pipeline
 
 The work request arrives as a user message. Treat it as the subject of your plan.
 
