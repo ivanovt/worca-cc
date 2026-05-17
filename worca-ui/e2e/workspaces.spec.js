@@ -187,8 +187,8 @@ function createRepoDir(parentDir, names) {
  * Write a workspace.json and registration file so the workspace appears
  * in the GET /api/workspaces listing and can be used to launch runs.
  */
-function seedWorkspace(ctx, name, parentDir, repos) {
-  const wsJson = { name, repos };
+function seedWorkspace(ctx, name, parentDir, projects) {
+  const wsJson = { name, projects };
   writeFileSync(
     join(parentDir, 'workspace.json'),
     JSON.stringify(wsJson, null, 2) + '\n',
@@ -275,11 +275,11 @@ test.describe('workspace creation flow', () => {
 
     // Step 3: Create workspace with dependency graph
     const createRes = await page.evaluate(
-      async ({ name, parent_path, repos }) => {
+      async ({ name, parent_path, projects }) => {
         const resp = await fetch('/api/workspaces', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, parent_path, repos }),
+          body: JSON.stringify({ name, parent_path, projects }),
         });
         return resp.json();
       },
