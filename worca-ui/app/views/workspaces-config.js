@@ -1,32 +1,6 @@
-import { html, nothing } from 'lit-html';
+import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { Boxes, iconSvg, Pencil, Play, Trash2 } from '../utils/icons.js';
-
-function _tierCount(projects) {
-  if (!projects?.length) return 0;
-  const names = new Set(projects.map((r) => r.name));
-  const inDegree = {};
-  for (const r of projects) inDegree[r.name] = 0;
-  for (const r of projects) {
-    for (const dep of r.depends_on || []) {
-      if (names.has(dep)) inDegree[r.name]++;
-    }
-  }
-  let tier = 0;
-  const remaining = new Set(projects.map((r) => r.name));
-  while (remaining.size > 0) {
-    const ready = [...remaining].filter((n) => inDegree[n] === 0);
-    if (ready.length === 0) return tier + 1;
-    tier++;
-    for (const n of ready) remaining.delete(n);
-    for (const r of projects) {
-      for (const dep of r.depends_on || []) {
-        if (ready.includes(dep)) inDegree[r.name]--;
-      }
-    }
-  }
-  return tier;
-}
 
 function _runStats(name, workspaceRuns) {
   const matches = (workspaceRuns || []).filter(
@@ -75,7 +49,6 @@ export function workspacesConfigView(
         </thead>
         <tbody>
           ${definitions.map((d) => {
-            const tiers = _tierCount(d.projects);
             const stats = _runStats(d.name, workspaceRuns);
             return html`
               <tr>
@@ -85,10 +58,7 @@ export function workspacesConfigView(
                 <td class="ws-path">
                   <code>${d.path}</code>
                 </td>
-                <td>
-                  ${d.projects.length}
-                  ${tiers > 1 ? html`<span class="ws-tiers">(${tiers}t)</span>` : nothing}
-                </td>
+                <td>${d.projects.length}</td>
                 <td>
                   ${
                     d.integration_test?.command
