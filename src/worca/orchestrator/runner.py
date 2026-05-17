@@ -670,7 +670,7 @@ def _init_orchestrator_log(logs_dir: str) -> None:
     """Open the orchestrator log file for appending."""
     global _orchestrator_log
     os.makedirs(logs_dir, exist_ok=True)
-    _orchestrator_log = open(os.path.join(logs_dir, "orchestrator.log"), "a")
+    _orchestrator_log = open(os.path.join(logs_dir, "orchestrator.log"), "a", encoding="utf-8")
 
 
 def _close_orchestrator_log() -> None:

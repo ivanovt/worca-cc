@@ -82,7 +82,7 @@ def load_status(path: str = ".worca/status.json") -> dict:
 def save_status(status: dict, path: str = ".worca/status.json") -> None:
     """Write status dict as formatted JSON using atomic temp+rename.
 
-    Writes to a temp file in the same directory, then os.rename to
+    Writes to a temp file in the same directory, then os.replace to
     atomically replace the target. Prevents corruption if the pipeline
     crashes mid-write. Creates parent directory if needed.
     """
@@ -96,7 +96,7 @@ def save_status(status: dict, path: str = ".worca/status.json") -> None:
         with os.fdopen(fd, "w") as f:
             json.dump(status, f, indent=2)
             f.write("\n")
-        os.rename(tmp_path, path)
+        os.replace(tmp_path, path)
     except Exception:
         try:
             os.unlink(tmp_path)

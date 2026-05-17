@@ -251,3 +251,39 @@ def test_rebuild_nonexistent_results_dir(tmp_path):
     stats_path = str(tmp_path / "stats" / "cumulative.json")
     result = rebuild_from_results("/nonexistent/results", stats_path)
     assert result["total_runs"] == 0
+
+
+def test_lock_and_unlock(tmp_path):
+    """_acquire_lock / _release_lock round-trips without error on the host platform."""
+    from worca.utils.stats import _acquire_lock, _release_lock
+
+    lock_path = str(tmp_path / "test.lock")
+    fd = _acquire_lock(lock_path)
+    assert fd is not None
+    _release_lock(fd)
+
+
+def test_concurrent_updates(tmp_path):
+    """Two threads merging into the same cumulative file produces correct totals."""
+    import threading
+
+    stats_path = str(tmp_path / "cumulative.json")
+    n = 20
+    threads = []
+    for i in range(n):
+        run = _make_run_status(f"run-{i:03d}", cost=1.00, input_tokens=1000, output_tokens=500)
+        t = threading.Thread(target=update_cumulative_stats, args=(run, stats_path))
+        threads.append(t)
+
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    with open(stats_path) as f:
+        result = json.load(f)
+
+    assert result["total_runs"] == n
+    assert result["total_cost_usd"] == n * 1.00
+    assert result["total_input_tokens"] == n * 1000
+    assert result["total_output_tokens"] == n * 500

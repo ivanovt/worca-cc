@@ -108,7 +108,7 @@ class PromptBuilder:
             with os.fdopen(fd, "w") as f:
                 f.write(serialized)
                 f.write("\n")
-            os.rename(tmp_path, path)
+            os.replace(tmp_path, path)
         except Exception:
             try:
                 os.unlink(tmp_path)
