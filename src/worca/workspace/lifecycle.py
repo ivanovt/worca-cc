@@ -77,4 +77,34 @@ def halt_workspace(
     )
     write_workspace_manifest(manifest, run_dir)
 
+    # Emit workspace.halted with halt_reason="user". Settings come from the
+    # workspace root — the halt entry point doesn't carry one of its own,
+    # and every child shares the workspace root's settings.json.
+    try:
+        from worca.events import types as event_types
+        from worca.events.workspace_emitter import emit_workspace_event
+
+        tiers = manifest.get("dag", {}).get("tiers", [])
+        completed_tiers = sum(1 for t in tiers if t.get("status") == "completed")
+        pending_tiers = sum(1 for t in tiers if t.get("status") == "halted")
+        settings_path = (
+            os.path.join(ws_root, ".claude", "settings.json")
+            if ws_root else ".claude/settings.json"
+        )
+        emit_workspace_event(
+            workspace_id,
+            event_types.WORKSPACE_HALTED,
+            event_types.workspace_halted_payload(
+                workspace_name=manifest.get("workspace_name", ""),
+                halt_reason="user",
+                completed_tiers=completed_tiers,
+                pending_tiers=pending_tiers,
+            ),
+            settings_path=settings_path,
+        )
+    except Exception:
+        # emit_workspace_event is itself never-raises, but the import path
+        # could fail in a partial install — keep halt successful regardless.
+        pass
+
     return True

@@ -330,5 +330,59 @@ def link_workspace_prs(
     umbrella = create_umbrella_issue(manifest, workspace)
     if umbrella:
         manifest["umbrella_issue"] = umbrella
+        _emit_umbrella_created(manifest, workspace, umbrella)
 
     return manifest
+
+
+def _emit_umbrella_created(
+    manifest: dict, workspace: Workspace, umbrella: dict,
+) -> None:
+    """Best-effort emit of workspace.umbrella_issue.created."""
+    try:
+        from worca.events import types as event_types
+        from worca.events.workspace_emitter import emit_workspace_event
+    except Exception:
+        return
+
+    issue_url = umbrella.get("url") or ""
+    issue_number = None
+    m = re.search(r"/issues/(\d+)", issue_url)
+    if m:
+        try:
+            issue_number = int(m.group(1))
+        except ValueError:
+            issue_number = None
+
+    nwo = None
+    m2 = re.search(r"github\.com/([^/]+/[^/]+)/issues/", issue_url)
+    if m2:
+        nwo = m2.group(1)
+    if nwo is None and workspace.umbrella_repo:
+        nwo = workspace.umbrella_repo
+
+    child_pr_count = sum(
+        1 for c in manifest.get("children", []) if c.get("pr_number")
+    )
+
+    workspace_root = manifest.get("workspace_root") or ""
+    settings_path = (
+        os.path.join(workspace_root, ".claude", "settings.json")
+        if workspace_root else ".claude/settings.json"
+    )
+
+    try:
+        emit_workspace_event(
+            manifest["workspace_id"],
+            event_types.WORKSPACE_UMBRELLA_ISSUE_CREATED,
+            event_types.workspace_umbrella_issue_created_payload(
+                workspace_name=manifest.get("workspace_name", ""),
+                issue_url=issue_url,
+                issue_number=issue_number,
+                nwo=nwo,
+                child_pr_count=child_pr_count,
+            ),
+            settings_path=settings_path,
+        )
+    except Exception:
+        pass

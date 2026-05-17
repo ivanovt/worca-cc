@@ -8,6 +8,11 @@ per-child env vars WORCA_WORKSPACE_ID, WORCA_WORKSPACE_NAME, WORCA_DEFER_PR=1.
 Between tiers, context artifacts (git diff --stat + targeted file-level diffs)
 are extracted from completed children, written to {run_dir}/context/{project}-diff.md,
 and injected into the next tier's children via --guide (W-047 §4).
+
+Emits workspace.tier.started/.completed/.failed and
+workspace.circuit_breaker.tripped/halted events at the corresponding state
+transitions. Emission failures never propagate — emit_workspace_event is
+itself never-raises, and we guard imports in case of partial installs.
 """
 from __future__ import annotations
 
@@ -15,6 +20,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 
 from worca.state.status import WorkspaceStatus
 
@@ -221,12 +227,33 @@ def _write_context_file(run_dir: str, project: str, content: str) -> str:
     return path
 
 
+def _emit(event_type: str, payload: dict, *, workspace_id: str, settings_path: str | None) -> None:
+    """Best-effort workspace event emission. Never raises.
+
+    Module-level so DagExecutor instances and the halt helper share one
+    failure-isolated emit path. Import is lazy so partial installs don't
+    break dispatch.
+    """
+    try:
+        from worca.events.workspace_emitter import emit_workspace_event
+    except Exception:
+        return
+    try:
+        kwargs = {}
+        if settings_path is not None:
+            kwargs["settings_path"] = settings_path
+        emit_workspace_event(workspace_id, event_type, payload, **kwargs)
+    except Exception:
+        pass
+
+
 class DagExecutor:
     """Dispatch workspace children in tier order via ThreadPoolExecutor."""
 
-    def __init__(self, manifest: dict, run_dir: str):
+    def __init__(self, manifest: dict, run_dir: str, *, settings_path: str | None = None):
         self._manifest = manifest
         self._run_dir = run_dir
+        self._settings_path = settings_path
         self._workspace_id = manifest["workspace_id"]
         self._workspace_name = manifest["workspace_name"]
         self._workspace_root = manifest["workspace_root"]
@@ -249,8 +276,17 @@ class DagExecutor:
             if child.get("status") == "completed":
                 self._completed_projects[child["project"]] = child
 
+    def _emit_event(self, event_type: str, payload: dict) -> None:
+        _emit(
+            event_type,
+            payload,
+            workspace_id=self._workspace_id,
+            settings_path=self._settings_path,
+        )
+
     def execute(self) -> dict:
         tiers = self._manifest["dag"]["tiers"]
+        from worca.events import types as event_types
 
         for i, tier_info in enumerate(tiers):
             tier_idx = tier_info["tier"]
@@ -263,13 +299,25 @@ class DagExecutor:
                 continue
 
             if self._check_circuit_breaker():
+                self._emit_circuit_breaker_tripped()
                 self._halt_remaining_tiers(tiers[i:])
+                self._emit_halted("circuit_breaker")
                 return {"status": "halted"}
 
             already_done = [p for p in projects if p in self._completed_projects]
             need_dispatch = [p for p in projects if p not in self._completed_projects]
 
             blocked, runnable = self._partition_projects(need_dispatch)
+
+            tier_started_at = datetime.now(timezone.utc)
+            self._emit_event(
+                event_types.WORKSPACE_TIER_STARTED,
+                event_types.workspace_tier_started_payload(
+                    workspace_name=self._workspace_name,
+                    tier=tier_idx,
+                    projects=projects,
+                ),
+            )
 
             for project in blocked:
                 project_path = self._projects_by_name.get(project, project)
@@ -285,6 +333,7 @@ class DagExecutor:
                 self._terminal_count += 1
                 self._failed_count += 1
 
+            results: dict = {}
             if runnable:
                 tier_info["status"] = "running"
                 self._write_manifest()
@@ -321,8 +370,51 @@ class DagExecutor:
 
             self._write_manifest()
 
+            tier_duration_ms = int(
+                (datetime.now(timezone.utc) - tier_started_at).total_seconds() * 1000
+            )
+
+            if tier_info["status"] == "failed":
+                # Identify the projects in THIS tier that failed/blocked.
+                tier_project_set = set(projects)
+                failed_in_tier = [
+                    c["project"] for c in self._manifest["children"]
+                    if c["project"] in tier_project_set
+                    and c.get("tier") == tier_idx
+                    and c.get("status") in ("failed", "setup_failed")
+                ]
+                blocked_in_tier = [
+                    c["project"] for c in self._manifest["children"]
+                    if c["project"] in tier_project_set
+                    and c.get("tier") == tier_idx
+                    and c.get("status") == "blocked"
+                ]
+                self._emit_event(
+                    event_types.WORKSPACE_TIER_FAILED,
+                    event_types.workspace_tier_failed_payload(
+                        workspace_name=self._workspace_name,
+                        tier=tier_idx,
+                        failed_projects=failed_in_tier,
+                        blocked_projects=blocked_in_tier or None,
+                        duration_ms=tier_duration_ms,
+                    ),
+                )
+            elif tier_info["status"] == "completed":
+                self._emit_event(
+                    event_types.WORKSPACE_TIER_COMPLETED,
+                    event_types.workspace_tier_completed_payload(
+                        workspace_name=self._workspace_name,
+                        tier=tier_idx,
+                        projects=projects,
+                        status="completed",
+                        duration_ms=tier_duration_ms,
+                    ),
+                )
+
             if self._check_circuit_breaker() and i < len(tiers) - 1:
+                self._emit_circuit_breaker_tripped()
                 self._halt_remaining_tiers(tiers[i + 1:])
+                self._emit_halted("circuit_breaker")
                 return {"status": "halted"}
 
             if self._dependency_graph and i < len(tiers) - 1:
@@ -346,6 +438,8 @@ class DagExecutor:
             self._manifest["status"] = WorkspaceStatus.HALTED
             self._manifest["halt_reason"] = "circuit_breaker"
             self._write_manifest()
+            self._emit_circuit_breaker_tripped()
+            self._emit_halted("circuit_breaker")
             return {"status": "halted"}
         if has_failures:
             self._manifest["status"] = WorkspaceStatus.FAILED
@@ -355,6 +449,36 @@ class DagExecutor:
         self._manifest["status"] = WorkspaceStatus.COMPLETED
         self._write_manifest()
         return {"status": "completed"}
+
+    def _emit_circuit_breaker_tripped(self) -> None:
+        from worca.events import types as event_types
+        self._emit_event(
+            event_types.WORKSPACE_CIRCUIT_BREAKER_TRIPPED,
+            event_types.workspace_circuit_breaker_tripped_payload(
+                workspace_name=self._workspace_name,
+                failed_count=self._failed_count,
+                terminal_count=self._terminal_count,
+                total_count=self._total_projects,
+                threshold=self._failure_threshold or 0.0,
+            ),
+        )
+
+    def _emit_halted(self, reason: str) -> None:
+        from worca.events import types as event_types
+        tiers = self._manifest.get("dag", {}).get("tiers", [])
+        completed_tiers = sum(1 for t in tiers if t.get("status") == "completed")
+        pending_tiers = sum(
+            1 for t in tiers if t.get("status") in ("pending", "halted")
+        )
+        self._emit_event(
+            event_types.WORKSPACE_HALTED,
+            event_types.workspace_halted_payload(
+                workspace_name=self._workspace_name,
+                halt_reason=reason,
+                completed_tiers=completed_tiers,
+                pending_tiers=pending_tiers,
+            ),
+        )
 
     def _partition_projects(self, projects: list[str]) -> tuple[list[str], list[str]]:
         blocked = []

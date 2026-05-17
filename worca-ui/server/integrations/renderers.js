@@ -239,6 +239,272 @@ function renderFleetFailed(envelope) {
 }
 
 // ---------------------------------------------------------------------------
+// Workspace event renderers
+// ---------------------------------------------------------------------------
+// Mirror the fleet renderers' shape: short title line + indented meta rows.
+// workspace_id replaces fleet_id; envelopes carry workspace_id at the top
+// level (no `pipeline` wrapper). See src/worca/events/workspace_emitter.py
+// for the envelope schema.
+
+function workspaceId(envelope) {
+  return envelope.workspace_id ?? 'workspace';
+}
+
+function workspaceTitle(envelope) {
+  const name = envelope.payload?.workspace_name;
+  return name
+    ? `${name} (\`${workspaceId(envelope)}\`)`
+    : `\`${workspaceId(envelope)}\``;
+}
+
+function renderWorkspaceLaunched(envelope) {
+  const p = envelope.payload ?? {};
+  const projects = Array.isArray(p.projects) ? p.projects : [];
+  const projectsLabel = projects.length
+    ? projects.slice(0, 5).join(', ') +
+      (projects.length > 5 ? `, +${projects.length - 5} more` : '')
+    : '(none)';
+  const parts = [
+    `\u{1F680} **Workspace launched:** ${workspaceTitle(envelope)}`,
+  ];
+  parts.push(`   **Projects:** ${projects.length} — ${projectsLabel}`);
+  if (p.tier_count != null) parts.push(`   **Tiers:** ${p.tier_count}`);
+  if (p.guide_attached) parts.push('   **Guide:** attached');
+  if (p.skip_planning) parts.push('   **Plan:** skipped (per-project plans)');
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspaceCompleted(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`✅ **Workspace completed:** ${workspaceTitle(envelope)}`];
+  if (p.child_count != null) {
+    parts.push(`   **Projects:** ${p.child_count}`);
+  }
+  if (p.integration_passed === false) {
+    parts.push('   **Integration test:** not run');
+  } else if (p.integration_passed) {
+    parts.push('   **Integration test:** passed');
+  }
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  if (p.umbrella_issue_url) {
+    parts.push(`   **Umbrella:** ${p.umbrella_issue_url}`);
+  }
+  return mdMsg(parts.join('\n'), 'success');
+}
+
+function renderWorkspaceFailed(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`❌ **Workspace failed:** ${workspaceTitle(envelope)}`];
+  if (p.failed_tier != null) {
+    parts.push(`   **Failed tier:** ${p.failed_tier}`);
+  }
+  if (Array.isArray(p.failed_projects) && p.failed_projects.length > 0) {
+    parts.push(`   **Failed projects:** ${p.failed_projects.join(', ')}`);
+  }
+  if (p.completed_count != null && p.tier_count != null) {
+    parts.push(
+      `   **Progress:** ${p.completed_count} project(s) completed, ${p.failed_count ?? 0} failed`,
+    );
+  }
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  return mdMsg(parts.join('\n'), 'error');
+}
+
+function renderWorkspaceHalted(envelope) {
+  const p = envelope.payload ?? {};
+  const reason = p.halt_reason || 'unknown';
+  const sev = reason === 'circuit_breaker' ? 'error' : 'warning';
+  const parts = [`\u{1F6D1} **Workspace halted:** ${workspaceTitle(envelope)}`];
+  parts.push(`   **Reason:** ${reason}`);
+  if (p.completed_tiers != null) {
+    parts.push(`   **Completed tiers:** ${p.completed_tiers}`);
+  }
+  if (p.pending_tiers != null && p.pending_tiers > 0) {
+    parts.push(`   **Pending (not dispatched):** ${p.pending_tiers} tier(s)`);
+  }
+  return mdMsg(parts.join('\n'), sev);
+}
+
+function renderWorkspacePaused(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`\u{1F7E1} **Workspace paused:** ${workspaceTitle(envelope)}`];
+  if (p.reason) parts.push(`   **Reason:** ${p.reason}`);
+  return mdMsg(parts.join('\n'), 'warning');
+}
+
+function renderWorkspaceResumed(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [
+    `\u{1F7E2} **Workspace resumed:** ${workspaceTitle(envelope)}`,
+  ];
+  if (p.from_state) parts.push(`   **From state:** ${p.from_state}`);
+  if (p.redispatch_count != null && p.redispatch_count > 0) {
+    parts.push(`   **Re-dispatched:** ${p.redispatch_count} project(s)`);
+  }
+  if (p.skip_count != null && p.skip_count > 0) {
+    parts.push(`   **Skipped (already complete):** ${p.skip_count}`);
+  }
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspaceTierFailed(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`❌ **Workspace tier failed:** ${workspaceTitle(envelope)}`];
+  if (p.tier != null) parts.push(`   **Tier:** ${p.tier}`);
+  if (Array.isArray(p.failed_projects) && p.failed_projects.length > 0) {
+    parts.push(`   **Failed:** ${p.failed_projects.join(', ')}`);
+  }
+  if (Array.isArray(p.blocked_projects) && p.blocked_projects.length > 0) {
+    parts.push(
+      `   **Blocked (dep failure):** ${p.blocked_projects.join(', ')}`,
+    );
+  }
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  return mdMsg(parts.join('\n'), 'error');
+}
+
+function renderWorkspaceIntegrationFailed(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [
+    `❌ **Workspace integration test failed:** ${workspaceTitle(envelope)}`,
+  ];
+  if (p.exit_code != null) {
+    parts.push(`   **Exit code:** ${p.exit_code}`);
+  }
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  if (p.log_tail) {
+    // Render as a code block so chat clients preserve formatting.
+    parts.push(`   **Tail:**\n\`\`\`\n${p.log_tail}\n\`\`\``);
+  }
+  return mdMsg(parts.join('\n'), 'error');
+}
+
+function renderWorkspaceUmbrellaIssueCreated(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [
+    `\u{1F517} **Workspace umbrella issue created:** ${workspaceTitle(envelope)}`,
+  ];
+  if (p.issue_number != null && p.nwo) {
+    parts.push(`   **Issue:** [${p.nwo}#${p.issue_number}](${p.issue_url})`);
+  } else if (p.issue_url) {
+    parts.push(`   **Issue:** ${p.issue_url}`);
+  }
+  if (p.child_pr_count != null) {
+    parts.push(`   **Linked PRs:** ${p.child_pr_count}`);
+  }
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspaceCircuitBreakerTripped(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [
+    `⚠ **Workspace circuit breaker tripped:** ${workspaceTitle(envelope)}`,
+  ];
+  const ratio =
+    p.failure_ratio != null ? `${Math.round(p.failure_ratio * 100)}%` : '?';
+  const threshold =
+    p.threshold != null ? `${Math.round(p.threshold * 100)}%` : '?';
+  parts.push(
+    `   **Failures:** ${p.failed_count ?? 0}/${p.terminal_count ?? 0} (${ratio} ≥ threshold ${threshold})`,
+  );
+  return mdMsg(parts.join('\n'), 'error');
+}
+
+// Opt-in workspace renderers — quieter for chat by default but available
+// for webhook consumers that want the full coordinator stream.
+
+function renderWorkspacePlanStarted(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`⚙ **Workspace planning:** ${workspaceTitle(envelope)}`];
+  parts.push(
+    `   **Decomposing** prompt into per-project sub-plans${p.project_count != null ? ` (${p.project_count} project${p.project_count === 1 ? '' : 's'})` : ''}…`,
+  );
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspacePlanCompleted(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`✅ **Workspace plan ready:** ${workspaceTitle(envelope)}`];
+  parts.push(
+    `   **Plans written:** ${p.project_count}${p.skipped_count ? ` (+${p.skipped_count} skipped)` : ''}`,
+  );
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  return mdMsg(parts.join('\n'), 'success');
+}
+
+function renderWorkspacePlanFailed(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`❌ **Workspace plan failed:** ${workspaceTitle(envelope)}`];
+  if (p.error_type) parts.push(`   **Error type:** ${p.error_type}`);
+  if (p.error) parts.push(`   **Error:** ${p.error}`);
+  return mdMsg(parts.join('\n'), 'error');
+}
+
+function renderWorkspaceTierStarted(envelope) {
+  const p = envelope.payload ?? {};
+  const projects = Array.isArray(p.projects) ? p.projects : [];
+  const parts = [`⚙ **Workspace tier started:** ${workspaceTitle(envelope)}`];
+  parts.push(`   **Tier:** ${p.tier ?? '?'} (${projects.length} project(s))`);
+  if (projects.length > 0) {
+    parts.push(`   **Projects:** ${projects.join(', ')}`);
+  }
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspaceTierCompleted(envelope) {
+  const p = envelope.payload ?? {};
+  const projects = Array.isArray(p.projects) ? p.projects : [];
+  const parts = [
+    `✅ **Workspace tier completed:** ${workspaceTitle(envelope)}`,
+  ];
+  parts.push(`   **Tier:** ${p.tier ?? '?'} (${projects.length} project(s))`);
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  return mdMsg(parts.join('\n'), 'success');
+}
+
+function renderWorkspaceIntegrationStarted(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [
+    `⚙ **Workspace integration test started:** ${workspaceTitle(envelope)}`,
+  ];
+  if (p.command) parts.push(`   **Command:** \`${p.command}\``);
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspaceIntegrationPassed(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [
+    `✅ **Workspace integration test passed:** ${workspaceTitle(envelope)}`,
+  ];
+  if (p.duration_ms != null) {
+    parts.push(`   **Duration:** ${fmtMs(p.duration_ms)}`);
+  }
+  return mdMsg(parts.join('\n'), 'success');
+}
+
+function renderWorkspaceGuideConflict(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`⚠ **Workspace guide conflict:** ${workspaceTitle(envelope)}`];
+  if (p.stage) parts.push(`   **Stage:** ${p.stage}`);
+  if (p.source) parts.push(`   **Source:** ${p.source}`);
+  if (p.run_id) parts.push(`   **Run:** \`${p.run_id}\``);
+  if (p.message) parts.push(`   **Conflict:** ${p.message}`);
+  return mdMsg(parts.join('\n'), 'warning');
+}
+
+// ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
 
@@ -264,13 +530,35 @@ const EVENT_RENDERERS = {
   'fleet.halted': renderFleetHalted,
   'fleet.completed': renderFleetCompleted,
   'fleet.failed': renderFleetFailed,
+  // Workspace events — terminal / attention defaults. See OPT_IN_RENDERERS
+  // for the lifecycle-progress events (plan.*, tier.started/.completed,
+  // integration_test.started/.passed) — kept out by default because a wide
+  // DAG can fire 6+ tier transitions in minutes.
+  'workspace.completed': renderWorkspaceCompleted,
+  'workspace.failed': renderWorkspaceFailed,
+  'workspace.halted': renderWorkspaceHalted,
+  'workspace.paused': renderWorkspacePaused,
+  'workspace.resumed': renderWorkspaceResumed,
+  'workspace.tier.failed': renderWorkspaceTierFailed,
+  'workspace.integration_test.failed': renderWorkspaceIntegrationFailed,
+  'workspace.umbrella_issue.created': renderWorkspaceUmbrellaIssueCreated,
+  'workspace.circuit_breaker.tripped': renderWorkspaceCircuitBreakerTripped,
+  'workspace.guide_conflict': renderWorkspaceGuideConflict,
 };
 
-// fleet.launched ships as an opt-in renderer rather than a Tier-1 default —
-// see comment above. Callers that want it can pull it from this export and
-// register it in their own pipeline.
+// fleet.launched + workspace progress events ship as opt-in renderers rather
+// than Tier-1 defaults. Callers that want them can pull from this export and
+// register them in their own pipeline.
 export const OPT_IN_RENDERERS = {
   'fleet.launched': renderFleetLaunched,
+  'workspace.launched': renderWorkspaceLaunched,
+  'workspace.plan.started': renderWorkspacePlanStarted,
+  'workspace.plan.completed': renderWorkspacePlanCompleted,
+  'workspace.plan.failed': renderWorkspacePlanFailed,
+  'workspace.tier.started': renderWorkspaceTierStarted,
+  'workspace.tier.completed': renderWorkspaceTierCompleted,
+  'workspace.integration_test.started': renderWorkspaceIntegrationStarted,
+  'workspace.integration_test.passed': renderWorkspaceIntegrationPassed,
 };
 
 export const TIER1_EVENTS = Object.keys(EVENT_RENDERERS);

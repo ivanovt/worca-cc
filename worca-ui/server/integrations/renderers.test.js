@@ -14,13 +14,21 @@ function fleetEnvelope(
   return { event_type, fleet_id, payload };
 }
 
+function workspaceEnvelope(
+  event_type,
+  payload,
+  workspace_id = 'ws_202605120900_test1234',
+) {
+  return { event_type, workspace_id, payload };
+}
+
 function bodyText(msg) {
   return msg.body.map((s) => s.value).join('');
 }
 
 describe('TIER1_EVENTS', () => {
-  it('exports exactly 17 event type strings (14 pipeline + 3 fleet)', () => {
-    expect(TIER1_EVENTS).toHaveLength(17);
+  it('exports exactly 27 event type strings (14 pipeline + 3 fleet + 10 workspace defaults — workspace.launched is opt-in)', () => {
+    expect(TIER1_EVENTS).toHaveLength(27);
     expect(TIER1_EVENTS).toContain('pipeline.run.started');
     expect(TIER1_EVENTS).toContain('pipeline.run.completed');
     expect(TIER1_EVENTS).toContain('pipeline.run.failed');
@@ -41,6 +49,26 @@ describe('TIER1_EVENTS', () => {
     expect(TIER1_EVENTS).toContain('fleet.failed');
     // fleet.launched is opt-in, NOT here:
     expect(TIER1_EVENTS).not.toContain('fleet.launched');
+    // Workspace tier-1 defaults — terminal and attention events:
+    expect(TIER1_EVENTS).toContain('workspace.completed');
+    expect(TIER1_EVENTS).toContain('workspace.failed');
+    expect(TIER1_EVENTS).toContain('workspace.halted');
+    expect(TIER1_EVENTS).toContain('workspace.paused');
+    expect(TIER1_EVENTS).toContain('workspace.resumed');
+    expect(TIER1_EVENTS).toContain('workspace.tier.failed');
+    expect(TIER1_EVENTS).toContain('workspace.integration_test.failed');
+    expect(TIER1_EVENTS).toContain('workspace.umbrella_issue.created');
+    expect(TIER1_EVENTS).toContain('workspace.circuit_breaker.tripped');
+    expect(TIER1_EVENTS).toContain('workspace.guide_conflict');
+    // Workspace opt-in (NOT defaults):
+    expect(TIER1_EVENTS).not.toContain('workspace.launched');
+    expect(TIER1_EVENTS).not.toContain('workspace.plan.started');
+    expect(TIER1_EVENTS).not.toContain('workspace.plan.completed');
+    expect(TIER1_EVENTS).not.toContain('workspace.plan.failed');
+    expect(TIER1_EVENTS).not.toContain('workspace.tier.started');
+    expect(TIER1_EVENTS).not.toContain('workspace.tier.completed');
+    expect(TIER1_EVENTS).not.toContain('workspace.integration_test.started');
+    expect(TIER1_EVENTS).not.toContain('workspace.integration_test.passed');
   });
 });
 
@@ -511,6 +539,291 @@ describe('renderEvent', () => {
       );
       const text = bodyText(msg);
       expect(text).toContain('+2 more');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Workspace events
+  // -------------------------------------------------------------------------
+
+  describe('workspace.completed', () => {
+    it('renders success with project count + duration + umbrella URL', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.completed', {
+          workspace_name: 'my-platform',
+          tier_count: 3,
+          child_count: 5,
+          integration_passed: true,
+          duration_ms: 754000,
+          umbrella_issue_url: 'https://github.com/org/platform/issues/42',
+        }),
+      );
+      expect(isValidMessage(msg)).toBe(true);
+      expect(msg.severity).toBe('success');
+      const text = bodyText(msg);
+      expect(text).toContain('my-platform');
+      expect(text).toContain('ws_202605120900_test1234');
+      expect(text).toContain('5');
+      expect(text).toContain('passed');
+      expect(text).toContain('12m34s');
+      expect(text).toContain('issues/42');
+    });
+  });
+
+  describe('workspace.failed', () => {
+    it('renders error with tier + failed projects + duration', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.failed', {
+          workspace_name: 'my-ws',
+          tier_count: 3,
+          completed_count: 1,
+          failed_count: 2,
+          duration_ms: 30000,
+          failed_tier: 1,
+          failed_projects: ['backend', 'worker'],
+        }),
+      );
+      expect(msg.severity).toBe('error');
+      const text = bodyText(msg);
+      expect(text).toContain('my-ws');
+      expect(text).toContain('backend');
+      expect(text).toContain('worker');
+      expect(text).toContain('30s');
+    });
+  });
+
+  describe('workspace.halted', () => {
+    it('renders user-halt as warning', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.halted', {
+          workspace_name: 'my-ws',
+          halt_reason: 'user',
+          completed_tiers: 1,
+          pending_tiers: 2,
+        }),
+      );
+      expect(msg.severity).toBe('warning');
+      const text = bodyText(msg);
+      expect(text).toContain('user');
+      expect(text).toContain('2 tier');
+    });
+
+    it('renders circuit_breaker as error', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.halted', {
+          workspace_name: 'my-ws',
+          halt_reason: 'circuit_breaker',
+        }),
+      );
+      expect(msg.severity).toBe('error');
+      expect(bodyText(msg)).toContain('circuit_breaker');
+    });
+  });
+
+  describe('workspace.paused', () => {
+    it('renders warning with reason', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.paused', {
+          workspace_name: 'my-ws',
+          reason: 'user',
+        }),
+      );
+      expect(msg.severity).toBe('warning');
+      expect(bodyText(msg)).toContain('paused');
+    });
+  });
+
+  describe('workspace.resumed', () => {
+    it('renders info with from_state + counts', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.resumed', {
+          workspace_name: 'my-ws',
+          from_state: 'halted',
+          redispatch_count: 2,
+          skip_count: 1,
+        }),
+      );
+      expect(msg.severity).toBe('info');
+      const text = bodyText(msg);
+      expect(text).toContain('resumed');
+      expect(text).toContain('halted');
+      expect(text).toContain('2 project');
+    });
+  });
+
+  describe('workspace.tier.failed', () => {
+    it('renders error with failed + blocked projects', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.tier.failed', {
+          workspace_name: 'my-ws',
+          tier: 1,
+          failed_projects: ['backend'],
+          blocked_projects: ['frontend'],
+          duration_ms: 12000,
+        }),
+      );
+      expect(msg.severity).toBe('error');
+      const text = bodyText(msg);
+      expect(text).toContain('backend');
+      expect(text).toContain('frontend');
+      expect(text).toContain('Blocked');
+    });
+  });
+
+  describe('workspace.integration_test.failed', () => {
+    it('renders error with exit code + log tail', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.integration_test.failed', {
+          workspace_name: 'my-ws',
+          exit_code: 1,
+          duration_ms: 4500,
+          log_path: '/abs/log.txt',
+          log_tail: 'FAIL: test_user_auth\n',
+        }),
+      );
+      expect(msg.severity).toBe('error');
+      const text = bodyText(msg);
+      expect(text).toContain('Exit code');
+      expect(text).toContain('1');
+      expect(text).toContain('FAIL: test_user_auth');
+    });
+  });
+
+  describe('workspace.umbrella_issue.created', () => {
+    it('renders info with nwo + issue number + child count', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.umbrella_issue.created', {
+          workspace_name: 'my-ws',
+          issue_url: 'https://github.com/org/platform/issues/42',
+          issue_number: 42,
+          nwo: 'org/platform',
+          child_pr_count: 3,
+        }),
+      );
+      expect(msg.severity).toBe('info');
+      const text = bodyText(msg);
+      expect(text).toContain('org/platform#42');
+      expect(text).toContain('3');
+    });
+  });
+
+  describe('workspace.circuit_breaker.tripped', () => {
+    it('renders error with failure ratio + threshold', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.circuit_breaker.tripped', {
+          workspace_name: 'my-ws',
+          failed_count: 3,
+          terminal_count: 4,
+          total_count: 5,
+          threshold: 0.3,
+          failure_ratio: 0.75,
+        }),
+      );
+      expect(msg.severity).toBe('error');
+      const text = bodyText(msg);
+      expect(text).toContain('3/4');
+      expect(text).toContain('75%');
+      expect(text).toContain('30%');
+    });
+  });
+
+  describe('workspace.guide_conflict', () => {
+    it('renders warning with stage + run_id + message', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.guide_conflict', {
+          workspace_name: 'my-ws',
+          run_id: 'run-789',
+          stage: 'plan',
+          source: 'description',
+          message: 'Description requests X but guide forbids it',
+        }),
+      );
+      expect(msg.severity).toBe('warning');
+      const text = bodyText(msg);
+      expect(text).toContain('plan');
+      expect(text).toContain('run-789');
+      expect(text).toContain('Description requests X');
+    });
+  });
+
+  describe('workspace opt-in renderers', () => {
+    it('workspace.launched is NOT in the default map', () => {
+      const msg = renderEvent(
+        workspaceEnvelope('workspace.launched', {
+          workspace_name: 'my-ws',
+          projects: ['a', 'b'],
+        }),
+      );
+      expect(msg).toBeNull();
+    });
+
+    it('exports workspace.launched via OPT_IN_RENDERERS', () => {
+      expect(OPT_IN_RENDERERS['workspace.launched']).toBeTypeOf('function');
+    });
+
+    it('OPT_IN_RENDERERS.workspace.launched renders projects + tier count', () => {
+      const render = OPT_IN_RENDERERS['workspace.launched'];
+      const msg = render(
+        workspaceEnvelope('workspace.launched', {
+          workspace_name: 'my-ws',
+          projects: ['a', 'b', 'c'],
+          tier_count: 2,
+          guide_attached: true,
+        }),
+      );
+      expect(isValidMessage(msg)).toBe(true);
+      const text = bodyText(msg);
+      expect(text).toContain('a, b, c');
+      expect(text).toContain('Tiers');
+      expect(text).toContain('Guide');
+    });
+
+    it('OPT_IN_RENDERERS.workspace.tier.started includes tier index', () => {
+      const render = OPT_IN_RENDERERS['workspace.tier.started'];
+      const msg = render(
+        workspaceEnvelope('workspace.tier.started', {
+          workspace_name: 'my-ws',
+          tier: 1,
+          projects: ['backend', 'worker'],
+        }),
+      );
+      expect(isValidMessage(msg)).toBe(true);
+      const text = bodyText(msg);
+      expect(text).toContain('Tier:');
+      expect(text).toContain('1');
+      expect(text).toContain('backend');
+    });
+
+    it('OPT_IN_RENDERERS.workspace.tier.completed shows duration', () => {
+      const render = OPT_IN_RENDERERS['workspace.tier.completed'];
+      const msg = render(
+        workspaceEnvelope('workspace.tier.completed', {
+          workspace_name: 'my-ws',
+          tier: 0,
+          projects: ['shared-lib'],
+          status: 'completed',
+          duration_ms: 90000,
+        }),
+      );
+      expect(msg.severity).toBe('success');
+      expect(bodyText(msg)).toContain('1m30s');
+    });
+
+    it('OPT_IN_RENDERERS.workspace.plan.started/completed/failed all export', () => {
+      expect(OPT_IN_RENDERERS['workspace.plan.started']).toBeTypeOf('function');
+      expect(OPT_IN_RENDERERS['workspace.plan.completed']).toBeTypeOf(
+        'function',
+      );
+      expect(OPT_IN_RENDERERS['workspace.plan.failed']).toBeTypeOf('function');
+    });
+
+    it('OPT_IN_RENDERERS.workspace.integration_test.started/passed export', () => {
+      expect(OPT_IN_RENDERERS['workspace.integration_test.started']).toBeTypeOf(
+        'function',
+      );
+      expect(OPT_IN_RENDERERS['workspace.integration_test.passed']).toBeTypeOf(
+        'function',
+      );
     });
   });
 });

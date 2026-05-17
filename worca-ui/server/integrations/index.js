@@ -16,6 +16,7 @@ import { createFleetHandlers } from './commands/fleet.js';
 import { createGlobalHandlers } from './commands/global.js';
 import { parseCommand } from './commands/parser.js';
 import { createProjectHandlers } from './commands/project.js';
+import { createWorkspaceHandlers } from './commands/workspace.js';
 import { loadIntegrationsConfig } from './config-loader.js';
 import { createRateLimiter } from './rate_limiter.js';
 import { renderEvent } from './renderers.js';
@@ -67,11 +68,16 @@ export function createIntegrations({
   const projectHandlers = createProjectHandlers({ chatContext, restClient });
   const controlHandlers = createControlHandlers({ chatContext, restClient });
   const fleetHandlers = createFleetHandlers({ chatContext, restClient });
+  const workspaceHandlers = createWorkspaceHandlers({
+    chatContext,
+    restClient,
+  });
   const allHandlers = {
     ...globalHandlers,
     ...projectHandlers,
     ...controlHandlers,
     ...fleetHandlers,
+    ...workspaceHandlers,
   };
 
   // Mutable adapter registry — keyed by adapter name

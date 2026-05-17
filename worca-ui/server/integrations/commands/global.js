@@ -124,6 +124,15 @@ Fleet commands (cross-project):
 /fleet-pause <id> \u2014 pause every in-flight child
 /fleet-resume <id> \u2014 resume paused/interrupted, re-dispatch failed
 
+Workspace commands (DAG-ordered cross-project):
+/workspaces \u2014 list active workspaces
+/workspace [id|last] \u2014 workspace status
+/workspace-projects <id|last> \u2014 per-project status
+/workspace-tiers <id|last> \u2014 tier-by-tier DAG status
+/workspace-halt <id> \u2014 graceful halt (in-flight finish naturally)
+/workspace-resume <id> \u2014 re-dispatch failed/halted projects
+/workspace-prs <id> \u2014 list child PRs + umbrella issue
+
 Commands with [run_id] auto-resolve to the active run if omitted.
 Use \`*suffix\` to match by ending, e.g. /status \`*2db5\`
 Project commands require /use first.`;

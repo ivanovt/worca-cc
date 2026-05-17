@@ -19,9 +19,55 @@ from datetime import datetime, timezone
 import jsonschema
 
 import worca
+from worca.events import types as event_types
+from worca.events.workspace_emitter import emit_workspace_event
 from worca.state.status import WorkspaceStatus
 from worca.utils.claude_cli import run_agent
 from worca.workspace.manifest import Workspace
+
+
+def _settings_path_for_workspace(workspace_root: str, settings_arg: str) -> str:
+    """Resolve --settings into an absolute path anchored at workspace_root.
+
+    The workspace coordinator runs from cwd (typically workspace_root or a
+    parent), and `_resume_workspace` may be invoked from anywhere. Anchor
+    against the workspace root so emit_workspace_event always finds the
+    right settings file for hook + webhook dispatch.
+    """
+    if os.path.isabs(settings_arg):
+        return settings_arg
+    return os.path.join(workspace_root, settings_arg)
+
+
+def _ms_since(started_iso: str | None) -> int | None:
+    """Compute elapsed ms since `started_iso` (UTC ISO 8601). None if unset."""
+    if not started_iso:
+        return None
+    try:
+        started = datetime.fromisoformat(started_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    now = datetime.now(timezone.utc)
+    delta = now - started
+    return int(delta.total_seconds() * 1000)
+
+
+def _read_log_tail(log_path: str | None, max_lines: int = 10) -> str | None:
+    """Read the last `max_lines` of a log file, capped to 2 KB.
+
+    Used by workspace.integration_test.failed payloads so chat subscribers
+    can show a meaningful snippet without dragging the full log over the
+    webhook channel.
+    """
+    if not log_path or not os.path.isfile(log_path):
+        return None
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return None
+    tail = "".join(lines[-max_lines:])
+    return tail[-2048:] if len(tail) > 2048 else tail
 
 _AGENTS_DIR = os.path.join(os.path.dirname(worca.__file__), "agents", "core")
 _SCHEMAS_DIR = os.path.join(os.path.dirname(worca.__file__), "schemas")
@@ -602,11 +648,41 @@ def _resume_workspace(workspace_root: str, workspace_id: str) -> int:
     for project in missing:
         redispatch.add(project)
 
+    from_state = status
+
     rebuild_resume_manifest(manifest, skip, redispatch)
     write_workspace_manifest(manifest, run_dir)
 
+    settings_path = _settings_path_for_workspace(workspace_root, ".claude/settings.json")
+    resume_started_at = datetime.now(timezone.utc).isoformat()
+
+    emit_workspace_event(
+        workspace_id,
+        event_types.WORKSPACE_RESUMED,
+        event_types.workspace_resumed_payload(
+            workspace_name=ws.name,
+            from_state=from_state,
+            redispatch_count=len(redispatch),
+            skip_count=len(skip),
+        ),
+        settings_path=settings_path,
+    )
+
     if manifest["status"] == WorkspaceStatus.INTEGRATION_TESTING:
         print(f"Resuming workspace {workspace_id} — re-running integration test only")
+        integration_started_at = None
+        if ws.integration_test is not None:
+            integration_started_at = datetime.now(timezone.utc).isoformat()
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_INTEGRATION_STARTED,
+                event_types.workspace_integration_started_payload(
+                    workspace_name=ws.name,
+                    command=ws.integration_test.command,
+                    working_dir=ws.integration_test.working_dir,
+                ),
+                settings_path=settings_path,
+            )
         it_result = run_integration_test(manifest, ws, run_dir)
         manifest["integration_test"] = it_result
 
@@ -614,38 +690,181 @@ def _resume_workspace(workspace_root: str, workspace_id: str) -> int:
             manifest["status"] = WorkspaceStatus.INTEGRATION_FAILED
             write_workspace_manifest(manifest, run_dir)
             print("Integration test failed again.")
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_INTEGRATION_FAILED,
+                event_types.workspace_integration_failed_payload(
+                    workspace_name=ws.name,
+                    exit_code=it_result.get("exit_code"),
+                    duration_ms=_ms_since(integration_started_at),
+                    log_path=it_result.get("log_path"),
+                    log_tail=_read_log_tail(it_result.get("log_path")),
+                ),
+                settings_path=settings_path,
+            )
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_FAILED,
+                event_types.workspace_failed_payload(
+                    workspace_name=ws.name,
+                    tier_count=len(manifest["dag"]["tiers"]),
+                    completed_count=sum(
+                        1 for c in manifest["children"]
+                        if c.get("status") == "completed"
+                    ),
+                    failed_count=0,
+                    duration_ms=_ms_since(resume_started_at),
+                ),
+                settings_path=settings_path,
+            )
             return 1
         else:
             manifest["status"] = WorkspaceStatus.COMPLETED
             write_workspace_manifest(manifest, run_dir)
             print("Integration test passed. Workspace completed.")
+            if it_result["status"] == "passed":
+                emit_workspace_event(
+                    workspace_id,
+                    event_types.WORKSPACE_INTEGRATION_PASSED,
+                    event_types.workspace_integration_passed_payload(
+                        workspace_name=ws.name,
+                        duration_ms=_ms_since(integration_started_at),
+                        log_path=it_result.get("log_path"),
+                    ),
+                    settings_path=settings_path,
+                )
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_COMPLETED,
+                event_types.workspace_completed_payload(
+                    workspace_name=ws.name,
+                    tier_count=len(manifest["dag"]["tiers"]),
+                    child_count=len(manifest.get("children", [])),
+                    integration_passed=True,
+                    duration_ms=_ms_since(resume_started_at),
+                ),
+                settings_path=settings_path,
+            )
             return 0
 
     print(f"Resuming workspace {workspace_id} — re-dispatching {len(redispatch)} project(s)")
 
-    executor = DagExecutor(manifest, run_dir)
+    executor = DagExecutor(manifest, run_dir, settings_path=settings_path)
     result = executor.execute()
+
+    if result["status"] == "halted":
+        print("Workspace dispatch halted.")
+        return 1
 
     if result["status"] != "completed":
         print(f"Workspace dispatch {result['status']}.")
+        emit_workspace_event(
+            workspace_id,
+            event_types.WORKSPACE_FAILED,
+            event_types.workspace_failed_payload(
+                workspace_name=ws.name,
+                tier_count=len(manifest["dag"]["tiers"]),
+                completed_count=sum(
+                    1 for c in manifest["children"]
+                    if c.get("status") == "completed"
+                ),
+                failed_count=sum(
+                    1 for c in manifest["children"]
+                    if c.get("status") in ("failed", "blocked", "setup_failed")
+                ),
+                duration_ms=_ms_since(resume_started_at),
+            ),
+            settings_path=settings_path,
+        )
         return 1
 
+    integration_passed = True
     if not manifest.get("skip_integration"):
         manifest["status"] = WorkspaceStatus.INTEGRATION_TESTING
         write_workspace_manifest(manifest, run_dir)
+
+        integration_started_at = None
+        if ws.integration_test is not None:
+            integration_started_at = datetime.now(timezone.utc).isoformat()
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_INTEGRATION_STARTED,
+                event_types.workspace_integration_started_payload(
+                    workspace_name=ws.name,
+                    command=ws.integration_test.command,
+                    working_dir=ws.integration_test.working_dir,
+                ),
+                settings_path=settings_path,
+            )
 
         it_result = run_integration_test(manifest, ws, run_dir)
         manifest["integration_test"] = it_result
 
         if it_result["status"] == "failed":
+            integration_passed = False
             manifest["status"] = WorkspaceStatus.INTEGRATION_FAILED
             write_workspace_manifest(manifest, run_dir)
             print("Integration test failed.")
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_INTEGRATION_FAILED,
+                event_types.workspace_integration_failed_payload(
+                    workspace_name=ws.name,
+                    exit_code=it_result.get("exit_code"),
+                    duration_ms=_ms_since(integration_started_at),
+                    log_path=it_result.get("log_path"),
+                    log_tail=_read_log_tail(it_result.get("log_path")),
+                ),
+                settings_path=settings_path,
+            )
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_FAILED,
+                event_types.workspace_failed_payload(
+                    workspace_name=ws.name,
+                    tier_count=len(manifest["dag"]["tiers"]),
+                    completed_count=sum(
+                        1 for c in manifest["children"]
+                        if c.get("status") == "completed"
+                    ),
+                    failed_count=0,
+                    duration_ms=_ms_since(resume_started_at),
+                ),
+                settings_path=settings_path,
+            )
             return 1
+        elif it_result["status"] == "passed":
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_INTEGRATION_PASSED,
+                event_types.workspace_integration_passed_payload(
+                    workspace_name=ws.name,
+                    duration_ms=_ms_since(integration_started_at),
+                    log_path=it_result.get("log_path"),
+                ),
+                settings_path=settings_path,
+            )
 
     manifest["status"] = WorkspaceStatus.COMPLETED
     write_workspace_manifest(manifest, run_dir)
     print(f"Workspace {workspace_id} resumed successfully.")
+    emit_workspace_event(
+        workspace_id,
+        event_types.WORKSPACE_COMPLETED,
+        event_types.workspace_completed_payload(
+            workspace_name=ws.name,
+            tier_count=len(manifest["dag"]["tiers"]),
+            child_count=len(manifest.get("children", [])),
+            integration_passed=integration_passed,
+            duration_ms=_ms_since(resume_started_at),
+            umbrella_issue_url=(
+                manifest.get("umbrella_issue", {}).get("url")
+                if isinstance(manifest.get("umbrella_issue"), dict)
+                else None
+            ),
+        ),
+        settings_path=settings_path,
+    )
     return 0
 
 
@@ -723,8 +942,37 @@ def main(argv=None) -> int:
 
     write_workspace_manifest(manifest, run_dir)
 
+    settings_path = _settings_path_for_workspace(workspace_root, args.settings)
+    workspace_started_at = manifest["created_at"]
+
+    emit_workspace_event(
+        ws_id,
+        event_types.WORKSPACE_LAUNCHED,
+        event_types.workspace_launched_payload(
+            projects=[p.name for p in ws.projects],
+            workspace_name=ws.name,
+            branch_template=args.branch,
+            guide_attached=bool(guide_paths),
+            max_parallel=args.max_parallel,
+            skip_planning=args.skip_planning,
+            tier_count=len(ws.tiers),
+        ),
+        settings_path=settings_path,
+    )
+
     if not args.skip_planning:
         print(f"Running workspace planner for {ws.name}...")
+        plan_started_at = datetime.now(timezone.utc).isoformat()
+        emit_workspace_event(
+            ws_id,
+            event_types.WORKSPACE_PLAN_STARTED,
+            event_types.workspace_plan_started_payload(
+                workspace_name=ws.name,
+                project_count=len(ws.projects),
+            ),
+            settings_path=settings_path,
+        )
+
         project_contexts = gather_project_context(ws, workspace_root)
         planner_prompt = build_planner_prompt(
             ws, args.prompt or "", project_contexts, guide_paths,
@@ -736,6 +984,29 @@ def main(argv=None) -> int:
             print(f"error: workspace planner failed: {e}", file=sys.stderr)
             manifest["status"] = WorkspaceStatus.FAILED
             write_workspace_manifest(manifest, run_dir)
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_PLAN_FAILED,
+                event_types.workspace_plan_failed_payload(
+                    workspace_name=ws.name,
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    duration_ms=_ms_since(plan_started_at),
+                ),
+                settings_path=settings_path,
+            )
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_FAILED,
+                event_types.workspace_failed_payload(
+                    workspace_name=ws.name,
+                    tier_count=len(ws.tiers),
+                    completed_count=0,
+                    failed_count=0,
+                    duration_ms=_ms_since(workspace_started_at),
+                ),
+                settings_path=settings_path,
+            )
             return 1
 
         errors = validate_workspace_plan(plan, ws)
@@ -747,6 +1018,30 @@ def main(argv=None) -> int:
             )
             manifest["status"] = WorkspaceStatus.FAILED
             write_workspace_manifest(manifest, run_dir)
+            err_msg = "; ".join(errors)
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_PLAN_FAILED,
+                event_types.workspace_plan_failed_payload(
+                    workspace_name=ws.name,
+                    error=err_msg,
+                    error_type="ValidationError",
+                    duration_ms=_ms_since(plan_started_at),
+                ),
+                settings_path=settings_path,
+            )
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_FAILED,
+                event_types.workspace_failed_payload(
+                    workspace_name=ws.name,
+                    tier_count=len(ws.tiers),
+                    completed_count=0,
+                    failed_count=0,
+                    duration_ms=_ms_since(workspace_started_at),
+                ),
+                settings_path=settings_path,
+            )
             return 1
 
         project_plan_paths = write_workspace_plan_files(plan, run_dir)
@@ -757,6 +1052,17 @@ def main(argv=None) -> int:
         }
         write_workspace_manifest(manifest, run_dir)
         print(f"Workspace plan written: {len(project_plan_paths)} project plan(s)")
+        emit_workspace_event(
+            ws_id,
+            event_types.WORKSPACE_PLAN_COMPLETED,
+            event_types.workspace_plan_completed_payload(
+                workspace_name=ws.name,
+                project_count=len(project_plan_paths),
+                skipped_count=len(ws.projects) - len(project_plan_paths),
+                duration_ms=_ms_since(plan_started_at),
+            ),
+            settings_path=settings_path,
+        )
     else:
         manifest["status"] = WorkspaceStatus.RUNNING
         write_workspace_manifest(manifest, run_dir)
@@ -766,29 +1072,132 @@ def main(argv=None) -> int:
 
     print(f"Workspace run {ws_id} — dispatching {len(ws.projects)} project(s)")
 
-    executor = DagExecutor(manifest, run_dir)
+    executor = DagExecutor(manifest, run_dir, settings_path=settings_path)
     result = executor.execute()
 
-    if result["status"] != "completed":
-        print(f"Workspace dispatch {result['status']}.")
+    if result["status"] == "halted":
+        # DagExecutor already emitted circuit_breaker.tripped + halted.
+        print("Workspace dispatch halted.")
         return 1
 
+    if result["status"] != "completed":
+        # Tier-level failures already emitted workspace.tier.failed. Wrap
+        # with the workspace-level workspace.failed terminal event.
+        print(f"Workspace dispatch {result['status']}.")
+        completed_count = sum(
+            1 for c in manifest["children"] if c.get("status") == "completed"
+        )
+        failed_count = sum(
+            1 for c in manifest["children"]
+            if c.get("status") in ("failed", "blocked", "setup_failed")
+        )
+        failed_projects = [
+            c["project"] for c in manifest["children"]
+            if c.get("status") in ("failed", "blocked", "setup_failed")
+        ]
+        emit_workspace_event(
+            ws_id,
+            event_types.WORKSPACE_FAILED,
+            event_types.workspace_failed_payload(
+                workspace_name=ws.name,
+                tier_count=len(ws.tiers),
+                completed_count=completed_count,
+                failed_count=failed_count,
+                duration_ms=_ms_since(workspace_started_at),
+                failed_projects=failed_projects,
+            ),
+            settings_path=settings_path,
+        )
+        return 1
+
+    integration_passed = True
     if not args.skip_integration:
         manifest["status"] = WorkspaceStatus.INTEGRATION_TESTING
         write_workspace_manifest(manifest, run_dir)
+
+        integration_started_at = None
+        if ws.integration_test is not None:
+            integration_started_at = datetime.now(timezone.utc).isoformat()
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_INTEGRATION_STARTED,
+                event_types.workspace_integration_started_payload(
+                    workspace_name=ws.name,
+                    command=ws.integration_test.command,
+                    working_dir=ws.integration_test.working_dir,
+                ),
+                settings_path=settings_path,
+            )
 
         it_result = run_integration_test(manifest, ws, run_dir)
         manifest["integration_test"] = it_result
 
         if it_result["status"] == "failed":
+            integration_passed = False
             manifest["status"] = WorkspaceStatus.INTEGRATION_FAILED
             write_workspace_manifest(manifest, run_dir)
             print("Integration test failed.")
+            log_tail = _read_log_tail(it_result.get("log_path"))
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_INTEGRATION_FAILED,
+                event_types.workspace_integration_failed_payload(
+                    workspace_name=ws.name,
+                    exit_code=it_result.get("exit_code"),
+                    duration_ms=_ms_since(integration_started_at),
+                    log_path=it_result.get("log_path"),
+                    log_tail=log_tail,
+                ),
+                settings_path=settings_path,
+            )
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_FAILED,
+                event_types.workspace_failed_payload(
+                    workspace_name=ws.name,
+                    tier_count=len(ws.tiers),
+                    completed_count=sum(
+                        1 for c in manifest["children"]
+                        if c.get("status") == "completed"
+                    ),
+                    failed_count=0,
+                    duration_ms=_ms_since(workspace_started_at),
+                ),
+                settings_path=settings_path,
+            )
             return 1
+        elif it_result["status"] == "passed":
+            emit_workspace_event(
+                ws_id,
+                event_types.WORKSPACE_INTEGRATION_PASSED,
+                event_types.workspace_integration_passed_payload(
+                    workspace_name=ws.name,
+                    duration_ms=_ms_since(integration_started_at),
+                    log_path=it_result.get("log_path"),
+                ),
+                settings_path=settings_path,
+            )
 
     manifest["status"] = WorkspaceStatus.COMPLETED
     write_workspace_manifest(manifest, run_dir)
     print(f"Workspace {ws_id} completed successfully.")
+    emit_workspace_event(
+        ws_id,
+        event_types.WORKSPACE_COMPLETED,
+        event_types.workspace_completed_payload(
+            workspace_name=ws.name,
+            tier_count=len(ws.tiers),
+            child_count=len(manifest.get("children", [])),
+            integration_passed=integration_passed,
+            duration_ms=_ms_since(workspace_started_at),
+            umbrella_issue_url=(
+                manifest.get("umbrella_issue", {}).get("url")
+                if isinstance(manifest.get("umbrella_issue"), dict)
+                else None
+            ),
+        ),
+        settings_path=settings_path,
+    )
     return 0
 
 
