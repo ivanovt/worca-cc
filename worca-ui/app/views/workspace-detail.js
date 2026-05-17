@@ -758,18 +758,19 @@ function _childStatusVariant(status) {
 function _missingRunPlaceholder(child) {
   const status = child.status || 'pending';
   const variant = _childStatusVariant(status);
-  const repoName = child.repo || child.project_path?.split('/').pop() || '—';
+  const projectName =
+    child.project || child.project_path?.split('/').pop() || '—';
   return html`
     <div class="run-card ${statusClass(status)} fleet-child-card-placeholder">
       <div class="run-card-top">
         <span class="run-card-status">${unsafeHTML(statusIcon(status, 16))}</span>
-        <span class="run-card-title">${repoName}</span>
+        <span class="run-card-title">${projectName}</span>
         <sl-badge variant="${variant}" pill class="status-badge-${status}">${status}</sl-badge>
       </div>
       <div class="run-card-meta">
         <span class="run-card-meta-item">
-          <span class="meta-label">Repo:</span>
-          <span class="meta-value">${repoName}</span>
+          <span class="meta-label">Project:</span>
+          <span class="meta-value">${projectName}</span>
         </span>
         ${
           child.tier != null
@@ -827,7 +828,7 @@ function _childrenSection(ws, { runsById, onSelectRun } = {}) {
       <div class="run-list fleet-children-list">
         ${children.map((child) => {
           const run = child.run_id ? runs[child.run_id] : null;
-          const anchorId = child.run_id ? `repo-${child.run_id}` : null;
+          const anchorId = child.run_id ? `project-${child.run_id}` : null;
           const card = run
             ? runCardView(run, { onClick: onSelectRun })
             : _missingRunPlaceholder(child);

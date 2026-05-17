@@ -438,27 +438,27 @@ describe('workspaceDetailView — integration test panel', () => {
 
 // ─── PR table ────────────────────────────────────────────────────────────────
 
-describe('workspaceDetailView — Repos section (replaces PR table)', () => {
-  // The previous 4-column PR table was replaced with the same Repos
-  // listing fleet-detail uses for "Projects" — each child renders as a
-  // rich runCardView (or a placeholder when the matching Run object
-  // hasn't loaded yet). PR URLs / dependency annotations move into the
-  // run card itself, so they're no longer tested as table cells here.
+describe('workspaceDetailView — Projects section (replaces PR table)', () => {
+  // The previous 4-column PR table was replaced with the same Projects
+  // listing fleet-detail uses — each child renders as a rich runCardView
+  // (or a placeholder when the matching Run object hasn't loaded yet). PR
+  // URLs / dependency annotations move into the run card itself, so they're
+  // no longer tested as table cells here.
   beforeEach(() => resetWorkspaceDetailState());
 
-  it('renders the Repos section with per-child cards', () => {
+  it('renders the Projects section with per-child cards', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
     expect(out).toContain('workspace-children-section');
-    expect(out).toContain('Repos');
+    expect(out).toContain('Projects');
   });
 
   it('headline reflects the child count', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
     // 3 children in BASE_WORKSPACE
-    expect(out).toMatch(/Repos\s*·\s*3 repos/);
+    expect(out).toMatch(/Projects\s*·\s*3 projects/);
   });
 
-  it('renders one row per child repo (by name)', () => {
+  it('renders one row per child project (by name)', () => {
     const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
     expect(out).toContain('shared-lib');
     expect(out).toContain('backend');

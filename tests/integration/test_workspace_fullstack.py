@@ -369,7 +369,7 @@ def test_workspace_fullstack_3_repos(tmp_path):
     # Verify the manifest children have the shape dashboard.js needs
     # for _renderWorkspaceCard tier grouping
     for child in manifest["children"]:
-        assert "repo" in child, "child missing 'repo' field"
+        assert "project" in child, "child missing 'project' field"
         assert "run_id" in child, "child missing 'run_id' field"
         assert "status" in child, "child missing 'status' field"
         assert "tier" in child, "child missing 'tier' field for dashboard grouping"
