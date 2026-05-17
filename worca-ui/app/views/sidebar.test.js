@@ -394,9 +394,10 @@ describe('sidebar - Fleets nav entry', () => {
     expect(output).toContain('>4<');
   });
 
-  it('Fleets badge variant is neutral when no fleet is halted', async () => {
-    // Color escalates only on the "needs attention" trigger (halted).
-    // Running / completed fleets keep the badge neutral.
+  it('Fleets badge variant is primary (blue) when any fleet is running', async () => {
+    // Three-tier escalation: warning (halted) > primary (running) > neutral.
+    // Matches the Running sidebar row's "active = primary" convention so
+    // running fleets aren't visually indistinguishable from idle ones.
     const state = makeState({
       fleets: [
         { fleet_id: 'f1', status: 'running' },
@@ -408,8 +409,23 @@ describe('sidebar - Fleets nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('class="fleets-count-badge"');
-    expect(output).toContain('variant="neutral"');
+    expect(output).toContain('variant="primary"');
     expect(output).not.toContain('variant="warning"');
+  });
+
+  it('Fleets badge warning beats primary when halted + running coexist', async () => {
+    const state = makeState({
+      fleets: [
+        { fleet_id: 'f1', status: 'running' },
+        { fleet_id: 'f2', status: 'halted' },
+      ],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('fleets-count-badge');
+    expect(output).toContain('variant="warning"');
+    expect(output).not.toContain('variant="primary"');
   });
 
   it('Fleets badge variant flips to warning when any fleet is halted', async () => {
@@ -530,7 +546,10 @@ describe('sidebar - Workspaces nav entry', () => {
     expect(output).toContain('>4<');
   });
 
-  it('Workspaces badge variant is neutral when nothing needs attention', async () => {
+  it('Workspaces badge variant is primary (blue) when any workspace is running', async () => {
+    // Three-tier escalation: warning > primary > neutral. A running
+    // workspace flips the badge blue so it's visually distinguishable
+    // from an all-completed sidebar count.
     const state = makeState({
       workspaceRuns: [
         { workspace_id: 'w1', status: 'running' },
@@ -541,7 +560,7 @@ describe('sidebar - Workspaces nav entry', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    expect(output).toContain('variant="neutral"');
+    expect(output).toContain('variant="primary"');
   });
 
   it('Workspaces badge variant flips to warning when any workspace is halted', async () => {

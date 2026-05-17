@@ -150,7 +150,9 @@ describe('workspace sidebar badge variant logic', () => {
   const route = { section: 'active' };
   const defaultOpts = () => ({ onNavigate: vi.fn() });
 
-  it('workspace badge is neutral for planning workspaces (no halted/integration_failed)', async () => {
+  it('workspace badge is primary (blue) for planning workspaces', async () => {
+    // planning is an orchestrator in-flight phase → matches the
+    // Running sidebar row's "active" colour.
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'planning' }],
     });
@@ -158,12 +160,34 @@ describe('workspace sidebar badge variant logic', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('workspaces-count-badge');
-    expect(output).toContain('variant="neutral"');
+    expect(output).toContain('variant="primary"');
   });
 
-  it('workspace badge is neutral for integration_testing workspaces (no halted/integration_failed)', async () => {
+  it('workspace badge is primary (blue) for integration_testing workspaces', async () => {
     const state = makeState({
       workspaceRuns: [{ workspace_id: 'w1', status: 'integration_testing' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+  });
+
+  it('workspace badge is primary (blue) for running workspaces', async () => {
+    const state = makeState({
+      workspaceRuns: [{ workspace_id: 'w1', status: 'running' }],
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('workspaces-count-badge');
+    expect(output).toContain('variant="primary"');
+  });
+
+  it('workspace badge is neutral when all workspaces are completed', async () => {
+    const state = makeState({
+      workspaceRuns: [{ workspace_id: 'w1', status: 'completed' }],
     });
     const output = renderToString(
       sidebarView(state, route, 'open', defaultOpts()),

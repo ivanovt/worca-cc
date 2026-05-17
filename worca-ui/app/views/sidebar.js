@@ -132,24 +132,46 @@ export function sidebarView(
   const haltedFleetCount = liveFleets.filter(
     (f) => f.status === 'halted',
   ).length;
-  // History/Worktrees show a total count and escalate the colour when
-  // attention is warranted. Match that for Fleets: badge surfaces the
-  // total live count, variant flips to warning when any fleet is halted.
+  const activeFleetCount = liveFleets.filter(
+    (f) => f.status === 'running' || f.status === 'resuming',
+  ).length;
+  // Three-tier variant matching the badge-color-language guide:
+  //   warning (orange) > primary (blue) > neutral (grey)
+  // — attention beats in-flight beats idle. Aligns with the Running
+  // sidebar row, which uses `primary` for any active count.
   const fleetBadgeCount = liveFleets.length;
   const showFleetBadge = fleetBadgeCount > 0;
-  const fleetBadgeVariant = haltedFleetCount > 0 ? 'warning' : 'neutral';
+  const fleetBadgeVariant =
+    haltedFleetCount > 0
+      ? 'warning'
+      : activeFleetCount > 0
+        ? 'primary'
+        : 'neutral';
 
   const liveWorkspaces = workspaceRuns.filter((w) => !w.archived);
   const WORKSPACE_ATTENTION = { halted: 1, integration_failed: 1, failed: 1 };
+  // planning / running / integration_testing are all orchestrator-driven
+  // in-flight phases; resuming is included for parity with fleets.
+  const WORKSPACE_ACTIVE = {
+    planning: 1,
+    running: 1,
+    integration_testing: 1,
+    resuming: 1,
+  };
   const attentionWorkspaceCount = liveWorkspaces.filter(
     (w) => WORKSPACE_ATTENTION[w.status],
   ).length;
-  // Mirror Fleets: total live count, warning variant when any workspace
-  // needs operator attention (halted / integration_failed / failed).
+  const activeWorkspaceCount = liveWorkspaces.filter(
+    (w) => WORKSPACE_ACTIVE[w.status],
+  ).length;
   const workspaceBadgeCount = liveWorkspaces.length;
   const showWorkspaceBadge = workspaceBadgeCount > 0;
   const workspaceBadgeVariant =
-    attentionWorkspaceCount > 0 ? 'warning' : 'neutral';
+    attentionWorkspaceCount > 0
+      ? 'warning'
+      : activeWorkspaceCount > 0
+        ? 'primary'
+        : 'neutral';
 
   const connClass =
     connectionState === 'open'
