@@ -257,7 +257,7 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
     expect(output).toContain('sidebar-new-run-split');
     expect(output).toContain('sidebar-new-run-btn-primary');
     expect(output).toContain('sidebar-new-run-btn-chevron');
-    expect(output).toContain('>New Pipeline<');
+    expect(output).toContain('>Run Pipeline<');
   });
 
   it('chevron dropdown exposes New Fleet as a menu item', async () => {
@@ -268,7 +268,7 @@ describe('sidebar - New Pipeline CTA (split button)', () => {
     expect(output).toContain('sl-dropdown');
     expect(output).toContain('sl-menu');
     expect(output).toContain('menu-item-new-fleet');
-    expect(output).toContain('New Fleet');
+    expect(output).toContain('Run Fleet');
   });
 
   it('primary "New Pipeline" button stays clickable in global mode with no project selected', async () => {
@@ -646,6 +646,6 @@ describe('sidebar - New Workspace in dropdown', () => {
       sidebarView(state, route, 'open', defaultOpts()),
     );
     expect(output).toContain('menu-item-new-workspace');
-    expect(output).toContain('New Workspace');
+    expect(output).toContain('Run Workspace');
   });
 });

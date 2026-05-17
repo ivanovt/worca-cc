@@ -229,7 +229,7 @@ export function sidebarView(
                 @click=${atCapacity ? null : () => onNavigate('new-run')}
               >
                 ${unsafeHTML(iconSvg(Plus, 14))}
-                <span>New Pipeline</span>
+                <span>Run Pipeline</span>
               </button>
               <sl-dropdown
                 class="sidebar-new-run-chevron-dropdown"
@@ -252,14 +252,14 @@ export function sidebarView(
                     @click=${() => onNavigate('fleet-runs/new')}
                   >
                     ${unsafeHTML(iconSvg(Workflow, 14))}
-                    New Fleet
+                    Run Fleet
                   </sl-menu-item>
                   <sl-menu-item
                     class="menu-item-new-workspace"
                     @click=${() => onNavigate('workspace-runs/new')}
                   >
                     ${unsafeHTML(iconSvg(Boxes, 14))}
-                    New Workspace
+                    Run Workspace
                   </sl-menu-item>
                 </sl-menu>
               </sl-dropdown>

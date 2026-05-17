@@ -883,7 +883,7 @@ function _workspacePlanSection({ rerender } = {}) {
             `
             : nothing
         }
-        <span class="settings-field-hint">Master planner: Opus decomposes the prompt into per-repo sub-plans. Independent: each repo runs its own Planner.</span>
+        <span class="settings-field-hint">Master planner: a single shared plan is produced for the whole workspace and decomposed into per-project sub-plans. Independent: each project runs its own Planner.</span>
       </div>
     </div>
   `;

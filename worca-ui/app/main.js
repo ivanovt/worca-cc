@@ -283,7 +283,7 @@ function _fleetListView() {
       <div class="fleet-list-empty">
         <p>No fleet runs yet.</p>
         <sl-button variant="primary" @click=${() => navigate('fleet-runs', 'new', null)}>
-          + New Fleet
+          + Run Fleet
         </sl-button>
       </div>
     `;
@@ -415,7 +415,7 @@ function _workspaceListView() {
       <div class="fleet-list-empty">
         <p>No workspace runs yet.</p>
         <sl-button variant="primary" @click=${() => navigate('workspace-runs', 'new', null)}>
-          + New Workspace
+          + Run Workspace
         </sl-button>
       </div>
     `;
@@ -2645,7 +2645,7 @@ function contentHeaderView() {
   } else if (route.section === 'fleet-runs') {
     title =
       route.runId === 'new'
-        ? 'New Fleet'
+        ? 'Run Fleet'
         : route.runId
           ? `Fleet ${route.runId.split('_').pop() || route.runId}`
           : 'Fleets';
@@ -2790,7 +2790,7 @@ function contentHeaderView() {
   } else if (route.section === 'workspace-runs') {
     showBack = true;
     if (route.runId === 'new') {
-      title = 'New Workspace';
+      title = 'Run Workspace';
       // Reuse fleet-launcher's submit state — it dispatches based on
       // launcherMode, so workspace mode hits POST /api/workspace-runs and
       // returns data.workspace_id on success.
@@ -3006,7 +3006,7 @@ function contentHeaderView() {
       }
     }
   } else if (route.section === 'new-run') {
-    title = 'New Pipeline';
+    title = 'Run Pipeline';
     showBack = true;
     const nrs = getNewRunSubmitState();
     const capReached = isAtCapacity(state);
@@ -3039,12 +3039,12 @@ function contentHeaderView() {
     showBack = true;
   }
 
-  // Dashboard gets a "New Pipeline" button in the header
+  // Dashboard gets a "Run Pipeline" button in the header
   if (!route.section && !route.runId) {
     actionButton = html`
       <button class="action-btn action-btn--primary" @click=${() => navigate('new-run', null, route.projectId)}>
         ${unsafeHTML(iconSvg(Plus, 14))}
-        New Pipeline
+        Run Pipeline
       </button>`;
   }
 
