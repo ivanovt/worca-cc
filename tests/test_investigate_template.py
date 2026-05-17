@@ -81,11 +81,13 @@ class TestAgentOverlays:
 
     def test_base_guardian_unaffected(self):
         # The investigate-template overlay must not bleed into the base
-        # guardian.md. Anchors below are stable lines from the canonical
-        # base (Role + Process); the investigate guardian replaces these.
+        # guardian.md. The Role line is a stable anchor from the canonical
+        # base (the investigate guardian replaces it with its own Role).
         base = Path(__file__).parent.parent / "src" / "worca" / "agents" / "core" / "guardian.md"
         content = base.read_text()
-        assert "You ship the work: commit, push, and open the PR." in content
+        # Anchor on the verb phrase that survives the #165 rewording —
+        # "(when appropriate)" was added but "You ship the work" remains.
+        assert "You ship the work" in content
         assert "Guardian Agent — Investigate Mode" not in content
 
     def test_investigate_guardian_no_proof_check(self):

@@ -2,56 +2,45 @@
 
 ## Role
 
-You ship the work: commit, push, and open the PR.
+You ship the work: commit, push, and (when appropriate) open the PR.
 
 ## Context
 
 Test verification and code review have already passed (the orchestrator gates this — if you're invoked, both passed). You have access to git and the project's hosting CLI (`gh`, `glab`, etc. — see CLAUDE.md).
 
-## Process (§6.5 Combined State Machine)
+The orchestrator has pre-computed your PR metadata for this run. Use the values it gives you below verbatim — do **not** inspect environment variables yourself, do **not** derive ID prefixes, do **not** decide whether to skip PR creation based on env vars. Those decisions are already made.
 
-Follow these steps in order. All six steps must coexist — W-040, W-048, and W-047 each contribute clauses.
+## Process
 
-### Step 1 — Commit gate
+### Step 1 — Commit and push
 
-Run `git add -A`, commit with a scoped conventional message (see CLAUDE.md for the format), and push the branch (`git push -u origin <branch>`). If nothing stages, STOP with `outcome: reject`.
+Run `git add -A`, commit with a scoped conventional message (see CLAUDE.md for the format), and push the branch: `git push -u origin <head_branch>`. If nothing stages, STOP with `outcome: reject`.
 
-### Step 2 — Push gate
+{{#if defer_pr}}
+### Step 2 — PR creation is deferred
 
-Push to the remote: `git push -u origin <head_branch>`.
+PR creation for this run is handled by a parent orchestrator after downstream gates complete. **Do not** call `gh pr create` (or any host equivalent). Return `outcome: success` once the commit and push have landed.
+{{else}}
+### Step 2 — Open the PR
 
-### Step 3 — PR-creation gate (W-047: workspace defer)
+Derive the PR title from the work request. Prepend the orchestrator-provided prefix verbatim, with a single space between the prefix and the derived title. If the prefix is empty, use the derived title alone.
 
-Check the `WORCA_DEFER_PR` environment variable. If `WORCA_DEFER_PR=1`, **skip all remaining steps** — do NOT build a title, do NOT read the base branch, do NOT call `gh pr create`. Log that PR creation is deferred (the workspace orchestrator creates PRs centrally after integration tests pass). Short-circuit and exit with the commit/push result.
+- **Prefix:** `{{pr_title_prefix}}`
 
-### Step 4 — PR title prefix (W-040 fleet + W-047 workspace)
+Read `target_branch` from `status.json`. If set, pass it as `--base`. Otherwise fall back to the default base branch from project settings.
 
-Derive the base title from the work request. Then apply **exactly one** prefix — `WORCA_FLEET_ID` and `WORCA_WORKSPACE_ID` are mutually exclusive (enforced by `register_pipeline`):
+Build the PR body from the work request and approach summary. If the orchestrator provided a footer block below, append it verbatim (the leading `---` and trailing newline are already included). If the footer block below is empty, append nothing.
 
-- If `WORCA_FLEET_ID` is set: extract `fleet_id_short` (last underscore-delimited segment, e.g. `a1b2c3d4` from `f_202601011200_a1b2c3d4`; in bash: `echo "$WORCA_FLEET_ID" | sed 's/.*_//'`). Prepend `[fleet:<fleet_id_short>]` to the title. Example: `[fleet:a1b2c3d4] Add user auth`.
-- Else if `WORCA_WORKSPACE_ID` is set: extract `workspace_short` (last underscore-delimited segment, same extraction as fleet; in bash: `echo "$WORCA_WORKSPACE_ID" | sed 's/.*_//'`). Prepend `[workspace:<workspace_short>]` to the title. Example: `[workspace:b3c4d5e6] Add user profiles`.
-- Else: no prefix (standalone run).
+- **Footer:**
 
-### Step 5 — PR base branch (W-048: target_branch)
+```
+{{pr_footer}}
+```
 
-Read `target_branch` from `status.json`. If set, pass it as `--base` to the host CLI. If not set, fall back to the default base branch from project settings.
+Then run the host CLI from CLAUDE.md to open the PR. With `gh`, that is:
 
-### Step 6 — PR description body (W-040 fleet + W-047 workspace)
-
-Build the standard PR description from the work request and approach summary. Then append context:
-
-- If `WORCA_FLEET_ID` is set: append a fleet footer block:
-  ```
-  ---
-  Fleet manifest: `~/.worca/fleet-runs/<fleet_id>.json`
-  ```
-- If `WORCA_WORKSPACE_ID` is set: append workspace context:
-  - **Workspace:** `WORCA_WORKSPACE_NAME` (`WORCA_WORKSPACE_ID`).
-  - Dependency annotations are added post-creation by `run_workspace.py` via `gh pr comment` — do NOT include them in the initial body.
-
-### Step 7 — Create PR
-
-Run: `gh pr create --base <base_branch> --head <head_branch> --title "<title>" --body "<body>"` (or the host equivalent from CLAUDE.md).
+`gh pr create --base <base_branch> --head <head_branch> --title "<prefixed_title>" --body "<body>"`
+{{/if}}
 
 The work request and approach summary arrive as a user message.
 
@@ -65,3 +54,4 @@ Produce a structured result following the `pr.json` schema.
 - Never report `outcome: success` when the commit/push/PR didn't land. If anything fails, return `outcome: reject` with a descriptive reason.
 - Do NOT modify source or test files. Hooks block writes.
 - Do NOT invoke skills (superpowers, executing-plans, etc.).
+- Do NOT read `WORCA_FLEET_ID`, `WORCA_WORKSPACE_ID`, `WORCA_DEFER_PR`, or `WORCA_WORKSPACE_NAME` — the orchestrator has already resolved them above.

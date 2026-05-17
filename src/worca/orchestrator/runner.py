@@ -16,6 +16,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
+from worca.orchestrator.guardian_context import build_guardian_context
 from worca.orchestrator.error_classifier import (
     classify_error, record_failure, record_success,
     should_halt, get_retry_delay, get_circuit_breaker_state,
@@ -1814,6 +1815,9 @@ def run_pipeline(
                     "agent_overrides_dir", ".claude/agents"
                 )
                 template_agents_dir = _render_worca.get("_template_agents_dir")
+                # Guardian template vars (#165) are threaded into PromptBuilder
+                # context below — _render_agent_templates only performs overlay
+                # merging, placeholders are resolved at agent-dispatch time.
                 _render_agent_templates(run_dir, {
                     "plan_file": status["plan_file"],
                     "run_id": status.get("run_id", ""),
@@ -1833,6 +1837,13 @@ def run_pipeline(
         prompt_builder.update_context("run_id", status.get("run_id", ""))
         prompt_builder.update_context("branch", branch_name)
         prompt_builder.update_context("title", work_request.title)
+        # Guardian template variables (issue #165): derived once here so the
+        # dispatch-time resolve_agent call resolves {{pr_title_prefix}},
+        # {{pr_footer}}, and {{#if defer_pr}} in guardian.md. Computed from
+        # the current process env, which carries the fleet/workspace child
+        # WORCA_* vars set by run_fleet.py / dag_executor.py.
+        for key, value in build_guardian_context(os.environ).items():
+            prompt_builder.update_context(key, value)
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
 
