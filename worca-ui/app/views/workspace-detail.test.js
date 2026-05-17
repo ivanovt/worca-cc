@@ -35,21 +35,19 @@ const BASE_WORKSPACE = {
     description: 'Coordinated migration across backend, lib, and frontend.',
   },
   dag: {
-    projects: [
-      { name: 'shared-lib', depends_on: [], status: 'completed', tier: 0 },
-      {
-        name: 'backend',
-        depends_on: ['shared-lib'],
-        status: 'running',
-        tier: 1,
-      },
-      {
-        name: 'frontend',
-        depends_on: ['backend', 'shared-lib'],
-        status: 'pending',
-        tier: 2,
-      },
+    // Matches the manifest shape written by run_workspace.py:
+    // tiers + dependency_graph. _dagPanel derives the dag-graph fixture
+    // from dependency_graph and looks up child status.
+    tiers: [
+      { tier: 0, projects: ['shared-lib'], status: 'completed' },
+      { tier: 1, projects: ['backend'], status: 'running' },
+      { tier: 2, projects: ['frontend'], status: 'pending' },
     ],
+    dependency_graph: {
+      'shared-lib': [],
+      backend: ['shared-lib'],
+      frontend: ['backend', 'shared-lib'],
+    },
   },
   tiers: [
     { tier: 0, status: 'completed', repos: ['shared-lib'] },

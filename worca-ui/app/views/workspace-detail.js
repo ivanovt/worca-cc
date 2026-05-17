@@ -136,8 +136,9 @@ function _guideConflictsAggregate(children) {
   for (const child of children || []) {
     const conflicts = child.guide_conflicts;
     if (!conflicts || conflicts.length === 0) continue;
-    const repo = child.repo_name || child.project_path?.split('/').pop() || '—';
-    byRepo.push({ repo, conflicts });
+    const project =
+      child.project || child.project_path?.split('/').pop() || '—';
+    byRepo.push({ project, conflicts });
   }
   if (byRepo.length === 0) return nothing;
   const total = byRepo.reduce((sum, r) => sum + r.conflicts.length, 0);
@@ -153,9 +154,9 @@ function _guideConflictsAggregate(children) {
       </div>
       <div class="guide-conflicts-aggregate-list">
         ${byRepo.map(
-          ({ repo, conflicts }) => html`
+          ({ project, conflicts }) => html`
           <div class="guide-conflicts-aggregate-group">
-            <strong class="guide-conflicts-repo">${repo}</strong>
+            <strong class="guide-conflicts-repo">${project}</strong>
             ${conflicts.map(
               (c) => html`
               <div class="guide-conflict-row">
@@ -271,7 +272,24 @@ function _overviewSection(ws) {
 
 function _dagPanel(ws) {
   if (!ws.dag) return nothing;
-  const { svg } = dagGraphView(ws.dag, { mode: 'navigate' });
+  // The manifest's `dag` has shape `{tiers, dependency_graph}`. dagGraphView
+  // wants a flat list of `{name, depends_on, status}` — synthesize it from
+  // the dependency graph (authoritative for edges) and look up live status
+  // from the children list.
+  const childStatusByName = new Map();
+  for (const c of ws.children || []) {
+    if (c.project) childStatusByName.set(c.project, c.status);
+  }
+  const depGraph = ws.dag.dependency_graph || {};
+  const dagProjects = Object.keys(depGraph)
+    .sort()
+    .map((name) => ({
+      name,
+      depends_on: depGraph[name] || [],
+      status: childStatusByName.get(name) || 'pending',
+    }));
+  if (dagProjects.length === 0) return nothing;
+  const { svg } = dagGraphView({ projects: dagProjects }, { mode: 'navigate' });
   if (!svg) return nothing;
   return html`
     <div class="new-run-section workspace-dag-panel">

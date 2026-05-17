@@ -6,6 +6,11 @@ const H_GAP = 60;
 const V_GAP = 24;
 const PADDING = 16;
 
+// Pull the path end back by this many pixels so the marker-end arrowhead
+// lands cleanly against the target node's left edge instead of overlapping
+// it. Matches the marker viewBox / refX combination below.
+const ARROW_INSET = 6;
+
 const STATUS_COLOR = {
   'status-pending': 'var(--status-pending)',
   'status-running': 'var(--status-running)',
@@ -66,13 +71,15 @@ export function dagGraphView(dag, options = {}) {
       if (!from) continue;
       const x1 = from.x + NODE_W;
       const y1 = from.y + NODE_H / 2;
-      const x2 = to.x;
+      // Pull the path end back so the arrowhead lands at the rect edge
+      // rather than overlapping it.
+      const x2 = to.x - ARROW_INSET;
       const y2 = to.y + NODE_H / 2;
       const cx = Math.round((x1 + x2) / 2);
       const dep = projectByName.get(depName);
       const stroke =
         mode === 'navigate' && dep ? statusColor(dep.status) : 'var(--border)';
-      edges += `<path class="dag-graph-edge" d="M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}" fill="none" stroke="${stroke}" stroke-width="2"/>`;
+      edges += `<path class="dag-graph-edge" d="M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}" fill="none" stroke="${stroke}" stroke-width="2" marker-end="url(#dag-graph-arrow)"/>`;
     }
   }
 
@@ -107,7 +114,18 @@ export function dagGraphView(dag, options = {}) {
     });
   }
 
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${edges}${nodes}</svg>`;
+  // `fill="context-stroke"` makes the arrowhead inherit each edge's stroke
+  // colour automatically — one marker covers every status palette + the
+  // neutral border colour without per-edge defs duplication. Supported in
+  // Chrome 113+ / Firefox 113+ / Safari 16.4+ (mid-2023).
+  const defs =
+    '<defs>' +
+    '<marker id="dag-graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" ' +
+    'markerWidth="6" markerHeight="6" orient="auto-start-reverse">' +
+    '<path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/>' +
+    '</marker>' +
+    '</defs>';
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">${defs}${edges}${nodes}</svg>`;
   return { svg, nodes: nodeList };
 }
 
