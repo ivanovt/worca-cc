@@ -478,7 +478,18 @@ export function createProjectScopedRoutes({
       });
     }
 
-    const validation = validateSettingsPayload(body);
+    let existingForValidation = {};
+    try {
+      if (existsSync(settingsPath)) {
+        existingForValidation = JSON.parse(readFileSync(settingsPath, 'utf8'));
+      }
+    } catch {
+      existingForValidation = {};
+    }
+
+    const validation = validateSettingsPayload(body, {
+      existing: existingForValidation,
+    });
     if (!validation.valid) {
       return res.status(400).json({
         error: {

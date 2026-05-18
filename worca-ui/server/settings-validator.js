@@ -36,8 +36,12 @@ const VALID_PRICING_FIELDS = [
   'cache_read_per_mtok',
 ];
 
-export function validateSettingsPayload(body) {
+export function validateSettingsPayload(body, options = {}) {
   const details = [];
+  const existingWorca =
+    options.existing && typeof options.existing === 'object'
+      ? options.existing.worca || {}
+      : {};
 
   if (body.worca !== undefined) {
     if (
@@ -49,7 +53,16 @@ export function validateSettingsPayload(body) {
       return { valid: false, details };
     }
     const w = body.worca;
-    const validModels = deriveValidModels(w);
+    // Sections like agents/pricing reference model keys that may live in another
+    // section saved earlier. Merge persisted models with body-supplied models so
+    // a single-section save (e.g. agents-only) doesn't reject custom models.
+    const mergedModels = {
+      ...(existingWorca.models && typeof existingWorca.models === 'object'
+        ? existingWorca.models
+        : {}),
+      ...(w.models && typeof w.models === 'object' ? w.models : {}),
+    };
+    const validModels = deriveValidModels({ models: mergedModels });
 
     // agents
     if (w.agents !== undefined) {

@@ -152,6 +152,65 @@ describe('validateSettingsPayload — defaults', () => {
   });
 });
 
+describe('validateSettingsPayload — cross-section model context', () => {
+  it('rejects custom model in agents when no existing context is provided', () => {
+    const result = validateSettingsPayload({
+      worca: { agents: { implementer: { model: 'glm-ds', max_turns: 300 } } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('Invalid model "glm-ds"'),
+    );
+  });
+
+  it('accepts custom model in agents when existing settings declare it', () => {
+    const result = validateSettingsPayload(
+      {
+        worca: { agents: { implementer: { model: 'glm-ds', max_turns: 300 } } },
+      },
+      {
+        existing: {
+          worca: {
+            models: {
+              opus: 'claude-opus-4-6',
+              sonnet: 'claude-sonnet-4-6',
+              'glm-ds': { id: 'discretestack-stable' },
+            },
+          },
+        },
+      },
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  it('accepts custom model in pricing when existing settings declare it', () => {
+    const result = validateSettingsPayload(
+      {
+        worca: { pricing: { models: { 'glm-ds': { input_per_mtok: 1 } } } },
+      },
+      {
+        existing: { worca: { models: { 'glm-ds': { id: 'foo' } } } },
+      },
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  it('still rejects truly unknown model even with existing context', () => {
+    const result = validateSettingsPayload(
+      {
+        worca: {
+          agents: { implementer: { model: 'nonexistent', max_turns: 30 } },
+        },
+      },
+      { existing: { worca: { models: { 'glm-ds': { id: 'foo' } } } } },
+    );
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('Invalid model "nonexistent"'),
+    );
+  });
+});
+
 describe('validateSettingsPayload — pricing', () => {
   it('accepts valid pricing with all model fields', () => {
     const result = validateSettingsPayload({
