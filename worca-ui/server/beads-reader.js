@@ -59,14 +59,21 @@ export async function listIssues(beadsDb) {
 }
 
 export async function listIssuesByLabel(beadsDb, label) {
-  try {
+  const attempt = async () => {
     const issues = await runBd(
       ['list', '--label-any', label, '--all', '--limit', '0'],
       beadsDb,
     );
     return await enrichWithDeps(issues, beadsDb);
+  };
+  try {
+    return await attempt();
   } catch {
-    return [];
+    // bd/SQLite contention during active runs is usually sub-second — one
+    // retry covers the observed window. If it still fails, propagate so the
+    // WS handler can return an error rather than masquerading as "no beads."
+    await new Promise((r) => setTimeout(r, 150));
+    return await attempt();
   }
 }
 

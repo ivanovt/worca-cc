@@ -831,62 +831,48 @@ export function prApprovalPanelView(run, options = {}) {
 
 export function runBeadsSectionView(beads) {
   if (!beads) return nothing;
-  if (beads.length === 0) {
-    return html`
-      <div class="run-beads-section">
-        <sl-details class="run-beads-panel" @sl-after-show=${scrollOnExpand}>
-          <div slot="summary" class="run-beads-header">
-            <span class="run-beads-icon">${unsafeHTML(iconSvg(List, 16))}</span>
-            <span class="run-beads-title">Beads</span>
-          </div>
-          <div class="run-beads-empty">No linked Beads issues</div>
-        </sl-details>
-      </div>
-    `;
-  }
+  const isEmpty = beads.length === 0;
+  const closed = beads.filter((b) => b.status === 'closed').length;
+  const total = beads.length;
+  const variant =
+    total === 0 ? 'neutral' : closed === total ? 'success' : 'primary';
   return html`
     <div class="run-beads-section">
       <sl-details class="run-beads-panel" @sl-after-show=${scrollOnExpand}>
         <div slot="summary" class="run-beads-header">
           <span class="run-beads-icon">${unsafeHTML(iconSvg(List, 16))}</span>
           <span class="run-beads-title">Beads</span>
-          ${(() => {
-            const closed = beads.filter((b) => b.status === 'closed').length;
-            const total = beads.length;
-            const variant =
-              total === 0
-                ? 'neutral'
-                : closed === total
-                  ? 'success'
-                  : 'primary';
-            return html`<sl-badge variant="${variant}" pill>${closed}/${total}</sl-badge>`;
-          })()}
-        </div>
-        <div class="run-beads-list">
-          ${beads.map(
-            (issue) => html`
-            <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
-              <div slot="content">${beadTooltipContent(issue)}</div>
-              <div class="run-bead-row">
-                <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-                ${
-                  issue.blocked_by?.length
-                    ? html`<sl-badge variant="warning" pill>blocked</sl-badge>`
-                    : html`<sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>`
-                }
-                <span class="run-bead-id">#${issue.id}</span>
-                <span class="run-bead-title">${issue.title}</span>
-              </div>
-            </sl-tooltip>
-          `,
-          )}
+          ${
+            isEmpty
+              ? nothing
+              : html`<sl-badge variant="${variant}" pill>${closed}/${total}</sl-badge>`
+          }
         </div>
         ${
-          beads.length > 1
-            ? html`
-          ${_graphWithTooltips(beads)}
-        `
-            : ''
+          isEmpty
+            ? html`<div class="run-beads-empty">No linked Beads issues</div>`
+            : html`
+              <div class="run-beads-list">
+                ${beads.map(
+                  (issue) => html`
+                  <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
+                    <div slot="content">${beadTooltipContent(issue)}</div>
+                    <div class="run-bead-row">
+                      <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+                      ${
+                        issue.blocked_by?.length
+                          ? html`<sl-badge variant="warning" pill>blocked</sl-badge>`
+                          : html`<sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>`
+                      }
+                      <span class="run-bead-id">#${issue.id}</span>
+                      <span class="run-bead-title">${issue.title}</span>
+                    </div>
+                  </sl-tooltip>
+                `,
+                )}
+              </div>
+              ${beads.length > 1 ? _graphWithTooltips(beads) : nothing}
+            `
         }
       </sl-details>
     </div>
