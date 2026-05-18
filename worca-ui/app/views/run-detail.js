@@ -407,7 +407,9 @@ function _dispatchEventsRowView(iter) {
     <div class="iteration-tags-row">
       <span class="meta-label">Subagents:</span>
       ${events.map((ev) => {
-        const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
+        const isAllowed =
+          ev.type === 'pipeline.hook.dispatch_allowed' ||
+          ev.type === 'pipeline.hook.skill_allowed';
         const variant = isAllowed ? 'success' : 'danger';
         const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
         const suffix = count ? ` (×${count})` : '';
@@ -418,6 +420,66 @@ function _dispatchEventsRowView(iter) {
         return html`<sl-badge variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
       })}
     </div>
+  `;
+}
+
+const _ALLOWED_DISPATCH_TYPES = new Set([
+  'pipeline.hook.dispatch_allowed',
+  'pipeline.hook.skill_allowed',
+]);
+
+function _dispatchActivityCounterView(stages, agents) {
+  let explicit = 0;
+  let wildcard = 0;
+  const tuples = [];
+
+  for (const [key, stage] of Object.entries(stages)) {
+    const agent = stage.agent || agents?.[key]?.agent || key;
+    const iterations = stage.iterations || [];
+    for (const iter of iterations) {
+      const events = iter.dispatch_events || [];
+      for (const ev of events) {
+        if (!_ALLOWED_DISPATCH_TYPES.has(ev.type)) continue;
+        const count = ev.count || 1;
+        if (ev.via === 'wildcard') {
+          wildcard += count;
+        } else {
+          explicit += count;
+        }
+        tuples.push({
+          agent,
+          child: ev.subagent_type,
+          via: ev.via || 'explicit',
+          count,
+        });
+      }
+    }
+  }
+
+  if (explicit === 0 && wildcard === 0) return nothing;
+
+  const summary =
+    wildcard > 0
+      ? `Dispatch activity: ${explicit} explicit, ${wildcard} via wildcard`
+      : `Dispatch activity: ${explicit} explicit`;
+
+  return html`
+    <sl-details class="dispatch-activity-counter">
+      <span slot="summary">${summary}</span>
+      <div class="dispatch-activity-tuples">
+        ${tuples.map(
+          (t) => html`
+          <div class="dispatch-tuple">
+            <span class="dispatch-tuple-agent">${t.agent}</span>
+            <span class="dispatch-tuple-arrow">→</span>
+            <span class="dispatch-tuple-child">${t.child}</span>
+            <sl-badge variant="${t.via === 'wildcard' ? 'warning' : 'success'}" pill>${t.via}</sl-badge>
+            ${t.count > 1 ? html`<span class="dispatch-tuple-count">×${t.count}</span>` : nothing}
+          </div>
+        `,
+        )}
+      </div>
+    </sl-details>
   `;
 }
 
@@ -905,6 +967,7 @@ export function runDetailView(run, settings = {}, options = {}) {
       ${_circuitBreakerBannerView(run, settings)}
       ${prVerificationBannerView(run)}
       ${guideConflictsPanelView(run.guide_conflicts, options)}
+      ${_dispatchActivityCounterView(stages, agents)}
 
       <div class="run-info-section">
         ${

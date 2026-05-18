@@ -1951,6 +1951,51 @@ sl-input [slot="prefix"] {
   display: inline-block;
 }
 
+/* Dispatch chip variants */
+.dispatch-chip-wildcard {
+  --sl-color-neutral-200: var(--sl-color-primary-200);
+  background: var(--sl-color-primary-100);
+  font-weight: 600;
+}
+
+.dispatch-chip-locked {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.dispatch-chip-warn {
+  --sl-color-neutral-200: var(--sl-color-warning-200);
+  background: var(--sl-color-warning-100);
+}
+
+/* Dispatch section layout */
+.dispatch-section {
+  margin-bottom: 16px;
+}
+
+.dispatch-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 12px 0 8px;
+}
+
+.dispatch-tier {
+  margin-bottom: 12px;
+}
+
+.dispatch-tier-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sl-color-neutral-600);
+  margin-bottom: 4px;
+}
+
+.dispatch-tier-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
 /* Permissions list */
 .settings-permissions {
   display: flex;

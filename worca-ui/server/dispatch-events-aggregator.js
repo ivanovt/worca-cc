@@ -22,6 +22,8 @@ import { existsSync, readFileSync } from 'node:fs';
 const DISPATCH_EVENT_TYPES = new Set([
   'pipeline.hook.dispatch_allowed',
   'pipeline.hook.dispatch_blocked',
+  'pipeline.hook.skill_allowed',
+  'pipeline.hook.skill_blocked',
 ]);
 
 /**
@@ -50,13 +52,16 @@ export function readDispatchEventsFromJsonl(eventsPath) {
     }
     if (!DISPATCH_EVENT_TYPES.has(e.event_type)) continue;
     const payload = e.payload || {};
-    if (!payload.subagent_type) continue;
-    out.push({
+    const subagentType = payload.subagent_type || payload.skill;
+    if (!subagentType) continue;
+    const entry = {
       type: e.event_type,
-      subagent_type: payload.subagent_type,
-      reason: payload.reason,
+      subagent_type: subagentType,
       timestamp: e.timestamp,
-    });
+    };
+    if (payload.reason) entry.reason = payload.reason;
+    if (payload.via) entry.via = payload.via;
+    out.push(entry);
   }
   return out;
 }
@@ -154,6 +159,7 @@ function aggregate(events) {
         count: 1,
       };
       if (ev.reason) entry.reason = ev.reason;
+      if (ev.via) entry.via = ev.via;
       map.set(key, entry);
     }
   }

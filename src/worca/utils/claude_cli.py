@@ -15,6 +15,7 @@ import tempfile
 import threading
 from typing import Optional, Callable
 
+from worca.hooks.tracking import _load_dispatch_section
 from worca.utils.env import get_env, filter_model_env
 
 # Linux ARG_MAX is typically 2 MiB but total argv+envp must fit.
@@ -86,12 +87,36 @@ def terminate_current():
         pass
 
 
+def _resolve_tool_disallows(agent_name: str, settings: dict | None = None) -> list[str]:
+    """Build the --disallowedTools list from settings (W-054 §8).
+
+    Loads worca.governance.dispatch.tools and returns the always_disallowed
+    entries minus Skill (now governed by the skills hook). Named-tool entries
+    in per_agent_allow are warned about and ignored — only '*' and [] are
+    honored in v1.
+    """
+    cfg = _load_dispatch_section("tools", settings)
+    disallows = list(cfg["always_disallowed"])
+    entry = cfg["per_agent_allow"].get(
+        agent_name, cfg["per_agent_allow"].get("_defaults", ["*"]),
+    )
+    has_wildcard = "*" in entry or len(entry) == 0
+    if not has_wildcard:
+        print(
+            f"[worca] tools.per_agent_allow.{agent_name} contains named tools; "
+            f"only '*' or [] are honored in v1 — falling back to wildcard",
+            file=sys.stderr,
+        )
+    return [t for t in disallows if t != "Skill"]
+
+
 def build_command(
     prompt: str,
     agent: str,
     output_format: str = "stream-json",
     json_schema: Optional[str] = None,
     model: Optional[str] = None,
+    settings: Optional[dict] = None,
     **kwargs,
 ) -> tuple[list[str], Optional[str]]:
     """Build the claude CLI command list without executing.
@@ -130,6 +155,8 @@ def build_command(
     _claude_bin = shlex.split(_claude_bin_override or "claude")
     if _claude_bin_override:
         print(f"[worca] WORCA_CLAUDE_BIN override active: {_claude_bin_override}", file=sys.stderr)
+    agent_name = os.path.splitext(os.path.basename(agent))[0]
+    disallowed_tools = _resolve_tool_disallows(agent_name, settings)
     cmd = [
         *_claude_bin,
         "-p",
@@ -140,7 +167,7 @@ def build_command(
         output_format,
         "--no-session-persistence",
         "--dangerously-skip-permissions",
-        "--disallowedTools", "Skill,EnterPlanMode,EnterWorktree,TodoWrite",
+        "--disallowedTools", ",".join(disallowed_tools),
     ]
     if model:
         cmd.extend(["--model", model])
@@ -312,6 +339,7 @@ def run_agent(
     model_env: Optional[dict] = None,
     log_path: Optional[str] = None,
     on_event: Optional[Callable[[dict], None]] = None,
+    settings: Optional[dict] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -334,6 +362,7 @@ def run_agent(
         output_format=output_format,
         json_schema=json_schema,
         model=model,
+        settings=settings,
     )
 
     global _current_proc

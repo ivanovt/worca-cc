@@ -8,6 +8,7 @@ Source resolution order:
   3. Installed pip package (default)
 """
 
+import copy
 import importlib.resources
 import json
 import os
@@ -154,6 +155,38 @@ _PATH_MIGRATIONS = [
 ]
 
 
+def _migrate_dispatch_governance(governance_cfg: dict, changes: list[str]) -> None:
+    """Migrate flat subagent_dispatch -> nested dispatch.subagents (W-054)."""
+    from worca.hooks.tracking import _DISPATCH_DEFAULTS
+
+    if "subagent_dispatch" not in governance_cfg:
+        return
+    old = governance_cfg.pop("subagent_dispatch")
+    dispatch = governance_cfg.setdefault("dispatch", {})
+    subagents = dispatch.setdefault("subagents", {})
+    per_agent = subagents.setdefault("per_agent_allow", {})
+    per_agent.update(old)
+    per_agent.setdefault(
+        "_defaults",
+        list(_DISPATCH_DEFAULTS["subagents"]["per_agent_allow"]["_defaults"]),
+    )
+    subagents.setdefault(
+        "always_disallowed",
+        list(_DISPATCH_DEFAULTS["subagents"]["always_disallowed"]),
+    )
+    subagents.setdefault(
+        "default_denied",
+        list(_DISPATCH_DEFAULTS["subagents"]["default_denied"]),
+    )
+    dispatch.setdefault("tools", copy.deepcopy(_DISPATCH_DEFAULTS["tools"]))
+    dispatch.setdefault("skills", copy.deepcopy(_DISPATCH_DEFAULTS["skills"]))
+    governance_cfg.pop("_dispatch_legacy", None)
+    changes.append(
+        "  governance.subagent_dispatch -> governance.dispatch.subagents "
+        "(W-054 — tools and skills sections added with defaults)"
+    )
+
+
 def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
     """Apply path migrations to settings dict. Returns (migrated_settings, list_of_changes)."""
     changes = []
@@ -190,7 +223,11 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
     # automatically translated, so we stash them under `_dispatch_legacy`
     # for the user to review and re-enter under the new schema.
     governance_cfg = worca_cfg.get("governance", {})
-    if "dispatch" in governance_cfg and "subagent_dispatch" not in governance_cfg:
+    dispatch_val = governance_cfg.get("dispatch", {})
+    _is_new_dispatch_shape = isinstance(dispatch_val, dict) and bool(
+        {"tools", "skills", "subagents"} & dispatch_val.keys()
+    )
+    if "dispatch" in governance_cfg and "subagent_dispatch" not in governance_cfg and not _is_new_dispatch_shape:
         _SUBAGENT_DISPATCH_DEFAULTS = {
             "planner": ["Explore"],
             "coordinator": [],
@@ -245,6 +282,13 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
                 '  governance.subagent_dispatch: normalized "explore" -> "Explore" '
                 "(canonical Claude Code subagent name is capitalized)"
             )
+
+    # Migrate subagent_dispatch → dispatch.subagents + add tools/skills (W-054).
+    governance_cfg = worca_cfg.get("governance", {})
+    _migrate_dispatch_governance(governance_cfg, changes)
+    if governance_cfg:
+        worca_cfg["governance"] = governance_cfg
+        migrated["worca"] = worca_cfg
 
     # Ensure SubagentStart + SubagentStop hooks are registered. The hook
     # scripts have existed since the initial W-038 landing but were never

@@ -8,7 +8,8 @@ import os
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from worca.hooks.tracking import check_dispatch
+from worca.hooks.agent_role import role_from_worca_agent
+from worca.hooks.tracking import check_allowed
 
 try:
     from worca.events.hook_emitter import emit_from_hook
@@ -16,40 +17,35 @@ except ImportError:
     emit_from_hook = None
 
 
-def _role_from_worca_agent(raw: str) -> str:
-    """Extract the bare agent role from a WORCA_AGENT env value.
-
-    The env value is "{stage}-{agent}-iter-{N}" (e.g. "implement-implementer-iter-2").
-    Mirrors the helper in worca.hooks.guard. Without this normalization, the
-    dispatch-rule lookup fails because rules are keyed on bare agent names.
-    """
-    if not raw:
-        return ""
-    base = raw.rsplit("-iter-", 1)[0] if "-iter-" in raw else raw
-    parts = base.split("-")
-    return parts[-1] if parts else raw
-
-
 def main():
     data = json.load(sys.stdin)
-    parent = _role_from_worca_agent(os.environ.get("WORCA_AGENT", ""))
+    parent = role_from_worca_agent(os.environ.get("WORCA_AGENT", ""))
     child = data.get("agent_type", "")
 
-    code, reason = check_dispatch(parent, child)
-    if code != 0:
+    allowed, reason, via = check_allowed("subagents", parent, child)
+    if not allowed:
+        if reason == "always_disallowed":
+            msg = f"Blocked: {child} is on the subagent denylist"
+        else:
+            msg = f"Blocked: {parent} cannot dispatch {child}"
         if emit_from_hook:
             emit_from_hook("pipeline.hook.dispatch_blocked", {
                 "agent": parent,
                 "subagent_type": child,
-                "reason": reason,
+                "reason": msg,
             })
-        print(reason, file=sys.stderr)
-    elif parent and emit_from_hook:
-        emit_from_hook("pipeline.hook.dispatch_allowed", {
-            "agent": parent,
-            "subagent_type": child,
-        })
-    sys.exit(code)
+        print(msg, file=sys.stderr)
+        sys.exit(2)
+    else:
+        if parent and emit_from_hook:
+            payload = {
+                "agent": parent,
+                "subagent_type": child,
+            }
+            if via:
+                payload["via"] = via
+            emit_from_hook("pipeline.hook.dispatch_allowed", payload)
+        sys.exit(0)
 
 
 if __name__ == "__main__":

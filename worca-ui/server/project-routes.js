@@ -23,6 +23,7 @@ import { actionAllowed } from '../app/utils/state-actions.js';
 import { atomicWriteSync } from './atomic-write.js';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { dispatchExternal } from './dispatch-external.js';
+import { migrateDispatchGovernance } from './dispatch-migration.js';
 import { ensureWebhookForUi } from './ensure-webhook.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
@@ -515,21 +516,14 @@ export function createProjectScopedRoutes({
         if (!base.worca || typeof base.worca !== 'object') base.worca = {};
         base.worca = deepMerge(base.worca, body.worca);
 
-        if (
-          body.worca.governance &&
-          typeof body.worca.governance === 'object' &&
-          body.worca.governance.subagent_dispatch !== undefined &&
-          base.worca.governance &&
-          typeof base.worca.governance === 'object' &&
-          'dispatch' in base.worca.governance
-        ) {
-          delete base.worca.governance.dispatch;
-        }
         baseChanged = true;
       }
 
       // STEP 1: extract misplaced global keys + inert milestone keys
       const autoMigrated = extractAndStripGlobalKeys(base);
+
+      // STEP 1a: migrate legacy subagent_dispatch → dispatch.subagents (W-054)
+      if (base.worca) migrateDispatchGovernance(base.worca);
 
       // STEP 2: write extracted global keys to ~/.worca/settings.json
       const globalSettingsPath = prefsDir

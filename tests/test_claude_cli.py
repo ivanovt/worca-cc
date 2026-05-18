@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 
 from worca.utils.claude_cli import (
     AgentSubprocessError,
+    _resolve_tool_disallows,
     build_command,
     process_stream,
     run_agent,
@@ -137,7 +138,7 @@ def test_run_agent_parses_json():
     result_event = {"result": "success", "output": "done"}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
-        result = run_agent("do stuff", agent="planner", max_turns=40)
+        result = run_agent("do stuff", agent="planner", max_turns=40, settings={})
     assert result["result"] == "success"
     assert result["type"] == "result"
 
@@ -147,7 +148,7 @@ def test_run_agent_raises_on_failure():
     mock_proc = _make_mock_popen(result_event, returncode=1)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("fail", agent="planner", max_turns=5)
+            run_agent("fail", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except RuntimeError as e:
             assert "agent failed" in str(e)
@@ -162,7 +163,7 @@ def test_run_agent_raises_on_invalid_json():
     mock_proc.wait.return_value = 0
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except RuntimeError as e:
             assert "result" in str(e).lower() or "stream" in str(e).lower()
@@ -172,7 +173,7 @@ def test_run_agent_passes_correct_command():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("my prompt", agent="implementer", max_turns=20, json_schema='{"type":"object"}')
+        run_agent("my prompt", agent="implementer", max_turns=20, json_schema='{"type":"object"}', settings={})
     args = mock_popen.call_args[0][0]
     assert args[0] == "claude"
     assert "--agent" in args
@@ -185,7 +186,7 @@ def test_run_agent_max_turns_accepted_but_ignored():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("prompt", agent="planner", max_turns=999)
+        run_agent("prompt", agent="planner", max_turns=999, settings={})
     args = mock_popen.call_args[0][0]
     assert "--max-turns" not in args
 
@@ -194,7 +195,7 @@ def test_run_agent_passes_model_to_cli():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("prompt", agent="implementer", model="claude-sonnet-4-6")
+        run_agent("prompt", agent="implementer", model="claude-sonnet-4-6", settings={})
     args = mock_popen.call_args[0][0]
     assert "--model" in args
     idx = args.index("--model")
@@ -205,7 +206,7 @@ def test_run_agent_omits_model_when_none():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("prompt", agent="planner")
+        run_agent("prompt", agent="planner", settings={})
     args = mock_popen.call_args[0][0]
     assert "--model" not in args
 
@@ -235,7 +236,7 @@ def test_run_agent_raises_subprocess_error_with_returncode_for_real_failures():
     mock_proc = _make_mock_popen(result_event, returncode=1)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("fail", agent="planner", max_turns=5)
+            run_agent("fail", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except AgentSubprocessError as e:
             assert e.returncode == 1
@@ -262,7 +263,7 @@ def test_run_agent_raises_interrupted_when_subprocess_killed_mid_stream():
     mock_proc.wait.return_value = -15
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised InterruptedError"
         except InterruptedError as e:
             # Message should mention the signal so logs are useful.
@@ -292,7 +293,7 @@ def test_run_agent_waits_briefly_for_returncode_when_stream_throws():
     mock_proc.wait.side_effect = _wait
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised InterruptedError"
         except InterruptedError:
             pass
@@ -317,7 +318,7 @@ def test_run_agent_stream_failure_with_clean_exit_still_raises_subprocess_error(
     mock_proc.wait.return_value = 0
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except InterruptedError:
             assert False, "Clean exit must NOT be reclassified as interrupted"
@@ -333,6 +334,7 @@ def test_run_agent_merges_model_env_into_subprocess_env():
         run_agent(
             "prompt", agent="planner",
             model_env={"ANTHROPIC_BASE_URL": "http://x", "API_TIMEOUT_MS": "5000"},
+            settings={},
         )
     env = mock_popen.call_args[1]["env"]
     assert env["ANTHROPIC_BASE_URL"] == "http://x"
@@ -347,6 +349,7 @@ def test_run_agent_filters_reserved_keys_from_model_env(capsys):
         run_agent(
             "prompt", agent="planner",
             model_env={"WORCA_FOO": "1", "ANTHROPIC_BASE_URL": "http://x"},
+            settings={},
         )
     env = mock_popen.call_args[1]["env"]
     assert env["ANTHROPIC_BASE_URL"] == "http://x"
@@ -360,7 +363,7 @@ def test_run_agent_model_env_none_is_safe():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
-        result = run_agent("prompt", agent="planner", model_env=None)
+        result = run_agent("prompt", agent="planner", model_env=None, settings={})
     assert result["ok"] is True
 
 
@@ -387,7 +390,7 @@ def test_run_agent_handles_wait_timeout_after_stream_failure():
     mock_proc.wait.side_effect = _wait
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
         except InterruptedError:
             pass  # acceptable
         except (AgentSubprocessError, RuntimeError):
@@ -505,3 +508,110 @@ def test_process_stream_third_event_with_new_structured_output_wins():
     result = process_stream(_stream(first, second, third))
     assert result["structured_output"] == {"passed": False, "failures": ["regressed"]}
     assert result["total_cost_usd"] == 0.30
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tool_disallows: settings-driven tool disallow list (W-054 §8)
+# ---------------------------------------------------------------------------
+
+
+def _settings_with_tools(tools_config):
+    """Build a settings dict for the tools dispatch section."""
+    return {"worca": {"governance": {"dispatch": {"tools": tools_config}}}}
+
+
+def test_resolve_tool_disallows_default():
+    """Default settings return always_disallowed items (EnterPlanMode, EnterWorktree, TodoWrite)."""
+    result = _resolve_tool_disallows("planner", settings={})
+    assert "EnterPlanMode" in result
+    assert "EnterWorktree" in result
+    assert "TodoWrite" in result
+
+
+def test_resolve_tool_disallows_drops_skill():
+    """Skill is never in the disallow list — governance moved to skill_use.py hook."""
+    result = _resolve_tool_disallows("planner", settings={})
+    assert "Skill" not in result
+    # Even if someone manually adds Skill to always_disallowed
+    settings = _settings_with_tools({
+        "always_disallowed": ["Skill", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("planner", settings=settings)
+    assert "Skill" not in result
+    assert "EnterPlanMode" in result
+
+
+def test_resolve_tool_disallows_named_entries_warn(capsys):
+    """Named-tool entries in per_agent_allow get a warning and are ignored (v1 limitation)."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["Read", "Write"]},
+    })
+    result = _resolve_tool_disallows("planner", settings=settings)
+    assert "EnterPlanMode" in result
+    captured = capsys.readouterr()
+    assert "named tools" in captured.err.lower() or "only '*' or []" in captured.err
+
+
+def test_resolve_tool_disallows_wildcard_no_warn(capsys):
+    """Wildcard entry '*' does not produce a warning."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    _resolve_tool_disallows("planner", settings=settings)
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_resolve_tool_disallows_empty_entry_no_warn(capsys):
+    """Empty entry [] is treated the same as wildcard — no warning."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"planner": []},
+    })
+    _resolve_tool_disallows("planner", settings=settings)
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
+def test_resolve_tool_disallows_custom_always_disallowed():
+    """User can customize always_disallowed via settings."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite", "CustomTool"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("implementer", settings=settings)
+    assert "CustomTool" in result
+    assert "EnterPlanMode" in result
+
+
+def test_build_command_disallowed_tools_from_settings():
+    """build_command uses settings-driven disallows instead of hardcoded string."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    idx = cmd.index("--disallowedTools")
+    disallow_str = cmd[idx + 1]
+    assert "EnterPlanMode" in disallow_str
+    assert "Skill" not in disallow_str
+
+
+def test_build_command_disallowed_tools_default_no_skill():
+    """Default build_command disallows EnterPlanMode etc. but not Skill."""
+    cmd, _ = build_command("prompt", agent="planner", settings={})
+    idx = cmd.index("--disallowedTools")
+    disallow_str = cmd[idx + 1]
+    assert "EnterPlanMode" in disallow_str
+    assert "EnterWorktree" in disallow_str
+    assert "TodoWrite" in disallow_str
+    assert "Skill" not in disallow_str

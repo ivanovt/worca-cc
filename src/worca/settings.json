@@ -9,6 +9,15 @@
             "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/pre_tool_use.py\""
           }
         ]
+      },
+      {
+        "matcher": "Skill",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(cd \"$(git rev-parse --git-common-dir)/..\" && pwd)/.claude/worca/claude_hooks/skill_use.py\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -264,15 +273,33 @@
         "restrict_git_commit": true
       },
       "test_gate_strikes": 2,
-      "subagent_dispatch": {
-        "planner": ["Explore"],
-        "coordinator": [],
-        "implementer": ["Explore"],
-        "tester": ["Explore"],
-        "guardian": ["Explore"],
-        "reviewer": ["Explore"],
-        "plan_reviewer": ["Explore"],
-        "learner": ["Explore"]
+      "dispatch": {
+        "tools": {
+          "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
+          "default_denied": [],
+          "per_agent_allow": { "_defaults": ["*"] }
+        },
+        "skills": {
+          "always_disallowed": [
+            "loop", "schedule", "worca-*", "update-config",
+            "hookify:hookify", "hookify:configure", "hookify:list",
+            "hookify:writing-rules", "init"
+          ],
+          "default_denied": [
+            "review", "security-review", "feature-dev:feature-dev",
+            "claude-md-management:revise-claude-md",
+            "claude-md-management:claude-md-improver"
+          ],
+          "per_agent_allow": { "_defaults": ["*"] }
+        },
+        "subagents": {
+          "always_disallowed": ["general-purpose"],
+          "default_denied": [],
+          "per_agent_allow": {
+            "_defaults": ["Explore"],
+            "implementer": ["Explore", "feature-dev:code-reviewer"]
+          }
+        }
       }
     },
     "defaults": {

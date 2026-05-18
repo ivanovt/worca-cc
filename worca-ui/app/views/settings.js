@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
 import reservedEnvKeysData from '../../server/reserved-env-keys.json';
 import {
   confirmDialogTemplate,
@@ -18,7 +19,6 @@ import {
   Pencil,
   Plus,
   RefreshCw,
-  RotateCcw,
   Save,
   Settings,
   Shield,
@@ -34,14 +34,8 @@ import {
 } from '../utils/model-clipboard.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
 import { isVersionBehind } from '../utils/version-compare.js';
-import {
-  addTag,
-  filterSuggestions,
-  isCustomized,
-  KNOWN_TYPES,
-  removeTag,
-  SUBAGENT_DENYLIST,
-} from './dispatch-tag-state.js';
+import { dispatchSectionView } from './dispatch-section.js';
+import { KNOWN_TYPES } from './dispatch-tag-state.js';
 import { integrationsTab } from './integrations.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
@@ -67,6 +61,7 @@ export const AGENT_NAMES = [
   'reviewer',
   'guardian',
   'learner',
+  'workspace_planner',
 ];
 const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
 
@@ -158,7 +153,7 @@ const GUARD_RULES = [
   },
 ];
 
-const DEFAULT_GOVERNANCE = {
+export const DEFAULT_GOVERNANCE = {
   guards: {
     block_rm_rf: true,
     block_env_write: true,
@@ -166,15 +161,10 @@ const DEFAULT_GOVERNANCE = {
     restrict_git_commit: true,
   },
   test_gate_strikes: 2,
-  subagent_dispatch: {
-    planner: ['Explore'],
-    coordinator: [],
-    implementer: ['Explore'],
-    tester: ['Explore'],
-    reviewer: ['Explore'],
-    guardian: ['Explore'],
-    plan_reviewer: ['Explore'],
-    learner: ['Explore'],
+  dispatch: {
+    tools: { ...DISPATCH_DEFAULTS.tools },
+    skills: { ...DISPATCH_DEFAULTS.skills },
+    subagents: { ...DISPATCH_DEFAULTS.subagents },
   },
 };
 
@@ -186,28 +176,10 @@ let _settingsProjectId = null; // track which project settings are loaded for
 let _migrationNeeded = false;
 let _migrationDismissed = false;
 
-// --- Dispatch tag state ---
-let _dispatchTagState = {}; // agent -> { tags, input, showSuggestions, activeIndex }
-
-// Discovered subagent types from GET /api/subagents. Falls back to KNOWN_TYPES
-// (imported from dispatch-tag-state.js) when the fetch hasn't returned or fails.
+// --- Dispatch autocomplete state ---
 let _discoveredKnownTypes = null;
-
-function _getDispatchState(agent, initialTags) {
-  if (!_dispatchTagState[agent]) {
-    _dispatchTagState[agent] = {
-      tags: [...(initialTags || [])],
-      input: '',
-      showSuggestions: false,
-      activeIndex: -1,
-    };
-  }
-  return _dispatchTagState[agent];
-}
-
-function _resetDispatchTagState() {
-  _dispatchTagState = {};
-}
+let _knownTools = null;
+let _knownSkills = null;
 
 function settingsUrl(projectId, suffix = '') {
   if (projectId) return `/api/projects/${projectId}/settings${suffix}`;
@@ -273,9 +245,7 @@ export async function loadSettings(projectId) {
       settingsData.worca.governance = { ...DEFAULT_GOVERNANCE };
     } else {
       const gov = settingsData.worca.governance;
-      // Legacy fallback: if only old dispatch key present, use it under new name
-      const hasNew = gov.subagent_dispatch !== undefined;
-      const hasLegacy = gov.dispatch !== undefined && !hasNew;
+      const serverDispatch = gov.dispatch || {};
       settingsData.worca.governance = {
         ...DEFAULT_GOVERNANCE,
         ...gov,
@@ -283,11 +253,41 @@ export async function loadSettings(projectId) {
           ...DEFAULT_GOVERNANCE.guards,
           ...(gov.guards || {}),
         },
-        subagent_dispatch: {
-          ...DEFAULT_GOVERNANCE.subagent_dispatch,
-          ...(hasNew ? gov.subagent_dispatch : hasLegacy ? gov.dispatch : {}),
+        dispatch: {
+          tools: {
+            always_disallowed:
+              serverDispatch.tools?.always_disallowed ??
+              DISPATCH_DEFAULTS.tools.always_disallowed,
+            default_denied:
+              serverDispatch.tools?.default_denied ??
+              DISPATCH_DEFAULTS.tools.default_denied,
+            per_agent_allow:
+              serverDispatch.tools?.per_agent_allow ??
+              DISPATCH_DEFAULTS.tools.per_agent_allow,
+          },
+          skills: {
+            always_disallowed:
+              serverDispatch.skills?.always_disallowed ??
+              DISPATCH_DEFAULTS.skills.always_disallowed,
+            default_denied:
+              serverDispatch.skills?.default_denied ??
+              DISPATCH_DEFAULTS.skills.default_denied,
+            per_agent_allow:
+              serverDispatch.skills?.per_agent_allow ??
+              DISPATCH_DEFAULTS.skills.per_agent_allow,
+          },
+          subagents: {
+            always_disallowed:
+              serverDispatch.subagents?.always_disallowed ??
+              DISPATCH_DEFAULTS.subagents.always_disallowed,
+            default_denied:
+              serverDispatch.subagents?.default_denied ??
+              DISPATCH_DEFAULTS.subagents.default_denied,
+            per_agent_allow:
+              serverDispatch.subagents?.per_agent_allow ??
+              DISPATCH_DEFAULTS.subagents.per_agent_allow,
+          },
         },
-        _legacy_dispatch: hasLegacy,
       };
     }
     // Project defaults from keys.json (§10a). Keys in NORMALIZE_SKIP_KEYS
@@ -332,20 +332,34 @@ export async function loadSettings(projectId) {
     }
     _migrationNeeded = detectMigrationNeeded(settingsData.worca);
     _migrationDismissed = false;
-    _resetDispatchTagState();
-    // Fetch the discovered subagents list for the dispatch editor. Best-effort:
-    // on failure we keep _discoveredKnownTypes = null and the editor uses the
-    // hardcoded KNOWN_TYPES fallback from dispatch-tag-state.js.
+    // Best-effort fetch of known items for dispatch autocomplete.
+    // On failure we keep nulls and the editor uses hardcoded fallbacks.
     try {
-      const subRes = await fetch('/api/subagents');
-      if (subRes.ok) {
+      const [subRes, toolsRes, skillsRes] = await Promise.all([
+        fetch('/api/subagents').catch(() => null),
+        fetch('/api/tools').catch(() => null),
+        fetch('/api/skills').catch(() => null),
+      ]);
+      if (subRes?.ok) {
         const body = await subRes.json();
         if (body?.ok && Array.isArray(body.subagents)) {
           _discoveredKnownTypes = body.subagents;
         }
       }
+      if (toolsRes?.ok) {
+        const body = await toolsRes.json();
+        if (body?.ok && Array.isArray(body.tools)) {
+          _knownTools = body.tools;
+        }
+      }
+      if (skillsRes?.ok) {
+        const body = await skillsRes.json();
+        if (body?.ok && Array.isArray(body.skills)) {
+          _knownSkills = body.skills;
+        }
+      }
     } catch {
-      // keep the fallback
+      // keep the fallbacks
     }
   } catch (err) {
     settingsData = null;
@@ -601,12 +615,10 @@ function readGovernanceFromDom() {
   const strikeEl = document.getElementById('test-gate-strikes');
   const test_gate_strikes = parseInt(strikeEl?.value, 10) || 2;
 
-  const subagent_dispatch = {};
-  for (const agent of AGENT_NAMES) {
-    subagent_dispatch[agent] = [...(_dispatchTagState[agent]?.tags || [])];
-  }
+  const dispatch =
+    settingsData?.worca?.governance?.dispatch || DEFAULT_GOVERNANCE.dispatch;
 
-  return { guards, test_gate_strikes, subagent_dispatch };
+  return { guards, test_gate_strikes, dispatch };
 }
 
 export function formatDiskThreshold(bytes) {
@@ -989,172 +1001,22 @@ function pipelineTab(worca, rerender) {
   `;
 }
 
-function dispatchTagRowView(agent, initialTags, defaultTags, rerender) {
-  const state = _getDispatchState(agent, initialTags);
-  const knownTypes = _discoveredKnownTypes || KNOWN_TYPES;
-  const suggestions = filterSuggestions(
-    state.input,
-    knownTypes,
-    state.tags,
-    SUBAGENT_DENYLIST,
-  );
-  const customized = isCustomized(state.tags, defaultTags);
-
-  function handleInput(e) {
-    state.input = e.target.value;
-    state.showSuggestions = true;
-    state.activeIndex = -1;
-    rerender();
-  }
-
-  function handleFocus() {
-    state.showSuggestions = true;
-    rerender();
-  }
-
-  function handleBlur() {
-    // Delay to allow click on suggestion to fire first
-    setTimeout(() => {
-      state.showSuggestions = false;
-      rerender();
-    }, 150);
-  }
-
-  function handleKeydown(e) {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (state.activeIndex >= 0 && suggestions[state.activeIndex]) {
-        const item = suggestions[state.activeIndex];
-        if (!item.denied) {
-          const result = addTag(state.tags, item.name, SUBAGENT_DENYLIST);
-          state.tags = result.tags;
-          state.input = '';
-          state.showSuggestions = false;
-          state.activeIndex = -1;
-          rerender();
-        }
-      } else if (state.input.trim()) {
-        const result = addTag(state.tags, state.input, SUBAGENT_DENYLIST);
-        state.tags = result.tags;
-        state.input = '';
-        state.showSuggestions = false;
-        state.activeIndex = -1;
-        rerender();
-      }
-    } else if (e.key === 'Backspace' && !state.input && state.tags.length > 0) {
-      state.tags = removeTag(state.tags, state.tags[state.tags.length - 1]);
-      rerender();
-    } else if (e.key === 'Escape') {
-      state.showSuggestions = false;
-      state.activeIndex = -1;
-      rerender();
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      state.activeIndex = Math.min(
-        state.activeIndex + 1,
-        suggestions.length - 1,
-      );
-      rerender();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      state.activeIndex = Math.max(state.activeIndex - 1, -1);
-      rerender();
-    }
-  }
-
-  function pickSuggestion(item) {
-    if (item.denied) return;
-    const result = addTag(state.tags, item.name, SUBAGENT_DENYLIST);
-    state.tags = result.tags;
-    state.input = '';
-    state.showSuggestions = false;
-    state.activeIndex = -1;
-    rerender();
-  }
-
-  function resetToDefault() {
-    state.tags = [...defaultTags];
-    state.input = '';
-    state.showSuggestions = false;
-    state.activeIndex = -1;
-    rerender();
-  }
-
-  return html`
-    <div class="settings-dispatch-row">
-      <span class="settings-dispatch-agent">${agent}</span>
-      <div class="dispatch-tag-input-wrapper">
-        <div class="dispatch-tag-input" id="dispatch-${agent}">
-          ${state.tags.map(
-            (tag) => html`<sl-tag
-              size="small"
-              removable
-              data-value="${tag}"
-              @sl-remove=${() => {
-                state.tags = removeTag(state.tags, tag);
-                rerender();
-              }}
-            >${tag}</sl-tag>`,
-          )}
-          <input
-            type="text"
-            class="dispatch-tag-input-field"
-            placeholder="${state.tags.length === 0 ? 'none' : ''}"
-            .value=${state.input}
-            @input=${handleInput}
-            @focus=${handleFocus}
-            @blur=${handleBlur}
-            @keydown=${handleKeydown}
-          />
-        </div>
-        ${
-          state.showSuggestions && suggestions.length > 0
-            ? html`<div class="dispatch-suggestions">
-              ${(() => {
-                let lastGroup = null;
-                return suggestions.map((item, i) => {
-                  const groupHeader =
-                    item.group !== lastGroup
-                      ? html`<div class="group-label">${item.group}</div>`
-                      : nothing;
-                  lastGroup = item.group;
-                  return html`${groupHeader}<div
-                    class="item ${item.denied ? 'denied' : ''} ${i === state.activeIndex ? 'active' : ''}"
-                    title=${
-                      item.denied
-                        ? 'Blocked by denylist — cannot be used in pipeline mode'
-                        : ''
-                    }
-                    @mousedown=${() => pickSuggestion(item)}
-                  >${item.name} <span class="item-label">${item.label}</span></div>`;
-                });
-              })()}
-            </div>`
-            : nothing
-        }
-      </div>
-      ${
-        customized
-          ? html`<sl-icon-button
-            title="Reset to default"
-            label="Reset to default"
-            class="dispatch-reset-btn"
-            @click=${resetToDefault}
-          >${unsafeHTML(iconSvg(RotateCcw, 14))}</sl-icon-button>`
-          : html`<span class="dispatch-reset-placeholder"></span>`
-      }
-    </div>
-  `;
-}
-
-function governanceTab(worca, permissions, rerender) {
+export function governanceTab(worca, permissions, rerender) {
   const governance = worca.governance || DEFAULT_GOVERNANCE;
   const guards = governance.guards || DEFAULT_GOVERNANCE.guards;
-  const subagent_dispatch =
-    governance.subagent_dispatch || DEFAULT_GOVERNANCE.subagent_dispatch;
-  const isLegacy = governance._legacy_dispatch === true;
+  const dispatch = governance.dispatch || DEFAULT_GOVERNANCE.dispatch;
   if (!permissions.allow) permissions.allow = [];
   const permList = permissions.allow;
+
+  function handleDispatchChange(section, newConfig) {
+    if (!worca?.governance?.dispatch) return;
+    worca.governance.dispatch[section] = newConfig;
+    rerender();
+  }
+
+  const knownTools = _knownTools || [];
+  const knownSkills = _knownSkills || [];
+  const knownSubagents = _discoveredKnownTypes || KNOWN_TYPES;
 
   return html`
     <div class="settings-tab-content">
@@ -1182,30 +1044,30 @@ function governanceTab(worca, permissions, rerender) {
       </div>
 
       <h3 class="settings-section-title">Dispatch Rules</h3>
-      ${
-        isLegacy
-          ? html`
-        <sl-alert variant="warning" open>
-          <strong>Legacy configuration detected.</strong>
-          Your settings use the old <code>governance.dispatch</code> key.
-          Saving will migrate to <code>governance.subagent_dispatch</code>.
-        </sl-alert>
-      `
-          : nothing
-      }
-      <sl-alert variant="neutral" open>
-        <strong>Denylist:</strong> <code>general-purpose</code> is always blocked and cannot be added to dispatch rules.
-      </sl-alert>
-      <div class="settings-dispatch-table">
-        ${AGENT_NAMES.map((agent) =>
-          dispatchTagRowView(
-            agent,
-            subagent_dispatch[agent] || [],
-            DEFAULT_GOVERNANCE.subagent_dispatch[agent] || [],
-            rerender,
-          ),
-        )}
-      </div>
+      ${dispatchSectionView({
+        section: 'tools',
+        config: dispatch.tools || DISPATCH_DEFAULTS.tools,
+        knownItems: knownTools,
+        agentRoles: AGENT_NAMES,
+        defaults: DISPATCH_DEFAULTS.tools,
+        onChange: (cfg) => handleDispatchChange('tools', cfg),
+      })}
+      ${dispatchSectionView({
+        section: 'skills',
+        config: dispatch.skills || DISPATCH_DEFAULTS.skills,
+        knownItems: knownSkills,
+        agentRoles: AGENT_NAMES,
+        defaults: DISPATCH_DEFAULTS.skills,
+        onChange: (cfg) => handleDispatchChange('skills', cfg),
+      })}
+      ${dispatchSectionView({
+        section: 'subagents',
+        config: dispatch.subagents || DISPATCH_DEFAULTS.subagents,
+        knownItems: knownSubagents,
+        agentRoles: AGENT_NAMES,
+        defaults: DISPATCH_DEFAULTS.subagents,
+        onChange: (cfg) => handleDispatchChange('subagents', cfg),
+      })}
 
       <h3 class="settings-section-title">Permissions</h3>
       <div class="settings-permissions" id="permissions-list">

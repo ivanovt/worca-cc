@@ -1,6 +1,6 @@
 // server/app.js
 
-import { execFileSync, spawn } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -181,6 +181,52 @@ export function createApp(options = {}) {
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
+  });
+
+  // GET /api/tools — static known-tools list for autocomplete.
+  const knownToolsPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    'known-tools.json',
+  );
+  const knownTools = JSON.parse(readFileSync(knownToolsPath, 'utf8'));
+
+  app.get('/api/tools', (_req, res) => {
+    res.json({ ok: true, tools: knownTools });
+  });
+
+  // GET /api/skills — try `claude --list-skills --json`, fallback to static list.
+  const knownSkillsPath = join(
+    dirname(fileURLToPath(import.meta.url)),
+    'known-skills.json',
+  );
+  const knownSkills = JSON.parse(readFileSync(knownSkillsPath, 'utf8'));
+
+  app.get('/api/skills', (_req, res) => {
+    execFile(
+      'claude',
+      ['--list-skills', '--json'],
+      { timeout: 5000 },
+      (err, stdout) => {
+        if (!err && stdout) {
+          try {
+            const parsed = JSON.parse(stdout);
+            const skills = Array.isArray(parsed)
+              ? parsed.map((s) => ({
+                  name: typeof s === 'string' ? s : s.name,
+                  group:
+                    typeof s === 'string'
+                      ? 'Discovered'
+                      : s.group || 'Discovered',
+                }))
+              : knownSkills;
+            return res.json({ ok: true, skills, source: 'live' });
+          } catch {
+            // JSON parse failed — fall through to fallback
+          }
+        }
+        res.json({ ok: true, skills: knownSkills, source: 'fallback' });
+      },
+    );
   });
 
   // GET /api/beads/issues

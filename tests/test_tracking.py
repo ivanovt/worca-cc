@@ -5,9 +5,12 @@ from unittest.mock import patch
 import pytest
 from worca.hooks.tracking import (
     check_dispatch,
+    check_allowed,
     handle_agent_stop,
     DEFAULT_SUBAGENT_DISPATCH,
+    _DISPATCH_DEFAULTS,
     _load_subagent_dispatch,
+    _matches_any,
     _reset_dispatch_cache,
 )
 
@@ -40,9 +43,10 @@ def test_allows_implementer_dispatching_explore():
     assert code == 0
 
 
-def test_blocks_coordinator_dispatching_anything():
+def test_coordinator_gets_explore_via_defaults():
+    """W-054: coordinator now gets Explore via _defaults (broadened from empty set)."""
     code, reason = check_dispatch("coordinator", "Explore")
-    assert code == 2
+    assert code == 0
 
 
 def test_allows_tester_dispatching_explore():
@@ -71,9 +75,10 @@ def test_allows_all_in_interactive_mode_any_agent():
     assert code == 0
 
 
-def test_blocks_unknown_parent_dispatching():
+def test_unknown_parent_gets_defaults():
+    """W-054: unknown agents fall through to _defaults: ['Explore']."""
     code, reason = check_dispatch("unknown_agent", "Explore")
-    assert code == 2
+    assert code == 0
 
 
 def test_plan_reviewer_in_default_dispatch():
@@ -195,7 +200,7 @@ def test_config_empty_list_removes_all():
 
 
 def test_default_constant_matches_settings_json():
-    """DEFAULT_SUBAGENT_DISPATCH keys/values must match src/worca/settings.json defaults."""
+    """settings.json dispatch.subagents shape must match _DISPATCH_DEFAULTS."""
     import json
     import os
 
@@ -205,16 +210,20 @@ def test_default_constant_matches_settings_json():
     with open(settings_path) as f:
         raw = json.load(f)
 
-    json_dispatch = raw.get("worca", {}).get("governance", {}).get("subagent_dispatch", {})
-
-    for agent, allowed_list in json_dispatch.items():
-        assert agent in DEFAULT_SUBAGENT_DISPATCH, f"{agent} missing from DEFAULT_SUBAGENT_DISPATCH"
-        assert DEFAULT_SUBAGENT_DISPATCH[agent] == set(allowed_list), (
-            f"Mismatch for {agent}: constant={DEFAULT_SUBAGENT_DISPATCH[agent]} json={set(allowed_list)}"
+    for section in ("tools", "skills", "subagents"):
+        json_section = (
+            raw.get("worca", {})
+            .get("governance", {})
+            .get("dispatch", {})
+            .get(section, {})
         )
-
-    for agent in DEFAULT_SUBAGENT_DISPATCH:
-        assert agent in json_dispatch, f"{agent} missing from settings.json subagent_dispatch"
+        defaults_section = _DISPATCH_DEFAULTS[section]
+        assert json_section["always_disallowed"] == defaults_section["always_disallowed"], (
+            f"{section}.always_disallowed mismatch"
+        )
+        assert json_section["default_denied"] == defaults_section["default_denied"], (
+            f"{section}.default_denied mismatch"
+        )
 
 
 def test_cache_reset_between_config_changes():
@@ -312,3 +321,187 @@ def test_no_close_on_failure_without_bead():
     with patch("worca.utils.beads.bd_close") as mock_close:
         handle_agent_stop("tester", None, False)
     mock_close.assert_not_called()
+
+
+# --- Helper ---
+
+
+def _settings_with_dispatch(section: str, section_config: dict) -> dict:
+    """Construct a settings dict for a dispatch section."""
+    return {"worca": {"governance": {"dispatch": {section: section_config}}}}
+
+
+# --- _matches_any tests (W-054 §11) ---
+
+
+def test_matches_any_exact_match():
+    """Exact string match works; different strings don't match."""
+    assert _matches_any("hookify:hookify", ["hookify:hookify"]) is True
+    assert _matches_any("hookify:list", ["hookify:hookify"]) is False
+
+
+def test_matches_any_glob_worca_prefix():
+    """Trailing-* glob matches prefix; missing separator doesn't match."""
+    assert _matches_any("worca-install", ["worca-*"]) is True
+    assert _matches_any("worca-release", ["worca-*"]) is True
+    assert _matches_any("worca", ["worca-*"]) is False
+
+
+def test_matches_any_bare_wildcard():
+    """Bare '*' matches everything."""
+    assert _matches_any("anything", ["*"]) is True
+    assert _matches_any("*", ["*"]) is True
+
+
+def test_matches_any_empty_candidate():
+    """Empty string doesn't match a prefix glob."""
+    assert _matches_any("", ["worca-*"]) is False
+
+
+# --- check_allowed tests (W-054 §2.1) ---
+
+
+def test_check_allowed_wildcard_allows_unknown():
+    """'*' allows any candidate not in deny tiers — no all_known needed."""
+    cfg = _settings_with_dispatch("subagents", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    allowed, reason, via = check_allowed(
+        "subagents", "planner", "some-new-agent", settings_override=cfg,
+    )
+    assert allowed is True
+    assert via == "wildcard"
+
+
+def test_check_allowed_mixed_form():
+    """'["*", "review"]' includes default_denied 'review' with via='explicit'."""
+    cfg = _settings_with_dispatch("skills", {
+        "always_disallowed": [],
+        "default_denied": ["review", "security-review"],
+        "per_agent_allow": {"_defaults": ["*"], "reviewer": ["*", "review"]},
+    })
+    allowed, reason, via = check_allowed(
+        "skills", "reviewer", "review", settings_override=cfg,
+    )
+    assert allowed is True
+    assert via == "explicit"
+
+
+def test_check_allowed_replace_not_union():
+    """Per-agent entry replaces _defaults, does not union."""
+    cfg = _settings_with_dispatch("subagents", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Explore"], "implementer": ["foo"]},
+    })
+    allowed, _, _ = check_allowed(
+        "subagents", "implementer", "Explore", settings_override=cfg,
+    )
+    assert allowed is False
+    allowed, _, _ = check_allowed(
+        "subagents", "implementer", "foo", settings_override=cfg,
+    )
+    assert allowed is True
+
+
+def test_check_allowed_always_disallowed_short_circuit():
+    """Tier 1 (always_disallowed) wins over '*' and explicit naming."""
+    cfg = _settings_with_dispatch("subagents", {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {
+            "_defaults": ["*"],
+            "implementer": ["*", "general-purpose"],
+        },
+    })
+    allowed, reason, via = check_allowed(
+        "subagents", "implementer", "general-purpose", settings_override=cfg,
+    )
+    assert allowed is False
+    assert reason == "always_disallowed"
+    assert via is None
+
+
+def test_check_allowed_default_denied_not_in_wildcard():
+    """'*' excludes default_denied items; reason is 'default_denied'."""
+    cfg = _settings_with_dispatch("skills", {
+        "always_disallowed": [],
+        "default_denied": ["review"],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    allowed, reason, via = check_allowed(
+        "skills", "implementer", "review", settings_override=cfg,
+    )
+    assert allowed is False
+    assert reason == "default_denied"
+    assert via is None
+
+
+def test_check_allowed_missing_section_uses_defaults():
+    """Empty config falls back to _DISPATCH_DEFAULTS."""
+    allowed, reason, via = check_allowed(
+        "subagents", "planner", "Explore", settings_override={},
+    )
+    assert allowed is True
+    assert via == "explicit"
+
+
+def test_check_allowed_workspace_planner_falls_back_to_defaults():
+    """Agent not in per_agent_allow resolves via _defaults (§1.2 regression fix)."""
+    cfg = _settings_with_dispatch("subagents", {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Explore"]},
+    })
+    allowed, reason, via = check_allowed(
+        "subagents", "workspace_planner", "Explore", settings_override=cfg,
+    )
+    assert allowed is True
+    assert via == "explicit"
+
+
+def test_check_allowed_via_field():
+    """Returns 'wildcard' when resolved via '*', 'explicit' when named."""
+    cfg_wildcard = _settings_with_dispatch("subagents", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    _, _, via = check_allowed(
+        "subagents", "planner", "Explore", settings_override=cfg_wildcard,
+    )
+    assert via == "wildcard"
+
+    cfg_explicit = _settings_with_dispatch("subagents", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Explore"]},
+    })
+    _, _, via = check_allowed(
+        "subagents", "planner", "Explore", settings_override=cfg_explicit,
+    )
+    assert via == "explicit"
+
+
+def test_check_allowed_empty_agent_allows_all():
+    """Empty agent (interactive mode) allows all dispatches."""
+    allowed, reason, via = check_allowed(
+        "subagents", "", "anything", settings_override={},
+    )
+    assert allowed is True
+
+
+def test_check_allowed_bare_wildcard_in_deny_list_blocks_everything():
+    """Footgun: bare '*' in always_disallowed blocks everything."""
+    cfg = _settings_with_dispatch("skills", {
+        "always_disallowed": ["*"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    allowed, reason, _ = check_allowed(
+        "skills", "implementer", "any-skill", settings_override=cfg,
+    )
+    assert allowed is False
+    assert reason == "always_disallowed"

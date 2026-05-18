@@ -42,7 +42,7 @@ describe('readDispatchEventsFromJsonl', () => {
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:01:00.000Z',
-        payload: { agent: 'tester', subagent_type: 'Explore' },
+        payload: { agent: 'tester', subagent_type: 'Explore', via: 'explicit' },
       },
       {
         event_type: 'pipeline.hook.dispatch_blocked',
@@ -62,8 +62,10 @@ describe('readDispatchEventsFromJsonl', () => {
     const result = readDispatchEventsFromJsonl(path);
     expect(result).toHaveLength(2);
     expect(result[0].type).toBe('pipeline.hook.dispatch_allowed');
+    expect(result[0].via).toBe('explicit');
     expect(result[1].type).toBe('pipeline.hook.dispatch_blocked');
     expect(result[1].reason).toContain('denylist');
+    expect(result[1].via).toBeUndefined();
   });
 
   it('skips malformed JSON lines silently', () => {
@@ -78,6 +80,34 @@ describe('readDispatchEventsFromJsonl', () => {
     );
     const result = readDispatchEventsFromJsonl(path);
     expect(result).toHaveLength(1);
+  });
+
+  it('includes skill_blocked events and extracts skill name', () => {
+    const path = join(root, 'events.jsonl');
+    writeJsonl(path, [
+      {
+        event_type: 'pipeline.hook.skill_allowed',
+        timestamp: '2026-04-13T11:01:00.000Z',
+        payload: { agent: 'implementer', skill: 'review', via: 'explicit' },
+      },
+      {
+        event_type: 'pipeline.hook.skill_blocked',
+        timestamp: '2026-04-13T11:02:00.000Z',
+        payload: {
+          agent: 'implementer',
+          skill: 'worca-install',
+          reason: 'always_disallowed',
+        },
+      },
+    ]);
+    const result = readDispatchEventsFromJsonl(path);
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe('pipeline.hook.skill_allowed');
+    expect(result[0].subagent_type).toBe('review');
+    expect(result[0].via).toBe('explicit');
+    expect(result[1].type).toBe('pipeline.hook.skill_blocked');
+    expect(result[1].subagent_type).toBe('worca-install');
+    expect(result[1].reason).toBe('always_disallowed');
   });
 
   it('skips dispatch events missing subagent_type', () => {
@@ -119,6 +149,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
     ];
@@ -127,6 +158,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         count: 1,
       },
     ]);
@@ -143,6 +175,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T12:00:00.000Z', // after iteration ended
       },
     ];
@@ -161,6 +194,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
     ];
@@ -179,16 +213,19 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:03:00.000Z',
       },
     ];
@@ -197,6 +234,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         count: 3,
       },
     ]);
@@ -213,11 +251,13 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'feature-dev:code-reviewer',
+        via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
     ];
@@ -240,6 +280,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
@@ -309,16 +350,19 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z', // implement iter 1
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:07:00.000Z', // implement iter 2
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:12:00.000Z', // test iter 1
       },
     ];
@@ -350,6 +394,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T12:00:00.000Z',
       },
     ];
@@ -363,6 +408,7 @@ describe('assignEventsToIterations', () => {
       {
         type: 'pipeline.hook.dispatch_allowed',
         subagent_type: 'Explore',
+        via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
     ];

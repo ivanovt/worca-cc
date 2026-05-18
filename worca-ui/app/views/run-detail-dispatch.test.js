@@ -118,6 +118,7 @@ describe('iteration tags layout', () => {
             {
               type: 'pipeline.hook.dispatch_allowed',
               subagent_type: 'Explore',
+              via: 'explicit',
               count: 1,
             },
           ],
@@ -149,6 +150,26 @@ describe('iteration tags layout', () => {
     expect(html).toContain('title="denylist"');
   });
 
+  it('renders skill_allowed events as allowed badges', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.skill_allowed',
+              subagent_type: 'review',
+              via: 'wildcard',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('review dispatched');
+    expect(html).toContain('variant="success"');
+  });
+
   it('omits Subagents row when no dispatch events', () => {
     const html = renderToString(runDetailView(makeRun()));
     expect(html).not.toContain('Subagents:');
@@ -162,11 +183,13 @@ describe('iteration tags layout', () => {
             {
               type: 'pipeline.hook.dispatch_allowed',
               subagent_type: 'Explore',
+              via: 'explicit',
               count: 5,
             },
             {
               type: 'pipeline.hook.dispatch_allowed',
               subagent_type: 'Plan',
+              via: 'wildcard',
               count: 1,
             },
           ],
@@ -218,5 +241,207 @@ describe('iteration tags layout', () => {
   it('omits classification row when absent', () => {
     const html = renderToString(runDetailView(makeRun()));
     expect(html).not.toContain('Fail Category:');
+  });
+});
+
+describe('dispatch activity counter', () => {
+  it('renders counter with explicit and wildcard counts', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              via: 'explicit',
+              count: 3,
+            },
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Plan',
+              via: 'wildcard',
+              count: 2,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Dispatch activity:');
+    expect(html).toContain('3 explicit');
+    expect(html).toContain('2 via wildcard');
+  });
+
+  it('omits wildcard segment when all events are explicit', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              via: 'explicit',
+              count: 5,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('5 explicit');
+    expect(html).not.toContain('wildcard');
+  });
+
+  it('counts skill_allowed events alongside dispatch_allowed', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              via: 'explicit',
+              count: 1,
+            },
+            {
+              type: 'pipeline.hook.skill_allowed',
+              subagent_type: 'review',
+              via: 'wildcard',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('1 explicit');
+    expect(html).toContain('1 via wildcard');
+  });
+
+  it('excludes blocked events from counter', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              via: 'explicit',
+              count: 2,
+            },
+            {
+              type: 'pipeline.hook.dispatch_blocked',
+              subagent_type: 'general-purpose',
+              reason: 'denylist',
+              count: 3,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('2 explicit');
+  });
+
+  it('aggregates counts across multiple stages', () => {
+    const run = {
+      stages: {
+        implement: {
+          status: 'completed',
+          agent: 'implementer',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              dispatch_events: [
+                {
+                  type: 'pipeline.hook.dispatch_allowed',
+                  subagent_type: 'Explore',
+                  via: 'explicit',
+                  count: 3,
+                },
+              ],
+            },
+          ],
+        },
+        test: {
+          status: 'completed',
+          agent: 'tester',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              dispatch_events: [
+                {
+                  type: 'pipeline.hook.dispatch_allowed',
+                  subagent_type: 'Explore',
+                  via: 'wildcard',
+                  count: 2,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('3 explicit');
+    expect(html).toContain('2 via wildcard');
+  });
+
+  it('renders expanded tuples with agent, child, and via', () => {
+    const run = {
+      stages: {
+        implement: {
+          status: 'completed',
+          agent: 'implementer',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              dispatch_events: [
+                {
+                  type: 'pipeline.hook.dispatch_allowed',
+                  subagent_type: 'Explore',
+                  via: 'explicit',
+                  count: 1,
+                },
+                {
+                  type: 'pipeline.hook.dispatch_allowed',
+                  subagent_type: 'Plan',
+                  via: 'wildcard',
+                  count: 1,
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('implementer');
+    expect(html).toContain('Explore');
+    expect(html).toContain('Plan');
+    expect(html).toContain('explicit');
+    expect(html).toContain('wildcard');
+  });
+
+  it('omits counter when no allowed dispatch events exist', () => {
+    const html = renderToString(runDetailView(makeRun()));
+    expect(html).not.toContain('Dispatch activity:');
+  });
+
+  it('omits counter when only blocked events exist', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_blocked',
+              subagent_type: 'general-purpose',
+              reason: 'denylist',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).not.toContain('Dispatch activity:');
   });
 });

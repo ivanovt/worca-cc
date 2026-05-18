@@ -25,6 +25,40 @@ DEFAULT_SUBAGENT_DISPATCH = {
 # same types from being added via the settings editor.
 _SUBAGENT_DENYLIST = frozenset({"general-purpose"})
 
+_DISPATCH_DEFAULTS = {
+    "tools": {
+        "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    },
+    "skills": {
+        "always_disallowed": [
+            "loop",
+            "schedule",
+            "worca-*",
+            "update-config",
+            "hookify:hookify",
+            "hookify:configure",
+            "hookify:list",
+            "hookify:writing-rules",
+            "init",
+        ],
+        "default_denied": [
+            "review",
+            "security-review",
+            "feature-dev:feature-dev",
+            "claude-md-management:revise-claude-md",
+            "claude-md-management:claude-md-improver",
+        ],
+        "per_agent_allow": {"_defaults": ["*"]},
+    },
+    "subagents": {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Explore"]},
+    },
+}
+
 # Cache is process-lifetime. Hook subprocesses are short-lived so staleness is
 # not a concern in today's usage. If this module is ever imported from a
 # long-running process (e.g. a daemon), call _reset_dispatch_cache() when
@@ -110,23 +144,90 @@ def _load_settings() -> dict:
         return json.load(f)
 
 
+def _matches_any(candidate: str, patterns: list[str]) -> bool:
+    """Check if candidate matches any pattern in the list.
+
+    Supported: exact match, trailing-* prefix glob, bare '*' (matches all).
+    """
+    for pattern in patterns:
+        if pattern == candidate:
+            return True
+        if pattern == "*":
+            return True
+        if pattern.endswith("*") and len(pattern) > 1 and candidate.startswith(pattern[:-1]):
+            return True
+    return False
+
+
+def _load_dispatch_section(section: str, settings_override: dict | None = None) -> dict:
+    """Load worca.governance.dispatch.{tools,skills,subagents}.
+
+    Returns the normalized section dict with all three tiers populated.
+    """
+    settings = settings_override if settings_override is not None else _load_settings()
+    raw = (
+        settings
+        .get("worca", {})
+        .get("governance", {})
+        .get("dispatch", {})
+        .get(section, {})
+    )
+    defaults = _DISPATCH_DEFAULTS[section]
+    return {
+        "always_disallowed": list(raw.get("always_disallowed", defaults["always_disallowed"])),
+        "default_denied": list(raw.get("default_denied", defaults["default_denied"])),
+        "per_agent_allow": {**defaults["per_agent_allow"], **raw.get("per_agent_allow", {})},
+    }
+
+
+def check_allowed(
+    section: str,
+    agent: str,
+    candidate: str,
+    *,
+    settings_override: dict | None = None,
+) -> tuple:
+    """Returns (allowed: bool, reason: str, via: 'wildcard'|'explicit'|None)."""
+    if not agent:
+        return (True, "ok", None)
+
+    cfg = _load_dispatch_section(section, settings_override)
+
+    if _matches_any(candidate, cfg["always_disallowed"]):
+        return (False, "always_disallowed", None)
+
+    entry = cfg["per_agent_allow"].get(
+        agent, cfg["per_agent_allow"].get("_defaults", []),
+    )
+    has_wildcard = "*" in entry
+    explicit = {x for x in entry if x != "*"}
+
+    if has_wildcard:
+        if candidate in explicit:
+            return (True, "ok", "explicit")
+        if _matches_any(candidate, cfg["default_denied"]):
+            return (False, "default_denied", None)
+        return (True, "ok", "wildcard")
+    else:
+        if candidate in explicit:
+            return (True, "ok", "explicit")
+        return (False, "not_in_allow_list", None)
+
+
 def check_dispatch(parent_agent: str, child_agent: str) -> tuple:
     """Check if parent_agent is allowed to dispatch child_agent.
 
     Returns (0, "") for allowed, (2, reason) for blocked.
-    Interactive mode (empty parent) allows all dispatches.
-    Denylist check happens first — cannot be bypassed by config.
+    Thin shim over check_allowed('subagents', ...).
     """
     if not parent_agent:
-        return (0, "")  # interactive mode, allow all
-
-    if child_agent in _SUBAGENT_DENYLIST:
-        return (2, f"Blocked: {child_agent} is on the subagent denylist")
-
-    rules = _load_subagent_dispatch()
-    allowed = rules.get(parent_agent, set())
-    if child_agent in allowed:
         return (0, "")
+
+    allowed, reason, via = check_allowed("subagents", parent_agent, child_agent)
+    if allowed:
+        return (0, "")
+    if reason == "always_disallowed":
+        return (2, f"Blocked: {child_agent} is on the subagent denylist")
     return (2, f"Blocked: {parent_agent} cannot dispatch {child_agent}")
 
 

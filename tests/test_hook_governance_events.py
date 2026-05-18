@@ -403,6 +403,7 @@ class TestSubagentStartDispatchAllowedEvent:
         assert e["event_type"] == "pipeline.hook.dispatch_allowed"
         assert e["payload"]["agent"] == "implementer"
         assert e["payload"]["subagent_type"] == "Explore"
+        assert e["payload"]["via"] in ("wildcard", "explicit")
 
     def test_dispatch_allowed_event_envelope_fields(self, tmp_path):
         events_file = str(tmp_path / "events.jsonl")
