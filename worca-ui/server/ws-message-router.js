@@ -682,14 +682,32 @@ export function createMessageRouter({
         ws.send(JSON.stringify(makeOk(req, { issues: [], runId })));
         return;
       }
-      const issues = await listIssuesByLabel(beadsDbPath, `run:${runId}`);
-      console.log(
-        '[list-beads-by-run] runId=%s count=%d statuses=%o',
-        runId,
-        issues.length,
-        issues.map((i) => i.status),
-      );
-      ws.send(JSON.stringify(makeOk(req, { issues, runId })));
+      try {
+        const issues = await listIssuesByLabel(beadsDbPath, `run:${runId}`);
+        console.log(
+          '[list-beads-by-run] runId=%s count=%d statuses=%o',
+          runId,
+          issues.length,
+          issues.map((i) => i.status),
+        );
+        ws.send(JSON.stringify(makeOk(req, { issues, runId })));
+      } catch (err) {
+        // Don't return empty issues on failure — the UI would treat that as
+        // "all beads deleted" and tear down the open <sl-details> panel. Let
+        // the client keep its last-known-good state until the next poll.
+        console.warn(
+          `[list-beads-by-run] runId=${runId} failed: ${err?.message || err}`,
+        );
+        ws.send(
+          JSON.stringify(
+            makeError(
+              req,
+              'beads_unavailable',
+              `bd query failed: ${err?.message || err}`,
+            ),
+          ),
+        );
+      }
       return;
     }
 

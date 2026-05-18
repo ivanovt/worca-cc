@@ -313,9 +313,25 @@ describe('listIssuesByLabel', () => {
     expect(await listIssuesByLabel(DB, 'run:run-999')).toEqual([]);
   });
 
-  it('returns [] when bd fails', async () => {
-    mockBdError('fail');
-    expect(await listIssuesByLabel(DB, 'run:run-1')).toEqual([]);
+  it('retries once on failure and returns the second attempt result', async () => {
+    // First attempt: bd list fails.
+    mockBdError('SIGTERM');
+    // Second attempt: bd list succeeds, no deps needed.
+    mockBdResult([
+      { id: '1', title: 'A', status: 'open', priority: 2, dependency_count: 0 },
+    ]);
+    const issues = await listIssuesByLabel(DB, 'run:run-1');
+    expect(issues.length).toBe(1);
+    expect(issues[0].title).toBe('A');
+  });
+
+  it('throws when both attempts fail (no longer masquerades as empty)', async () => {
+    // Both attempts fail — must propagate so the WS handler can surface
+    // beads_unavailable instead of pretending the run has no beads. See
+    // GH issue #180.
+    mockBdError('SIGTERM');
+    mockBdError('SIGTERM');
+    await expect(listIssuesByLabel(DB, 'run:run-1')).rejects.toThrow('SIGTERM');
   });
 });
 
@@ -516,12 +532,18 @@ describe('enrichWithDeps rejection handling', () => {
     expect(await listIssues(DB)).toEqual([]);
   });
 
-  it('listIssuesByLabel returns [] when bd show (deps) rejects', async () => {
+  it('listIssuesByLabel throws when bd show (deps) rejects on both attempts', async () => {
+    // First attempt: bd list ok, bd show (deps) rejects.
     mockBdResult([
       { id: '1', title: 'A', status: 'open', priority: 2, dependency_count: 1 },
     ]);
     mockBdError('SIGTERM');
-    expect(await listIssuesByLabel(DB, 'run:foo')).toEqual([]);
+    // Retry: same failure mode.
+    mockBdResult([
+      { id: '1', title: 'A', status: 'open', priority: 2, dependency_count: 1 },
+    ]);
+    mockBdError('SIGTERM');
+    await expect(listIssuesByLabel(DB, 'run:foo')).rejects.toThrow('SIGTERM');
   });
 });
 
