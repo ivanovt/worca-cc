@@ -569,12 +569,43 @@ export function createProjectScopedRoutes({
         atomicWriteSync(settingsPath, `${JSON.stringify(base, null, 2)}\n`);
       }
 
+      // STEP 3a: strip shadowed worca keys from settings.local.json. Local is
+      // deep-merged over base on read, so a stale `worca.<key>` copy in local
+      // would resurrect after the user saves a new value. `models` is excluded
+      // because its env-portion lives in local by design (see model-env-routes).
+      const lp = localPathFor(settingsPath);
+      let localChanged = false;
+      const localForPrune = readLocalSettings(settingsPath);
+      if (
+        body.worca &&
+        typeof body.worca === 'object' &&
+        localForPrune.worca &&
+        typeof localForPrune.worca === 'object'
+      ) {
+        for (const key of Object.keys(body.worca)) {
+          if (key === 'models') continue;
+          if (key in localForPrune.worca) {
+            delete localForPrune.worca[key];
+            localChanged = true;
+          }
+        }
+        if (localChanged && Object.keys(localForPrune.worca).length === 0) {
+          delete localForPrune.worca;
+        }
+      }
+
       if (body.permissions !== undefined) {
-        const lp = localPathFor(settingsPath);
-        const local = readLocalSettings(settingsPath);
-        local.permissions = body.permissions;
+        localForPrune.permissions = body.permissions;
+        localChanged = true;
+      }
+
+      if (localChanged) {
         mkdirSync(dirname(lp), { recursive: true });
-        writeFileSync(lp, `${JSON.stringify(local, null, 2)}\n`, 'utf8');
+        writeFileSync(
+          lp,
+          `${JSON.stringify(localForPrune, null, 2)}\n`,
+          'utf8',
+        );
       }
 
       const merged = readMergedSettings(settingsPath);

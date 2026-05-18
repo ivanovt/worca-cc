@@ -152,6 +152,63 @@ describe('PUT /api/projects/:id/settings — persistence split', () => {
     expect(base.worca.governance).toEqual({ strict: true });
   });
 
+  it('strips shadowing worca.agents from settings.local.json on agents save', async () => {
+    // Base declares the model id; env lives in local (env-split design).
+    writeFileSync(
+      baseSettingsPath,
+      JSON.stringify({
+        worca: {
+          agents: { implementer: { model: 'sonnet', max_turns: 300 } },
+          models: { 'glm-ds': 'discretestack-stable' },
+        },
+      }),
+    );
+    // Seed local with stale worca.agents that would shadow base via deep-merge.
+    writeFileSync(
+      localSettingsPath,
+      JSON.stringify({
+        worca: {
+          agents: {
+            planner: { model: 'opus', max_turns: 100 },
+            implementer: { model: 'sonnet', max_turns: 300 },
+          },
+          // Non-shadowing entries that must survive a save of `agents`.
+          webhooks: [{ url: 'http://localhost:3400/api/webhooks/inbox' }],
+          models: { 'glm-ds': { env: { TOKEN: 'secret' } } },
+        },
+      }),
+    );
+
+    const app = buildApp(prefsDir, projectRoot);
+    const res = await request(
+      app,
+      'POST',
+      `/api/projects/${projectName}/settings`,
+      {
+        worca: {
+          agents: { planner: { model: 'glm-ds', max_turns: 250 } },
+        },
+      },
+    );
+
+    expect(res.status).toBe(200);
+
+    // Local must no longer shadow agents.
+    const local = JSON.parse(readFileSync(localSettingsPath, 'utf8'));
+    expect(local.worca?.agents).toBeUndefined();
+    // Webhooks (auto-config) and model env (secrets) must be preserved.
+    expect(local.worca?.webhooks).toEqual([
+      { url: 'http://localhost:3400/api/webhooks/inbox' },
+    ]);
+    expect(local.worca?.models?.['glm-ds']?.env?.TOKEN).toBe('secret');
+
+    // Merged view returned to client reflects the user's save (not the stale local).
+    expect(res.body.worca.agents.planner).toEqual({
+      model: 'glm-ds',
+      max_turns: 250,
+    });
+  });
+
   it('handles a payload with both worca and permissions correctly', async () => {
     const app = buildApp(prefsDir, projectRoot);
     await request(app, 'POST', `/api/projects/${projectName}/settings`, {
