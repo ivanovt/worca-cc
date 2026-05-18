@@ -1575,6 +1575,9 @@ export function _getOrInitModelState(name, serverEntry) {
       _id: _envRowId(name, k, i),
     })),
     dirty: false,
+    // Preserve user's manual expand/collapse across clean re-syncs so the
+    // env panel doesn't snap shut while they're browsing it.
+    envExpanded: existing?.envExpanded ?? false,
   };
   _modelsEditState.set(name, fresh);
   return fresh;
@@ -1593,6 +1596,7 @@ function _updateEnvField(name, rowId, field, value, rerender) {
   if (!row) return;
   row[field] = value;
   s.dirty = true;
+  s.envExpanded = true;
   // Rerender so the validation pill / Save-disabled state flips for key edits.
   // For value edits, the input is the source of truth and there's nothing
   // visual to change — skip rerender to avoid input flicker during typing.
@@ -1611,6 +1615,7 @@ function _addEnvRow(name, rerender) {
   if (!s) return;
   s.env.push({ k: '', v: '', _id: _envRowId(name, '', s.env.length) });
   s.dirty = true;
+  s.envExpanded = true;
   rerender();
   requestAnimationFrame(() => {
     const rows = document.querySelectorAll(
@@ -1626,6 +1631,15 @@ function _removeEnvRow(name, rowId, rerender) {
   if (!s) return;
   s.env = s.env.filter((r) => r._id !== rowId);
   s.dirty = true;
+  s.envExpanded = true;
+  rerender();
+}
+
+function _toggleEnvExpanded(name, expanded, rerender) {
+  const s = _modelsEditState.get(name);
+  if (!s) return;
+  if (s.envExpanded === expanded) return;
+  s.envExpanded = expanded;
   rerender();
 }
 
@@ -2234,6 +2248,10 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
   const isBuiltin = BUILTIN_MODEL_NAMES.has(name);
   const valid = _cardIsValid(name);
   const envCount = state.env.filter((r) => r.k.trim() !== '').length;
+  const invalidCount = state.env.filter(
+    (r) => _envKeyValidationError(r.k) !== null,
+  ).length;
+  const envExpanded = state.envExpanded;
 
   return html`
     <div
@@ -2259,12 +2277,24 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
           ></sl-input>
         </div>
 
-        <div class="settings-field">
-          <div class="settings-label-row">
-            <label class="settings-label">Environment Variables</label>
-            <span class="settings-muted-small"
-              >${envCount} ${envCount === 1 ? 'var' : 'vars'}</span
-            >
+        <sl-details
+          class="model-env-details ${invalidCount > 0 ? 'has-invalid' : ''}"
+          ?open=${envExpanded}
+          @sl-show=${() => _toggleEnvExpanded(name, true, rerender)}
+          @sl-hide=${() => _toggleEnvExpanded(name, false, rerender)}
+        >
+          <div slot="summary" class="model-env-summary">
+            <span class="settings-label">Environment Variables</span>
+            ${
+              invalidCount > 0
+                ? html`<span class="model-env-invalid-chip"
+                    >${invalidCount}
+                    ${invalidCount === 1 ? 'invalid' : 'invalid'}</span
+                  >`
+                : html`<span class="settings-muted-small"
+                    >${envCount} ${envCount === 1 ? 'var' : 'vars'}</span
+                  >`
+            }
           </div>
 
           ${
@@ -2284,7 +2314,7 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
             ${unsafeHTML(iconSvg(Plus, 12))}
             Add variable
           </sl-button>
-        </div>
+        </sl-details>
       </div>
 
       <div class="model-card-actions">

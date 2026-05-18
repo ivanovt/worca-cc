@@ -5094,6 +5094,46 @@ sl-tooltip.bead-tooltip::part(body) {
   margin: 0.4rem 0 0;
 }
 
+.model-env-details::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.model-env-details::part(header) {
+  padding: 0.25rem 0.4rem;
+  border-radius: 6px;
+}
+
+.model-env-details::part(header):hover {
+  background: var(--hover, rgba(0, 0, 0, 0.04));
+}
+
+.model-env-details::part(content) {
+  padding: 0.5rem 0 0;
+}
+
+.model-env-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.75rem;
+}
+
+.model-env-invalid-chip {
+  color: var(--status-failed, #ef4444);
+  font-weight: 600;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.model-env-details.has-invalid::part(header) {
+  border-left: 3px solid var(--status-failed, #ef4444);
+  padding-left: 0.5rem;
+}
+
 .model-env-value::part(input) {
   font-size: 12px;
 }
