@@ -65,4 +65,21 @@ describe('sidebar Project Settings scoping', () => {
     const templateStr = JSON.stringify(result.values);
     expect(templateStr).toContain('Project Settings');
   });
+
+  it('shows Project Settings in legacy --project mode (no registered projects, null currentProjectId)', async () => {
+    // When worca is launched with --project /path, the server has a real
+    // worcaDir but /api/projects returns []. currentProjectId stays null.
+    // The legacy un-scoped /api/settings endpoint works, so Project Settings
+    // must stay visible (and not be replaced by the All-Projects empty state).
+    const { sidebarView } = await import('./sidebar.js');
+    const state = makeState({
+      projects: [],
+      currentProjectId: null,
+    });
+    const route = { section: 'active' };
+    const result = sidebarView(state, route, 'open', { onNavigate: vi.fn() });
+
+    const templateStr = JSON.stringify(result.values);
+    expect(templateStr).toContain('Project Settings');
+  });
 });

@@ -383,8 +383,12 @@ export function sidebarView(
       <div class="sidebar-section">
         <div class="sidebar-section-header">Configuration</div>
         ${
-          currentProjectId
-            ? html`
+          // Hide Project Settings only in true All-Projects mode (multi-project
+          // with no selection). In single-project mode (projects empty, server
+          // has worcaDir), the un-scoped settings endpoint works fine.
+          (projects || []).length > 1 && !currentProjectId
+            ? ''
+            : html`
         <div class="sidebar-item ${route.section === 'project-settings' ? 'active' : ''}"
              @click=${() => onNavigate('project-settings')}>
           <span class="sidebar-item-left">
@@ -393,7 +397,6 @@ export function sidebarView(
           </span>
         </div>
         `
-            : ''
         }
         <div class="sidebar-item ${route.section === 'workspaces' ? 'active' : ''}"
              @click=${() => onNavigate('workspaces')}>

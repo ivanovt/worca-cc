@@ -1534,10 +1534,14 @@ onHashChange((newRoute) => {
   }
 
   if (route.section === 'project-settings') {
-    // Project Settings is project-scoped — skip the un-scoped fetch in
-    // All Projects mode. The view renders a CTA empty state instead.
-    if (store.getState().currentProjectId) {
-      loadSettings(store.getState().currentProjectId).then(() => rerender());
+    // In single-project mode the server has worcaDir, so loadSettings(null)
+    // works. In All-Projects mode (multi-project + no selection) it hits
+    // the un-scoped endpoint with no real project — skip the fetch; the
+    // view renders a CTA empty state instead.
+    const s = store.getState();
+    const isAllProjects = (s.projects || []).length > 1 && !s.currentProjectId;
+    if (!isAllProjects) {
+      loadSettings(s.currentProjectId || null).then(() => rerender());
     }
   }
 
@@ -3423,7 +3427,9 @@ function mainContentView() {
   }
 
   if (route.section === 'project-settings') {
-    if (!state.currentProjectId) {
+    const isAllProjects =
+      (state.projects || []).length > 1 && !state.currentProjectId;
+    if (isAllProjects) {
       return html`
         <div class="empty-state project-settings-empty">
           <p>Select a project from the sidebar to view its settings.</p>
@@ -3435,7 +3441,7 @@ function mainContentView() {
     }
     return projectSettingsView(state.preferences, {
       rerender,
-      currentProjectId: state.currentProjectId,
+      currentProjectId: state.currentProjectId || null,
     });
   }
 
@@ -3758,8 +3764,11 @@ if (route.section === 'settings') {
   startIntegrationsPoll();
 }
 if (route.section === 'project-settings') {
-  const pid = store.getState().currentProjectId;
-  if (pid) loadSettings(pid).then(() => rerender());
+  const s = store.getState();
+  const isAllProjects = (s.projects || []).length > 1 && !s.currentProjectId;
+  if (!isAllProjects) {
+    loadSettings(s.currentProjectId || null).then(() => rerender());
+  }
 }
 
 // Single-project polling fallback: WS totalRunning derivation only covers
