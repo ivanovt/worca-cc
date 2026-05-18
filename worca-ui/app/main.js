@@ -1534,9 +1534,11 @@ onHashChange((newRoute) => {
   }
 
   if (route.section === 'project-settings') {
-    loadSettings(store.getState().currentProjectId || null).then(() =>
-      rerender(),
-    );
+    // Project Settings is project-scoped — skip the un-scoped fetch in
+    // All Projects mode. The view renders a CTA empty state instead.
+    if (store.getState().currentProjectId) {
+      loadSettings(store.getState().currentProjectId).then(() => rerender());
+    }
   }
 
   if (route.section === 'costs') {
@@ -3421,9 +3423,19 @@ function mainContentView() {
   }
 
   if (route.section === 'project-settings') {
+    if (!state.currentProjectId) {
+      return html`
+        <div class="empty-state project-settings-empty">
+          <p>Select a project from the sidebar to view its settings.</p>
+          <sl-button variant="primary" @click=${() => navigate('dashboard', null, null)}>
+            Back to Dashboard
+          </sl-button>
+        </div>
+      `;
+    }
     return projectSettingsView(state.preferences, {
       rerender,
-      currentProjectId: state.currentProjectId || null,
+      currentProjectId: state.currentProjectId,
     });
   }
 
@@ -3746,9 +3758,8 @@ if (route.section === 'settings') {
   startIntegrationsPoll();
 }
 if (route.section === 'project-settings') {
-  loadSettings(store.getState().currentProjectId || null).then(() =>
-    rerender(),
-  );
+  const pid = store.getState().currentProjectId;
+  if (pid) loadSettings(pid).then(() => rerender());
 }
 
 // Single-project polling fallback: WS totalRunning derivation only covers

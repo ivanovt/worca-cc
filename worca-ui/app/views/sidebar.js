@@ -382,6 +382,9 @@ export function sidebarView(
 
       <div class="sidebar-section">
         <div class="sidebar-section-header">Configuration</div>
+        ${
+          currentProjectId
+            ? html`
         <div class="sidebar-item ${route.section === 'project-settings' ? 'active' : ''}"
              @click=${() => onNavigate('project-settings')}>
           <span class="sidebar-item-left">
@@ -389,6 +392,9 @@ export function sidebarView(
             <span>Project Settings</span>
           </span>
         </div>
+        `
+            : ''
+        }
         <div class="sidebar-item ${route.section === 'workspaces' ? 'active' : ''}"
              @click=${() => onNavigate('workspaces')}>
           <span class="sidebar-item-left">
