@@ -115,8 +115,13 @@ export function createModelEnvRouter({ settingsPath: staticPath } = {}) {
 
     let baseChanged = false;
     if (resolvedId) {
-      // Prefer string form when there's no other metadata — keeps JSON minimal.
-      const nextBaseEntry = resolvedId;
+      // When env exists in local, base MUST use the object form `{id}` so
+      // deepMerge({id}, {env}) preserves the id. With the string form,
+      // deepMerge would see a non-object base and discard it, dropping the id
+      // entirely — the bug behind empty Model ID after Duplicate/Paste.
+      // String form stays the default when there's no env, to keep JSON minimal.
+      const hasEnv = Object.keys(envIn).length > 0;
+      const nextBaseEntry = hasEnv ? { id: resolvedId } : resolvedId;
       if (JSON.stringify(baseEntry) !== JSON.stringify(nextBaseEntry)) {
         base.worca.models[model] = nextBaseEntry;
         baseChanged = true;

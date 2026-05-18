@@ -28,9 +28,9 @@ describe('Pricing table CSS', () => {
     expect(css).toMatch(/\.pricing-table\s+th\s*\{[^}]*letter-spacing/);
   });
 
-  it('has .pricing-model-name with capitalize', () => {
+  it('has .pricing-model-name with uppercase (matches column header style)', () => {
     expect(css).toMatch(
-      /\.pricing-model-name\s*\{[^}]*text-transform:\s*capitalize/,
+      /\.pricing-model-name\s*\{[^}]*text-transform:\s*uppercase/,
     );
   });
 

@@ -2031,7 +2031,7 @@ sl-input [slot="prefix"] {
 
 .pricing-model-name {
   font-weight: 500;
-  text-transform: capitalize;
+  text-transform: uppercase;
 }
 
 .pricing-table sl-input {
@@ -5082,6 +5082,16 @@ sl-tooltip.bead-tooltip::part(body) {
 
 .model-env-key.is-invalid::part(base) {
   border-color: var(--status-failed, #ef4444);
+}
+
+.rename-model-input.is-invalid::part(base) {
+  border-color: var(--status-failed, #ef4444);
+}
+
+.rename-model-error {
+  color: var(--status-failed, #ef4444);
+  font-size: 12px;
+  margin: 0.4rem 0 0;
 }
 
 .model-env-value::part(input) {

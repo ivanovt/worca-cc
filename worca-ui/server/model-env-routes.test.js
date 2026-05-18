@@ -87,7 +87,7 @@ describe('PUT /api/settings/model-env', () => {
     expect(local.worca.models['alt-fast'].id).toBeUndefined();
   });
 
-  it('moves id to settings.json (string form) and strips env from it', async () => {
+  it('moves id to settings.json and strips env from it', async () => {
     // Seed settings.json with a hand-edited entry that has env — simulating
     // the legacy / footgun case the simplification is meant to eliminate.
     writeFileSync(
@@ -111,8 +111,10 @@ describe('PUT /api/settings/model-env', () => {
     });
     expect(res.status).toBe(200);
     const baseAfter = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    // id moved to settings.json (string form, since no env lives there now)
-    expect(baseAfter.worca.models['alt-fast']).toBe('updated-id');
+    // id moved to settings.json; env stripped. Object form (not string) because
+    // env exists in local — deepMerge requires both sides to be objects to
+    // preserve the id (string + object would collapse to just the object).
+    expect(baseAfter.worca.models['alt-fast']).toEqual({ id: 'updated-id' });
   });
 
   it('prevents phantom resurrection of env keys from settings.json', async () => {
@@ -143,8 +145,8 @@ describe('PUT /api/settings/model-env', () => {
     expect(res.status).toBe(200);
     const baseAfter = JSON.parse(readFileSync(settingsPath, 'utf8'));
     const localAfter = JSON.parse(readFileSync(localPath, 'utf8'));
-    // settings.json entry is string-form, no env
-    expect(baseAfter.worca.models['alt-fast']).toBe('x');
+    // settings.json entry is object-form (because env exists in local), no env
+    expect(baseAfter.worca.models['alt-fast']).toEqual({ id: 'x' });
     // local has only what was sent
     expect(localAfter.worca.models['alt-fast'].env).toEqual({ SHARED: 'new' });
   });
@@ -230,6 +232,32 @@ describe('PUT /api/settings/model-env', () => {
       }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it('preserves id through GET after PUT with env (regression: duplicate empty id)', async () => {
+    // Regression: after Duplicate/Paste, PUT writes id to base + env to local.
+    // GET then deep-merges base + local. If base stored string form, the
+    // merge would discard it (string + object → object only), losing the id
+    // and rendering an empty Model ID input in the UI. Saving that empty
+    // value then destroys the id in base permanently.
+    const putRes = await fetch(`${base}/api/settings/model-env`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'glm-ds-01',
+        id: 'discretestack-stable',
+        env: { ANTHROPIC_AUTH_TOKEN: 'sk-secret' },
+      }),
+    });
+    expect(putRes.status).toBe(200);
+
+    const getRes = await fetch(`${base}/api/settings`);
+    expect(getRes.status).toBe(200);
+    const body = await getRes.json();
+    expect(body.worca.models['glm-ds-01']).toEqual({
+      id: 'discretestack-stable',
+      env: { ANTHROPIC_AUTH_TOKEN: 'sk-secret' },
+    });
   });
 
   it('accepts empty env (drops the model entry from local file)', async () => {
@@ -331,7 +359,8 @@ describe('PUT /api/settings/model-env', () => {
     });
     expect(res.status).toBe(200);
     const baseAfter = JSON.parse(readFileSync(settingsPath, 'utf8'));
-    expect(baseAfter.worca.models['alt-fast']).toBe('baseline');
+    // Object form because env exists in local (so deepMerge preserves the id)
+    expect(baseAfter.worca.models['alt-fast']).toEqual({ id: 'baseline' });
     const localAfter = JSON.parse(readFileSync(localPath, 'utf8'));
     expect(localAfter.worca.models['alt-fast'].env).toEqual({
       ANTHROPIC_BASE_URL: 'https://x',

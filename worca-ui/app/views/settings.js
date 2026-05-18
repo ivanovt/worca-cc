@@ -15,6 +15,7 @@ import {
   Cpu,
   FolderOpen,
   iconSvg,
+  Pencil,
   Plus,
   RefreshCw,
   RotateCcw,
@@ -1744,6 +1745,166 @@ async function _duplicateModel(name, modelsConfig, rerender) {
   }
 }
 
+// --- Model rename (dialog + PUT-new + DELETE-old) -------------------------
+
+let _renameState = null; // { oldName, draft, error } | null
+
+export function _validateRename(draft, oldName, modelsConfig) {
+  const trimmed = (draft || '').trim();
+  if (!trimmed) return 'Name cannot be empty';
+  if (trimmed === oldName) return null;
+  if (modelsConfig[trimmed]) return `Model "${trimmed}" already exists`;
+  return null;
+}
+
+function _promptRenameModel(oldName, modelsConfig, rerender) {
+  _renameState = {
+    oldName,
+    draft: oldName,
+    error: _validateRename(oldName, oldName, modelsConfig),
+  };
+  rerender();
+  requestAnimationFrame(() => {
+    document.getElementById('rename-model-dialog')?.show();
+    document.getElementById('rename-model-input')?.focus?.();
+  });
+}
+
+function _updateRenameDraft(value, modelsConfig, rerender) {
+  if (!_renameState) return;
+  _renameState.draft = value;
+  _renameState.error = _validateRename(
+    value,
+    _renameState.oldName,
+    modelsConfig,
+  );
+  rerender();
+}
+
+function _dismissRenameDialog(rerender) {
+  document.getElementById('rename-model-dialog')?.hide();
+  _renameState = null;
+  rerender();
+}
+
+async function _commitRenameModel(modelsConfig, rerender) {
+  if (!_renameState) return;
+  const oldName = _renameState.oldName;
+  const newName = (_renameState.draft || '').trim();
+  if (_validateRename(newName, oldName, modelsConfig)) return;
+  if (newName === oldName) {
+    _dismissRenameDialog(rerender);
+    return;
+  }
+  const source = _normalizeModelEntry(modelsConfig[oldName]);
+  _modelsEditState.delete(newName);
+  const putUrl = _settingsProjectId
+    ? `/api/projects/${_settingsProjectId}/settings/model-env`
+    : '/api/settings/model-env';
+  const delUrl = _settingsProjectId
+    ? `/api/projects/${_settingsProjectId}/settings/model-env?model=${encodeURIComponent(oldName)}`
+    : `/api/settings/model-env?model=${encodeURIComponent(oldName)}`;
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const putRes = await fetch(putUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: newName,
+        id: source.id,
+        env: { ...source.env },
+      }),
+    });
+    if (!putRes.ok) {
+      const body = await putRes.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${putRes.status}`);
+    }
+    const delRes = await fetch(delUrl, { method: 'DELETE' });
+    if (!delRes.ok) {
+      const body = await delRes.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${delRes.status}`);
+    }
+    _modelsEditState.delete(oldName);
+    saveStatus = 'success';
+    saveMessage = `Renamed ${oldName} → ${newName}`;
+    await loadSettings(_settingsProjectId);
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to rename ${oldName}: ${err.message}`;
+  }
+  _dismissRenameDialog(rerender);
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
+function _renameModelDialogTemplate(modelsConfig, rerender) {
+  if (!_renameState) return nothing;
+  const { oldName, draft, error } = _renameState;
+  const trimmed = (draft || '').trim();
+  const isUnchanged = trimmed === oldName;
+  const confirmDisabled = Boolean(error) || isUnchanged;
+  return html`
+    <sl-dialog
+      id="rename-model-dialog"
+      label="Rename model"
+      @sl-after-hide=${() => {
+        if (_renameState) {
+          _renameState = null;
+          rerender();
+        }
+      }}
+    >
+      <p style="margin: 0 0 0.5rem">
+        Rename <code>${oldName}</code> to:
+      </p>
+      <sl-input
+        id="rename-model-input"
+        class="rename-model-input ${error ? 'is-invalid' : ''}"
+        size="small"
+        value="${draft}"
+        spellcheck="false"
+        autocomplete="off"
+        placeholder="new shorthand (e.g. alt-fast)"
+        @sl-input=${(e) => _updateRenameDraft(e.target.value, modelsConfig, rerender)}
+        @keydown=${(e) => {
+          if (e.key === 'Enter' && !confirmDisabled) {
+            e.preventDefault();
+            _commitRenameModel(modelsConfig, rerender);
+          }
+        }}
+      ></sl-input>
+      ${error ? html`<p class="rename-model-error">${error}</p>` : nothing}
+      <div
+        slot="footer"
+        style="display:flex; justify-content:flex-end; gap:0.5rem; width:100%"
+      >
+        <sl-button
+          variant="default"
+          @click=${() => _dismissRenameDialog(rerender)}
+        >
+          Cancel
+        </sl-button>
+        <sl-button
+          variant="primary"
+          ?disabled=${confirmDisabled}
+          @click=${() => _commitRenameModel(modelsConfig, rerender)}
+        >
+          Rename
+        </sl-button>
+      </div>
+    </sl-dialog>
+  `;
+}
+
 async function _copyModelToClipboard(name, modelsConfig, rerender) {
   const source = _normalizeModelEntry(modelsConfig[name]);
   const text = encodeModelEnvelope({
@@ -2127,6 +2288,17 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
       </div>
 
       <div class="model-card-actions">
+        <sl-tooltip content="Rename this model's shorthand">
+          <sl-button
+            variant="default"
+            size="small"
+            class="model-rename-btn"
+            @click=${() => _promptRenameModel(name, modelsConfig, rerender)}
+          >
+            ${unsafeHTML(iconSvg(Pencil, 12))}
+            Rename
+          </sl-button>
+        </sl-tooltip>
         <sl-tooltip content="Duplicate this model with all its env vars">
           <sl-button
             variant="default"
@@ -2254,6 +2426,7 @@ export function modelsTab(worca, rerender) {
           Reset all
         </sl-button>
       </div>
+      ${_renameModelDialogTemplate(modelsConfig, rerender)}
     </div>
   `;
 }

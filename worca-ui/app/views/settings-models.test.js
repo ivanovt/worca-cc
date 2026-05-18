@@ -203,3 +203,38 @@ describe('_getOrInitModelState', () => {
     expect(same.id).toBe('user-edited-id'); // user's edit preserved
   });
 });
+
+describe('_validateRename', () => {
+  it('rejects empty / whitespace-only names', async () => {
+    const { _validateRename } = await import('./settings.js');
+    const cfg = { 'glm-ds': {}, opus: {} };
+    expect(_validateRename('', 'glm-ds', cfg)).toMatch(/empty/i);
+    expect(_validateRename('   ', 'glm-ds', cfg)).toMatch(/empty/i);
+  });
+
+  it('returns null when name is unchanged (same as current)', async () => {
+    const { _validateRename } = await import('./settings.js');
+    const cfg = { 'glm-ds': {}, opus: {} };
+    expect(_validateRename('glm-ds', 'glm-ds', cfg)).toBeNull();
+  });
+
+  it('rejects collision with another existing model', async () => {
+    const { _validateRename } = await import('./settings.js');
+    const cfg = { 'glm-ds': {}, opus: {}, sonnet: {} };
+    expect(_validateRename('opus', 'glm-ds', cfg)).toMatch(/already exists/);
+  });
+
+  it('accepts a name that is not in the config', async () => {
+    const { _validateRename } = await import('./settings.js');
+    const cfg = { 'glm-ds': {}, opus: {} };
+    expect(_validateRename('alt-fast', 'glm-ds', cfg)).toBeNull();
+  });
+
+  it('trims whitespace before checking for collision', async () => {
+    const { _validateRename } = await import('./settings.js');
+    const cfg = { 'glm-ds': {}, opus: {} };
+    expect(_validateRename('  opus  ', 'glm-ds', cfg)).toMatch(
+      /already exists/,
+    );
+  });
+});
