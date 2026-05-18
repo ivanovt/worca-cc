@@ -101,12 +101,12 @@ def test_save_no_temp_file_left_on_failure(tmp_path):
     assert tmp_files == []
 
 
-def test_save_uses_os_rename_for_atomicity(tmp_path):
-    """save_status must call os.rename to atomically replace the target."""
+def test_save_uses_os_replace_for_atomicity(tmp_path):
+    """save_status must call os.replace to atomically replace the target (cross-platform)."""
     path = tmp_path / "status.json"
-    with patch("os.rename", wraps=os.rename) as mock_rename:
+    with patch("os.replace", wraps=os.replace) as mock_replace:
         save_status({"stage": "plan"}, str(path))
-        assert mock_rename.called
+        assert mock_replace.called
 
 
 # --- update_stage ---

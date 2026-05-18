@@ -4,15 +4,42 @@ Maintains a cumulative.json file that aggregates token usage and cost
 data across all completed pipeline runs.
 """
 
-import fcntl
 import json
 import os
+import sys
 import tempfile
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+if sys.platform == "win32":
+    import msvcrt
+else:
+    import fcntl
+
 from worca.state.status import PipelineStatus
 
+_process_lock = threading.Lock()
+
+
+def _acquire_lock(lock_path: str) -> int:
+    """Open and exclusively lock a sidecar .lock file. Returns the fd."""
+    Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
+    fd = open(lock_path, "w")
+    if sys.platform == "win32":
+        msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def _release_lock(fd: int) -> None:
+    """Unlock and close the lock file descriptor."""
+    if sys.platform == "win32":
+        msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    fd.close()
 
 def update_cumulative_stats(
     run_status: dict,
@@ -30,17 +57,15 @@ def update_cumulative_stats(
     Returns:
         The updated cumulative stats dict.
     """
-    # Acquire a file lock to prevent lost-update races when multiple
-    # processes merge stats concurrently.
-    lock_path = stats_path + ".lock"
-    Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
-    lock_fd = open(lock_path, "w")
-    try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        return _update_cumulative_stats_locked(run_status, stats_path)
-    finally:
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        lock_fd.close()
+    # Process-level lock for same-process thread safety; file lock for
+    # cross-process safety (msvcrt.locking is process-scoped on Windows).
+    with _process_lock:
+        lock_path = stats_path + ".lock"
+        lock_fd = _acquire_lock(lock_path)
+        try:
+            return _update_cumulative_stats_locked(run_status, stats_path)
+        finally:
+            _release_lock(lock_fd)
 
 
 def _update_cumulative_stats_locked(
@@ -136,22 +161,27 @@ def _update_cumulative_stats_locked(
     return stats
 
 
+def _empty_cumulative() -> dict:
+    """Return a fresh empty cumulative stats structure."""
+    return {
+        "updated_at": "",
+        "total_runs": 0,
+        "total_cost_usd": 0,
+        "total_input_tokens": 0,
+        "total_output_tokens": 0,
+        "by_model": {},
+        "by_agent": {},
+        "runs": [],
+    }
+
+
 def _load_cumulative(stats_path: str) -> dict:
     """Load existing cumulative stats or return empty structure."""
     try:
         with open(stats_path) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {
-            "updated_at": "",
-            "total_runs": 0,
-            "total_cost_usd": 0,
-            "total_input_tokens": 0,
-            "total_output_tokens": 0,
-            "by_model": {},
-            "by_agent": {},
-            "runs": [],
-        }
+        return _empty_cumulative()
 
 
 def _save_cumulative(stats: dict, stats_path: str) -> None:
@@ -271,7 +301,7 @@ def rebuild_from_results(
         The rebuilt cumulative stats dict.
     """
     # Start fresh
-    stats = _load_cumulative("/dev/null")  # empty structure
+    stats = _empty_cumulative()
 
     if not os.path.isdir(results_dir):
         _save_cumulative(stats, stats_path)

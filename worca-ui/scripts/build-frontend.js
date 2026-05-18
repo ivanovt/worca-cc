@@ -4,6 +4,25 @@ import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+function findPython() {
+  /* Find a usable Python — prefer python3 on Unix, python on Windows. */
+  const candidates =
+    process.platform === 'win32'
+      ? ['python', 'python3']
+      : ['python3', 'python'];
+  for (const cmd of candidates) {
+    try {
+      execFileSync(cmd, ['--version'], {
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
+      return cmd;
+    } catch {
+      /* not found or not executable — try next */
+    }
+  }
+  return null;
+}
+
 async function run() {
   const thisFile = fileURLToPath(new URL(import.meta.url));
   const repoRoot = path.resolve(path.dirname(thisFile), '..');
@@ -49,6 +68,14 @@ async function run() {
   const utilsDir = path.join(appDir, 'utils');
   mkdirSync(utilsDir, { recursive: true });
   const constantsOut = path.join(utilsDir, 'status-constants.js');
+  const python = findPython();
+  if (!python) {
+    console.error(
+      'status-constants codegen failed: python not found (install Python and worca-cc)',
+    );
+    process.exitCode = 1;
+    return;
+  }
   try {
     const pyScript =
       'import json; from worca.state import status as s; ' +
@@ -62,7 +89,7 @@ async function run() {
       '"PIPELINE_ALL_TERMINAL": sorted(s.PIPELINE_ALL_TERMINAL), ' +
       '"PIPELINE_IN_FLIGHT": sorted(s.PIPELINE_IN_FLIGHT)' +
       '}))';
-    const raw = execFileSync('python3', ['-c', pyScript], {
+    const raw = execFileSync(python, ['-c', pyScript], {
       cwd: path.join(repoRoot, '..'),
       encoding: 'utf8',
     });
@@ -81,7 +108,7 @@ async function run() {
     console.log('generated', path.relative(repoRoot, constantsOut));
   } catch (err) {
     console.error(
-      'status-constants codegen failed (is python3 + worca-cc installed?):',
+      `status-constants codegen failed (is ${python} + worca-cc installed?):`,
       err.message,
     );
     process.exitCode = 1;
