@@ -24,6 +24,7 @@ import { atomicWriteSync } from './atomic-write.js';
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { dispatchExternal } from './dispatch-external.js';
 import { ensureWebhookForUi } from './ensure-webhook.js';
+import { getDefaultBranch } from './git-helpers.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
 import { createModelEnvRouter } from './model-env-routes.js';
@@ -361,7 +362,8 @@ export function createProjectScopedRoutes({
   router.get('/runs', requireWorcaDir, (req, res) => {
     try {
       const runs = discoverRuns(req.project.worcaDir);
-      const response = { ok: true, runs };
+      const default_branch = getDefaultBranch(req.project.projectRoot);
+      const response = { ok: true, runs, default_branch };
       // Include settings so multi-project clients can use loop limits, etc.
       const { settingsPath } = req.project;
       if (settingsPath && existsSync(settingsPath)) {

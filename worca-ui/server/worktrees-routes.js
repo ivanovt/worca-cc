@@ -20,6 +20,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as fsp from 'node:fs/promises';
 import { join } from 'node:path';
 import { Router } from 'express';
+import { getDefaultBranch } from './git-helpers.js';
 import { pruneWorktrees, removeWorktree } from './worktree-ops.js';
 
 const CLEANUP_CONCURRENCY = 4;
@@ -362,6 +363,7 @@ async function _listWorktrees(worcaDir) {
     started_at: m.reg.started_at || null,
     status: m.status,
     removable: m.status !== 'running',
+    target_branch: m.reg.target_branch || null,
     fleet_id: m.reg.fleet_id || null,
     workspace_id: m.reg.workspace_id || null,
     group_type: m.reg.group_type || null,
@@ -399,9 +401,11 @@ export function createWorktreesRouter() {
     }
     try {
       const worktrees = await _listWorktrees(worcaDir);
+      const default_branch = getDefaultBranch(req.project?.projectRoot);
       res.json({
         ok: true,
         worktrees,
+        default_branch,
         // Documents the semantics shift in `disk_bytes` (project files only).
         // Clients can render this as a caveat next to disk totals.
         disk_walk_skip_dirs: [...WALK_SKIP_DIRS],

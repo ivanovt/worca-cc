@@ -14,6 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockRemoveWorktree = vi.fn();
 const mockPruneWorktrees = vi.fn();
+const mockGetDefaultBranch = vi.fn().mockReturnValue('main');
+
+vi.mock('./git-helpers.js', () => ({
+  getDefaultBranch: (...args) => mockGetDefaultBranch(...args),
+}));
 
 vi.mock('./worktree-ops.js', () => ({
   removeWorktree: (...args) => mockRemoveWorktree(...args),
@@ -123,6 +128,14 @@ describe('GET /api/worktrees', () => {
     const data = await res.json();
     expect(data.ok).toBe(true);
     expect(data.worktrees).toEqual([]);
+  });
+
+  it('GET_default_branch: includes default_branch in response', async () => {
+    mockGetDefaultBranch.mockReturnValue('develop');
+    const res = await fetch(`${base}/api/worktrees`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.default_branch).toBe('develop');
   });
 
   it('GET_enriched: returns entry with fleet_id, workspace_id, group_type, group_status, resumable', async () => {
@@ -323,6 +336,50 @@ describe('GET /api/worktrees', () => {
       const data = await res.json();
       const wt = data.worktrees.find((w) => w.run_id === 'run-nopid');
       expect(wt.status).toBe('running');
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('GET_target_branch_present: includes target_branch from registry', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'wt-target-br-'));
+    writeWorktreeStatus(worktreePath, 'completed');
+    writePipelineEntry(tmpDir, 'run-tb', {
+      run_id: 'run-tb',
+      title: 'Target branch test',
+      branch: 'feature/tb',
+      target_branch: 'main',
+      worktree_path: worktreePath,
+    });
+
+    try {
+      const res = await fetch(`${base}/api/worktrees`);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      const wt = data.worktrees.find((w) => w.run_id === 'run-tb');
+      expect(wt).toBeDefined();
+      expect(wt.target_branch).toBe('main');
+    } finally {
+      rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
+
+  it('GET_target_branch_null_when_absent: target_branch is null when registry lacks it', async () => {
+    const worktreePath = mkdtempSync(join(tmpdir(), 'wt-no-tb-'));
+    writeWorktreeStatus(worktreePath, 'completed');
+    writePipelineEntry(tmpDir, 'run-no-tb', {
+      run_id: 'run-no-tb',
+      branch: 'feature/no-tb',
+      worktree_path: worktreePath,
+    });
+
+    try {
+      const res = await fetch(`${base}/api/worktrees`);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      const wt = data.worktrees.find((w) => w.run_id === 'run-no-tb');
+      expect(wt).toBeDefined();
+      expect(wt.target_branch).toBeNull();
     } finally {
       rmSync(worktreePath, { recursive: true, force: true });
     }

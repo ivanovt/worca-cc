@@ -645,6 +645,67 @@ describe('runCardView - guide conflict icon', () => {
   });
 });
 
+describe('runCardView - source/target branch display', () => {
+  it('shows Source Branch with head_branch when available', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz-20260518',
+      branch: 'master',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('Source Branch:');
+    expect(output).toContain('worca/feat-xyz-20260518');
+    expect(output).not.toContain('>master<');
+  });
+
+  it('falls back to run.branch when head_branch is absent', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'completed',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+      completed_at: '2026-01-01T01:00:00Z',
+      branch: 'main',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('Source Branch:');
+    expect(output).toContain('main');
+  });
+
+  it('shows Target Branch when target_branch differs from _default_branch', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      target_branch: 'develop',
+      _default_branch: 'master',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('Target Branch:');
+    expect(output).toContain('develop');
+  });
+
+  it('hides Target Branch when target_branch equals _default_branch', () => {
+    const run = {
+      id: '1',
+      pipeline_status: 'running',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      target_branch: 'master',
+      _default_branch: 'master',
+    };
+    const output = renderToString(runCardView(run));
+    expect(output).toContain('Source Branch:');
+    expect(output).not.toContain('Target Branch:');
+  });
+});
+
 describe('runCardView - beads badge', () => {
   const baseRun = {
     id: '1',

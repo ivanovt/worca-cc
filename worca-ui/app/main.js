@@ -1235,14 +1235,18 @@ function fetchAllProjectRuns() {
     projects.map((p) =>
       fetch(`/api/projects/${p.name}/runs`)
         .then((r) => r.json())
-        .then((data) => ({
-          runs: (data.runs || []).map((run) => ({
-            ...run,
-            project: run.project || p.name,
-          })),
-          settings: data.settings || null,
-          projectName: p.name,
-        }))
+        .then((data) => {
+          const defaultBranch = data.default_branch || null;
+          return {
+            runs: (data.runs || []).map((run) => ({
+              ...run,
+              project: run.project || p.name,
+              _default_branch: defaultBranch,
+            })),
+            settings: data.settings || null,
+            projectName: p.name,
+          };
+        })
         .catch(() => ({ runs: [], settings: null, projectName: p.name })),
     ),
   ).then((results) => {
@@ -1287,9 +1291,14 @@ function fetchWorktrees() {
   const requests = targets.map((name) =>
     fetch(`/api/projects/${name}/worktrees`)
       .then((r) => r.json())
-      .then((data) =>
-        (data.worktrees || []).map((w) => ({ ...w, project: name })),
-      )
+      .then((data) => {
+        const defaultBranch = data.default_branch || null;
+        return (data.worktrees || []).map((w) => ({
+          ...w,
+          project: name,
+          _default_branch: defaultBranch,
+        }));
+      })
       .catch(() => []),
   );
 
