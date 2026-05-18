@@ -1,10 +1,15 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import reservedEnvKeysData from '../../server/reserved-env-keys.json';
-import { confirmDialogTemplate, showConfirm } from '../utils/confirm-dialog.js';
+import {
+  confirmDialogTemplate,
+  showConfirm,
+  showInfo,
+} from '../utils/confirm-dialog.js';
 import {
   Bell,
   ClipboardCopy,
+  ClipboardPaste,
   Coins,
   Copy,
   Cpu,
@@ -22,6 +27,10 @@ import {
   X,
   Zap,
 } from '../utils/icons.js';
+import {
+  decodeModelEnvelope,
+  encodeModelEnvelope,
+} from '../utils/model-clipboard.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
 import { isVersionBehind } from '../utils/version-compare.js';
 import {
@@ -1735,6 +1744,171 @@ async function _duplicateModel(name, modelsConfig, rerender) {
   }
 }
 
+async function _copyModelToClipboard(name, modelsConfig, rerender) {
+  const source = _normalizeModelEntry(modelsConfig[name]);
+  const text = encodeModelEnvelope({
+    name,
+    id: source.id,
+    env: source.env,
+  });
+  try {
+    if (!navigator.clipboard?.writeText) {
+      throw new Error('Clipboard API unavailable');
+    }
+    await navigator.clipboard.writeText(text);
+    saveStatus = 'success';
+    const envCount = Object.keys(source.env).length;
+    saveMessage =
+      envCount > 0
+        ? `Copied ${name} to clipboard (id + ${envCount} env ${envCount === 1 ? 'var' : 'vars'})`
+        : `Copied ${name} to clipboard`;
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to copy ${name}: ${err.message || 'clipboard write blocked'}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
+function _pasteInfoNoData(rerender) {
+  showInfo(
+    {
+      label: 'No model data on the clipboard',
+      message: html`
+        <p>
+          The clipboard didn't contain a worca model envelope. Use the
+          <strong>Copy</strong> button on an existing model card to copy one,
+          then click <strong>Paste</strong> again.
+        </p>
+      `,
+    },
+    rerender,
+  );
+}
+
+function _pasteInfoPermissionDenied(rerender) {
+  showInfo(
+    {
+      label: 'Clipboard access blocked',
+      message: html`
+        <p>
+          Your browser blocked clipboard access. Allow clipboard read permission
+          for this site in your browser settings, then try Paste again.
+        </p>
+      `,
+    },
+    rerender,
+  );
+}
+
+function _pasteInfoUnsupported(rerender) {
+  showInfo(
+    {
+      label: 'Paste not supported in this browser',
+      message: html`
+        <p>
+          This browser doesn't expose clipboard reads to web pages (Firefox is
+          the common case). Open
+          <code>.claude/settings.local.json</code> directly to copy the model
+          entry by hand.
+        </p>
+      `,
+    },
+    rerender,
+  );
+}
+
+async function _pasteModelFromClipboard(modelsConfig, rerender) {
+  if (!navigator.clipboard?.readText) {
+    _pasteInfoUnsupported(rerender);
+    return;
+  }
+
+  let text;
+  try {
+    text = await navigator.clipboard.readText();
+  } catch (err) {
+    if (err?.name === 'NotAllowedError') {
+      _pasteInfoPermissionDenied(rerender);
+    } else {
+      _pasteInfoUnsupported(rerender);
+    }
+    return;
+  }
+
+  const decoded = decodeModelEnvelope(text);
+  if (!decoded.ok) {
+    _pasteInfoNoData(rerender);
+    return;
+  }
+
+  const { name: rawName, id, env } = decoded.model;
+  const existing = new Set(Object.keys(modelsConfig));
+  let targetName = rawName;
+  let renamed = false;
+  if (existing.has(rawName)) {
+    const next = _nextDuplicateName(rawName, existing);
+    if (!next) {
+      saveStatus = 'error';
+      saveMessage = `Cannot paste "${rawName}" — no free numeric suffix slot.`;
+      rerender();
+      return;
+    }
+    targetName = next;
+    renamed = true;
+  }
+
+  _modelsEditState.delete(targetName);
+
+  const url = _settingsProjectId
+    ? `/api/projects/${_settingsProjectId}/settings/model-env`
+    : '/api/settings/model-env';
+  saveStatus = 'saving';
+  saveMessage = '';
+  rerender();
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: targetName,
+        id: id || targetName,
+        env: { ...env },
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+    saveStatus = 'success';
+    saveMessage = renamed
+      ? `Pasted ${rawName} as ${targetName} (name was taken)`
+      : `Pasted ${targetName}`;
+    await loadSettings(_settingsProjectId);
+  } catch (err) {
+    saveStatus = 'error';
+    saveMessage = `Failed to paste ${targetName}: ${err.message}`;
+  }
+  rerender();
+  if (saveStatus === 'success') {
+    setTimeout(() => {
+      if (saveStatus === 'success') {
+        saveStatus = null;
+        saveMessage = '';
+        rerender();
+      }
+    }, 3000);
+  }
+}
+
 function _promptDeleteModel(name, modelsConfig, rerender) {
   // After the W-051 storage split, any model with an id lives (at least
   // partially) in committed settings.json — deleting it means a write to
@@ -1964,6 +2138,19 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
             Duplicate
           </sl-button>
         </sl-tooltip>
+        <sl-tooltip
+          content="Copy this model (id + env vars) to the clipboard. The clipboard may persist via OS clipboard history — be mindful with secret values."
+        >
+          <sl-button
+            variant="default"
+            size="small"
+            class="model-copy-btn"
+            @click=${() => _copyModelToClipboard(name, modelsConfig, rerender)}
+          >
+            ${unsafeHTML(iconSvg(ClipboardCopy, 12))}
+            Copy
+          </sl-button>
+        </sl-tooltip>
         <sl-button
           variant="danger"
           size="small"
@@ -2040,6 +2227,19 @@ export function modelsTab(worca, rerender) {
             ${unsafeHTML(iconSvg(Plus, 14))}
             Add
           </sl-button>
+          <sl-tooltip
+            content="Paste a model that was copied from another project. On name collision, the pasted model gets a numeric suffix (same as Duplicate)."
+          >
+            <sl-button
+              variant="default"
+              size="small"
+              class="model-paste-btn"
+              @click=${() => _pasteModelFromClipboard(modelsConfig, rerender)}
+            >
+              ${unsafeHTML(iconSvg(ClipboardPaste, 14))}
+              Paste
+            </sl-button>
+          </sl-tooltip>
         </div>
       </div>
 

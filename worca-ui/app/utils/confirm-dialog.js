@@ -1,6 +1,6 @@
 import { html, nothing } from 'lit-html';
 
-let _pending = null; // { label, message, confirmLabel, confirmVariant, cancelLabel, onConfirm, onCancel }
+let _pending = null; // { label, message, confirmLabel, confirmVariant, cancelLabel, singleButton, onConfirm, onCancel }
 
 export function showConfirm(
   {
@@ -9,6 +9,7 @@ export function showConfirm(
     confirmLabel,
     confirmVariant = 'danger',
     cancelLabel,
+    singleButton = false,
     onConfirm,
     onCancel,
   },
@@ -20,6 +21,7 @@ export function showConfirm(
     confirmLabel,
     confirmVariant,
     cancelLabel,
+    singleButton,
     onConfirm,
     onCancel,
   };
@@ -27,6 +29,20 @@ export function showConfirm(
   requestAnimationFrame(() => {
     document.getElementById('global-confirm-dialog')?.show();
   });
+}
+
+export function showInfo({ label, message, okLabel = 'OK', onOk }, rerender) {
+  showConfirm(
+    {
+      label,
+      message,
+      confirmLabel: okLabel,
+      confirmVariant: 'primary',
+      singleButton: true,
+      onConfirm: onOk,
+    },
+    rerender,
+  );
 }
 
 function dismiss(callback) {
@@ -45,6 +61,7 @@ export function confirmDialogTemplate() {
     confirmLabel,
     confirmVariant,
     cancelLabel,
+    singleButton,
     onConfirm,
     onCancel,
   } = _pending;
@@ -52,8 +69,12 @@ export function confirmDialogTemplate() {
     <sl-dialog id="global-confirm-dialog" label=${label} @sl-after-hide=${() => dismiss(onCancel)}>
       ${typeof message === 'string' ? html`<p>${message}</p>` : message}
       <div slot="footer" style="display:flex; justify-content:center; gap:0.75rem; width:100%">
-        <sl-button variant="default" autofocus @click=${() => dismiss(onCancel)}>${cancelLabel || 'Cancel'}</sl-button>
-        <sl-button variant=${confirmVariant} @click=${() => dismiss(onConfirm)}>${confirmLabel}</sl-button>
+        ${
+          singleButton
+            ? nothing
+            : html`<sl-button variant="default" autofocus @click=${() => dismiss(onCancel)}>${cancelLabel || 'Cancel'}</sl-button>`
+        }
+        <sl-button variant=${confirmVariant} ?autofocus=${singleButton} @click=${() => dismiss(onConfirm)}>${confirmLabel}</sl-button>
       </div>
     </sl-dialog>
   `;
