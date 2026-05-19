@@ -1,4 +1,5 @@
 import { html, nothing } from 'lit-html';
+import { isCustomized } from './dispatch-tag-state.js';
 
 function chipView(tag, { locked, warn, removable, onRemove }) {
   const isWildcard = tag === '*';
@@ -15,6 +16,9 @@ function chipView(tag, { locked, warn, removable, onRemove }) {
 
   if (removable && onRemove) {
     return html`<sl-tag size="small" removable class="${classes}" data-value="${tag}" @sl-remove=${onRemove}>${label}</sl-tag>`;
+  }
+  if (removable) {
+    return html`<sl-tag size="small" removable class="${classes}" data-value="${tag}">${label}</sl-tag>`;
   }
   return html`<sl-tag size="small" class="${classes}" data-value="${tag}">${label}</sl-tag>`;
 }
@@ -38,17 +42,124 @@ function tierView(title, items, { locked, warn, removable, onRemove }) {
   `;
 }
 
-function perAgentRowView(agent, tags, _defaultTags) {
+function filterSuggestions(input, knownItems, currentTags, deniedSet) {
+  const query = (input || '').trim().toLowerCase();
+  return (knownItems || [])
+    .filter((item) => !currentTags.includes(item.name))
+    .filter((item) => !query || item.name.toLowerCase().includes(query))
+    .slice(0, 50)
+    .map((item) => ({
+      ...item,
+      denied: deniedSet.has(item.name),
+    }));
+}
+
+function perAgentRowView({
+  section,
+  agent,
+  tags,
+  defaultTags,
+  knownItems,
+  alwaysDisallowed,
+  rowState,
+  onRemove,
+  onReset,
+  onInput,
+  onFocus,
+  onBlur,
+  onKeydown,
+  onSuggestionClick,
+}) {
+  const isAgent = agent !== '_defaults';
+  const customized = isAgent && isCustomized(tags, defaultTags);
+  const deniedSet = new Set(alwaysDisallowed || []);
+  const suggestions = rowState.showSuggestions
+    ? filterSuggestions(rowState.input, knownItems, tags, deniedSet)
+    : [];
+
   return html`
-    <div class="settings-dispatch-row">
+    <div
+      class="settings-dispatch-row"
+      data-section="${section}"
+      data-agent="${agent}"
+    >
       <span class="settings-dispatch-agent">${agent}</span>
       <div class="dispatch-tag-input-wrapper">
-        <div class="dispatch-tag-input">
+        <div
+          id="dispatch-${section}-${agent}"
+          class="dispatch-tag-input"
+          @click=${(e) => {
+            // Focus the input when the wrapper is clicked
+            const input = e.currentTarget.querySelector(
+              '.dispatch-tag-input-field',
+            );
+            if (input && e.target !== input) input.focus();
+          }}
+        >
           ${tags.map((tag) =>
-            chipView(tag, { locked: false, warn: false, removable: true }),
+            chipView(tag, {
+              locked: false,
+              warn: false,
+              removable: true,
+              onRemove: () => onRemove(tag),
+            }),
           )}
+          <input
+            class="dispatch-tag-input-field"
+            type="text"
+            .value=${rowState.input || ''}
+            placeholder=${tags.length === 0 ? `Add ${section.slice(0, -1)}…` : ''}
+            @input=${onInput}
+            @focus=${onFocus}
+            @blur=${onBlur}
+            @keydown=${onKeydown}
+          />
         </div>
+        ${
+          rowState.showSuggestions && suggestions.length > 0
+            ? html`
+              <div class="dispatch-suggestions">
+                ${suggestions.map(
+                  (item) => html`
+                    <div
+                      class="item${item.denied ? ' denied' : ''}"
+                      @mousedown=${(e) => {
+                        // Prevent input blur before click fires
+                        e.preventDefault();
+                      }}
+                      @click=${() => {
+                        if (!item.denied) onSuggestionClick(item.name);
+                      }}
+                    >
+                      <span>${item.name}</span>
+                      ${
+                        item.label
+                          ? html`<span class="item-label">${item.label}</span>`
+                          : nothing
+                      }
+                    </div>
+                  `,
+                )}
+              </div>
+            `
+            : nothing
+        }
       </div>
+      ${
+        customized
+          ? html`
+            <sl-button
+              size="small"
+              variant="text"
+              class="dispatch-reset-btn"
+              title="Reset to default"
+              @click=${onReset}
+            >
+              Reset
+            </sl-button>
+          `
+          : html`<span class="dispatch-reset-placeholder"></span>`
+      }
     </div>
   `;
 }
@@ -67,18 +178,81 @@ function capitalize(s) {
  * @param {string[]} params.agentRoles
  * @param {Object} params.defaults
  * @param {(newConfig: Object) => void} params.onChange
+ * @param {Object} [params.state] - Per-agent UI state: { [agent]: { input, showSuggestions } }
+ * @param {() => void} [params.rerender]
  */
 export function dispatchSectionView({
   section,
   config,
-  knownItems: _knownItems,
+  knownItems,
   agentRoles,
   defaults,
   onChange,
+  state,
+  rerender,
 }) {
   const alwaysDisallowed = config.always_disallowed || [];
   const defaultDenied = config.default_denied || [];
   const perAgentAllow = config.per_agent_allow || {};
+  const editingState = state || {};
+  const triggerRerender = rerender || (() => {});
+
+  function getRowState(agent) {
+    if (!editingState[agent]) {
+      editingState[agent] = { input: '', showSuggestions: false };
+    }
+    return editingState[agent];
+  }
+
+  function emit(newPerAgentAllow) {
+    onChange({
+      ...config,
+      per_agent_allow: newPerAgentAllow,
+    });
+  }
+
+  function _agentDefault(agent) {
+    return (
+      defaults?.per_agent_allow?.[agent] ||
+      defaults?.per_agent_allow?._defaults ||
+      []
+    );
+  }
+
+  // The "effective" tag list for an agent: the explicit per-agent value
+  // when present, otherwise the section defaults. Edits materialize the
+  // effective list into an explicit per-agent entry.
+  function _effectiveTags(agent) {
+    if (perAgentAllow[agent] !== undefined) return perAgentAllow[agent];
+    if (agent === '_defaults') return [];
+    return _agentDefault(agent);
+  }
+
+  function addTagToAgent(agent, tag) {
+    const trimmed = (tag || '').trim();
+    if (!trimmed) return;
+    if (alwaysDisallowed.includes(trimmed)) return;
+    const current = _effectiveTags(agent);
+    if (current.includes(trimmed)) return;
+    const next = [...current, trimmed];
+    emit({ ...perAgentAllow, [agent]: next });
+  }
+
+  function removeTagFromAgent(agent, tag) {
+    const current = _effectiveTags(agent);
+    const next = current.filter((t) => t !== tag);
+    emit({ ...perAgentAllow, [agent]: next });
+  }
+
+  function resetAgent(agent) {
+    const next = { ...perAgentAllow };
+    const agentDefault =
+      defaults?.per_agent_allow?.[agent] ||
+      defaults?.per_agent_allow?._defaults ||
+      [];
+    next[agent] = [...agentDefault];
+    emit(next);
+  }
 
   function handleRemoveDefaultDenied(tag) {
     const newDenied = defaultDenied.filter((t) => t !== tag);
@@ -111,12 +285,58 @@ export function dispatchSectionView({
         <div class="dispatch-tier-label">Per-Agent Allow</div>
         <div class="settings-dispatch-table">
           ${allAgentKeys.map((agent) => {
-            const tags = perAgentAllow[agent] || [];
-            const agentDefaults =
-              defaults?.per_agent_allow?.[agent] ||
-              defaults?.per_agent_allow?._defaults ||
-              [];
-            return perAgentRowView(agent, tags, agentDefaults);
+            const tags = _effectiveTags(agent);
+            const agentDefaults = _agentDefault(agent);
+            const rowState = getRowState(agent);
+            return perAgentRowView({
+              section,
+              agent,
+              tags,
+              defaultTags: agentDefaults,
+              knownItems,
+              alwaysDisallowed,
+              rowState,
+              onRemove: (tag) => removeTagFromAgent(agent, tag),
+              onReset: () => resetAgent(agent),
+              onInput: (e) => {
+                rowState.input = e.target.value;
+                rowState.showSuggestions = true;
+                triggerRerender();
+              },
+              onFocus: () => {
+                rowState.showSuggestions = true;
+                triggerRerender();
+              },
+              onBlur: () => {
+                // Delay so suggestion @click can fire first
+                setTimeout(() => {
+                  rowState.showSuggestions = false;
+                  triggerRerender();
+                }, 150);
+              },
+              onKeydown: (e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  const value = rowState.input.trim();
+                  if (value) {
+                    addTagToAgent(agent, value);
+                    rowState.input = '';
+                    rowState.showSuggestions = false;
+                    triggerRerender();
+                  }
+                } else if (e.key === 'Escape') {
+                  rowState.showSuggestions = false;
+                  rowState.input = '';
+                  triggerRerender();
+                }
+              },
+              onSuggestionClick: (name) => {
+                addTagToAgent(agent, name);
+                rowState.input = '';
+                rowState.showSuggestions = false;
+                triggerRerender();
+              },
+            });
           })}
         </div>
       </div>

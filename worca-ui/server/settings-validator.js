@@ -396,19 +396,91 @@ export function validateSettingsPayload(body, options = {}) {
           ) {
             details.push('governance.dispatch must be an object');
           } else {
+            const DISPATCH_SECTIONS = ['tools', 'skills', 'subagents'];
             for (const [key, val] of Object.entries(g.dispatch)) {
-              if (!VALID_AGENTS.includes(key)) {
-                details.push(`Unknown dispatch agent: "${key}"`);
-                continue;
-              }
-              if (!Array.isArray(val)) {
-                details.push(`Dispatch for "${key}" must be an array`);
-                continue;
-              }
-              for (const v of val) {
-                if (typeof v !== 'string') {
-                  details.push(`Dispatch entry for "${key}" must be a string`);
+              if (DISPATCH_SECTIONS.includes(key)) {
+                // W-054 nested shape: dispatch.{tools,skills,subagents}
+                if (
+                  typeof val !== 'object' ||
+                  val === null ||
+                  Array.isArray(val)
+                ) {
+                  details.push(`governance.dispatch.${key} must be an object`);
+                  continue;
                 }
+                for (const tierKey of ['always_disallowed', 'default_denied']) {
+                  if (val[tierKey] === undefined) continue;
+                  if (!Array.isArray(val[tierKey])) {
+                    details.push(
+                      `governance.dispatch.${key}.${tierKey} must be an array`,
+                    );
+                    continue;
+                  }
+                  for (const entry of val[tierKey]) {
+                    if (typeof entry !== 'string') {
+                      details.push(
+                        `governance.dispatch.${key}.${tierKey} entries must be strings`,
+                      );
+                    }
+                  }
+                }
+                if (val.per_agent_allow !== undefined) {
+                  if (
+                    typeof val.per_agent_allow !== 'object' ||
+                    val.per_agent_allow === null ||
+                    Array.isArray(val.per_agent_allow)
+                  ) {
+                    details.push(
+                      `governance.dispatch.${key}.per_agent_allow must be an object`,
+                    );
+                  } else {
+                    for (const [agent, allowList] of Object.entries(
+                      val.per_agent_allow,
+                    )) {
+                      if (
+                        agent !== '_defaults' &&
+                        !VALID_AGENTS.includes(agent) &&
+                        agent !== 'workspace_planner'
+                      ) {
+                        details.push(
+                          `governance.dispatch.${key}.per_agent_allow: unknown agent "${agent}"`,
+                        );
+                        continue;
+                      }
+                      if (!Array.isArray(allowList)) {
+                        details.push(
+                          `governance.dispatch.${key}.per_agent_allow.${agent} must be an array`,
+                        );
+                        continue;
+                      }
+                      for (const entry of allowList) {
+                        if (typeof entry !== 'string') {
+                          details.push(
+                            `governance.dispatch.${key}.per_agent_allow.${agent} entries must be strings`,
+                          );
+                        }
+                      }
+                    }
+                  }
+                }
+              } else if (
+                VALID_AGENTS.includes(key) ||
+                key === 'workspace_planner'
+              ) {
+                // Pre-W-054 legacy flat shape — tolerated for migration.
+                if (!Array.isArray(val)) {
+                  details.push(`Dispatch for "${key}" must be an array`);
+                  continue;
+                }
+                for (const v of val) {
+                  if (typeof v !== 'string') {
+                    details.push(
+                      `Dispatch entry for "${key}" must be a string`,
+                    );
+                  }
+                }
+              } else {
+                details.push(`Unknown dispatch key: "${key}"`);
               }
             }
           }

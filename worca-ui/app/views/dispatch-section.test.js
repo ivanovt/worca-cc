@@ -171,10 +171,14 @@ describe('dispatch-section', () => {
           onChange: vi.fn(),
         }),
       );
-      const lockedSection =
-        html.split('Always Disallowed')[1]?.split('Default Denied')[0] || '';
-      expect(lockedSection).toContain('general-purpose');
-      expect(lockedSection).not.toContain('removable');
+      // Locate the chip element by its data-value rather than slicing on a
+      // section divider — the "Default Denied" header isn't rendered when
+      // the section is empty.
+      const chipMatch = html.match(
+        /<sl-tag([^>]*)data-value="general-purpose"/,
+      );
+      expect(chipMatch).not.toBeNull();
+      expect(chipMatch[1]).not.toContain('removable');
     });
   });
 

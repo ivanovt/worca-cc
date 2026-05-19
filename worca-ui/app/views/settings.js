@@ -175,11 +175,69 @@ let saveMessage = '';
 let _settingsProjectId = null; // track which project settings are loaded for
 let _migrationNeeded = false;
 let _migrationDismissed = false;
+let _legacyDispatchDetected = false;
 
 // --- Dispatch autocomplete state ---
 let _discoveredKnownTypes = null;
 let _knownTools = null;
 let _knownSkills = null;
+
+// --- Per-section dispatch editor state ({input, showSuggestions} per agent) ---
+let _dispatchEditState = {
+  tools: {},
+  skills: {},
+  subagents: {},
+};
+
+function resetDispatchEditState() {
+  _dispatchEditState = { tools: {}, skills: {}, subagents: {} };
+}
+
+const _DISPATCH_SECTION_KEYS = new Set(['tools', 'skills', 'subagents']);
+
+function _detectAndAbsorbLegacyDispatch(gov) {
+  if (!gov || typeof gov !== 'object') return false;
+  let detected = false;
+
+  // Legacy flat shape: governance.dispatch = { planner: [...], ... }
+  const dispatch = gov.dispatch;
+  if (dispatch && typeof dispatch === 'object' && !Array.isArray(dispatch)) {
+    const flatKeys = Object.keys(dispatch).filter(
+      (k) => !_DISPATCH_SECTION_KEYS.has(k) && Array.isArray(dispatch[k]),
+    );
+    if (flatKeys.length > 0) {
+      detected = true;
+      if (!dispatch.subagents) dispatch.subagents = {};
+      if (!dispatch.subagents.per_agent_allow) {
+        dispatch.subagents.per_agent_allow = {};
+      }
+      for (const key of flatKeys) {
+        if (!dispatch.subagents.per_agent_allow[key]) {
+          dispatch.subagents.per_agent_allow[key] = dispatch[key];
+        }
+        delete dispatch[key];
+      }
+    }
+  }
+
+  // Pre-W-054 intermediate shape: governance.subagent_dispatch = { planner: [...] }
+  if (gov.subagent_dispatch && typeof gov.subagent_dispatch === 'object') {
+    detected = true;
+    if (!gov.dispatch) gov.dispatch = {};
+    if (!gov.dispatch.subagents) gov.dispatch.subagents = {};
+    if (!gov.dispatch.subagents.per_agent_allow) {
+      gov.dispatch.subagents.per_agent_allow = {};
+    }
+    for (const [k, v] of Object.entries(gov.subagent_dispatch)) {
+      if (!gov.dispatch.subagents.per_agent_allow[k]) {
+        gov.dispatch.subagents.per_agent_allow[k] = v;
+      }
+    }
+    delete gov.subagent_dispatch;
+  }
+
+  return detected;
+}
 
 function settingsUrl(projectId, suffix = '') {
   if (projectId) return `/api/projects/${projectId}/settings${suffix}`;
@@ -245,6 +303,9 @@ export async function loadSettings(projectId) {
       settingsData.worca.governance = { ...DEFAULT_GOVERNANCE };
     } else {
       const gov = settingsData.worca.governance;
+      // Detect and migrate legacy shapes (flat governance.dispatch, or
+      // intermediate subagent_dispatch) into the W-054 nested shape in place.
+      _legacyDispatchDetected = _detectAndAbsorbLegacyDispatch(gov);
       const serverDispatch = gov.dispatch || {};
       settingsData.worca.governance = {
         ...DEFAULT_GOVERNANCE,
@@ -332,6 +393,7 @@ export async function loadSettings(projectId) {
     }
     _migrationNeeded = detectMigrationNeeded(settingsData.worca);
     _migrationDismissed = false;
+    resetDispatchEditState();
     // Best-effort fetch of known items for dispatch autocomplete.
     // On failure we keep nulls and the editor uses hardcoded fallbacks.
     try {
@@ -1018,6 +1080,17 @@ export function governanceTab(worca, permissions, rerender) {
   const knownSkills = _knownSkills || [];
   const knownSubagents = _discoveredKnownTypes || KNOWN_TYPES;
 
+  const legacyDispatchBanner = _legacyDispatchDetected
+    ? html`
+        <sl-alert variant="warning" open class="migration-banner">
+          <strong>Legacy <code>governance.dispatch</code> shape detected.</strong>
+          Values have been migrated into the new
+          <code>dispatch.subagents.per_agent_allow</code> structure in memory.
+          Click <strong>Save</strong> to persist the migration.
+        </sl-alert>
+      `
+    : nothing;
+
   return html`
     <div class="settings-tab-content">
       <h3 class="settings-section-title">Guard Rules</h3>
@@ -1044,6 +1117,7 @@ export function governanceTab(worca, permissions, rerender) {
       </div>
 
       <h3 class="settings-section-title">Dispatch Rules</h3>
+      ${legacyDispatchBanner}
       ${dispatchSectionView({
         section: 'tools',
         config: dispatch.tools || DISPATCH_DEFAULTS.tools,
@@ -1051,6 +1125,8 @@ export function governanceTab(worca, permissions, rerender) {
         agentRoles: AGENT_NAMES,
         defaults: DISPATCH_DEFAULTS.tools,
         onChange: (cfg) => handleDispatchChange('tools', cfg),
+        state: _dispatchEditState.tools,
+        rerender,
       })}
       ${dispatchSectionView({
         section: 'skills',
@@ -1059,6 +1135,8 @@ export function governanceTab(worca, permissions, rerender) {
         agentRoles: AGENT_NAMES,
         defaults: DISPATCH_DEFAULTS.skills,
         onChange: (cfg) => handleDispatchChange('skills', cfg),
+        state: _dispatchEditState.skills,
+        rerender,
       })}
       ${dispatchSectionView({
         section: 'subagents',
@@ -1067,6 +1145,8 @@ export function governanceTab(worca, permissions, rerender) {
         agentRoles: AGENT_NAMES,
         defaults: DISPATCH_DEFAULTS.subagents,
         onChange: (cfg) => handleDispatchChange('subagents', cfg),
+        state: _dispatchEditState.subagents,
+        rerender,
       })}
 
       <h3 class="settings-section-title">Permissions</h3>
