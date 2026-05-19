@@ -888,6 +888,8 @@ export function runDetailView(run, settings = {}, options = {}) {
   const sourceBranch =
     run.head_branch || run.branch || run.work_request?.branch || '';
   const targetBranch = run.target_branch || '';
+  const defaultBranch = run._default_branch || '';
+  const showTargetBranch = targetBranch && targetBranch !== defaultBranch;
   const pipelineTemplate = formatPipelineTemplate(run.pipeline_template);
   const pr = run.pr?.url || run.pr_url || null;
   const endTime =
@@ -959,7 +961,7 @@ export function runDetailView(run, settings = {}, options = {}) {
             : nothing
         }
         ${
-          targetBranch
+          showTargetBranch
             ? html`
           <div class="run-target-branch">
             <span class="meta-label">Target Branch:</span>

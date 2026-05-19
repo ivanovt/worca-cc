@@ -456,17 +456,45 @@ describe('runDetailView - source/target branch display', () => {
     expect(out).toContain('develop');
   });
 
-  it('shows Target Branch unconditionally when target_branch is present', () => {
+  it('shows Target Branch when target_branch differs from _default_branch', () => {
     const run = {
       id: 'r-branch-3',
       active: true,
       started_at: '2026-01-01T00:00:00Z',
       head_branch: 'worca/feat-xyz',
-      target_branch: 'master',
+      target_branch: 'develop',
+      _default_branch: 'main',
     };
     const out = render(runDetailView(run));
     expect(out).toContain('Target Branch:');
-    expect(out).toContain('master');
+    expect(out).toContain('develop');
+  });
+
+  it('hides Target Branch when target_branch equals _default_branch', () => {
+    const run = {
+      id: 'r-branch-3b',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      target_branch: 'main',
+      _default_branch: 'main',
+    };
+    const out = render(runDetailView(run));
+    expect(out).not.toContain('Target Branch:');
+  });
+
+  it('shows Target Branch when _default_branch is unknown (null)', () => {
+    const run = {
+      id: 'r-branch-3c',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      target_branch: 'main',
+      _default_branch: null,
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Target Branch:');
+    expect(out).toContain('main');
   });
 
   it('attaches PR link to the Source Branch row', () => {

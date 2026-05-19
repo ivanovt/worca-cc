@@ -1,65 +1,38 @@
 /**
- * Tests for propagating _default_branch from API responses onto run/worktree
- * objects in fetchAllProjectRuns and fetchWorktrees.
+ * Tests the per-response shape mappers that fetchAllProjectRuns and
+ * fetchWorktrees in main.js delegate to. We import the real module — not a
+ * local copy — and also stub `fetch` to exercise the full mapper-through-
+ * promise path end-to-end.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  mapProjectRunsResponse,
+  mapWorktreesResponse,
+} from './utils/run-mappers.js';
 
-/**
- * Mirrors the per-project mapping logic inside fetchAllProjectRuns.
- * Extracts default_branch from the API response and attaches it as
- * _default_branch on each run object.
- */
-function mapProjectRunsResponse(data, projectName) {
-  const defaultBranch = data.default_branch || null;
-  return {
-    runs: (data.runs || []).map((run) => ({
-      ...run,
-      project: run.project || projectName,
-      _default_branch: defaultBranch,
-    })),
-    settings: data.settings || null,
-    projectName,
-  };
-}
-
-/**
- * Mirrors the per-project mapping logic inside fetchWorktrees.
- * Extracts default_branch from the API response and attaches it as
- * _default_branch on each worktree object.
- */
-function mapWorktreesResponse(data, projectName) {
-  const defaultBranch = data.default_branch || null;
-  return (data.worktrees || []).map((w) => ({
-    ...w,
-    project: projectName,
-    _default_branch: defaultBranch,
-  }));
-}
-
-describe('fetchAllProjectRuns: _default_branch propagation', () => {
+describe('mapProjectRunsResponse', () => {
   it('attaches _default_branch from API response to each run', () => {
     const data = {
       runs: [
-        { id: 'run-1', branch: 'master' },
-        { id: 'run-2', branch: 'master' },
+        { id: 'run-1', branch: 'main' },
+        { id: 'run-2', branch: 'main' },
       ],
-      default_branch: 'master',
+      default_branch: 'main',
       settings: null,
     };
 
     const result = mapProjectRunsResponse(data, 'my-project');
 
-    expect(result.runs[0]._default_branch).toBe('master');
-    expect(result.runs[1]._default_branch).toBe('master');
+    expect(result.runs[0]._default_branch).toBe('main');
+    expect(result.runs[1]._default_branch).toBe('main');
+    expect(result.projectName).toBe('my-project');
   });
 
   it('sets _default_branch to null when API omits default_branch', () => {
-    const data = {
-      runs: [{ id: 'run-1' }],
-    };
-
-    const result = mapProjectRunsResponse(data, 'my-project');
-
+    const result = mapProjectRunsResponse(
+      { runs: [{ id: 'run-1' }] },
+      'my-project',
+    );
     expect(result.runs[0]._default_branch).toBeNull();
   });
 
@@ -70,9 +43,7 @@ describe('fetchAllProjectRuns: _default_branch propagation', () => {
       ],
       default_branch: 'main',
     };
-
     const result = mapProjectRunsResponse(data, 'proj');
-
     expect(result.runs[0]).toMatchObject({
       id: 'run-1',
       head_branch: 'feat/x',
@@ -83,63 +54,68 @@ describe('fetchAllProjectRuns: _default_branch propagation', () => {
   });
 
   it('stamps project name on run when run.project is missing', () => {
-    const data = {
-      runs: [{ id: 'run-1' }],
-      default_branch: 'develop',
-    };
-
-    const result = mapProjectRunsResponse(data, 'repo-a');
-
+    const result = mapProjectRunsResponse(
+      { runs: [{ id: 'run-1' }], default_branch: 'develop' },
+      'repo-a',
+    );
     expect(result.runs[0].project).toBe('repo-a');
     expect(result.runs[0]._default_branch).toBe('develop');
   });
 
   it('keeps run.project if already set', () => {
-    const data = {
-      runs: [{ id: 'run-1', project: 'original' }],
-      default_branch: 'main',
-    };
-
-    const result = mapProjectRunsResponse(data, 'fallback');
-
+    const result = mapProjectRunsResponse(
+      { runs: [{ id: 'run-1', project: 'original' }], default_branch: 'main' },
+      'fallback',
+    );
     expect(result.runs[0].project).toBe('original');
+  });
+
+  it('handles a missing runs array safely', () => {
+    const result = mapProjectRunsResponse({ default_branch: 'main' }, 'proj');
+    expect(result.runs).toEqual([]);
+    expect(result.projectName).toBe('proj');
+  });
+
+  it('handles a null payload safely', () => {
+    const result = mapProjectRunsResponse(null, 'proj');
+    expect(result.runs).toEqual([]);
+    expect(result.settings).toBeNull();
+    expect(result.projectName).toBe('proj');
   });
 });
 
-describe('fetchWorktrees: _default_branch propagation', () => {
+describe('mapWorktreesResponse', () => {
   it('attaches _default_branch from API response to each worktree', () => {
-    const data = {
-      worktrees: [
-        { run_id: 'wt-1', branch: 'feat/a' },
-        { run_id: 'wt-2', branch: 'feat/b' },
-      ],
-      default_branch: 'main',
-    };
-
-    const result = mapWorktreesResponse(data, 'my-project');
-
+    const result = mapWorktreesResponse(
+      {
+        worktrees: [
+          { run_id: 'wt-1', branch: 'feat/a' },
+          { run_id: 'wt-2', branch: 'feat/b' },
+        ],
+        default_branch: 'main',
+      },
+      'my-project',
+    );
     expect(result[0]._default_branch).toBe('main');
     expect(result[1]._default_branch).toBe('main');
   });
 
   it('sets _default_branch to null when API omits default_branch', () => {
-    const data = {
-      worktrees: [{ run_id: 'wt-1' }],
-    };
-
-    const result = mapWorktreesResponse(data, 'my-project');
-
+    const result = mapWorktreesResponse(
+      { worktrees: [{ run_id: 'wt-1' }] },
+      'my-project',
+    );
     expect(result[0]._default_branch).toBeNull();
   });
 
   it('preserves existing worktree fields alongside _default_branch', () => {
-    const data = {
-      worktrees: [{ run_id: 'wt-1', branch: 'feat/x', status: 'running' }],
-      default_branch: 'develop',
-    };
-
-    const result = mapWorktreesResponse(data, 'proj');
-
+    const result = mapWorktreesResponse(
+      {
+        worktrees: [{ run_id: 'wt-1', branch: 'feat/x', status: 'running' }],
+        default_branch: 'develop',
+      },
+      'proj',
+    );
     expect(result[0]).toMatchObject({
       run_id: 'wt-1',
       branch: 'feat/x',
@@ -150,16 +126,102 @@ describe('fetchWorktrees: _default_branch propagation', () => {
   });
 
   it('stamps project name on every worktree', () => {
-    const data = {
-      worktrees: [{ run_id: 'wt-1' }, { run_id: 'wt-2' }],
-      default_branch: 'master',
-    };
-
-    const result = mapWorktreesResponse(data, 'repo-b');
-
+    const result = mapWorktreesResponse(
+      {
+        worktrees: [{ run_id: 'wt-1' }, { run_id: 'wt-2' }],
+        default_branch: 'main',
+      },
+      'repo-b',
+    );
     for (const wt of result) {
       expect(wt.project).toBe('repo-b');
-      expect(wt._default_branch).toBe('master');
+      expect(wt._default_branch).toBe('main');
     }
+  });
+
+  it('handles a missing worktrees array safely', () => {
+    expect(mapWorktreesResponse({}, 'proj')).toEqual([]);
+  });
+
+  it('handles a null payload safely', () => {
+    expect(mapWorktreesResponse(null, 'proj')).toEqual([]);
+  });
+});
+
+describe('fetch round-trip: /api/projects/:id/runs', () => {
+  const originalFetch = globalThis.fetch;
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('produces mapped runs end-to-end with _default_branch attached', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      json: async () => ({
+        runs: [{ id: 'r1' }, { id: 'r2', project: 'override' }],
+        default_branch: 'main',
+        settings: { foo: 1 },
+      }),
+    });
+
+    const fetchAndMap = (projectName) =>
+      globalThis
+        .fetch(`/api/projects/${projectName}/runs`)
+        .then((r) => r.json())
+        .then((data) => mapProjectRunsResponse(data, projectName));
+
+    const result = await fetchAndMap('demo');
+
+    expect(globalThis.fetch).toHaveBeenCalledWith('/api/projects/demo/runs');
+    expect(result.runs).toHaveLength(2);
+    expect(result.runs[0]).toMatchObject({
+      id: 'r1',
+      project: 'demo',
+      _default_branch: 'main',
+    });
+    expect(result.runs[1]).toMatchObject({
+      id: 'r2',
+      project: 'override',
+      _default_branch: 'main',
+    });
+    expect(result.settings).toEqual({ foo: 1 });
+  });
+});
+
+describe('fetch round-trip: /api/projects/:id/worktrees', () => {
+  const originalFetch = globalThis.fetch;
+  beforeEach(() => {
+    globalThis.fetch = vi.fn();
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it('produces mapped worktrees end-to-end with _default_branch attached', async () => {
+    globalThis.fetch.mockResolvedValue({
+      json: async () => ({
+        worktrees: [{ run_id: 'wt-1', branch: 'feat/a' }],
+        default_branch: 'develop',
+      }),
+    });
+
+    const fetchAndMap = (projectName) =>
+      globalThis
+        .fetch(`/api/projects/${projectName}/worktrees`)
+        .then((r) => r.json())
+        .then((data) => mapWorktreesResponse(data, projectName));
+
+    const result = await fetchAndMap('repo-x');
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      '/api/projects/repo-x/worktrees',
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      run_id: 'wt-1',
+      branch: 'feat/a',
+      project: 'repo-x',
+      _default_branch: 'develop',
+    });
   });
 });

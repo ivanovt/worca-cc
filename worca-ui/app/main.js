@@ -20,6 +20,10 @@ import {
   Square,
   Trash2,
 } from './utils/icons.js';
+import {
+  mapProjectRunsResponse,
+  mapWorktreesResponse,
+} from './utils/run-mappers.js';
 import { sortByStartDesc } from './utils/sort-runs.js';
 import { actionAllowed } from './utils/state-actions.js';
 import { statusIcon } from './utils/status-badge.js';
@@ -1235,18 +1239,7 @@ function fetchAllProjectRuns() {
     projects.map((p) =>
       fetch(`/api/projects/${p.name}/runs`)
         .then((r) => r.json())
-        .then((data) => {
-          const defaultBranch = data.default_branch || null;
-          return {
-            runs: (data.runs || []).map((run) => ({
-              ...run,
-              project: run.project || p.name,
-              _default_branch: defaultBranch,
-            })),
-            settings: data.settings || null,
-            projectName: p.name,
-          };
-        })
+        .then((data) => mapProjectRunsResponse(data, p.name))
         .catch(() => ({ runs: [], settings: null, projectName: p.name })),
     ),
   ).then((results) => {
@@ -1291,14 +1284,7 @@ function fetchWorktrees() {
   const requests = targets.map((name) =>
     fetch(`/api/projects/${name}/worktrees`)
       .then((r) => r.json())
-      .then((data) => {
-        const defaultBranch = data.default_branch || null;
-        return (data.worktrees || []).map((w) => ({
-          ...w,
-          project: name,
-          _default_branch: defaultBranch,
-        }));
-      })
+      .then((data) => mapWorktreesResponse(data, name))
       .catch(() => []),
   );
 

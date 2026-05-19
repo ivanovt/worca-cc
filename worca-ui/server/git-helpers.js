@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
 
-export function getDefaultBranch(projectRoot) {
+const CACHE_TTL_MS = 30_000;
+const cache = new Map();
+
+function _resolveDefaultBranch(projectRoot) {
   try {
     const out = execFileSync(
       'git',
@@ -12,5 +15,18 @@ export function getDefaultBranch(projectRoot) {
   } catch {
     // no symbolic-ref configured — fall through
   }
-  return 'master';
+  return 'main';
+}
+
+export function getDefaultBranch(projectRoot) {
+  const now = Date.now();
+  const hit = cache.get(projectRoot);
+  if (hit && hit.expiresAt > now) return hit.value;
+  const value = _resolveDefaultBranch(projectRoot);
+  cache.set(projectRoot, { value, expiresAt: now + CACHE_TTL_MS });
+  return value;
+}
+
+export function _clearDefaultBranchCache() {
+  cache.clear();
 }
