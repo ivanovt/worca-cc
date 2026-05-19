@@ -42,13 +42,25 @@ When `WORCA_AGENT` is empty (interactive mode), all dispatches are allowed — h
 
 **Default: wide open (`["*"]`).** Per-tool blast radius is small, and Bash is already hook-guarded by `pre_tool_use.py`. The `always_disallowed` entries prevent agents from entering plan mode, spawning worktrees, or writing todos — actions that would break pipeline flow.
 
-The tools section only honors `"*"` and `[]` (lockdown) — named-tool allowlists are not supported in v1 because `--disallowedTools` takes an enumeration and inverting against an unstable tool universe (built-ins + MCP) is brittle.
+**Named-tool allowlists are supported (PR C).** `per_agent_allow` honors three forms:
+
+| Form | CLI translation | Meaning |
+|------|-----------------|---------|
+| `["*"]` (default) | `--tools default` | All built-in tools allowed (minus `always_disallowed`) |
+| `["Read", "Grep"]` | `--tools Agent,Grep,Read,Skill` | Only the named built-ins are allowed; **`Skill` and `Agent` are auto-included** so worca's skill / subagent governance hooks still fire |
+| `[]` | `--tools ""` | Full lockdown — no built-in tool can be used |
+
+**Two constraints worth knowing:**
+
+1. **MCP tools (`mcp_*`) are not covered by `--tools`.** Per the Claude CLI help text, `--tools` only restricts the *built-in* set. MCP governance flows through separate channels (the MCP server's own auth, the harness's MCP allow/deny configuration). A named tool allowlist does not block MCP calls.
+2. **`Skill` and `Agent` are meta-tools.** They invoke skills and subagents, and the worca hooks (`skill_use.py` and `subagent_start.py`) gate those calls. If you author a named allowlist without `Skill` or `Agent`, the agent can't dispatch — but the hooks would never fire if those meta-tools were truly excluded from `--tools`. The implementation auto-adds them to any named list to keep both governance paths alive.
 
 ### Skills
 
 ```jsonc
 {
   "always_disallowed": [
+    "batch", "fewer-permission-prompts",
     "loop", "schedule",
     "worca-*",
     "update-config",
@@ -56,12 +68,23 @@ The tools section only honors `"*"` and `[]` (lockdown) — named-tool allowlist
     "init"
   ],
   "default_denied": [
-    "review", "security-review",
+    "claude-api", "debug",
+    "review", "security-review", "simplify",
     "feature-dev:feature-dev",
     "claude-md-management:revise-claude-md",
     "claude-md-management:claude-md-improver"
   ],
-  "per_agent_allow": { "_defaults": ["*"] }
+  "per_agent_allow": {
+    "_defaults": ["*"],
+    "implementer": ["*", "simplify", "claude-api"],
+    "tester": ["*", "debug"],
+    "reviewer": ["*", "review", "security-review"],
+    "learner": [
+      "*",
+      "claude-md-management:revise-claude-md",
+      "claude-md-management:claude-md-improver"
+    ]
+  }
 }
 ```
 
@@ -71,6 +94,8 @@ The tools section only honors `"*"` and `[]` (lockdown) — named-tool allowlist
 
 | Pattern | Reason |
 |---------|--------|
+| `batch` | Pipeline-spawning — the bundled `/batch` skill decomposes work into 5–30 background subagent worktrees and opens PRs, which would recursively launch parallel pipelines inside a pipeline |
+| `fewer-permission-prompts` | Governance self-modification — modifies the project's `.claude/settings.json` allowlist, bypassing the worca governance boundary |
 | `loop`, `schedule` | Pipeline-recursion — an agent spawning its own loop would fork unbounded work |
 | `worca-*` | Pipeline-spawning — `worca-install`, `worca-rc`, `worca-release`, etc. should never run inside a pipeline |
 | `update-config` | Governance self-modification — agents must not change their own config mid-run |
@@ -79,11 +104,14 @@ The tools section only honors `"*"` and `[]` (lockdown) — named-tool allowlist
 
 **Tier 2 (`default_denied`) rationale:**
 
-| Skill | Reason |
-|-------|--------|
-| `review`, `security-review` | Duplicate reviewer-stage work; opt-in for second-opinion runs |
-| `feature-dev:feature-dev` | Would launch nested feature development inside an already-developing pipeline |
-| `claude-md-management:revise-claude-md`, `claude-md-management:claude-md-improver` | Modify CLAUDE.md mid-pipeline; useful only for the learner stage |
+| Skill | Reason | Default opt-ins |
+|-------|--------|-----------------|
+| `claude-api` | Claude API reference + model-ID migration; useful when implementing API features but noisy elsewhere | `implementer` |
+| `debug` | Enables debug logging mid-session; high-signal for the tester but distracts other agents | `tester` |
+| `review`, `security-review` | Duplicate reviewer-stage work; opt-in for second-opinion runs | `reviewer` |
+| `simplify` | Spawns 3 parallel review-style agents — fine for the implementer's self-review loop, too heavy for other stages | `implementer` |
+| `feature-dev:feature-dev` | Would launch nested feature development inside an already-developing pipeline | (none) |
+| `claude-md-management:revise-claude-md`, `claude-md-management:claude-md-improver` | Modify CLAUDE.md mid-pipeline; useful only for the learner stage | `learner` |
 
 ### Subagents
 
@@ -91,26 +119,25 @@ The tools section only honors `"*"` and `[]` (lockdown) — named-tool allowlist
 {
   "always_disallowed": ["general-purpose"],
   "default_denied": [],
-  "per_agent_allow": {
-    "_defaults": ["Explore"],
-    "implementer": ["Explore", "feature-dev:code-reviewer"]
-  }
+  "per_agent_allow": { "_defaults": ["*"] }
 }
 ```
 
-**Default: narrow (`["Explore"]`).** Subagents can fork unbounded invisible work — each subagent spawns a full Claude session with its own tool access. Broader access is opt-in.
+**Default: wide open (`["*"]`).** All built-in subagents (`Explore`, `Plan`, `claude-code-guide`, `statusline-setup`) plus user/plugin subagents resolve via wildcard. The `general-purpose` subagent is in `always_disallowed` because it spawns an unconstrained Claude session with full tool access — the one footgun.
+
+Projects that need tighter control add specific subagents to `default_denied` and opt in per agent. The plain wildcard default reflects an operational reality: hand-curating allowlists for an evolving set of project/plugin subagents creates more drift than safety.
 
 ## Asymmetric defaults
 
-The three sections intentionally use different default postures:
+All three sections now default to `["*"]` (PR B for subagents). The deny tiers carry the protection:
 
-| Section | `_defaults` | Rationale |
-|---------|-------------|-----------|
-| tools | `["*"]` | Per-tool blast radius is small; Bash already hook-guarded |
-| skills | `["*"]` | Custom skills are the primary use case for enabling Skill; denylist covers footguns |
-| subagents | `["Explore"]` | Subagents fork unbounded invisible work — opt-in to broader access |
+| Section | `_defaults` | Tier-1 denials |
+|---------|-------------|----------------|
+| tools | `["*"]` | `EnterPlanMode`, `EnterWorktree`, `TodoWrite` |
+| skills | `["*"]` | `batch`, `fewer-permission-prompts`, `loop`, `schedule`, `worca-*`, `update-config`, `hookify:*`, `init` |
+| subagents | `["*"]` | `general-purpose` |
 
-This is not inconsistency — it reflects blast radius. A tool call is one operation. A skill invocation runs a bounded script. A subagent spawns a full agent session.
+The skills section additionally uses `default_denied` to gate per-agent opt-ins (`simplify`, `debug`, `claude-api`, `review`, etc.). Subagents and tools use `default_denied` rarely — projects can add entries to express "this is normally off; reviewer can opt in" without flipping per-agent allowlists.
 
 ## Wildcard semantics
 
@@ -171,7 +198,7 @@ Dispatch decisions emit telemetry events:
 
 | Section | Hook script | Mechanism |
 |---------|-------------|-----------|
-| tools | `claude_cli.py` | `--disallowedTools` flag on agent subprocess |
+| tools | `claude_cli.py` | `--tools <list>` + `--disallowedTools <list>` flags on agent subprocess |
 | skills | `skill_use.py` | PreToolUse hook on the `Skill` tool |
 | subagents | `subagent_start.py` | SubagentStart hook |
 
@@ -199,13 +226,28 @@ Dispatch decisions emit telemetry events:
 }
 ```
 
-### Give the implementer access to code-reviewer subagent
+### Tighten subagents from the default wildcard
+
+The default is `["*"]` (PR B). To go back to a narrow Explore-only posture for the coordinator while leaving every other agent on the wildcard default:
 
 ```jsonc
 "subagents": {
   "per_agent_allow": {
-    "_defaults": ["Explore"],
-    "implementer": ["Explore", "feature-dev:code-reviewer"]
+    "_defaults": ["*"],
+    "coordinator": ["Explore"]
+  }
+}
+```
+
+### Block a specific subagent from the wildcard default
+
+Add it to `default_denied`. The wildcard does not include `default_denied` entries:
+
+```jsonc
+"subagents": {
+  "default_denied": ["claude-code-guide"],
+  "per_agent_allow": {
+    "_defaults": ["*"]
   }
 }
 ```
@@ -220,3 +262,18 @@ Dispatch decisions emit telemetry events:
   }
 }
 ```
+
+The learner subprocess is invoked with `--tools ""` — no built-in tool is available. The `Skill` and `Agent` PreToolUse hooks still fire, but they can't ultimately succeed because the underlying tools they invoke are themselves locked down.
+
+### Restrict an agent to a named tool subset
+
+```jsonc
+"tools": {
+  "per_agent_allow": {
+    "_defaults": ["*"],
+    "reviewer": ["Read", "Grep"]
+  }
+}
+```
+
+The reviewer subprocess is invoked with `--tools Agent,Grep,Read,Skill` (with `Skill`/`Agent` auto-included). The reviewer can read and grep but cannot Edit, Write, or run Bash. Worca's skill/subagent governance still applies to the meta-tools.

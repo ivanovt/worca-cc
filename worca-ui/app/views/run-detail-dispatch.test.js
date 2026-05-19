@@ -117,7 +117,8 @@ describe('iteration tags layout', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
               via: 'explicit',
               count: 1,
             },
@@ -137,7 +138,8 @@ describe('iteration tags layout', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_blocked',
-              subagent_type: 'general-purpose',
+              section: 'subagents',
+              candidate: 'general-purpose',
               reason: 'denylist',
               count: 2,
             },
@@ -147,17 +149,20 @@ describe('iteration tags layout', () => {
     );
     expect(html).toContain('Subagents:');
     expect(html).toContain('general-purpose blocked (×2)');
-    expect(html).toContain('title="denylist"');
+    // PR B tooltip composition: section/via/reason joined by " · "
+    expect(html).toMatch(/title="[^"]*denylist[^"]*"/);
+    expect(html).toMatch(/title="[^"]*section: subagents[^"]*"/);
   });
 
-  it('renders skill_allowed events as allowed badges', () => {
+  it('renders skill dispatches via the unified dispatch_allowed event (section: skills)', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
           dispatch_events: [
             {
-              type: 'pipeline.hook.skill_allowed',
-              subagent_type: 'review',
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'skills',
+              candidate: 'review',
               via: 'wildcard',
               count: 1,
             },
@@ -182,13 +187,15 @@ describe('iteration tags layout', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
               via: 'explicit',
               count: 5,
             },
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Plan',
+              section: 'subagents',
+              candidate: 'Plan',
               via: 'wildcard',
               count: 1,
             },
@@ -199,6 +206,25 @@ describe('iteration tags layout', () => {
     expect(html).toContain('Explore dispatched (×5)');
     expect(html).toContain('Plan dispatched');
     expect(html).not.toContain('Plan dispatched (×');
+  });
+
+  it('back-compat: legacy subagent_type payload key still renders', () => {
+    // Status snapshots written before W-054 PR D still carry the old field.
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              via: 'explicit',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Explore dispatched');
   });
 
   // --- Classification row ---
@@ -252,13 +278,15 @@ describe('dispatch activity counter', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
               via: 'explicit',
               count: 3,
             },
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Plan',
+              section: 'subagents',
+              candidate: 'Plan',
               via: 'wildcard',
               count: 2,
             },
@@ -278,7 +306,8 @@ describe('dispatch activity counter', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
               via: 'explicit',
               count: 5,
             },
@@ -290,20 +319,22 @@ describe('dispatch activity counter', () => {
     expect(html).not.toContain('wildcard');
   });
 
-  it('counts skill_allowed events alongside dispatch_allowed', () => {
+  it('counts skill dispatches alongside subagent dispatches via the unified type', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
               via: 'explicit',
               count: 1,
             },
             {
-              type: 'pipeline.hook.skill_allowed',
-              subagent_type: 'review',
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'skills',
+              candidate: 'review',
               via: 'wildcard',
               count: 1,
             },
@@ -322,13 +353,15 @@ describe('dispatch activity counter', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
               via: 'explicit',
               count: 2,
             },
             {
               type: 'pipeline.hook.dispatch_blocked',
-              subagent_type: 'general-purpose',
+              section: 'subagents',
+              candidate: 'general-purpose',
               reason: 'denylist',
               count: 3,
             },
@@ -352,7 +385,8 @@ describe('dispatch activity counter', () => {
               dispatch_events: [
                 {
                   type: 'pipeline.hook.dispatch_allowed',
-                  subagent_type: 'Explore',
+                  section: 'subagents',
+                  candidate: 'Explore',
                   via: 'explicit',
                   count: 3,
                 },
@@ -370,7 +404,8 @@ describe('dispatch activity counter', () => {
               dispatch_events: [
                 {
                   type: 'pipeline.hook.dispatch_allowed',
-                  subagent_type: 'Explore',
+                  section: 'subagents',
+                  candidate: 'Explore',
                   via: 'wildcard',
                   count: 2,
                 },
@@ -398,13 +433,15 @@ describe('dispatch activity counter', () => {
               dispatch_events: [
                 {
                   type: 'pipeline.hook.dispatch_allowed',
-                  subagent_type: 'Explore',
+                  section: 'subagents',
+                  candidate: 'Explore',
                   via: 'explicit',
                   count: 1,
                 },
                 {
                   type: 'pipeline.hook.dispatch_allowed',
-                  subagent_type: 'Plan',
+                  section: 'subagents',
+                  candidate: 'Plan',
                   via: 'wildcard',
                   count: 1,
                 },
@@ -434,7 +471,8 @@ describe('dispatch activity counter', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_blocked',
-              subagent_type: 'general-purpose',
+              section: 'subagents',
+              candidate: 'general-purpose',
               reason: 'denylist',
               count: 1,
             },

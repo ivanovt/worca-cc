@@ -34,9 +34,10 @@ def main():
     allowed, reason, via = check_allowed("skills", parent, skill)
     if not allowed:
         if emit_from_hook:
-            emit_from_hook("pipeline.hook.skill_blocked", {
+            emit_from_hook("pipeline.hook.dispatch_blocked", {
                 "agent": parent,
-                "skill": skill,
+                "section": "skills",
+                "candidate": skill,
                 "reason": reason,
             })
         print(f"Blocked: skill '{skill}' is not allowed for {parent or 'this agent'} ({reason})",
@@ -44,9 +45,10 @@ def main():
         sys.exit(2)
 
     if parent and emit_from_hook:
-        emit_from_hook("pipeline.hook.skill_allowed", {
+        emit_from_hook("pipeline.hook.dispatch_allowed", {
             "agent": parent,
-            "skill": skill,
+            "section": "skills",
+            "candidate": skill,
             "via": via,
         })
     sys.exit(0)

@@ -36,6 +36,12 @@ describe('DISPATCH_DEFAULTS', () => {
     );
   });
 
+  it('skills always_disallowed includes new dangerous bundled skills (PR A)', () => {
+    expect(DISPATCH_DEFAULTS.skills.always_disallowed).toEqual(
+      expect.arrayContaining(['batch', 'fewer-permission-prompts']),
+    );
+  });
+
   it('skills default_denied includes review and feature-dev:feature-dev', () => {
     expect(DISPATCH_DEFAULTS.skills.default_denied).toEqual(
       expect.arrayContaining([
@@ -46,8 +52,41 @@ describe('DISPATCH_DEFAULTS', () => {
     );
   });
 
+  it('skills default_denied includes new bundled skills with per-agent opt-ins (PR A)', () => {
+    expect(DISPATCH_DEFAULTS.skills.default_denied).toEqual(
+      expect.arrayContaining(['simplify', 'debug', 'claude-api']),
+    );
+  });
+
   it('skills _defaults is wildcard', () => {
     expect(DISPATCH_DEFAULTS.skills.per_agent_allow._defaults).toEqual(['*']);
+  });
+
+  it('skills per_agent_allow opts implementer into simplify and claude-api', () => {
+    expect(DISPATCH_DEFAULTS.skills.per_agent_allow.implementer).toEqual(
+      expect.arrayContaining(['simplify', 'claude-api']),
+    );
+  });
+
+  it('skills per_agent_allow opts tester into debug', () => {
+    expect(DISPATCH_DEFAULTS.skills.per_agent_allow.tester).toEqual(
+      expect.arrayContaining(['debug']),
+    );
+  });
+
+  it('skills per_agent_allow opts reviewer into review/security-review', () => {
+    expect(DISPATCH_DEFAULTS.skills.per_agent_allow.reviewer).toEqual(
+      expect.arrayContaining(['review', 'security-review']),
+    );
+  });
+
+  it('skills per_agent_allow opts learner into claude-md-management skills', () => {
+    expect(DISPATCH_DEFAULTS.skills.per_agent_allow.learner).toEqual(
+      expect.arrayContaining([
+        'claude-md-management:revise-claude-md',
+        'claude-md-management:claude-md-improver',
+      ]),
+    );
   });
 
   it('subagents always_disallowed is general-purpose', () => {
@@ -60,9 +99,9 @@ describe('DISPATCH_DEFAULTS', () => {
     expect(DISPATCH_DEFAULTS.subagents.default_denied).toEqual([]);
   });
 
-  it('subagents _defaults is Explore', () => {
+  it('subagents _defaults is wildcard (PR B)', () => {
     expect(DISPATCH_DEFAULTS.subagents.per_agent_allow._defaults).toEqual([
-      'Explore',
+      '*',
     ]);
   });
 });

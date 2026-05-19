@@ -31,7 +31,8 @@ def main():
         if emit_from_hook:
             emit_from_hook("pipeline.hook.dispatch_blocked", {
                 "agent": parent,
-                "subagent_type": child,
+                "section": "subagents",
+                "candidate": child,
                 "reason": msg,
             })
         print(msg, file=sys.stderr)
@@ -40,7 +41,8 @@ def main():
         if parent and emit_from_hook:
             payload = {
                 "agent": parent,
-                "subagent_type": child,
+                "section": "subagents",
+                "candidate": child,
             }
             if via:
                 payload["via"] = via

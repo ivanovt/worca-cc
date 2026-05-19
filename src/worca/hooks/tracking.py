@@ -33,6 +33,8 @@ _DISPATCH_DEFAULTS = {
     },
     "skills": {
         "always_disallowed": [
+            "batch",
+            "fewer-permission-prompts",
             "loop",
             "schedule",
             "worca-*",
@@ -44,18 +46,31 @@ _DISPATCH_DEFAULTS = {
             "init",
         ],
         "default_denied": [
+            "claude-api",
+            "debug",
             "review",
             "security-review",
+            "simplify",
             "feature-dev:feature-dev",
             "claude-md-management:revise-claude-md",
             "claude-md-management:claude-md-improver",
         ],
-        "per_agent_allow": {"_defaults": ["*"]},
+        "per_agent_allow": {
+            "_defaults": ["*"],
+            "implementer": ["*", "simplify", "claude-api"],
+            "tester": ["*", "debug"],
+            "reviewer": ["*", "review", "security-review"],
+            "learner": [
+                "*",
+                "claude-md-management:revise-claude-md",
+                "claude-md-management:claude-md-improver",
+            ],
+        },
     },
     "subagents": {
         "always_disallowed": ["general-purpose"],
         "default_denied": [],
-        "per_agent_allow": {"_defaults": ["Explore"]},
+        "per_agent_allow": {"_defaults": ["*"]},
     },
 }
 

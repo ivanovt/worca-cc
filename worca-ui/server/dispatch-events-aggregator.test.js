@@ -42,14 +42,20 @@ describe('readDispatchEventsFromJsonl', () => {
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:01:00.000Z',
-        payload: { agent: 'tester', subagent_type: 'Explore', via: 'explicit' },
+        payload: {
+          agent: 'tester',
+          section: 'subagents',
+          candidate: 'Explore',
+          via: 'explicit',
+        },
       },
       {
         event_type: 'pipeline.hook.dispatch_blocked',
         timestamp: '2026-04-13T11:02:00.000Z',
         payload: {
           agent: 'tester',
-          subagent_type: 'general-purpose',
+          section: 'subagents',
+          candidate: 'general-purpose',
           reason: 'Blocked: denylist',
         },
       },
@@ -62,8 +68,12 @@ describe('readDispatchEventsFromJsonl', () => {
     const result = readDispatchEventsFromJsonl(path);
     expect(result).toHaveLength(2);
     expect(result[0].type).toBe('pipeline.hook.dispatch_allowed');
+    expect(result[0].section).toBe('subagents');
+    expect(result[0].candidate).toBe('Explore');
     expect(result[0].via).toBe('explicit');
     expect(result[1].type).toBe('pipeline.hook.dispatch_blocked');
+    expect(result[1].section).toBe('subagents');
+    expect(result[1].candidate).toBe('general-purpose');
     expect(result[1].reason).toContain('denylist');
     expect(result[1].via).toBeUndefined();
   });
@@ -75,14 +85,79 @@ describe('readDispatchEventsFromJsonl', () => {
       `${JSON.stringify({
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:00:00.000Z',
-        payload: { subagent_type: 'Explore' },
+        payload: { section: 'subagents', candidate: 'Explore' },
       })}\n{not valid json\n\n`,
     );
     const result = readDispatchEventsFromJsonl(path);
     expect(result).toHaveLength(1);
   });
 
-  it('includes skill_blocked events and extracts skill name', () => {
+  it('handles skill dispatches via the unified shape with section discriminator', () => {
+    const path = join(root, 'events.jsonl');
+    writeJsonl(path, [
+      {
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:01:00.000Z',
+        payload: {
+          agent: 'implementer',
+          section: 'skills',
+          candidate: 'review',
+          via: 'explicit',
+        },
+      },
+      {
+        event_type: 'pipeline.hook.dispatch_blocked',
+        timestamp: '2026-04-13T11:02:00.000Z',
+        payload: {
+          agent: 'implementer',
+          section: 'skills',
+          candidate: 'worca-install',
+          reason: 'always_disallowed',
+        },
+      },
+    ]);
+    const result = readDispatchEventsFromJsonl(path);
+    expect(result).toHaveLength(2);
+    expect(result[0].type).toBe('pipeline.hook.dispatch_allowed');
+    expect(result[0].section).toBe('skills');
+    expect(result[0].candidate).toBe('review');
+    expect(result[0].via).toBe('explicit');
+    expect(result[1].type).toBe('pipeline.hook.dispatch_blocked');
+    expect(result[1].section).toBe('skills');
+    expect(result[1].candidate).toBe('worca-install');
+    expect(result[1].reason).toBe('always_disallowed');
+  });
+
+  it('skips dispatch events missing candidate', () => {
+    const path = join(root, 'events.jsonl');
+    writeJsonl(path, [
+      {
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:00:00.000Z',
+        payload: { agent: 'tester', section: 'subagents' },
+      },
+    ]);
+    const result = readDispatchEventsFromJsonl(path);
+    expect(result).toEqual([]);
+  });
+
+  it('defaults missing section to "subagents" for backward read compatibility', () => {
+    // Hooks always emit section now, but older event logs from pre-PR-D runs
+    // may lack the field. Default to "subagents" so the legacy entries render.
+    const path = join(root, 'events.jsonl');
+    writeJsonl(path, [
+      {
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:00:00.000Z',
+        payload: { agent: 'tester', candidate: 'Explore', via: 'explicit' },
+      },
+    ]);
+    const result = readDispatchEventsFromJsonl(path);
+    expect(result).toHaveLength(1);
+    expect(result[0].section).toBe('subagents');
+  });
+
+  it('drops legacy skill_* event types (PR D — unified to dispatch_*)', () => {
     const path = join(root, 'events.jsonl');
     writeJsonl(path, [
       {
@@ -93,30 +168,7 @@ describe('readDispatchEventsFromJsonl', () => {
       {
         event_type: 'pipeline.hook.skill_blocked',
         timestamp: '2026-04-13T11:02:00.000Z',
-        payload: {
-          agent: 'implementer',
-          skill: 'worca-install',
-          reason: 'always_disallowed',
-        },
-      },
-    ]);
-    const result = readDispatchEventsFromJsonl(path);
-    expect(result).toHaveLength(2);
-    expect(result[0].type).toBe('pipeline.hook.skill_allowed');
-    expect(result[0].subagent_type).toBe('review');
-    expect(result[0].via).toBe('explicit');
-    expect(result[1].type).toBe('pipeline.hook.skill_blocked');
-    expect(result[1].subagent_type).toBe('worca-install');
-    expect(result[1].reason).toBe('always_disallowed');
-  });
-
-  it('skips dispatch events missing subagent_type', () => {
-    const path = join(root, 'events.jsonl');
-    writeJsonl(path, [
-      {
-        event_type: 'pipeline.hook.dispatch_allowed',
-        timestamp: '2026-04-13T11:00:00.000Z',
-        payload: { agent: 'tester' },
+        payload: { agent: 'implementer', skill: 'init', reason: 'denied' },
       },
     ]);
     const result = readDispatchEventsFromJsonl(path);
@@ -148,7 +200,8 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
@@ -157,7 +210,8 @@ describe('assignEventsToIterations', () => {
     expect(result.implement.iterations[0].dispatch_events).toEqual([
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         count: 1,
       },
@@ -174,9 +228,10 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
-        timestamp: '2026-04-13T12:00:00.000Z', // after iteration ended
+        timestamp: '2026-04-13T12:00:00.000Z',
       },
     ];
     const result = assignEventsToIterations(events, stages);
@@ -193,7 +248,8 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
@@ -202,7 +258,7 @@ describe('assignEventsToIterations', () => {
     expect(result.implement.iterations[0].dispatch_events).toHaveLength(1);
   });
 
-  it('aggregates duplicate (type, subagent_type) with count', () => {
+  it('aggregates duplicate (type, section, candidate) with count', () => {
     const stages = {
       implement: makeStage(
         '2026-04-13T11:00:00.000Z',
@@ -212,19 +268,22 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:03:00.000Z',
       },
@@ -233,14 +292,15 @@ describe('assignEventsToIterations', () => {
     expect(result.implement.iterations[0].dispatch_events).toEqual([
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         count: 3,
       },
     ]);
   });
 
-  it('keeps different subagent types as separate entries', () => {
+  it('keeps different candidates as separate entries', () => {
     const stages = {
       implement: makeStage(
         '2026-04-13T11:00:00.000Z',
@@ -250,13 +310,15 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'feature-dev:code-reviewer',
+        section: 'subagents',
+        candidate: 'feature-dev:code-reviewer',
         via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
@@ -264,12 +326,14 @@ describe('assignEventsToIterations', () => {
     const result = assignEventsToIterations(events, stages);
     const agg = result.implement.iterations[0].dispatch_events;
     expect(agg).toHaveLength(2);
-    const byType = Object.fromEntries(agg.map((e) => [e.subagent_type, e]));
-    expect(byType.Explore.count).toBe(1);
-    expect(byType['feature-dev:code-reviewer'].count).toBe(1);
+    const byCandidate = Object.fromEntries(agg.map((e) => [e.candidate, e]));
+    expect(byCandidate.Explore.count).toBe(1);
+    expect(byCandidate['feature-dev:code-reviewer'].count).toBe(1);
   });
 
-  it('keeps allowed and blocked as separate entries even for same subagent', () => {
+  it('keeps the same candidate name in two sections as separate entries (PR D)', () => {
+    // Synthetic case: a subagent and a skill share a name. The dedup key
+    // must include section so the two entries don't collide.
     const stages = {
       implement: makeStage(
         '2026-04-13T11:00:00.000Z',
@@ -279,13 +343,45 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'review',
+        via: 'explicit',
+        timestamp: '2026-04-13T11:01:00.000Z',
+      },
+      {
+        type: 'pipeline.hook.dispatch_allowed',
+        section: 'skills',
+        candidate: 'review',
+        via: 'explicit',
+        timestamp: '2026-04-13T11:02:00.000Z',
+      },
+    ];
+    const result = assignEventsToIterations(events, stages);
+    const agg = result.implement.iterations[0].dispatch_events;
+    expect(agg).toHaveLength(2);
+    const sections = agg.map((e) => e.section).sort();
+    expect(sections).toEqual(['skills', 'subagents']);
+  });
+
+  it('keeps allowed and blocked as separate entries even for same candidate', () => {
+    const stages = {
+      implement: makeStage(
+        '2026-04-13T11:00:00.000Z',
+        '2026-04-13T11:10:00.000Z',
+      ),
+    };
+    const events = [
+      {
+        type: 'pipeline.hook.dispatch_allowed',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_blocked',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         reason: 'Blocked: rule mismatch',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
@@ -309,13 +405,15 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_blocked',
-        subagent_type: 'general-purpose',
+        section: 'subagents',
+        candidate: 'general-purpose',
         reason: 'reason A',
         timestamp: '2026-04-13T11:01:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_blocked',
-        subagent_type: 'general-purpose',
+        section: 'subagents',
+        candidate: 'general-purpose',
         reason: 'reason B',
         timestamp: '2026-04-13T11:02:00.000Z',
       },
@@ -349,21 +447,24 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
-        timestamp: '2026-04-13T11:02:00.000Z', // implement iter 1
+        timestamp: '2026-04-13T11:02:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
-        timestamp: '2026-04-13T11:07:00.000Z', // implement iter 2
+        timestamp: '2026-04-13T11:07:00.000Z',
       },
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
-        timestamp: '2026-04-13T11:12:00.000Z', // test iter 1
+        timestamp: '2026-04-13T11:12:00.000Z',
       },
     ];
     const result = assignEventsToIterations(events, stages);
@@ -393,7 +494,8 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T12:00:00.000Z',
       },
@@ -407,7 +509,8 @@ describe('assignEventsToIterations', () => {
     const events = [
       {
         type: 'pipeline.hook.dispatch_allowed',
-        subagent_type: 'Explore',
+        section: 'subagents',
+        candidate: 'Explore',
         via: 'explicit',
         timestamp: '2026-04-13T11:02:00.000Z',
       },

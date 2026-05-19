@@ -295,7 +295,8 @@ class TestSubagentStartDispatchBlockedEvent:
         e = events[0]
         assert e["event_type"] == "pipeline.hook.dispatch_blocked"
         assert e["payload"]["agent"] == "coordinator"
-        assert e["payload"]["subagent_type"] == "general-purpose"
+        assert e["payload"]["section"] == "subagents"
+        assert e["payload"]["candidate"] == "general-purpose"
         assert "reason" in e["payload"]
 
     def test_dispatch_blocked_event_envelope_fields(self, tmp_path):
@@ -402,7 +403,8 @@ class TestSubagentStartDispatchAllowedEvent:
         e = events[0]
         assert e["event_type"] == "pipeline.hook.dispatch_allowed"
         assert e["payload"]["agent"] == "implementer"
-        assert e["payload"]["subagent_type"] == "Explore"
+        assert e["payload"]["section"] == "subagents"
+        assert e["payload"]["candidate"] == "Explore"
         assert e["payload"]["via"] in ("wildcard", "explicit")
 
     def test_dispatch_allowed_event_envelope_fields(self, tmp_path):

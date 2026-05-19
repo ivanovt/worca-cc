@@ -538,6 +538,21 @@ W-054: Configurable per-agent tool/skill/subagent dispatch governance.
 
 5. **UI subagent dispatch card replaced** — The single-section subagent dispatch editor in the Governance settings panel is replaced with a three-section editor (Tools, Skills, Subagents). Bookmarks or screenshots of the old layout are stale.
 
+6. **Dispatch telemetry events unified (PR D)** — The two event-name conventions (`pipeline.hook.dispatch_*` for subagents, `pipeline.hook.skill_*` for skills) collapse into a single `pipeline.hook.dispatch_{allowed,blocked}` family. The payload now carries `section` (`"subagents"` or `"skills"`) and `candidate` instead of the section-specific `subagent_type` / `skill` keys.
+
+   ```jsonc
+   // OLD (skills)
+   { "event_type": "pipeline.hook.skill_allowed",
+     "payload": { "agent": "implementer", "skill": "review", "via": "wildcard" } }
+
+   // NEW (both sections)
+   { "event_type": "pipeline.hook.dispatch_allowed",
+     "payload": { "agent": "implementer", "section": "skills",
+                  "candidate": "review", "via": "wildcard" } }
+   ```
+
+   Downstream event consumers (webhooks, log scrapers) that filter by `event_type` or read `payload.subagent_type` / `payload.skill` need to read `payload.candidate` and discriminate by `payload.section`. The pre-PR-D `skill_*` event types are no longer emitted by `skill_use.py`. The UI aggregator drops the `payload.subagent_type || payload.skill` fallback and reads `payload.candidate` exclusively; it ignores legacy `skill_*` events that may linger in old event logs.
+
 **Automatic migration via `worca init --upgrade`:**
 
 ```

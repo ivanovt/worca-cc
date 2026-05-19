@@ -224,8 +224,8 @@ def test_main_exits_0_interactive_mode():
     assert exc.value.code == 0
 
 
-def test_main_emits_skill_allowed_with_via():
-    """When allowed, emits pipeline.hook.skill_allowed with the via field."""
+def test_main_emits_dispatch_allowed_with_via():
+    """When allowed, emits the unified pipeline.hook.dispatch_allowed event."""
     cfg = _skills_settings({
         "always_disallowed": [],
         "default_denied": [],
@@ -241,13 +241,15 @@ def test_main_emits_skill_allowed_with_via():
     assert code == 0
     emit.assert_called_once()
     event_name, payload = emit.call_args[0]
-    assert event_name == "pipeline.hook.skill_allowed"
+    assert event_name == "pipeline.hook.dispatch_allowed"
+    assert payload["section"] == "skills"
+    assert payload["candidate"] == "my-skill"
     assert payload["via"] == "wildcard"
-    assert payload["skill"] == "my-skill"
+    assert payload["agent"] == "implementer"
 
 
-def test_main_emits_skill_blocked():
-    """When blocked, emits pipeline.hook.skill_blocked."""
+def test_main_emits_dispatch_blocked():
+    """When blocked, emits the unified pipeline.hook.dispatch_blocked event."""
     cfg = _skills_settings({
         "always_disallowed": ["worca-*"],
         "default_denied": [],
@@ -263,6 +265,29 @@ def test_main_emits_skill_blocked():
     assert code == 2
     emit.assert_called_once()
     event_name, payload = emit.call_args[0]
-    assert event_name == "pipeline.hook.skill_blocked"
-    assert payload["skill"] == "worca-install"
+    assert event_name == "pipeline.hook.dispatch_blocked"
+    assert payload["section"] == "skills"
+    assert payload["candidate"] == "worca-install"
+    assert payload["agent"] == "implementer"
     assert "reason" in payload
+
+
+def test_main_no_longer_emits_legacy_skill_event_names():
+    """PR D: hooks must NOT emit pipeline.hook.skill_{allowed,blocked} anymore."""
+    cfg = _skills_settings({
+        "always_disallowed": ["worca-*"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    emit = MagicMock()
+    _run_skill_main(
+        {"skill_name": "worca-install"},
+        env_agent="implement-implementer-iter-1",
+        settings_override=cfg,
+        emit_mock=emit,
+    )
+    for call in emit.call_args_list:
+        event_name = call[0][0]
+        assert not event_name.startswith("pipeline.hook.skill_"), (
+            f"Legacy event name still emitted: {event_name}"
+        )

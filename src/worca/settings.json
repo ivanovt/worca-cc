@@ -281,23 +281,34 @@
         },
         "skills": {
           "always_disallowed": [
+            "batch", "fewer-permission-prompts",
             "loop", "schedule", "worca-*", "update-config",
             "hookify:hookify", "hookify:configure", "hookify:list",
             "hookify:writing-rules", "init"
           ],
           "default_denied": [
-            "review", "security-review", "feature-dev:feature-dev",
+            "claude-api", "debug", "review", "security-review", "simplify",
+            "feature-dev:feature-dev",
             "claude-md-management:revise-claude-md",
             "claude-md-management:claude-md-improver"
           ],
-          "per_agent_allow": { "_defaults": ["*"] }
+          "per_agent_allow": {
+            "_defaults": ["*"],
+            "implementer": ["*", "simplify", "claude-api"],
+            "tester": ["*", "debug"],
+            "reviewer": ["*", "review", "security-review"],
+            "learner": [
+              "*",
+              "claude-md-management:revise-claude-md",
+              "claude-md-management:claude-md-improver"
+            ]
+          }
         },
         "subagents": {
           "always_disallowed": ["general-purpose"],
           "default_denied": [],
           "per_agent_allow": {
-            "_defaults": ["Explore"],
-            "implementer": ["Explore", "feature-dev:code-reviewer"]
+            "_defaults": ["*"]
           }
         }
       }

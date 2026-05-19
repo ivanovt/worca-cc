@@ -400,33 +400,51 @@ function _classificationRowView(iter) {
   `;
 }
 
+function _dispatchEventCandidate(ev) {
+  // Back-compat: accept the legacy `subagent_type` payload key during the
+  // event-shape rollout. Tests fed status snapshots written before W-054 PR D
+  // landed still use the old field name.
+  return ev.candidate || ev.subagent_type || '';
+}
+
 function _dispatchEventsRowView(iter) {
   const events = iter.dispatch_events;
   if (!events || events.length === 0) return nothing;
   return html`
-    <div class="iteration-tags-row">
+    <div class="iteration-tags-row dispatch-events-row">
       <span class="meta-label">Subagents:</span>
       ${events.map((ev) => {
-        const isAllowed =
-          ev.type === 'pipeline.hook.dispatch_allowed' ||
-          ev.type === 'pipeline.hook.skill_allowed';
-        const variant = isAllowed ? 'success' : 'danger';
+        const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
+        const isWildcard = isAllowed && ev.via === 'wildcard';
+        // PR B: wildcard dispatches get a neutral variant so the eye can
+        // separate "broadly allowed" from "explicitly opted in" at a glance.
+        const variant = isAllowed
+          ? isWildcard
+            ? 'neutral'
+            : 'success'
+          : 'danger';
         const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
         const suffix = count ? ` (×${count})` : '';
+        const candidate = _dispatchEventCandidate(ev);
         const label = isAllowed
-          ? `${ev.subagent_type} dispatched${suffix}`
-          : `${ev.subagent_type} blocked${suffix}`;
-        const tooltip = ev.reason || '';
-        return html`<sl-badge variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
+          ? `${candidate} dispatched${suffix}`
+          : `${candidate} blocked${suffix}`;
+        const tooltipParts = [];
+        if (ev.section) tooltipParts.push(`section: ${ev.section}`);
+        if (ev.via) tooltipParts.push(`via: ${ev.via}`);
+        if (ev.reason) tooltipParts.push(ev.reason);
+        const tooltip =
+          tooltipParts.join(' · ') || (isAllowed ? 'dispatched' : 'blocked');
+        const cls = isWildcard
+          ? 'dispatch-badge dispatch-badge-wildcard'
+          : 'dispatch-badge';
+        return html`<sl-badge class="${cls}" variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
       })}
     </div>
   `;
 }
 
-const _ALLOWED_DISPATCH_TYPES = new Set([
-  'pipeline.hook.dispatch_allowed',
-  'pipeline.hook.skill_allowed',
-]);
+const _ALLOWED_DISPATCH_TYPES = new Set(['pipeline.hook.dispatch_allowed']);
 
 function _dispatchActivityCounterView(stages, agents) {
   let explicit = 0;
@@ -448,7 +466,7 @@ function _dispatchActivityCounterView(stages, agents) {
         }
         tuples.push({
           agent,
-          child: ev.subagent_type,
+          child: _dispatchEventCandidate(ev),
           via: ev.via || 'explicit',
           count,
         });

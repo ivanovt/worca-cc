@@ -26,10 +26,28 @@ def reset_cache():
 # --- check_dispatch tests ---
 
 
-def test_blocks_implementer_dispatching_planner():
-    code, reason = check_dispatch("implementer", "planner")
-    assert code == 2
-    assert "Blocked" in reason
+def test_blocks_implementer_dispatching_planner_under_narrow_default():
+    """Under a narrowed _defaults (e.g. ["Explore"]), the implementer can't
+    dispatch arbitrary pipeline-stage names. PR B changed the bundled default
+    to ["*"], so this only blocks when the project narrows the allow list.
+    """
+    cfg = {"worca": {"governance": {"dispatch": {"subagents": {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Explore"]},
+    }}}}}
+    allowed, reason, _ = check_allowed(
+        "subagents", "implementer", "planner", settings_override=cfg,
+    )
+    assert allowed is False
+    assert reason == "not_in_allow_list"
+
+
+def test_implementer_dispatching_planner_allowed_under_wildcard_default():
+    """PR B: wildcard default allows the implementer to dispatch any
+    non-denied subagent — including a project-defined `planner` subagent."""
+    code, _ = check_dispatch("implementer", "planner")
+    assert code == 0
 
 
 def test_allows_planner_dispatching_explore():
@@ -44,7 +62,7 @@ def test_allows_implementer_dispatching_explore():
 
 
 def test_coordinator_gets_explore_via_defaults():
-    """W-054: coordinator now gets Explore via _defaults (broadened from empty set)."""
+    """W-054 + PR B: coordinator now gets Explore via _defaults wildcard."""
     code, reason = check_dispatch("coordinator", "Explore")
     assert code == 0
 
@@ -60,9 +78,17 @@ def test_allows_guardian_dispatching_explore():
     assert code == 0
 
 
-def test_blocks_guardian_dispatching_implementer():
-    code, reason = check_dispatch("guardian", "implementer")
-    assert code == 2
+def test_blocks_guardian_dispatching_implementer_under_narrow_default():
+    """Under a narrowed _defaults, guardian can't dispatch unrelated names."""
+    cfg = {"worca": {"governance": {"dispatch": {"subagents": {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Explore"]},
+    }}}}}
+    allowed, _, _ = check_allowed(
+        "subagents", "guardian", "implementer", settings_override=cfg,
+    )
+    assert allowed is False
 
 
 def test_allows_all_in_interactive_mode():
@@ -76,7 +102,7 @@ def test_allows_all_in_interactive_mode_any_agent():
 
 
 def test_unknown_parent_gets_defaults():
-    """W-054: unknown agents fall through to _defaults: ['Explore']."""
+    """W-054 + PR B: unknown agents fall through to _defaults: ['*']."""
     code, reason = check_dispatch("unknown_agent", "Explore")
     assert code == 0
 
@@ -97,9 +123,17 @@ def test_allows_plan_reviewer_dispatching_explore():
     assert code == 0
 
 
-def test_blocks_plan_reviewer_dispatching_implementer():
-    code, reason = check_dispatch("plan_reviewer", "implementer")
-    assert code == 2
+def test_blocks_plan_reviewer_dispatching_implementer_under_narrow_default():
+    """Under a narrowed _defaults, plan_reviewer can't dispatch implementer."""
+    cfg = {"worca": {"governance": {"dispatch": {"subagents": {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Explore"]},
+    }}}}}
+    allowed, _, _ = check_allowed(
+        "subagents", "plan_reviewer", "implementer", settings_override=cfg,
+    )
+    assert allowed is False
 
 
 # --- New tests per plan §5.2-5.3 ---
@@ -440,12 +474,15 @@ def test_check_allowed_default_denied_not_in_wildcard():
 
 
 def test_check_allowed_missing_section_uses_defaults():
-    """Empty config falls back to _DISPATCH_DEFAULTS."""
+    """Empty config falls back to _DISPATCH_DEFAULTS.
+
+    PR B: subagent _defaults is now ['*'], so Explore resolves via wildcard.
+    """
     allowed, reason, via = check_allowed(
         "subagents", "planner", "Explore", settings_override={},
     )
     assert allowed is True
-    assert via == "explicit"
+    assert via == "wildcard"
 
 
 def test_check_allowed_workspace_planner_falls_back_to_defaults():
@@ -505,3 +542,134 @@ def test_check_allowed_bare_wildcard_in_deny_list_blocks_everything():
     )
     assert allowed is False
     assert reason == "always_disallowed"
+
+
+# --- PR A: refreshed Claude Code built-in defaults ---
+
+
+@pytest.mark.parametrize("agent", [
+    "planner", "coordinator", "implementer", "tester",
+    "guardian", "reviewer", "plan_reviewer", "learner",
+])
+def test_batch_skill_always_denied_for_every_agent(agent):
+    """The bundled /batch skill must be hard-denied — it spawns parallel pipelines."""
+    allowed, reason, _ = check_allowed("skills", agent, "batch", settings_override={})
+    assert allowed is False
+    assert reason == "always_disallowed"
+
+
+@pytest.mark.parametrize("agent", [
+    "planner", "coordinator", "implementer", "tester",
+    "guardian", "reviewer", "plan_reviewer", "learner",
+])
+def test_fewer_permission_prompts_skill_always_denied(agent):
+    """fewer-permission-prompts rewrites the project's allowlist — always denied."""
+    allowed, reason, _ = check_allowed(
+        "skills", agent, "fewer-permission-prompts", settings_override={},
+    )
+    assert allowed is False
+    assert reason == "always_disallowed"
+
+
+def test_simplify_default_denied_under_wildcard():
+    """simplify is in default_denied — agents under _defaults: ["*"] cannot use it."""
+    allowed, reason, _ = check_allowed(
+        "skills", "planner", "simplify", settings_override={},
+    )
+    assert allowed is False
+    assert reason == "default_denied"
+
+
+def test_simplify_allowed_for_implementer_opt_in():
+    """implementer is opted into simplify via per_agent_allow."""
+    allowed, _, via = check_allowed(
+        "skills", "implementer", "simplify", settings_override={},
+    )
+    assert allowed is True
+    assert via == "explicit"
+
+
+def test_debug_default_denied_but_allowed_for_tester():
+    """debug is default_denied; only the tester is opted in."""
+    allowed, reason, _ = check_allowed(
+        "skills", "planner", "debug", settings_override={},
+    )
+    assert allowed is False
+    assert reason == "default_denied"
+
+    allowed, _, via = check_allowed(
+        "skills", "tester", "debug", settings_override={},
+    )
+    assert allowed is True
+    assert via == "explicit"
+
+
+def test_claude_api_default_denied_but_allowed_for_implementer():
+    """claude-api is default_denied; the implementer is opted in."""
+    allowed, reason, _ = check_allowed(
+        "skills", "reviewer", "claude-api", settings_override={},
+    )
+    assert allowed is False
+    assert reason == "default_denied"
+
+    allowed, _, via = check_allowed(
+        "skills", "implementer", "claude-api", settings_override={},
+    )
+    assert allowed is True
+    assert via == "explicit"
+
+
+def test_review_skill_opted_in_for_reviewer():
+    """reviewer can dispatch the review and security-review skills."""
+    for skill in ("review", "security-review"):
+        allowed, _, via = check_allowed(
+            "skills", "reviewer", skill, settings_override={},
+        )
+        assert allowed is True, f"{skill} should be allowed for reviewer"
+        assert via == "explicit"
+
+
+def test_claude_md_management_skills_opted_in_for_learner():
+    """learner is opted into claude-md-management:* skills."""
+    for skill in (
+        "claude-md-management:revise-claude-md",
+        "claude-md-management:claude-md-improver",
+    ):
+        allowed, _, via = check_allowed(
+            "skills", "learner", skill, settings_override={},
+        )
+        assert allowed is True, f"{skill} should be allowed for learner"
+        assert via == "explicit"
+
+
+# --- PR B: subagents _defaults flipped to ["*"] ---
+
+
+@pytest.mark.parametrize("agent", [
+    "planner", "coordinator", "implementer", "tester",
+    "guardian", "reviewer", "plan_reviewer", "learner", "workspace_planner",
+])
+def test_subagents_wildcard_default_allows_any_non_denied(agent):
+    """PR B: every pipeline agent dispatches arbitrary subagents via wildcard."""
+    allowed, reason, via = check_allowed(
+        "subagents", agent, "feature-dev:code-reviewer", settings_override={},
+    )
+    assert allowed is True, f"{agent} should dispatch via wildcard"
+    assert via == "wildcard"
+
+
+def test_subagents_general_purpose_still_denied_under_wildcard():
+    """PR B: general-purpose stays in always_disallowed even with wildcard."""
+    allowed, reason, _ = check_allowed(
+        "subagents", "implementer", "general-purpose", settings_override={},
+    )
+    assert allowed is False
+    assert reason == "always_disallowed"
+
+
+def test_subagents_explore_now_via_wildcard():
+    """PR B: Explore is no longer enumerated per-agent — it resolves via wildcard."""
+    _, _, via = check_allowed(
+        "subagents", "planner", "Explore", settings_override={},
+    )
+    assert via == "wildcard"

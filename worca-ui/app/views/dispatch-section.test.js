@@ -74,17 +74,21 @@ describe('dispatch-section', () => {
     });
 
     it('named chip does not have wildcard class', () => {
+      // Pass narrow defaults so per-agent rows fall back to "Explore" (not
+      // the post-PR-B `*` default), then assert the named chip itself does
+      // not carry the wildcard class.
+      const narrowDefaults = {
+        always_disallowed: [],
+        default_denied: [],
+        per_agent_allow: { _defaults: ['Explore'] },
+      };
       const html = renderToString(
         dispatchSectionView({
           section: 'subagents',
-          config: {
-            always_disallowed: [],
-            default_denied: [],
-            per_agent_allow: { _defaults: ['Explore'] },
-          },
+          config: narrowDefaults,
           knownItems: KNOWN_SUBAGENTS,
           agentRoles: AGENT_ROLES,
-          defaults: DISPATCH_DEFAULTS.subagents,
+          defaults: narrowDefaults,
           onChange: vi.fn(),
         }),
       );
@@ -277,6 +281,81 @@ describe('dispatch-section', () => {
         }),
       );
       expect(html).toContain('Tools');
+    });
+  });
+
+  describe('suggestion popup tri-state (PR E)', () => {
+    const KNOWN_SKILLS = [
+      { name: 'review', group: 'Built-in' },
+      { name: 'simplify', group: 'Built-in' },
+      { name: 'batch', group: 'Built-in' },
+      { name: 'my-custom-skill', group: 'User' },
+    ];
+
+    function renderWithOpenSuggestions({ defaultDenied, alwaysDisallowed }) {
+      const state = { planner: { input: '', showSuggestions: true } };
+      return renderToString(
+        dispatchSectionView({
+          section: 'skills',
+          config: {
+            always_disallowed: alwaysDisallowed,
+            default_denied: defaultDenied,
+            per_agent_allow: { _defaults: ['*'] },
+          },
+          knownItems: KNOWN_SKILLS,
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS.skills,
+          onChange: vi.fn(),
+          state,
+          rerender: () => {},
+        }),
+      );
+    }
+
+    it('default_denied items render with .warn class on suggestion items', () => {
+      const html = renderWithOpenSuggestions({
+        defaultDenied: ['simplify'],
+        alwaysDisallowed: [],
+      });
+      expect(html).toMatch(/class="item\s+warn"/);
+    });
+
+    it('default_denied items render an opt-in hint label', () => {
+      const html = renderWithOpenSuggestions({
+        defaultDenied: ['simplify'],
+        alwaysDisallowed: [],
+      });
+      expect(html).toContain('item-hint');
+      expect(html).toContain('opt-in');
+    });
+
+    it('always_disallowed items render with .denied class (not .warn)', () => {
+      const html = renderWithOpenSuggestions({
+        defaultDenied: [],
+        alwaysDisallowed: ['batch'],
+      });
+      // The batch suggestion item gets .denied
+      expect(html).toMatch(/class="item\s+denied"/);
+      expect(html).not.toMatch(/class="item\s+warn"/);
+    });
+
+    it('always_disallowed wins over default_denied on suggestion items', () => {
+      const html = renderWithOpenSuggestions({
+        defaultDenied: ['batch'],
+        alwaysDisallowed: ['batch'],
+      });
+      // batch should be denied (line-through), NOT warn
+      expect(html).toMatch(/class="item\s+denied"/);
+      // The opt-in hint should not appear for an always-disallowed item
+      expect(html).not.toContain('item-hint');
+    });
+
+    it('available items render with no special class', () => {
+      const html = renderWithOpenSuggestions({
+        defaultDenied: [],
+        alwaysDisallowed: [],
+      });
+      expect(html).toContain('class="item"');
     });
   });
 });

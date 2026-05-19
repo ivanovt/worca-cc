@@ -129,24 +129,37 @@ describe('watcher', () => {
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:01:00.000Z',
-        payload: { agent: 'implementer', subagent_type: 'Explore' },
+        payload: {
+          agent: 'implementer',
+          section: 'subagents',
+          candidate: 'Explore',
+        },
       },
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:02:00.000Z',
-        payload: { agent: 'implementer', subagent_type: 'Explore' },
+        payload: {
+          agent: 'implementer',
+          section: 'subagents',
+          candidate: 'Explore',
+        },
       },
       {
         event_type: 'pipeline.hook.dispatch_allowed',
         timestamp: '2026-04-13T11:03:00.000Z',
-        payload: { agent: 'implementer', subagent_type: 'Explore' },
+        payload: {
+          agent: 'implementer',
+          section: 'subagents',
+          candidate: 'Explore',
+        },
       },
       {
         event_type: 'pipeline.hook.dispatch_blocked',
         timestamp: '2026-04-13T11:04:00.000Z',
         payload: {
           agent: 'implementer',
-          subagent_type: 'general-purpose',
+          section: 'subagents',
+          candidate: 'general-purpose',
           reason: 'Blocked: denylist',
         },
       },
@@ -161,17 +174,19 @@ describe('watcher', () => {
     expect(run).toBeDefined();
     const iter = run.stages.implement.iterations[0];
     expect(iter.dispatch_events).toBeDefined();
-    // One entry per (type, subagent_type) — not four.
+    // One entry per (type, section, candidate) — not four.
     expect(iter.dispatch_events).toHaveLength(2);
     const allowed = iter.dispatch_events.find(
       (e) => e.type === 'pipeline.hook.dispatch_allowed',
     );
-    expect(allowed.subagent_type).toBe('Explore');
+    expect(allowed.section).toBe('subagents');
+    expect(allowed.candidate).toBe('Explore');
     expect(allowed.count).toBe(3);
     const blocked = iter.dispatch_events.find(
       (e) => e.type === 'pipeline.hook.dispatch_blocked',
     );
-    expect(blocked.subagent_type).toBe('general-purpose');
+    expect(blocked.section).toBe('subagents');
+    expect(blocked.candidate).toBe('general-purpose');
     expect(blocked.count).toBe(1);
     expect(blocked.reason).toBe('Blocked: denylist');
   });

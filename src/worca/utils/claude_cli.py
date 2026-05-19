@@ -87,27 +87,58 @@ def terminate_current():
         pass
 
 
-def _resolve_tool_disallows(agent_name: str, settings: dict | None = None) -> list[str]:
-    """Build the --disallowedTools list from settings (W-054 §8).
+def _resolve_tool_args(
+    agent_name: str, settings: dict | None = None,
+) -> tuple[list[str], str]:
+    """Resolve --tools and --disallowedTools args for an agent (W-054 PR C).
 
-    Loads worca.governance.dispatch.tools and returns the always_disallowed
-    entries minus Skill (now governed by the skills hook). Named-tool entries
-    in per_agent_allow are warned about and ignored — only '*' and [] are
-    honored in v1.
+    Returns ``(disallowed_tools, tools_arg)``:
+
+      * ``disallowed_tools`` — the ``always_disallowed`` list minus the meta
+        tools that worca governs through its own hooks (``Skill`` is
+        delegated to ``skill_use.py``).
+      * ``tools_arg`` is one of:
+          - ``"default"`` — all built-in tools allowed (wildcard or no per-agent
+            entry). Passed to ``--tools default``.
+          - ``""`` — full lockdown. Passed as ``--tools ""``.
+          - ``"A,B,C"`` — explicit list. Always auto-includes ``Skill`` and
+            ``Agent`` so worca's skill/subagent governance hooks still fire.
+
+    Notes:
+      * MCP tools (``mcp_*``) are not covered by ``--tools`` per the Claude
+        CLI ("from the built-in set"). MCP governance flows through other
+        channels.
+      * ``Skill`` and ``Agent`` are meta-tools — if they're excluded from
+        ``--tools``, the worca skill_use.py / subagent_start.py hooks never
+        fire and dispatch governance is silently disabled. Auto-inclusion
+        keeps the hooks in the loop.
     """
     cfg = _load_dispatch_section("tools", settings)
-    disallows = list(cfg["always_disallowed"])
+    disallows = [t for t in cfg["always_disallowed"] if t != "Skill"]
+
     entry = cfg["per_agent_allow"].get(
         agent_name, cfg["per_agent_allow"].get("_defaults", ["*"]),
     )
-    has_wildcard = "*" in entry or len(entry) == 0
-    if not has_wildcard:
-        print(
-            f"[worca] tools.per_agent_allow.{agent_name} contains named tools; "
-            f"only '*' or [] are honored in v1 — falling back to wildcard",
-            file=sys.stderr,
-        )
-    return [t for t in disallows if t != "Skill"]
+
+    if "*" in entry:
+        return disallows, "default"
+    if len(entry) == 0:
+        return disallows, ""
+
+    tools = {t for t in entry if t != "*"}
+    tools.add("Skill")  # so skill_use.py hook fires
+    tools.add("Agent")  # so subagent_start.py hook fires
+    return disallows, ",".join(sorted(tools))
+
+
+# Back-compat shim: some external callers and older tests still import the
+# original name. The new function is the source of truth.
+def _resolve_tool_disallows(
+    agent_name: str, settings: dict | None = None,
+) -> list[str]:
+    """Deprecated: use _resolve_tool_args. Returns only the disallows tuple element."""
+    disallows, _ = _resolve_tool_args(agent_name, settings)
+    return disallows
 
 
 def build_command(
@@ -156,7 +187,7 @@ def build_command(
     if _claude_bin_override:
         print(f"[worca] WORCA_CLAUDE_BIN override active: {_claude_bin_override}", file=sys.stderr)
     agent_name = os.path.splitext(os.path.basename(agent))[0]
-    disallowed_tools = _resolve_tool_disallows(agent_name, settings)
+    disallowed_tools, tools_arg = _resolve_tool_args(agent_name, settings)
     cmd = [
         *_claude_bin,
         "-p",
@@ -167,8 +198,10 @@ def build_command(
         output_format,
         "--no-session-persistence",
         "--dangerously-skip-permissions",
-        "--disallowedTools", ",".join(disallowed_tools),
+        "--tools", tools_arg,
     ]
+    if disallowed_tools:
+        cmd.extend(["--disallowedTools", ",".join(disallowed_tools)])
     if model:
         cmd.extend(["--model", model])
     if output_format == "stream-json":

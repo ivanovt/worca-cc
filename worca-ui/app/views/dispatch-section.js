@@ -42,8 +42,9 @@ function tierView(title, items, { locked, warn, removable, onRemove }) {
   `;
 }
 
-function filterSuggestions(input, knownItems, currentTags, deniedSet) {
+function filterSuggestions(input, knownItems, currentTags, deniedSet, warnSet) {
   const query = (input || '').trim().toLowerCase();
+  const warns = warnSet || new Set();
   return (knownItems || [])
     .filter((item) => !currentTags.includes(item.name))
     .filter((item) => !query || item.name.toLowerCase().includes(query))
@@ -51,6 +52,7 @@ function filterSuggestions(input, knownItems, currentTags, deniedSet) {
     .map((item) => ({
       ...item,
       denied: deniedSet.has(item.name),
+      warn: warns.has(item.name) && !deniedSet.has(item.name),
     }));
 }
 
@@ -61,6 +63,7 @@ function perAgentRowView({
   defaultTags,
   knownItems,
   alwaysDisallowed,
+  defaultDenied,
   rowState,
   onRemove,
   onReset,
@@ -73,8 +76,9 @@ function perAgentRowView({
   const isAgent = agent !== '_defaults';
   const customized = isAgent && isCustomized(tags, defaultTags);
   const deniedSet = new Set(alwaysDisallowed || []);
+  const warnSet = new Set(defaultDenied || []);
   const suggestions = rowState.showSuggestions
-    ? filterSuggestions(rowState.input, knownItems, tags, deniedSet)
+    ? filterSuggestions(rowState.input, knownItems, tags, deniedSet, warnSet)
     : [];
 
   return html`
@@ -122,7 +126,12 @@ function perAgentRowView({
                 ${suggestions.map(
                   (item) => html`
                     <div
-                      class="item${item.denied ? ' denied' : ''}"
+                      class="item${item.denied ? ' denied' : ''}${item.warn ? ' warn' : ''}"
+                      title=${
+                        item.warn
+                          ? 'Default-denied — adding it opts this agent into a normally-blocked capability'
+                          : nothing
+                      }
                       @mousedown=${(e) => {
                         // Prevent input blur before click fires
                         e.preventDefault();
@@ -132,6 +141,11 @@ function perAgentRowView({
                       }}
                     >
                       <span>${item.name}</span>
+                      ${
+                        item.warn
+                          ? html`<span class="item-hint">opt-in</span>`
+                          : nothing
+                      }
                       ${
                         item.label
                           ? html`<span class="item-label">${item.label}</span>`
@@ -167,6 +181,15 @@ function perAgentRowView({
 function capitalize(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+const _SECTION_HINTS = {
+  tools:
+    "Tools are governed at process-spawn time. `*` allows all built-in tools (minus the hard-deny list). A named list (e.g. Read, Grep) restricts the agent to those built-ins — `Skill` and `Agent` are auto-included so worca's skill/subagent governance keeps working. MCP tools (mcp_*) are not covered by this section.",
+  skills:
+    "Skills are gated by a PreToolUse hook on the `Skill` tool. Items in the second tier are blocked under `*` — add them to a specific agent's allow list to opt in.",
+  subagents:
+    'Subagents are gated by a SubagentStart hook. Default is `*` (any subagent except the hard-deny list). Add entries to the second tier to gate specific subagents from broad fanout.',
+};
 
 /**
  * Renders a single dispatch governance section (tools, skills, or subagents).
@@ -264,9 +287,16 @@ export function dispatchSectionView({
 
   const allAgentKeys = ['_defaults', ...agentRoles];
 
+  const sectionHint = _SECTION_HINTS[section];
+
   return html`
     <div class="dispatch-section">
       <h4 class="dispatch-section-title">${capitalize(section)}</h4>
+      ${
+        sectionHint
+          ? html`<p class="dispatch-section-hint">${sectionHint}</p>`
+          : nothing
+      }
 
       ${tierView('Always Disallowed', alwaysDisallowed, {
         locked: true,
@@ -295,6 +325,7 @@ export function dispatchSectionView({
               defaultTags: agentDefaults,
               knownItems,
               alwaysDisallowed,
+              defaultDenied,
               rowState,
               onRemove: (tag) => removeTagFromAgent(agent, tag),
               onReset: () => resetAgent(agent),

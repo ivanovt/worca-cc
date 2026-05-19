@@ -203,7 +203,8 @@ test('_defaults row is editable like any per-agent row', async ({ page }) => {
   try {
     await goToGovernance(page, ctx, {});
 
-    // Subagents _defaults starts with ["Explore"]. Add a second tag.
+    // After PR B, subagents _defaults starts at ["*"]. Add a named entry
+    // alongside the wildcard chip.
     const input = page.locator(
       '#dispatch-subagents-_defaults .dispatch-tag-input-field',
     );
@@ -215,7 +216,7 @@ test('_defaults row is editable like any per-agent row', async ({ page }) => {
       page.locator('#dispatch-subagents-_defaults sl-tag[data-value="Plan"]'),
     ).toBeVisible();
     await expect(
-      page.locator('#dispatch-subagents-_defaults sl-tag[data-value="Explore"]'),
+      page.locator('#dispatch-subagents-_defaults sl-tag[data-value="*"]'),
     ).toBeVisible();
   } finally {
     await ctx.close();
@@ -236,6 +237,47 @@ test('wildcard `*` chip renders with `any` label and dispatch-chip-wildcard clas
     );
     await expect(wildcardChip).toBeVisible();
     await expect(wildcardChip).toContainText('any');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('skills section: default_denied suggestion item renders .warn class with opt-in hint (PR E)', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {});
+
+    // `review` is in DISPATCH_DEFAULTS.skills.default_denied. When typed into
+    // a per-agent suggestion popup, it should render with .warn class and
+    // an "opt-in" hint label — not .denied (which is reserved for
+    // always_disallowed entries).
+    const input = page.locator(
+      '#dispatch-skills-implementer .dispatch-tag-input-field',
+    );
+    await input.click();
+    await input.fill('review');
+
+    const suggestions = page.locator(
+      '.settings-dispatch-row:has(#dispatch-skills-implementer) .dispatch-suggestions',
+    );
+    await expect(suggestions).toBeVisible();
+    const warnItem = suggestions
+      .locator('.item.warn')
+      .filter({ hasText: 'review' })
+      .first();
+    await expect(warnItem).toBeVisible();
+    await expect(warnItem).not.toHaveClass(/denied/);
+    await expect(warnItem.locator('.item-hint')).toContainText('opt-in');
+
+    // Clicking the warn item should add the chip (no block).
+    await warnItem.click();
+    await expect(
+      page.locator(
+        '#dispatch-skills-implementer sl-tag[data-value="review"]',
+      ),
+    ).toBeVisible();
   } finally {
     await ctx.close();
   }

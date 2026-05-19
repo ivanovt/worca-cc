@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 
 from worca.utils.claude_cli import (
     AgentSubprocessError,
+    _resolve_tool_args,
     _resolve_tool_disallows,
     build_command,
     process_stream,
@@ -543,43 +544,6 @@ def test_resolve_tool_disallows_drops_skill():
     assert "EnterPlanMode" in result
 
 
-def test_resolve_tool_disallows_named_entries_warn(capsys):
-    """Named-tool entries in per_agent_allow get a warning and are ignored (v1 limitation)."""
-    settings = _settings_with_tools({
-        "always_disallowed": ["EnterPlanMode"],
-        "default_denied": [],
-        "per_agent_allow": {"planner": ["Read", "Write"]},
-    })
-    result = _resolve_tool_disallows("planner", settings=settings)
-    assert "EnterPlanMode" in result
-    captured = capsys.readouterr()
-    assert "named tools" in captured.err.lower() or "only '*' or []" in captured.err
-
-
-def test_resolve_tool_disallows_wildcard_no_warn(capsys):
-    """Wildcard entry '*' does not produce a warning."""
-    settings = _settings_with_tools({
-        "always_disallowed": ["EnterPlanMode"],
-        "default_denied": [],
-        "per_agent_allow": {"_defaults": ["*"]},
-    })
-    _resolve_tool_disallows("planner", settings=settings)
-    captured = capsys.readouterr()
-    assert captured.err == ""
-
-
-def test_resolve_tool_disallows_empty_entry_no_warn(capsys):
-    """Empty entry [] is treated the same as wildcard — no warning."""
-    settings = _settings_with_tools({
-        "always_disallowed": ["EnterPlanMode"],
-        "default_denied": [],
-        "per_agent_allow": {"planner": []},
-    })
-    _resolve_tool_disallows("planner", settings=settings)
-    captured = capsys.readouterr()
-    assert captured.err == ""
-
-
 def test_resolve_tool_disallows_custom_always_disallowed():
     """User can customize always_disallowed via settings."""
     settings = _settings_with_tools({
@@ -592,26 +556,172 @@ def test_resolve_tool_disallows_custom_always_disallowed():
     assert "EnterPlanMode" in result
 
 
-def test_build_command_disallowed_tools_from_settings():
-    """build_command uses settings-driven disallows instead of hardcoded string."""
+# ---------------------------------------------------------------------------
+# _resolve_tool_args — PR C: named-tool allowlists via --tools
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tool_args_wildcard_returns_default():
+    """Wildcard '*' in per_agent_allow maps to the literal 'default' tools-arg."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    disallows, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == "default"
+    assert "EnterPlanMode" in disallows
+
+
+def test_resolve_tool_args_empty_locks_down():
+    """Empty per-agent list maps to '' — full lockdown."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": []},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == ""
+
+
+def test_resolve_tool_args_named_list_includes_meta_tools():
+    """Named lists auto-include Skill + Agent so worca hooks still fire."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["Read", "Grep"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools, "Skill must auto-include so skill_use.py fires"
+    assert "Agent" in tools, "Agent must auto-include so subagent_start.py fires"
+
+
+def test_resolve_tool_args_named_list_dedup_meta_tools():
+    """If user already names Skill/Agent, the auto-include doesn't double-add."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["Read", "Skill", "Agent"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    tools = tools_arg.split(",")
+    assert tools.count("Skill") == 1
+    assert tools.count("Agent") == 1
+
+
+def test_resolve_tool_args_mixed_form_treats_wildcard_first():
+    """Mixed ['*', 'Read'] form uses wildcard — default tools-arg."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["*", "Read"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == "default"
+
+
+def test_resolve_tool_args_falls_back_to_defaults():
+    """Agent without per-agent entry uses _defaults."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Read", "Grep"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools
+    assert "Agent" in tools
+
+
+def test_resolve_tool_args_drops_skill_from_disallows():
+    """Skill is never in --disallowedTools — governed by skill_use.py hook."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["Skill", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    disallows, _ = _resolve_tool_args("planner", settings=settings)
+    assert "Skill" not in disallows
+    assert "EnterPlanMode" in disallows
+
+
+# ---------------------------------------------------------------------------
+# build_command: --tools + --disallowedTools wiring (PR C)
+# ---------------------------------------------------------------------------
+
+
+def test_build_command_emits_tools_default_under_wildcard():
+    """Wildcard default → --tools default."""
+    cmd, _ = build_command("prompt", agent="planner", settings={})
+    idx = cmd.index("--tools")
+    assert cmd[idx + 1] == "default"
+
+
+def test_build_command_emits_tools_named_list_with_meta_tools():
+    """Named per-agent list → --tools 'Agent,Read,Skill' (auto-includes meta)."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["Read", "Grep"]},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    idx = cmd.index("--tools")
+    tools_arg = cmd[idx + 1]
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools
+    assert "Agent" in tools
+
+
+def test_build_command_emits_tools_empty_under_lockdown():
+    """Empty per-agent list → --tools '' (full lockdown)."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": []},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    idx = cmd.index("--tools")
+    assert cmd[idx + 1] == ""
+
+
+def test_build_command_emits_disallowed_tools_when_non_empty():
+    """--disallowedTools is emitted only when the disallow list is non-empty."""
     settings = _settings_with_tools({
         "always_disallowed": ["EnterPlanMode"],
         "default_denied": [],
         "per_agent_allow": {"_defaults": ["*"]},
     })
     cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    assert "--disallowedTools" in cmd
     idx = cmd.index("--disallowedTools")
-    disallow_str = cmd[idx + 1]
-    assert "EnterPlanMode" in disallow_str
-    assert "Skill" not in disallow_str
+    assert "EnterPlanMode" in cmd[idx + 1]
 
 
-def test_build_command_disallowed_tools_default_no_skill():
-    """Default build_command disallows EnterPlanMode etc. but not Skill."""
+def test_build_command_omits_disallowed_tools_when_empty():
+    """--disallowedTools is omitted when the disallow list is empty."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    assert "--disallowedTools" not in cmd
+
+
+def test_build_command_default_disallow_excludes_skill():
+    """Default disallows include EnterPlanMode etc. but never Skill."""
     cmd, _ = build_command("prompt", agent="planner", settings={})
-    idx = cmd.index("--disallowedTools")
-    disallow_str = cmd[idx + 1]
-    assert "EnterPlanMode" in disallow_str
-    assert "EnterWorktree" in disallow_str
-    assert "TodoWrite" in disallow_str
-    assert "Skill" not in disallow_str
+    if "--disallowedTools" in cmd:
+        idx = cmd.index("--disallowedTools")
+        disallow_str = cmd[idx + 1]
+        assert "EnterPlanMode" in disallow_str
+        assert "EnterWorktree" in disallow_str
+        assert "TodoWrite" in disallow_str
+        assert "Skill" not in disallow_str

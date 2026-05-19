@@ -226,21 +226,27 @@ Three sections — `tools`, `skills`, `subagents` — each with a consistent thr
         "per_agent_allow":   { "_defaults": ["*"] }
       },
       "skills": {
-        "always_disallowed": ["loop", "schedule", "worca-*", "update-config",
+        "always_disallowed": ["batch", "fewer-permission-prompts",
+                              "loop", "schedule", "worca-*", "update-config",
                               "hookify:hookify", "hookify:configure", "hookify:list",
                               "hookify:writing-rules", "init"],
-        "default_denied":    ["review", "security-review", "feature-dev:feature-dev",
+        "default_denied":    ["claude-api", "debug", "review", "security-review",
+                              "simplify", "feature-dev:feature-dev",
                               "claude-md-management:revise-claude-md",
                               "claude-md-management:claude-md-improver"],
-        "per_agent_allow":   { "_defaults": ["*"] }
+        "per_agent_allow": {
+          "_defaults":   ["*"],
+          "implementer": ["*", "simplify", "claude-api"],
+          "tester":      ["*", "debug"],
+          "reviewer":    ["*", "review", "security-review"],
+          "learner":     ["*", "claude-md-management:revise-claude-md",
+                          "claude-md-management:claude-md-improver"]
+        }
       },
       "subagents": {
         "always_disallowed": ["general-purpose"],
         "default_denied":    [],
-        "per_agent_allow": {
-          "_defaults": ["Explore"],
-          "implementer": ["Explore", "feature-dev:code-reviewer"]
-        }
+        "per_agent_allow":   { "_defaults": ["*"] }
       }
     }
   }
@@ -255,7 +261,17 @@ Three sections — `tools`, `skills`, `subagents` — each with a consistent thr
 
 **Wildcards:** `"*"` means "allow any item not in `always_disallowed` or `default_denied`". An empty list `[]` means lockdown — nothing allowed.
 
-**Asymmetric defaults:** tools default to `["*"]` (small blast radius per tool), subagents default to `["Explore"]` (subagents fork unbounded invisible work — opt-in to broader access).
+**Defaults:** all three sections default to `["*"]` — the `always_disallowed` tier carries the safety net (e.g. `general-purpose` for subagents). Projects that need narrower per-agent posture override `per_agent_allow` explicitly.
+
+**Tools section CLI mapping (PR C):**
+
+| `per_agent_allow` form | Claude CLI flag | Meaning |
+|---|---|---|
+| `["*"]` | `--tools default` | All built-ins allowed (minus `always_disallowed`) |
+| `["Read", "Grep"]` | `--tools Agent,Grep,Read,Skill` | Restricted to named built-ins; `Skill` + `Agent` auto-included so worca hooks fire |
+| `[]` | `--tools ""` | Lockdown — no built-in tool available |
+
+MCP tools (`mcp_*`) are not covered by `--tools` — MCP governance flows through other channels.
 
 For the complete reference — including the skill denylist rationale, mixed form semantics, and resolution algorithm — see [`docs/governance.md`](./docs/governance.md).
 

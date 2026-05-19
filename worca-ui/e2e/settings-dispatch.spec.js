@@ -90,10 +90,10 @@ test('renders tag input with current dispatch values', async ({ page }) => {
 test('add known subagent type via suggestions', async ({ page }) => {
   const ctx = await startServer();
   try {
-    // Pre-populate coordinator with an explicit empty list to override the
-    // section's `_defaults: ["Explore"]` inheritance — otherwise the row
-    // would already display Explore as an effective chip and the suggestion
-    // filter would exclude it.
+    // After PR B, _defaults is ["*"] — so Explore is not in the effective
+    // tag list (the wildcard chip is). Suggestions still surface Explore by
+    // name. Pre-populate coordinator with an explicit empty list to keep the
+    // assertion stable regardless of effective-chip rendering.
     await goToGovernance(page, ctx, {
       worca: {
         governance: {
@@ -244,9 +244,10 @@ test('reset to default button restores default tags', async ({ page }) => {
     // Click reset
     await resetBtn.click();
 
-    // Default is ["Explore"] — custom-thing should be gone
+    // After PR B, _defaults is ["*"] — the wildcard chip should render and
+    // custom-thing should be gone.
     await expect(
-      page.locator('#dispatch-subagents-implementer sl-tag[data-value="Explore"]'),
+      page.locator('#dispatch-subagents-implementer sl-tag[data-value="*"]'),
     ).toBeVisible();
     await expect(
       page.locator('#dispatch-subagents-implementer sl-tag[data-value="custom-thing"]'),
@@ -316,10 +317,10 @@ test('legacy governance.dispatch shows warning and migrates to dispatch.subagent
 test('save round-trip preserves all dispatch values', async ({ page }) => {
   const ctx = await startServer();
   try {
-    // Start with default settings
+    // Start with default settings — post-PR-B the implementer row shows the
+    // wildcard chip from _defaults: ["*"], not an "Explore" chip.
     await goToGovernance(page, ctx, {});
 
-    // implementer starts with ["Explore"] by default; add a second tag
     const input = page.locator('#dispatch-subagents-implementer .dispatch-tag-input-field');
     await input.click();
     await input.fill('feature-dev:code-reviewer');
@@ -337,9 +338,10 @@ test('save round-trip preserves all dispatch values', async ({ page }) => {
     await page.goto(`${ctx.url}/#/project-settings`, GOTO_OPTS);
     await page.locator('sl-tab[panel="governance"]').click();
 
-    // Both chips should still be present after reload
+    // After save, the explicit per-agent entry is materialized — both the
+    // wildcard chip and the newly-added named chip should be present.
     await expect(
-      page.locator('#dispatch-subagents-implementer sl-tag[data-value="Explore"]'),
+      page.locator('#dispatch-subagents-implementer sl-tag[data-value="*"]'),
     ).toBeVisible();
     await expect(
       page.locator(

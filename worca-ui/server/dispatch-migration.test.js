@@ -185,6 +185,8 @@ describe('migrateDispatchGovernance', () => {
     expect(pa.planner).toEqual(['Explore']);
     expect(pa.coordinator).toEqual([]);
     expect(pa.implementer).toEqual(['Explore']);
-    expect(pa._defaults).toEqual(['Explore']);
+    // PR B: subagents _defaults is now ['*']; the migration seeds the new
+    // default for projects that didn't have an explicit _defaults entry.
+    expect(pa._defaults).toEqual(['*']);
   });
 });
