@@ -464,6 +464,92 @@ class TestMigrateDispatchGovernance:
         )
 
 
+class TestSkillHookRegistration:
+    """W-054: hooks.PreToolUse[matcher=Skill] must be auto-wired on upgrade.
+
+    Without explicit injection, _deep_merge treats the existing PreToolUse
+    list as a scalar and silently drops the template's Skill matcher —
+    leaving skill_use.py dead and governance.dispatch.skills unenforced.
+    """
+
+    def _skill_hook_entries(self, settings):
+        entries = settings.get("hooks", {}).get("PreToolUse", [])
+        return [
+            e for e in entries
+            if any(
+                h.get("command", "").endswith("skill_use.py")
+                or h.get("command", "").endswith('skill_use.py"')
+                for h in e.get("hooks", [])
+            )
+        ]
+
+    def test_injected_when_pretooluse_has_other_matchers(self):
+        """Existing Bash|Write|Edit matcher must not block Skill injection."""
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash|Write|Edit",
+                        "hooks": [{"type": "command", "command": "python3 .../pre_tool_use.py"}],
+                    }
+                ]
+            }
+        }
+        migrated, changes = _migrate_settings_paths(settings)
+        skill_entries = self._skill_hook_entries(migrated)
+        assert len(skill_entries) == 1
+        assert skill_entries[0]["matcher"] == "Skill"
+        assert any("PreToolUse[Skill]" in c for c in changes)
+
+    def test_injected_when_pretooluse_missing(self):
+        """Fresh project with no PreToolUse array still gets the Skill hook."""
+        settings = {}
+        migrated, _changes = _migrate_settings_paths(settings)
+        skill_entries = self._skill_hook_entries(migrated)
+        assert len(skill_entries) == 1
+        assert skill_entries[0]["matcher"] == "Skill"
+
+    def test_idempotent_when_already_present(self):
+        """Re-running upgrade must not duplicate the Skill matcher."""
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash|Write|Edit",
+                        "hooks": [{"type": "command", "command": "python3 .../pre_tool_use.py"}],
+                    }
+                ]
+            }
+        }
+        first, first_changes = _migrate_settings_paths(settings)
+        second, second_changes = _migrate_settings_paths(first)
+        skill_entries = self._skill_hook_entries(second)
+        assert len(skill_entries) == 1
+        assert any("PreToolUse[Skill]" in c for c in first_changes)
+        assert not any("PreToolUse[Skill]" in c for c in second_changes), (
+            "second upgrade must be a no-op for Skill hook"
+        )
+
+    def test_existing_skill_matcher_preserved(self):
+        """User-customized Skill matcher (e.g. different command path) is untouched."""
+        custom_command = "python3 /custom/path/to/skill_use.py"
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Skill",
+                        "hooks": [{"type": "command", "command": custom_command}],
+                    }
+                ]
+            }
+        }
+        migrated, changes = _migrate_settings_paths(settings)
+        skill_entries = self._skill_hook_entries(migrated)
+        assert len(skill_entries) == 1
+        assert skill_entries[0]["hooks"][0]["command"] == custom_command
+        assert not any("PreToolUse[Skill]" in c for c in changes)
+
+
 # ── §11b: _migrate_global_keys_to_preferences ──────────────────────
 
 

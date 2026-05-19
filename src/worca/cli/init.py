@@ -308,6 +308,31 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
             ]
             changes.append(f"  hooks.{hook_type}: registered {script}")
 
+    # Ensure PreToolUse[matcher=Skill] is registered (W-054). Existing
+    # projects already have a hooks.PreToolUse array (Bash|Write|Edit), so
+    # _deep_merge silently drops the template's additional Skill entry
+    # (lists are treated as scalars). Inject it explicitly, idempotently —
+    # without this the skill_use.py hook is dead code on every upgrade and
+    # the dispatch.skills governance section is unenforced.
+    pre_tool_hooks = hooks.setdefault("PreToolUse", [])
+    skill_hook_present = any(
+        any(
+            h.get("command", "").endswith('skill_use.py"')
+            or h.get("command", "").endswith("skill_use.py")
+            for h in entry.get("hooks", [])
+        )
+        for entry in pre_tool_hooks
+    )
+    if not skill_hook_present:
+        pre_tool_hooks.append({
+            "matcher": "Skill",
+            "hooks": [{
+                "type": "command",
+                "command": _hook_cmd_tpl.format(script="skill_use.py"),
+            }],
+        })
+        changes.append("  hooks.PreToolUse[Skill]: registered skill_use.py")
+
     return migrated, changes
 
 
