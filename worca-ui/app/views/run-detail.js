@@ -885,7 +885,11 @@ export function runDetailView(run, settings = {}, options = {}) {
     return { overview: empty, stages: empty };
   }
 
-  const branch = run.branch || run.work_request?.branch || '';
+  const sourceBranch =
+    run.head_branch || run.branch || run.work_request?.branch || '';
+  const targetBranch = run.target_branch || '';
+  const defaultBranch = run._default_branch || '';
+  const showTargetBranch = targetBranch && targetBranch !== defaultBranch;
   const pipelineTemplate = formatPipelineTemplate(run.pipeline_template);
   const pr = run.pr?.url || run.pr_url || null;
   const endTime =
@@ -946,12 +950,22 @@ export function runDetailView(run, settings = {}, options = {}) {
             : nothing
         }
         ${
-          branch
+          sourceBranch
             ? html`
           <div class="run-branch">
-            <span class="meta-label">Branch:</span>
-            <span class="meta-value">${branch}</span>
+            <span class="meta-label">Source Branch:</span>
+            <span class="meta-value">${sourceBranch}</span>
             ${pr ? html`<a class="run-pr-link" href="${pr}" target="_blank">View PR</a>` : nothing}
+          </div>
+        `
+            : nothing
+        }
+        ${
+          showTargetBranch
+            ? html`
+          <div class="run-target-branch">
+            <span class="meta-label">Target Branch:</span>
+            <span class="meta-value">${targetBranch}</span>
           </div>
         `
             : nothing

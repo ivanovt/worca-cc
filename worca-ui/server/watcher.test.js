@@ -309,6 +309,108 @@ describe('watcher', () => {
     expect(runs.find((r) => r.run_id === 'run-gone')).toBeUndefined();
   });
 
+  it('worktree run includes head_branch from registry entry', async () => {
+    const wtDir = join(dir, 'worktrees', 'wt-branch');
+    const wtRunId = 'run-branch-001';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+
+    const wtStatus = {
+      run_id: wtRunId,
+      started_at: '2026-05-18T10:00:00Z',
+      pipeline_status: 'running',
+      branch: 'master',
+      work_request: { title: 'branch test' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(wtRunDir, 'status.json'), JSON.stringify(wtStatus));
+
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({
+        run_id: wtRunId,
+        worktree_path: wtDir,
+        title: 'branch test',
+        pid: 99996,
+        status: 'running',
+        branch: 'worca/feature-xyz-20260518',
+        target_branch: 'master',
+      }),
+    );
+
+    // Sync
+    const syncRuns = discoverRuns(dir);
+    const syncRun = syncRuns.find((r) => r.run_id === wtRunId);
+    expect(syncRun).toBeDefined();
+    expect(syncRun.head_branch).toBe('worca/feature-xyz-20260518');
+
+    // Async
+    const asyncRuns = await discoverRunsAsync(dir);
+    const asyncRun = asyncRuns.find((r) => r.run_id === wtRunId);
+    expect(asyncRun).toBeDefined();
+    expect(asyncRun.head_branch).toBe('worca/feature-xyz-20260518');
+  });
+
+  it('worktree run has head_branch null when registry has no branch', async () => {
+    const wtDir = join(dir, 'worktrees', 'wt-no-branch');
+    const wtRunId = 'run-no-branch-001';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+
+    const wtStatus = {
+      run_id: wtRunId,
+      started_at: '2026-05-18T10:30:00Z',
+      pipeline_status: 'running',
+      work_request: { title: 'no branch test' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(wtRunDir, 'status.json'), JSON.stringify(wtStatus));
+
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({
+        run_id: wtRunId,
+        worktree_path: wtDir,
+        title: 'no branch test',
+        pid: 99995,
+        status: 'running',
+      }),
+    );
+
+    const syncRuns = discoverRuns(dir);
+    const syncRun = syncRuns.find((r) => r.run_id === wtRunId);
+    expect(syncRun.head_branch).toBeNull();
+
+    const asyncRuns = await discoverRunsAsync(dir);
+    const asyncRun = asyncRuns.find((r) => r.run_id === wtRunId);
+    expect(asyncRun.head_branch).toBeNull();
+  });
+
+  it('in-place run does not have head_branch', () => {
+    const runId = 'run-inplace-001';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+
+    const status = {
+      run_id: runId,
+      started_at: '2026-05-18T11:00:00Z',
+      pipeline_status: 'running',
+      branch: 'master',
+      work_request: { title: 'in-place run' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(runDir, 'status.json'), JSON.stringify(status));
+
+    const runs = discoverRuns(dir);
+    const run = runs.find((r) => r.run_id === runId);
+    expect(run).toBeDefined();
+    expect(run.head_branch).toBeUndefined();
+  });
+
   it('discoverRuns_fleet_id_propagation: fleet_id from registry entry propagates to run', async () => {
     const wtDir = join(dir, 'worktrees', 'wt-fleet');
     const wtRunId = 'run-fleet-001';
