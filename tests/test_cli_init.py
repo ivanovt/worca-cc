@@ -152,6 +152,12 @@ class TestMigrateSettingsPaths:
             "hooks": {
                 "SubagentStart": [{"hooks": [{"type": "command", "command": "echo"}]}],
                 "SubagentStop": [{"hooks": [{"type": "command", "command": "echo"}]}],
+                "PreToolUse": [
+                    {
+                        "matcher": "Skill",
+                        "hooks": [{"type": "command", "command": "python3 .../skill_use.py"}],
+                    },
+                ],
             },
         }
         _, changes = _migrate_settings_paths(settings)

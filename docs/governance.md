@@ -8,7 +8,7 @@ Each section (`tools`, `skills`, `subagents`) has three tiers:
 
 | Tier | Key | Overridable | Purpose |
 |------|-----|-------------|---------|
-| 1 | `always_disallowed` | No | Hard deny — worca-internal footguns that no agent should ever invoke. Cannot be bypassed from settings. |
+| 1 | `always_disallowed` | Yes, by editing settings.json | Hard deny — worca-internal footguns no agent should invoke. The `_DISPATCH_DEFAULTS` constants in `tracking.py` populate this on `worca init`/`--upgrade`, but the resulting value in `settings.json` can be edited or cleared per project. Edit sparingly. |
 | 2 | `default_denied` | Yes, via explicit opt-in | Blocked unless the agent explicitly names them in `per_agent_allow`. The `"*"` wildcard does **not** include them. |
 | 3 | `per_agent_allow` | N/A | Per-agent allow list with `_defaults` fallback. Controls what each agent role can use. |
 
@@ -148,7 +148,7 @@ The coordinator can invoke no skills/subagents/tools (depending on the section),
 
 ## `always_disallowed` and `default_denied` overlap
 
-If the same name appears in both tiers, `always_disallowed` wins — it short-circuits first in the resolution algorithm. The item cannot be opted in via `per_agent_allow` regardless of the `default_denied` entry.
+If the same name appears in both tiers within the resolved config, `always_disallowed` wins — it short-circuits first in the resolution algorithm. The item cannot be opted in via `per_agent_allow` regardless of the `default_denied` entry. (Removing the name from `always_disallowed` in `settings.json` would demote it to `default_denied`-only, which is the intended escape hatch when a project genuinely needs to override a default footgun.)
 
 ## Pattern matching
 

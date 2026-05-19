@@ -249,7 +249,7 @@ Three sections — `tools`, `skills`, `subagents` — each with a consistent thr
 
 **Tiers:**
 
-1. **`always_disallowed`** — non-overridable hard deny. Cannot be bypassed from settings.
+1. **`always_disallowed`** — hard-deny defaults. The list ships from `_DISPATCH_DEFAULTS` in `tracking.py` (and is written into `settings.json` on `worca init`/`--upgrade`), but the resulting value is project-editable — projects can clear or override entries if they have a real reason. Edit sparingly.
 2. **`default_denied`** — blocked unless the agent explicitly names them in `per_agent_allow`. The `"*"` wildcard does **not** include them.
 3. **`per_agent_allow`** — per-agent allow list with `_defaults` fallback. Supports `"*"` (all available minus the two deny tiers), named entries, and mixed `["*", "extra"]` form. Per-agent entry **replaces** `_defaults` (no union).
 
