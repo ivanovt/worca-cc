@@ -1,7 +1,14 @@
 import { html, nothing } from 'lit-html';
 import { isCustomized } from './dispatch-tag-state.js';
 
-function chipView(tag, { locked, warn, removable, onRemove }) {
+// Follow-up #4: hovering over the `*` chip explains what wildcard means.
+// Hovering a locked chip explains why it's there (e.g. always_disallowed
+// or, in the Tools section, the auto-included Skill/Agent meta-tools).
+const _WILDCARD_CHIP_TITLE =
+  'Any item not in the Always Disallowed or Default Denied tiers';
+const _LOCKED_CHIP_TITLE_DEFAULT = 'Hard-deny — cannot be removed';
+
+function chipView(tag, { locked, warn, removable, onRemove, titleOverride }) {
   const isWildcard = tag === '*';
   const classes = [
     'dispatch-chip',
@@ -13,14 +20,21 @@ function chipView(tag, { locked, warn, removable, onRemove }) {
     .join(' ');
 
   const label = isWildcard ? 'any' : tag;
+  const title =
+    titleOverride ??
+    (isWildcard
+      ? _WILDCARD_CHIP_TITLE
+      : locked
+        ? _LOCKED_CHIP_TITLE_DEFAULT
+        : '');
 
   if (removable && onRemove) {
-    return html`<sl-tag size="small" removable class="${classes}" data-value="${tag}" @sl-remove=${onRemove}>${label}</sl-tag>`;
+    return html`<sl-tag size="small" removable class="${classes}" data-value="${tag}" title="${title}" @sl-remove=${onRemove}>${label}</sl-tag>`;
   }
   if (removable) {
-    return html`<sl-tag size="small" removable class="${classes}" data-value="${tag}">${label}</sl-tag>`;
+    return html`<sl-tag size="small" removable class="${classes}" data-value="${tag}" title="${title}">${label}</sl-tag>`;
   }
-  return html`<sl-tag size="small" class="${classes}" data-value="${tag}">${label}</sl-tag>`;
+  return html`<sl-tag size="small" class="${classes}" data-value="${tag}" title="${title}">${label}</sl-tag>`;
 }
 
 function tierView(title, items, { locked, warn, removable, onRemove }) {
@@ -56,6 +70,55 @@ function filterSuggestions(input, knownItems, currentTags, deniedSet, warnSet) {
     }));
 }
 
+// Follow-up #3 / #5: meta-tools that worca uses to dispatch skills and
+// subagents. When a Tools per-agent row has a *named* list (not wildcard,
+// not empty), the runtime auto-includes these so the skill_use.py and
+// subagent_start.py hooks still fire. The UI surfaces them as locked
+// pseudo-chips with a tooltip so the user understands why they're there.
+const _AUTO_INCLUDED_META_TOOLS = ['Skill', 'Agent'];
+const _AUTO_INCLUDED_TITLE =
+  'Auto-included so the worca skill/subagent governance hooks keep firing';
+
+function _autoIncludedMetaChips(section, tags) {
+  // Only render for the Tools section when the user supplied a named list.
+  if (section !== 'tools') return null;
+  if (!tags || tags.length === 0) return null;
+  if (tags.includes('*')) return null;
+  // Don't duplicate chips the user already typed.
+  const userSet = new Set(tags);
+  const auto = _AUTO_INCLUDED_META_TOOLS.filter((t) => !userSet.has(t));
+  if (auto.length === 0) return null;
+  return auto.map(
+    (tag) => html`<sl-tag
+      size="small"
+      class="dispatch-chip dispatch-chip-locked dispatch-chip-auto"
+      data-value="${tag}"
+      data-auto-included="true"
+      title="${_AUTO_INCLUDED_TITLE}"
+      >${tag}</sl-tag
+    >`,
+  );
+}
+
+function _lockdownChip(section, agent, perAgentAllow) {
+  // Follow-up #4: show a "Lockdown" placeholder when a non-_defaults row
+  // has an *explicit* empty per_agent_allow entry. Distinguishes "I removed
+  // every chip" (lockdown) from "I never customized this agent" (inherits
+  // _defaults).
+  if (agent === '_defaults') return null;
+  const explicit = perAgentAllow?.[agent];
+  if (!Array.isArray(explicit) || explicit.length !== 0) return null;
+  const noun = section.slice(0, -1); // "tools" -> "tool"
+  return html`<sl-tag
+    size="small"
+    class="dispatch-chip dispatch-chip-locked dispatch-chip-lockdown"
+    data-value=""
+    data-lockdown="true"
+    title="Explicit lockdown — no ${noun} available to this agent"
+    >Lockdown</sl-tag
+  >`;
+}
+
 function perAgentRowView({
   section,
   agent,
@@ -64,6 +127,7 @@ function perAgentRowView({
   knownItems,
   alwaysDisallowed,
   defaultDenied,
+  perAgentAllow,
   rowState,
   onRemove,
   onReset,
@@ -80,6 +144,9 @@ function perAgentRowView({
   const suggestions = rowState.showSuggestions
     ? filterSuggestions(rowState.input, knownItems, tags, deniedSet, warnSet)
     : [];
+
+  const autoIncludedChips = _autoIncludedMetaChips(section, tags);
+  const lockdownChip = _lockdownChip(section, agent, perAgentAllow);
 
   return html`
     <div
@@ -108,6 +175,8 @@ function perAgentRowView({
               onRemove: () => onRemove(tag),
             }),
           )}
+          ${autoIncludedChips ?? nothing}
+          ${lockdownChip ?? nothing}
           <input
             class="dispatch-tag-input-field"
             type="text"
@@ -213,6 +282,7 @@ export function dispatchSectionView({
   onChange,
   state,
   rerender,
+  showTitle = true,
 }) {
   const alwaysDisallowed = config.always_disallowed || [];
   const defaultDenied = config.default_denied || [];
@@ -291,7 +361,11 @@ export function dispatchSectionView({
 
   return html`
     <div class="dispatch-section">
-      <h4 class="dispatch-section-title">${capitalize(section)}</h4>
+      ${
+        showTitle
+          ? html`<h4 class="dispatch-section-title">${capitalize(section)}</h4>`
+          : nothing
+      }
       ${
         sectionHint
           ? html`<p class="dispatch-section-hint">${sectionHint}</p>`
@@ -326,6 +400,7 @@ export function dispatchSectionView({
               knownItems,
               alwaysDisallowed,
               defaultDenied,
+              perAgentAllow,
               rowState,
               onRemove: (tag) => removeTagFromAgent(agent, tag),
               onReset: () => resetAgent(agent),

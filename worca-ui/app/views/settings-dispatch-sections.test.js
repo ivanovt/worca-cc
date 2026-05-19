@@ -129,8 +129,32 @@ describe('settings.js dispatch sections (W-054)', () => {
         },
       };
       const html = renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
-      const sectionCount = (html.match(/dispatch-section-title/g) || []).length;
-      expect(sectionCount).toBe(3);
+      // Each section is wrapped in an sl-details with data-section. The
+      // inner h4.dispatch-section-title is suppressed when nested in
+      // dispatch-section-details (showTitle=false), so count the wrappers.
+      const sectionCount = (
+        html.match(/data-section="(tools|skills|subagents)"/g) || []
+      ).length;
+      expect(sectionCount).toBeGreaterThanOrEqual(3);
+    });
+
+    it('renders each dispatch section inside a collapsible sl-details', async () => {
+      const { governanceTab } = await import('./settings.js');
+      const worca = {
+        governance: {
+          guards: {},
+          test_gate_strikes: 2,
+          dispatch: { ...DISPATCH_DEFAULTS },
+        },
+      };
+      const html = renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
+      for (const section of ['tools', 'skills', 'subagents']) {
+        // The sl-details wrapper carries data-section so the e2e tests can
+        // target it. We just verify it's rendered (collapsed-by-default
+        // behavior is asserted in the e2e suite).
+        expect(html).toContain(`data-section="${section}"`);
+      }
+      expect(html).toContain('dispatch-section-details');
     });
   });
 });

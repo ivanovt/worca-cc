@@ -1982,6 +1982,29 @@ sl-input [slot="prefix"] {
   opacity: 0.6;
 }
 
+/* Auto-included meta-tool chips (Skill, Agent) — locked but not crossed-out;
+ * the line-through reads as "blocked", but these are present-and-required. */
+.dispatch-chip-auto {
+  text-decoration: none;
+  opacity: 0.75;
+  font-style: italic;
+  border-style: dashed;
+}
+
+.dispatch-chip-auto::part(base) {
+  border-style: dashed;
+}
+
+/* Lockdown placeholder — semantically distinct from a real chip. */
+.dispatch-chip-lockdown {
+  text-decoration: none;
+  opacity: 0.7;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+}
+
 .dispatch-chip-warn {
   --sl-color-neutral-200: var(--sl-color-warning-200);
   background: var(--sl-color-warning-100);
@@ -2004,6 +2027,39 @@ sl-input [slot="prefix"] {
   line-height: 1.4;
   margin: 0 0 8px;
   max-width: 720px;
+}
+
+/* Collapsible wrapper for each dispatch section in the Governance tab.
+ * Mirrors .model-env-details so users get a consistent collapse pattern. */
+sl-details.dispatch-section-details {
+  margin-bottom: 0.5rem;
+}
+
+sl-details.dispatch-section-details::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+sl-details.dispatch-section-details::part(header) {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+}
+
+sl-details.dispatch-section-details::part(header):hover {
+  background: var(--hover, rgba(0, 0, 0, 0.04));
+}
+
+sl-details.dispatch-section-details::part(content) {
+  padding: 0.25rem 0 0.5rem;
+}
+
+.dispatch-section-details-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.75rem;
 }
 
 .dispatch-tier {
@@ -2216,6 +2272,58 @@ sl-input.pricing-input::part(input) {
 
 .dispatch-badge-wildcard::part(base) {
   font-style: italic;
+}
+
+/* Empty-state line shown in completed iterations that produced no dispatch
+ * events. Muted on purpose — explicit absence, not a missing feature. */
+.dispatch-events-empty {
+  font-size: 12px;
+  color: var(--sl-color-neutral-500);
+  font-style: italic;
+}
+
+.meta-value-muted {
+  color: var(--sl-color-neutral-500);
+}
+
+/* Overflow control: when an iteration dispatches more than _DISPATCH_VISIBLE_LIMIT
+ * candidates (typical under PR B's wildcard default), the tail goes inside a
+ * compact sl-details. */
+sl-details.dispatch-events-overflow {
+  display: inline-block;
+}
+
+sl-details.dispatch-events-overflow::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+sl-details.dispatch-events-overflow::part(header) {
+  padding: 0 0.4rem;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--sl-color-neutral-700);
+}
+
+sl-details.dispatch-events-overflow::part(header):hover {
+  background: var(--hover, rgba(0, 0, 0, 0.04));
+}
+
+sl-details.dispatch-events-overflow::part(content) {
+  padding: 0.25rem 0 0;
+}
+
+.dispatch-events-overflow-summary {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.dispatch-events-overflow-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
 }
 
 /* --- Agent Prompt Section --- */

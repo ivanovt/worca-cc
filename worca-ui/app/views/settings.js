@@ -189,9 +189,48 @@ let _dispatchEditState = {
   subagents: {},
 };
 
+// --- Per-section expand/collapse state for the Governance tab. Sections
+// collapse by default so the Governance tab doesn't dominate the page; the
+// pattern mirrors the model-card env-vars sl-details. ---
+const _dispatchSectionExpanded = {
+  tools: false,
+  skills: false,
+  subagents: false,
+};
+
 function resetDispatchEditState() {
   _dispatchEditState = { tools: {}, skills: {}, subagents: {} };
 }
+
+function _toggleDispatchSection(section, expanded, rerender) {
+  if (_dispatchSectionExpanded[section] === expanded) return;
+  _dispatchSectionExpanded[section] = expanded;
+  rerender();
+}
+
+function _dispatchSectionSummary(section, dispatch) {
+  const cfg = dispatch[section] || DISPATCH_DEFAULTS[section];
+  const alwaysCount = (cfg.always_disallowed || []).length;
+  const deniedCount = (cfg.default_denied || []).length;
+  const perAgentEntries = Object.entries(cfg.per_agent_allow || {}).filter(
+    ([k]) => k !== '_defaults',
+  );
+  const customCount = perAgentEntries.length;
+  const parts = [];
+  parts.push(`${alwaysCount} always-disallowed`);
+  if (deniedCount > 0) parts.push(`${deniedCount} default-denied`);
+  if (customCount > 0)
+    parts.push(
+      `${customCount} customized agent${customCount === 1 ? '' : 's'}`,
+    );
+  return parts.join(' · ');
+}
+
+const _DISPATCH_SECTION_LABELS = {
+  tools: 'Tools',
+  skills: 'Skills',
+  subagents: 'Subagents',
+};
 
 const _DISPATCH_SECTION_KEYS = new Set(['tools', 'skills', 'subagents']);
 
@@ -1118,35 +1157,46 @@ export function governanceTab(worca, permissions, rerender) {
 
       <h3 class="settings-section-title">Dispatch Rules</h3>
       ${legacyDispatchBanner}
-      ${dispatchSectionView({
-        section: 'tools',
-        config: dispatch.tools || DISPATCH_DEFAULTS.tools,
-        knownItems: knownTools,
-        agentRoles: AGENT_NAMES,
-        defaults: DISPATCH_DEFAULTS.tools,
-        onChange: (cfg) => handleDispatchChange('tools', cfg),
-        state: _dispatchEditState.tools,
-        rerender,
-      })}
-      ${dispatchSectionView({
-        section: 'skills',
-        config: dispatch.skills || DISPATCH_DEFAULTS.skills,
-        knownItems: knownSkills,
-        agentRoles: AGENT_NAMES,
-        defaults: DISPATCH_DEFAULTS.skills,
-        onChange: (cfg) => handleDispatchChange('skills', cfg),
-        state: _dispatchEditState.skills,
-        rerender,
-      })}
-      ${dispatchSectionView({
-        section: 'subagents',
-        config: dispatch.subagents || DISPATCH_DEFAULTS.subagents,
-        knownItems: knownSubagents,
-        agentRoles: AGENT_NAMES,
-        defaults: DISPATCH_DEFAULTS.subagents,
-        onChange: (cfg) => handleDispatchChange('subagents', cfg),
-        state: _dispatchEditState.subagents,
-        rerender,
+      ${[
+        { section: 'tools', knownItems: knownTools },
+        { section: 'skills', knownItems: knownSkills },
+        { section: 'subagents', knownItems: knownSubagents },
+      ].map(({ section, knownItems }) => {
+        const expanded = _dispatchSectionExpanded[section];
+        const summary = _dispatchSectionSummary(section, dispatch);
+        return html`
+          <sl-details
+            class="dispatch-section-details"
+            data-section="${section}"
+            ?open=${expanded}
+            @sl-show=${(e) => {
+              if (e.target.matches('sl-details.dispatch-section-details')) {
+                _toggleDispatchSection(section, true, rerender);
+              }
+            }}
+            @sl-hide=${(e) => {
+              if (e.target.matches('sl-details.dispatch-section-details')) {
+                _toggleDispatchSection(section, false, rerender);
+              }
+            }}
+          >
+            <div slot="summary" class="dispatch-section-details-summary">
+              <span class="settings-label">${_DISPATCH_SECTION_LABELS[section]}</span>
+              <span class="settings-muted-small">${summary}</span>
+            </div>
+            ${dispatchSectionView({
+              section,
+              config: dispatch[section] || DISPATCH_DEFAULTS[section],
+              knownItems,
+              agentRoles: AGENT_NAMES,
+              defaults: DISPATCH_DEFAULTS[section],
+              onChange: (cfg) => handleDispatchChange(section, cfg),
+              state: _dispatchEditState[section],
+              rerender,
+              showTitle: false,
+            })}
+          </sl-details>
+        `;
       })}
 
       <h3 class="settings-section-title">Permissions</h3>

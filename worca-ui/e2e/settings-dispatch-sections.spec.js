@@ -22,6 +22,28 @@ async function goToGovernance(page, ctx, settings = {}) {
   await page.locator('sl-tab[panel="governance"]').click();
 }
 
+/**
+ * Sections collapse by default to keep the Governance tab compact. Tests that
+ * interact with chips / inputs inside a section must expand it first.
+ */
+async function expandDispatchSection(page, section) {
+  const details = page.locator(
+    `sl-details.dispatch-section-details[data-section="${section}"]`,
+  );
+  await expect(details).toBeAttached();
+  // Click the slotted summary so the user-driven path is exercised — that
+  // way the sl-show + rerender cycle runs end-to-end. `el.show()` works
+  // too but the click path also exercises the visible summary surface area.
+  const isOpen = await details.evaluate((el) => el.open);
+  if (!isOpen) {
+    await details
+      .locator('.dispatch-section-details-summary')
+      .first()
+      .click();
+    await expect(details).toHaveJSProperty('open', true);
+  }
+}
+
 async function saveGovernanceTab(page) {
   const [response] = await Promise.all([
     page.waitForResponse(
@@ -51,6 +73,7 @@ test('tools section: always_disallowed chips render locked and non-removable', a
   const ctx = await startServer();
   try {
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'tools');
 
     // EnterPlanMode is in DISPATCH_DEFAULTS.tools.always_disallowed.
     // It should render with the dispatch-chip-locked class and NOT have the
@@ -71,6 +94,7 @@ test('tools section: add custom tag via Enter persists through save round-trip',
   const ctx = await startServer();
   try {
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'tools');
 
     const input = page.locator(
       '#dispatch-tools-planner .dispatch-tag-input-field',
@@ -104,6 +128,7 @@ test('skills section: default_denied chip renders with warn class and is removab
   const ctx = await startServer();
   try {
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'skills');
 
     // `review` is in DISPATCH_DEFAULTS.skills.default_denied. The Default
     // Denied tier renders chips with dispatch-chip-warn + removable.
@@ -126,6 +151,7 @@ test('skills section: add via suggestions persists through save round-trip', asy
   const ctx = await startServer();
   try {
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'skills');
 
     const input = page.locator(
       '#dispatch-skills-implementer .dispatch-tag-input-field',
@@ -170,6 +196,7 @@ test('skills section: always_disallowed item appears greyed in suggestions and c
   const ctx = await startServer();
   try {
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'skills');
 
     const input = page.locator(
       '#dispatch-skills-coordinator .dispatch-tag-input-field',
@@ -202,6 +229,7 @@ test('_defaults row is editable like any per-agent row', async ({ page }) => {
   const ctx = await startServer();
   try {
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'subagents');
 
     // After PR B, subagents _defaults starts at ["*"]. Add a named entry
     // alongside the wildcard chip.
@@ -223,7 +251,7 @@ test('_defaults row is editable like any per-agent row', async ({ page }) => {
   }
 });
 
-test('wildcard `*` chip renders with `any` label and dispatch-chip-wildcard class', async ({
+test('wildcard `*` chip renders with `any` label, wildcard class, and explanatory tooltip', async ({
   page,
 }) => {
   const ctx = await startServer();
@@ -231,12 +259,18 @@ test('wildcard `*` chip renders with `any` label and dispatch-chip-wildcard clas
     // Default tools.per_agent_allow._defaults = ["*"] → wildcard chip should
     // render with the special styling and "any" label.
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'tools');
 
     const wildcardChip = page.locator(
       '#dispatch-tools-_defaults sl-tag.dispatch-chip-wildcard[data-value="*"]',
     );
     await expect(wildcardChip).toBeVisible();
     await expect(wildcardChip).toContainText('any');
+    // Follow-up #4: hovering the * chip explains what wildcard means.
+    await expect(wildcardChip).toHaveAttribute(
+      'title',
+      /Any item not in the Always Disallowed/,
+    );
   } finally {
     await ctx.close();
   }
@@ -248,6 +282,7 @@ test('skills section: default_denied suggestion item renders .warn class with op
   const ctx = await startServer();
   try {
     await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'skills');
 
     // `review` is in DISPATCH_DEFAULTS.skills.default_denied. When typed into
     // a per-agent suggestion popup, it should render with .warn class and
@@ -283,6 +318,179 @@ test('skills section: default_denied suggestion item renders .warn class with op
   }
 });
 
+// ─── Collapsible sections ────────────────────────────────────────────────────
+
+test('dispatch sections render collapsed by default', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {});
+
+    for (const section of ['tools', 'skills', 'subagents']) {
+      const details = page.locator(
+        `sl-details.dispatch-section-details[data-section="${section}"]`,
+      );
+      await expect(details).toBeAttached();
+      // Shoelace tracks `open` as a JS property reflected to the attribute.
+      await expect(details).toHaveJSProperty('open', false);
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('dispatch section summary shows always-disallowed count and customization', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            tools: {
+              per_agent_allow: { _defaults: ['*'], planner: ['Read'] },
+            },
+          },
+        },
+      },
+    });
+
+    const summary = page.locator(
+      'sl-details.dispatch-section-details[data-section="tools"] .dispatch-section-details-summary',
+    );
+    await expect(summary).toContainText('always-disallowed');
+    // The customized planner row should be counted in the summary.
+    await expect(summary).toContainText('customized agent');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('expanding a section reveals its per-agent rows', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {});
+
+    // The dispatch-tag-input container itself carries id="dispatch-skills-implementer".
+    const skillsRow = page.locator('#dispatch-skills-implementer');
+    // Collapsed by default — the row is not visible (display:none inside sl-details).
+    await expect(skillsRow).not.toBeVisible();
+
+    await expandDispatchSection(page, 'skills');
+    await expect(skillsRow).toBeVisible();
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ─── Auto-included Skill/Agent meta-chips (Tools section) ───────────────────
+
+test('tools section: named per-agent list shows auto-included Skill + Agent chips', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            tools: {
+              per_agent_allow: { _defaults: ['*'], planner: ['Read', 'Grep'] },
+            },
+          },
+        },
+      },
+    });
+    await expandDispatchSection(page, 'tools');
+
+    const plannerRow = page.locator('#dispatch-tools-planner');
+    await expect(
+      plannerRow.locator('sl-tag[data-value="Read"]'),
+    ).toBeVisible();
+    // Auto-include locks Skill + Agent as visual-only pseudo-chips.
+    const skillAuto = plannerRow.locator(
+      'sl-tag[data-value="Skill"][data-auto-included="true"]',
+    );
+    const agentAuto = plannerRow.locator(
+      'sl-tag[data-value="Agent"][data-auto-included="true"]',
+    );
+    await expect(skillAuto).toBeVisible();
+    await expect(agentAuto).toBeVisible();
+    await expect(skillAuto).toHaveAttribute('title', /Auto-included/);
+    await expect(skillAuto).not.toHaveAttribute('removable', '');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('tools section: wildcard row does not show auto-included meta-chips', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'tools');
+
+    const defaultsRow = page.locator('#dispatch-tools-_defaults');
+    // _defaults: ["*"] renders the wildcard chip — auto-include not needed.
+    await expect(
+      defaultsRow.locator('[data-auto-included="true"]'),
+    ).toHaveCount(0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// ─── Lockdown chip (explicit empty per-agent list) ──────────────────────────
+
+test('lockdown chip renders for an agent with an explicit empty per-agent list', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            skills: {
+              per_agent_allow: { _defaults: ['*'], coordinator: [] },
+            },
+          },
+        },
+      },
+    });
+    await expandDispatchSection(page, 'skills');
+
+    const lockdown = page.locator(
+      '#dispatch-skills-coordinator sl-tag[data-lockdown="true"]',
+    );
+    await expect(lockdown).toBeVisible();
+    await expect(lockdown).toContainText('Lockdown');
+    await expect(lockdown).toHaveAttribute('title', /lockdown/i);
+    // Lockdown placeholder is not removable.
+    await expect(lockdown).not.toHaveAttribute('removable', '');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('lockdown chip is absent when an agent inherits defaults', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'skills');
+
+    // No agent has been customized to [], so no lockdown placeholder.
+    await expect(
+      page.locator('sl-tag[data-lockdown="true"]'),
+    ).toHaveCount(0);
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('Esc clears input and dismisses suggestions popup', async ({ page }) => {
   const ctx = await startServer();
   try {
@@ -298,6 +506,7 @@ test('Esc clears input and dismisses suggestions popup', async ({ page }) => {
         },
       },
     });
+    await expandDispatchSection(page, 'subagents');
 
     const input = page.locator(
       '#dispatch-subagents-coordinator .dispatch-tag-input-field',

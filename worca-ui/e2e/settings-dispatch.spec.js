@@ -20,6 +20,29 @@ async function goToGovernance(page, ctx, settings = {}) {
   );
   await page.goto(`${ctx.url}/#/project-settings`, GOTO_OPTS);
   await page.locator('sl-tab[panel="governance"]').click();
+  // Every test in this file interacts with the Subagents section; the
+  // post-follow-up UI collapses sections by default so we expand it here to
+  // keep the test bodies focused on dispatch behavior, not chrome.
+  await expandDispatchSection(page, 'subagents');
+}
+
+/**
+ * Dispatch sections collapse by default. Open the requested section so the
+ * per-agent rows become interactable.
+ */
+async function expandDispatchSection(page, section) {
+  const details = page.locator(
+    `sl-details.dispatch-section-details[data-section="${section}"]`,
+  );
+  await expect(details).toBeAttached();
+  const isOpen = await details.evaluate((el) => el.open);
+  if (!isOpen) {
+    await details
+      .locator('.dispatch-section-details-summary')
+      .first()
+      .click();
+    await expect(details).toHaveJSProperty('open', true);
+  }
 }
 
 /**
@@ -108,14 +131,16 @@ test('add known subagent type via suggestions', async ({ page }) => {
     await input.click();
     await input.fill('exp');
 
-    // Suggestions popup should appear with "Explore"
+    // Suggestions popup should appear with "Explore" (and potentially
+    // discovered plugin subagents whose name contains "exp" — match by the
+    // first inner span which carries the bare candidate name).
     const suggestions = page.locator(
       '.settings-dispatch-row:has(#dispatch-subagents-coordinator) .dispatch-suggestions',
     );
     await expect(suggestions).toBeVisible();
-    const exploreItem = suggestions.locator('.item:not(.denied)').filter({
-      hasText: 'Explore',
-    });
+    const exploreItem = suggestions
+      .locator('.item:not(.denied)')
+      .filter({ has: page.locator('span', { hasText: /^Explore$/ }) });
     await expect(exploreItem).toBeVisible();
 
     // Click the suggestion

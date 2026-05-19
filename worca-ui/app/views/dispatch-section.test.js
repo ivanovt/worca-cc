@@ -284,6 +284,154 @@ describe('dispatch-section', () => {
     });
   });
 
+  describe('wildcard tooltip', () => {
+    it('* chip carries a title attribute explaining wildcard semantics', () => {
+      const html = renderToString(
+        dispatchSectionView({
+          section: 'subagents',
+          config: {
+            always_disallowed: ['general-purpose'],
+            default_denied: [],
+            per_agent_allow: { _defaults: ['*'] },
+          },
+          knownItems: KNOWN_SUBAGENTS,
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS.subagents,
+          onChange: vi.fn(),
+        }),
+      );
+      // The wildcard chip should expose a tooltip via the title attribute.
+      expect(html).toMatch(
+        /title="[^"]*Any item not in the Always Disallowed[^"]*"/,
+      );
+    });
+  });
+
+  describe('auto-included Skill/Agent meta-chips (tools only)', () => {
+    function render(perAgent, section) {
+      return renderToString(
+        dispatchSectionView({
+          section,
+          config: {
+            always_disallowed: [],
+            default_denied: [],
+            per_agent_allow: perAgent,
+          },
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS[section],
+          onChange: vi.fn(),
+        }),
+      );
+    }
+
+    it('renders Skill + Agent auto-included chips when tools has a named list', () => {
+      const html = render(
+        { _defaults: ['*'], planner: ['Read', 'Grep'] },
+        'tools',
+      );
+      // Locate the planner row chips
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      expect(plannerRow).toContain('data-auto-included="true"');
+      expect(plannerRow).toMatch(
+        /data-value="Skill"[^>]*data-auto-included="true"/,
+      );
+      expect(plannerRow).toMatch(
+        /data-value="Agent"[^>]*data-auto-included="true"/,
+      );
+      expect(plannerRow).toContain('dispatch-chip-auto');
+    });
+
+    it('does NOT render auto-included chips when tools uses wildcard', () => {
+      const html = render({ _defaults: ['*'] }, 'tools');
+      expect(html).not.toContain('data-auto-included="true"');
+    });
+
+    it('does NOT render auto-included chips when tools per-agent is empty (lockdown)', () => {
+      const html = render({ _defaults: ['*'], planner: [] }, 'tools');
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      expect(plannerRow).not.toContain('data-auto-included="true"');
+    });
+
+    it('skips duplicates when user already typed Skill or Agent', () => {
+      const html = render(
+        { _defaults: ['*'], planner: ['Read', 'Skill'] },
+        'tools',
+      );
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      // User's Skill chip is editable (no auto-include flag). Only Agent
+      // should be auto-included.
+      const autoMatches = plannerRow.match(/data-auto-included="true"/g) || [];
+      expect(autoMatches).toHaveLength(1);
+      expect(plannerRow).toMatch(
+        /data-value="Agent"[^>]*data-auto-included="true"/,
+      );
+    });
+
+    it('skills section never gets the auto-include treatment', () => {
+      const html = render(
+        { _defaults: ['*'], planner: ['my-custom-skill'] },
+        'skills',
+      );
+      expect(html).not.toContain('data-auto-included="true"');
+    });
+  });
+
+  describe('Lockdown chip for explicit empty lists', () => {
+    function render(perAgent, section) {
+      return renderToString(
+        dispatchSectionView({
+          section,
+          config: {
+            always_disallowed: [],
+            default_denied: [],
+            per_agent_allow: perAgent,
+          },
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS[section],
+          onChange: vi.fn(),
+        }),
+      );
+    }
+
+    it('renders Lockdown chip when per-agent list is explicitly empty', () => {
+      const html = render({ _defaults: ['*'], planner: [] }, 'skills');
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      expect(plannerRow).toContain('data-lockdown="true"');
+      expect(plannerRow).toContain('Lockdown');
+      expect(plannerRow).toContain('dispatch-chip-lockdown');
+    });
+
+    it('does NOT render Lockdown when row inherits non-empty defaults', () => {
+      const html = render({ _defaults: ['*'] }, 'skills');
+      // No agent has an explicit empty list, so no lockdown anywhere.
+      expect(html).not.toContain('data-lockdown="true"');
+    });
+
+    it('does NOT render Lockdown for the _defaults row itself', () => {
+      // Even when _defaults is explicitly [], that's "inherit nothing", not
+      // a per-agent lockdown — the placeholder would be confusing.
+      const html = render({ _defaults: [] }, 'skills');
+      const defaultsRow =
+        html.split('data-agent="_defaults"')[1]?.split('data-agent="')[0] || '';
+      expect(defaultsRow).not.toContain('data-lockdown="true"');
+    });
+
+    it('renders Lockdown across all three sections when applicable', () => {
+      for (const section of ['tools', 'skills', 'subagents']) {
+        const html = render({ _defaults: ['*'], planner: [] }, section);
+        const plannerRow =
+          html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+        expect(plannerRow).toContain('data-lockdown="true"');
+      }
+    });
+  });
+
   describe('suggestion popup tri-state (PR E)', () => {
     const KNOWN_SKILLS = [
       { name: 'review', group: 'Built-in' },

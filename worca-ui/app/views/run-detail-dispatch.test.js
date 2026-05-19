@@ -126,7 +126,7 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Subagents:');
+    expect(html).toContain('Dispatch:');
     expect(html).toContain('Explore dispatched');
     expect(html).toContain('variant="success"');
   });
@@ -147,7 +147,7 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Subagents:');
+    expect(html).toContain('Dispatch:');
     expect(html).toContain('general-purpose blocked (×2)');
     // PR B tooltip composition: section/via/reason joined by " · "
     expect(html).toMatch(/title="[^"]*denylist[^"]*"/);
@@ -170,14 +170,74 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Subagents:');
+    expect(html).toContain('Dispatch:');
     expect(html).toContain('review dispatched');
     expect(html).toContain('variant="success"');
   });
 
-  it('omits Subagents row when no dispatch events', () => {
+  it('renders explicit empty-state for completed iterations with no dispatch', () => {
     const html = renderToString(runDetailView(makeRun()));
-    expect(html).not.toContain('Subagents:');
+    expect(html).toContain('Dispatch:');
+    expect(html).toContain('No subagent or skill activity in this iteration');
+  });
+
+  it('omits Dispatch row for in-progress iterations with no events', () => {
+    // In-progress iterations stay blank so empty-state doesn't flicker into
+    // view before the first hook fires.
+    const html = renderToString(
+      runDetailView({
+        stages: {
+          implement: {
+            status: 'in_progress',
+            iterations: [
+              {
+                number: 1,
+                status: 'in_progress',
+                started_at: '2026-04-13T11:00:00.000Z',
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(html).not.toContain('Dispatch:');
+    expect(html).not.toContain('No subagent or skill activity');
+  });
+
+  it('collapses dispatch events into a +N more overflow at 7+ entries', () => {
+    const events = Array.from({ length: 9 }, (_, i) => ({
+      type: 'pipeline.hook.dispatch_allowed',
+      section: 'subagents',
+      candidate: `Agent${i}`,
+      via: 'wildcard',
+      count: 1,
+    }));
+    const html = renderToString(
+      runDetailView(makeRun({ dispatch_events: events })),
+    );
+    expect(html).toContain('Dispatch:');
+    // Six visible inline
+    for (let i = 0; i < 6; i += 1) {
+      expect(html).toContain(`Agent${i} dispatched`);
+    }
+    // Remaining 3 sit behind the overflow control
+    expect(html).toContain('+3 more');
+    expect(html).toContain('dispatch-events-overflow');
+  });
+
+  it('does NOT show overflow when count is at or below the visible limit', () => {
+    const events = Array.from({ length: 6 }, (_, i) => ({
+      type: 'pipeline.hook.dispatch_allowed',
+      section: 'subagents',
+      candidate: `Agent${i}`,
+      via: 'wildcard',
+      count: 1,
+    }));
+    const html = renderToString(
+      runDetailView(makeRun({ dispatch_events: events })),
+    );
+    expect(html).not.toContain('more');
+    expect(html).not.toContain('dispatch-events-overflow');
   });
 
   it('renders ×N suffix only when count > 1', () => {

@@ -407,39 +407,75 @@ function _dispatchEventCandidate(ev) {
   return ev.candidate || ev.subagent_type || '';
 }
 
+// PR D / B / follow-up: badges in this row now mix subagent + skill
+// dispatches under the unified `pipeline.hook.dispatch_*` event family. The
+// "Dispatch:" label is the honest one — the legacy "Subagents:" label was
+// already lying once the skill_use.py hook started emitting through the same
+// channel.
+const _DISPATCH_VISIBLE_LIMIT = 6;
+
 function _dispatchEventsRowView(iter) {
   const events = iter.dispatch_events;
-  if (!events || events.length === 0) return nothing;
+  if (!events || events.length === 0) {
+    // Empty-state for completed iterations: show a muted line so the absence
+    // of dispatch activity reads as "checked + none", not "we forgot to run
+    // the hook". Live/in-progress iterations stay blank to avoid flicker.
+    if (iter.status === 'completed' || iter.completed_at) {
+      return html`
+        <div class="iteration-tags-row dispatch-events-row">
+          <span class="meta-label">Dispatch:</span>
+          <span class="meta-value-muted dispatch-events-empty">
+            No subagent or skill activity in this iteration
+          </span>
+        </div>
+      `;
+    }
+    return nothing;
+  }
+  const overflow = events.length > _DISPATCH_VISIBLE_LIMIT;
+  const inline = overflow ? events.slice(0, _DISPATCH_VISIBLE_LIMIT) : events;
+  const hidden = overflow ? events.slice(_DISPATCH_VISIBLE_LIMIT) : [];
+  const renderBadge = (ev) => {
+    const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
+    const isWildcard = isAllowed && ev.via === 'wildcard';
+    // PR B: wildcard dispatches get a neutral variant so the eye can
+    // separate "broadly allowed" from "explicitly opted in" at a glance.
+    const variant = isAllowed ? (isWildcard ? 'neutral' : 'success') : 'danger';
+    const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
+    const suffix = count ? ` (×${count})` : '';
+    const candidate = _dispatchEventCandidate(ev);
+    const label = isAllowed
+      ? `${candidate} dispatched${suffix}`
+      : `${candidate} blocked${suffix}`;
+    const tooltipParts = [];
+    if (ev.section) tooltipParts.push(`section: ${ev.section}`);
+    if (ev.via) tooltipParts.push(`via: ${ev.via}`);
+    if (ev.reason) tooltipParts.push(ev.reason);
+    const tooltip =
+      tooltipParts.join(' · ') || (isAllowed ? 'dispatched' : 'blocked');
+    const cls = isWildcard
+      ? 'dispatch-badge dispatch-badge-wildcard'
+      : 'dispatch-badge';
+    return html`<sl-badge class="${cls}" variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
+  };
   return html`
     <div class="iteration-tags-row dispatch-events-row">
-      <span class="meta-label">Subagents:</span>
-      ${events.map((ev) => {
-        const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
-        const isWildcard = isAllowed && ev.via === 'wildcard';
-        // PR B: wildcard dispatches get a neutral variant so the eye can
-        // separate "broadly allowed" from "explicitly opted in" at a glance.
-        const variant = isAllowed
-          ? isWildcard
-            ? 'neutral'
-            : 'success'
-          : 'danger';
-        const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
-        const suffix = count ? ` (×${count})` : '';
-        const candidate = _dispatchEventCandidate(ev);
-        const label = isAllowed
-          ? `${candidate} dispatched${suffix}`
-          : `${candidate} blocked${suffix}`;
-        const tooltipParts = [];
-        if (ev.section) tooltipParts.push(`section: ${ev.section}`);
-        if (ev.via) tooltipParts.push(`via: ${ev.via}`);
-        if (ev.reason) tooltipParts.push(ev.reason);
-        const tooltip =
-          tooltipParts.join(' · ') || (isAllowed ? 'dispatched' : 'blocked');
-        const cls = isWildcard
-          ? 'dispatch-badge dispatch-badge-wildcard'
-          : 'dispatch-badge';
-        return html`<sl-badge class="${cls}" variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
-      })}
+      <span class="meta-label">Dispatch:</span>
+      ${inline.map(renderBadge)}
+      ${
+        overflow
+          ? html`
+            <sl-details class="dispatch-events-overflow">
+              <span slot="summary" class="dispatch-events-overflow-summary"
+                >${`+${hidden.length} more`}</span
+              >
+              <div class="dispatch-events-overflow-content">
+                ${hidden.map(renderBadge)}
+              </div>
+            </sl-details>
+          `
+          : nothing
+      }
     </div>
   `;
 }
