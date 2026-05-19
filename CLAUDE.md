@@ -176,7 +176,7 @@ npx vitest run worca-ui/server/    # UI server tests
 cd worca-ui && npx playwright test --workers=1  # Browser e2e tests (must run serially)
 ```
 
-Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing failures in unrelated tests should be ignored — only verify tests relevant to your changes.
+Test naming: `tests/test_<module>.py` mirrors source module names. To skip a failing test, name it and verify it fails on the parent commit — aggregate dismissals ("pre-existing", "flaky", "unrelated") are not accepted.
 
 **Integration tests** (`tests/integration/`) run the full pipeline with a mock Claude CLI (`tests/mock_claude/mock_claude.py`). They require `pip install -e ".[dev]"` and Unix (signal tests are skipped on Windows). Each test spins up a temp git repo + worca runtime, so they're slower (~30-60s for the full suite).
 
