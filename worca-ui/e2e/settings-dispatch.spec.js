@@ -90,8 +90,19 @@ test('renders tag input with current dispatch values', async ({ page }) => {
 test('add known subagent type via suggestions', async ({ page }) => {
   const ctx = await startServer();
   try {
-    // Default settings: coordinator starts with [] (no tags)
-    await goToGovernance(page, ctx, {});
+    // Pre-populate coordinator with an explicit empty list to override the
+    // section's `_defaults: ["Explore"]` inheritance — otherwise the row
+    // would already display Explore as an effective chip and the suggestion
+    // filter would exclude it.
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            subagents: { per_agent_allow: { coordinator: [] } },
+          },
+        },
+      },
+    });
 
     const input = page.locator('#dispatch-subagents-coordinator .dispatch-tag-input-field');
     await input.click();

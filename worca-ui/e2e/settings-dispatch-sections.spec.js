@@ -244,7 +244,18 @@ test('wildcard `*` chip renders with `any` label and dispatch-chip-wildcard clas
 test('Esc clears input and dismisses suggestions popup', async ({ page }) => {
   const ctx = await startServer();
   try {
-    await goToGovernance(page, ctx, {});
+    // Pre-populate coordinator: [] so the row is truly empty (otherwise the
+    // section's `_defaults: ["Explore"]` would render an effective chip and
+    // exclude Explore from the suggestion matches for 'exp').
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            subagents: { per_agent_allow: { coordinator: [] } },
+          },
+        },
+      },
+    });
 
     const input = page.locator(
       '#dispatch-subagents-coordinator .dispatch-tag-input-field',
