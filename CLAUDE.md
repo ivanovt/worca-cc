@@ -182,6 +182,18 @@ Test naming: `tests/test_<module>.py` mirrors source module names. To skip a fai
 
 **Playwright note:** Browser e2e tests must run with `--workers=1` (serial). Parallel workers cause flaky failures due to browser context contamination between isolated test servers.
 
+**Conditional Playwright runs (UI changes).** When the diff between `$WORCA_BASE_BRANCH` and `HEAD` touches any path under `worca-ui/app/` or `worca-ui/server/`, the tester MUST run Playwright in addition to vitest:
+
+```bash
+cd worca-ui && npx playwright test --workers=1
+# Per-file if you hit port collisions:
+cd worca-ui && npx playwright test e2e/<spec>.spec.js --workers=1
+```
+
+This closes the feedback loop inside the implementer → tester iteration instead of waiting for out-of-band CI. The per-failure attribution rules above apply: name each failing test, verify against the parent commit, or route the failure back to the implementer.
+
+If the Chromium binary is missing (`npx playwright install chromium` was never run in this environment), state that explicitly in your verdict — do not silently skip the suite.
+
 **Coverage runs** (Python) use the centralized runner in `scripts/coverage.py`:
 
 ```bash
