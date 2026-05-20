@@ -110,7 +110,7 @@ describe('iteration tags layout', () => {
 
   // --- Subagents row ---
 
-  it('renders dispatch events with Subagents label', () => {
+  it('renders subagent dispatches under a Subagents: label', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -126,12 +126,13 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Dispatch:');
+    expect(html).toContain('Subagents:');
+    expect(html).not.toContain('Skills:');
     expect(html).toContain('Explore dispatched');
     expect(html).toContain('variant="success"');
   });
 
-  it('renders blocked dispatch with tooltip', () => {
+  it('renders blocked subagent dispatch with tooltip and Subagents: label', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -147,14 +148,14 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Dispatch:');
+    expect(html).toContain('Subagents:');
     expect(html).toContain('general-purpose blocked (×2)');
     // PR B tooltip composition: section/via/reason joined by " · "
     expect(html).toMatch(/title="[^"]*denylist[^"]*"/);
     expect(html).toMatch(/title="[^"]*section: subagents[^"]*"/);
   });
 
-  it('renders skill dispatches via the unified dispatch_allowed event (section: skills)', () => {
+  it('renders skill dispatches under a Skills: label (per-section row)', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -170,9 +171,41 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Dispatch:');
+    expect(html).toContain('Skills:');
+    expect(html).not.toContain('Subagents:');
     expect(html).toContain('review dispatched');
     expect(html).toContain('variant="success"');
+  });
+
+  it('splits mixed dispatches into separate Subagents: and Skills: rows', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'subagents',
+              candidate: 'Explore',
+              via: 'explicit',
+              count: 1,
+            },
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'skills',
+              candidate: 'simplify',
+              via: 'explicit',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('Skills:');
+    expect(html).toContain('data-dispatch-section="subagents"');
+    expect(html).toContain('data-dispatch-section="skills"');
+    expect(html).toContain('Explore dispatched');
+    expect(html).toContain('simplify dispatched');
   });
 
   it('renders explicit empty-state for completed iterations with no dispatch', () => {
@@ -202,6 +235,8 @@ describe('iteration tags layout', () => {
     );
     expect(html).not.toContain('Dispatch:');
     expect(html).not.toContain('No subagent or skill activity');
+    expect(html).not.toContain('Subagents:');
+    expect(html).not.toContain('Skills:');
   });
 
   it('collapses dispatch events into a +N more overflow at 7+ entries', () => {
@@ -215,7 +250,7 @@ describe('iteration tags layout', () => {
     const html = renderToString(
       runDetailView(makeRun({ dispatch_events: events })),
     );
-    expect(html).toContain('Dispatch:');
+    expect(html).toContain('Subagents:');
     // Six visible inline
     for (let i = 0; i < 6; i += 1) {
       expect(html).toContain(`Agent${i} dispatched`);
@@ -330,8 +365,8 @@ describe('iteration tags layout', () => {
   });
 });
 
-describe('dispatch activity counter', () => {
-  it('renders counter with explicit and wildcard counts', () => {
+describe('overview no longer shows the redundant hero "Dispatch activity" counter', () => {
+  it('does NOT render a Dispatch activity panel above the stage timeline', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -354,12 +389,14 @@ describe('dispatch activity counter', () => {
         }),
       ),
     );
-    expect(html).toContain('Dispatch activity:');
-    expect(html).toContain('3 explicit');
-    expect(html).toContain('2 via wildcard');
+    // The hero counter was removed — per-section iteration rows now carry
+    // the same information without duplicating it in the overview.
+    expect(html).not.toContain('Dispatch activity:');
+    expect(html).not.toContain('dispatch-activity-counter');
+    expect(html).not.toContain('dispatch-activity-tuples');
   });
 
-  it('omits wildcard segment when all events are explicit', () => {
+  it('per-iteration Subagents/Skills rows still carry the counts', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -369,162 +406,28 @@ describe('dispatch activity counter', () => {
               section: 'subagents',
               candidate: 'Explore',
               via: 'explicit',
-              count: 5,
-            },
-          ],
-        }),
-      ),
-    );
-    expect(html).toContain('5 explicit');
-    expect(html).not.toContain('wildcard');
-  });
-
-  it('counts skill dispatches alongside subagent dispatches via the unified type', () => {
-    const html = renderToString(
-      runDetailView(
-        makeRun({
-          dispatch_events: [
-            {
-              type: 'pipeline.hook.dispatch_allowed',
-              section: 'subagents',
-              candidate: 'Explore',
-              via: 'explicit',
-              count: 1,
+              count: 3,
             },
             {
               type: 'pipeline.hook.dispatch_allowed',
               section: 'skills',
-              candidate: 'review',
-              via: 'wildcard',
+              candidate: 'simplify',
+              via: 'explicit',
               count: 1,
             },
           ],
         }),
       ),
     );
-    expect(html).toContain('1 explicit');
-    expect(html).toContain('1 via wildcard');
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('Skills:');
+    expect(html).toContain('Explore dispatched (×3)');
+    expect(html).toContain('simplify dispatched');
   });
 
-  it('excludes blocked events from counter', () => {
-    const html = renderToString(
-      runDetailView(
-        makeRun({
-          dispatch_events: [
-            {
-              type: 'pipeline.hook.dispatch_allowed',
-              section: 'subagents',
-              candidate: 'Explore',
-              via: 'explicit',
-              count: 2,
-            },
-            {
-              type: 'pipeline.hook.dispatch_blocked',
-              section: 'subagents',
-              candidate: 'general-purpose',
-              reason: 'denylist',
-              count: 3,
-            },
-          ],
-        }),
-      ),
-    );
-    expect(html).toContain('2 explicit');
-  });
-
-  it('aggregates counts across multiple stages', () => {
-    const run = {
-      stages: {
-        implement: {
-          status: 'completed',
-          agent: 'implementer',
-          iterations: [
-            {
-              number: 1,
-              status: 'completed',
-              dispatch_events: [
-                {
-                  type: 'pipeline.hook.dispatch_allowed',
-                  section: 'subagents',
-                  candidate: 'Explore',
-                  via: 'explicit',
-                  count: 3,
-                },
-              ],
-            },
-          ],
-        },
-        test: {
-          status: 'completed',
-          agent: 'tester',
-          iterations: [
-            {
-              number: 1,
-              status: 'completed',
-              dispatch_events: [
-                {
-                  type: 'pipeline.hook.dispatch_allowed',
-                  section: 'subagents',
-                  candidate: 'Explore',
-                  via: 'wildcard',
-                  count: 2,
-                },
-              ],
-            },
-          ],
-        },
-      },
-    };
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('3 explicit');
-    expect(html).toContain('2 via wildcard');
-  });
-
-  it('renders expanded tuples with agent, child, and via', () => {
-    const run = {
-      stages: {
-        implement: {
-          status: 'completed',
-          agent: 'implementer',
-          iterations: [
-            {
-              number: 1,
-              status: 'completed',
-              dispatch_events: [
-                {
-                  type: 'pipeline.hook.dispatch_allowed',
-                  section: 'subagents',
-                  candidate: 'Explore',
-                  via: 'explicit',
-                  count: 1,
-                },
-                {
-                  type: 'pipeline.hook.dispatch_allowed',
-                  section: 'subagents',
-                  candidate: 'Plan',
-                  via: 'wildcard',
-                  count: 1,
-                },
-              ],
-            },
-          ],
-        },
-      },
-    };
-    const html = renderToString(runDetailView(run));
-    expect(html).toContain('implementer');
-    expect(html).toContain('Explore');
-    expect(html).toContain('Plan');
-    expect(html).toContain('explicit');
-    expect(html).toContain('wildcard');
-  });
-
-  it('omits counter when no allowed dispatch events exist', () => {
-    const html = renderToString(runDetailView(makeRun()));
-    expect(html).not.toContain('Dispatch activity:');
-  });
-
-  it('omits counter when only blocked events exist', () => {
+  // Kept here so future regressions that try to re-introduce the hero
+  // counter trip a test rather than slip through review.
+  it('synthetic placeholder so the suite keeps a recognizable name', () => {
     const html = renderToString(
       runDetailView(
         makeRun({

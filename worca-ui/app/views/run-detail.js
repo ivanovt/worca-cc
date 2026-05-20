@@ -407,19 +407,84 @@ function _dispatchEventCandidate(ev) {
   return ev.candidate || ev.subagent_type || '';
 }
 
-// PR D / B / follow-up: badges in this row now mix subagent + skill
-// dispatches under the unified `pipeline.hook.dispatch_*` event family. The
-// "Dispatch:" label is the honest one — the legacy "Subagents:" label was
-// already lying once the skill_use.py hook started emitting through the same
-// channel.
+// PR D / B / follow-up: each iteration shows one row per dispatch section
+// ("Subagents:" + "Skills:") rather than a single mixed-bag "Dispatch:" line.
+// This restores the original per-section label semantics that PR D's unified
+// event family had blurred — and replaces the redundant hero-level
+// "Dispatch activity" counter that previously sat above the stage timeline.
 const _DISPATCH_VISIBLE_LIMIT = 6;
+const _DISPATCH_SECTIONS = [
+  { section: 'subagents', label: 'Subagents:' },
+  { section: 'skills', label: 'Skills:' },
+];
 
-function _dispatchEventsRowView(iter) {
-  const events = iter.dispatch_events;
-  if (!events || events.length === 0) {
-    // Empty-state for completed iterations: show a muted line so the absence
-    // of dispatch activity reads as "checked + none", not "we forgot to run
-    // the hook". Live/in-progress iterations stay blank to avoid flicker.
+function _dispatchBadgeView(ev) {
+  const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
+  const isWildcard = isAllowed && ev.via === 'wildcard';
+  // PR B: wildcard dispatches get a neutral variant so the eye can separate
+  // "broadly allowed" from "explicitly opted in" at a glance.
+  const variant = isAllowed ? (isWildcard ? 'neutral' : 'success') : 'danger';
+  const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
+  const suffix = count ? ` (×${count})` : '';
+  const candidate = _dispatchEventCandidate(ev);
+  const label = isAllowed
+    ? `${candidate} dispatched${suffix}`
+    : `${candidate} blocked${suffix}`;
+  const tooltipParts = [];
+  if (ev.section) tooltipParts.push(`section: ${ev.section}`);
+  if (ev.via) tooltipParts.push(`via: ${ev.via}`);
+  if (ev.reason) tooltipParts.push(ev.reason);
+  const tooltip =
+    tooltipParts.join(' · ') || (isAllowed ? 'dispatched' : 'blocked');
+  const cls = isWildcard
+    ? 'dispatch-badge dispatch-badge-wildcard'
+    : 'dispatch-badge';
+  return html`<sl-badge class="${cls}" variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
+}
+
+function _dispatchSectionRowView(label, sectionKey, events) {
+  if (events.length === 0) return nothing;
+  const overflow = events.length > _DISPATCH_VISIBLE_LIMIT;
+  const inline = overflow ? events.slice(0, _DISPATCH_VISIBLE_LIMIT) : events;
+  const hidden = overflow ? events.slice(_DISPATCH_VISIBLE_LIMIT) : [];
+  return html`
+    <div
+      class="iteration-tags-row dispatch-events-row"
+      data-dispatch-section="${sectionKey}"
+    >
+      <span class="meta-label">${label}</span>
+      ${inline.map(_dispatchBadgeView)}
+      ${
+        overflow
+          ? html`
+            <sl-details class="dispatch-events-overflow">
+              <span slot="summary" class="dispatch-events-overflow-summary"
+                >${`+${hidden.length} more`}</span
+              >
+              <div class="dispatch-events-overflow-content">
+                ${hidden.map(_dispatchBadgeView)}
+              </div>
+            </sl-details>
+          `
+          : nothing
+      }
+    </div>
+  `;
+}
+
+function _dispatchEventsRowsView(iter) {
+  const events = iter.dispatch_events || [];
+  const buckets = { subagents: [], skills: [] };
+  for (const ev of events) {
+    // Back-compat: pre-PR-D events carry no `section`. Treat them as subagents
+    // since that was the only emitter before the unification.
+    const s = ev.section || 'subagents';
+    if (buckets[s]) buckets[s].push(ev);
+  }
+  const anyEvents = buckets.subagents.length > 0 || buckets.skills.length > 0;
+  // Empty-state for completed iterations only: rendering a muted line on
+  // every in-progress iteration would flicker as hooks fire mid-run.
+  if (!anyEvents) {
     if (iter.status === 'completed' || iter.completed_at) {
       return html`
         <div class="iteration-tags-row dispatch-events-row">
@@ -432,108 +497,10 @@ function _dispatchEventsRowView(iter) {
     }
     return nothing;
   }
-  const overflow = events.length > _DISPATCH_VISIBLE_LIMIT;
-  const inline = overflow ? events.slice(0, _DISPATCH_VISIBLE_LIMIT) : events;
-  const hidden = overflow ? events.slice(_DISPATCH_VISIBLE_LIMIT) : [];
-  const renderBadge = (ev) => {
-    const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
-    const isWildcard = isAllowed && ev.via === 'wildcard';
-    // PR B: wildcard dispatches get a neutral variant so the eye can
-    // separate "broadly allowed" from "explicitly opted in" at a glance.
-    const variant = isAllowed ? (isWildcard ? 'neutral' : 'success') : 'danger';
-    const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
-    const suffix = count ? ` (×${count})` : '';
-    const candidate = _dispatchEventCandidate(ev);
-    const label = isAllowed
-      ? `${candidate} dispatched${suffix}`
-      : `${candidate} blocked${suffix}`;
-    const tooltipParts = [];
-    if (ev.section) tooltipParts.push(`section: ${ev.section}`);
-    if (ev.via) tooltipParts.push(`via: ${ev.via}`);
-    if (ev.reason) tooltipParts.push(ev.reason);
-    const tooltip =
-      tooltipParts.join(' · ') || (isAllowed ? 'dispatched' : 'blocked');
-    const cls = isWildcard
-      ? 'dispatch-badge dispatch-badge-wildcard'
-      : 'dispatch-badge';
-    return html`<sl-badge class="${cls}" variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
-  };
   return html`
-    <div class="iteration-tags-row dispatch-events-row">
-      <span class="meta-label">Dispatch:</span>
-      ${inline.map(renderBadge)}
-      ${
-        overflow
-          ? html`
-            <sl-details class="dispatch-events-overflow">
-              <span slot="summary" class="dispatch-events-overflow-summary"
-                >${`+${hidden.length} more`}</span
-              >
-              <div class="dispatch-events-overflow-content">
-                ${hidden.map(renderBadge)}
-              </div>
-            </sl-details>
-          `
-          : nothing
-      }
-    </div>
-  `;
-}
-
-const _ALLOWED_DISPATCH_TYPES = new Set(['pipeline.hook.dispatch_allowed']);
-
-function _dispatchActivityCounterView(stages, agents) {
-  let explicit = 0;
-  let wildcard = 0;
-  const tuples = [];
-
-  for (const [key, stage] of Object.entries(stages)) {
-    const agent = stage.agent || agents?.[key]?.agent || key;
-    const iterations = stage.iterations || [];
-    for (const iter of iterations) {
-      const events = iter.dispatch_events || [];
-      for (const ev of events) {
-        if (!_ALLOWED_DISPATCH_TYPES.has(ev.type)) continue;
-        const count = ev.count || 1;
-        if (ev.via === 'wildcard') {
-          wildcard += count;
-        } else {
-          explicit += count;
-        }
-        tuples.push({
-          agent,
-          child: _dispatchEventCandidate(ev),
-          via: ev.via || 'explicit',
-          count,
-        });
-      }
-    }
-  }
-
-  if (explicit === 0 && wildcard === 0) return nothing;
-
-  const summary =
-    wildcard > 0
-      ? `Dispatch activity: ${explicit} explicit, ${wildcard} via wildcard`
-      : `Dispatch activity: ${explicit} explicit`;
-
-  return html`
-    <sl-details class="dispatch-activity-counter">
-      <span slot="summary">${summary}</span>
-      <div class="dispatch-activity-tuples">
-        ${tuples.map(
-          (t) => html`
-          <div class="dispatch-tuple">
-            <span class="dispatch-tuple-agent">${t.agent}</span>
-            <span class="dispatch-tuple-arrow">→</span>
-            <span class="dispatch-tuple-child">${t.child}</span>
-            <sl-badge variant="${t.via === 'wildcard' ? 'warning' : 'success'}" pill>${t.via}</sl-badge>
-            ${t.count > 1 ? html`<span class="dispatch-tuple-count">×${t.count}</span>` : nothing}
-          </div>
-        `,
-        )}
-      </div>
-    </sl-details>
+    ${_DISPATCH_SECTIONS.map(({ section, label }) =>
+      _dispatchSectionRowView(label, section, buckets[section]),
+    )}
   `;
 }
 
@@ -820,7 +787,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
           : nothing
       }
       ${_classificationRowView(iter)}
-      ${_dispatchEventsRowView(iter)}
+      ${_dispatchEventsRowsView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
     </div>
   `;
@@ -1021,7 +988,6 @@ export function runDetailView(run, settings = {}, options = {}) {
       ${_circuitBreakerBannerView(run, settings)}
       ${prVerificationBannerView(run)}
       ${guideConflictsPanelView(run.guide_conflicts, options)}
-      ${_dispatchActivityCounterView(stages, agents)}
 
       <div class="run-info-section">
         ${
@@ -1327,7 +1293,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
-                      ${iterations.length === 1 ? _dispatchEventsRowView(iterations[0]) : nothing}
+                      ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
