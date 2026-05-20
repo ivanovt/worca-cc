@@ -31,6 +31,27 @@ def main():
     skill = _extract_skill_name(tool_input)
     parent = role_from_worca_agent(os.environ.get("WORCA_AGENT", ""))
 
+    # Fail closed on unresolvable skill name (only for governed agents).
+    # If the Claude Code PreToolUse payload schema ever renames the skill
+    # field, _extract_skill_name returns "" and check_allowed under a
+    # wildcard would otherwise *allow* an unknown skill — the opposite of
+    # what governance is meant to do. Interactive (no WORCA_AGENT) passes
+    # through.
+    if parent and not skill:
+        if emit_from_hook:
+            emit_from_hook("pipeline.hook.dispatch_blocked", {
+                "agent": parent,
+                "section": "skills",
+                "candidate": "",
+                "reason": "skill_name_unresolved",
+            })
+        print(
+            "Blocked: could not extract skill name from PreToolUse payload — "
+            "fail-closed (check Claude Code Skill payload schema)",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+
     allowed, reason, via = check_allowed("skills", parent, skill)
     if not allowed:
         if emit_from_hook:

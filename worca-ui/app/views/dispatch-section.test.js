@@ -506,4 +506,54 @@ describe('dispatch-section', () => {
       expect(html).toContain('class="item"');
     });
   });
+
+  describe('bare * in deny tier surfaces a warning', () => {
+    function renderWithWildcardInDeny(
+      section,
+      alwaysDisallowed,
+      defaultDenied,
+    ) {
+      return renderToString(
+        dispatchSectionView({
+          section,
+          config: {
+            always_disallowed: alwaysDisallowed,
+            default_denied: defaultDenied,
+            per_agent_allow: { _defaults: ['*'] },
+          },
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS[section],
+          onChange: vi.fn(),
+        }),
+      );
+    }
+
+    it('renders sl-alert with dispatch-wildcard-deny-warning class when * is in always_disallowed', () => {
+      const html = renderWithWildcardInDeny('skills', ['*'], []);
+      expect(html).toContain('dispatch-wildcard-deny-warning');
+      expect(html).toContain('Always Disallowed');
+    });
+
+    it('renders the warning when * is in default_denied', () => {
+      const html = renderWithWildcardInDeny('subagents', [], ['*']);
+      expect(html).toContain('dispatch-wildcard-deny-warning');
+      expect(html).toContain('Default Denied');
+    });
+
+    it('mentions both tiers when * is in both', () => {
+      const html = renderWithWildcardInDeny('tools', ['*'], ['*']);
+      expect(html).toContain('Always Disallowed');
+      expect(html).toContain('Default Denied');
+    });
+
+    it('does NOT render the warning when no deny tier contains *', () => {
+      const html = renderWithWildcardInDeny(
+        'skills',
+        ['worca-*', 'init'],
+        ['review'],
+      );
+      expect(html).not.toContain('dispatch-wildcard-deny-warning');
+    });
+  });
 });

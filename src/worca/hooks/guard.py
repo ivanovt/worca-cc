@@ -8,6 +8,8 @@ import re
 import sys
 import os
 
+from worca.hooks.agent_role import role_from_worca_agent as _role_from_worca_agent
+
 
 def _extract_actual_command(command: str) -> str:
     """Extract the actual command, stripping any cd prefix added by hooks.
@@ -28,27 +30,8 @@ _SAFE_COMMAND_PREFIXES = ("bd ", "bd\t")
 # utils/claude_cli.py from the resolved prompt filename). All role-based
 # checks must extract the agent component with `_role_from_worca_agent()`
 # — comparing the raw env var against a bare agent name silently fails.
-
-
-def _role_from_worca_agent(raw: str) -> str:
-    """Extract the agent role from a WORCA_AGENT env value.
-
-    The env value is the basename (sans extension) of the resolved prompt
-    file: ``{stage}-{agent}-iter-{N}``. Stage values and agent names never
-    contain ``-`` or ``iter`` tokens, so splitting is unambiguous. Returns
-    the empty string for an empty input.
-
-    Examples:
-        _role_from_worca_agent("test-tester-iter-5") -> "tester"
-        _role_from_worca_agent("pr-guardian-iter-1") -> "guardian"
-        _role_from_worca_agent("plan_review-plan_reviewer-iter-2") -> "plan_reviewer"
-        _role_from_worca_agent("guardian") -> "guardian"  # legacy / bare form
-    """
-    if not raw:
-        return ""
-    base = raw.rsplit("-iter-", 1)[0] if "-iter-" in raw else raw
-    parts = base.split("-")
-    return parts[-1] if parts else raw
+# Implementation lives in worca.hooks.agent_role and is shared with the
+# skill_use and subagent_start hooks; imported above.
 
 
 def _is_env_evasion(command: str) -> bool:

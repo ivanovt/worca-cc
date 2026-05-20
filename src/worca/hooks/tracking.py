@@ -74,46 +74,76 @@ _DISPATCH_DEFAULTS = {
     },
 }
 
-# Cache is process-lifetime. Hook subprocesses are short-lived so staleness is
-# not a concern in today's usage. If this module is ever imported from a
-# long-running process (e.g. a daemon), call _reset_dispatch_cache() when
-# settings.json changes or pass settings_override on every read.
-_cached_rules: dict | None = None
+# Cache is process-lifetime, keyed by section. Hook subprocesses are short-lived
+# so staleness is not a concern in today's usage. If this module is ever imported
+# from a long-running process (e.g. a daemon), call _reset_dispatch_cache() when
+# settings.json changes or pass settings_override on every read (which bypasses
+# the cache).
+_cached_sections: dict[str, dict] = {}
 
 
 def _reset_dispatch_cache() -> None:
-    """Reset the cached dispatch rules (used in tests and after config changes)."""
-    global _cached_rules
-    _cached_rules = None
+    """Reset the cached dispatch sections (used in tests and after config changes)."""
+    _cached_sections.clear()
 
 
 def _load_subagent_dispatch(settings_override: dict | None = None) -> dict:
-    """Load subagent dispatch rules from settings, with default fallback.
+    """Back-compat shim for the legacy subagent-only dispatch loader.
 
-    Args:
-        settings_override: If provided, use this dict instead of loading from disk.
-            The cache is bypassed when an override is given.
+    The current implementation routes everything through ``_load_dispatch_section``
+    + ``check_allowed``. This helper is kept so older imports and tests still
+    work; it returns ``{agent_role: set(allowed_subagents)}`` derived from the
+    `subagents` section's `per_agent_allow` plus `DEFAULT_SUBAGENT_DISPATCH`
+    fallback for any role the user hasn't enumerated.
+
+    Accepts both the legacy ``governance.subagent_dispatch`` shape and the
+    current ``governance.dispatch.subagents.per_agent_allow`` shape so callers
+    that still hand-build settings dicts don't have to migrate.
     """
-    global _cached_rules
-    if _cached_rules is not None and settings_override is None:
-        return _cached_rules
-
     rules = {agent: set(allowed) for agent, allowed in DEFAULT_SUBAGENT_DISPATCH.items()}
 
     try:
-        if settings_override is not None:
-            raw_settings = settings_override
-        else:
-            raw_settings = _load_settings()
+        raw_settings = (
+            settings_override if settings_override is not None else _load_settings()
+        )
+    except FileNotFoundError:
+        return rules  # settings.json is optional; defaults apply silently
 
-        user_dispatch = (
+    try:
+        legacy = (
             raw_settings.get("worca", {})
             .get("governance", {})
             .get("subagent_dispatch", {})
         )
+        if not isinstance(legacy, dict):
+            raise TypeError(f"subagent_dispatch must be a dict, got {type(legacy).__name__}")
 
-        for agent, allowed_list in user_dispatch.items():
-            allowed = set(allowed_list)
+        if legacy:
+            translated = {
+                "worca": {
+                    "governance": {
+                        "dispatch": {
+                            "subagents": {"per_agent_allow": legacy},
+                        },
+                    },
+                },
+            }
+            cfg = _load_dispatch_section("subagents", translated)
+        else:
+            cfg = _load_dispatch_section("subagents", settings_override)
+
+        for agent, allowed_list in cfg["per_agent_allow"].items():
+            if agent == "_defaults":
+                continue
+            try:
+                allowed = {x for x in allowed_list if x != "*"}
+            except TypeError as e:
+                print(
+                    f"[tracking] Warning: malformed allowed list for {agent} "
+                    f"({type(e).__name__}: {e}); falling back to defaults",
+                    file=sys.stderr,
+                )
+                continue
             denied = allowed & _SUBAGENT_DENYLIST
             if denied:
                 print(
@@ -122,9 +152,7 @@ def _load_subagent_dispatch(settings_override: dict | None = None) -> dict:
                     file=sys.stderr,
                 )
                 allowed -= denied
-            rules[agent] = allowed  # full replace per-agent key
-    except FileNotFoundError:
-        pass  # settings.json is optional; defaults apply silently
+            rules[agent] = allowed
     except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
         print(
             f"[tracking] Warning: failed to load subagent_dispatch from settings "
@@ -132,8 +160,6 @@ def _load_subagent_dispatch(settings_override: dict | None = None) -> dict:
             file=sys.stderr,
         )
 
-    if settings_override is None:
-        _cached_rules = rules
     return rules
 
 
@@ -178,7 +204,14 @@ def _load_dispatch_section(section: str, settings_override: dict | None = None) 
     """Load worca.governance.dispatch.{tools,skills,subagents}.
 
     Returns the normalized section dict with all three tiers populated.
+
+    Results are cached process-lifetime per section. The cache is bypassed
+    when ``settings_override`` is supplied (used by tests and any caller that
+    needs a fresh read against a synthetic config).
     """
+    if settings_override is None and section in _cached_sections:
+        return _cached_sections[section]
+
     settings = settings_override if settings_override is not None else _load_settings()
     raw = (
         settings
@@ -188,11 +221,15 @@ def _load_dispatch_section(section: str, settings_override: dict | None = None) 
         .get(section, {})
     )
     defaults = _DISPATCH_DEFAULTS[section]
-    return {
+    resolved = {
         "always_disallowed": list(raw.get("always_disallowed", defaults["always_disallowed"])),
         "default_denied": list(raw.get("default_denied", defaults["default_denied"])),
         "per_agent_allow": {**defaults["per_agent_allow"], **raw.get("per_agent_allow", {})},
     }
+
+    if settings_override is None:
+        _cached_sections[section] = resolved
+    return resolved
 
 
 def check_allowed(

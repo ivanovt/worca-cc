@@ -34,6 +34,7 @@ import {
 } from '../utils/model-clipboard.js';
 import { STAGE_ORDER } from '../utils/stage-order.js';
 import { isVersionBehind } from '../utils/version-compare.js';
+import { AGENT_NAMES } from './agent-names.js';
 import { dispatchSectionView } from './dispatch-section.js';
 import { KNOWN_TYPES } from './dispatch-tag-state.js';
 import { integrationsTab } from './integrations.js';
@@ -52,17 +53,11 @@ export const STAGE_AGENT_MAP = {
 
 /** Stages configurable via the settings UI (excludes preflight which has no agent). */
 export const CONFIGURABLE_STAGES = STAGE_ORDER.filter((s) => s !== 'preflight');
-export const AGENT_NAMES = [
-  'planner',
-  'plan_reviewer',
-  'coordinator',
-  'implementer',
-  'tester',
-  'reviewer',
-  'guardian',
-  'learner',
-  'workspace_planner',
-];
+// AGENT_NAMES lives in agent-names.js so the sync test can import it without
+// pulling settings.js' transitive JSON imports. Re-exported here so existing
+// `import { AGENT_NAMES } from './settings.js'` callers keep working.
+export { AGENT_NAMES } from './agent-names.js';
+
 const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
 
 export function getModelKeys(worca) {

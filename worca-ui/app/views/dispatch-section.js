@@ -359,6 +359,31 @@ export function dispatchSectionView({
 
   const sectionHint = _SECTION_HINTS[section];
 
+  // Footgun guard: a bare `*` in a deny tier matches everything and locks
+  // every candidate out of the section. Surface as a non-blocking warning so
+  // the operator can see what they're about to ship without taking the rule
+  // out of their hands (settings.json edits remain authoritative).
+  const wildcardTiers = [];
+  if (alwaysDisallowed.includes('*')) wildcardTiers.push('Always Disallowed');
+  if (defaultDenied.includes('*')) wildcardTiers.push('Default Denied');
+  const wildcardWarning =
+    wildcardTiers.length > 0
+      ? html`
+        <sl-alert
+          variant="warning"
+          open
+          class="dispatch-wildcard-deny-warning"
+          data-section="${section}"
+        >
+          A bare <code>*</code> in
+          ${wildcardTiers.join(' and ')} blocks every ${section.slice(0, -1)}
+          for every agent — including ones explicitly listed in Per-Agent
+          Allow. If this isn't intentional, remove the <code>*</code> and use a
+          prefix glob (e.g. <code>worca-*</code>) or an exact name.
+        </sl-alert>
+      `
+      : nothing;
+
   return html`
     <div class="dispatch-section">
       ${
@@ -371,6 +396,7 @@ export function dispatchSectionView({
           ? html`<p class="dispatch-section-hint">${sectionHint}</p>`
           : nothing
       }
+      ${wildcardWarning}
 
       ${tierView('Always Disallowed', alwaysDisallowed, {
         locked: true,

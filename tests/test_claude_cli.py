@@ -725,3 +725,45 @@ def test_build_command_default_disallow_excludes_skill():
         assert "EnterWorktree" in disallow_str
         assert "TodoWrite" in disallow_str
         assert "Skill" not in disallow_str
+
+
+def test_resolve_tool_args_matches_per_agent_on_resolved_filename():
+    """Regression: per_agent_allow is keyed by bare role, but build_command
+    receives the resolved-prompt basename like 'implement-implementer-iter-3'.
+    _resolve_tool_args must normalize via role_from_worca_agent before looking up.
+    """
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "implementer": ["Read", "Grep"]},
+    })
+    _, tools_arg = _resolve_tool_args("implement-implementer-iter-3", settings=settings)
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools
+    assert "Agent" in tools
+    assert tools_arg != "default", (
+        "Expected per-agent allowlist to apply, but fell through to _defaults wildcard"
+    )
+
+
+def test_build_command_per_agent_tools_apply_on_resolved_path():
+    """End-to-end: a resolved agent .md path triggers per-agent tools lookup."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "tester": ["Bash"]},
+    })
+    cmd, _ = build_command(
+        "prompt",
+        agent="/tmp/run/agents/resolved/test-tester-iter-2.md",
+        settings=settings,
+    )
+    idx = cmd.index("--tools")
+    tools_arg = cmd[idx + 1]
+    assert tools_arg != "default"
+    tools = set(tools_arg.split(","))
+    assert "Bash" in tools
+    assert "Skill" in tools  # auto-included so hook fires
+    assert "Agent" in tools

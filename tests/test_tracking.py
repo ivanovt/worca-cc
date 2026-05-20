@@ -277,6 +277,54 @@ def test_cache_reset_between_config_changes():
     assert rules_b["planner"] == {"Explore"}
 
 
+def test_load_dispatch_section_caches_disk_reads():
+    """W-054 cache: _load_dispatch_section reads disk once per section and
+    reuses the resolved dict on subsequent calls (until _reset_dispatch_cache).
+    """
+    import worca.hooks.tracking as tracking
+
+    load_calls = {"n": 0}
+
+    def counting_load():
+        load_calls["n"] += 1
+        return {
+            "worca": {
+                "governance": {
+                    "dispatch": {
+                        "tools": {"per_agent_allow": {"planner": ["Read"]}},
+                    },
+                },
+            },
+        }
+
+    with patch.object(tracking, "_load_settings", side_effect=counting_load):
+        # First call hits disk
+        cfg1 = tracking._load_dispatch_section("tools")
+        # Second call (no settings_override) must use the cache
+        cfg2 = tracking._load_dispatch_section("tools")
+        # Different section also reads disk once, doesn't share the tools cache
+        cfg3 = tracking._load_dispatch_section("skills")
+
+    assert load_calls["n"] == 2, f"expected 2 disk reads (tools + skills), got {load_calls['n']}"
+    assert cfg1 is cfg2  # same cached object
+    assert cfg3["per_agent_allow"]["_defaults"] == ["*"]
+
+
+def test_load_dispatch_section_override_bypasses_cache():
+    """settings_override must bypass the cache so test fixtures stay isolated."""
+    import worca.hooks.tracking as tracking
+
+    # Prime cache with one config
+    primed = {"worca": {"governance": {"dispatch": {"tools": {"per_agent_allow": {"planner": ["Read"]}}}}}}
+    with patch.object(tracking, "_load_settings", return_value=primed):
+        tracking._load_dispatch_section("tools")  # cache is populated
+
+    # Override produces a different result even though the cache holds the primed one
+    override = {"worca": {"governance": {"dispatch": {"tools": {"per_agent_allow": {"planner": ["Grep"]}}}}}}
+    cfg = tracking._load_dispatch_section("tools", settings_override=override)
+    assert cfg["per_agent_allow"]["planner"] == ["Grep"]
+
+
 def test_warns_on_malformed_settings_shape():
     """Malformed settings shape (non-dict subagent_dispatch) logs a warning and falls back to defaults."""
     # TypeError: .items() on a non-dict

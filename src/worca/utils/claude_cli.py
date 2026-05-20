@@ -15,6 +15,7 @@ import tempfile
 import threading
 from typing import Optional, Callable
 
+from worca.hooks.agent_role import role_from_worca_agent
 from worca.hooks.tracking import _load_dispatch_section
 from worca.utils.env import get_env, filter_model_env
 
@@ -116,8 +117,13 @@ def _resolve_tool_args(
     cfg = _load_dispatch_section("tools", settings)
     disallows = [t for t in cfg["always_disallowed"] if t != "Skill"]
 
+    # agent_name arrives as the resolved-prompt basename (e.g.
+    # "implement-implementer-iter-3"); per_agent_allow is keyed by bare role
+    # (e.g. "implementer"). Normalize via role_from_worca_agent so per-agent
+    # entries actually match in production.
+    role = role_from_worca_agent(agent_name) or agent_name
     entry = cfg["per_agent_allow"].get(
-        agent_name, cfg["per_agent_allow"].get("_defaults", ["*"]),
+        role, cfg["per_agent_allow"].get("_defaults", ["*"]),
     )
 
     if "*" in entry:

@@ -281,28 +281,41 @@ Default is `["*"]` — developers usually have project-specific skills and the d
 already covers the dangerous cases. The wildcard covers project-defined skills automatically
 as they're added.
 
-### 4. Tools section — narrower wildcard contract
+### 4. Tools section — `--tools` allowlist, not `--disallowedTools` inversion
 
-Tools differ from skills/subagents in one critical way: Claude Code's CLI takes
-`--disallowedTools <list>`, an enumeration. To honor a *named* allowlist we would have to
-compute the complement against a moving universe (built-ins + every MCP tool registered at
-runtime). That inversion is brittle.
+**Implementation revision** (from the draft's "only `*` / `[]`" stance). Claude Code's
+CLI takes `--tools <list>` (allowlist) *in addition to* `--disallowedTools <list>`
+(denylist). PR C dropped the inversion problem entirely by switching the per-agent
+allow to drive `--tools`. The mapping is:
 
-For v1, the tools section honors only two values:
+| `per_agent_allow` form | Claude CLI flag | Meaning |
+|---|---|---|
+| `["*"]` | `--tools default` | All built-ins allowed (minus `always_disallowed`) |
+| `["Read", "Grep"]` | `--tools Agent,Grep,Read,Skill` | Restricted to named built-ins; `Skill` + `Agent` auto-included so worca hooks fire |
+| `[]` | `--tools ""` | Lockdown — no built-in tool available |
+| `["*", "Read"]` | `--tools default` | Mixed form collapses to wildcard (the explicit extra is already in `default`) |
 
-- `"*"` (or its sugar form `["*"]`) — pass `--disallowedTools <always_disallowed>` only.
-- `[]` — same as `*` for the per-agent allow purpose; no extra disallows beyond tier 1.
+Notes:
 
-Named-tool entries are accepted in the JSON but emit a startup warning and are ignored.
-The mixed `["*", "extra"]` form has no meaning for tools (there is no `default_denied`
-for tools) and is normalized to `["*"]`. Documenting this asymmetry up front is cleaner
-than pretending the inversion problem is solvable.
+- `Skill` and `Agent` are meta-tools. When a named list is supplied, worca auto-includes
+  them so the skill_use.py and subagent_start.py hooks still fire. Without that
+  auto-inclusion, dispatch governance is silently disabled for the targeted agent.
+- `--disallowedTools` is still emitted, but only with `always_disallowed` (minus `Skill`,
+  which is delegated to the skills hook). The two flags compose: a named tool that appears
+  in both `--tools` and `--disallowedTools` is still blocked.
+- MCP tools (`mcp_*`) are not covered by `--tools` — the Claude CLI documents this flag
+  as built-ins only. MCP governance flows through other channels.
+- The empty-string `--tools ""` lockdown form is verified empirically by the `build_command`
+  unit tests; the CLI accepts it as "no tools allowed".
 
-`always_disallowed` defaults: `["EnterPlanMode", "EnterWorktree", "TodoWrite"]`. Note
-`Skill` is *removed* — it is now controlled via the skills section.
+`always_disallowed` defaults: `["EnterPlanMode", "EnterWorktree", "TodoWrite"]`. `Skill`
+is intentionally absent — it is controlled via the skills section. The `_resolve_tool_args`
+helper still filters `Skill` out defensively, so a project that re-adds it to
+`always_disallowed` will not accidentally block the skills hook.
 
 `default_denied`: empty by default. Reserved for future use (e.g. if Claude Code ships a
-`Write` variant we want gated).
+`Write` variant we want gated). Mixed-form opt-in semantics from the skills section are
+not yet wired through for tools because no real use case demands it.
 
 ### 5. Subagents section
 
@@ -318,10 +331,31 @@ explicit opt-in).
 
 #### 5.3 `per_agent_allow._defaults`
 
-`["Explore"]` — preserves today's behavior. Subagents have asymmetric blast radius vs.
-tools (one subagent dispatch can do an arbitrary amount of work in a child context), so
-opt-in to broader access stays the rule. Developers who want all subagents available write
-`"_defaults": ["*"]` explicitly.
+**Implemented value: `["*"]`** (revised from the draft's `["Explore"]`).
+
+The original draft picked `["Explore"]` to preserve today's behavior. That rationale
+was abandoned during implementation for two reasons:
+
+1. **Consistency across sections.** Tools and skills both default to `["*"]`. Having
+   subagents default to a single named agent made the three sections behave inconsistently
+   — a "subagents are special" carve-out that the resolution algorithm already addresses
+   via `always_disallowed: ["general-purpose"]`. The wildcard plus the hard-deny tier
+   gives the same safety net (no unbounded `general-purpose` work) without the asymmetric
+   default.
+2. **Project-defined subagent visibility.** Projects increasingly ship their own subagents
+   (the `feature-dev:*`, `claude-md-management:*`, and plugin-namespaced families). The
+   `["Explore"]` default would force every project to enumerate each one before it became
+   usable. The W-054 `default_denied` tier — currently empty — is the right escape hatch
+   for "useful in some pipelines, dangerous in others" cases; the bare `_defaults`
+   shouldn't carry that load.
+
+The §1.2 workspace_planner-defect fix still holds: workspace_planner (and any future
+unenumerated agent) falls through to `_defaults: ["*"]` and gets the same access as the
+rest of the roster.
+
+Subagent blast radius is still real — operators who want lockdown for a specific role
+can use `"<role>": []` to ground them. The shift just moves the default from "opt-in"
+to "opt-out," matching tools and skills.
 
 #### 5.4 Agent roster — nine roles, not eight
 
@@ -340,12 +374,13 @@ workspace-runs landing (commit `00b3c1b`), there are **nine** roles:
 | `learner` | per-pipeline | existing, gated off by default |
 | `workspace_planner` | per-workspace | **new — missing from current `DEFAULT_SUBAGENT_DISPATCH`** |
 
-`_defaults: ["Explore"]` covers all nine implicitly (no need to enumerate). The fix for
-the §1.2 defect is automatic: under the new resolution algorithm, an agent not listed in
-`per_agent_allow` falls through to `_defaults`, so workspace_planner gets `["Explore"]`
-without any special-casing. The migration in §9 preserves user-supplied per-agent values
-verbatim — a project that has explicitly enumerated all eight legacy agents will not
-automatically gain a workspace_planner entry, but the fallback to `_defaults` still applies.
+`_defaults: ["*"]` (see §5.3 for the implementation revision) covers all nine roles
+implicitly. The fix for the §1.2 defect is automatic: under the new resolution algorithm,
+an agent not listed in `per_agent_allow` falls through to `_defaults`, so
+workspace_planner gets the wildcard without any special-casing. The migration in §9
+preserves user-supplied per-agent values verbatim — a project that has explicitly
+enumerated all eight legacy agents will not automatically gain a workspace_planner entry,
+but the fallback to `_defaults` still applies.
 
 ### 6. Settings.json end-to-end shape
 
@@ -381,7 +416,7 @@ After migration, a fresh `.claude/settings.json` has:
       "subagents": {
         "always_disallowed": ["general-purpose"],
         "default_denied":    [],
-        "per_agent_allow":   { "_defaults": ["Explore"] }
+        "per_agent_allow":   { "_defaults": ["*"] }
       }
     }
   }
@@ -489,44 +524,61 @@ Both `pipeline.hook.dispatch_allowed` (existing) and `pipeline.hook.skill_allowe
 gain a `via: "wildcard" | "explicit"` field. The UI reads this to render the
 wildcard-allowed counter on the Run Detail Governance section.
 
-### 8. `claude_cli.py` — drive disallows from settings
+### 8. `claude_cli.py` — drive `--tools` and `--disallowedTools` from settings
 
-Replace the hardcoded string with a settings lookup, called once per agent:
+The implementation supersedes the draft "disallows-only" pseudocode. The current
+`_resolve_tool_args` returns both halves so `build_command` can pass `--tools` *and*
+`--disallowedTools` consistently:
 
 ```python
 def build_command(prompt, agent, *, settings=None, ...):
     ...
     agent_name = os.path.splitext(os.path.basename(agent))[0]
-    disallowed_tools = _resolve_tool_disallows(agent_name, settings)
+    disallowed_tools, tools_arg = _resolve_tool_args(agent_name, settings)
     cmd = [
         *_claude_bin, "-p", cli_prompt, "--agent", agent,
         "--output-format", output_format,
         "--no-session-persistence", "--dangerously-skip-permissions",
-        "--disallowedTools", ",".join(disallowed_tools),
+        "--tools", tools_arg,
     ]
+    if disallowed_tools:
+        cmd.extend(["--disallowedTools", ",".join(disallowed_tools)])
     ...
 
-def _resolve_tool_disallows(agent_name: str, settings: dict | None) -> list[str]:
+def _resolve_tool_args(agent_name: str, settings: dict | None) -> tuple[list[str], str]:
     cfg = _load_dispatch_section("tools", settings)
-    # Tier 1 always applies
-    disallows = list(cfg["always_disallowed"])
+    # Skill is always dropped from disallows — the skills hook governs it.
+    disallows = [t for t in cfg["always_disallowed"] if t != "Skill"]
+
+    # agent_name arrives as the resolved-prompt basename
+    # (e.g. "implement-implementer-iter-3"); per_agent_allow is keyed by bare
+    # role ("implementer"). Normalize via role_from_worca_agent.
+    role = role_from_worca_agent(agent_name) or agent_name
     entry = cfg["per_agent_allow"].get(
-        agent_name, cfg["per_agent_allow"].get("_defaults", ["*"])
+        role, cfg["per_agent_allow"].get("_defaults", ["*"])
     )
-    # Tools section only honors "*" / [] for per-agent — anything else gets stripped + warned
-    has_wildcard = "*" in entry or len(entry) == 0
-    if not has_wildcard:
-        print(
-            f"[worca] tools.per_agent_allow.{agent_name} contains named tools; "
-            f"only '*' or [] are honored in v1 — falling back to wildcard",
-            file=sys.stderr,
-        )
-    # Skill stays out of the disallow list — it now goes through the skills hook
-    return [t for t in disallows if t != "Skill"]
+
+    if "*" in entry:
+        return disallows, "default"
+    if len(entry) == 0:
+        return disallows, ""  # lockdown — verified to work with the Claude CLI
+
+    # Named list: auto-include Skill and Agent so worca's governance hooks fire.
+    tools = {t for t in entry if t != "*"}
+    tools.add("Skill")
+    tools.add("Agent")
+    return disallows, ",".join(sorted(tools))
 ```
 
-Note: `Skill` is dropped from the disallow list entirely. Governance moves to the new
-PreToolUse hook (§7.2), so the model gains the capability but each invocation is checked.
+Key points:
+
+- `Skill` is dropped from the disallow list. Governance moves to the new PreToolUse hook
+  (§7.2), so the model gains the capability but each invocation is checked.
+- Per-agent lookup uses the bare role, so settings like
+  `tools.per_agent_allow.implementer = ["Read", "Grep"]` actually match in production
+  (regression covered by `test_resolve_tool_args_matches_per_agent_on_resolved_filename`).
+- The empty per-agent list `[]` is honored as lockdown — `--tools ""` is the supported
+  Claude CLI form.
 
 ### 9. Migration on `worca init --upgrade`
 
@@ -835,7 +887,8 @@ produce identical results for a shared set of test vectors.
 **Files:** `src/worca/hooks/tracking.py`, `tests/test_tracking.py`
 
 1. Add `_DISPATCH_DEFAULTS` constant with the three section defaults — note `subagents._defaults`
-   uses `["Explore"]`, which covers `workspace_planner` automatically via fallback (§5.4).
+   uses `["*"]` (see §5.3 for the revision rationale), which covers `workspace_planner`
+   automatically via fallback (§5.4).
 2. Add `_matches_any()` per §11 with the exact implementation specified.
 3. Add `_load_dispatch_section()` and `check_allowed()` per §7.1 / §2.1. The `check_allowed()`
    signature is `(section, agent, candidate, *, settings_override=None)` — no `all_known`

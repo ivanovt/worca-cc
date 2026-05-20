@@ -272,6 +272,51 @@ def test_main_emits_dispatch_blocked():
     assert "reason" in payload
 
 
+def test_main_fail_closed_when_skill_name_unresolvable():
+    """If the PreToolUse payload has no skill_name/name field (e.g. Claude
+    Code renamed the field), governed agents must be blocked. Otherwise an
+    empty candidate would pass through the wildcard branch and silently
+    allow everything.
+    """
+    cfg = _skills_settings({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    emit = MagicMock()
+    code = _run_skill_main(
+        {"unknown_field": "my-skill"},  # neither skill_name nor name
+        env_agent="implement-implementer-iter-1",
+        settings_override=cfg,
+        emit_mock=emit,
+    )
+    assert code == 2
+    emit.assert_called_once()
+    event_name, payload = emit.call_args[0]
+    assert event_name == "pipeline.hook.dispatch_blocked"
+    assert payload["reason"] == "skill_name_unresolved"
+
+
+def test_main_fail_closed_does_not_fire_in_interactive_mode():
+    """Interactive runs (no WORCA_AGENT) keep their current pass-through behavior
+    even when the skill name is unresolvable — governance only applies to
+    pipeline agents.
+    """
+    env = os.environ.copy()
+    env.pop("WORCA_AGENT", None)
+
+    import worca.claude_hooks.skill_use as skill_mod
+
+    stdin_payload = json.dumps({"tool_name": "Skill", "tool_input": {}})
+
+    with patch.dict(os.environ, env, clear=True), \
+         patch("sys.stdin", StringIO(stdin_payload)):
+        with pytest.raises(SystemExit) as exc:
+            skill_mod.main()
+
+    assert exc.value.code == 0
+
+
 def test_main_no_longer_emits_legacy_skill_event_names():
     """PR D: hooks must NOT emit pipeline.hook.skill_{allowed,blocked} anymore."""
     cfg = _skills_settings({

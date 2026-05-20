@@ -2029,6 +2029,19 @@ sl-input [slot="prefix"] {
   max-width: 720px;
 }
 
+sl-alert.dispatch-wildcard-deny-warning {
+  margin: 0 0 12px;
+  font-size: 12px;
+  max-width: 720px;
+}
+
+sl-alert.dispatch-wildcard-deny-warning code {
+  font-size: 12px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--sl-color-neutral-100);
+}
+
 /* Collapsible wrapper for each dispatch section in the Governance tab.
  * Mirrors .model-env-details so users get a consistent collapse pattern. */
 sl-details.dispatch-section-details {
