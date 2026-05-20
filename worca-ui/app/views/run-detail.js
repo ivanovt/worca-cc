@@ -427,8 +427,13 @@ function _dispatchBadgeView(ev) {
   const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
   const suffix = count ? ` (×${count})` : '';
   const candidate = _dispatchEventCandidate(ev);
+  // Drop the "dispatched" suffix on allowed badges — the row label
+  // ("Subagents:" / "Skills:") already gives the action, and the chip
+  // colour distinguishes allowed (green/neutral) from blocked (red).
+  // Blocked badges keep an explicit "blocked" word since that's the
+  // exception case in an otherwise allowed-by-default row.
   const label = isAllowed
-    ? `${candidate} dispatched${suffix}`
+    ? `${candidate}${suffix}`
     : `${candidate} blocked${suffix}`;
   const tooltipParts = [];
   if (ev.section) tooltipParts.push(`section: ${ev.section}`);

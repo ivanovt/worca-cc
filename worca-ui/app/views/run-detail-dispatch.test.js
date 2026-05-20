@@ -128,7 +128,9 @@ describe('iteration tags layout', () => {
     );
     expect(html).toContain('Subagents:');
     expect(html).not.toContain('Skills:');
-    expect(html).toContain('Explore dispatched');
+    // The badge omits "dispatched" — the row label already conveys the action.
+    expect(html).toMatch(/>Explore<\/sl-badge>/);
+    expect(html).not.toContain('Explore dispatched');
     expect(html).toContain('variant="success"');
   });
 
@@ -173,7 +175,8 @@ describe('iteration tags layout', () => {
     );
     expect(html).toContain('Skills:');
     expect(html).not.toContain('Subagents:');
-    expect(html).toContain('review dispatched');
+    expect(html).toMatch(/>review<\/sl-badge>/);
+    expect(html).not.toContain('review dispatched');
     expect(html).toContain('variant="success"');
   });
 
@@ -204,8 +207,8 @@ describe('iteration tags layout', () => {
     expect(html).toContain('Skills:');
     expect(html).toContain('data-dispatch-section="subagents"');
     expect(html).toContain('data-dispatch-section="skills"');
-    expect(html).toContain('Explore dispatched');
-    expect(html).toContain('simplify dispatched');
+    expect(html).toMatch(/>Explore<\/sl-badge>/);
+    expect(html).toMatch(/>simplify<\/sl-badge>/);
   });
 
   it('renders explicit empty-state for completed iterations with no dispatch', () => {
@@ -251,9 +254,9 @@ describe('iteration tags layout', () => {
       runDetailView(makeRun({ dispatch_events: events })),
     );
     expect(html).toContain('Subagents:');
-    // Six visible inline
+    // Six visible inline — bare candidate name, no "dispatched" suffix.
     for (let i = 0; i < 6; i += 1) {
-      expect(html).toContain(`Agent${i} dispatched`);
+      expect(html).toMatch(new RegExp(`>Agent${i}<\\/sl-badge>`));
     }
     // Remaining 3 sit behind the overflow control
     expect(html).toContain('+3 more');
@@ -298,9 +301,9 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Explore dispatched (×5)');
-    expect(html).toContain('Plan dispatched');
-    expect(html).not.toContain('Plan dispatched (×');
+    expect(html).toContain('Explore (×5)');
+    expect(html).toMatch(/>Plan<\/sl-badge>/);
+    expect(html).not.toMatch(/>Plan \(×/);
   });
 
   it('back-compat: legacy subagent_type payload key still renders', () => {
@@ -319,7 +322,7 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
-    expect(html).toContain('Explore dispatched');
+    expect(html).toMatch(/>Explore<\/sl-badge>/);
   });
 
   // --- Classification row ---
@@ -421,8 +424,8 @@ describe('overview no longer shows the redundant hero "Dispatch activity" counte
     );
     expect(html).toContain('Subagents:');
     expect(html).toContain('Skills:');
-    expect(html).toContain('Explore dispatched (×3)');
-    expect(html).toContain('simplify dispatched');
+    expect(html).toContain('Explore (×3)');
+    expect(html).toMatch(/>simplify<\/sl-badge>/);
   });
 
   // Kept here so future regressions that try to re-introduce the hero
