@@ -12,7 +12,7 @@ Four execution defaults are now binding (mirror of the `## Decisions` section on
 
 - **Shipping strategy** — single PR landing all 7 phases atomically. No phase-split. Heavier diff but no half-shipped state and atomic rollback.
 - **Default `auto_mode` (fresh installs)** — `adaptive`. Coordinator emits `worca-effort:*` labels on first run; the implementer consumes them. Documented in MIGRATION.md as a behavior change for upgraders.
-- **Default `auto_cap`** — `xhigh`. Lets escalation reach Opus 4.7's model-default ceiling; `max` is reachable only via explicit operator opt-in.
+- **Default `auto_cap`** — `xhigh`. On Opus 4.7 this lets escalation reach the model-default ceiling while keeping `max` an explicit opt-in. **Caveat for the shipped 4.6 models:** since Opus 4.6 / Sonnet 4.6 have no `xhigh` rung, the model-aware cap rounds *up* to `max` (see §3 *Model-aware effort ladders*), so loopback escalation **can** reach `max` on the default config. Operators wanting the "no auto-max" guarantee on 4.6 pin `auto_cap: high`.
 - **Per-agent defaults in shipped `src/worca/settings.json`** — bake `planner: xhigh`, `coordinator: medium`, `guardian: high`. Leave `implementer`, `tester`, `reviewer` unset so the adaptive path drives base from the coordinator's per-bead label (or model default under `disabled`/`reactive`).
 
 ## Problem
@@ -110,13 +110,16 @@ The coordinator persists its effort verdict on the bead itself so the cache surv
 
 ### 3. Resolution algorithm
 
-The runner resolves effort once per stage invocation, after `get_stage_config()` and before `claude_cli` is called. Inputs: agent config's `effort` value, `auto_mode`, `auto_cap`, current trigger, current iteration number, and (for implementer only) the assigned bead.
+The runner resolves effort once per stage invocation, after `get_stage_config()` and before `claude_cli` is called. Inputs: agent config's `effort` value, `auto_mode`, `auto_cap`, current trigger, current iteration number, the assigned bead (implementer only), **and the resolved model id** (to select the model's effort ladder — see *Model-aware effort ladders* below).
 
 ```python
-def resolve_effort(agent, agent_effort, auto_mode, auto_cap, trigger, iter_num, bead):
+def resolve_effort(agent, agent_effort, auto_mode, auto_cap, trigger, iter_num, bead, model):
     """
-    Returns (level, source, base, bead_classified) where:
-      level            -- value sent to CLAUDE_CODE_EFFORT_LEVEL (or None to omit)
+    Returns (level, requested, source, base, bead_classified) where:
+      level            -- value actually sent to CLAUDE_CODE_EFFORT_LEVEL after
+                          collapsing onto the model's supported ladder (or None to omit)
+      requested        -- the pre-collapse canonical level the policy produced
+                          (differs from `level` only when the model lacks that rung)
       source           -- one of: explicit, model_default,
                           adaptive:llm, reactive, disabled
       base             -- starting point before escalation
@@ -153,17 +156,24 @@ def resolve_effort(agent, agent_effort, auto_mode, auto_cap, trigger, iter_num, 
             elif agent != "implementer":
                 bead_classified["skip_reason"] = "non_classified_agent"
 
-    # --- Apply escalation (only under reactive / adaptive) ---
-    if auto_mode == "disabled":
-        return (base, "disabled" if base else None, base, bead_classified)
+    # --- Model-aware resolution (see "Model-aware effort ladders" below) ---
+    ladder = model_ladder(model)             # supported rungs; canonical fallback if unmapped, () if unsupported
 
-    escalated = apply_escalation(base, agent, trigger, iter_num)
-    final = clamp(escalated, auto_cap)
-    source = source_base if source_base == "adaptive:llm" else auto_mode
-    return (final, source, base, bead_classified)
+    if auto_mode == "disabled":
+        level = collapse_down(base, ladder)  # round base down to a supported rung (None stays None)
+        return (level, base, "disabled" if base else None, base, bead_classified)
+
+    # Escalation deltas are applied as index steps on the *model's* ladder (locked decision),
+    # so on a 4-rung ladder `high +1 = max`. `requested` keeps the pre-collapse canonical
+    # intent so status.json can show "policy wanted X, model ran Y".
+    requested = apply_escalation(base, agent, trigger, iter_num, ladder=CANONICAL)
+    level     = apply_escalation(collapse_down(base, ladder), agent, trigger, iter_num, ladder)
+    level     = clamp(level, round_up(auto_cap, ladder))   # cap rounds UP onto the ladder
+    source    = source_base if source_base == "adaptive:llm" else auto_mode
+    return (level, requested, source, base, bead_classified)
 ```
 
-The `(level, source, base, bead_classified)` tuple is persisted in `status.json` (see §6) and emitted as a log line.
+The `(level, requested, source, base, bead_classified)` tuple is persisted in `status.json` (see §6) and emitted as a log line.
 
 **Escalation rules** (`apply_escalation`):
 
@@ -178,7 +188,43 @@ The `(level, source, base, bead_classified)` tuple is persisted in `status.json`
 
 Only the agent re-running on a loopback escalates. Tester does not escalate when re-run after an implementer fix; only the implementer does. Reviewer does not escalate when re-run after another loop; only the originating agent does.
 
+Deltas are **index steps on the resolved model's ladder**, not fixed canonical rungs, and **saturate at the top rung** (a `+2` that overshoots lands on the model's highest rung). On the shipped 4-rung models this makes escalation coarser than on Opus 4.7 — a single `+1` from `high` reaches `max`.
+
 `clamp(level, cap)` rounds the level *down* to the cap if it exceeds it, and records `capped_from` in the iteration record.
+
+#### Model-aware effort ladders
+
+**Why this is load-bearing, not an edge case.** Effort rungs are model-specific. Per the [model-config docs](https://code.claude.com/docs/en/model-config#adjust-effort-level):
+
+| Model | Supported rungs |
+|---|---|
+| Opus 4.7 | `low, medium, high, xhigh, max` |
+| Opus 4.6 / Sonnet 4.6 | `low, medium, high, max` (**no `xhigh`**) |
+| Sonnet 4.5 / Opus 4.5 / Haiku | effort not supported |
+
+The shipped `worca.models` aliases point at **Opus 4.6** (`opus`) and **Sonnet 4.6** (`sonnet`) — *neither supports `xhigh`*. So a naive 5-rung canonical ladder breaks the default config: `planner: xhigh` silently runs as `high`, and implementer escalation `high → xhigh` collapses back to `high` (Claude Code: *"`xhigh` runs as `high` on Opus 4.6"*), making the headline loopback-escalation feature a **silent no-op** while `status.json` falsely records `xhigh`.
+
+**Resolution: all rung arithmetic happens on the resolved model's ladder.** `effort.py` carries a `MODEL_EFFORT_LADDERS` map keyed by model family:
+
+```python
+MODEL_EFFORT_LADDERS = {
+    "opus-4-7":   ("low", "medium", "high", "xhigh", "max"),
+    "opus-4-6":   ("low", "medium", "high", "max"),
+    "sonnet-4-6": ("low", "medium", "high", "max"),
+    # unsupported (4.5, haiku, …): () → effort omitted entirely
+}
+```
+
+The resolution sequence:
+
+1. **Look up the ladder** for the resolved model id. Unknown model → fall back to the canonical 5-rung ladder, send the value as-is (Claude Code does its own fallback), and log a warning that the model is unmapped so escalation may be inexact. Empty ladder (effort unsupported) → omit the env var, no escalation.
+2. **Collapse the base** onto the ladder by rounding **down** to the highest supported rung ≤ requested (mirrors Claude Code's own runtime fallback, so the recorded level matches what the model will actually run). `xhigh` base on Sonnet 4.6 → `high`.
+3. **Apply escalation as index deltas on this ladder** (per the user-locked decision). On Sonnet 4.6's 4-rung ladder, `high (idx 2) + test_failure (+1) = max (idx 3)` — a single loopback jumps straight to `max`. Deltas saturate at the top rung.
+4. **Collapse `auto_cap` onto the ladder by rounding *up*** to the nearest supported rung ≥ the configured cap. On Sonnet 4.6, `auto_cap: xhigh` → `max`, so the cap does not strangle escalation below the model's reachable range. Asymmetric rounding is deliberate: base rounds down (truthful runtime mirror), cap rounds up (don't accidentally pin escalation below what the ladder allows).
+
+**Accepted consequence (locked):** on models without `xhigh` (the shipped 4.6 default), loopback escalation is *aggressive* — one `test_failure` takes a `high`-base implementer to `max`, and the default `auto_cap: xhigh` permits it (xhigh rounds up to max). This relaxes the "`max` only via explicit opt-in" guarantee to "explicit opt-in **or** loopback escalation on a model whose ladder lacks `xhigh`." Operators who want gentler 4.6 escalation pin `auto_cap: high`, which freezes escalation at `high` (a deliberate dead-zone) rather than letting it reach `max`. This trade-off is documented in `docs/effort.md` and MIGRATION.md.
+
+**Persistence:** `resolve_effort()` returns both `level` (the model-collapsed value actually sent) and `requested` (the pre-collapse canonical value). When they differ, `status.json` carries `requested` alongside `level` so the UI and learner can see "policy wanted X, the model ran Y" rather than silently trusting a level the model never honored.
 
 **Note on disabled mode and per-agent values:** under `disabled`, an explicit per-agent `effort` is still applied as the env var (no escalation). The plan's earlier "explicit = never escalate" semantic now lives at the mode level — set `auto_mode: disabled` to pin every agent to its template value (or model default) and freeze escalation.
 
@@ -255,7 +301,7 @@ if model:
 
 ```python
 # runner.py — at the stage-invocation site
-effort_level, effort_source = resolve_effort(
+effort_level, effort_requested, effort_source, effort_base, bead_classified = resolve_effort(
     agent=stage_config["agent"],
     agent_effort=stage_config["effort"],
     auto_mode=effort_settings["auto_mode"],
@@ -263,6 +309,7 @@ effort_level, effort_source = resolve_effort(
     trigger=trigger,
     iter_num=iter_num,
     bead=assigned_bead,
+    model=stage_config["model"],   # selects the model's effort ladder
 )
 env_overrides = dict(stage_config.get("model_env") or {})
 if effort_level is not None:
@@ -270,6 +317,8 @@ if effort_level is not None:
 ```
 
 `run_agent()` already accepts and forwards `model_env`; this becomes a no-op there.
+
+**The env var is required for `max`, not merely convenient.** The model-config docs note that the `effortLevel` *settings* field rejects `max` (it is session-only), and that `max` is settable non-interactively **only** through `CLAUDE_CODE_EFFORT_LEVEL`. Since W-052 exposes `max` in both the per-agent dropdown and `auto_cap`, the env-var seam is load-bearing for `max` support — a future refactor must not "simplify" this to the `effortLevel` settings field, which would silently drop `max`.
 
 ### 6. Observability — status.json and pipeline logs
 
@@ -282,13 +331,15 @@ if effort_level is not None:
   "started_at": "2026-05-12T10:14:33Z",
   "agent": "implementer",
   "model": "claude-sonnet-4-6",
+  "model":  "claude-sonnet-4-6",      // 4-rung ladder: low/medium/high/max (no xhigh)
   "trigger": "test_failure",
   "effort": {
-    "level":  "xhigh",                // sent to CLAUDE_CODE_EFFORT_LEVEL (null = omitted)
-    "source": "adaptive",             // explicit | model_default | adaptive:llm | reactive | disabled
-    "base":   "high",                 // starting point before escalation
-    "escalations": ["test_failure"],
-    "capped_from": null,              // or "max" if clamp fired
+    "level":     "max",               // actually sent to CLAUDE_CODE_EFFORT_LEVEL after model collapse (null = omitted)
+    "requested": "max",               // canonical pre-collapse value; differs from `level` only when the model lacks that rung
+    "source":    "adaptive",          // explicit | model_default | adaptive:llm | reactive | disabled
+    "base":      "high",              // starting point before escalation (here, the bead label)
+    "escalations": ["test_failure"],  // on the 4-rung ladder, high +1 = max — a single-loop jump (accepted, locked)
+    "capped_from": null,              // or the pre-clamp level if auto_cap fired
     "bead_classified": {              // null for non-bead stages (planner, etc.)
       "level":  "high",               // coordinator's verdict for the assigned bead
       "applied": true,                // was this level used as the base?
@@ -300,17 +351,21 @@ if effort_level is not None:
 
 `bead_classified` is the forensic block — it answers "what did the coordinator think, and why was/wasn't that what the iteration ran at?" `skip_reason` enum: `"mode_reactive" | "mode_disabled" | "explicit_override" | "non_classified_agent" | null`. When `applied = true`, `skip_reason = null`.
 
+`requested` vs `level` is the **model-collapse** forensic signal (see *Model-aware effort ladders* in §3). They diverge when the policy asks for a rung the resolved model lacks — e.g. `planner: xhigh` on Opus 4.6 records `requested: "xhigh"`, `level: "high"`. Without this pair, the UI and learner would trust a level the model never honored.
+
 **Pipeline log format** (terse `key=value` style, divergence-aware):
+
+Log lines reflect the **model-collapsed** level actually sent. A `req=<level>` qualifier appears only when the requested (canonical) level differs from the sent level because the model lacks that rung; `model-collapsed` flags it explicitly. Examples assume the shipped aliases — implementer/tester on Sonnet 4.6 (4-rung), planner/etc. on Opus 4.6 (4-rung):
 
 | Scenario | Log line |
 |---|---|
 | `adaptive`, bead label used | `IMPLEMENT iter 1: effort=high source=adaptive bead=high` |
-| `adaptive`, explicit per-agent override | `IMPLEMENT iter 1: effort=xhigh source=explicit bead=medium(overridden)` |
+| `adaptive`, explicit override, model lacks rung | `IMPLEMENT iter 1: effort=high req=xhigh source=explicit bead=medium(overridden) model-collapsed` |
 | `reactive`, bead label informational | `IMPLEMENT iter 1: effort=high source=reactive bead=medium(ignored)` |
 | `disabled`, bead label informational | `IMPLEMENT iter 1: effort=high source=disabled bead=medium(ignored)` |
-| Loopback escalation | `IMPLEMENT iter 2: effort=xhigh source=adaptive bead=high +test_failure` |
-| Cap fired | `IMPLEMENT iter 3: effort=xhigh source=adaptive bead=high +test_failure +test_failure capped` |
-| Non-bead stage (e.g. planner) | `PLAN iter 1: effort=xhigh source=explicit` |
+| Loopback escalation (4-rung ladder) | `IMPLEMENT iter 2: effort=max source=adaptive bead=high +test_failure` |
+| Cap fired (operator pinned `auto_cap: high`) | `IMPLEMENT iter 3: effort=high source=adaptive bead=high +test_failure capped_from=max` |
+| Non-bead stage, planner xhigh on Opus 4.6 | `PLAN iter 1: effort=high req=xhigh source=explicit model-collapsed` |
 | Model default fallback | `TEST iter 1: effort=- source=model_default` |
 
 Emitted from the existing stage-start log in `runner.py:1887-1889`.
@@ -409,7 +464,8 @@ When the template-editor UI lands (out of scope for this plan), the same widget 
 ### 8. Compatibility and breaking changes
 
 - **No breaking changes to existing configs.** Omitted `effort` field continues to mean "use Claude Code model default" — current behavior preserved exactly.
-- **Older models** (Sonnet 4.5, Opus 4.5, etc.) silently fall back to their highest supported rung — this is Claude Code behavior, not worca behavior. Documented in MIGRATION.md, not errored.
+- **The default shipped models lack `xhigh`.** This is not an "older models" edge case — the shipped `worca.models` aliases resolve to **Opus 4.6** and **Sonnet 4.6**, whose ladders are `low/medium/high/max`. The locked defaults (`planner: xhigh`, `auto_cap: xhigh`) and the 5-rung escalation deltas are calibrated for Opus 4.7, so model-aware resolution (§3, *Model-aware effort ladders*) is **mandatory**, not a nicety — without it, `planner: xhigh` silently runs `high` and implementer loopback escalation is a no-op while `status.json` records a level the model never ran. Operators who point `worca.models.opus` at Opus 4.7 get the full 5-rung ladder back automatically.
+- **Genuinely unsupported models** (Sonnet 4.5, Opus 4.5, Haiku) have an empty ladder → the env var is omitted entirely and no escalation occurs. Unmapped/unknown models fall back to the canonical 5-rung ladder with a logged warning (Claude Code does its own runtime fallback). Documented in MIGRATION.md, not errored.
 - **Subagent frontmatter `effort:`** is documented by Claude Code as overriding session effort for skills/subagents (`/en/sub-agents#supported-frontmatter-fields`). worca agent templates are loaded as Claude Code subagents, so a template-level frontmatter `effort:` would clobber the env var. Resolution: do **not** set frontmatter `effort:` in any worca template; env-var path is the single source of truth.
 
 ## Implementation Plan
@@ -425,10 +481,10 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 **Tasks:**
 1. Add `worca.effort` block to `src/worca/settings.json` with the locked defaults: `auto_mode: "adaptive"`, `auto_cap: "xhigh"`.
 2. Add `effort` field to default agent entries in `settings.json` per the locked per-agent defaults: `planner: "xhigh"`, `coordinator: "medium"`, `guardian: "high"`. Implementer/tester/reviewer remain unset so the adaptive path drives base from the coordinator's per-bead label (or model default under `disabled`/`reactive`).
-3. Create `src/worca/orchestrator/effort.py` with `resolve_effort()`, `apply_escalation()`, `clamp()`, `read_bead_effort_label()`, and the `EFFORT_LEVELS` ordered tuple.
+3. Create `src/worca/orchestrator/effort.py` with `resolve_effort()`, `apply_escalation()`, `clamp()`, `read_bead_effort_label()`, the `EFFORT_LEVELS` ordered tuple, **and `MODEL_EFFORT_LADDERS` + `model_ladder(model)` lookup**. `resolve_effort()` takes a `model` arg; all rung arithmetic (base round-down, escalation deltas, cap round-up) runs on the model's ladder per §3 *Model-aware effort ladders*. It returns `(level, requested, source, base, bead_classified)`.
 4. Extend `get_stage_config()` in `stages.py:78-110` to include `effort: agent_config.get("effort")` in the returned dict.
-5. In `runner.py` at the stage-invocation site (~`runner.py:1839-1864`), call `resolve_effort()` with `trigger`, `iter_num`, and the assigned bead (None for non-implementer), and merge the result into `env_overrides` before `run_agent()`.
-6. Persist `effort` block (including `bead_classified` sub-block) in `start_iteration()` (`status.py:75-110`) as a new optional kwarg.
+5. In `runner.py` at the stage-invocation site (~`runner.py:1839-1864`), call `resolve_effort()` with `trigger`, `iter_num`, the assigned bead (None for non-implementer), **and `model=stage_config["model"]`**, and merge the result into `env_overrides` before `run_agent()`.
+6. Persist `effort` block (including `requested` model-collapse field + `bead_classified` sub-block) in `start_iteration()` (`status.py:75-110`) as a new optional kwarg.
 
 ### Phase 2: Coordinator-owned effort labeling
 
@@ -490,8 +546,8 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 
 **Tasks:**
 1. Add a "Effort Levels" section to CLAUDE.md alongside "Model Profiles".
-2. Document older-model fallback behavior in MIGRATION.md.
-3. Write `docs/effort.md` with the resolution algorithm, coordinator rubric, mode semantics table, and per-agent override examples.
+2. Document in MIGRATION.md: (a) the default models (Opus 4.6 / Sonnet 4.6) lack `xhigh` so the shipped `xhigh` defaults collapse to `high`; (b) the aggressive-escalation consequence on 4-rung ladders (`high → max` in one loopback) and the `auto_cap: high` opt-out for gentler escalation; (c) pointing `worca.models.opus` at Opus 4.7 restores the full 5-rung ladder.
+3. Write `docs/effort.md` with the resolution algorithm, the **model-aware ladder rules** (per-model rungs, base round-down / cap round-up, `requested` vs `level`), coordinator rubric, mode semantics table, per-agent override examples, and the `CLAUDE_CODE_MAX_OUTPUT_TOKENS` truncation note for high/max effort.
 
 ### Files Changed Summary
 
@@ -499,9 +555,9 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 |---|---|
 | `src/worca/settings.json` | Add `worca.effort` block (`auto_mode: "adaptive"`, `auto_cap: "xhigh"`); add `effort` to planner (`xhigh`), coordinator (`medium`), guardian (`high`). Implementer/tester/reviewer remain unset. |
 | `src/worca/orchestrator/stages.py` | Add `effort` to `get_stage_config()` return value |
-| `src/worca/orchestrator/effort.py` | **New.** `resolve_effort()`, `apply_escalation()`, `clamp()`, `read_bead_effort_label()`, `EFFORT_LEVELS` |
+| `src/worca/orchestrator/effort.py` | **New.** `resolve_effort()` (model-aware), `apply_escalation()` (deltas on the model ladder), `clamp()`, `read_bead_effort_label()`, `EFFORT_LEVELS`, `MODEL_EFFORT_LADDERS` + `model_ladder()` lookup with canonical/empty fallbacks |
 | `src/worca/orchestrator/runner.py` | Wire `resolve_effort()` at stage invocation; post-COORDINATE warning for unlabeled beads; log line emit; SSE payload |
-| `src/worca/state/status.py` | Persist `effort` dict (with `bead_classified` sub-block) in iteration record |
+| `src/worca/state/status.py` | Persist `effort` dict (with `requested` model-collapse field + `bead_classified` sub-block) in iteration record |
 | `src/worca/utils/beads.py` | Add `bd_get_effort_label()` read helper; reuse `bd_label_add()` |
 | `src/worca/utils/claude_cli.py` | (No code change — env-var path already works) |
 | `src/worca/agents/core/coordinator.md` | Append "Effort Labeling" section with rubric + `bd create --labels` + `bd update --notes` instructions |
@@ -521,7 +577,7 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 - **Determinism.** Adaptive effort makes runs less reproducible — the same bead set may resolve to different effort levels depending on what the coordinator returned that day. Mitigated by persisting `effort.source`, `effort.base`, `effort.escalations`, and `effort.bead_classified` per iteration so runs are explainable post-hoc.
 - **Cost ceiling.** No separate classifier calls — effort labeling rides on the coordinator's existing Opus pass. The marginal cost is one extra `--labels` flag and a short `bd update --notes` per bead. Sub-percent of the coordinator's existing per-bead spend.
 - **Cache freshness.** The `worca-effort:*` label persists on the bead forever. If a bead's scope changes after classification (rare — beads are typically atomic and short-lived), the cached level may be stale. Mitigation: user can delete the label manually; we do not auto-invalidate.
-- **Effort and `max_turns` interaction.** Effort controls reasoning per step; `max_turns` caps the number of agent turns. They are orthogonal but compound: a high-effort agent may need more turns to express its reasoning. The current `msize` multiplier is uniform and may need per-effort calibration in a follow-up — out of scope here.
+- **Effort, `max_turns`, and output-token headroom.** Effort controls reasoning per step; `max_turns` caps the number of agent turns. They are orthogonal but compound: a high-effort agent may need more turns to express its reasoning. The current `msize` multiplier is uniform and may need per-effort calibration in a follow-up — out of scope here. **Additionally**, the [adaptive-thinking docs](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#cost-control) warn that at `high`/`max` effort the model generates more thinking tokens and is "more likely to exhaust the `max_tokens` budget," surfacing as `stop_reason: "max_tokens"` (truncated output). Loopback escalation toward `max` therefore needs *output-token* headroom (`CLAUDE_CODE_MAX_OUTPUT_TOKENS`), not just turn budget — escalating effort while leaving the output cap untouched can silently truncate the very iteration the escalation was meant to strengthen. Per-effort `CLAUDE_CODE_MAX_OUTPUT_TOKENS` calibration is out of scope here but should be tracked in the same follow-up as `msize`; operators hitting truncation today can raise it via the `worca.models.*.env` path.
 - **Coordinator concern coupling.** The coordinator now does two jobs: decomposition + effort classification. Risk: prompt growth degrades decomposition quality. Mitigation: keep the effort-labeling instructions to a single appended section in `coordinator.md` (short rubric + `bd create --labels` + `bd update --notes` directives); revisit if decomposition quality regresses in integration tests.
 - **Governance.** No new governance hooks. Effort labels are attached via existing `bd create --labels` / `bd update --notes` calls; existing tool-restriction hooks apply unchanged.
 - **Breaking changes:** None. Omitted `effort` field preserves current behavior; existing pipelines run identically.
@@ -531,6 +587,8 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 ## Test Plan
 
 ### Unit Tests
+
+The baseline `resolve_effort` rows below pin `model=claude-opus-4-7` (full 5-rung ladder) so the rung arithmetic reads cleanly; the *model-aware* rows that follow exercise collapse on the 4-rung shipped models. Tuples are shown as `(level, source, …)` shorthand — the full return is `(level, requested, source, base, bead_classified)`.
 
 | Layer | Test | Validates |
 |---|---|---|
@@ -546,6 +604,13 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 | Python | `test_resolve_effort_review_changes_plus_two` | adaptive + test_failure × 1 then review_changes × 1 → +1+2 = base+3 (clamped to cap) |
 | Python | `test_resolve_effort_planner_stacks_on_replan` | planner + adaptive + 3× plan_review_changes → +3 rungs from model default |
 | Python | `test_resolve_effort_auto_cap_clamps` | escalation past `auto_cap` clamps and sets `capped_from` |
+| Python | `test_resolve_effort_base_collapses_on_model_without_rung` | explicit `xhigh` on `claude-opus-4-6` → `level="high"`, `requested="xhigh"` (base rounds down to model ladder) |
+| Python | `test_resolve_effort_escalation_on_short_ladder_jumps_to_max` | implementer base `high` + `test_failure` on `claude-sonnet-4-6` (4-rung) → `level="max"` in a single rung (delta on model ladder) |
+| Python | `test_resolve_effort_cap_rounds_up_on_short_ladder` | `auto_cap="xhigh"` on `claude-sonnet-4-6` rounds up to `max`, so escalation to `max` is not clamped |
+| Python | `test_resolve_effort_cap_pinned_high_freezes_escalation` | `auto_cap="high"` on `claude-sonnet-4-6` → `high`-base escalation clamps at `high` with `capped_from="max"` (deliberate dead-zone) |
+| Python | `test_resolve_effort_unsupported_model_omits_env` | `claude-sonnet-4-5` (empty ladder) → `level=None`, no escalation, env var omitted |
+| Python | `test_resolve_effort_unknown_model_uses_canonical_with_warning` | unmapped model id → canonical 5-rung ladder, value sent as-is, warning logged |
+| Python | `test_model_effort_ladders_map_known_families` | `MODEL_EFFORT_LADDERS` resolves opus-4-7 (5-rung), opus-4-6/sonnet-4-6 (4-rung), 4.5/haiku (empty) |
 | Python | `test_get_stage_config_includes_effort` | `get_stage_config()` returns `effort` key |
 | Python | `test_bd_get_effort_label_parses_label` | `bd_get_effort_label()` returns `"high"` for bead with `worca-effort:high` label |
 | Python | `test_bd_get_effort_label_invalid_returns_none` | `bd_get_effort_label()` returns `None` for `worca-effort:bogus` |
@@ -568,6 +633,9 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 | Pre-set `worca-effort:xhigh` on bead before run start | Coordinator preserves the label; under adaptive, iter 1 runs at `xhigh` |
 | `auto_cap: high` with bead labeled `xhigh` | Resolved level clamped to `high`; `capped_from: "xhigh"` in iteration record |
 | Bead missing `worca-effort:*` label after COORDINATE | Warning logged; resolve_effort falls back to model default; pipeline does not halt |
+| `planner: xhigh` on default `opus`→Opus 4.6 | Subprocess env carries `CLAUDE_CODE_EFFORT_LEVEL=high` (collapsed); status records `level="high"`, `requested="xhigh"`; log line shows `model-collapsed` |
+| Implementer (Sonnet 4.6) `test_failure` loopback under default `auto_cap: xhigh` | Iter 2 escalates `high → max` in one rung (cap rounds up); mock claude env capture shows `CLAUDE_CODE_EFFORT_LEVEL=max` |
+| Same loopback with operator `auto_cap: high` | Iter 2 stays `high`; status records `capped_from="max"` — confirms the documented gentle-escalation opt-out |
 
 ### Existing Tests to Update
 
@@ -593,3 +661,4 @@ See "Files Changed Summary" under §Implementation Plan above.
 - **Pipeline template editor UI.** Templates ship the same `effort` field structure; the editor itself is out of scope here (tracked separately).
 - **Frontmatter `effort:` in worca templates.** Single source of truth is the env var; templates do not set frontmatter effort.
 - **Auto-invalidation of stale `worca-effort:*` labels.** Bead scope rarely changes; manual deletion is the supported invalidation path.
+- **A separate "thinking mode" dial.** Considered and rejected. At the API level `thinking.type` is a tri-state (`adaptive | enabled | disabled`), but it does not survive translation to worca's `claude -p` layer as an independently useful knob: (1) on **adaptive** models the [effort level *is* the thinking control](https://platform.claude.com/docs/en/build-with-claude/adaptive-thinking#adaptive-thinking-with-the-effort-parameter) — `CLAUDE_CODE_EFFORT_LEVEL` is soft guidance layered on adaptive mode, which is what this plan already configures; (2) the fixed-budget **`enabled`** mode (`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` + `MAX_THINKING_TOKENS`) is *deprecated* and *rejected with a 400 on Opus 4.7*, so building config surface on it is a bad bet; (3) fully **disabling** thinking (`MAX_THINKING_TOKENS=0`) has no compelling worca stage use case — `effort: low` already minimizes thinking adaptively. If a residual need ever arises, all three knobs remain reachable today via the `worca.models.*.env` path (W-051) with zero new code.

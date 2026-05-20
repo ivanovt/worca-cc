@@ -169,20 +169,25 @@ function _cardView(wt, { onSelectRun, onCleanup } = {}) {
             `
           : nothing
       }
-      <div class="run-card-meta">
-        <span class="run-card-meta-item">
-          <span class="meta-label">Branch:</span>
-          <span class="meta-value">${wt.branch || '—'}</span>
-        </span>
-        <span class="run-card-meta-item">
-          <span class="meta-label">Disk:</span>
-          <span class="meta-value">${wt.truncated ? html`≥ ${_formatBytes(wt.disk_bytes)}` : _formatBytes(wt.disk_bytes)}</span>
-        </span>
-        <span class="run-card-meta-item">
-          <span class="meta-label">Age:</span>
-          <span class="meta-value">${_formatAge(wt.age_seconds)}</span>
-        </span>
-      </div>
+      ${(() => {
+        const defaultBranch = wt._default_branch || '';
+        const targetBranch = wt.target_branch || '';
+        return html`<div class="run-card-meta">
+          <span class="run-card-meta-item">
+            <span class="meta-label">Source Branch:</span>
+            <span class="meta-value">${wt.branch || '—'}</span>
+          </span>
+          ${targetBranch && targetBranch !== defaultBranch ? html`<span class="run-card-meta-item"><span class="meta-label">Target Branch:</span> <span class="meta-value">${targetBranch}</span></span>` : nothing}
+          <span class="run-card-meta-item">
+            <span class="meta-label">Disk:</span>
+            <span class="meta-value">${wt.truncated ? html`≥ ${_formatBytes(wt.disk_bytes)}` : _formatBytes(wt.disk_bytes)}</span>
+          </span>
+          <span class="run-card-meta-item">
+            <span class="meta-label">Age:</span>
+            <span class="meta-value">${_formatAge(wt.age_seconds)}</span>
+          </span>
+        </div>`;
+      })()}
       <div class="run-card-meta worktree-card-path">
         <span class="meta-label">Path:</span>
         <code class="worktree-path-mono">${wt.worktree_path}</code>

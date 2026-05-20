@@ -3,8 +3,13 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writeProject } from './project-registry.js';
+
+vi.mock('./git-helpers.js', () => ({
+  getDefaultBranch: vi.fn().mockReturnValue('main'),
+}));
+
 import {
   createProjectRoutes,
   createProjectScopedRoutes,
@@ -243,6 +248,7 @@ describe('project-routes', () => {
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
       expect(Array.isArray(body.runs)).toBe(true);
+      expect(typeof body.default_branch).toBe('string');
     });
 
     it('GET /api/projects/:id/runs returns 404 for unknown project', async () => {

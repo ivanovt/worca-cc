@@ -586,6 +586,35 @@ describe('worktreesView - bulk cleanup', () => {
   });
 });
 
+describe('worktreesView - branch labels', () => {
+  it('renders Source Branch label instead of plain Branch', () => {
+    const output = renderToString(worktreesView([completedWorktree]));
+    expect(output).toContain('>Source Branch:<');
+    expect(output).not.toContain('>Branch:<');
+  });
+
+  it('shows Target Branch when target_branch differs from _default_branch', () => {
+    const wt = {
+      ...completedWorktree,
+      target_branch: 'develop',
+      _default_branch: 'master',
+    };
+    const output = renderToString(worktreesView([wt]));
+    expect(output).toContain('Target Branch:');
+    expect(output).toContain('develop');
+  });
+
+  it('hides Target Branch when target_branch equals _default_branch', () => {
+    const wt = {
+      ...completedWorktree,
+      target_branch: 'master',
+      _default_branch: 'master',
+    };
+    const output = renderToString(worktreesView([wt]));
+    expect(output).not.toContain('Target Branch:');
+  });
+});
+
 describe('worktreesView - truncated disk display', () => {
   it('shows >= prefix for card disk value when truncated flag is set', () => {
     const truncatedWt = {

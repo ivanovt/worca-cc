@@ -176,11 +176,23 @@ npx vitest run worca-ui/server/    # UI server tests
 cd worca-ui && npx playwright test --workers=1  # Browser e2e tests (must run serially)
 ```
 
-Test naming: `tests/test_<module>.py` mirrors source module names. Pre-existing failures in unrelated tests should be ignored — only verify tests relevant to your changes.
+Test naming: `tests/test_<module>.py` mirrors source module names. To skip a failing test, name it and verify it fails on the parent commit — aggregate dismissals ("pre-existing", "flaky", "unrelated") are not accepted.
 
 **Integration tests** (`tests/integration/`) run the full pipeline with a mock Claude CLI (`tests/mock_claude/mock_claude.py`). They require `pip install -e ".[dev]"` and Unix (signal tests are skipped on Windows). Each test spins up a temp git repo + worca runtime, so they're slower (~30-60s for the full suite).
 
 **Playwright note:** Browser e2e tests must run with `--workers=1` (serial). Parallel workers cause flaky failures due to browser context contamination between isolated test servers.
+
+**Conditional Playwright runs (UI changes).** When the diff between `$WORCA_BASE_BRANCH` and `HEAD` touches any path under `worca-ui/app/` or `worca-ui/server/`, the tester MUST run Playwright in addition to vitest:
+
+```bash
+cd worca-ui && npx playwright test --workers=1
+# Per-file if you hit port collisions:
+cd worca-ui && npx playwright test e2e/<spec>.spec.js --workers=1
+```
+
+This closes the feedback loop inside the implementer → tester iteration instead of waiting for out-of-band CI. The per-failure attribution rules above apply: name each failing test, verify against the parent commit, or route the failure back to the implementer.
+
+If the Chromium binary is missing (`npx playwright install chromium` was never run in this environment), state that explicitly in your verdict — do not silently skip the suite.
 
 **Coverage runs** (Python) use the centralized runner in `scripts/coverage.py`:
 

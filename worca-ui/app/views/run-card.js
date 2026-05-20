@@ -146,7 +146,10 @@ export function runCardView(
       : run.started_at && endTime
         ? formatDuration(elapsed(run.started_at, endTime))
         : 'N/A';
-  const branch = run.branch || run.work_request?.branch || '';
+  const sourceBranch =
+    run.head_branch || run.branch || run.work_request?.branch || '';
+  const targetBranch = run.target_branch || '';
+  const defaultBranch = run._default_branch || '';
   const stages = run.stages ? _sortedEntries(run.stages) : [];
   const cost = _runCost(run);
 
@@ -285,7 +288,7 @@ export function runCardView(
           ? html`<div class="run-card-meta">${projectItem}</div>`
           : nothing;
       })()}
-      ${branch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Branch:</span> <span class="meta-value">${branch}</span></span></div>` : nothing}
+      ${sourceBranch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Source Branch:</span> <span class="meta-value">${sourceBranch}</span></span>${targetBranch && targetBranch !== defaultBranch ? html`<span class="run-card-meta-item"><span class="meta-label">Target Branch:</span> <span class="meta-value">${targetBranch}</span></span>` : nothing}</div>` : nothing}
       ${pipelineTemplate ? html`<div class="run-card-template"><span class="meta-label">Pipeline:</span> <span class="meta-value">${pipelineTemplate}</span></div>` : nothing}
       <div class="run-card-meta">
         <span class="run-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(run.started_at)}</span></span>

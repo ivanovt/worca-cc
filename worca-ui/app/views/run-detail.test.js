@@ -423,3 +423,92 @@ describe('prApprovalPanelView', () => {
     });
   });
 });
+
+describe('runDetailView - source/target branch display', () => {
+  function render(template) {
+    return renderToString(template?.overview ?? template);
+  }
+
+  it('shows Source Branch with head_branch when available', () => {
+    const run = {
+      id: 'r-branch-1',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz-20260518',
+      branch: 'master',
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Source Branch:');
+    expect(out).toContain('worca/feat-xyz-20260518');
+    expect(out).not.toContain('>master<');
+  });
+
+  it('falls back to run.branch when head_branch is absent', () => {
+    const run = {
+      id: 'r-branch-2',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+      completed_at: '2026-01-01T01:00:00Z',
+      branch: 'develop',
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Source Branch:');
+    expect(out).toContain('develop');
+  });
+
+  it('shows Target Branch when target_branch differs from _default_branch', () => {
+    const run = {
+      id: 'r-branch-3',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      target_branch: 'develop',
+      _default_branch: 'main',
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Target Branch:');
+    expect(out).toContain('develop');
+  });
+
+  it('hides Target Branch when target_branch equals _default_branch', () => {
+    const run = {
+      id: 'r-branch-3b',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      target_branch: 'main',
+      _default_branch: 'main',
+    };
+    const out = render(runDetailView(run));
+    expect(out).not.toContain('Target Branch:');
+  });
+
+  it('shows Target Branch when _default_branch is unknown (null)', () => {
+    const run = {
+      id: 'r-branch-3c',
+      active: true,
+      started_at: '2026-01-01T00:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      target_branch: 'main',
+      _default_branch: null,
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Target Branch:');
+    expect(out).toContain('main');
+  });
+
+  it('attaches PR link to the Source Branch row', () => {
+    const run = {
+      id: 'r-branch-4',
+      active: false,
+      started_at: '2026-01-01T00:00:00Z',
+      completed_at: '2026-01-01T01:00:00Z',
+      head_branch: 'worca/feat-xyz',
+      pr: { url: 'https://github.com/org/repo/pull/42' },
+    };
+    const out = render(runDetailView(run));
+    expect(out).toContain('Source Branch:');
+    expect(out).toContain('run-pr-link');
+    expect(out).toContain('https://github.com/org/repo/pull/42');
+  });
+});
