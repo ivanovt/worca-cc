@@ -26,7 +26,7 @@ from worca.orchestrator.registry import update_pipeline
 from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
-from worca.orchestrator.effort import resolve_effort
+from worca.orchestrator.effort import resolve_effort, escalation_iter_num
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
     is_learn_enabled,
@@ -2029,13 +2029,21 @@ def run_pipeline(
                     _bead_ids = prompt_builder.get_context("beads_ids") or []
                     if _bead_ids:
                         _assigned_bead = _bead_ids[0]
+                # Escalation depth counts only escalation-relevant loopbacks,
+                # NOT total stage iterations (per-bead Phase-1 fan-out would
+                # otherwise inflate the multiplier — see escalation_iter_num).
+                _eff_iter_num = escalation_iter_num(
+                    stage_config["agent"] or "",
+                    trigger,
+                    [it.get("trigger") for it in prev_iterations],
+                )
                 _eff_level, _eff_requested, _eff_source, _eff_base, _eff_bc, _eff_capped = resolve_effort(
                     agent=stage_config["agent"],
                     agent_effort=stage_config["effort"],
                     auto_mode=_effort_auto_mode,
                     auto_cap=_effort_auto_cap,
                     trigger=trigger,
-                    iter_num=len(prev_iterations) + 1,
+                    iter_num=_eff_iter_num,
                     bead=_assigned_bead,
                     model=stage_config["model"] or "",
                 )

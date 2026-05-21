@@ -63,6 +63,23 @@ def _setup_beads(pipeline_env, effort_label=None, bead_id=BEAD_ID):
     return response_file
 
 
+def _setup_bead_pool(pipeline_env, bead_ids, effort_label=None):
+    """Enable the stateful bd stub with a pool of beads (one IMPLEMENT iter each).
+
+    ``bd ready`` serves the beads in order and drops each as it is closed, so
+    the runner's Phase-1 loop produces one IMPLEMENT iteration per bead.
+    """
+    beads_file = pipeline_env.tmp_path / "bd_pool.json"
+    beads_file.write_text(json.dumps({
+        "beads": [
+            {"id": bid, "title": f"Bead {bid}", "effort": effort_label}
+            for bid in bead_ids
+        ],
+    }))
+    pipeline_env.enable_beads(beads_file=beads_file)
+    return beads_file
+
+
 def _happy_scenario(*, coord_beads=None, tester_per_iter=None,
                     impl_run_cmd=None, impl_per_iter=None):
     """Build a full-pipeline scenario with coordinator beads and tester outcome.
@@ -237,6 +254,60 @@ def test_adaptive_test_failure_escalation(pipeline_env):
     assert captured_1 == "high"
     captured_2 = (capture_dir / "impl_2.txt").read_text().strip()
     assert captured_2 == "max"
+
+
+# ---------------------------------------------------------------------------
+# (b2) Multi-bead test_failure loopback — escalation depth excludes Phase-1 fan-out
+# ---------------------------------------------------------------------------
+
+
+def test_adaptive_test_failure_escalation_multibead(pipeline_env):
+    """W-052 regression: per-bead Phase-1 iterations must NOT inflate escalation.
+
+    With 3 beads, Phase 1 produces 3 IMPLEMENT iterations (trigger next_bead,
+    zero delta). The first test_failure loopback (IMPLEMENT iter 4) must
+    escalate by exactly +1 rung (low -> medium on the Sonnet 4.6 ladder), NOT
+    by the total iteration count. The pre-fix runner passed
+    iter_num = len(prev_iterations) + 1 = 4, escalating low +3 rungs straight
+    to max.
+    """
+    bead_ids = ["bd-eff-a", "bd-eff-b", "bd-eff-c"]
+    _configure_effort(pipeline_env, auto_mode="adaptive", auto_cap="xhigh")
+    _setup_bead_pool(pipeline_env, bead_ids, effort_label="low")
+
+    scenario = _happy_scenario(
+        coord_beads=bead_ids,
+        tester_per_iter={
+            "iter_1": {
+                "action": "succeed",
+                "structured_output": {"passed": False, "failures": [{"test": "test_x"}]},
+            },
+            "iter_2": {
+                "action": "succeed",
+                "structured_output": {"passed": True},
+            },
+        },
+    )
+    result = pipeline_env.run(scenario, prompt="multibead escalation", timeout=120)
+    assert result.returncode == 0, f"Pipeline failed: {result.stderr[:500]}"
+
+    # Phase 1: one IMPLEMENT iteration per bead, all at the bead-label base.
+    for n in (1, 2, 3):
+        eff = _get_iteration_effort(result.status, "implement", n)
+        assert eff is not None, f"missing implement iter {n}"
+        assert eff["level"] == "low", f"iter {n}: {eff}"
+        assert eff["source"] == "adaptive:llm"
+        assert eff["escalations"] == []
+
+    # IMPLEMENT iter 4 = first test_failure loopback. Escalation depth is 1
+    # (one loopback), so low + 1 rung = "medium" — NOT "max".
+    eff4 = _get_iteration_effort(result.status, "implement", 4)
+    assert eff4 is not None, "expected a 4th implement iteration (test_failure loopback)"
+    assert eff4["base"] == "low"
+    assert eff4["level"] == "medium", f"over-escalation regression: {eff4}"
+    assert eff4["requested"] == "medium"
+    assert eff4["escalations"] == ["test_failure"]
+    assert eff4["capped_from"] is None
 
 
 # ---------------------------------------------------------------------------

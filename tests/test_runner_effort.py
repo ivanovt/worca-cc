@@ -229,6 +229,57 @@ class TestPipelineResolveEffortCall:
         assert kw["iter_num"] == 1
 
     @patch("worca.orchestrator.runner.resolve_effort")
+    @patch("worca.orchestrator.runner.escalation_iter_num")
+    @patch("worca.orchestrator.runner.run_stage")
+    @patch("worca.orchestrator.runner.create_branch")
+    @patch("worca.orchestrator.runner.current_branch", return_value="main")
+    @patch("worca.orchestrator.runner.get_current_git_head", return_value="abc123")
+    @patch("worca.orchestrator.runner._query_ready_bead", return_value=None)
+    def test_iter_num_routed_through_escalation_depth(
+        self, mock_bead, mock_head, mock_branch, mock_create, mock_stage,
+        mock_iter_num, mock_resolve, tmp_path,
+    ):
+        """resolve_effort's iter_num must come from escalation_iter_num()
+        (escalation depth), NOT len(prev_iterations) + 1. This is the W-052
+        multi-bead over-escalation regression guard: per-bead Phase-1 fan-out
+        must not inflate the escalation multiplier."""
+        mock_iter_num.return_value = 99  # sentinel distinct from any real count
+        mock_resolve.return_value = ("high", "high", "explicit", "high", None, None)
+
+        settings_path = self._make_settings(tmp_path, effort={
+            "auto_mode": "reactive",
+            "auto_cap": "xhigh",
+        })
+        status_path = str(tmp_path / "status.json")
+        os.makedirs(tmp_path / "runs", exist_ok=True)
+
+        call_count = [0]
+        def stage_side_effect(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ({"approach": "test", "tasks_outline": []}, {})
+            raise Exception("stop after plan")
+        mock_stage.side_effect = stage_side_effect
+
+        with pytest.raises(Exception, match="stop after plan"):
+            run_pipeline(
+                self._make_wr(),
+                settings_path=settings_path,
+                status_path=status_path,
+                skip_preflight=True,
+            )
+
+        assert mock_iter_num.called, "runner should compute iter_num via escalation_iter_num()"
+        # First non-preflight stage is PLAN: planner agent, initial trigger,
+        # no prior iterations.
+        assert mock_iter_num.call_args_list[0].args == ("planner", "initial", [])
+        # resolve_effort must receive the helper's return value verbatim
+        # (every stage, not the raw len(prev_iterations) + 1).
+        assert all(
+            c.kwargs["iter_num"] == 99 for c in mock_resolve.call_args_list
+        )
+
+    @patch("worca.orchestrator.runner.resolve_effort")
     @patch("worca.orchestrator.runner.run_stage")
     @patch("worca.orchestrator.runner.create_branch")
     @patch("worca.orchestrator.runner.current_branch", return_value="main")

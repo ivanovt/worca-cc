@@ -578,3 +578,92 @@ class TestResolveEffortCappedFrom:
             trigger="test_failure", iter_num=3, bead=None, model=self.MODEL,
         )
         assert capped is None
+
+
+# ---------------------------------------------------------------------------
+# escalation_iter_num() — escalation depth excludes per-bead Phase-1 fan-out
+# ---------------------------------------------------------------------------
+#
+# Regression guard for the W-052 over-escalation bug: the runner used to pass
+# iter_num = len(prev_iterations) + 1 (TOTAL stage iterations) to
+# resolve_effort. For the implementer, that count is dominated by per-bead
+# Phase-1 iterations (trigger "next_bead", zero delta), so the FIRST real
+# loopback escalated by N rungs (N = beads implemented) instead of +1,
+# jumping straight to the ladder top on any multi-bead run.
+#
+# escalation_iter_num() returns the logical escalation iteration number:
+# loops = iter_num - 1 must equal the number of escalation loopbacks taken
+# (including the current one), NOT the total iteration count.
+
+
+class TestEscalationIterNum:
+    def test_implementer_first_test_failure_ignores_fanout(self):
+        """A single test_failure after N per-bead Phase-1 iters is still loop 1."""
+        from worca.orchestrator.effort import escalation_iter_num
+        prev = ["initial", "next_bead", "next_bead", "next_bead"]  # 4-bead Phase 1
+        assert escalation_iter_num("implementer", "test_failure", prev) == 2
+
+    def test_implementer_second_failure_stacks(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        prev = ["initial", "next_bead", "next_bead", "test_failure"]
+        assert escalation_iter_num("implementer", "test_failure", prev) == 3
+
+    def test_implementer_review_changes_after_fanout(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        prev = ["initial", "next_bead", "next_bead"]
+        assert escalation_iter_num("implementer", "review_changes", prev) == 2
+
+    def test_phase1_next_bead_never_escalates(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        prev = ["initial", "next_bead"]
+        assert escalation_iter_num("implementer", "next_bead", prev) == 1
+
+    def test_initial_no_history(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        assert escalation_iter_num("implementer", "initial", []) == 1
+
+    def test_planner_first_plan_review(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        assert escalation_iter_num("planner", "plan_review_revise", ["initial"]) == 2
+
+    def test_planner_stacks(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        prev = ["initial", "plan_review_revise"]
+        assert escalation_iter_num("planner", "restart_planning", prev) == 3
+
+    def test_non_escalating_agent_always_one(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        prev = ["initial", "next_bead", "test_failure", "review_changes"]
+        assert escalation_iter_num("coordinator", "review_changes", prev) == 1
+
+    def test_none_prev_triggers(self):
+        from worca.orchestrator.effort import escalation_iter_num
+        assert escalation_iter_num("implementer", "test_failure", None) == 2
+
+
+class TestMultiBeadEscalationBehavior:
+    """End-to-end demonstration of the bug fix on the Sonnet 4.6 (default) ladder."""
+
+    def test_first_failure_after_multibead_escalates_one_rung(self):
+        from worca.orchestrator.effort import (
+            apply_escalation,
+            escalation_iter_num,
+            model_ladder,
+        )
+        ladder = model_ladder("claude-sonnet-4-6")  # (low, medium, high, max)
+        prev = ["initial", "next_bead", "next_bead"]  # 3-bead Phase 1
+        itn = escalation_iter_num("implementer", "test_failure", prev)
+        # base "low" + 1 rung = "medium"; the buggy total-count path gave "max".
+        assert apply_escalation("low", "implementer", "test_failure", itn, ladder) == "medium"
+
+    def test_single_bead_unchanged(self):
+        """Single-bead runs (the only case the old code got right) still +1."""
+        from worca.orchestrator.effort import (
+            apply_escalation,
+            escalation_iter_num,
+            model_ladder,
+        )
+        ladder = model_ladder("claude-sonnet-4-6")
+        prev = ["initial"]
+        itn = escalation_iter_num("implementer", "test_failure", prev)
+        assert apply_escalation("medium", "implementer", "test_failure", itn, ladder) == "high"

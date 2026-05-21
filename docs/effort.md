@@ -100,6 +100,8 @@ Escalation fires when an agent re-runs on a loopback trigger. Deltas are **index
 
 Deltas stack across iterations: iter 1 = base, iter 2 = base + delta, iter 3 = base + 2*delta, etc. Only the agent re-running on the loopback escalates — the tester does not escalate when re-run after an implementer fix.
 
+Here "iter" counts **escalation loopbacks only**, not total stage iterations. The implementer runs once per bead during Phase-1 implementation (trigger `next_bead`, zero delta); those per-bead iterations do **not** count toward escalation depth. So the first `test_failure` after implementing N beads is escalation loop 1 (+1 rung), not loop N. `escalation_iter_num()` in `effort.py` computes this depth by counting only escalation-relevant prior triggers; the runner passes it to `resolve_effort()`.
+
 ### Aggressive escalation on 4-rung ladders
 
 On the shipped 4-rung models (Opus 4.6, Sonnet 4.6), escalation is coarser than on Opus 4.7's 5-rung ladder. A single `test_failure` (+1 rung) takes a `high`-base implementer straight to `max`:

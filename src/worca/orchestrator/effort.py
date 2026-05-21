@@ -123,6 +123,32 @@ def apply_escalation(
     return ladder[new_idx]
 
 
+def escalation_iter_num(
+    agent: str, trigger: str, prev_triggers: Optional[list]
+) -> int:
+    """Logical escalation iteration number to pass to ``resolve_effort``.
+
+    ``apply_escalation`` derives ``loops = iter_num - 1`` and multiplies the
+    per-loop delta by ``loops``. That multiplier must reflect the number of
+    *escalation loopbacks* the stage has taken — NOT its total iteration count.
+
+    For the implementer the total count is dominated by per-bead Phase-1
+    iterations (trigger ``"next_bead"``, zero delta). Passing
+    ``len(prev_iterations) + 1`` therefore over-escalated: the first real
+    ``test_failure``/``review_changes`` loopback in an N-bead run jumped N
+    rungs (straight to the ladder top) instead of the intended +1/+2.
+
+    This counts only escalation-relevant triggers for ``agent`` (those carrying
+    a non-zero delta in ``_ESCALATION_DELTAS``), including the current one, and
+    returns ``count + 1`` so that ``loops`` equals the number of escalation
+    loopbacks. Non-escalating agents/triggers always return 1 (no escalation).
+    """
+    deltas = _ESCALATION_DELTAS.get(agent, {})
+    prior = sum(1 for t in (prev_triggers or []) if t in deltas)
+    current = 1 if trigger in deltas else 0
+    return prior + current + 1
+
+
 def clamp(
     level: Optional[str], cap: Optional[str]
 ) -> tuple[Optional[str], Optional[str]]:
