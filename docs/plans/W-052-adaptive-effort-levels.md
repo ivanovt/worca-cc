@@ -6,14 +6,37 @@
 **Date:** 2026-05-12
 **Depends on:** None
 
-## Locked Defaults (2026-05-15)
+## Decisions
 
-Four execution defaults are now binding (mirror of the `## Decisions` section on issue #160):
+Decision log for this plan, in chronological order: design decisions locked 2026-05-12, execution defaults 2026-05-15, effort↔thinking analysis added 2026-05-20. These records consolidate the decision sections previously carried on issue #160 — the issue body now links here rather than duplicating them. Each record states what was chosen (vs the rejected alternative) and points to the design section carrying the full mechanism.
+
+### Design decisions (locked 2026-05-12)
+
+- **Effort classifier location** — *coordinator-owned* (vs a separate `effort_classifier` agent). Labels are attached via `bd create --labels worca-effort:<level>` during the coordinator's normal pass; no separate Haiku classifier. Drops Phase 2 of the original plan revision. Mechanism: §4.
+- **`auto_mode` semantics** — *three modes with orthogonal start-point × escalation axes* (vs a nested per-agent `effort: "auto"` value). Removes the `auto` value; the per-agent field is just the starting point and the mode controls escalation. Mechanism: §1 and the Proposal table.
+- **Adaptive override precedence** — *explicit per-agent value wins* over the LLM per-bead label. Rationale: an explicit value is the template author's intent, which beats per-bead model inference. Mechanism: §3.
+- **Resolution code location** — *new `src/worca/orchestrator/effort.py`* (vs inlining in the runner).
+- **Mid-run UI overrides of bead effort labels** — *not supported*. Operators change behavior mid-run by editing `settings.json` or `auto_mode`; the bead-detail panel shows the label read-only. Mechanism: §7.3, Out of Scope.
+- **`max` rung in UI** — *exposed in the per-agent dropdown with a `danger` variant + confirmation modal* on selection. Mechanism: §7.4.
+- **Coordinator label emission** — *always emit `worca-effort:<level>` regardless of `auto_mode`*. Under `reactive`/`disabled` the labels are forensic data, so "would `adaptive` have run this differently?" stays answerable post-hoc. Mechanism: §2, §4.
+- **Divergence surfacing** — *tight UI indicators* (badges/chips like `[overridden]`, `[ignored]`), no prose. Reasoning text appears only in the bead-detail notes section. `status.json` gets a per-iteration `bead_classified: {level, applied, skip_reason}` block. Mechanism: §6, §7.
+
+### Execution defaults (locked 2026-05-15)
+
+Four execution defaults are binding:
 
 - **Shipping strategy** — single PR landing all 7 phases atomically. No phase-split. Heavier diff but no half-shipped state and atomic rollback.
 - **Default `auto_mode` (fresh installs)** — `adaptive`. Coordinator emits `worca-effort:*` labels on first run; the implementer consumes them. Documented in MIGRATION.md as a behavior change for upgraders.
 - **Default `auto_cap`** — `xhigh`. On Opus 4.7 this lets escalation reach the model-default ceiling while keeping `max` an explicit opt-in. **Caveat for the shipped 4.6 models:** since Opus 4.6 / Sonnet 4.6 have no `xhigh` rung, the model-aware cap rounds *up* to `max` (see §3 *Model-aware effort ladders*), so loopback escalation **can** reach `max` on the default config. Operators wanting the "no auto-max" guarantee on 4.6 pin `auto_cap: high`.
 - **Per-agent defaults in shipped `src/worca/settings.json`** — bake `planner: xhigh`, `coordinator: medium`, `guardian: high`. Leave `implementer`, `tester`, `reviewer` unset so the adaptive path drives base from the coordinator's per-bead label (or model default under `disabled`/`reactive`).
+
+### Effort↔thinking analysis (added 2026-05-20)
+
+- **Model-aware effort ladders (critical fix).** All rung arithmetic happens on the *resolved model's* ladder, not a naive canonical 5-rung scale. The shipped aliases (`opus`→Opus 4.6, `sonnet`→Sonnet 4.6) lack `xhigh`, so a canonical ladder would silently run `planner: xhigh` as `high` and make implementer loopback escalation a no-op while `status.json` falsely records `xhigh`. Resolution: `resolve_effort()` takes a `model` arg and uses `MODEL_EFFORT_LADDERS`; base rounds *down*, escalation deltas are index steps on the model's ladder, `auto_cap` rounds *up*. Both `level` (sent) and `requested` (pre-collapse canonical) are persisted per iteration. Full mechanism: §3 *Model-aware effort ladders*, §8.
+- **Escalation delta semantics on coarse ladders** — *per-model ladder* (vs canonical). Deltas apply on the model's actual rungs and saturate at the top. **Accepted consequence:** on the 4-rung shipped models a single `test_failure` takes a `high`-base implementer straight to `max`, and the default `auto_cap: xhigh` permits it (xhigh rounds up to max). This relaxes the "`max` only via explicit opt-in" guarantee to "explicit opt-in **or** loopback escalation on a model lacking `xhigh`". Operators wanting the no-auto-max guarantee on 4.6 pin `auto_cap: high` (a deliberate dead-zone); pointing `worca.models.opus` at Opus 4.7 restores the full 5-rung ladder.
+- **No separate "thinking mode" dial** (considered, rejected). At the API level `thinking.type` is a tri-state (`adaptive | enabled | disabled`), but it does not survive translation to worca's `claude -p` layer as an independently useful knob: on adaptive models the effort level *is* the thinking control (already configured here); the fixed-budget `enabled` mode is deprecated and rejected with a 400 on Opus 4.7; fully disabling thinking has no worca stage use case (`effort: low` already minimizes it). All three knobs remain reachable via `worca.models.*.env` (W-051) with zero new code. Full rationale: Out of Scope.
+- **Output-token headroom under escalation** (consideration, follow-up). At `high`/`max` effort the model emits more thinking tokens and is likelier to hit `stop_reason: "max_tokens"` (truncated output). Loopback escalation toward `max` therefore needs `CLAUDE_CODE_MAX_OUTPUT_TOKENS` headroom, not just turn budget. Per-effort calibration is out of scope (tracked with the `msize` follow-up); operators can raise it today via `worca.models.*.env`. See Considerations.
+- **Env-var seam is required for `max`, not merely convenient.** The `effortLevel` *settings* field rejects `max` (session-only); `CLAUDE_CODE_EFFORT_LEVEL` is the only non-interactive way to set it. Since `max` is exposed in the per-agent dropdown and `auto_cap`, the env-var seam is load-bearing and must not be refactored to the settings field. Mechanism: §5.
 
 ## Problem
 
@@ -73,7 +96,7 @@ return {
 
 The per-agent `effort` field accepts only literal rungs: `low | medium | high | xhigh | max`. There is **no `auto` value** — the mode field (`worca.effort.auto_mode`) decides whether explicit values, model defaults, or per-bead LLM judgment are used as the starting point. This collapses the plan's earlier "explicit values never escalate; only `auto` escalates" complexity into a single rule: mode controls escalation, the per-agent field is just the starting point (and acts as an override under `adaptive`).
 
-**This is the shipped `src/worca/settings.json` default** (per *Locked Defaults*). Existing keys (`model`, `max_turns`) are unchanged — only the four new entries shown below are added on top of the current block:
+**This is the shipped `src/worca/settings.json` default** (per *Decisions → Execution defaults*). Existing keys (`model`, `max_turns`) are unchanged — only the four new entries shown below are added on top of the current block:
 
 ```jsonc
 // src/worca/settings.json (shipped default, committed)
