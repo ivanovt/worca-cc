@@ -125,42 +125,14 @@ Agent config in `.claude/settings.json` under the `worca` namespace. Key section
 
 ### Model Profiles (`worca.models`)
 
-Each entry in `worca.models` is either a plain string (model ID) or an object with `id` and optional `env`:
+Entries in `worca.models` are either a plain string (model ID) or `{id, env}` — the `env` map is merged into the subprocess environment when that model runs, useful for routing through alternative endpoints or tuning per-stage settings like `CLAUDE_CODE_MAX_OUTPUT_TOKENS`.
 
-```jsonc
-"worca": {
-  "models": {
-    "opus":   "claude-opus-4-6",              // string form — no env vars
-    "sonnet": "claude-sonnet-4-6",
-    "alt-fast": {                             // object form — per-model env vars
-      "id": "some-fast-model-id",
-      "env": {
-        "ANTHROPIC_BASE_URL": "https://api.example.com/v1",
-        "API_TIMEOUT_MS": "3000000"
-      }
-    }
-  }
-}
-```
+Key gotchas:
 
-When a stage runs using a model that has an `env` map, those variables are merged into the subprocess environment. This allows routing individual agents through alternative endpoints or tuning per-stage settings like `CLAUDE_CODE_MAX_OUTPUT_TOKENS`.
-
-**Secrets** belong in `settings.local.json` (gitignored, deep-merged over `settings.json` by `load_settings()`). The UI Secrets panel writes exclusively to this file:
-
-```jsonc
-// settings.local.json
-"worca": {
-  "models": {
-    "alt-fast": { "env": { "ANTHROPIC_AUTH_TOKEN": "sk-..." } }
-  }
-}
-```
-
-**Reserved keys:** env vars matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped (with a stderr warning) to prevent misconfiguration from breaking pipeline internals. The denylist is shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
-
-**Worktree materialization:** when a pipeline runs in a worktree, secrets from the parent's `settings.local.json` are materialized into the worktree's `settings.json` (which is gitignored). This is the same on-disk plaintext exposure model as `~/.aws/credentials`.
-
-**`work_request.py` haiku coupling:** the `extract_work_request` helper resolves its hardcoded `--model haiku` through the same `resolve_model()` path as agent stages. A user who customizes their `haiku` entry also retargets work-request title generation — this is intentional for consistent routing.
+- **Secrets** belong in `settings.local.json` (gitignored, deep-merged over `settings.json`). The UI Secrets panel writes exclusively to this file. Never inline secrets in `settings.json`.
+- **Reserved keys** matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped with a stderr warning. Denylist shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
+- **Worktree materialization:** parent's `settings.local.json` secrets are materialized into the worktree's `settings.json` (gitignored). Same on-disk plaintext exposure model as `~/.aws/credentials`.
+- **`work_request.py` haiku coupling:** `extract_work_request` resolves its hardcoded `--model haiku` through `resolve_model()`, so customizing the `haiku` entry also retargets work-request title generation. Intentional.
 
 ## Code Hosting
 
@@ -276,67 +248,13 @@ The raw `coverage` CLI still works for ad-hoc use (`coverage combine && coverage
 
 ### Dispatch Governance (`worca.governance.dispatch`)
 
-Three sections — `tools`, `skills`, `subagents` — each with a consistent three-tier model:
+`tools`, `skills`, and `subagents` each follow a three-tier model:
 
-```jsonc
-"worca": {
-  "governance": {
-    "dispatch": {
-      "tools": {
-        "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
-        "default_denied":    [],
-        "per_agent_allow":   { "_defaults": ["*"] }
-      },
-      "skills": {
-        "always_disallowed": ["batch", "fewer-permission-prompts",
-                              "loop", "schedule", "worca-*", "update-config",
-                              "hookify:hookify", "hookify:configure", "hookify:list",
-                              "hookify:writing-rules", "init"],
-        "default_denied":    ["claude-api", "debug", "review", "security-review",
-                              "simplify", "feature-dev:feature-dev",
-                              "claude-md-management:revise-claude-md",
-                              "claude-md-management:claude-md-improver"],
-        "per_agent_allow": {
-          "_defaults":   ["*"],
-          "implementer": ["*", "simplify", "claude-api"],
-          "tester":      ["*", "debug"],
-          "reviewer":    ["*", "review", "security-review"],
-          "learner":     ["*", "claude-md-management:revise-claude-md",
-                          "claude-md-management:claude-md-improver"]
-        }
-      },
-      "subagents": {
-        "always_disallowed": ["general-purpose"],
-        "default_denied":    [],
-        "per_agent_allow":   { "_defaults": ["*"] }
-      }
-    }
-  }
-}
-```
+1. **`always_disallowed`** — hard-deny defaults. Shipped from `_DISPATCH_DEFAULTS` in `tracking.py`; project-editable but rarely should be edited.
+2. **`default_denied`** — blocked unless the agent names them in `per_agent_allow`. The `"*"` wildcard does NOT include these.
+3. **`per_agent_allow`** — per-agent allow list with `_defaults` fallback. `"*"` means "everything except the deny tiers". `[]` falls through to `_defaults`. `["none"]` is the explicit lockdown sentinel (`LOCKDOWN_SENTINEL`).
 
-**Tiers:**
-
-1. **`always_disallowed`** — hard-deny defaults. The list ships from `_DISPATCH_DEFAULTS` in `tracking.py` (and is written into `settings.json` on `worca init`/`--upgrade`), but the resulting value is project-editable — projects can clear or override entries if they have a real reason. Edit sparingly.
-2. **`default_denied`** — blocked unless the agent explicitly names them in `per_agent_allow`. The `"*"` wildcard does **not** include them.
-3. **`per_agent_allow`** — per-agent allow list with `_defaults` fallback. Supports `"*"` (all available minus the two deny tiers), named entries, and mixed `["*", "extra"]` form. Per-agent entry **replaces** `_defaults` (no union).
-
-**Wildcards:** `"*"` means "allow any item not in `always_disallowed` or `default_denied`". An empty list `[]` falls through to `_defaults` — clearing the chip list in the UI does not silently brick an agent. To express full lockdown, use the singleton `["none"]` (the `LOCKDOWN_SENTINEL`).
-
-**Defaults:** all three sections default to `["*"]` — the `always_disallowed` tier carries the safety net (e.g. `general-purpose` for subagents). Projects that need narrower per-agent posture override `per_agent_allow` explicitly.
-
-**Tools section CLI mapping (PR C):**
-
-| `per_agent_allow` form | Claude CLI flag | Meaning |
-|---|---|---|
-| `["*"]` | `--tools default` | All built-ins allowed (minus `always_disallowed`) |
-| `["Read", "Grep"]` | `--tools Agent,Grep,Read,Skill` | Restricted to named built-ins; `Skill` + `Agent` auto-included so worca hooks fire |
-| `[]` (or missing key) | inherits `_defaults` | Falls through — clearing chips never bricks an agent |
-| `["none"]` | `--tools ""` | Explicit lockdown — no built-in tool available |
-
-MCP tools (`mcp_*`) are not covered by `--tools` — MCP governance flows through other channels.
-
-For the complete reference — including the skill denylist rationale, mixed form semantics, and resolution algorithm — see [`docs/governance.md`](./docs/governance.md).
+MCP tools (`mcp_*`) flow through other channels, not `--tools`. For the full reference — including the shipped denylist contents, mixed-form semantics, the CLI-flag mapping for `tools`, and the resolution algorithm — see [`docs/governance.md`](./docs/governance.md). Dispatch the `worca-dispatch-governance-reviewer` subagent after changes here.
 
 ## Events & Webhooks
 
@@ -433,160 +351,21 @@ Running worktrees are never eligible for cleanup. Use `git worktree list` to see
 
 ## Fleet Runs
 
-Fan out a single work-request to N independent projects in parallel using `run_fleet.py`.
+Fan out a single work-request to N independent projects in parallel via `python .claude/scripts/run_fleet.py --projects <paths> --prompt "..."`. Supports `--guide` (repeatable), `--plan` (shared plan skips child Planner), `--plan-first` (reference-project planning), `--base`/`--head-template` for branch naming, `--max-parallel` (default 5), and a circuit breaker on failure ratio (default 0.30).
 
-```bash
-# Basic fleet: same prompt to 3 projects
-python .claude/scripts/run_fleet.py \
-  --projects /path/to/repo-a /path/to/repo-b /path/to/repo-c \
-  --prompt "Apply authentication migration"
+Lifecycle actions on an existing fleet_id: `--pause` (paused at next checkpoint), `--stop` (immediate SIGTERM), `--resume` (continues in place or re-dispatches failed children). `--branch` is explicitly rejected — use `--base` + `--head-template`. Worktree cleanup via `worca cleanup --fleet-id <id>`.
 
-# With a normative guide and shared base branch
-python .claude/scripts/run_fleet.py \
-  --projects /path/to/repo-a /path/to/repo-b \
-  --prompt "Migrate to v2 API" \
-  --guide ./migration-spec.md \
-  --base main
-
-# Skip per-child planning by supplying a shared plan
-python .claude/scripts/run_fleet.py \
-  --projects /path/to/repo-a /path/to/repo-b \
-  --prompt "Apply logging standards" \
-  --plan ./shared-plan.md
-
-# Pause / stop / resume a fleet (lifecycle actions on an existing fleet_id)
-python .claude/scripts/run_fleet.py --pause  f_202601011200_abc12345
-python .claude/scripts/run_fleet.py --stop   f_202601011200_abc12345
-python .claude/scripts/run_fleet.py --resume f_202601011200_abc12345
-```
-
-### Key flags
-
-| Flag | Description |
-|------|-------------|
-| `--projects PATH [PATH ...]` | Target project paths |
-| `--projects-file FILE` | File listing project paths (one per line) |
-| `--prompt TEXT` | Work-request prompt (mutually exclusive with `--source`) |
-| `--source REF` | Source reference (`gh:issue:42`, `bd:bd-abc`) |
-| `--guide PATH` | Normative reference guide injected into every child's prompt (repeatable, resolved to absolute paths before dispatch) |
-| `--plan PATH` | Shared plan file; every child skips the PLAN stage |
-| `--plan-first [PROJECT]` | Run the Planner on a reference project first; remaining children inherit its plan |
-| `--base BRANCH` | PR base branch shared across the fleet (each project's default if omitted) |
-| `--head-template TMPL` | Per-child head branch name template. Placeholders: `{project}`, `{fleet_id}`, `{slug}`, `{yyyymmdd}`, `{yyyymmddhhmm}` |
-| `--max-parallel N` | Maximum concurrent child pipelines (default: 5) |
-| `--fleet-failure-threshold RATIO` | Failure ratio that trips the circuit breaker and halts unstarted children (default: 0.30) |
-| `--pause FLEET_ID` | Pause a running fleet — write a `pause` control file to every in-flight child (manifest → `paused`) |
-| `--stop FLEET_ID` | Stop a running fleet — write a `stop` control file + SIGTERM every in-flight child (manifest → `halted`, `halt_reason=stopped`) |
-| `--resume FLEET_ID` | Resume a halted/stopped/paused/failed fleet — continue paused/interrupted children in place, re-dispatch failed/pending children |
-
-`--branch` is explicitly rejected — use `--base` for the PR base branch and `--head-template` for the per-child head branch name. `--pause`, `--stop` and `--resume` are mutually exclusive lifecycle actions.
-
-### Halt vs. Pause vs. Stop
-
-Three ways to wind down an in-flight fleet, differing only in how they treat children already running:
-
-| Action | New children | In-flight children | Manifest state |
-|--------|--------------|--------------------|----------------|
-| **Halt** (`DELETE /api/fleet-runs/:id`) | not launched | keep running until they finish naturally | `halted` / `halt_reason=user` |
-| **Pause** (`--pause`) | not launched | paused at next checkpoint, resumable in place | `paused` |
-| **Stop** (`--stop`) | not launched | interrupted immediately (SIGTERM), resumable in place | `halted` / `halt_reason=stopped` |
-
-All three are sticky — only `--resume` (or the UI Resume button) clears them. Resume continues `paused`/`interrupted` children in their existing worktrees and re-dispatches `failed`/`pending` ones fresh.
-
-### Fleet cleanup
-
-Fleet worktrees are cleaned up with the standard `worca cleanup` command extended with a fleet-scoped flag:
-
-```bash
-worca cleanup --fleet-id <fleet_id>   # Remove all child worktrees + fleet manifest dir
-```
-
-See [`docs/fleet-runs.md`](./docs/fleet-runs.md) for a full walkthrough including guide attachment, plan modes, the circuit breaker, and resume behavior.
+Full walkthrough (every flag, halt-vs-pause-vs-stop matrix, circuit breaker semantics, resume behavior): [`docs/fleet-runs.md`](./docs/fleet-runs.md).
 
 ## Workspace Runs
 
-Coordinate changes across interdependent projects with dependency-ordered execution using `run_workspace.py`. Unlike fleet runs (same prompt to N independent projects), workspace runs decompose one prompt into project-specific sub-plans, execute them in DAG tier order, run cross-project integration tests, and create linked PRs with dependency metadata.
+Coordinate changes across interdependent projects with dependency-ordered execution via `python .claude/scripts/run_workspace.py <parent-dir> --prompt "..."`. Unlike fleet runs (same prompt to N independent projects), workspace runs decompose one prompt into per-project sub-plans, execute them in DAG tier order, run cross-project integration tests, and create linked PRs with dependency metadata.
 
-A workspace is defined by a `workspace.json` in a parent directory whose children are sibling git projects. Child pipelines are standard worca runs dispatched via `run_worktree.py` — all existing governance, hooks, and stage machinery are unchanged.
+A workspace is defined by `workspace.json` in a parent directory listing sibling projects with `depends_on` relationships, an optional `integration_test` command, and an optional `umbrella_repo`. Initialize with `worca workspace init <parent>`. Child pipelines are standard worca runs via `run_worktree.py` — governance, hooks, and stage machinery are unchanged.
 
-```bash
-# Initialize a workspace from a parent directory containing git projects
-worca workspace init /path/to/parent
+Supports `--guide`, `--skip-integration`, `--skip-planning` (each project plans independently), `--resume`, `--dry-run` (prints the DAG and exits), `--max-parallel` (default 5). Worktree cleanup via `worca cleanup --workspace-id <id>`.
 
-# Edit workspace.json to define depends_on relationships and integration test
-# Then run a coordinated pipeline:
-python .claude/scripts/run_workspace.py /path/to/parent \
-  --prompt "Add user authentication across all services"
-
-# With a normative guide
-python .claude/scripts/run_workspace.py /path/to/parent \
-  --prompt "Migrate to v2 API" \
-  --guide ./migration-spec.md
-
-# Skip master planner (use per-project independent planning)
-python .claude/scripts/run_workspace.py /path/to/parent \
-  --prompt "Apply logging standards" \
-  --skip-planning
-
-# Dry-run: print the DAG and exit
-python .claude/scripts/run_workspace.py /path/to/parent \
-  --prompt "Add auth" --dry-run
-
-# Resume a failed/halted workspace run
-python .claude/scripts/run_workspace.py /path/to/parent \
-  --resume ws_202601011200_abc12345
-```
-
-### Key flags
-
-| Flag | Description |
-|------|-------------|
-| `WORKSPACE_ROOT` | Positional: path to parent directory containing `workspace.json` |
-| `--prompt TEXT` | Work-request prompt (mutually exclusive with `--source`) |
-| `--source REF` | Source reference (`gh:issue:42`, `bd:bd-abc`) |
-| `--guide PATH` | Normative reference guide (repeatable) |
-| `--branch TEMPLATE` | Branch name template with `{workspace}`, `{project}`, `{slug}` placeholders (default: `workspace/{slug}/{project}`) |
-| `--skip-integration` | Skip the cross-project integration test phase |
-| `--skip-planning` | Skip the master planner; each project plans independently |
-| `--resume WORKSPACE_ID` | Resume a failed/halted workspace run |
-| `--max-parallel N` | Max concurrent children within a tier (default: 5) |
-| `--dry-run` | Print the DAG and exit without launching children |
-
-### workspace.json format
-
-```json
-{
-  "name": "my-platform",
-  "projects": [
-    { "name": "shared-lib", "path": "shared-lib", "depends_on": [] },
-    { "name": "backend",    "path": "backend",    "depends_on": ["shared-lib"] },
-    { "name": "frontend",   "path": "frontend",   "depends_on": ["shared-lib"] }
-  ],
-  "integration_test": {
-    "command": "docker compose run integration-tests",
-    "working_dir": "."
-  },
-  "umbrella_repo": "org/my-platform"
-}
-```
-
-Fields: `name` (workspace display name), `projects` (list with `name`, `path`, `depends_on`), `integration_test` (optional: `command` + `working_dir`), `umbrella_repo` (optional: GitHub `org/repo` for umbrella issue).
-
-### Execution flow
-
-1. **Master planner** reads every project's `CLAUDE.md`, decomposes the prompt into per-project sub-plans (agent + model configurable via `worca.agents.workspace_planner` in settings)
-2. **DAG executor** runs tiers sequentially — projects within a tier run in parallel (up to `--max-parallel`)
-3. **Context injection** — between tiers, completed projects' diffs (8 KB cap) are injected as `--guide` into the next tier's children
-4. **Integration test** — after all tiers, runs the user-defined `integration_test.command`; if it fails, no PRs are created
-5. **PR linking** — creates per-project PRs with dependency comments (`Depends on: org/lib#15`, `Blocks: org/frontend#43`) and an umbrella issue listing all PRs in merge order
-
-### Workspace cleanup
-
-```bash
-worca cleanup --workspace-id <workspace_id>   # Remove all child worktrees + workspace run dir
-```
-
-See [`docs/workspace-runs.md`](./docs/workspace-runs.md) for a full walkthrough including DAG execution, context injection, integration testing, PR linking, and resume behavior.
+Full walkthrough (workspace.json schema, master-planner role, DAG executor + context injection between tiers, integration testing, PR linking with dependency comments, umbrella issue): [`docs/workspace-runs.md`](./docs/workspace-runs.md).
 
 ## Migrating
 
@@ -594,33 +373,14 @@ User-facing upgrade and cleanup steps live in [`MIGRATION.md`](./MIGRATION.md).
 
 ## Releasing
 
-Two independent packages — release by pushing tags. **Do not use twine or npm publish manually; CI handles publishing.**
+Two independent packages release by pushing tags — CI handles publishing. **Never use twine or npm publish manually.**
 
 | Package | Version source | Tag format |
 |---|---|---|
 | `worca-cc` | `pyproject.toml` + `src/worca/__init__.py` (both must match) | `worca-cc-vX.Y.Z` |
 | `@worca/ui` | `worca-ui/package.json` | `worca-ui-vX.Y.Z` |
 
-Steps (same for both):
-
-1. Bump version in the version source file(s)
-2. Commit and push
-3. Tag and push tag:
-   ```bash
-   git tag worca-cc-v0.6.0rc6    # or worca-ui-v0.1.0-rc.4
-   git push origin <tag>
-   ```
-4. CI validates tag matches version, builds, tests, and publishes (PyPI via trusted publishing, npm via `NPM_TOKEN` secret)
-
-Releases are independent — a UI fix doesn't require a Python release.
-
-Update commands for users:
-```bash
-pip install --upgrade worca-cc==X.Y.Z
-npm install -g @worca/ui@X.Y.Z
-```
-
-> Dispatch `worca-release-preflight` right before `/worca-release` or `/worca-rc` — it audits version-file parity, master/CI state, and MIGRATION.md coverage so a release isn't tagged on a red branch or with a stale version.
+Use `/worca-release` (stable) or `/worca-rc` (RC) — they handle version bump + commit + tag + push. CI validates tag matches version, builds, tests, and publishes (PyPI via trusted publishing, npm via `NPM_TOKEN`). Releases are independent — a UI fix doesn't require a Python release. Dispatch `worca-release-preflight` first to audit version-file parity, master/CI state, and MIGRATION.md coverage.
 
 ## Plans & Roadmap
 
@@ -631,37 +391,25 @@ npm install -g @worca/ui@X.Y.Z
 
 ### GitHub Issue Structure
 
-Issues must follow this structure so the pipeline can auto-detect plan files when started with `--source gh:issue:N`:
+Issues use this structure so the pipeline can auto-detect plan files when started with `--source gh:issue:N`:
 
 ```markdown
 ## Problem
 
-<What's wrong or missing — 2-5 sentences>
-
 ## Proposal
-
-<What to build and how — bullet points or short paragraphs>
 
 ## Considerations
 
-<Trade-offs, edge cases, dependencies — optional>
-
 ## Plan
 
-- [docs/plans/W-NNN-short-description.md](https://github.com/SinishaDjukic/worca-cc/blob/master/docs/plans/W-NNN-short-description.md)
+- [docs/plans/W-NNN-slug.md](https://github.com/SinishaDjukic/worca-cc/blob/master/docs/plans/W-NNN-slug.md)
 ```
 
-**When to use the `W-NNN:` prefix:**
-- **Use it** for major features and refactoring — anything that warrants a plan file in `docs/plans/`. The `W-NNN` ties the issue, the plan file, and any branches/PRs together.
-- **Do NOT use it for bugs.** Bug issues use a plain descriptive title (e.g. `GH-issue plan auto-detect hardcodes docs/plans/`) and do not get a `W-NNN` allocation. They also typically skip the `## Plan` section unless the fix is large enough to warrant one — in which case it's no longer a bug and should be filed as a `W-NNN` refactor/feature instead.
-
 **Key rules:**
-- Title format for features/refactors: `W-NNN: Short Description`
-- Title format for bugs: plain descriptive sentence, no prefix
-- Labels: one of `area:cc` / `area:ui` + one of `P0`-`P4`. Bugs additionally get the `bug` label.
-- The `## Plan` section (when present) must contain a markdown link to `docs/plans/*.md` using an absolute blob URL (e.g. `https://github.com/SinishaDjukic/worca-cc/blob/main/docs/plans/W-NNN.md`) — the pipeline parses this link and skips the PLAN stage when the file exists
-- If no plan link is present, the pipeline runs the Planner to generate one
-- Plan files use the naming convention `W-NNN-short-description.md` in `docs/plans/`
-- When asked to write a new plan, follow the structure and conventions in [`docs/plans/_TEMPLATE.md`](./docs/plans/_TEMPLATE.md)
+- Title — features/refactors: `W-NNN: Short Description`. Bugs: plain descriptive title, no prefix.
+- Labels — one of `area:cc` / `area:ui` + one of `P0`-`P4`. Bugs add `bug`.
+- The `## Plan` link MUST be an absolute blob URL — the pipeline parses this exact format. Missing/relative link means the pipeline runs the Planner.
+- Plan file convention: `docs/plans/W-NNN-short-description.md`. Write per [`docs/plans/_TEMPLATE.md`](./docs/plans/_TEMPLATE.md).
+- `W-NNN` is for features/refactors only. Bugs do not get an allocation; if a fix is large enough to need a plan, file it as a refactor with `W-NNN` instead.
 
-> Use `/worca-plan-new` to file a new W-NNN — it allocates the ID, scaffolds the plan file, and creates the linked issue with the right structure. After drafting the plan, dispatch `worca-plan-template-reviewer` to audit it against `_TEMPLATE.md` before pipeline launch.
+Use `/worca-plan-new` to file a new W-NNN end-to-end. After drafting, dispatch `worca-plan-template-reviewer` to audit against the template.
