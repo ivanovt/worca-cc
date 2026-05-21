@@ -42,6 +42,10 @@ def main():
         )
         sys.exit(2)
     if not allowed:
+        # Stderr message is a human sentence; the emitted event keeps the
+        # canonical rule path in `reason` so the UI tooltip and downstream
+        # consumers can match it against skill_use.py's emissions
+        # (lockdown / always_disallowed / default_denied / not_in_allow_list).
         if reason == "always_disallowed":
             msg = f"Blocked: {child} is on the subagent denylist"
         else:
@@ -51,7 +55,7 @@ def main():
                 "agent": parent,
                 "section": "subagents",
                 "candidate": child,
-                "reason": msg,
+                "reason": reason,
             })
         print(msg, file=sys.stderr)
         sys.exit(2)

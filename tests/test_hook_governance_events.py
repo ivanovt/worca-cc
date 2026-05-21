@@ -338,8 +338,14 @@ class TestSubagentStartDispatchBlockedEvent:
         assert code == 0
         assert not os.path.exists(events_file)
 
-    def test_dispatch_blocked_payload_reason_names_child_agent(self, tmp_path):
-        """Reason string in payload mentions the blocked child agent."""
+    def test_dispatch_blocked_payload_uses_canonical_reason(self, tmp_path):
+        """`reason` in payload is the canonical rule path, matching
+        skill_use.py's emissions (`always_disallowed`, `default_denied`,
+        `not_in_allow_list`, `lockdown`, `config_unreadable`). The blocked
+        child name lives in `candidate` — keeping `reason` machine-readable
+        lets the UI tooltip and downstream consumers match against the
+        same vocabulary across all dispatch sections.
+        """
         events_file = str(tmp_path / "events.jsonl")
         os.environ["WORCA_EVENTS_PATH"] = events_file
         os.environ["WORCA_RUN_ID"] = "run-001"
@@ -349,7 +355,9 @@ class TestSubagentStartDispatchBlockedEvent:
 
         events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         e = events[0]
-        assert "general-purpose" in e["payload"]["reason"]
+        # `candidate` carries the child name; `reason` is the rule path.
+        assert e["payload"]["candidate"] == "general-purpose"
+        assert e["payload"]["reason"] == "always_disallowed"
 
     def test_emit_noop_when_events_path_missing(self):
         """No crash when WORCA_EVENTS_PATH is not set — dispatch still blocked."""
