@@ -348,6 +348,30 @@ def bd_daemon_ensure(beads_dir: str) -> bool:
     return bd_daemon_start(beads_dir)
 
 
+_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+_EFFORT_LABEL_PREFIX = "worca-effort:"
+
+
+def bd_get_effort_label(bead_id: str) -> Optional[str]:
+    """Extract the effort level from a bead's worca-effort:* label.
+
+    Returns the level string (e.g. "high") or None if missing/invalid.
+    """
+    result = _run_bd("show", bead_id)
+    if result.returncode != 0:
+        return None
+    label_match = re.search(r'^LABELS:\s*(.+)$', result.stdout, re.MULTILINE)
+    if not label_match:
+        return None
+    for label in label_match.group(1).split(","):
+        label = label.strip()
+        if label.startswith(_EFFORT_LABEL_PREFIX):
+            level = label[len(_EFFORT_LABEL_PREFIX):]
+            if level in _EFFORT_LEVELS:
+                return level
+    return None
+
+
 def bd_init(cwd: Optional[str] = None) -> bool:
     """Initialize beads in a directory via bd init.
 

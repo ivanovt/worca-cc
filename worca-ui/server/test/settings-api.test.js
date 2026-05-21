@@ -330,6 +330,37 @@ describe('POST /api/settings', () => {
     });
   });
 
+  it('merges worca.effort correctly -- returns merged view', async () => {
+    const effort = { auto_mode: 'reactive', auto_cap: 'high' };
+    const res = await post({ worca: { effort } });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.worca.effort).toEqual(effort);
+    expect(data.worca.loops).toEqual(SAMPLE_SETTINGS.worca.loops);
+  });
+
+  it('merges per-agent effort alongside model and max_turns', async () => {
+    const res = await post({
+      worca: {
+        agents: { planner: { model: 'opus', max_turns: 100, effort: 'xhigh' } },
+      },
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.worca.agents.planner).toEqual({
+      model: 'opus',
+      max_turns: 100,
+      effort: 'xhigh',
+    });
+  });
+
+  it('persists effort block to disk and re-reads correctly', async () => {
+    const effort = { auto_mode: 'adaptive', auto_cap: 'xhigh' };
+    await post({ worca: { effort } });
+    const saved = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(saved.worca.effort).toEqual(effort);
+  });
+
   it('migrates subagent_dispatch to dispatch.subagents on save', async () => {
     const res = await post({
       worca: {

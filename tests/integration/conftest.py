@@ -94,6 +94,7 @@ def pipeline_env(tmp_path):
         "reviewer": {"max_turns": 5},
         "guardian": {"max_turns": 5},
     }
+    settings["worca"]["effort"] = {"auto_mode": "disabled"}
     settings_path.write_text(json.dumps(settings, indent=2))
 
     worca_dir = project / ".worca"
@@ -428,7 +429,9 @@ def pipeline_env(tmp_path):
         """
         _overrides["WORCA_AGENT"] = name
 
-    def enable_beads(response_file: Path | None = None) -> None:
+    def enable_beads(
+        response_file: Path | None = None, beads_file: Path | None = None
+    ) -> None:
         """Activate the bd stub and clear ``WORCA_SKIP_BEADS`` for the next run.
 
         The stubs directory is prepended to ``PATH`` only inside the next
@@ -438,6 +441,11 @@ def pipeline_env(tmp_path):
             response_file: Optional path to a JSON file with canned bd
                 responses. See ``tests/integration/stubs/_stub_lib.py`` for
                 the schema.
+            beads_file: Optional path to a JSON file describing a stateful bead
+                pool (``{"beads": [{"id", "title", "effort", ...}]}``). When
+                set, the stub serves ``bd ready``/``show``/``close`` from the
+                pool, tracking closures across calls — exercising multi-bead
+                Phase-1 fan-out. See ``stubs/_stub_lib.py``.
         """
         existing_path = _overrides.get("PATH", os.environ.get("PATH", ""))
         if str(STUBS_DIR) not in existing_path.split(os.pathsep):
@@ -447,6 +455,8 @@ def pipeline_env(tmp_path):
         if response_file is not None:
             _overrides["WORCA_STUB_BD_RESPONSE_FILE"] = str(response_file)
             _stub_response_files["bd"] = Path(response_file)
+        if beads_file is not None:
+            _overrides["WORCA_STUB_BEADS_FILE"] = str(beads_file)
 
     yield PipelineEnv(
         project=project,

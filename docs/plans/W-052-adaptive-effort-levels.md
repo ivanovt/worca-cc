@@ -70,7 +70,7 @@ The three modes encode two orthogonal axes — **starting point** (template-auth
 
 **The coordinator owns per-bead effort classification.** During its normal `bd create` pass (Opus, full plan + scope in context), it attaches `--labels worca-effort:<level>` and writes a reasoning note via `bd update --notes`. No separate classifier agent. The coordinator emits labels **regardless of `auto_mode`** — under `reactive` / `disabled` the labels are informational and used for forensic comparison ("would `adaptive` have run this differently?").
 
-Implementer loopback escalation: `test_failure` +1 rung, `review_changes` +2 rungs, stacked across iterations. Planner: +1 per `plan_review_changes` bounce. Resolved effort + the coordinator's verdict + a `skip_reason` (when divergent) are persisted per-iteration in `status.json` and surfaced in the UI as tight badges/chips.
+Implementer loopback escalation: `test_failure` +1 rung, `review_changes` +2 rungs, stacked across iterations. Planner: +1 per `plan_review_revise` bounce (plan-review loop) or `restart_planning` bounce (reviewer sends back to planner). Resolved effort + the coordinator's verdict + a `skip_reason` (when divergent) are persisted per-iteration in `status.json` and surfaced in the UI as tight badges/chips.
 
 ## Design
 
@@ -206,7 +206,8 @@ The `(level, requested, source, base, bead_classified)` tuple is persisted in `s
 | implementer | `test_failure` | +1 per loop (stacks across iters) |
 | implementer | `review_changes` | +2 per loop (stacks across iters) |
 | planner | `initial` | +0 |
-| planner | `plan_review_changes` | +1 per re-run (stacks within run) |
+| planner | `plan_review_revise` | +1 per re-run (plan-review loop bounce; stacks within run) |
+| planner | `restart_planning` | +1 per re-run (reviewer sends back to planner; stacks within run) |
 | coordinator / tester / reviewer / guardian | any | +0 (no escalation; non-implementer-non-planner agents do not escalate on loopback) |
 
 Only the agent re-running on a loopback escalates. Tester does not escalate when re-run after an implementer fix; only the implementer does. Reviewer does not escalate when re-run after another loop; only the originating agent does.
@@ -527,8 +528,8 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 
 **Tasks:**
 1. Format-and-emit the effort log line at `runner.py:1887-1889`.
-2. Extend the `STAGE_STARTED` event payload with `effort: {...}` so the UI receives it via SSE.
-3. Update `stage_started_payload()` to accept and forward the effort dict.
+2. Extend `stage_started_payload()` (`src/worca/events/types.py:288-303`) to accept and forward the effort dict as `effort: {...}`. This lets webhook subscribers and the learner see effort on stage start.
+3. **Do not extend `stage_completed_payload()` or `stage_failed_payload()` with effort data.** The effort dict is already persisted in the iteration record in `status.json` (Phase 1, task 6). The UI reads completed iteration data from `status.json` via the WebSocket `status-update` channel (`worca-ui/server/ws-message-router.js`), not from individual event payloads — so the effort block is already available to the UI for completed/failed iterations without duplicating it on the completion event. STAGE_STARTED carries effort for webhook subscribers and in-flight display; status.json is the authoritative source for post-completion rendering (§7.1 badges, §7.3 mini-table).
 
 ### Phase 4: UI — per-iteration badges and tooltips
 
@@ -553,15 +554,18 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 
 ### Phase 6: UI — settings panel
 
-**Files:** `worca-ui/app/views/settings.js`, `worca-ui/server/settings-routes.js` (or equivalent), `worca-ui/app/styles.css`.
+**Files:** `worca-ui/app/views/settings.js`, `worca-ui/server/project-routes.js`, `worca-ui/server/settings-validator.js`, `worca-ui/app/styles.css`.
 
 **Tasks:**
 1. Add "Effort" section to settings.js, between Models and Secrets.
 2. Implement `auto_mode` dropdown, `auto_cap` dropdown, per-agent table.
 3. Per-agent dropdown values: `(unset)`, `low`, `medium`, `high`, `xhigh`, `max`. **No `auto` value.**
-4. Wire writes to `settings.json` via existing settings PUT endpoint.
-5. Implement inheritance placeholder rendering using the models-panel pattern.
-6. Add confirmation modal triggered when selecting `max` (for per-agent fields and `auto_cap`).
+4. Wire writes to `settings.json` via the existing `POST /api/projects/:projectId/settings` endpoint in `project-routes.js:461`. No new route needed — the effort block is a standard `worca.*` section and the existing handler already does read-merge-write on `settings.json`.
+5. Extend `settings-validator.js:validateSettingsPayload()` with effort validation:
+   - Validate `worca.effort` block: `auto_mode` must be one of `disabled | reactive | adaptive`; `auto_cap` must be one of `low | medium | high | xhigh | max`. Reject unknown keys.
+   - Validate `worca.agents.*.effort` (inside the existing agents loop at `settings-validator.js:76-96`): value must be one of `low | medium | high | xhigh | max`. Without this, the UI can write invalid values that the Python runtime silently falls back from.
+6. Implement inheritance placeholder rendering using the models-panel pattern.
+7. Add confirmation modal triggered when selecting `max` (for per-agent fields and `auto_cap`).
 
 ### Phase 7: Documentation
 
@@ -588,7 +592,8 @@ The phases below structure the *order of work within the PR*, not separate PRs.
 | `worca-ui/app/views/beads-panel.js` | Bead detail label (read-only) + `[ignored: <mode>]` chip + per-iteration mini-table |
 | `worca-ui/app/views/settings.js` | "Effort" section (auto_mode, auto_cap, per-agent table); `max`-confirmation modal |
 | `worca-ui/app/styles.css` | Effort-badge color CSS vars if not subsumed by existing variants |
-| `worca-ui/server/settings-routes.js` | Accept `worca.effort.*` writes |
+| `worca-ui/server/settings-validator.js` | Add `worca.effort` block validation (`auto_mode`, `auto_cap` enums) and `worca.agents.*.effort` rung validation inside the existing agents loop |
+| `worca-ui/server/project-routes.js` | (No code change — existing `POST /settings` handler already does read-merge-write for `worca.*` sections) |
 | `CLAUDE.md` | "Effort Levels" section |
 | `MIGRATION.md` | Older-model fallback note |
 | `docs/effort.md` | **New.** Feature documentation |
@@ -625,7 +630,8 @@ The baseline `resolve_effort` rows below pin `model=claude-opus-4-7` (full 5-run
 | Python | `test_resolve_effort_disabled_records_bead_skip_reason` | disabled + bead `worca-effort:medium` → `bead_classified.applied=false`, `skip_reason="mode_disabled"` |
 | Python | `test_resolve_effort_non_implementer_skip_reason` | adaptive + reviewer agent + bead `worca-effort:high` → `bead_classified.applied=false`, `skip_reason="non_classified_agent"` |
 | Python | `test_resolve_effort_review_changes_plus_two` | adaptive + test_failure × 1 then review_changes × 1 → +1+2 = base+3 (clamped to cap) |
-| Python | `test_resolve_effort_planner_stacks_on_replan` | planner + adaptive + 3× plan_review_changes → +3 rungs from model default |
+| Python | `test_resolve_effort_planner_stacks_on_plan_review_revise` | planner + adaptive + 3× `plan_review_revise` → +3 rungs from base |
+| Python | `test_resolve_effort_planner_escalates_on_restart_planning` | planner + adaptive + `restart_planning` trigger → +1 rung from base |
 | Python | `test_resolve_effort_auto_cap_clamps` | escalation past `auto_cap` clamps and sets `capped_from` |
 | Python | `test_resolve_effort_base_collapses_on_model_without_rung` | explicit `xhigh` on `claude-opus-4-6` → `level="high"`, `requested="xhigh"` (base rounds down to model ladder) |
 | Python | `test_resolve_effort_escalation_on_short_ladder_jumps_to_max` | implementer base `high` + `test_failure` on `claude-sonnet-4-6` (4-rung) → `level="max"` in a single rung (delta on model ladder) |
@@ -642,6 +648,7 @@ The baseline `resolve_effort` rows below pin `model=claude-opus-4-7` (full 5-run
 | JS | `effort-badge.test.js` | Level badge + source qualifier chip render correctly; divergence chip appears only when `bead_classified.applied=false` |
 | JS | `effort-tooltip.test.js` | Tooltip text matches the short-line mapping in §7.1 (no prose) |
 | JS | `settings-effort.test.js` | auto_mode + cap dropdowns write to `settings.json`; per-agent table renders inherited placeholders; selecting `max` triggers confirm modal |
+| JS | `settings-validator.test.js` (extend) | `worca.effort.auto_mode` rejects invalid value; `worca.effort.auto_cap` rejects invalid value; `worca.agents.*.effort` rejects invalid rung; valid effort values pass |
 
 ### Integration / E2E Tests
 
@@ -666,9 +673,12 @@ The baseline `resolve_effort` rows below pin `model=claude-opus-4-7` (full 5-run
 |---|---|
 | `tests/test_stages.py::test_get_stage_config_*` | Add assertions for new `effort` field |
 | `tests/test_status.py::test_start_iteration_*` | Verify `effort` kwarg is round-tripped |
-| `tests/integration/test_pipeline_end_to_end.py` | Pin `auto_mode=disabled` in fixtures so existing assertions aren't sensitive to env-var presence |
+| `tests/integration/conftest.py` | Pin `auto_mode=disabled` in the `pipeline_env` fixture's default `settings["worca"]` block (lines 84-96) so existing assertions in `test_pipeline_dispatch.py`, `test_pipeline_transitions.py`, and `test_pipeline_edge_cases.py` aren't sensitive to the new `CLAUDE_CODE_EFFORT_LEVEL` env var |
 | `worca-ui/app/views/run-detail.test.js` | Update iteration-card snapshot assertions to account for new badge row |
-| `worca-ui/app/views/settings.test.js` | Section ordering update |
+| `worca-ui/app/views/settings-dispatch-sections.test.js` | Update section-layout assertions to account for the new "Effort" section (this file verifies `sl-details` wrappers and `data-section` attributes across settings tabs) |
+| `worca-ui/app/views/settings-form-roundtrip.test.js` | Add effort block to the roundtrip serialization test so `worca.effort` survives the form→JSON→form cycle |
+| `worca-ui/server/settings-validator.test.js` | Add effort validation cases: valid/invalid `auto_mode`, valid/invalid `auto_cap`, valid/invalid `worca.agents.*.effort` |
+| `worca-ui/server/test/settings-api.test.js` | Add `POST /api/settings` integration case for effort block round-trip |
 
 ## Files to Create/Modify
 

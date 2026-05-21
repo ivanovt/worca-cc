@@ -8,6 +8,7 @@ import {
   showInfo,
 } from '../utils/confirm-dialog.js';
 import {
+  Activity,
   Bell,
   ClipboardCopy,
   ClipboardPaste,
@@ -59,6 +60,9 @@ export const CONFIGURABLE_STAGES = STAGE_ORDER.filter((s) => s !== 'preflight');
 export { AGENT_NAMES } from './agent-names.js';
 
 const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
+
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export const AUTO_MODES = ['disabled', 'reactive', 'adaptive'];
 
 export function getModelKeys(worca) {
   const models = worca?.models || {};
@@ -827,6 +831,25 @@ export function readPricingFromDom() {
     currency: settingsData?.worca?.pricing?.currency || 'USD',
     last_updated: new Date().toISOString().slice(0, 10),
   };
+}
+
+export function readEffortFromDom() {
+  const auto_mode =
+    document.getElementById('effort-auto-mode')?.value || 'adaptive';
+  const auto_cap = document.getElementById('effort-auto-cap')?.value || 'xhigh';
+
+  const agents = {};
+  for (const name of AGENT_NAMES) {
+    const el = document.getElementById(`effort-agent-${name}`);
+    const val = el?.value;
+    if (val && val !== '') {
+      agents[name] = { effort: val };
+    } else {
+      agents[name] = { effort: null };
+    }
+  }
+
+  return { auto_mode, auto_cap, agents };
 }
 
 export function getDefaults() {
@@ -2448,6 +2471,171 @@ export function modelsTab(worca, rerender) {
   `;
 }
 
+const _AUTO_MODE_HINTS = {
+  disabled: 'Per-agent effort only; no runtime escalation on loopbacks.',
+  reactive:
+    'Per-agent effort as starting point; escalates on test failures and review bounces.',
+  adaptive:
+    'Coordinator classifies per-bead effort; escalates on loopbacks. Explicit per-agent values override.',
+};
+
+function _confirmMaxEffort(selectEl, previousValue, rerender) {
+  showConfirm(
+    {
+      label: 'Confirm max effort',
+      message: html`Setting effort to <strong>max</strong> significantly
+        increases token consumption and cost. Continue?`,
+      confirmLabel: 'Use max',
+      confirmVariant: 'warning',
+      onConfirm: () => {},
+      onCancel: () => {
+        selectEl.value = previousValue;
+      },
+    },
+    rerender,
+  );
+}
+
+export function effortTab(worca, rerender) {
+  const effort = worca.effort || {};
+  const agents = worca.agents || {};
+  const autoMode = effort.auto_mode || 'adaptive';
+  const autoCap = effort.auto_cap || 'xhigh';
+
+  return html`
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Effort Mode</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Auto Mode</label>
+          <sl-select
+            id="effort-auto-mode"
+            .value="${autoMode}"
+            size="small"
+            hoist
+          >
+            ${AUTO_MODES.map(
+              (m) => html`<sl-option value="${m}">${m}</sl-option>`,
+            )}
+          </sl-select>
+          <span class="settings-field-hint"
+            >${_AUTO_MODE_HINTS[autoMode] || ''}</span
+          >
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Auto Cap</label>
+          <sl-select
+            id="effort-auto-cap"
+            .value="${autoCap}"
+            size="small"
+            hoist
+            @sl-change=${(e) => {
+              if (e.target.value === 'max') {
+                _confirmMaxEffort(e.target, autoCap, rerender);
+              }
+            }}
+          >
+            ${EFFORT_LEVELS.map(
+              (l) => html`<sl-option value="${l}">${l}</sl-option>`,
+            )}
+          </sl-select>
+          <span class="settings-field-hint"
+            >Ceiling for runtime-resolved effort levels</span
+          >
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Per-Agent Effort</h3>
+      <div class="effort-agent-table">
+        <table class="effort-table">
+          <thead>
+            <tr>
+              <th>Agent</th>
+              <th>Effort</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${AGENT_NAMES.map((name) => {
+              const agentCfg = agents[name] || {};
+              const currentEffort = agentCfg.effort || '';
+              const hasExplicit = Boolean(agentCfg.effort);
+              return html`
+                <tr>
+                  <td class="effort-agent-name">${name}</td>
+                  <td>
+                    <sl-select
+                      id="effort-agent-${name}"
+                      .value="${currentEffort}"
+                      size="small"
+                      hoist
+                      @sl-change=${(e) => {
+                        if (e.target.value === 'max') {
+                          _confirmMaxEffort(e.target, currentEffort, rerender);
+                        }
+                      }}
+                    >
+                      <sl-option value="">(unset)</sl-option>
+                      ${EFFORT_LEVELS.map(
+                        (l) => html`<sl-option value="${l}">${l}</sl-option>`,
+                      )}
+                    </sl-select>
+                  </td>
+                  <td>
+                    ${
+                      !hasExplicit
+                        ? html`<span
+                            class="effort-inherit-hint settings-muted-small"
+                            >inherits from auto mode</span
+                          >`
+                        : nothing
+                    }
+                  </td>
+                </tr>
+              `;
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="settings-tab-actions">
+        <sl-button
+          variant="primary"
+          size="small"
+          @click=${() => {
+            const {
+              auto_mode,
+              auto_cap,
+              agents: agentEfforts,
+            } = readEffortFromDom();
+            saveSettings(
+              {
+                worca: {
+                  effort: { auto_mode, auto_cap },
+                  agents: agentEfforts,
+                },
+              },
+              rerender,
+            );
+          }}
+        >
+          ${unsafeHTML(iconSvg(Save, 14))}
+          Save
+        </sl-button>
+        <sl-button
+          variant="default"
+          size="small"
+          outline
+          @click=${() => confirmReset('effort', rerender)}
+        >
+          ${unsafeHTML(iconSvg(RefreshCw, 14))}
+          Reset
+        </sl-button>
+      </div>
+    </div>
+  `;
+}
+
 function pricingTab(worca, rerender) {
   const pricing = worca.pricing || {};
   const models = pricing.models || {};
@@ -3232,6 +3420,10 @@ export function projectSettingsView(
           ${unsafeHTML(iconSvg(Cpu, 14))}
           Models
         </sl-tab>
+        <sl-tab slot="nav" panel="effort">
+          ${unsafeHTML(iconSvg(Activity, 14))}
+          Effort
+        </sl-tab>
         <sl-tab slot="nav" panel="pipeline">
           ${unsafeHTML(iconSvg(Workflow, 14))}
           Pipeline
@@ -3251,6 +3443,7 @@ export function projectSettingsView(
 
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="models">${modelsTab(worca, rerender)}</sl-tab-panel>
+        <sl-tab-panel name="effort">${effortTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>

@@ -350,6 +350,34 @@ def test_stage_started_payload_required_fields():
     assert p["max_turns"] == 50
 
 
+def test_stage_started_payload_with_effort():
+    from worca.events.types import stage_started_payload
+    effort = {
+        "level": "high",
+        "source": "adaptive",
+        "base": "medium",
+        "escalations": 1,
+        "bead_classified": "medium",
+    }
+    p = stage_started_payload(
+        stage="IMPLEMENT", iteration=2,
+        agent="implementer", model="claude-sonnet-4-6",
+        trigger="test_failure", max_turns=50,
+        effort=effort,
+    )
+    assert p["effort"] == effort
+
+
+def test_stage_started_payload_effort_omitted_when_none():
+    from worca.events.types import stage_started_payload
+    p = stage_started_payload(
+        stage="PLAN", iteration=1,
+        agent="planner", model="claude-opus-4-6",
+        trigger="initial", max_turns=30,
+    )
+    assert "effort" not in p
+
+
 def test_stage_completed_payload_required_fields():
     from worca.events.types import stage_completed_payload
     p = stage_completed_payload(

@@ -368,6 +368,93 @@ function _outcomeBadge(outcome) {
   return html`<sl-badge variant="${_outcomeVariant(outcome)}" pill>${outcome.replace(/_/g, ' ')}</sl-badge>`;
 }
 
+function _effortLevelVariant(level) {
+  if (level === 'high') return 'primary';
+  if (level === 'xhigh') return 'warning';
+  if (level === 'max') return 'danger';
+  return 'neutral';
+}
+
+function _effortSourceLabel(source) {
+  if (source === 'adaptive:llm') return 'adaptive';
+  if (source === 'model_default') return 'model default';
+  return source || '';
+}
+
+function _effortTooltip(effort) {
+  const parts = [];
+  if (effort.source === 'explicit') {
+    parts.push('template value');
+  } else if (effort.source === 'model_default') {
+    parts.push('Claude Code default for this model');
+  } else if (effort.source === 'adaptive:llm') {
+    const beadLevel = effort.bead_classified?.level;
+    parts.push(`coordinator label: ${beadLevel || effort.base}`);
+  } else if (
+    (effort.source === 'reactive' || effort.source === 'disabled') &&
+    effort.bead_classified &&
+    !effort.bead_classified.applied &&
+    effort.bead_classified.level
+  ) {
+    parts.push(
+      `coordinator labeled ${effort.bead_classified.level}; not applied under ${effort.source}`,
+    );
+  }
+  if (effort.capped_from) {
+    parts.push(`capped from ${effort.capped_from}`);
+  }
+  if (effort.escalations?.length && effort.base) {
+    parts.push(`escalated from ${effort.base}`);
+  }
+  return parts.join(' · ');
+}
+
+function _effortRowView(iter) {
+  const e = iter.effort;
+  if (!e) return nothing;
+  const levelText = e.level ?? '-';
+  const variant = e.level ? _effortLevelVariant(e.level) : 'neutral';
+  const sourceLabel = _effortSourceLabel(e.source);
+  const tooltip = _effortTooltip(e);
+
+  const escalationChips = e.escalations?.length
+    ? e.escalations.map(
+        (esc) =>
+          html`<sl-badge class="effort-source-chip" variant="neutral" pill>+${esc}</sl-badge>`,
+      )
+    : nothing;
+
+  const cappedChip = e.capped_from
+    ? html`<sl-badge class="effort-source-chip" variant="neutral" pill>capped</sl-badge>`
+    : nothing;
+
+  const bc = e.bead_classified;
+  const showBeadRow = bc && bc.level != null && bc.applied === false;
+  const divergenceLabel =
+    bc?.skip_reason === 'explicit_override' ? 'overridden' : 'ignored';
+
+  return html`
+    <div class="iteration-tags-row" title="${tooltip}">
+      <span class="meta-label">Effort:</span>
+      <sl-badge class="effort-level-badge" variant="${variant}" pill>${levelText}</sl-badge>
+      <sl-badge class="effort-source-chip" variant="neutral" pill>${sourceLabel}</sl-badge>
+      ${escalationChips}
+      ${cappedChip}
+    </div>
+    ${
+      showBeadRow
+        ? html`
+      <div class="iteration-tags-row">
+        <span class="meta-label">Bead:</span>
+        <sl-badge class="effort-bead-level" variant="${_effortLevelVariant(bc.level)}" pill>${bc.level}</sl-badge>
+        <sl-badge class="effort-divergence-chip" variant="warning" pill>${divergenceLabel}</sl-badge>
+      </div>
+    `
+        : nothing
+    }
+  `;
+}
+
 function _classificationVariant(category) {
   if (category === 'infra_transient') return 'warning';
   if (
@@ -794,6 +881,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
       `
           : nothing
       }
+      ${_effortRowView(iter)}
       ${_classificationRowView(iter)}
       ${_dispatchEventsRowsView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
@@ -1082,6 +1170,15 @@ export function runDetailView(run, settings = {}, options = {}) {
         `
             : nothing
         }
+        ${(() => {
+          const effortCfg = settings.effort;
+          if (!effortCfg?.auto_mode) return nothing;
+          return html`
+          <div class="run-effort-header">
+            <sl-badge class="effort-header-chip" variant="neutral" pill>Effort: ${effortCfg.auto_mode} · cap ${effortCfg.auto_cap || 'xhigh'}</sl-badge>
+          </div>
+        `;
+        })()}
         ${timingStripView(run.started_at, endTime)}
         ${(() => {
           const allIters = Object.values(stages).flatMap(
@@ -1314,6 +1411,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       }
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
+                      ${iterations.length === 1 ? _effortRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}

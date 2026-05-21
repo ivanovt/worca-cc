@@ -94,14 +94,8 @@ def _pick_response(responses: dict, argv_tail: list[str]) -> dict:
     return responses.get("default", {})
 
 
-def run_stub(binary: str, response_env_var: str) -> int:
-    """Execute the stub: log the call, emit a canned response, exit."""
-    argv = sys.argv[1:]
-    _log_invocation(binary, argv)
-
-    responses = _load_responses(response_env_var)
-    response = _pick_response(responses, argv)
-
+def _emit(response: dict) -> int:
+    """Write a response dict's stdout/stderr and return its exit code."""
     stdout = response.get("stdout", "")
     stderr = response.get("stderr", "")
     exit_code = int(response.get("exit", 0))
@@ -115,3 +109,106 @@ def run_stub(binary: str, response_env_var: str) -> int:
         if not stderr.endswith("\n"):
             sys.stderr.write("\n")
     return exit_code
+
+
+# ---------------------------------------------------------------------------
+# Stateful bead pool (opt-in via $WORCA_STUB_BEADS_FILE)
+# ---------------------------------------------------------------------------
+#
+# Unlike the canned-response mechanism, this serves a *sequence* of beads:
+# ``bd ready`` lists only beads not yet closed, ``bd close <id>`` records the
+# closure to a sibling state file, and ``bd show <id>`` emits the bead with its
+# ``worca-effort:`` label. This lets integration tests exercise multi-bead
+# Phase-1 fan-out (one IMPLEMENT iteration per bead) — see W-052. When the env
+# var is unset the stub falls through to the stateless canned responses, so
+# existing tests are unaffected.
+
+
+def _bead_state_path(beads_file: str) -> str:
+    return beads_file + ".closed"
+
+
+def _load_bead_pool() -> list | None:
+    path = os.environ.get("WORCA_STUB_BEADS_FILE")
+    if not path or not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f).get("beads", [])
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _load_closed(beads_file: str) -> set:
+    path = _bead_state_path(beads_file)
+    if not os.path.exists(path):
+        return set()
+    try:
+        with open(path) as f:
+            return set(json.load(f))
+    except (OSError, json.JSONDecodeError):
+        return set()
+
+
+def _save_closed(beads_file: str, closed: set) -> None:
+    with open(_bead_state_path(beads_file), "w") as f:
+        json.dump(sorted(closed), f)
+
+
+def _render_ready(open_beads: list) -> str:
+    lines = [f"\U0001f4cb Ready work ({len(open_beads)} issues with no blockers):", ""]
+    for i, b in enumerate(open_beads, 1):
+        pri = b.get("priority", "P2")
+        typ = b.get("type", "task")
+        lines.append(f"{i}. [● {pri}] [{typ}] {b['id']}: {b.get('title', '')}")
+    return "\n".join(lines) + "\n"
+
+
+def _render_show(bead: dict) -> str:
+    pri = bead.get("priority", "P2")
+    out = f"○ {bead['id']} · {bead.get('title', '')}   [● {pri} · OPEN]\n"
+    effort = bead.get("effort")
+    if effort:
+        out += f"LABELS: worca-effort:{effort}\n"
+    return out
+
+
+def _handle_bd_beads(argv: list) -> dict | None:
+    """Serve ready/show/close from a stateful bead pool, or None to fall through."""
+    beads_file = os.environ.get("WORCA_STUB_BEADS_FILE")
+    if not beads_file:
+        return None
+    beads = _load_bead_pool()
+    if beads is None or not argv:
+        return None
+
+    sub = argv[0]
+    closed = _load_closed(beads_file)
+
+    if sub == "ready":
+        open_beads = [b for b in beads if b["id"] not in closed]
+        return {"stdout": _render_ready(open_beads), "exit": 0}
+    if sub == "show" and len(argv) >= 2:
+        for b in beads:
+            if b["id"] == argv[1]:
+                return {"stdout": _render_show(b), "exit": 0}
+        return None  # unknown bead — let canned/default handle it
+    if sub == "close" and len(argv) >= 2:
+        closed.add(argv[1])
+        _save_closed(beads_file, closed)
+        return {"stdout": f"Closed {argv[1]}", "exit": 0}
+    return None  # update / label / etc. fall through to canned responses
+
+
+def run_stub(binary: str, response_env_var: str) -> int:
+    """Execute the stub: log the call, emit a canned response, exit."""
+    argv = sys.argv[1:]
+    _log_invocation(binary, argv)
+
+    if binary == "bd":
+        bead_response = _handle_bd_beads(argv)
+        if bead_response is not None:
+            return _emit(bead_response)
+
+    responses = _load_responses(response_env_var)
+    return _emit(_pick_response(responses, argv))

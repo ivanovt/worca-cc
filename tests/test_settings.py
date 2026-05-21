@@ -471,3 +471,155 @@ class TestWorkspaceSettings:
         assert result["worca"]["workspace"]["max_parallel"] == 3
         assert result["worca"]["fleet"]["max_parallel"] == 5
         assert result["worca"]["fleet"]["failure_threshold"] == 0.30
+
+
+# ---------------------------------------------------------------------------
+# TestEffortSettings (W-052 Phase 1)
+# ---------------------------------------------------------------------------
+
+
+class TestEffortSettings:
+    """Tests for the worca.effort settings block and per-agent effort defaults."""
+
+    def test_real_settings_has_effort_section(self):
+        """src/worca/settings.json contains the worca.effort block."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert "effort" in result.get("worca", {}), \
+            "worca.effort section missing from src/worca/settings.json"
+
+    def test_effort_auto_mode_default(self):
+        """Default auto_mode is 'adaptive'."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert result["worca"]["effort"]["auto_mode"] == "adaptive"
+
+    def test_effort_auto_cap_default(self):
+        """Default auto_cap is 'xhigh'."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert result["worca"]["effort"]["auto_cap"] == "xhigh"
+
+    def test_effort_block_has_exactly_two_keys(self):
+        """The effort block contains only auto_mode and auto_cap."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert set(result["worca"]["effort"].keys()) == {"auto_mode", "auto_cap"}
+
+    def test_planner_effort_xhigh(self):
+        """Planner has effort 'xhigh' (heavy reasoning)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert result["worca"]["agents"]["planner"]["effort"] == "xhigh"
+
+    def test_coordinator_effort_medium(self):
+        """Coordinator has effort 'medium' (mechanical decomposition)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert result["worca"]["agents"]["coordinator"]["effort"] == "medium"
+
+    def test_guardian_effort_high(self):
+        """Guardian has effort 'high' (high vigilance)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert result["worca"]["agents"]["guardian"]["effort"] == "high"
+
+    def test_implementer_effort_unset(self):
+        """Implementer has no effort field (adaptive path drives base)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert "effort" not in result["worca"]["agents"]["implementer"]
+
+    def test_tester_effort_unset(self):
+        """Tester has no effort field (model default)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert "effort" not in result["worca"]["agents"]["tester"]
+
+    def test_reviewer_effort_unset(self):
+        """Reviewer has no effort field (model default)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert "effort" not in result["worca"]["agents"]["reviewer"]
+
+    def test_local_override_auto_mode(self, tmp_path):
+        """Local override can change auto_mode."""
+        base = {
+            "worca": {
+                "effort": {"auto_mode": "adaptive", "auto_cap": "xhigh"}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(base))
+        local_file = tmp_path / "settings.local.json"
+        local_file.write_text(json.dumps({
+            "worca": {"effort": {"auto_mode": "disabled"}}
+        }))
+
+        result = load_settings(str(settings_file))
+        assert result["worca"]["effort"]["auto_mode"] == "disabled"
+        assert result["worca"]["effort"]["auto_cap"] == "xhigh"
+
+    def test_local_override_agent_effort(self, tmp_path):
+        """Local override can add effort to an agent that lacks it."""
+        base = {
+            "worca": {
+                "agents": {
+                    "implementer": {"model": "sonnet", "max_turns": 300}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(base))
+        local_file = tmp_path / "settings.local.json"
+        local_file.write_text(json.dumps({
+            "worca": {"agents": {"implementer": {"effort": "high"}}}
+        }))
+
+        result = load_settings(str(settings_file))
+        impl = result["worca"]["agents"]["implementer"]
+        assert impl["effort"] == "high"
+        assert impl["model"] == "sonnet"
+        assert impl["max_turns"] == 300
+
+    def test_effort_merge_preserves_siblings(self, tmp_path):
+        """Overriding effort keys does not affect sibling worca sections."""
+        base = {
+            "worca": {
+                "effort": {"auto_mode": "adaptive", "auto_cap": "xhigh"},
+                "fleet": {"max_parallel": 5, "failure_threshold": 0.30},
+            }
+        }
+        local = {
+            "worca": {"effort": {"auto_cap": "high"}}
+        }
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(base))
+        local_file = tmp_path / "settings.local.json"
+        local_file.write_text(json.dumps(local))
+
+        result = load_settings(str(settings_file))
+        assert result["worca"]["effort"]["auto_cap"] == "high"
+        assert result["worca"]["effort"]["auto_mode"] == "adaptive"
+        assert result["worca"]["fleet"]["max_parallel"] == 5

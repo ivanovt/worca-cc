@@ -26,6 +26,7 @@ from worca.orchestrator.registry import update_pipeline
 from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
+from worca.orchestrator.effort import resolve_effort, escalation_iter_num
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
     is_learn_enabled,
@@ -36,7 +37,7 @@ from worca.state.status import (
     start_iteration, complete_iteration,
     PipelineStatus, PIPELINE_TERMINAL,
 )
-from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop
+from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
 from worca.utils.git import create_branch, current_branch, get_current_git_head
@@ -703,6 +704,58 @@ def _format_duration(seconds: float) -> str:
     return f"{h}h {m}m {s}s"
 
 
+_ESCALATION_TRIGGERS = frozenset({
+    "test_failure", "review_changes", "plan_review_revise", "restart_planning",
+})
+
+
+def format_effort_log_line(
+    stage_label: str, iter_num: int, effort: dict | None, *, trigger: str = "initial",
+) -> str | None:
+    """Format a terse key=value effort log line per §6 of the W-052 plan.
+
+    Returns None when effort is None (e.g. preflight).
+    """
+    if effort is None:
+        return None
+
+    level = effort.get("level")
+    requested = effort.get("requested")
+    source = effort.get("source", "model_default")
+    capped_from = effort.get("capped_from")
+    bc = effort.get("bead_classified")
+
+    parts = [f"{stage_label} iter {iter_num}:"]
+
+    parts.append(f"effort={level or '-'}")
+
+    if requested and requested != level:
+        parts.append(f"req={requested}")
+
+    source_display = source.replace("adaptive:llm", "adaptive") if source else "model_default"
+    parts.append(f"source={source_display}")
+
+    if bc and bc.get("level") is not None:
+        bead_level = bc["level"]
+        if bc.get("applied"):
+            parts.append(f"bead={bead_level}")
+        elif bc.get("skip_reason") == "explicit_override":
+            parts.append(f"bead={bead_level}(overridden)")
+        else:
+            parts.append(f"bead={bead_level}(ignored)")
+
+    if iter_num > 1 and trigger in _ESCALATION_TRIGGERS:
+        parts.append(f"+{trigger}")
+
+    if capped_from:
+        parts.append(f"capped_from={capped_from}")
+
+    if requested and requested != level and source != "adaptive:llm":
+        parts.append("model-collapsed")
+
+    return " ".join(parts)
+
+
 def _log_stage_metrics(stage_label: str, result: dict, raw_envelope: dict) -> None:
     """Log detailed metrics from a completed stage."""
     parts = []
@@ -1058,6 +1111,7 @@ def run_stage(
     prompt_override: str = None,
     agent_override: str = None,
     ctx: Optional[EventContext] = None,
+    env_overrides: Optional[dict] = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -1072,6 +1126,8 @@ def run_stage(
         agent_override: When provided, used as the --agent path instead of the
             default _agent_path(). Allows per-stage resolved templates to be
             passed directly to the claude CLI.
+        env_overrides: Extra env vars merged into model_env before passing to
+            run_agent(). Used for CLAUDE_CODE_EFFORT_LEVEL injection.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
@@ -1094,6 +1150,9 @@ def run_stage(
     log_path = os.path.join(log_dir, f"iter-{iteration}.log")
     on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
     agent = agent_override if agent_override is not None else _agent_path(config["agent"], run_dir=run_dir)
+    merged_env = dict(config.get("model_env") or {})
+    if env_overrides:
+        merged_env.update(env_overrides)
     raw = run_agent(
         prompt=prompt,
         agent=agent,
@@ -1101,7 +1160,7 @@ def run_stage(
         output_format="stream-json",
         json_schema=_schema_path(config["schema"]),
         model=config.get("model"),
-        model_env=config.get("model_env"),
+        model_env=merged_env,
         log_path=log_path,
         on_event=on_event,
     )
@@ -1795,6 +1854,12 @@ def run_pipeline(
             except Exception:
                 pass
 
+        # Read effort settings once at pipeline start
+        _effort_settings = load_settings(settings_path).get("worca", {}).get("effort", {})
+        _effort_auto_mode = _effort_settings.get("auto_mode", "adaptive")
+        _effort_auto_cap = _effort_settings.get("auto_cap", "xhigh")
+        _log(f"Effort: auto_mode={_effort_auto_mode}, auto_cap={_effort_auto_cap}")
+
         stage_order = get_enabled_stages(settings_path)
 
         # Handle plan file
@@ -1952,12 +2017,60 @@ def run_pipeline(
             if prev_iteration_count:
                 status["stages"][current_stage.value]["iteration"] = prev_iteration_count
 
+            # Resolve effort level for non-preflight stages
+            _effort_env_overrides = {}
+            _effort_dict = None
+            if current_stage != Stage.PREFLIGHT and stage_config["agent"]:
+                _assigned_bead = (
+                    prompt_builder.get_context("assigned_bead_id")
+                    if current_stage == Stage.IMPLEMENT else None
+                )
+                if _assigned_bead is None and current_stage == Stage.IMPLEMENT:
+                    _bead_ids = prompt_builder.get_context("beads_ids") or []
+                    if _bead_ids:
+                        _assigned_bead = _bead_ids[0]
+                # Escalation depth counts only escalation-relevant loopbacks,
+                # NOT total stage iterations (per-bead Phase-1 fan-out would
+                # otherwise inflate the multiplier — see escalation_iter_num).
+                _eff_iter_num = escalation_iter_num(
+                    stage_config["agent"] or "",
+                    trigger,
+                    [it.get("trigger") for it in prev_iterations],
+                )
+                _eff_level, _eff_requested, _eff_source, _eff_base, _eff_bc, _eff_capped = resolve_effort(
+                    agent=stage_config["agent"],
+                    agent_effort=stage_config["effort"],
+                    auto_mode=_effort_auto_mode,
+                    auto_cap=_effort_auto_cap,
+                    trigger=trigger,
+                    iter_num=_eff_iter_num,
+                    bead=_assigned_bead,
+                    model=stage_config["model"] or "",
+                )
+                _iter_num = len(prev_iterations) + 1
+                _escalations = (
+                    [trigger] if trigger in _ESCALATION_TRIGGERS and _iter_num > 1
+                    else []
+                )
+                _effort_dict = {
+                    "level": _eff_level,
+                    "requested": _eff_requested,
+                    "source": _eff_source,
+                    "base": _eff_base,
+                    "escalations": _escalations,
+                    "capped_from": _eff_capped,
+                    "bead_classified": _eff_bc,
+                }
+                if _eff_level is not None:
+                    _effort_env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = _eff_level
+
             # Start a new iteration record
             iter_record = start_iteration(
                 status, current_stage.value,
                 agent=stage_config["agent"],
                 model=stage_config["model"],
                 trigger=trigger,
+                effort=_effort_dict,
             )
             iter_num = iter_record["number"]
             save_status(status, actual_status_path)
@@ -1969,6 +2082,7 @@ def run_pipeline(
                     model=stage_config.get("model", ""),
                     trigger=trigger,
                     max_turns=(stage_config.get("max_turns") or 0) * msize,
+                    effort=_effort_dict,
                 ))
                 if current_stage == Stage.TEST:
                     emit_event(ctx, TEST_SUITE_STARTED, test_suite_started_payload(
@@ -1984,7 +2098,11 @@ def run_pipeline(
 
             stage_label = current_stage.value.upper()
             iter_label = f" (iter {iter_num})" if iter_num > 1 else ""
-            _log(f"{stage_label}{iter_label} starting...")
+            _effort_line = format_effort_log_line(stage_label, iter_num, _effort_dict, trigger=trigger)
+            if _effort_line:
+                _log(_effort_line)
+            else:
+                _log(f"{stage_label}{iter_label} starting...")
             t0 = time.time()
 
             # Check shutdown flag between stages
@@ -2002,8 +2120,7 @@ def run_pipeline(
 
             # --- Phase 1 bead assignment (IMPLEMENT only) ---
             if current_stage == Stage.IMPLEMENT:
-                impl_trigger = _next_trigger.get(Stage.IMPLEMENT.value, "initial")
-                if impl_trigger in ("initial", "next_bead"):
+                if trigger in ("initial", "next_bead"):
                     # Phase 1: implement all beads sequentially
                     run_bead_ids = prompt_builder.get_context("beads_ids")
                     bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
@@ -2023,9 +2140,7 @@ def run_pipeline(
                             prompt_builder.update_context("assigned_bead_description", details.get("description", ""))
                         except Exception:
                             prompt_builder.update_context("assigned_bead_description", "")
-                elif impl_trigger in ("test_failure", "review_changes"):
-                    # Phase 3: fix mode — no bead assignment
-                    prompt_builder.update_context("assigned_bead_id", None)
+                elif trigger in ("test_failure", "review_changes"):
                     prompt_builder.update_context("assigned_bead_title", None)
                     prompt_builder.update_context("assigned_bead_description", None)
 
@@ -2163,6 +2278,7 @@ def run_pipeline(
                         prompt_override=rendered_prompt,
                         agent_override=_agent_override,
                         ctx=ctx,
+                        env_overrides=_effort_env_overrides,
                     )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
@@ -2673,6 +2789,11 @@ def run_pipeline(
                             ))
                     else:
                         _log(f"Failed to label beads with {run_label}", "warn")
+                # Best-effort check: warn about beads missing worca-effort:* labels
+                if beads_ids:
+                    _unlabeled = [bid for bid in beads_ids if not bd_get_effort_label(bid)]
+                    if _unlabeled:
+                        _log(f"{len(_unlabeled)} bead(s) missing worca-effort label: {', '.join(_unlabeled)}", "warn")
 
             # Handle implement results — batch-then-test flow
             elif current_stage == Stage.IMPLEMENT:

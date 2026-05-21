@@ -157,4 +157,56 @@ describe('settings.js dispatch sections (W-054)', () => {
       expect(html).toContain('dispatch-section-details');
     });
   });
+
+  describe('effortTab section layout', () => {
+    it('renders Effort Mode section title', async () => {
+      const { effortTab } = await import('./settings.js');
+      const worca = {
+        effort: { auto_mode: 'adaptive', auto_cap: 'xhigh' },
+        agents: {},
+      };
+      const html = renderToString(effortTab(worca, vi.fn()));
+      expect(html).toContain('Effort Mode');
+    });
+
+    it('renders Per-Agent Effort section title', async () => {
+      const { effortTab } = await import('./settings.js');
+      const worca = {
+        effort: { auto_mode: 'adaptive', auto_cap: 'xhigh' },
+        agents: {},
+      };
+      const html = renderToString(effortTab(worca, vi.fn()));
+      expect(html).toContain('Per-Agent Effort');
+    });
+
+    it('renders auto_mode and auto_cap controls with correct IDs', async () => {
+      const { effortTab } = await import('./settings.js');
+      const worca = {
+        effort: { auto_mode: 'reactive', auto_cap: 'high' },
+        agents: {},
+      };
+      const html = renderToString(effortTab(worca, vi.fn()));
+      expect(html).toContain('effort-auto-mode');
+      expect(html).toContain('effort-auto-cap');
+    });
+
+    it('renders per-agent effort selects for all agents', async () => {
+      const { effortTab, AGENT_NAMES } = await import('./settings.js');
+      const worca = {
+        effort: { auto_mode: 'adaptive', auto_cap: 'xhigh' },
+        agents: {},
+      };
+      const html = renderToString(effortTab(worca, vi.fn()));
+      for (const name of AGENT_NAMES) {
+        expect(html).toContain(`effort-agent-${name}`);
+      }
+    });
+
+    it('wraps content in settings-tab-content', async () => {
+      const { effortTab } = await import('./settings.js');
+      const worca = { effort: {}, agents: {} };
+      const html = renderToString(effortTab(worca, vi.fn()));
+      expect(html).toContain('settings-tab-content');
+    });
+  });
 });

@@ -1254,3 +1254,130 @@ describe('validateGlobalSettings — dynamic model validation', () => {
     }
   });
 });
+
+describe('validateSettingsPayload — worca.effort', () => {
+  it('accepts valid effort block with all fields', () => {
+    const result = validateSettingsPayload({
+      worca: { effort: { auto_mode: 'adaptive', auto_cap: 'xhigh' } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('accepts each valid auto_mode value', () => {
+    for (const mode of ['disabled', 'reactive', 'adaptive']) {
+      const result = validateSettingsPayload({
+        worca: { effort: { auto_mode: mode } },
+      });
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  it('rejects invalid auto_mode value', () => {
+    const result = validateSettingsPayload({
+      worca: { effort: { auto_mode: 'turbo' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(expect.stringContaining('auto_mode'));
+  });
+
+  it('rejects non-string auto_mode', () => {
+    const result = validateSettingsPayload({
+      worca: { effort: { auto_mode: true } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(expect.stringContaining('auto_mode'));
+  });
+
+  it('accepts each valid auto_cap value', () => {
+    for (const cap of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      const result = validateSettingsPayload({
+        worca: { effort: { auto_cap: cap } },
+      });
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  it('rejects invalid auto_cap value', () => {
+    const result = validateSettingsPayload({
+      worca: { effort: { auto_cap: 'ultra' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(expect.stringContaining('auto_cap'));
+  });
+
+  it('rejects non-string auto_cap', () => {
+    const result = validateSettingsPayload({
+      worca: { effort: { auto_cap: 5 } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(expect.stringContaining('auto_cap'));
+  });
+
+  it('rejects unknown keys in effort block', () => {
+    const result = validateSettingsPayload({
+      worca: { effort: { auto_mode: 'adaptive', unknown_key: true } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('Unknown effort key'),
+    );
+  });
+
+  it('rejects non-object effort', () => {
+    const result = validateSettingsPayload({ worca: { effort: 'high' } });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('effort must be an object'),
+    );
+  });
+
+  it('rejects array effort', () => {
+    const result = validateSettingsPayload({ worca: { effort: [] } });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('effort must be an object'),
+    );
+  });
+
+  it('accepts empty effort object', () => {
+    const result = validateSettingsPayload({ worca: { effort: {} } });
+    expect(result.valid).toBe(true);
+  });
+});
+
+describe('validateSettingsPayload — per-agent effort', () => {
+  it('accepts valid per-agent effort rung', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      const result = validateSettingsPayload({
+        worca: { agents: { implementer: { effort: level } } },
+      });
+      expect(result.valid).toBe(true);
+    }
+  });
+
+  it('rejects invalid per-agent effort rung', () => {
+    const result = validateSettingsPayload({
+      worca: { agents: { implementer: { effort: 'turbo' } } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(expect.stringContaining('effort'));
+    expect(result.details).toContainEqual(
+      expect.stringContaining('implementer'),
+    );
+  });
+
+  it('rejects non-string per-agent effort', () => {
+    const result = validateSettingsPayload({
+      worca: { agents: { planner: { effort: 3 } } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(expect.stringContaining('effort'));
+  });
+
+  it('accepts agent config without effort field', () => {
+    const result = validateSettingsPayload({
+      worca: { agents: { implementer: { model: 'sonnet', max_turns: 200 } } },
+    });
+    expect(result.valid).toBe(true);
+  });
+});

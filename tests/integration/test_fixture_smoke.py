@@ -38,6 +38,13 @@ def test_pipeline_env_settings_overridden(pipeline_env):
     assert stages.get("learn", {}).get("enabled") is False
 
 
+def test_pipeline_env_effort_pinned_disabled(pipeline_env):
+    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text())
+    effort = settings.get("worca", {}).get("effort", {})
+    assert effort.get("auto_mode") == "disabled"
+
+
 def test_webhook_server_url_is_localhost(webhook_server):
     assert webhook_server.url.startswith("http://localhost:")
 

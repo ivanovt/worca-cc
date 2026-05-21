@@ -82,6 +82,63 @@ def test_coordinator_no_single_brace_run_id():
 
 
 # ---------------------------------------------------------------------------
+# coordinator.md — Effort Labeling (W-052 Phase 2)
+# ---------------------------------------------------------------------------
+
+
+def test_coordinator_has_effort_labeling_section():
+    content = _read("coordinator.md")
+    assert "## Effort Labeling" in content
+
+
+def test_coordinator_effort_rubric_has_all_levels():
+    content = _read("coordinator.md")
+    for level in ("low", "medium", "high", "xhigh"):
+        assert f"| `{level}`" in content, (
+            f"coordinator.md effort rubric must include the `{level}` level"
+        )
+
+
+def test_coordinator_effort_rubric_never_pick_max():
+    content = _read("coordinator.md")
+    lower = content.lower()
+    assert "never pick" in lower and "max" in lower, (
+        "coordinator.md effort rubric must instruct never to pick `max` autonomously"
+    )
+
+
+def test_coordinator_effort_bd_create_labels_instruction():
+    content = _read("coordinator.md")
+    assert "worca-effort:" in content, (
+        "coordinator.md must instruct bd create --labels worca-effort:<level>"
+    )
+    assert "--labels" in content
+
+
+def test_coordinator_effort_bd_update_notes_instruction():
+    content = _read("coordinator.md")
+    assert "bd update" in content and "--notes" in content, (
+        "coordinator.md must instruct bd update <id> --notes for effort reasoning"
+    )
+
+
+def test_coordinator_effort_preserve_existing_label():
+    content = _read("coordinator.md")
+    lower = content.lower()
+    assert "preserve" in lower or "do not overwrite" in lower, (
+        "coordinator.md must instruct preserving existing worca-effort:* labels"
+    )
+
+
+def test_coordinator_effort_mode_independent_emission():
+    content = _read("coordinator.md")
+    lower = content.lower()
+    assert ("regardless" in lower and "auto_mode" in lower) or "mode-independent" in lower, (
+        "coordinator.md must note that effort labels are emitted regardless of auto_mode"
+    )
+
+
+# ---------------------------------------------------------------------------
 # implementer.md
 # ---------------------------------------------------------------------------
 

@@ -48,8 +48,16 @@ def test_blocks_implementer_dispatching_planner_under_narrow_default():
 def test_implementer_dispatching_planner_allowed_under_wildcard_default():
     """PR B: wildcard default allows the implementer to dispatch any
     non-denied subagent — including a project-defined `planner` subagent."""
-    code, _ = check_dispatch("implementer", "planner")
-    assert code == 0
+    cfg = {"worca": {"governance": {"dispatch": {"subagents": {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    }}}}}
+    allowed, reason, _ = check_allowed(
+        "subagents", "implementer", "planner", settings_override=cfg,
+    )
+    assert allowed is True
+    assert reason == "ok"
 
 
 def test_allows_planner_dispatching_explore():
