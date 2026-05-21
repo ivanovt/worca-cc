@@ -633,6 +633,27 @@ Per-agent effort values (`worca.agents.<agent>.effort`) accept `low | medium | h
 
 **Full reference:** [`docs/effort.md`](./docs/effort.md).
 
+### 0.34.x → 0.35.0
+
+W-054 follow-up: dispatch defaults self-heal on upgrade, and the `worca-*` skills denylist is narrowed.
+
+**Behavior changes (no config edits required):**
+
+1. **Stale Explore-only subagent default is auto-adopted to the new wildcard default.** W-054 preserved each project's existing per-agent subagent allow lists verbatim. Projects that were on the *old shipped default* — every pipeline agent capped to `["Explore"]`, from the W-038 era — were therefore left pinned to Explore-only even though the W-054 default had become `_defaults: ["*"]` (any subagent except `general-purpose`). On upgrade, a config whose `governance.dispatch.subagents.per_agent_allow` exactly matches that legacy Explore-only set is collapsed to `{ "_defaults": ["*"] }`, so pipeline agents (planner, implementer, tester, …) can dispatch any subagent again. **Customized configs are not touched** — the match is exact, and a touched `_defaults` (or any added/changed entry) preserves your settings as-is.
+
+2. **The broad `worca-*` skills denylist glob is narrowed.** `governance.dispatch.skills.always_disallowed` previously hard-denied *every* `worca-*` skill via a glob. It now names only the genuinely-dangerous ones individually (`worca-release`, `worca-rc`, `worca-pr-prep`, `worca-install`, `worca-sync`, `worca-sync-commit`, `worca-sync-pr`, `worca-agent-override`, `worca-analyze`, `worca-plan-new`). Useful dev skills (`worca-dev-precommit`, `worca-coverage`, `worca-ui-add-*`, `worca-event-add`, `worca-webhook-test`, `worca-issue`) become dispatchable via the per-agent `"*"` wildcard. As above, this only rewrites an *untouched* denylist (exact set match); a customized denylist is preserved.
+
+**One-time and version-stamped.** Both normalizations are gated by a new `governance.dispatch_migration_version` integer (current value `1`). They run exactly once per config — on `worca init --upgrade` (Python) or on the next Governance-panel save (UI) — then the stamp prevents them from running again, so deliberately re-pinning agents to Explore-only *after* the upgrade sticks.
+
+**To keep the old (restrictive) behavior**, set the per-agent subagent entries (and/or the skills denylist) explicitly to your preferred values. Because the stamp is written on first upgrade, your explicit choices are never re-widened.
+
+**Automatic migration messages via `worca init --upgrade`:**
+
+```
+governance.dispatch.subagents: adopted new default (_defaults: ["*"]) for config pinned to legacy Explore-only set
+governance.dispatch.skills.always_disallowed: narrowed legacy "worca-*" glob to the current must-disallow set
+```
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

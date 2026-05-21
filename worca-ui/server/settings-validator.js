@@ -437,6 +437,16 @@ export function validateSettingsPayload(body, options = {}) {
             );
           }
         }
+        if (g.dispatch_migration_version !== undefined) {
+          if (
+            !Number.isInteger(g.dispatch_migration_version) ||
+            g.dispatch_migration_version < 0
+          ) {
+            details.push(
+              'dispatch_migration_version must be a non-negative integer',
+            );
+          }
+        }
         if (g.dispatch !== undefined) {
           if (
             typeof g.dispatch !== 'object' ||

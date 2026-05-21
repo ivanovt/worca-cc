@@ -32,7 +32,26 @@ describe('DISPATCH_DEFAULTS', () => {
 
   it('skills always_disallowed includes pipeline-recursion skills', () => {
     expect(DISPATCH_DEFAULTS.skills.always_disallowed).toEqual(
-      expect.arrayContaining(['loop', 'schedule', 'worca-*', 'init']),
+      expect.arrayContaining(['loop', 'schedule', 'init']),
+    );
+  });
+
+  it('skills always_disallowed names dangerous worca-* skills individually, not via a glob', () => {
+    // The broad `worca-*` glob was narrowed so useful dev skills (precommit,
+    // coverage, ui/event scaffolding) are dispatchable; only genuinely
+    // dangerous worca-* skills (release/sync/override/launch) stay hard-denied.
+    expect(DISPATCH_DEFAULTS.skills.always_disallowed).not.toContain('worca-*');
+    expect(DISPATCH_DEFAULTS.skills.always_disallowed).toEqual(
+      expect.arrayContaining([
+        'worca-release',
+        'worca-rc',
+        'worca-pr-prep',
+        'worca-install',
+        'worca-sync',
+        'worca-agent-override',
+        'worca-analyze',
+        'worca-plan-new',
+      ]),
     );
   });
 

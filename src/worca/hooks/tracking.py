@@ -27,7 +27,22 @@ _DISPATCH_DEFAULTS = {
             "fewer-permission-prompts",
             "loop",
             "schedule",
-            "worca-*",
+            # worca-* dev skills that genuinely must stay off-limits to pipeline
+            # agents: release/publish, PR merges, cross-repo sync, installation,
+            # agent/governance override (privilege escalation), pipeline launch
+            # (recursion), and autonomous issue/plan creation. The rest of the
+            # worca-* dev tooling (precommit, coverage, ui/event scaffolding,
+            # webhook-test, issue read) is allowed via the per-agent "*" wildcard.
+            "worca-release",
+            "worca-rc",
+            "worca-pr-prep",
+            "worca-install",
+            "worca-sync",
+            "worca-sync-commit",
+            "worca-sync-pr",
+            "worca-agent-override",
+            "worca-analyze",
+            "worca-plan-new",
             "update-config",
             "hookify:hookify",
             "hookify:configure",
@@ -63,6 +78,137 @@ _DISPATCH_DEFAULTS = {
         "per_agent_allow": {"_defaults": ["*"]},
     },
 }
+
+# --- One-time dispatch-default normalization (W-054 follow-up) ---------------
+#
+# Version of the dispatch normalization. Stamped onto
+# governance.dispatch_migration_version so the normalization runs exactly once
+# per config; re-runs (and fresh installs already at this version) are no-ops.
+# Bump when adding a new one-time normalization below.
+DISPATCH_MIGRATION_VERSION = 1
+
+# The pre-W-054 (W-038-era) shipped subagent dispatch default: every pipeline
+# agent capped to Explore-only. W-054 changed the default to `_defaults: ["*"]`,
+# but the migration preserved these explicit values verbatim, leaving upgraders
+# pinned to Explore-only. We detect this exact (untouched) shape and adopt the
+# new permissive default. coordinator:[] (and any empty list) is treated as
+# "falls through to _defaults" and ignored in the comparison.
+_LEGACY_EXPLORE_SUBAGENT_DEFAULT = {
+    "planner": ["Explore"],
+    "implementer": ["Explore"],
+    "tester": ["Explore"],
+    "guardian": ["Explore"],
+    "reviewer": ["Explore"],
+    "plan_reviewer": ["Explore"],
+    "learner": ["Explore"],
+}
+
+# The pre-narrowing skills denylist (carried the broad `worca-*` glob). An
+# untouched config matching this set is widened to the current default, which
+# disallows only the genuinely-dangerous worca-* skills.
+_LEGACY_SKILLS_ALWAYS_DISALLOWED = frozenset({
+    "batch",
+    "fewer-permission-prompts",
+    "loop",
+    "schedule",
+    "worca-*",
+    "update-config",
+    "hookify:hookify",
+    "hookify:configure",
+    "hookify:list",
+    "hookify:writing-rules",
+    "init",
+})
+
+
+def _canonical_per_agent(per_agent: dict) -> dict:
+    """Drop _defaults and empty/passthrough entries; sort values for comparison."""
+    out = {}
+    for agent, allow in per_agent.items():
+        if agent == "_defaults":
+            continue
+        if not allow:  # [] or None falls through to _defaults — ignore
+            continue
+        out[agent] = sorted(allow)
+    return out
+
+
+def adopt_stale_subagent_default(subagents_cfg: dict) -> bool:
+    """Collapse a stale Explore-only per_agent_allow to the new default.
+
+    Returns True if the config was the untouched W-038 Explore-only default
+    (and was rewritten to ``{"_defaults": ["*"]}``), else False. Only fires
+    when ``_defaults`` is the new wildcard (or unset) — a customized
+    ``_defaults`` means the operator has touched this section.
+    """
+    if not isinstance(subagents_cfg, dict):
+        return False
+    pa = subagents_cfg.get("per_agent_allow")
+    if not isinstance(pa, dict):
+        return False
+    if pa.get("_defaults") not in (None, ["*"]):
+        return False
+    expected = {a: sorted(v) for a, v in _LEGACY_EXPLORE_SUBAGENT_DEFAULT.items()}
+    if _canonical_per_agent(pa) != expected:
+        return False
+    subagents_cfg["per_agent_allow"] = {"_defaults": ["*"]}
+    return True
+
+
+def adopt_narrowed_skills_denylist(skills_cfg: dict) -> bool:
+    """Widen an untouched skills denylist (broad ``worca-*``) to the current set.
+
+    Returns True if ``always_disallowed`` exactly matched the legacy default
+    (and was replaced with the current narrowed default), else False.
+    """
+    if not isinstance(skills_cfg, dict):
+        return False
+    current = skills_cfg.get("always_disallowed")
+    if not isinstance(current, list):
+        return False
+    if frozenset(current) != _LEGACY_SKILLS_ALWAYS_DISALLOWED:
+        return False
+    skills_cfg["always_disallowed"] = list(
+        _DISPATCH_DEFAULTS["skills"]["always_disallowed"]
+    )
+    return True
+
+
+def normalize_dispatch_defaults(governance_cfg: dict) -> list[str]:
+    """Apply one-time dispatch-default normalizations, gated by a version stamp.
+
+    Brings an *untouched* config up to the current shipped defaults for the two
+    things that changed after W-054:
+      1. subagents.per_agent_allow pinned to the legacy Explore-only set, and
+      2. skills.always_disallowed carrying the broad ``worca-*`` glob.
+
+    Both are exact-match guarded so a customized config is never silently
+    widened. Stamps ``dispatch_migration_version`` so it runs once. Mutates
+    ``governance_cfg`` in place; returns a list of change descriptions.
+    """
+    changes: list[str] = []
+    if not isinstance(governance_cfg, dict):
+        return changes
+    stamp = governance_cfg.get("dispatch_migration_version")
+    if not isinstance(stamp, int):
+        stamp = 0
+    if stamp >= DISPATCH_MIGRATION_VERSION:
+        return changes
+    dispatch = governance_cfg.get("dispatch")
+    if not isinstance(dispatch, dict):
+        return changes
+    if adopt_stale_subagent_default(dispatch.get("subagents")):
+        changes.append(
+            "  governance.dispatch.subagents: adopted new default "
+            '(_defaults: ["*"]) for config pinned to legacy Explore-only set'
+        )
+    if adopt_narrowed_skills_denylist(dispatch.get("skills")):
+        changes.append(
+            "  governance.dispatch.skills.always_disallowed: narrowed legacy "
+            '"worca-*" glob to the current must-disallow set'
+        )
+    governance_cfg["dispatch_migration_version"] = DISPATCH_MIGRATION_VERSION
+    return changes
 
 # In-process cache for resolved dispatch sections. Each entry is keyed by section
 # and stores (resolved_dict, settings_mtime). On every read we re-stat

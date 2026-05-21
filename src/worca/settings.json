@@ -280,6 +280,7 @@
         "restrict_git_commit": true
       },
       "test_gate_strikes": 2,
+      "dispatch_migration_version": 1,
       "dispatch": {
         "tools": {
           "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
@@ -289,7 +290,11 @@
         "skills": {
           "always_disallowed": [
             "batch", "fewer-permission-prompts",
-            "loop", "schedule", "worca-*", "update-config",
+            "loop", "schedule",
+            "worca-release", "worca-rc", "worca-pr-prep", "worca-install",
+            "worca-sync", "worca-sync-commit", "worca-sync-pr",
+            "worca-agent-override", "worca-analyze", "worca-plan-new",
+            "update-config",
             "hookify:hookify", "hookify:configure", "hookify:list",
             "hookify:writing-rules", "init"
           ],

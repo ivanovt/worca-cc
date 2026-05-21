@@ -1978,14 +1978,12 @@ sl-input [slot="prefix"] {
 }
 
 .dispatch-chip-locked {
-  text-decoration: line-through;
   opacity: 0.6;
 }
 
-/* Auto-included meta-tool chips (Skill, Agent) — locked but not crossed-out;
- * the line-through reads as "blocked", but these are present-and-required. */
+/* Auto-included meta-tool chips (Skill, Agent) — locked but visually distinct
+ * via the dashed border; present-and-required rather than blocked. */
 .dispatch-chip-auto {
-  text-decoration: none;
   opacity: 0.75;
   font-style: italic;
   border-style: dashed;
@@ -2023,6 +2021,21 @@ sl-input [slot="prefix"] {
 /* Dispatch section layout */
 .dispatch-section {
   margin-bottom: 16px;
+}
+
+/* Header row: optional section title on the left, per-section Reset on the
+ * right. Rendered at the top of each dispatch panel body (visible only when the
+ * sl-details is expanded). */
+.dispatch-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+}
+
+.dispatch-section-reset {
+  margin-left: auto;
 }
 
 .dispatch-section-title {

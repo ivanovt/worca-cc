@@ -165,7 +165,10 @@ describe('migrateDispatchGovernance', () => {
     );
   });
 
-  it('preserves full eight-agent enumerated shape', () => {
+  it('collapses the legacy Explore-only default to the new wildcard default', () => {
+    // The full eight-agent Explore-only enumeration is the untouched W-038
+    // default. The W-054 follow-up adopts the new permissive `_defaults: ["*"]`
+    // default for it instead of preserving the per-agent Explore caps.
     const worca = {
       governance: {
         subagent_dispatch: {
@@ -182,11 +185,124 @@ describe('migrateDispatchGovernance', () => {
     };
     migrateDispatchGovernance(worca);
     const pa = worca.governance.dispatch.subagents.per_agent_allow;
+    expect(pa).toEqual({ _defaults: ['*'] });
+    expect(worca.governance.dispatch_migration_version).toBe(1);
+  });
+
+  it('preserves a genuinely customized subagent shape', () => {
+    // A shape that differs from the untouched W-038 default (here: an extra
+    // allowed subagent) is a deliberate operator choice and must survive.
+    const worca = {
+      governance: {
+        subagent_dispatch: {
+          planner: ['Explore'],
+          implementer: ['Explore', 'feature-dev:code-reviewer'],
+          tester: ['Explore'],
+          guardian: ['Explore'],
+          reviewer: ['Explore'],
+          plan_reviewer: ['Explore'],
+          learner: ['Explore'],
+        },
+      },
+    };
+    migrateDispatchGovernance(worca);
+    const pa = worca.governance.dispatch.subagents.per_agent_allow;
+    expect(pa.implementer).toEqual(['Explore', 'feature-dev:code-reviewer']);
     expect(pa.planner).toEqual(['Explore']);
-    expect(pa.coordinator).toEqual([]);
-    expect(pa.implementer).toEqual(['Explore']);
-    // PR B: subagents _defaults is now ['*']; the migration seeds the new
-    // default for projects that didn't have an explicit _defaults entry.
-    expect(pa._defaults).toEqual(['*']);
+  });
+});
+
+describe('normalizeDispatchDefaults (W-054 follow-up)', () => {
+  // Pop-1 fixture: already on the W-054 nested shape (no legacy keys) but still
+  // pinned to the stale Explore-only subagent default + broad worca-* skills
+  // glob, with no version stamp.
+  function pop1Config() {
+    return {
+      governance: {
+        dispatch: {
+          subagents: {
+            per_agent_allow: {
+              planner: ['Explore'],
+              coordinator: [],
+              implementer: ['Explore'],
+              tester: ['Explore'],
+              guardian: ['Explore'],
+              reviewer: ['Explore'],
+              plan_reviewer: ['Explore'],
+              learner: ['Explore'],
+              _defaults: ['*'],
+            },
+            always_disallowed: ['general-purpose'],
+            default_denied: [],
+          },
+          skills: {
+            always_disallowed: [
+              'batch',
+              'fewer-permission-prompts',
+              'loop',
+              'schedule',
+              'worca-*',
+              'update-config',
+              'hookify:hookify',
+              'hookify:configure',
+              'hookify:list',
+              'hookify:writing-rules',
+              'init',
+            ],
+            default_denied: [],
+            per_agent_allow: { _defaults: ['*'] },
+          },
+          tools: {
+            always_disallowed: [],
+            default_denied: [],
+            per_agent_allow: { _defaults: ['*'] },
+          },
+        },
+      },
+    };
+  }
+
+  it('collapses stale Pop-1 subagent default and narrows the skills glob', () => {
+    const worca = pop1Config();
+    const changes = migrateDispatchGovernance(worca);
+    const d = worca.governance.dispatch;
+    expect(d.subagents.per_agent_allow).toEqual({ _defaults: ['*'] });
+    expect(d.skills.always_disallowed).not.toContain('worca-*');
+    expect(d.skills.always_disallowed).toContain('worca-release');
+    expect(worca.governance.dispatch_migration_version).toBe(1);
+    expect(changes.length).toBeGreaterThan(0);
+  });
+
+  it('is idempotent — a second pass makes no changes', () => {
+    const worca = pop1Config();
+    migrateDispatchGovernance(worca);
+    const snapshot = JSON.stringify(worca);
+    const changes = migrateDispatchGovernance(worca);
+    expect(changes).toEqual([]);
+    expect(JSON.stringify(worca)).toBe(snapshot);
+  });
+
+  it('does not touch a config already stamped at the current version', () => {
+    const worca = pop1Config();
+    worca.governance.dispatch_migration_version = 1;
+    const changes = migrateDispatchGovernance(worca);
+    // Stamp present → stale shapes are left exactly as the operator left them.
+    expect(changes).toEqual([]);
+    expect(worca.governance.dispatch.subagents.per_agent_allow.planner).toEqual(
+      ['Explore'],
+    );
+    expect(worca.governance.dispatch.skills.always_disallowed).toContain(
+      'worca-*',
+    );
+  });
+
+  it('preserves a Pop-1 config with a customized _defaults', () => {
+    const worca = pop1Config();
+    worca.governance.dispatch.subagents.per_agent_allow._defaults = ['Explore'];
+    migrateDispatchGovernance(worca);
+    // Customized _defaults means the operator touched it → not collapsed.
+    expect(worca.governance.dispatch.subagents.per_agent_allow.planner).toEqual(
+      ['Explore'],
+    );
   });
 });
