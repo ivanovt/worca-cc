@@ -162,14 +162,20 @@
         "enabled": false
       }
     },
+    "effort": {
+      "auto_mode": "adaptive",
+      "auto_cap": "xhigh"
+    },
     "agents": {
       "planner": {
         "model": "opus",
-        "max_turns": 100
+        "max_turns": 100,
+        "effort": "xhigh"
       },
       "coordinator": {
         "model": "opus",
-        "max_turns": 300
+        "max_turns": 300,
+        "effort": "medium"
       },
       "implementer": {
         "model": "sonnet",
@@ -185,7 +191,8 @@
       },
       "guardian": {
         "model": "opus",
-        "max_turns": 50
+        "max_turns": 50,
+        "effort": "high"
       },
       "learner": {
         "model": "opus",

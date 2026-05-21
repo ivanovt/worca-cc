@@ -117,7 +117,8 @@ Skills and subagents in this repo split into two scopes:
 
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
 - `worca.stages` — enable/disable stages, override agents
-- `worca.agents` — model and max_turns per agent
+- `worca.agents` — model, max_turns, and effort per agent
+- `worca.effort` — auto_mode, auto_cap for adaptive effort levels (see [`docs/effort.md`](./docs/effort.md))
 - `worca.models` — shorthand→full model ID mapping (supports per-model env vars)
 - `worca.loops` — max iterations for test/review/planning retry loops
 - `worca.circuit_breaker` — error classification and halt thresholds
@@ -133,6 +134,26 @@ Key gotchas:
 - **Reserved keys** matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped with a stderr warning. Denylist shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
 - **Worktree materialization:** parent's `settings.local.json` secrets are materialized into the worktree's `settings.json` (gitignored). Same on-disk plaintext exposure model as `~/.aws/credentials`.
 - **`work_request.py` haiku coupling:** `extract_work_request` resolves its hardcoded `--model haiku` through `resolve_model()`, so customizing the `haiku` entry also retargets work-request title generation. Intentional.
+
+### Effort Levels (`worca.effort`)
+
+Per-agent reasoning effort (`low | medium | high | xhigh | max`) is configured via `worca.agents.<agent>.effort` and governed by a pipeline-level `worca.effort` block. Omitted `effort` means "use Claude Code's model default." Full reference: [`docs/effort.md`](./docs/effort.md).
+
+`worca.effort.auto_mode` controls starting point and loopback escalation:
+
+| Mode | Starting point | Escalation on loopbacks |
+|---|---|---|
+| `disabled` | Per-agent value or model default | No |
+| `reactive` | Per-agent value or model default | Yes |
+| `adaptive` (default) | Per-agent value if set, else coordinator's bead label | Yes |
+
+Under `adaptive`, the coordinator classifies each bead's complexity via `worca-effort:<level>` labels during decomposition. The implementer uses that label as its starting point (unless an explicit per-agent value overrides it).
+
+Key points:
+- **`auto_cap`** (default `xhigh`) is the ceiling for runtime-resolved levels.
+- **Model-aware ladders:** effort rungs are model-specific. The shipped models (Opus 4.6, Sonnet 4.6) lack `xhigh` — the 4-rung ladder is `low/medium/high/max`. Resolution collapses requested levels onto the model's ladder.
+- **Env-var seam:** resolved effort passes through `CLAUDE_CODE_EFFORT_LEVEL`. This is the only non-interactive way to set `max`.
+- Set `auto_mode: "disabled"` to reproduce pre-W-052 behavior (no escalation, no bead-label consumption).
 
 ## Code Hosting
 

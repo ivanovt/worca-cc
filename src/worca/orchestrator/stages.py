@@ -106,7 +106,7 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     agent_name = stage_entry.get("agent") or STAGE_AGENT_MAP.get(stage)
 
     if agent_name is None:
-        return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "schema": None}
+        return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "effort": None, "schema": None}
 
     agent_config = worca.get("agents", {}).get(agent_name, {})
     model_map = worca.get("models", {})
@@ -117,6 +117,7 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
         "model": model_id,
         "model_env": model_env,
         "max_turns": agent_config.get("max_turns", 30),
+        "effort": agent_config.get("effort"),
         "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
     }
 

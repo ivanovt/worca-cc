@@ -131,12 +131,17 @@ def set_milestone(status: dict, milestone: str, value: bool) -> dict:
     return status
 
 
-def start_iteration(pipeline_status: dict, stage: str, **kwargs) -> dict:
+def start_iteration(pipeline_status: dict, stage: str, *, effort: dict | None = None, **kwargs) -> dict:
     """Start a new iteration for a stage.
 
     Appends a new entry to pipeline_status['stages'][stage]['iterations'].
     Creates the 'iterations' list if absent. Sets number, status, started_at,
     and any extra kwargs (agent, model, trigger).
+
+    Args:
+        effort: Optional effort resolution dict with keys: level, requested,
+            source, base, escalations, capped_from, bead_classified. Only
+            persisted when non-None.
 
     Returns the new iteration dict.
     """
@@ -149,7 +154,6 @@ def start_iteration(pipeline_status: dict, stage: str, **kwargs) -> dict:
     if "iterations" not in stage_data:
         stage_data["iterations"] = []
 
-    # Mark any stale in_progress iterations as interrupted (crash/stop residue)
     for it in stage_data["iterations"]:
         if it.get("status") == "in_progress":
             it["status"] = "interrupted"
@@ -163,6 +167,8 @@ def start_iteration(pipeline_status: dict, stage: str, **kwargs) -> dict:
         "started_at": datetime.now(timezone.utc).isoformat(),
         **kwargs,
     }
+    if effort is not None:
+        iteration["effort"] = effort
     stage_data["iterations"].append(iteration)
     stage_data["iteration"] = iteration_num
     return iteration

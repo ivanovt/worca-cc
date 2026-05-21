@@ -13,6 +13,86 @@ import {
 import { sortByStartDesc } from '../utils/sort-runs.js';
 import { runCardView } from './run-card.js';
 
+export function extractEffortLabel(labels) {
+  if (!labels) return null;
+  for (const label of labels) {
+    if (typeof label === 'string' && label.startsWith('worca-effort:')) {
+      return label.slice('worca-effort:'.length);
+    }
+  }
+  return null;
+}
+
+export function effortLevelVariant(level) {
+  if (level === 'high') return 'primary';
+  if (level === 'xhigh') return 'warning';
+  if (level === 'max') return 'danger';
+  return 'neutral';
+}
+
+export function effortSourceLabel(source) {
+  if (source === 'adaptive:llm') return 'adaptive';
+  if (source === 'model_default') return 'model default';
+  return source || '';
+}
+
+export function beadEffortBadgeView(issue, autoMode) {
+  const level = extractEffortLabel(issue?.labels);
+  if (!level) return nothing;
+  const variant = effortLevelVariant(level);
+  const showIgnored = autoMode === 'reactive' || autoMode === 'disabled';
+  return html`
+    <span class="bead-effort-badge">
+      <sl-badge variant="${variant}" pill>${level}</sl-badge>
+      ${showIgnored ? html`<sl-badge class="bead-effort-ignored" variant="warning" pill>ignored: ${autoMode}</sl-badge>` : nothing}
+    </span>
+  `;
+}
+
+export function beadNotesView(issue) {
+  if (!issue?.notes) return nothing;
+  return html`
+    <div class="bead-notes-section">
+      <div class="meta-label">Notes</div>
+      <div class="bead-notes-content">${issue.notes}</div>
+    </div>
+  `;
+}
+
+export function beadIterationMiniTable(iterations) {
+  if (!iterations?.length) return nothing;
+  const withEffort = iterations.filter((iter) => iter.effort);
+  if (withEffort.length === 0) return nothing;
+  return html`
+    <div class="bead-iter-table">
+      ${withEffort.map((iter) => {
+        const e = iter.effort;
+        const levelText = e.level ?? '-';
+        const variant = e.level ? effortLevelVariant(e.level) : 'neutral';
+        const sourceText = effortSourceLabel(e.source);
+        const escalationChips = e.escalations?.length
+          ? e.escalations.map(
+              (esc) =>
+                html`<sl-badge variant="neutral" pill>+${esc}</sl-badge>`,
+            )
+          : nothing;
+        const cappedChip = e.capped_from
+          ? html`<sl-badge variant="neutral" pill>capped</sl-badge>`
+          : nothing;
+        return html`
+          <div class="bead-iter-row">
+            <span class="bead-iter-label">iter ${iter.number}</span>
+            <sl-badge variant="${variant}" pill>${levelText}</sl-badge>
+            <sl-badge variant="neutral" pill>${sourceText}</sl-badge>
+            ${escalationChips}
+            ${cappedChip}
+          </div>
+        `;
+      })}
+    </div>
+  `;
+}
+
 export function priorityVariant(priority) {
   if (priority === 0 || priority === 1) return 'danger';
   if (priority === 2) return 'warning';

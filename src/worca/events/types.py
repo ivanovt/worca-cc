@@ -292,8 +292,9 @@ def stage_started_payload(
     model: str,
     trigger: str,
     max_turns: int,
+    effort: dict | None = None,
 ) -> dict:
-    return {
+    p: dict = {
         "stage": stage,
         "iteration": iteration,
         "agent": agent,
@@ -301,6 +302,9 @@ def stage_started_payload(
         "trigger": trigger,
         "max_turns": max_turns,
     }
+    if effort is not None:
+        p["effort"] = effort
+    return p
 
 
 def stage_completed_payload(

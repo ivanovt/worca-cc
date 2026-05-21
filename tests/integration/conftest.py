@@ -94,6 +94,7 @@ def pipeline_env(tmp_path):
         "reviewer": {"max_turns": 5},
         "guardian": {"max_turns": 5},
     }
+    settings["worca"]["effort"] = {"auto_mode": "disabled"}
     settings_path.write_text(json.dumps(settings, indent=2))
 
     worca_dir = project / ".worca"

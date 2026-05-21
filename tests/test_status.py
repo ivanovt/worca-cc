@@ -285,6 +285,100 @@ def test_start_iteration_passes_kwargs():
     assert iteration["trigger"] == "human"
 
 
+def test_start_iteration_persists_effort_dict():
+    status = {"stages": {"implement": {}}}
+    effort = {
+        "level": "high",
+        "requested": "xhigh",
+        "source": "adaptive:llm",
+        "base": "high",
+        "escalations": [],
+        "capped_from": None,
+        "bead_classified": {
+            "level": "high",
+            "applied": True,
+            "skip_reason": None,
+        },
+    }
+    iteration = start_iteration(status, "implement", effort=effort)
+    assert iteration["effort"] == effort
+    assert iteration["effort"]["bead_classified"]["level"] == "high"
+    assert iteration["effort"]["bead_classified"]["applied"] is True
+
+
+def test_start_iteration_effort_roundtrips_through_json(tmp_path):
+    status = {"stages": {"implement": {}}}
+    effort = {
+        "level": "max",
+        "requested": "max",
+        "source": "reactive",
+        "base": "high",
+        "escalations": ["test_failure"],
+        "capped_from": None,
+        "bead_classified": {
+            "level": "medium",
+            "applied": False,
+            "skip_reason": "mode_reactive",
+        },
+    }
+    start_iteration(status, "implement", agent="implementer", model="claude-sonnet-4-6", trigger="test_failure", effort=effort)
+    path = str(tmp_path / "status.json")
+    save_status(status, path)
+    loaded = load_status(path)
+    roundtripped = loaded["stages"]["implement"]["iterations"][0]["effort"]
+    assert roundtripped == effort
+    assert roundtripped["escalations"] == ["test_failure"]
+    assert roundtripped["bead_classified"]["skip_reason"] == "mode_reactive"
+
+
+def test_start_iteration_effort_none_omits_key():
+    status = {"stages": {"plan": {}}}
+    iteration = start_iteration(status, "plan", agent="planner")
+    assert "effort" not in iteration
+
+
+def test_start_iteration_effort_explicit_none_omits_key():
+    status = {"stages": {"plan": {}}}
+    iteration = start_iteration(status, "plan", effort=None)
+    assert "effort" not in iteration
+
+
+def test_start_iteration_effort_with_capped_from():
+    status = {"stages": {"implement": {}}}
+    effort = {
+        "level": "high",
+        "requested": "xhigh",
+        "source": "adaptive:llm",
+        "base": "high",
+        "escalations": ["test_failure"],
+        "capped_from": "max",
+        "bead_classified": {
+            "level": "high",
+            "applied": True,
+            "skip_reason": None,
+        },
+    }
+    iteration = start_iteration(status, "implement", effort=effort)
+    assert iteration["effort"]["capped_from"] == "max"
+    assert iteration["effort"]["level"] == "high"
+
+
+def test_start_iteration_effort_non_bead_stage():
+    status = {"stages": {"plan": {}}}
+    effort = {
+        "level": "high",
+        "requested": "xhigh",
+        "source": "explicit",
+        "base": "xhigh",
+        "escalations": [],
+        "capped_from": None,
+        "bead_classified": None,
+    }
+    iteration = start_iteration(status, "plan", effort=effort)
+    assert iteration["effort"]["bead_classified"] is None
+    assert iteration["effort"]["source"] == "explicit"
+
+
 # --- complete_iteration ---
 
 def test_complete_iteration_sets_fields():

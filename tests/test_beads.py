@@ -8,6 +8,7 @@ from unittest.mock import patch, MagicMock, mock_open
 from worca.utils.beads import (
     bd_create, bd_ready, bd_show, bd_close, bd_update, bd_dep_add,
     bd_daemon_stop, bd_daemon_status, bd_daemon_start, bd_daemon_ensure,
+    bd_get_effort_label,
     _wait_for_pid_exit, _DAEMON_STOPPED_SENTINEL,
 )
 
@@ -645,3 +646,94 @@ def test_bd_daemon_start_after_stop_reenables_ensure(tmp_path):
     with patch("worca.utils.beads.bd_daemon_status", return_value=False), \
          patch("worca.utils.beads.bd_daemon_start", return_value=True):
         assert bd_daemon_ensure(beads_dir) is True
+
+
+# --- bd_get_effort_label ---
+
+
+def _bd_show_output_with_labels(labels_str: str) -> str:
+    return (
+        "○ worca-cc-xyz · Implement feature   [● P2 · OPEN]\n"
+        "\n"
+        "DESCRIPTION\n"
+        "Some description.\n"
+        "\n"
+        f"LABELS: {labels_str}\n"
+        "\n"
+        "DEPENDENCIES\n"
+        "  (none)\n"
+    )
+
+
+def test_bd_get_effort_label_parses_label():
+    """Returns the effort level for a bead with a valid worca-effort label."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _bd_show_output_with_labels("run:abc123, worca-effort:high")
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+        assert bd_get_effort_label("worca-cc-xyz") == "high"
+
+
+def test_bd_get_effort_label_all_valid_levels():
+    """Every canonical effort level is accepted."""
+    for level in ("low", "medium", "high", "xhigh", "max"):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _bd_show_output_with_labels(f"worca-effort:{level}")
+        with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+            assert bd_get_effort_label("bead-1") == level
+
+
+def test_bd_get_effort_label_invalid_returns_none():
+    """Returns None when the worca-effort label has an unrecognized level."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _bd_show_output_with_labels("worca-effort:bogus")
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+        assert bd_get_effort_label("bead-1") is None
+
+
+def test_bd_get_effort_label_missing_returns_none():
+    """Returns None when no worca-effort label exists."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _bd_show_output_with_labels("run:abc123, area:cc")
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+        assert bd_get_effort_label("bead-1") is None
+
+
+def test_bd_get_effort_label_no_labels_section():
+    """Returns None when bd show output has no LABELS line."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = (
+        "○ worca-cc-xyz · Task   [● P2 · OPEN]\n"
+        "\n"
+        "DESCRIPTION\n"
+        "No labels here.\n"
+        "\n"
+        "DEPENDENCIES\n"
+        "  (none)\n"
+    )
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+        assert bd_get_effort_label("worca-cc-xyz") is None
+
+
+def test_bd_get_effort_label_bd_show_fails():
+    """Returns None when bd show fails (non-zero exit)."""
+    mock_result = MagicMock()
+    mock_result.returncode = 1
+    mock_result.stderr = "Error: not found"
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+        assert bd_get_effort_label("nonexistent") is None
+
+
+def test_bd_get_effort_label_only_first_effort_label():
+    """When multiple worca-effort labels exist, returns the first valid one."""
+    mock_result = MagicMock()
+    mock_result.returncode = 0
+    mock_result.stdout = _bd_show_output_with_labels(
+        "worca-effort:medium, worca-effort:high"
+    )
+    with patch("worca.utils.beads.subprocess.run", return_value=mock_result):
+        assert bd_get_effort_label("bead-1") == "medium"

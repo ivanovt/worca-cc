@@ -573,6 +573,66 @@ The UI's settings save handler runs the same migration automatically. The next t
 
 **New reference:** [`docs/governance.md`](./docs/governance.md) — full reference for the three-tier dispatch model.
 
+### 0.33.x → 0.35.0
+
+W-052: Adaptive effort levels for pipeline agents.
+
+**Behavior change (no breaking API changes):**
+
+1. **New default `auto_mode=adaptive`** — Pipelines that previously ran every agent at Claude Code's model default effort now receive explicit per-agent effort values (`planner: xhigh`, `coordinator: medium`, `guardian: high`) and adaptive loopback escalation. The coordinator classifies each bead's complexity via `worca-effort:<level>` labels, and the implementer consumes those labels as its starting effort.
+
+   **One-line opt-out** to restore pre-W-052 behavior (all agents at model default, no escalation):
+
+   ```jsonc
+   // .claude/settings.json
+   { "worca": { "effort": { "auto_mode": "disabled" } } }
+   ```
+
+2. **Shipped models lack `xhigh`** — The default `worca.models` aliases resolve to **Opus 4.6** and **Sonnet 4.6**, whose effort ladders are `low / medium / high / max` (no `xhigh`). The shipped defaults `planner: xhigh` and `auto_cap: xhigh` are collapsed by model-aware resolution:
+   - `planner: xhigh` runs as `high` on Opus 4.6 (base rounds down to the highest supported rung). `status.json` records `level: "high"`, `requested: "xhigh"` so the UI shows the policy-vs-actual divergence.
+   - `auto_cap: xhigh` rounds *up* to `max` on 4-rung models, so the cap does not block loopback escalation.
+
+3. **Aggressive escalation on 4-rung ladders** — On the shipped models, a single loopback takes a `high`-base implementer straight to `max` because the ladder has no `xhigh` rung between them:
+
+   ```
+   Sonnet 4.6 ladder: low(0) → medium(1) → high(2) → max(3)
+                                            ^^^^        ^^^^
+                                            base      base + 1 (test_failure)
+   ```
+
+   The default `auto_cap: xhigh` permits this (rounds up to `max`). This relaxes the "`max` only via explicit opt-in" guarantee to "explicit opt-in **or** loopback escalation on a model lacking `xhigh`."
+
+   **To prevent auto-escalation to `max`**, pin `auto_cap: high`:
+
+   ```jsonc
+   { "worca": { "effort": { "auto_cap": "high" } } }
+   ```
+
+   This creates a deliberate dead-zone: escalation clamps at `high` with `capped_from: "max"` recorded in the iteration.
+
+4. **Restoring the full 5-rung ladder** — Point `worca.models.opus` at Opus 4.7 to get all five rungs (`low / medium / high / xhigh / max`). Escalation becomes gentler: `high + test_failure = xhigh` (not `max`), and `auto_cap: xhigh` is an actual ceiling below `max`.
+
+   ```jsonc
+   { "worca": { "models": { "opus": "claude-opus-4-7-20250219" } } }
+   ```
+
+**New settings (additive):**
+
+```jsonc
+"worca": {
+  "effort": {
+    "auto_mode": "adaptive",   // disabled | reactive | adaptive
+    "auto_cap": "xhigh"        // low | medium | high | xhigh | max
+  }
+}
+```
+
+Per-agent effort values (`worca.agents.<agent>.effort`) accept `low | medium | high | xhigh | max`. Omitted = mode-dependent fallback (model default or bead label).
+
+**No automatic migration required.** The new `worca.effort` block is additive — `worca init --upgrade` merges the defaults into your project's `settings.json` non-destructively. Existing per-agent `model` and `max_turns` values are preserved.
+
+**Full reference:** [`docs/effort.md`](./docs/effort.md).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

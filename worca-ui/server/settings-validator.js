@@ -21,6 +21,9 @@ const VALID_LOOPS = [
   'restart_planning',
   'plan_review',
 ];
+const VALID_EFFORT_RUNGS = ['low', 'medium', 'high', 'xhigh', 'max'];
+const VALID_AUTO_MODES = ['disabled', 'reactive', 'adaptive'];
+const VALID_EFFORT_KEYS = ['auto_mode', 'auto_cap'];
 const VALID_MILESTONES = ['plan_approval', 'pr_approval', 'deploy_approval'];
 const VALID_GUARDS = [
   'block_rm_rf',
@@ -92,6 +95,52 @@ export function validateSettingsPayload(body, options = {}) {
               );
             }
           }
+          if (cfg.effort !== undefined) {
+            if (
+              typeof cfg.effort !== 'string' ||
+              !VALID_EFFORT_RUNGS.includes(cfg.effort)
+            ) {
+              details.push(
+                `Invalid effort "${cfg.effort}" for agent "${name}". Must be one of: ${VALID_EFFORT_RUNGS.join(', ')}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // effort
+    if (w.effort !== undefined) {
+      if (
+        typeof w.effort !== 'object' ||
+        w.effort === null ||
+        Array.isArray(w.effort)
+      ) {
+        details.push('effort must be an object');
+      } else {
+        const ef = w.effort;
+        for (const key of Object.keys(ef)) {
+          if (!VALID_EFFORT_KEYS.includes(key)) {
+            details.push(`Unknown effort key: "${key}"`);
+          }
+        }
+        if (
+          ef.auto_mode !== undefined &&
+          (typeof ef.auto_mode !== 'string' ||
+            !VALID_AUTO_MODES.includes(ef.auto_mode))
+        ) {
+          details.push(
+            `effort.auto_mode must be one of: ${VALID_AUTO_MODES.join(', ')}`,
+          );
+        }
+        if (
+          ef.auto_cap !== undefined &&
+          (typeof ef.auto_cap !== 'string' ||
+            !VALID_EFFORT_RUNGS.includes(ef.auto_cap))
+        ) {
+          details.push(
+            `effort.auto_cap must be one of: ${VALID_EFFORT_RUNGS.join(', ')}`,
+          );
         }
       }
     }

@@ -199,6 +199,7 @@ class TestGetStageConfig:
         assert config["model"] == "claude-sonnet-4-6"  # default "sonnet" resolved
         assert config["max_turns"] == 30
         assert config["schema"] == "plan.json"
+        assert config["effort"] is None
 
     def test_reads_agent_config_from_settings(self, tmp_path):
         settings = {
@@ -230,6 +231,7 @@ class TestGetStageConfig:
         assert config["model"] == "claude-sonnet-4-6"  # default "sonnet" resolved
         assert config["max_turns"] == 30
         assert config["schema"] == "implement.json"
+        assert config["effort"] is None
 
     def test_schema_matches_stage_map(self, tmp_path):
         from worca.orchestrator.stages import STAGE_SCHEMA_MAP
@@ -265,6 +267,73 @@ class TestGetStageConfig:
         assert config["model"] is None
         assert config["max_turns"] is None
         assert config["schema"] is None
+        assert config["effort"] is None
+
+
+class TestGetStageConfigEffort:
+    """Tests for effort field in get_stage_config return value."""
+
+    def test_effort_none_when_not_set(self, tmp_path):
+        settings = {
+            "worca": {
+                "agents": {
+                    "planner": {"model": "opus", "max_turns": 10}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["effort"] is None
+
+    def test_effort_returned_when_set(self, tmp_path):
+        settings = {
+            "worca": {
+                "agents": {
+                    "planner": {"model": "opus", "max_turns": 10, "effort": "xhigh"}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["effort"] == "xhigh"
+
+    def test_effort_medium(self, tmp_path):
+        settings = {
+            "worca": {
+                "agents": {
+                    "coordinator": {"model": "opus", "effort": "medium"}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.COORDINATE, settings_path=str(settings_file))
+        assert config["effort"] == "medium"
+
+    def test_effort_none_for_empty_settings(self, tmp_path):
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({}))
+        config = get_stage_config(Stage.REVIEW, settings_path=str(settings_file))
+        assert config["effort"] is None
+
+    def test_effort_preserved_with_stage_agent_override(self, tmp_path):
+        settings = {
+            "worca": {
+                "stages": {
+                    "plan": {"agent": "guardian"}
+                },
+                "agents": {
+                    "guardian": {"model": "opus", "effort": "high"}
+                }
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["agent"] == "guardian"
+        assert config["effort"] == "high"
 
 
 class TestGetStageConfigWithStages:
