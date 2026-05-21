@@ -87,6 +87,8 @@ Project-level skills and subagents (under `.claude/skills/` and `.claude/agents/
 | `/state-action-matrix` | Loading the pipeline state-action spec before touching states/transitions/gating. |
 | `/worca-ui-add-page` | Scaffolding a new worca-ui section across all 4-5 routing wire-up points (view file, main dispatch, header title, sidebar entry, WS/fetch hooks). |
 | `/worca-ui-add-card` | Scaffolding a new card view following `worca-ui/docs/card-layout.md` — top/meta/(stages)/actions with central variant map. |
+| `/worca-event-add` | Scaffolding a new worca event type across `types.py`, the payload builder, tests, and (if Tier 1) the chat renderer. Reference: `docs/events.md`. |
+| `/worca-webhook-test` | Signing and POSTing a synthetic event to a configured webhook URL — verifies HMAC, reachability, and (for control webhooks) the control-action response. |
 
 ### Subagents (dispatch via Agent tool)
 
@@ -102,6 +104,8 @@ All prefixed `worca-*` to distinguish them from pipeline agents (planner, coordi
 | `worca-ui-routing-reviewer` | After adding or modifying a worca-ui section. Audits all 5 wire-up points (view, dispatch, header, sidebar, WS/fetch). |
 | `worca-ui-card-consistency-reviewer` | After changes to any `*-card.js` view. Audits the 4-section layout, `statusIcon`/`statusClass` usage, and per-domain variant map (no inline `variant="success"`). Spec: `worca-ui/docs/card-layout.md`. |
 | `worca-ui-a11y-reviewer` | After non-trivial UI changes (new views, dialogs, form controls, status indicators). Raises the a11y floor on new code without forcing global retrofit. |
+| `worca-event-payload-reviewer` | After changes under `src/worca/events/`, `tests/test_event_types.py`, or `worca-ui/server/integrations/renderers.js`. Audits payload consistency, test coverage, and Tier 1 renderer wiring. Spec: `docs/events.md`. |
+| `worca-integrations-security-reviewer` | After changes to `src/worca/events/webhook.py`, `worca-ui/server/webhook-inbox.js`, or anything under `worca-ui/server/integrations/`. Audits HMAC handling, timing-safe compare, allowlist enforcement, and secret hygiene. |
 
 ### Why the prefix
 
@@ -333,6 +337,12 @@ Three sections — `tools`, `skills`, `subagents` — each with a consistent thr
 MCP tools (`mcp_*`) are not covered by `--tools` — MCP governance flows through other channels.
 
 For the complete reference — including the skill denylist rationale, mixed form semantics, and resolution algorithm — see [`docs/governance.md`](./docs/governance.md).
+
+## Events & Webhooks
+
+worca emits ~80 event types across `pipeline.*`, `control.*`, `fleet.*`, and `workspace.*` domains. The full reference lives in [`docs/events.md`](./docs/events.md) — start there before adding a new event type, configuring a webhook subscriber, or writing an integrations adapter. Subscribers can register webhooks (`worca.webhooks` in settings.json, with optional HMAC signing and control-response support) or chat adapters (Telegram, Discord, Slack, generic — configured at `~/.worca/integrations/config.json`).
+
+When adding a new event, use `/worca-event-add` to scaffold the constant, payload builder, test, and (if Tier 1) the chat renderer in one pass. To test a webhook config without running a pipeline, use `/worca-webhook-test`. The `worca-event-payload-reviewer` and `worca-integrations-security-reviewer` subagents audit changes for consistency and security correctness.
 
 ## Guide Precedence
 
