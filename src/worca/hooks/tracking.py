@@ -9,21 +9,11 @@ import json
 import os
 import sys
 
-DEFAULT_SUBAGENT_DISPATCH = {
-    "planner": {"Explore"},
-    "coordinator": set(),
-    "implementer": {"Explore"},
-    "tester": {"Explore"},
-    "guardian": {"Explore"},
-    "reviewer": {"Explore"},
-    "plan_reviewer": {"Explore"},
-    "learner": {"Explore"},
-}
-
-# Keep in sync with SUBAGENT_DENYLIST in
-# worca-ui/app/views/dispatch-tag-state.js — the UI mirrors this to block the
-# same types from being added via the settings editor.
-_SUBAGENT_DENYLIST = frozenset({"general-purpose"})
+# Literal sentinel that means "lock this agent out — allow nothing".
+# Used as the sole entry of a per_agent_allow list, e.g. ["none"]. Any other
+# combination treats "none" as just a tool/skill/subagent name (it won't match
+# anything real). Empty list [] falls through to _defaults instead.
+LOCKDOWN_SENTINEL = "none"
 
 _DISPATCH_DEFAULTS = {
     "tools": {
@@ -74,12 +64,13 @@ _DISPATCH_DEFAULTS = {
     },
 }
 
-# Cache is process-lifetime, keyed by section. Hook subprocesses are short-lived
-# so staleness is not a concern in today's usage. If this module is ever imported
-# from a long-running process (e.g. a daemon), call _reset_dispatch_cache() when
-# settings.json changes or pass settings_override on every read (which bypasses
-# the cache).
-_cached_sections: dict[str, dict] = {}
+# In-process cache for resolved dispatch sections. Each entry is keyed by section
+# and stores (resolved_dict, settings_mtime). On every read we re-stat
+# settings.json — if its mtime changed the cache is invalidated automatically.
+# This keeps the cache useful for repeated reads in a single process while
+# never serving stale config to long-running orchestrator runs that span a
+# settings.json edit.
+_cached_sections: dict[str, tuple[dict, float | None]] = {}
 
 
 def _reset_dispatch_cache() -> None:
@@ -87,84 +78,8 @@ def _reset_dispatch_cache() -> None:
     _cached_sections.clear()
 
 
-def _load_subagent_dispatch(settings_override: dict | None = None) -> dict:
-    """Back-compat shim for the legacy subagent-only dispatch loader.
-
-    The current implementation routes everything through ``_load_dispatch_section``
-    + ``check_allowed``. This helper is kept so older imports and tests still
-    work; it returns ``{agent_role: set(allowed_subagents)}`` derived from the
-    `subagents` section's `per_agent_allow` plus `DEFAULT_SUBAGENT_DISPATCH`
-    fallback for any role the user hasn't enumerated.
-
-    Accepts both the legacy ``governance.subagent_dispatch`` shape and the
-    current ``governance.dispatch.subagents.per_agent_allow`` shape so callers
-    that still hand-build settings dicts don't have to migrate.
-    """
-    rules = {agent: set(allowed) for agent, allowed in DEFAULT_SUBAGENT_DISPATCH.items()}
-
-    try:
-        raw_settings = (
-            settings_override if settings_override is not None else _load_settings()
-        )
-    except FileNotFoundError:
-        return rules  # settings.json is optional; defaults apply silently
-
-    try:
-        legacy = (
-            raw_settings.get("worca", {})
-            .get("governance", {})
-            .get("subagent_dispatch", {})
-        )
-        if not isinstance(legacy, dict):
-            raise TypeError(f"subagent_dispatch must be a dict, got {type(legacy).__name__}")
-
-        if legacy:
-            translated = {
-                "worca": {
-                    "governance": {
-                        "dispatch": {
-                            "subagents": {"per_agent_allow": legacy},
-                        },
-                    },
-                },
-            }
-            cfg = _load_dispatch_section("subagents", translated)
-        else:
-            cfg = _load_dispatch_section("subagents", settings_override)
-
-        for agent, allowed_list in cfg["per_agent_allow"].items():
-            if agent == "_defaults":
-                continue
-            try:
-                allowed = {x for x in allowed_list if x != "*"}
-            except TypeError as e:
-                print(
-                    f"[tracking] Warning: malformed allowed list for {agent} "
-                    f"({type(e).__name__}: {e}); falling back to defaults",
-                    file=sys.stderr,
-                )
-                continue
-            denied = allowed & _SUBAGENT_DENYLIST
-            if denied:
-                print(
-                    f"[tracking] Warning: stripped denied subagent(s) {denied} "
-                    f"from {agent} dispatch config",
-                    file=sys.stderr,
-                )
-                allowed -= denied
-            rules[agent] = allowed
-    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
-        print(
-            f"[tracking] Warning: failed to load subagent_dispatch from settings "
-            f"({type(e).__name__}: {e}); falling back to defaults",
-            file=sys.stderr,
-        )
-
-    return rules
-
-
-def _load_settings() -> dict:
-    """Load settings.json from the project root."""
+def _settings_path() -> str | None:
+    """Return the absolute path to settings.json, or None if it can't be located."""
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
     if not project_dir:
         import subprocess
@@ -177,12 +92,28 @@ def _load_settings() -> dict:
         if result.returncode == 0:
             project_dir = result.stdout.strip()
     if not project_dir:
+        return None
+    return os.path.join(project_dir, ".claude", "settings.json")
+
+
+def _load_settings() -> dict:
+    """Load settings.json from the project root."""
+    path = _settings_path()
+    if not path or not os.path.exists(path):
         return {}
-    settings_path = os.path.join(project_dir, ".claude", "settings.json")
-    if not os.path.exists(settings_path):
-        return {}
-    with open(settings_path) as f:
+    with open(path) as f:
         return json.load(f)
+
+
+def _settings_mtime() -> float | None:
+    """Return settings.json mtime, or None if not stat-able. Used for cache invalidation."""
+    path = _settings_path()
+    if not path:
+        return None
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
 
 
 def _matches_any(candidate: str, patterns: list[str]) -> bool:
@@ -205,12 +136,16 @@ def _load_dispatch_section(section: str, settings_override: dict | None = None) 
 
     Returns the normalized section dict with all three tiers populated.
 
-    Results are cached process-lifetime per section. The cache is bypassed
-    when ``settings_override`` is supplied (used by tests and any caller that
-    needs a fresh read against a synthetic config).
+    Results are cached in-process per section, keyed by settings.json mtime —
+    if the file changes on disk the next read transparently picks up the new
+    config. ``settings_override`` bypasses the cache (used by tests and any
+    caller that needs a fresh read against a synthetic config).
     """
-    if settings_override is None and section in _cached_sections:
-        return _cached_sections[section]
+    if settings_override is None:
+        cached = _cached_sections.get(section)
+        current_mtime = _settings_mtime()
+        if cached is not None and cached[1] == current_mtime:
+            return cached[0]
 
     settings = settings_override if settings_override is not None else _load_settings()
     raw = (
@@ -228,8 +163,31 @@ def _load_dispatch_section(section: str, settings_override: dict | None = None) 
     }
 
     if settings_override is None:
-        _cached_sections[section] = resolved
+        _cached_sections[section] = (resolved, _settings_mtime())
     return resolved
+
+
+def resolve_per_agent_entry(cfg: dict, agent: str) -> list[str]:
+    """Resolve the effective per_agent_allow entry for an agent.
+
+    Fall-through rules:
+      * Missing key for ``agent``     → use ``_defaults``.
+      * Empty list ``[]`` for ``agent`` → fall through to ``_defaults`` too,
+        because clearing the chip list in the UI shouldn't silently brick
+        an agent. To express lockdown, set the entry to ``[LOCKDOWN_SENTINEL]``.
+
+    The returned list may still contain ``"*"``, named entries, or be
+    ``[LOCKDOWN_SENTINEL]`` — callers interpret those.
+    """
+    entry = cfg["per_agent_allow"].get(agent)
+    if not entry:  # None or [] both fall through
+        entry = list(cfg["per_agent_allow"].get("_defaults", []))
+    return list(entry)
+
+
+def is_lockdown(entry: list[str]) -> bool:
+    """True iff ``entry`` is the lockdown sentinel (exactly ``[LOCKDOWN_SENTINEL]``)."""
+    return entry == [LOCKDOWN_SENTINEL]
 
 
 def check_allowed(
@@ -248,9 +206,11 @@ def check_allowed(
     if _matches_any(candidate, cfg["always_disallowed"]):
         return (False, "always_disallowed", None)
 
-    entry = cfg["per_agent_allow"].get(
-        agent, cfg["per_agent_allow"].get("_defaults", []),
-    )
+    entry = resolve_per_agent_entry(cfg, agent)
+
+    if is_lockdown(entry):
+        return (False, "lockdown", None)
+
     has_wildcard = "*" in entry
     explicit = {x for x in entry if x != "*"}
 

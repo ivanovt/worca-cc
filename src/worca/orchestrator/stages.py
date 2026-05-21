@@ -40,6 +40,17 @@ STAGE_AGENT_MAP = {
     Stage.LEARN: "learner",
 }
 
+# Agents that exist outside the per-stage flow. Workspace runs use
+# `workspace_planner` to decompose a prompt across sibling projects; it's
+# governed alongside the stage agents but never tied to a Stage enum value.
+# Add new non-stage agents here so the JS roster + the denylist-sync test stay
+# aligned without ad-hoc additions at the test layer.
+NON_STAGE_AGENTS = frozenset({"workspace_planner"})
+
+ALL_AGENTS = frozenset(
+    {v for v in STAGE_AGENT_MAP.values() if v is not None} | NON_STAGE_AGENTS
+)
+
 STAGE_SCHEMA_MAP = {
     Stage.PREFLIGHT: None,
     Stage.PLAN: "plan.json",

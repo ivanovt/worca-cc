@@ -573,12 +573,28 @@ def test_resolve_tool_args_wildcard_returns_default():
     assert "EnterPlanMode" in disallows
 
 
-def test_resolve_tool_args_empty_locks_down():
-    """Empty per-agent list maps to '' — full lockdown."""
+def test_resolve_tool_args_empty_falls_through_to_defaults():
+    """Empty per-agent list falls through to _defaults (post-review #2).
+    Clearing the chip list in the UI must not silently brick an agent — lockdown
+    is opt-in via the literal LOCKDOWN_SENTINEL singleton instead.
+    """
     settings = _settings_with_tools({
         "always_disallowed": [],
         "default_denied": [],
-        "per_agent_allow": {"planner": []},
+        "per_agent_allow": {"_defaults": ["*"], "planner": []},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == "default"
+
+
+def test_resolve_tool_args_lockdown_sentinel_blocks_everything():
+    """['none'] is the explicit lockdown form — emits --tools "" """
+    from worca.hooks.tracking import LOCKDOWN_SENTINEL
+
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "planner": [LOCKDOWN_SENTINEL]},
     })
     _, tools_arg = _resolve_tool_args("planner", settings=settings)
     assert tools_arg == ""
@@ -679,12 +695,14 @@ def test_build_command_emits_tools_named_list_with_meta_tools():
     assert "Agent" in tools
 
 
-def test_build_command_emits_tools_empty_under_lockdown():
-    """Empty per-agent list → --tools '' (full lockdown)."""
+def test_build_command_emits_tools_empty_under_lockdown_sentinel():
+    """['none'] per-agent list → --tools '' (full lockdown, post-review #2)."""
+    from worca.hooks.tracking import LOCKDOWN_SENTINEL
+
     settings = _settings_with_tools({
         "always_disallowed": [],
         "default_denied": [],
-        "per_agent_allow": {"planner": []},
+        "per_agent_allow": {"planner": [LOCKDOWN_SENTINEL]},
     })
     cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
     idx = cmd.index("--tools")

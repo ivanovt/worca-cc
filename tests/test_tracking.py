@@ -1,17 +1,17 @@
 """Tests for agent dispatch rules and Beads task sync hooks."""
 
-from io import StringIO
 from unittest.mock import patch
 import pytest
 from worca.hooks.tracking import (
+    LOCKDOWN_SENTINEL,
     check_dispatch,
     check_allowed,
     handle_agent_stop,
-    DEFAULT_SUBAGENT_DISPATCH,
     _DISPATCH_DEFAULTS,
-    _load_subagent_dispatch,
     _matches_any,
     _reset_dispatch_cache,
+    is_lockdown,
+    resolve_per_agent_entry,
 )
 
 
@@ -107,22 +107,6 @@ def test_unknown_parent_gets_defaults():
     assert code == 0
 
 
-def test_plan_reviewer_in_default_dispatch():
-    """plan_reviewer must appear in DEFAULT_SUBAGENT_DISPATCH."""
-    assert "plan_reviewer" in DEFAULT_SUBAGENT_DISPATCH
-
-
-def test_plan_reviewer_dispatch_allows_explore():
-    """plan_reviewer now allows explore for codebase verification (W-038)."""
-    assert DEFAULT_SUBAGENT_DISPATCH["plan_reviewer"] == {"Explore"}
-
-
-def test_allows_plan_reviewer_dispatching_explore():
-    """plan_reviewer can dispatch explore (W-038)."""
-    code, reason = check_dispatch("plan_reviewer", "Explore")
-    assert code == 0
-
-
 def test_blocks_plan_reviewer_dispatching_implementer_under_narrow_default():
     """Under a narrowed _defaults, plan_reviewer can't dispatch implementer."""
     cfg = {"worca": {"governance": {"dispatch": {"subagents": {
@@ -136,19 +120,10 @@ def test_blocks_plan_reviewer_dispatching_implementer_under_narrow_default():
     assert allowed is False
 
 
-# --- New tests per plan §5.2-5.3 ---
-
-
 def test_reviewer_dispatching_explore():
     """W-037 gap fix: reviewer can dispatch explore."""
     code, reason = check_dispatch("reviewer", "Explore")
     assert code == 0
-
-
-def test_learner_default_allows_explore():
-    """learner can dispatch Explore by default (consistency with other read-heavy stages)."""
-    assert "learner" in DEFAULT_SUBAGENT_DISPATCH
-    assert DEFAULT_SUBAGENT_DISPATCH["learner"] == {"Explore"}
 
 
 def test_allows_learner_dispatching_explore():
@@ -163,74 +138,39 @@ def test_denylist_blocks_general_purpose():
     assert "denylist" in reason.lower() or "Blocked" in reason
 
 
-def test_denylist_blocks_general_purpose_even_if_configured():
-    """User config with general-purpose is stripped; the denylist wins."""
+def test_always_disallowed_wins_over_per_agent_allow():
+    """User config that names a denied item is overruled by always_disallowed.
+    Settings.json wins is the design intent (project-memory), but a user listing
+    `general-purpose` in per_agent_allow while leaving it on `always_disallowed`
+    still gets blocked — the tiers stack."""
     settings = {
-        "worca": {
-            "governance": {
-                "subagent_dispatch": {
-                    "implementer": ["Explore", "general-purpose"],
-                }
-            }
-        }
+        "worca": {"governance": {"dispatch": {"subagents": {
+            "always_disallowed": ["general-purpose"],
+            "default_denied": [],
+            "per_agent_allow": {"implementer": ["*", "general-purpose"]},
+        }}}}
     }
-    stderr_capture = StringIO()
-    with patch("sys.stderr", stderr_capture):
-        rules = _load_subagent_dispatch(settings_override=settings)
-
-    assert "general-purpose" not in rules.get("implementer", set())
-    warning = stderr_capture.getvalue()
-    assert "general-purpose" in warning
+    allowed, reason, _ = check_allowed(
+        "subagents", "implementer", "general-purpose", settings_override=settings,
+    )
+    assert allowed is False
+    assert reason == "always_disallowed"
 
 
-def test_config_replaces_defaults_per_agent():
-    """User config implementer: ["Explore", "foo"] fully replaces that agent's defaults."""
+def test_user_can_clear_always_disallowed_floor():
+    """When the user empties always_disallowed, general-purpose becomes allowed.
+    Project-memory: settings.json wins is intentional — there is no frozen floor."""
     settings = {
-        "worca": {
-            "governance": {
-                "subagent_dispatch": {
-                    "implementer": ["Explore", "foo"],
-                }
-            }
-        }
+        "worca": {"governance": {"dispatch": {"subagents": {
+            "always_disallowed": [],
+            "default_denied": [],
+            "per_agent_allow": {"implementer": ["*", "general-purpose"]},
+        }}}}
     }
-    rules = _load_subagent_dispatch(settings_override=settings)
-    assert rules["implementer"] == {"Explore", "foo"}
-    # Other agents still have their defaults
-    assert rules["planner"] == DEFAULT_SUBAGENT_DISPATCH["planner"]
-    assert rules["tester"] == DEFAULT_SUBAGENT_DISPATCH["tester"]
-
-
-def test_config_fallback_for_missing_agent():
-    """Agents not in user config fall back to DEFAULT_SUBAGENT_DISPATCH."""
-    settings = {
-        "worca": {
-            "governance": {
-                "subagent_dispatch": {
-                    "implementer": ["Explore", "extra"],
-                }
-            }
-        }
-    }
-    rules = _load_subagent_dispatch(settings_override=settings)
-    # guardian not configured by user → gets default
-    assert rules["guardian"] == DEFAULT_SUBAGENT_DISPATCH["guardian"]
-    assert rules["coordinator"] == DEFAULT_SUBAGENT_DISPATCH["coordinator"]
-
-
-def test_config_empty_list_removes_all():
-    """User config planner: [] removes all explore access for planner."""
-    settings = {
-        "worca": {
-            "governance": {
-                "subagent_dispatch": {
-                    "planner": [],
-                }
-            }
-        }
-    }
-    rules = _load_subagent_dispatch(settings_override=settings)
-    assert rules["planner"] == set()
+    allowed, _, _ = check_allowed(
+        "subagents", "implementer", "general-purpose", settings_override=settings,
+    )
+    assert allowed is True
 
 
 def test_default_constant_matches_settings_json():
@@ -262,19 +202,23 @@ def test_default_constant_matches_settings_json():
 
 def test_cache_reset_between_config_changes():
     """After _reset_dispatch_cache(), a new settings_override is honoured."""
-    settings_a = {
-        "worca": {"governance": {"subagent_dispatch": {"planner": []}}}
-    }
-    settings_b = {
-        "worca": {"governance": {"subagent_dispatch": {"planner": ["Explore"]}}}
-    }
-    rules_a = _load_subagent_dispatch(settings_override=settings_a)
-    assert rules_a["planner"] == set()
+    settings_a = {"worca": {"governance": {"dispatch": {"subagents": {
+        "per_agent_allow": {"planner": [LOCKDOWN_SENTINEL]},
+    }}}}}
+    settings_b = {"worca": {"governance": {"dispatch": {"subagents": {
+        "per_agent_allow": {"planner": ["Explore"]},
+    }}}}}
+    allowed_a, _, _ = check_allowed(
+        "subagents", "planner", "Explore", settings_override=settings_a,
+    )
+    assert allowed_a is False
 
     _reset_dispatch_cache()
 
-    rules_b = _load_subagent_dispatch(settings_override=settings_b)
-    assert rules_b["planner"] == {"Explore"}
+    allowed_b, _, _ = check_allowed(
+        "subagents", "planner", "Explore", settings_override=settings_b,
+    )
+    assert allowed_b is True
 
 
 def test_load_dispatch_section_caches_disk_reads():
@@ -325,57 +269,15 @@ def test_load_dispatch_section_override_bypasses_cache():
     assert cfg["per_agent_allow"]["planner"] == ["Grep"]
 
 
-def test_warns_on_malformed_settings_shape():
-    """Malformed settings shape (non-dict subagent_dispatch) logs a warning and falls back to defaults."""
-    # TypeError: .items() on a non-dict
-    settings = {
-        "worca": {"governance": {"subagent_dispatch": "not-a-dict"}}
-    }
-    stderr_capture = StringIO()
-    with patch("sys.stderr", stderr_capture):
-        rules = _load_subagent_dispatch(settings_override=settings)
-
-    assert rules == {
-        agent: set(allowed) for agent, allowed in DEFAULT_SUBAGENT_DISPATCH.items()
-    }
-    warning = stderr_capture.getvalue()
-    assert "Warning" in warning
-    assert "falling back to defaults" in warning
-
-
-def test_warns_on_malformed_allowed_list():
-    """Non-iterable allowed list surfaces a warning instead of failing silently."""
-    # set(12345) raises TypeError — caught by our narrower except clause.
-    settings = {
-        "worca": {"governance": {"subagent_dispatch": {"planner": 12345}}}
-    }
-    stderr_capture = StringIO()
-    with patch("sys.stderr", stderr_capture):
-        rules = _load_subagent_dispatch(settings_override=settings)
-
-    # planner should fall back to the default value
-    assert rules["planner"] == DEFAULT_SUBAGENT_DISPATCH["planner"]
-    warning = stderr_capture.getvalue()
-    assert "Warning" in warning
-
-
-def test_missing_settings_file_is_silent():
-    """FileNotFoundError during _load_settings() does not produce a warning."""
+def test_missing_settings_file_uses_defaults():
+    """When settings.json is missing, _load_dispatch_section falls back to _DISPATCH_DEFAULTS."""
     import worca.hooks.tracking as tracking
 
-    stderr_capture = StringIO()
-    # Simulate _load_settings raising FileNotFoundError
-    with patch.object(
-        tracking, "_load_settings", side_effect=FileNotFoundError("no file")
-    ):
-        with patch("sys.stderr", stderr_capture):
-            rules = _load_subagent_dispatch()
+    with patch.object(tracking, "_load_settings", return_value={}):
+        cfg = tracking._load_dispatch_section("subagents")
 
-    assert rules == {
-        agent: set(allowed) for agent, allowed in DEFAULT_SUBAGENT_DISPATCH.items()
-    }
-    # FileNotFoundError is a normal case — no noise.
-    assert stderr_capture.getvalue() == ""
+    assert cfg["always_disallowed"] == _DISPATCH_DEFAULTS["subagents"]["always_disallowed"]
+    assert cfg["per_agent_allow"]["_defaults"] == ["*"]
 
 
 # --- handle_agent_stop tests ---
@@ -721,3 +623,117 @@ def test_subagents_explore_now_via_wildcard():
         "subagents", "planner", "Explore", settings_override={},
     )
     assert via == "wildcard"
+
+
+# --- Empty-list fall-through + lockdown sentinel (post-review #2) ---
+
+
+def test_resolve_per_agent_entry_missing_key_falls_through():
+    cfg = {"per_agent_allow": {"_defaults": ["Explore"], "planner": ["foo"]}}
+    assert resolve_per_agent_entry(cfg, "tester") == ["Explore"]
+
+
+def test_resolve_per_agent_entry_empty_list_falls_through():
+    """[]-as-entry must behave like a missing key (clearing UI chips ≠ lockdown)."""
+    cfg = {"per_agent_allow": {"_defaults": ["Explore"], "implementer": []}}
+    assert resolve_per_agent_entry(cfg, "implementer") == ["Explore"]
+
+
+def test_resolve_per_agent_entry_lockdown_sentinel_preserved():
+    """[LOCKDOWN_SENTINEL] is the only explicit lockdown form — preserved as-is."""
+    cfg = {
+        "per_agent_allow": {"_defaults": ["*"], "implementer": [LOCKDOWN_SENTINEL]},
+    }
+    assert resolve_per_agent_entry(cfg, "implementer") == [LOCKDOWN_SENTINEL]
+
+
+def test_is_lockdown_only_singleton():
+    assert is_lockdown([LOCKDOWN_SENTINEL]) is True
+    assert is_lockdown([]) is False
+    assert is_lockdown([LOCKDOWN_SENTINEL, "Read"]) is False  # mixed → not lockdown
+    assert is_lockdown(["*"]) is False
+
+
+def test_check_allowed_empty_list_falls_through_to_defaults():
+    cfg = _settings_with_dispatch("skills", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "implementer": []},
+    })
+    allowed, _, via = check_allowed(
+        "skills", "implementer", "any-skill", settings_override=cfg,
+    )
+    assert allowed is True
+    assert via == "wildcard"
+
+
+def test_check_allowed_lockdown_sentinel_blocks_everything():
+    cfg = _settings_with_dispatch("skills", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "implementer": [LOCKDOWN_SENTINEL]},
+    })
+    allowed, reason, _ = check_allowed(
+        "skills", "implementer", "any-skill", settings_override=cfg,
+    )
+    assert allowed is False
+    assert reason == "lockdown"
+
+
+def test_check_allowed_lockdown_blocks_even_safe_candidate():
+    """Lockdown is total — even a candidate that the wildcard would allow is denied."""
+    cfg = _settings_with_dispatch("subagents", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "implementer": [LOCKDOWN_SENTINEL]},
+    })
+    allowed, reason, _ = check_allowed(
+        "subagents", "implementer", "Explore", settings_override=cfg,
+    )
+    assert allowed is False
+    assert reason == "lockdown"
+
+
+def test_check_allowed_literal_none_with_other_entries_is_not_lockdown():
+    """['none', 'Read'] is NOT lockdown — 'none' is just a skill/tool name there.
+    Only the exact singleton ['none'] is the sentinel."""
+    cfg = _settings_with_dispatch("tools", {
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "implementer": ["none", "Read"]},
+    })
+    allowed, _, via = check_allowed(
+        "tools", "implementer", "Read", settings_override=cfg,
+    )
+    assert allowed is True
+    assert via == "explicit"
+
+
+# --- mtime-based cache invalidation (post-review #5) ---
+
+
+def test_dispatch_cache_invalidates_when_settings_mtime_changes(tmp_path, monkeypatch):
+    """Editing settings.json on disk transparently invalidates the per-section cache."""
+    import os
+    import worca.hooks.tracking as tracking
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        '{"worca": {"governance": {"dispatch": {"subagents": '
+        '{"per_agent_allow": {"planner": ["Explore"]}}}}}}'
+    )
+    monkeypatch.setattr(tracking, "_settings_path", lambda: str(settings_path))
+
+    cfg1 = tracking._load_dispatch_section("subagents")
+    assert cfg1["per_agent_allow"]["planner"] == ["Explore"]
+
+    # Rewrite settings with a different per-agent value and bump mtime
+    settings_path.write_text(
+        '{"worca": {"governance": {"dispatch": {"subagents": '
+        '{"per_agent_allow": {"planner": ["Grep"]}}}}}}'
+    )
+    new_mtime = os.path.getmtime(settings_path) + 10
+    os.utime(settings_path, (new_mtime, new_mtime))
+
+    cfg2 = tracking._load_dispatch_section("subagents")
+    assert cfg2["per_agent_allow"]["planner"] == ["Grep"]

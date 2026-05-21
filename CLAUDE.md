@@ -271,7 +271,7 @@ Three sections — `tools`, `skills`, `subagents` — each with a consistent thr
 2. **`default_denied`** — blocked unless the agent explicitly names them in `per_agent_allow`. The `"*"` wildcard does **not** include them.
 3. **`per_agent_allow`** — per-agent allow list with `_defaults` fallback. Supports `"*"` (all available minus the two deny tiers), named entries, and mixed `["*", "extra"]` form. Per-agent entry **replaces** `_defaults` (no union).
 
-**Wildcards:** `"*"` means "allow any item not in `always_disallowed` or `default_denied`". An empty list `[]` means lockdown — nothing allowed.
+**Wildcards:** `"*"` means "allow any item not in `always_disallowed` or `default_denied`". An empty list `[]` falls through to `_defaults` — clearing the chip list in the UI does not silently brick an agent. To express full lockdown, use the singleton `["none"]` (the `LOCKDOWN_SENTINEL`).
 
 **Defaults:** all three sections default to `["*"]` — the `always_disallowed` tier carries the safety net (e.g. `general-purpose` for subagents). Projects that need narrower per-agent posture override `per_agent_allow` explicitly.
 
@@ -281,7 +281,8 @@ Three sections — `tools`, `skills`, `subagents` — each with a consistent thr
 |---|---|---|
 | `["*"]` | `--tools default` | All built-ins allowed (minus `always_disallowed`) |
 | `["Read", "Grep"]` | `--tools Agent,Grep,Read,Skill` | Restricted to named built-ins; `Skill` + `Agent` auto-included so worca hooks fire |
-| `[]` | `--tools ""` | Lockdown — no built-in tool available |
+| `[]` (or missing key) | inherits `_defaults` | Falls through — clearing chips never bricks an agent |
+| `["none"]` | `--tools ""` | Explicit lockdown — no built-in tool available |
 
 MCP tools (`mcp_*`) are not covered by `--tools` — MCP governance flows through other channels.
 

@@ -155,17 +155,17 @@ _PATH_MIGRATIONS = [
 ]
 
 
-def _migrate_dispatch_governance(governance_cfg: dict, changes: list[str]) -> None:
-    """Migrate flat subagent_dispatch -> nested dispatch.subagents (W-054)."""
+def _seed_dispatch_defaults(governance_cfg: dict) -> None:
+    """Idempotently fill in any missing tiers/sections of governance.dispatch.
+
+    Mirrors the trailing portion of worca-ui/server/dispatch-migration.js so
+    Python and JS produce identical outputs from the same input (post-review #3).
+    """
     from worca.hooks.tracking import _DISPATCH_DEFAULTS
 
-    if "subagent_dispatch" not in governance_cfg:
-        return
-    old = governance_cfg.pop("subagent_dispatch")
     dispatch = governance_cfg.setdefault("dispatch", {})
     subagents = dispatch.setdefault("subagents", {})
     per_agent = subagents.setdefault("per_agent_allow", {})
-    per_agent.update(old)
     per_agent.setdefault(
         "_defaults",
         list(_DISPATCH_DEFAULTS["subagents"]["per_agent_allow"]["_defaults"]),
@@ -180,6 +180,18 @@ def _migrate_dispatch_governance(governance_cfg: dict, changes: list[str]) -> No
     )
     dispatch.setdefault("tools", copy.deepcopy(_DISPATCH_DEFAULTS["tools"]))
     dispatch.setdefault("skills", copy.deepcopy(_DISPATCH_DEFAULTS["skills"]))
+
+
+def _migrate_dispatch_governance(governance_cfg: dict, changes: list[str]) -> None:
+    """Migrate flat subagent_dispatch -> nested dispatch.subagents (W-054)."""
+    if "subagent_dispatch" not in governance_cfg:
+        return
+    old = governance_cfg.pop("subagent_dispatch")
+    dispatch = governance_cfg.setdefault("dispatch", {})
+    subagents = dispatch.setdefault("subagents", {})
+    per_agent = subagents.setdefault("per_agent_allow", {})
+    per_agent.update(old)
+    _seed_dispatch_defaults(governance_cfg)
     governance_cfg.pop("_dispatch_legacy", None)
     changes.append(
         "  governance.subagent_dispatch -> governance.dispatch.subagents "
@@ -215,47 +227,47 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
         migrated["worca"] = worca_cfg
         changes.append("  stages.review.agent: guardian -> reviewer")
 
-    # Migrate governance.dispatch -> governance.subagent_dispatch (W-038).
-    # The two keys use incompatible namespaces: the old `dispatch` maps
-    # pipeline-agent parents to lists of pipeline-agent children; the new
-    # `subagent_dispatch` maps parents to lists of subagent types
-    # (explore, feature-dev:code-reviewer, ...). Old values cannot be
-    # automatically translated, so we stash them under `_dispatch_legacy`
-    # for the user to review and re-enter under the new schema.
+    # Migrate pre-W-038 flat agent-keyed governance.dispatch shape.
+    # The legacy shape was e.g. {"dispatch": {"planner": ["Explore"], ...}} —
+    # agent names directly under `dispatch`. In that shape the only thing the
+    # values could govern was subagent dispatch (tools/skills weren't part of
+    # the schema), so moving them into `dispatch.subagents.per_agent_allow`
+    # preserves user intent without guessing.
+    # Option A (post-review #3): absorb instead of stash. The JS migration in
+    # `dispatch-migration.js` does the same.
     governance_cfg = worca_cfg.get("governance", {})
     dispatch_val = governance_cfg.get("dispatch", {})
-    _is_new_dispatch_shape = isinstance(dispatch_val, dict) and bool(
-        {"tools", "skills", "subagents"} & dispatch_val.keys()
-    )
-    if "dispatch" in governance_cfg and "subagent_dispatch" not in governance_cfg and not _is_new_dispatch_shape:
-        _SUBAGENT_DISPATCH_DEFAULTS = {
-            "planner": ["Explore"],
-            "coordinator": [],
-            "implementer": ["Explore"],
-            "tester": ["Explore"],
-            "guardian": ["Explore"],
-            "reviewer": ["Explore"],
-            "plan_reviewer": ["Explore"],
-            "learner": ["Explore"],
+    _NEW_DISPATCH_SECTIONS = {"tools", "skills", "subagents"}
+    if isinstance(dispatch_val, dict) and any(
+        k not in _NEW_DISPATCH_SECTIONS and isinstance(v, list)
+        for k, v in dispatch_val.items()
+    ):
+        legacy_agent_keys = {
+            k: v for k, v in dispatch_val.items()
+            if k not in _NEW_DISPATCH_SECTIONS and isinstance(v, list)
         }
-        old_values = governance_cfg.pop("dispatch")
-        governance_cfg["subagent_dispatch"] = _SUBAGENT_DISPATCH_DEFAULTS
-        # Preserve the old config only if it was non-trivial — skip empty or
-        # all-defaults-equivalent shells to keep settings.json tidy.
-        if old_values and any(v for v in old_values.values()):
-            governance_cfg["_dispatch_legacy"] = old_values
-            changes.append(
-                "  governance.dispatch -> governance.subagent_dispatch "
-                "(new defaults applied; old config preserved at "
-                "governance._dispatch_legacy — review and delete when no longer needed)"
-            )
-        else:
-            changes.append(
-                "  governance.dispatch -> governance.subagent_dispatch "
-                "(old key was empty; new defaults applied)"
-            )
+        for k in legacy_agent_keys:
+            dispatch_val.pop(k)
+        subagents = dispatch_val.setdefault("subagents", {})
+        per_agent = subagents.setdefault("per_agent_allow", {})
+        # Mirror JS `_absorbFlatDispatchKeys`: overwrite if the existing entry
+        # is missing or empty (None / [] both fall through to defaults at
+        # runtime anyway); otherwise preserve a user's explicit non-empty entry.
+        for k, v in legacy_agent_keys.items():
+            if not per_agent.get(k):
+                per_agent[k] = v
+        governance_cfg["dispatch"] = dispatch_val
+        # Seed any missing tiers / tools / skills with defaults so the post-
+        # migration shape is complete — JS migration does the same.
+        _seed_dispatch_defaults(governance_cfg)
         worca_cfg["governance"] = governance_cfg
         migrated["worca"] = worca_cfg
+        # Drop any prior _dispatch_legacy stash — Option A doesn't use it.
+        governance_cfg.pop("_dispatch_legacy", None)
+        changes.append(
+            "  governance.dispatch (flat agent-keyed) -> "
+            "governance.dispatch.subagents.per_agent_allow (W-054)"
+        )
 
     # Casing normalization: the initial W-038 landing shipped with lowercase
     # `"explore"` in subagent_dispatch defaults. Claude Code's actual
@@ -315,12 +327,10 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
     # without this the skill_use.py hook is dead code on every upgrade and
     # the dispatch.skills governance section is unenforced.
     pre_tool_hooks = hooks.setdefault("PreToolUse", [])
+    # Substring match so we tolerate any quoting/wrapping (trailing args, redirects)
+    # without re-introducing a per-shape endswith ladder.
     skill_hook_present = any(
-        any(
-            h.get("command", "").endswith('skill_use.py"')
-            or h.get("command", "").endswith("skill_use.py")
-            for h in entry.get("hooks", [])
-        )
+        any("skill_use.py" in h.get("command", "") for h in entry.get("hooks", []))
         for entry in pre_tool_hooks
     )
     if not skill_hook_present:

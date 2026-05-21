@@ -16,7 +16,7 @@ import pytest
 
 from worca.cli.init import _migrate_settings_paths
 from worca.hooks.tracking import _DISPATCH_DEFAULTS
-from worca.orchestrator.stages import STAGE_AGENT_MAP
+from worca.orchestrator.stages import ALL_AGENTS
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _UI_DIR = _REPO_ROOT / "worca-ui"
@@ -108,8 +108,7 @@ def _parse_js_agent_names() -> list[str]:
 
 def test_agent_roster_match():
     js_names = set(_parse_js_agent_names())
-    py_names = {v for v in STAGE_AGENT_MAP.values() if v is not None}
-    py_names.add("workspace_planner")
+    py_names = set(ALL_AGENTS)
     assert js_names == py_names, (
         f"Agent roster mismatch: "
         f"JS-only={js_names - py_names}, Py-only={py_names - js_names}"
@@ -141,13 +140,19 @@ _MIGRATION_FIXTURES = {
             "_dispatch_legacy": {"old": True},
         }
     },
-    # NOTE: pre-W-038 flat agent-keyed `dispatch` shape is intentionally NOT
-    # in this fixture set. The two implementations diverge by design on that
-    # historical case (Python's W-038 step stashes old values under
-    # `_dispatch_legacy` and applies fresh defaults; JS `_absorbFlatDispatchKeys`
-    # moves values verbatim). The shape hasn't been written to any active
-    # settings.json since W-038 landed, so the divergence is documented but
-    # unenforced.
+    # 2) Pre-W-038 flat agent-keyed `dispatch` shape. Post-review #3 aligned
+    #    both implementations on Option A (preserve user values) so this
+    #    fixture is now enforced for parity. Python's old stash-and-reseed
+    #    path has been removed.
+    "legacy_flat_dispatch": {
+        "governance": {
+            "dispatch": {
+                "planner": ["Explore"],
+                "coordinator": [],
+                "implementer": ["Explore", "feature-dev:code-reviewer"],
+            },
+        }
+    },
     # 3) Already-migrated input — must be a no-op for both implementations.
     "already_migrated": {
         "worca": {

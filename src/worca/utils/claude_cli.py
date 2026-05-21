@@ -16,7 +16,11 @@ import threading
 from typing import Optional, Callable
 
 from worca.hooks.agent_role import role_from_worca_agent
-from worca.hooks.tracking import _load_dispatch_section
+from worca.hooks.tracking import (
+    _load_dispatch_section,
+    is_lockdown,
+    resolve_per_agent_entry,
+)
 from worca.utils.env import get_env, filter_model_env
 
 # Linux ARG_MAX is typically 2 MiB but total argv+envp must fit.
@@ -101,7 +105,10 @@ def _resolve_tool_args(
       * ``tools_arg`` is one of:
           - ``"default"`` — all built-in tools allowed (wildcard or no per-agent
             entry). Passed to ``--tools default``.
-          - ``""`` — full lockdown. Passed as ``--tools ""``.
+          - ``""`` — full lockdown. Emitted only when the per-agent entry is
+            the explicit lockdown sentinel ``["none"]``. An empty list ``[]``
+            falls through to ``_defaults`` instead — clearing the chip list
+            in the UI must not silently brick an agent.
           - ``"A,B,C"`` — explicit list. Always auto-includes ``Skill`` and
             ``Agent`` so worca's skill/subagent governance hooks still fire.
 
@@ -122,14 +129,13 @@ def _resolve_tool_args(
     # (e.g. "implementer"). Normalize via role_from_worca_agent so per-agent
     # entries actually match in production.
     role = role_from_worca_agent(agent_name) or agent_name
-    entry = cfg["per_agent_allow"].get(
-        role, cfg["per_agent_allow"].get("_defaults", ["*"]),
-    )
+    entry = resolve_per_agent_entry(cfg, role)
+
+    if is_lockdown(entry):
+        return disallows, ""
 
     if "*" in entry:
         return disallows, "default"
-    if len(entry) == 0:
-        return disallows, ""
 
     tools = {t for t in entry if t != "*"}
     tools.add("Skill")  # so skill_use.py hook fires

@@ -71,8 +71,9 @@ def test_migrate_dispatch_to_subagent_dispatch():
     assert any("dispatch" in c for c in changes)
 
 
-def test_migrate_dispatch_replaces_wrong_values():
-    """Old pipeline-agent values are replaced with subagent-type defaults (W-038), then nested (W-054)."""
+def test_migrate_dispatch_preserves_user_values_option_a():
+    """Pre-W-038 flat agent-keyed values are preserved verbatim under
+    dispatch.subagents.per_agent_allow (post-review #3 — Option A)."""
     settings = {
         "worca": {
             "governance": {
@@ -88,8 +89,14 @@ def test_migrate_dispatch_replaces_wrong_values():
     }
     migrated, _changes = _migrate_settings_paths(settings)
     per_agent = migrated["worca"]["governance"]["dispatch"]["subagents"]["per_agent_allow"]
-    for agent, expected in _NEW_DEFAULTS.items():
-        assert per_agent[agent] == expected
+    # User-supplied entries land verbatim — including the unusual coordinator: ["implementer"].
+    assert per_agent["coordinator"] == ["implementer"]
+    # Empty entries are kept too — clear that they exist, even if runtime
+    # falls through to _defaults (post-review #2). Untouched at the storage layer.
+    assert per_agent["planner"] == []
+    assert per_agent["tester"] == []
+    # _defaults is seeded by the migration even though the user didn't have one.
+    assert per_agent["_defaults"] == _DISPATCH_DEFAULTS["subagents"]["per_agent_allow"]["_defaults"]
 
 
 def test_migrate_preserves_other_governance_keys():
@@ -190,14 +197,18 @@ def test_migrate_empty_dispatch_gets_nested_shape():
     assert "subagents" in governance["dispatch"]
 
 
-def test_migrate_empty_dict_dispatch_gets_nested_shape():
-    """dispatch: {} → nested W-054 shape with defaults."""
+def test_migrate_empty_dict_dispatch_is_noop():
+    """dispatch: {} has no legacy keys — migration is a no-op (post-review #3).
+    Defaults are still applied at read time via _load_dispatch_section."""
     settings = {"worca": {"governance": {"dispatch": {}}}}
-    migrated, _changes = _migrate_settings_paths(settings)
+    migrated, changes = _migrate_settings_paths(settings)
     governance = migrated["worca"]["governance"]
     assert "_dispatch_legacy" not in governance
     assert "subagent_dispatch" not in governance
-    assert "subagents" in governance["dispatch"]
+    # No flat agent keys → migration leaves dispatch alone.
+    assert governance["dispatch"] == {}
+    # And nothing dispatch-related got logged.
+    assert not any("dispatch" in c.lower() for c in changes)
 
 
 def test_migrate_normalizes_lowercase_explore_then_nests():

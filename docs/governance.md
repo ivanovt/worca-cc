@@ -48,7 +48,8 @@ When `WORCA_AGENT` is empty (interactive mode), all dispatches are allowed — h
 |------|-----------------|---------|
 | `["*"]` (default) | `--tools default` | All built-in tools allowed (minus `always_disallowed`) |
 | `["Read", "Grep"]` | `--tools Agent,Grep,Read,Skill` | Only the named built-ins are allowed; **`Skill` and `Agent` are auto-included** so worca's skill / subagent governance hooks still fire |
-| `[]` | `--tools ""` | Full lockdown — no built-in tool can be used |
+| `[]` (or missing key) | inherits `_defaults` | Falls through — clearing chips in the UI does not silently brick an agent |
+| `["none"]` | `--tools ""` | Explicit lockdown — no built-in tool can be used |
 
 **Two constraints worth knowing:**
 
@@ -160,18 +161,20 @@ Example: allowing the `review` skill (which is `default_denied`) for the reviewe
 
 Here, `"*"` allows everything except `always_disallowed` and `default_denied`. The explicit `"review"` entry opts in to that specific `default_denied` skill. Telemetry reports `via: "explicit"` for `review` and `via: "wildcard"` for other allowed items.
 
-## Empty `[]` lockdown
+## Empty `[]` falls through; `["none"]` is lockdown
 
-An empty per-agent allow list means "nothing allowed for this agent" — this is an explicit lockdown, not a fallback to `_defaults`.
+An empty per-agent allow list **falls through to `_defaults`**. Clearing the chip list in the UI must not silently brick an agent — that was a real footgun.
+
+To express full lockdown, use the singleton `["none"]` (the `LOCKDOWN_SENTINEL`):
 
 ```jsonc
 "per_agent_allow": {
   "_defaults": ["*"],
-  "coordinator": []
+  "coordinator": ["none"]    // lockdown — no skill/subagent/tool allowed
 }
 ```
 
-The coordinator can invoke no skills/subagents/tools (depending on the section), while all other agents get the wildcard default.
+The coordinator can invoke nothing in that section, while all other agents get the wildcard default. Any combination other than the exact singleton (`["none", "Read"]`, etc.) treats `"none"` as a literal name that won't match anything real — the sentinel only fires for the exact one-element list.
 
 ## `always_disallowed` and `default_denied` overlap
 
@@ -221,7 +224,7 @@ Dispatch decisions emit telemetry events:
 "subagents": {
   "per_agent_allow": {
     "_defaults": ["Explore"],
-    "coordinator": []
+    "coordinator": ["none"]   // singleton sentinel — explicit lockdown
   }
 }
 ```
@@ -258,7 +261,7 @@ Add it to `default_denied`. The wildcard does not include `default_denied` entri
 "tools": {
   "per_agent_allow": {
     "_defaults": ["*"],
-    "learner": []
+    "learner": ["none"]
   }
 }
 ```
