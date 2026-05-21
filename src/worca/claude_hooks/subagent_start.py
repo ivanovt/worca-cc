@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from worca.hooks.agent_role import role_from_worca_agent
-from worca.hooks.tracking import check_allowed
+from worca.hooks.tracking import ConfigUnreadable, check_allowed
 
 try:
     from worca.events.hook_emitter import emit_from_hook
@@ -22,7 +22,25 @@ def main():
     parent = role_from_worca_agent(os.environ.get("WORCA_AGENT", ""))
     child = data.get("agent_type", "")
 
-    allowed, reason, via = check_allowed("subagents", parent, child)
+    try:
+        allowed, reason, via = check_allowed("subagents", parent, child)
+    except ConfigUnreadable as e:
+        # Fail-closed: settings.json present but unparseable. Falling back to
+        # defaults would silently widen permissions under the new dispatch
+        # model (defaults are wildcard-allow). Block the dispatch instead.
+        if emit_from_hook:
+            emit_from_hook("pipeline.hook.dispatch_blocked", {
+                "agent": parent,
+                "section": "subagents",
+                "candidate": child,
+                "reason": "config_unreadable",
+            })
+        print(
+            f"Blocked: settings.json malformed — pipeline runtime cannot "
+            f"evaluate dispatch governance. Fix and retry. ({e})",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if not allowed:
         if reason == "always_disallowed":
             msg = f"Blocked: {child} is on the subagent denylist"

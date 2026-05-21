@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 import pytest
 
 from worca.hooks.agent_role import role_from_worca_agent
-from worca.hooks.tracking import check_allowed, _reset_dispatch_cache
+from worca.hooks.tracking import ConfigUnreadable, check_allowed, _reset_dispatch_cache
 from worca.claude_hooks.skill_use import _extract_skill_name
 
 
@@ -328,6 +328,36 @@ def test_main_fail_closed_does_not_fire_in_interactive_mode():
             skill_mod.main()
 
     assert exc.value.code == 0
+
+
+def test_main_fail_closed_on_config_unreadable():
+    """When settings.json is malformed, the hook MUST exit 2 (block), not 1 (crash).
+
+    Claude Code treats exit 1 from a hook as a non-blocking error — the
+    Skill call would proceed, silently bypassing dispatch governance.
+    Exit 2 is the only code that actually blocks the call.
+    """
+    import worca.claude_hooks.skill_use as skill_mod
+
+    def raise_unreadable(*args, **kwargs):
+        raise ConfigUnreadable("/fake/path/settings.json: invalid JSON (truncated)")
+
+    emit = MagicMock()
+    stdin_payload = json.dumps({"tool_name": "Skill", "tool_input": {"skill_name": "review"}})
+
+    with patch.dict(os.environ, {"WORCA_AGENT": "implement-implementer-iter-1"}, clear=False), \
+         patch("sys.stdin", StringIO(stdin_payload)), \
+         patch.object(skill_mod, "check_allowed", side_effect=raise_unreadable), \
+         patch.object(skill_mod, "emit_from_hook", emit):
+        with pytest.raises(SystemExit) as exc:
+            skill_mod.main()
+
+    assert exc.value.code == 2, "fail-closed: exit 2 (block), not 1 (crash → fail-open)"
+    emit.assert_called_once()
+    event_name, payload = emit.call_args[0]
+    assert event_name == "pipeline.hook.dispatch_blocked"
+    assert payload["reason"] == "config_unreadable"
+    assert payload["section"] == "skills"
 
 
 def test_main_no_longer_emits_legacy_skill_event_names():

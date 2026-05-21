@@ -96,13 +96,34 @@ def _settings_path() -> str | None:
     return os.path.join(project_dir, ".claude", "settings.json")
 
 
+class ConfigUnreadable(Exception):
+    """Raised when settings.json exists on disk but cannot be parsed as JSON.
+
+    Distinguishes "no config, use defaults" (file absent) from "config is
+    present but broken" (file there, JSON invalid). Hooks that catch this
+    MUST fail-closed (exit 2) rather than fall back to defaults — under
+    the new dispatch model, defaults are effectively wildcard-allow, so a
+    silent fallback would grant near-full permissions while the user
+    believes their custom config is in effect. See preflight stage for
+    the corresponding startup-time check.
+    """
+
+
 def _load_settings() -> dict:
-    """Load settings.json from the project root."""
+    """Load settings.json from the project root.
+
+    Returns ``{}`` when no settings file exists (defaults apply).
+    Raises ``ConfigUnreadable`` when the file exists but is not valid JSON
+    — callers MUST treat this as a fail-closed condition.
+    """
     path = _settings_path()
     if not path or not os.path.exists(path):
         return {}
-    with open(path) as f:
-        return json.load(f)
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ConfigUnreadable(f"{path}: invalid JSON ({e})") from e
 
 
 def _settings_mtime() -> float | None:
@@ -257,7 +278,15 @@ def main():
     if event == "subagent_start":
         parent = os.environ.get("WORCA_AGENT", "")
         child = data.get("agent_type", "")
-        code, reason = check_dispatch(parent, child)
+        try:
+            code, reason = check_dispatch(parent, child)
+        except ConfigUnreadable as e:
+            print(
+                f"Blocked: settings.json malformed — pipeline runtime cannot "
+                f"evaluate dispatch governance. Fix and retry. ({e})",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         if code != 0:
             print(reason, file=sys.stderr)
         sys.exit(code)

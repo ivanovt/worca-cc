@@ -4,10 +4,12 @@ from unittest.mock import patch
 import pytest
 from worca.hooks.tracking import (
     LOCKDOWN_SENTINEL,
+    ConfigUnreadable,
     check_dispatch,
     check_allowed,
     handle_agent_stop,
     _DISPATCH_DEFAULTS,
+    _load_settings,
     _matches_any,
     _reset_dispatch_cache,
     is_lockdown,
@@ -710,6 +712,48 @@ def test_check_allowed_literal_none_with_other_entries_is_not_lockdown():
 
 
 # --- mtime-based cache invalidation (post-review #5) ---
+
+
+# --- ConfigUnreadable: fail-closed on malformed settings.json ---
+
+
+def test_load_settings_returns_empty_when_file_absent(tmp_path, monkeypatch):
+    """Missing settings.json is a known state, not an error — defaults apply."""
+    import worca.hooks.tracking as tracking
+    missing = tmp_path / "nope.json"
+    monkeypatch.setattr(tracking, "_settings_path", lambda: str(missing))
+    assert _load_settings() == {}
+
+
+def test_load_settings_raises_config_unreadable_on_malformed_json(tmp_path, monkeypatch):
+    """Malformed JSON must surface as a typed exception so hooks can fail-closed.
+
+    Bare ``json.JSONDecodeError`` would propagate up and crash the hook
+    with exit code 1, which Claude Code treats as a non-blocking error —
+    the dispatch would proceed, silently bypassing governance.
+    """
+    import worca.hooks.tracking as tracking
+    bad = tmp_path / "settings.json"
+    bad.write_text('{"worca": ')  # truncated, invalid JSON
+    monkeypatch.setattr(tracking, "_settings_path", lambda: str(bad))
+    with pytest.raises(ConfigUnreadable) as exc:
+        _load_settings()
+    assert str(bad) in str(exc.value)
+
+
+def test_check_allowed_propagates_config_unreadable(tmp_path, monkeypatch):
+    """check_allowed surfaces ConfigUnreadable so hook main() can exit 2.
+
+    The alternative — catching internally and falling back to defaults —
+    would silently grant near-full permissions under the new dispatch
+    model (defaults are ``_defaults: ["*"]`` for every section).
+    """
+    import worca.hooks.tracking as tracking
+    bad = tmp_path / "settings.json"
+    bad.write_text("{this is not json")
+    monkeypatch.setattr(tracking, "_settings_path", lambda: str(bad))
+    with pytest.raises(ConfigUnreadable):
+        check_allowed("subagents", "implementer", "Explore")
 
 
 def test_dispatch_cache_invalidates_when_settings_mtime_changes(tmp_path, monkeypatch):

@@ -455,3 +455,52 @@ class TestSubagentStartDispatchAllowedEvent:
         code = self._call_main(data, agent="implementer")
 
         assert code == 0  # Still allowed, emit silently skipped
+
+
+# ---------------------------------------------------------------------------
+# subagent_start — fail-closed on malformed settings.json
+# ---------------------------------------------------------------------------
+
+
+class TestSubagentStartConfigUnreadable:
+    """When settings.json is malformed mid-run, the hook MUST exit 2 (block).
+
+    Bare json.JSONDecodeError would propagate and crash the hook with
+    exit code 1 — Claude Code treats that as a non-blocking error, so the
+    subagent dispatch would proceed, silently bypassing governance.
+    """
+
+    def setup_method(self):
+        for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
+            os.environ.pop(k, None)
+
+    def teardown_method(self):
+        for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
+            os.environ.pop(k, None)
+
+    def test_subagent_start_exits_2_on_config_unreadable(self, tmp_path):
+        events_file = str(tmp_path / "events.jsonl")
+        os.environ["WORCA_EVENTS_PATH"] = events_file
+        os.environ["WORCA_RUN_ID"] = "run-cu"
+        os.environ["WORCA_AGENT"] = "implement-implementer-iter-1"
+
+        from worca.hooks.tracking import ConfigUnreadable
+        import worca.claude_hooks.subagent_start as m
+        importlib.reload(m)
+
+        def raise_unreadable(*args, **kwargs):
+            raise ConfigUnreadable("/fake/path/settings.json: invalid JSON")
+
+        data = json.dumps({"agent_type": "Explore"})
+        with patch("sys.stdin", io.StringIO(data)), \
+             patch.object(m, "check_allowed", side_effect=raise_unreadable):
+            with pytest.raises(SystemExit) as exc:
+                m.main()
+
+        assert exc.value.code == 2, "fail-closed: exit 2 (block), not 1 (crash → fail-open)"
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
+        assert len(events) == 1
+        e = events[0]
+        assert e["event_type"] == "pipeline.hook.dispatch_blocked"
+        assert e["payload"]["reason"] == "config_unreadable"
+        assert e["payload"]["section"] == "subagents"
