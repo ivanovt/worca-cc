@@ -110,7 +110,7 @@ describe('iteration tags layout', () => {
 
   // --- Subagents row ---
 
-  it('renders subagent dispatches under a Subagents: label', () => {
+  it('renders subagent dispatches in a combined Skills/Subagents row', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -126,15 +126,20 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
+    // Both section labels are always present — empty side becomes "(none)".
     expect(html).toContain('Subagents:');
-    expect(html).not.toContain('Skills:');
-    // The badge omits "dispatched" — the row label already conveys the action.
-    expect(html).toMatch(/>Explore<\/sl-badge>/);
+    expect(html).toContain('Skills:');
+    expect(html).toContain('(none)');
+    // Allowed badge: green (success variant) + check icon before the label.
+    expect(html).toMatch(/Explore<\/sl-badge>/);
     expect(html).not.toContain('Explore dispatched');
     expect(html).toContain('variant="success"');
+    expect(html).toContain('dispatch-badge-icon');
+    // Tooltip leads with policy verdict so a hover is self-explanatory.
+    expect(html).toMatch(/content="Allowed by project dispatch policy[^"]*"/);
   });
 
-  it('renders blocked subagent dispatch with tooltip and Subagents: label', () => {
+  it('renders blocked subagent dispatch with tooltip and full row', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -151,13 +156,20 @@ describe('iteration tags layout', () => {
       ),
     );
     expect(html).toContain('Subagents:');
-    expect(html).toContain('general-purpose blocked (×2)');
-    // PR B tooltip composition: section/via/reason joined by " · "
-    expect(html).toMatch(/title="[^"]*denylist[^"]*"/);
-    expect(html).toMatch(/title="[^"]*section: subagents[^"]*"/);
+    expect(html).toContain('Skills:'); // always present now
+    // Blocked badge: red (danger) + X icon. "blocked" word dropped — the
+    // colour + icon now carry that signal.
+    expect(html).toContain('general-purpose (×2)');
+    expect(html).not.toContain('general-purpose blocked');
+    expect(html).toContain('variant="danger"');
+    expect(html).toContain('dispatch-badge-icon');
+    // Tooltip: lede + details, rendered via <sl-tooltip content="...">.
+    expect(html).toMatch(/content="Blocked by project dispatch policy[^"]*"/);
+    expect(html).toMatch(/content="[^"]*reason: denylist[^"]*"/);
+    expect(html).toMatch(/content="[^"]*section: subagents[^"]*"/);
   });
 
-  it('renders skill dispatches under a Skills: label (per-section row)', () => {
+  it('renders skill dispatches in a combined Skills/Subagents row', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -173,14 +185,19 @@ describe('iteration tags layout', () => {
         }),
       ),
     );
+    // Both labels always rendered — Subagents side is "(none)" here.
     expect(html).toContain('Skills:');
-    expect(html).not.toContain('Subagents:');
-    expect(html).toMatch(/>review<\/sl-badge>/);
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('(none)');
+    expect(html).toMatch(/review<\/sl-badge>/);
     expect(html).not.toContain('review dispatched');
+    // Wildcard allowed is still green (success) — the wildcard hint moves
+    // to a dedicated CSS class + tooltip, not a separate badge variant.
     expect(html).toContain('variant="success"');
+    expect(html).toContain('dispatch-badge-wildcard');
   });
 
-  it('splits mixed dispatches into separate Subagents: and Skills: rows', () => {
+  it('combines mixed dispatches into a single row with both sections', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -209,12 +226,21 @@ describe('iteration tags layout', () => {
     expect(html).toContain('data-dispatch-section="skills"');
     expect(html).toMatch(/>Explore<\/sl-badge>/);
     expect(html).toMatch(/>simplify<\/sl-badge>/);
+    // Both sections populated — "(none)" only shows when a side is empty.
+    expect(html).not.toContain('(none)');
   });
 
-  it('renders explicit empty-state for completed iterations with no dispatch', () => {
+  it('renders combined Skills/Subagents row with (none) on completed iterations with no dispatch', () => {
+    // Replaces the previous "Dispatch: No subagent or skill activity"
+    // empty-state collapse — the row keeps its shape for visual stability
+    // across iterations.
     const html = renderToString(runDetailView(makeRun()));
-    expect(html).toContain('Dispatch:');
-    expect(html).toContain('No subagent or skill activity in this iteration');
+    expect(html).toContain('Skills:');
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('(none)');
+    expect(html).not.toContain(
+      'No subagent or skill activity in this iteration',
+    );
   });
 
   it('omits Dispatch row for in-progress iterations with no events', () => {

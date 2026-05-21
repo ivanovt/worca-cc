@@ -2275,24 +2275,45 @@ sl-input.pricing-input::part(input) {
  * to wrap gracefully when an iteration dispatches 5+ distinct subagents.
  * Inherits flex-wrap from .iteration-tags-row; adds a small visual cue so
  * wildcard dispatches read differently from explicit ones. */
+/* One row with both sections: "Skills: <badges>  Subagents: <badges>".
+ * row-gap covers the case where chips wrap to a second line; column-gap
+ * spaces the two section groups apart so the eye finds the boundary. */
 .dispatch-events-row {
   row-gap: 4px;
+  column-gap: 16px;
 }
 
 .dispatch-badge::part(base) {
   font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
-.dispatch-badge-wildcard::part(base) {
-  font-style: italic;
+/* CircleCheck (allowed) / X (blocked) glyph sits inline before the badge
+ * label, with the badge's own foreground colour. */
+.dispatch-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
 }
 
-/* Empty-state line shown in completed iterations that produced no dispatch
- * events. Muted on purpose — explicit absence, not a missing feature. */
+.dispatch-badge-icon svg {
+  display: block;
+}
+
+.dispatch-events-section {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Empty-section placeholder: keeps the label visible so layout stays
+ * stable across iterations. Muted on purpose — explicit absence. */
 .dispatch-events-empty {
   font-size: 12px;
   color: var(--sl-color-neutral-500);
-  font-style: italic;
 }
 
 .meta-value-muted {

@@ -4,6 +4,7 @@ import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import {
   AlertTriangle,
+  CircleCheck,
   ClipboardCopy,
   Clock,
   Coins,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   RotateCcw,
   Timer,
+  X,
 } from '../utils/icons.js';
 import { scrollOnExpand } from '../utils/scroll.js';
 import { sortByStageOrder } from '../utils/stage-order.js';
@@ -421,60 +423,67 @@ const _DISPATCH_SECTIONS = [
 function _dispatchBadgeView(ev) {
   const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
   const isWildcard = isAllowed && ev.via === 'wildcard';
-  // PR B: wildcard dispatches get a neutral variant so the eye can separate
-  // "broadly allowed" from "explicitly opted in" at a glance.
-  const variant = isAllowed ? (isWildcard ? 'neutral' : 'success') : 'danger';
+  // Dispatched → green (success); blocked → red (danger). Wildcard still
+  // counts as dispatched — the via/section is conveyed via tooltip, not
+  // via a separate variant.
+  const variant = isAllowed ? 'success' : 'danger';
   const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
   const suffix = count ? ` (×${count})` : '';
   const candidate = _dispatchEventCandidate(ev);
-  // Drop the "dispatched" suffix on allowed badges — the row label
-  // ("Subagents:" / "Skills:") already gives the action, and the chip
-  // colour distinguishes allowed (green/neutral) from blocked (red).
-  // Blocked badges keep an explicit "blocked" word since that's the
-  // exception case in an otherwise allowed-by-default row.
-  const label = isAllowed
-    ? `${candidate}${suffix}`
-    : `${candidate} blocked${suffix}`;
-  const tooltipParts = [];
-  if (ev.section) tooltipParts.push(`section: ${ev.section}`);
-  if (ev.via) tooltipParts.push(`via: ${ev.via}`);
-  if (ev.reason) tooltipParts.push(ev.reason);
-  const tooltip =
-    tooltipParts.join(' · ') || (isAllowed ? 'dispatched' : 'blocked');
+  // Drop the "blocked" suffix — the colour + icon now carry that signal.
+  const label = `${candidate}${suffix}`;
+  // Tooltip leads with a plain-language verdict so a reader hovering
+  // a single chip understands instantly why it's red or green, even
+  // without reading the section/via/reason details after the dash.
+  const lede = isAllowed
+    ? 'Allowed by project dispatch policy'
+    : 'Blocked by project dispatch policy';
+  const detailParts = [];
+  if (ev.section) detailParts.push(`section: ${ev.section}`);
+  if (ev.via) detailParts.push(`via: ${ev.via}`);
+  if (ev.reason) detailParts.push(`reason: ${ev.reason}`);
+  const tooltip = detailParts.length
+    ? `${lede} — ${detailParts.join(' · ')}`
+    : lede;
   const cls = isWildcard
     ? 'dispatch-badge dispatch-badge-wildcard'
     : 'dispatch-badge';
-  return html`<sl-badge class="${cls}" variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
+  const iconSvgString = iconSvg(isAllowed ? CircleCheck : X, 12);
+  // Wrap in <sl-tooltip> so hovers show a styled, fast-appearing tooltip
+  // (Shoelace default show-delay is ~150ms) rather than the browser-native
+  // `title` (500ms+). The badge itself stays on one line — the existing
+  // renderToString test helper matches against /Explore<\/sl-badge>/.
+  return html`<sl-tooltip content="${tooltip}"><sl-badge class="${cls}" variant="${variant}" pill><span class="dispatch-badge-icon">${unsafeHTML(iconSvgString)}</span>${label}</sl-badge></sl-tooltip>`;
 }
 
-function _dispatchSectionRowView(label, sectionKey, events) {
-  if (events.length === 0) return nothing;
+function _dispatchSectionInlineView(label, sectionKey, events) {
   const overflow = events.length > _DISPATCH_VISIBLE_LIMIT;
   const inline = overflow ? events.slice(0, _DISPATCH_VISIBLE_LIMIT) : events;
   const hidden = overflow ? events.slice(_DISPATCH_VISIBLE_LIMIT) : [];
-  return html`
-    <div
-      class="iteration-tags-row dispatch-events-row"
-      data-dispatch-section="${sectionKey}"
-    >
-      <span class="meta-label">${label}</span>
-      ${inline.map(_dispatchBadgeView)}
-      ${
-        overflow
-          ? html`
-            <sl-details class="dispatch-events-overflow">
+  // Empty-section placeholder so the row keeps its shape even when one
+  // dispatch family produced nothing this iteration — the user complaint
+  // was that the previous "Dispatch: No subagent or skill activity"
+  // collapse made the layout flicker between iterations.
+  const body =
+    events.length === 0
+      ? html`<span class="dispatch-events-empty">(none)</span>`
+      : html`${inline.map(_dispatchBadgeView)}${
+          overflow
+            ? html`<sl-details class="dispatch-events-overflow">
               <span slot="summary" class="dispatch-events-overflow-summary"
                 >${`+${hidden.length} more`}</span
               >
               <div class="dispatch-events-overflow-content">
                 ${hidden.map(_dispatchBadgeView)}
               </div>
-            </sl-details>
-          `
-          : nothing
-      }
-    </div>
-  `;
+            </sl-details>`
+            : nothing
+        }`;
+  return html`<span
+    class="dispatch-events-section"
+    data-dispatch-section="${sectionKey}"
+    ><span class="meta-label">${label}</span>${body}</span
+  >`;
 }
 
 function _dispatchEventsRowsView(iter) {
@@ -486,26 +495,20 @@ function _dispatchEventsRowsView(iter) {
     const s = ev.section || 'subagents';
     if (buckets[s]) buckets[s].push(ev);
   }
+  // Skip the row entirely on in-progress iterations with no events yet
+  // so empty placeholders don't flicker into view before the first hook
+  // fires. Once the iteration completes (or any dispatch lands), the
+  // row is always shown with both sections present — empty sections
+  // render a muted "(none)" inline rather than disappearing.
   const anyEvents = buckets.subagents.length > 0 || buckets.skills.length > 0;
-  // Empty-state for completed iterations only: rendering a muted line on
-  // every in-progress iteration would flicker as hooks fire mid-run.
-  if (!anyEvents) {
-    if (iter.status === 'completed' || iter.completed_at) {
-      return html`
-        <div class="iteration-tags-row dispatch-events-row">
-          <span class="meta-label">Dispatch:</span>
-          <span class="meta-value-muted dispatch-events-empty">
-            No subagent or skill activity in this iteration
-          </span>
-        </div>
-      `;
-    }
-    return nothing;
-  }
+  const iterDone = iter.status === 'completed' || iter.completed_at;
+  if (!anyEvents && !iterDone) return nothing;
   return html`
-    ${_DISPATCH_SECTIONS.map(({ section, label }) =>
-      _dispatchSectionRowView(label, section, buckets[section]),
-    )}
+    <div class="iteration-tags-row dispatch-events-row">
+      ${_DISPATCH_SECTIONS.map(({ section, label }) =>
+        _dispatchSectionInlineView(label, section, buckets[section]),
+      )}
+    </div>
   `;
 }
 
