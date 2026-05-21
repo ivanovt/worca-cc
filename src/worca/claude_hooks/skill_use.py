@@ -21,8 +21,23 @@ except ImportError:
 
 
 def _extract_skill_name(tool_input: dict) -> str:
-    """Extract skill name from tool_input, checking skill_name then name."""
-    return tool_input.get("skill_name") or tool_input.get("name") or ""
+    """Extract skill name from a PreToolUse Skill payload.
+
+    Claude Code 2.1.x sends ``tool_input.skill`` (with optional ``args``)
+    — this is the only field observed in production. The ``skill_name``
+    and ``name`` entries were defensive guesses from the W-054 plan
+    (since the payload schema wasn't formally documented at design time);
+    they're kept as fallbacks so the hook stays robust if Claude Code
+    ever renames the field or older/pre-2.1.x builds use a different
+    name. Returns "" when none are present, which the caller treats as
+    fail-closed for governed agents.
+    """
+    return (
+        tool_input.get("skill")
+        or tool_input.get("skill_name")
+        or tool_input.get("name")
+        or ""
+    )
 
 
 def main():

@@ -59,15 +59,28 @@ def test_role_bare_hyphenated_name_passes_through():
 # ── _extract_skill_name ────────────────────────────────────────────
 
 
+def test_extract_skill_name_from_skill_field():
+    """Claude Code 2.1.x payload — observed live."""
+    assert _extract_skill_name({"skill": "ascii-banner", "args": "CALC calc.js"}) == "ascii-banner"
+
+
 def test_extract_skill_name_from_skill_name_field():
+    """Defensive fallback — pre-2.1.x or future renames."""
     assert _extract_skill_name({"skill_name": "worca-install"}) == "worca-install"
 
 
 def test_extract_skill_name_from_name_field():
+    """Defensive fallback — pre-2.1.x or future renames."""
     assert _extract_skill_name({"name": "review"}) == "review"
 
 
+def test_extract_skill_name_prefers_skill_over_others():
+    """When multiple fields are present, the verified 2.1.x key wins."""
+    assert _extract_skill_name({"skill": "a", "skill_name": "b", "name": "c"}) == "a"
+
+
 def test_extract_skill_name_prefers_skill_name_over_name():
+    """Fallback ordering: skill_name preferred over name."""
     assert _extract_skill_name({"skill_name": "a", "name": "b"}) == "a"
 
 
@@ -200,6 +213,25 @@ def test_main_exits_0_when_allowed():
     })
     code = _run_skill_main(
         {"skill_name": "my-skill"},
+        env_agent="implement-implementer-iter-1",
+        settings_override=cfg,
+    )
+    assert code == 0
+
+
+def test_main_exits_0_with_claude_code_skill_payload():
+    """End-to-end: Claude Code 2.1.x sends `tool_input.skill` — the hook
+    must extract it and resolve allow/deny correctly. Regression guard
+    against the original W-054 ship where the extractor only checked
+    `skill_name`/`name` and fail-closed-blocked every real Skill call.
+    """
+    cfg = _skills_settings({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    code = _run_skill_main(
+        {"skill": "ascii-banner", "args": "CALC calc.js"},
         env_agent="implement-implementer-iter-1",
         settings_override=cfg,
     )
