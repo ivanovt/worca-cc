@@ -69,6 +69,41 @@ cd worca-ui && npm install && npm run build && cd -
 After editing `src/worca/`, run `worca init --upgrade` to refresh `.claude/worca/`.
 Tests import from the package directly (`from worca.xxx import yyy`), so they use live source via the editable install.
 
+## Developer Tooling
+
+Project-level skills and subagents (under `.claude/skills/` and `.claude/agents/`) automate recurring engineering rituals for worca-cc itself. They are **dev-time tooling** — separate from the runtime pipeline agents in `src/worca/agents/core/` that ship to consumer projects.
+
+### Skills (invoke explicitly)
+
+| Skill | When to use |
+|---|---|
+| `/worca-dev-precommit` | Before every commit. Picks the right subset of ruff / biome / vitest / playwright / npm-pack based on what the branch changed. |
+| `/worca-plan-new` | Filing a new W-NNN feature plan. Allocates the next ID, scaffolds `docs/plans/W-NNN-*.md` from `_TEMPLATE.md`, creates the GitHub issue with correct title/labels/plan-link. |
+| `/worca-issue` | Reading, listing, or filing GitHub issues. Wraps the `--json` workaround and the W-NNN-vs-bug title convention. |
+| `/worca-pr-prep` | Before merging a PR. Verifies CI green, branch rebased, then merges via `gh pr merge --merge` (never local merge). |
+| `/worca-coverage` | Running Python coverage. Wraps `scripts/coverage.py` for `ci`, step-by-step, and baseline comparison. |
+| `/worca-release` | Cutting a stable release (worca-cc, @worca/ui, or both). |
+| `/worca-rc` | Cutting a release candidate. |
+| `/state-action-matrix` | Loading the pipeline state-action spec before touching states/transitions/gating. |
+
+### Subagents (dispatch via Agent tool)
+
+All prefixed `worca-*` to distinguish them from pipeline agents (planner, coordinator, etc.). Dispatch them when the trigger condition fires — they run in isolated context and return a structured verdict.
+
+| Subagent | Dispatch when |
+|---|---|
+| `worca-plan-template-reviewer` | After drafting or substantially editing a plan file in `docs/plans/`. Audits against `_TEMPLATE.md` conventions. |
+| `worca-dispatch-governance-reviewer` | After editing `worca.governance.dispatch` in settings.json, any agent prompt in `src/worca/agents/core/`, or hook code in `src/worca/claude_hooks/`. |
+| `worca-ui-design-reviewer` | After UI changes — checks badge color compliance, the lit-html template binding gotcha, and the npm `files` allowlist. |
+| `worca-stage-key-reviewer` | After changes to code that reads `status.json` or compares `stages.*` — catches the silent `'guardian'` (agent) vs `'pr'` (stage key) confusion. |
+| `worca-release-preflight` | Right before `/worca-release` or `/worca-rc`. Audits version-file parity, CI status, MIGRATION.md coverage. |
+
+### Why the prefix
+
+Skills and subagents in this repo split into two scopes:
+- **Pipeline agents** (`src/worca/agents/core/*.md`) — the product. Unprefixed names (`planner`, `coordinator`, etc.) ship to consumer projects via `worca init`.
+- **Dev-time tooling** (`.claude/skills/worca-*`, `.claude/agents/worca-*`) — only useful in the worca-cc repo itself. The `worca-` prefix signals scope and groups them in skill/agent lists.
+
 ## Configuration
 
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
@@ -147,6 +182,8 @@ For a human-readable view, post-process with `--jq` (e.g. `--jq '"#\(.number) \(
 
 The guardian agent uses this when creating PRs. Adapt this section for GitLab (`glab`), Bitbucket, or other hosting platforms.
 
+> Use `/worca-issue` to read/list/create issues — it bakes in the `--json` workaround, the W-NNN-vs-bug title rule, and the required label set. Use `/worca-pr-prep` to run the pre-merge gate.
+
 ## Development Approach
 
 This project follows **TDD (Test-Driven Development)**:
@@ -165,6 +202,8 @@ cd worca-ui && npm run lint:fix                   # Auto-fix UI lint issues
 ```
 
 **CI enforces biome formatting strictly.** Always run `cd worca-ui && npm run lint` before committing any worca-ui changes (JS, server, app). Use `npm run lint:fix` to auto-fix formatting issues. Common biome rules: long ternaries must be split across lines, trailing commas required.
+
+> Use `/worca-dev-precommit` to bundle ruff + biome + vitest + (conditional) playwright + npm-pack check — it picks the right subset based on what changed.
 
 ## Testing
 
@@ -216,6 +255,8 @@ python scripts/coverage.py compare --baseline=before.json --current=after.json
 The integration suite uses subprocess-level coverage — each pipeline run is wrapped with `coverage run --parallel-mode` by `tests/integration/conftest.py:_wrap_with_coverage`, producing one fragment per pipeline subprocess. Setting `WORCA_COVERAGE=1` activates this AND auto-disables `pytest-cov` for the run (via the `pytest_load_initial_conftests` hook in `tests/conftest.py`) — without that, pytest-cov's session_finish hook silently consumes the fragments before `coverage combine` can merge them. Without `WORCA_COVERAGE=1`, the standard `pytest --cov=worca` flow stays available for unit-test coverage.
 
 The raw `coverage` CLI still works for ad-hoc use (`coverage combine && coverage report`); the runner is just a thin orchestrator that handles the cleanup-and-combine sequencing and exposes a JSON shape stable enough for downstream tooling.
+
+> Use `/worca-coverage` for the common flows — it wraps `scripts/coverage.py` with the right env vars and surfaces the comparison workflow.
 
 ## Governance
 
@@ -337,6 +378,8 @@ cd worca-ui && npm pack --dry-run | grep <new-path>
 ```
 
 If the new file is absent, extend the `files` glob (e.g. `server/**/*.js` rather than `server/*.js`) and re-check.
+
+> Dispatch `worca-ui-design-reviewer` after non-trivial UI changes — it audits badge color compliance, the lit-html template binding gotcha, and the npm `files` allowlist in one pass.
 
 ### Running the UI
 
@@ -560,6 +603,8 @@ pip install --upgrade worca-cc==X.Y.Z
 npm install -g @worca/ui@X.Y.Z
 ```
 
+> Dispatch `worca-release-preflight` right before `/worca-release` or `/worca-rc` — it audits version-file parity, master/CI state, and MIGRATION.md coverage so a release isn't tagged on a red branch or with a stale version.
+
 ## Plans & Roadmap
 
 - Feature tracking lives in **GitHub Issues**: https://github.com/SinishaDjukic/worca-cc/issues
@@ -601,3 +646,5 @@ Issues must follow this structure so the pipeline can auto-detect plan files whe
 - If no plan link is present, the pipeline runs the Planner to generate one
 - Plan files use the naming convention `W-NNN-short-description.md` in `docs/plans/`
 - When asked to write a new plan, follow the structure and conventions in [`docs/plans/_TEMPLATE.md`](./docs/plans/_TEMPLATE.md)
+
+> Use `/worca-plan-new` to file a new W-NNN — it allocates the ID, scaffolds the plan file, and creates the linked issue with the right structure. After drafting the plan, dispatch `worca-plan-template-reviewer` to audit it against `_TEMPLATE.md` before pipeline launch.
