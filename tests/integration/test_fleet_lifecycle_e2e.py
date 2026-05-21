@@ -481,10 +481,13 @@ def test_fleet_pause_resume(tmp_path):
         m = read_fleet_manifest(fleet_id)
         assert m["status"] == "paused", f"manifest not paused: {m['status']!r}"
 
-        for child, (_, wt) in zip(children, cleanup_pairs):
-            ctl = Path(wt) / ".worca" / "runs" / child["run_id"] / "control.json"
-            assert ctl.exists(), f"missing control.json for {child['run_id']}"
-            assert json.loads(ctl.read_text())["action"] == "pause"
+        # NOTE: do not assert control.json exists here. The live child consumes
+        # and deletes it at the top of its next iteration (runner's
+        # _check_control_file), so checking the file is a consume-delete race.
+        # The pause is verified below by each child reaching pipeline_status
+        # "paused"; the control file's worktree targeting + "pause" action are
+        # covered deterministically (no live consumer) by
+        # tests/test_fleet_lifecycle.py::TestPauseFleet.
 
         # Sticky-paused invariant: poll must NOT flip back to running.
         derived = poll_and_update_fleet_manifest(fleet_id)
