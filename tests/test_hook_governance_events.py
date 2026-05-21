@@ -295,7 +295,8 @@ class TestSubagentStartDispatchBlockedEvent:
         e = events[0]
         assert e["event_type"] == "pipeline.hook.dispatch_blocked"
         assert e["payload"]["agent"] == "coordinator"
-        assert e["payload"]["subagent_type"] == "general-purpose"
+        assert e["payload"]["section"] == "subagents"
+        assert e["payload"]["candidate"] == "general-purpose"
         assert "reason" in e["payload"]
 
     def test_dispatch_blocked_event_envelope_fields(self, tmp_path):
@@ -337,8 +338,14 @@ class TestSubagentStartDispatchBlockedEvent:
         assert code == 0
         assert not os.path.exists(events_file)
 
-    def test_dispatch_blocked_payload_reason_names_child_agent(self, tmp_path):
-        """Reason string in payload mentions the blocked child agent."""
+    def test_dispatch_blocked_payload_uses_canonical_reason(self, tmp_path):
+        """`reason` in payload is the canonical rule path, matching
+        skill_use.py's emissions (`always_disallowed`, `default_denied`,
+        `not_in_allow_list`, `lockdown`, `config_unreadable`). The blocked
+        child name lives in `candidate` — keeping `reason` machine-readable
+        lets the UI tooltip and downstream consumers match against the
+        same vocabulary across all dispatch sections.
+        """
         events_file = str(tmp_path / "events.jsonl")
         os.environ["WORCA_EVENTS_PATH"] = events_file
         os.environ["WORCA_RUN_ID"] = "run-001"
@@ -348,7 +355,9 @@ class TestSubagentStartDispatchBlockedEvent:
 
         events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         e = events[0]
-        assert "general-purpose" in e["payload"]["reason"]
+        # `candidate` carries the child name; `reason` is the rule path.
+        assert e["payload"]["candidate"] == "general-purpose"
+        assert e["payload"]["reason"] == "always_disallowed"
 
     def test_emit_noop_when_events_path_missing(self):
         """No crash when WORCA_EVENTS_PATH is not set — dispatch still blocked."""
@@ -402,7 +411,9 @@ class TestSubagentStartDispatchAllowedEvent:
         e = events[0]
         assert e["event_type"] == "pipeline.hook.dispatch_allowed"
         assert e["payload"]["agent"] == "implementer"
-        assert e["payload"]["subagent_type"] == "Explore"
+        assert e["payload"]["section"] == "subagents"
+        assert e["payload"]["candidate"] == "Explore"
+        assert e["payload"]["via"] in ("wildcard", "explicit")
 
     def test_dispatch_allowed_event_envelope_fields(self, tmp_path):
         events_file = str(tmp_path / "events.jsonl")
@@ -452,3 +463,52 @@ class TestSubagentStartDispatchAllowedEvent:
         code = self._call_main(data, agent="implementer")
 
         assert code == 0  # Still allowed, emit silently skipped
+
+
+# ---------------------------------------------------------------------------
+# subagent_start — fail-closed on malformed settings.json
+# ---------------------------------------------------------------------------
+
+
+class TestSubagentStartConfigUnreadable:
+    """When settings.json is malformed mid-run, the hook MUST exit 2 (block).
+
+    Bare json.JSONDecodeError would propagate and crash the hook with
+    exit code 1 — Claude Code treats that as a non-blocking error, so the
+    subagent dispatch would proceed, silently bypassing governance.
+    """
+
+    def setup_method(self):
+        for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
+            os.environ.pop(k, None)
+
+    def teardown_method(self):
+        for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
+            os.environ.pop(k, None)
+
+    def test_subagent_start_exits_2_on_config_unreadable(self, tmp_path):
+        events_file = str(tmp_path / "events.jsonl")
+        os.environ["WORCA_EVENTS_PATH"] = events_file
+        os.environ["WORCA_RUN_ID"] = "run-cu"
+        os.environ["WORCA_AGENT"] = "implement-implementer-iter-1"
+
+        from worca.hooks.tracking import ConfigUnreadable
+        import worca.claude_hooks.subagent_start as m
+        importlib.reload(m)
+
+        def raise_unreadable(*args, **kwargs):
+            raise ConfigUnreadable("/fake/path/settings.json: invalid JSON")
+
+        data = json.dumps({"agent_type": "Explore"})
+        with patch("sys.stdin", io.StringIO(data)), \
+             patch.object(m, "check_allowed", side_effect=raise_unreadable):
+            with pytest.raises(SystemExit) as exc:
+                m.main()
+
+        assert exc.value.code == 2, "fail-closed: exit 2 (block), not 1 (crash → fail-open)"
+        events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
+        assert len(events) == 1
+        e = events[0]
+        assert e["event_type"] == "pipeline.hook.dispatch_blocked"
+        assert e["payload"]["reason"] == "config_unreadable"
+        assert e["payload"]["section"] == "subagents"

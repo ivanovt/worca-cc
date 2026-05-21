@@ -2,19 +2,24 @@
 
 Covers:
 - governance.dispatch → governance.subagent_dispatch migration (§5.4)
+- governance.subagent_dispatch → governance.dispatch.subagents (W-054 §9)
 - Global key extraction to ~/.worca/settings.json (§11b step 1)
 - Inert milestone key stripping (§11b step 2)
 """
 
+import copy
 import json
 import os
 from pathlib import Path
 
 from worca.cli.init import (
+    _deep_merge,
+    _migrate_dispatch_governance,
     _migrate_global_keys_to_preferences,
     _migrate_settings_paths,
     _strip_inert_milestone_keys,
 )
+from worca.hooks.tracking import _DISPATCH_DEFAULTS
 
 _FIXTURE_PATH = Path(__file__).parent / "fixtures" / "migration_strip_io.json"
 
@@ -44,7 +49,7 @@ _NEW_DEFAULTS = {
 
 
 def test_migrate_dispatch_to_subagent_dispatch():
-    """governance.dispatch key is renamed to governance.subagent_dispatch."""
+    """governance.dispatch key is migrated through to governance.dispatch.subagents (W-038 + W-054)."""
     settings = {
         "worca": {
             "governance": {
@@ -61,13 +66,14 @@ def test_migrate_dispatch_to_subagent_dispatch():
     }
     migrated, changes = _migrate_settings_paths(settings)
     governance = migrated["worca"]["governance"]
-    assert "dispatch" not in governance
-    assert "subagent_dispatch" in governance
-    assert any("dispatch" in c and "subagent_dispatch" in c for c in changes)
+    assert "subagent_dispatch" not in governance
+    assert "subagents" in governance["dispatch"]
+    assert any("dispatch" in c for c in changes)
 
 
-def test_migrate_dispatch_replaces_wrong_values():
-    """Old pipeline-agent values are replaced with subagent-type defaults."""
+def test_migrate_dispatch_preserves_user_values_option_a():
+    """Pre-W-038 flat agent-keyed values are preserved verbatim under
+    dispatch.subagents.per_agent_allow (post-review #3 — Option A)."""
     settings = {
         "worca": {
             "governance": {
@@ -82,8 +88,15 @@ def test_migrate_dispatch_replaces_wrong_values():
         }
     }
     migrated, _changes = _migrate_settings_paths(settings)
-    subagent_dispatch = migrated["worca"]["governance"]["subagent_dispatch"]
-    assert subagent_dispatch == _NEW_DEFAULTS
+    per_agent = migrated["worca"]["governance"]["dispatch"]["subagents"]["per_agent_allow"]
+    # User-supplied entries land verbatim — including the unusual coordinator: ["implementer"].
+    assert per_agent["coordinator"] == ["implementer"]
+    # Empty entries are kept too — clear that they exist, even if runtime
+    # falls through to _defaults (post-review #2). Untouched at the storage layer.
+    assert per_agent["planner"] == []
+    assert per_agent["tester"] == []
+    # _defaults is seeded by the migration even though the user didn't have one.
+    assert per_agent["_defaults"] == _DISPATCH_DEFAULTS["subagents"]["per_agent_allow"]["_defaults"]
 
 
 def test_migrate_preserves_other_governance_keys():
@@ -108,8 +121,8 @@ def test_migrate_preserves_other_governance_keys():
     assert governance["test_gate_strikes"] == 2
 
 
-def test_migrate_no_op_when_subagent_dispatch_exists():
-    """Already-migrated settings (subagent_dispatch present) are not modified."""
+def test_migrate_subagent_dispatch_to_nested():
+    """subagent_dispatch is migrated to nested dispatch.subagents (W-054)."""
     existing = {
         "planner": ["Explore"],
         "implementer": ["Explore", "feature-dev:code-reviewer"],
@@ -117,16 +130,17 @@ def test_migrate_no_op_when_subagent_dispatch_exists():
     settings = {
         "worca": {
             "governance": {
-                "subagent_dispatch": existing,
+                "subagent_dispatch": copy.deepcopy(existing),
             }
         }
     }
     migrated, changes = _migrate_settings_paths(settings)
     governance = migrated["worca"]["governance"]
-    # subagent_dispatch preserved as-is
-    assert governance["subagent_dispatch"] == existing
-    # no dispatch-rename change recorded
-    assert not any("dispatch" in c and "subagent_dispatch" in c for c in changes)
+    assert "subagent_dispatch" not in governance
+    per_agent = governance["dispatch"]["subagents"]["per_agent_allow"]
+    assert per_agent["planner"] == existing["planner"]
+    assert per_agent["implementer"] == existing["implementer"]
+    assert any("W-054" in c for c in changes)
 
 
 def test_migrate_no_op_when_no_dispatch_key():
@@ -148,8 +162,8 @@ def test_migrate_no_op_when_no_dispatch_key():
     assert not any("dispatch" in c for c in changes)
 
 
-def test_migrate_preserves_old_dispatch_values_at_legacy():
-    """Non-trivial old dispatch config is stashed at _dispatch_legacy for review."""
+def test_migrate_old_dispatch_legacy_dropped_after_full_migration():
+    """W-038 stashes _dispatch_legacy, W-054 drops it."""
     old_values = {
         "planner": [],
         "coordinator": ["implementer"],
@@ -158,15 +172,13 @@ def test_migrate_preserves_old_dispatch_values_at_legacy():
         "guardian": [],
     }
     settings = {"worca": {"governance": {"dispatch": old_values}}}
-    migrated, changes = _migrate_settings_paths(settings)
+    migrated, _changes = _migrate_settings_paths(settings)
     governance = migrated["worca"]["governance"]
-    assert governance["_dispatch_legacy"] == old_values
-    # Change message mentions preservation so the user knows what to look for.
-    assert any("_dispatch_legacy" in c for c in changes)
+    assert "_dispatch_legacy" not in governance
 
 
-def test_migrate_omits_legacy_when_old_dispatch_empty():
-    """Empty old dispatch config is not preserved — keeps settings.json tidy."""
+def test_migrate_empty_dispatch_gets_nested_shape():
+    """Empty old dispatch config → nested W-054 shape with defaults."""
     settings = {
         "worca": {
             "governance": {
@@ -178,26 +190,29 @@ def test_migrate_omits_legacy_when_old_dispatch_empty():
             }
         }
     }
-    migrated, changes = _migrate_settings_paths(settings)
+    migrated, _changes = _migrate_settings_paths(settings)
     governance = migrated["worca"]["governance"]
     assert "_dispatch_legacy" not in governance
-    assert "subagent_dispatch" in governance
-    # No mention of preservation in the change message.
-    assert not any("_dispatch_legacy" in c for c in changes)
+    assert "subagent_dispatch" not in governance
+    assert "subagents" in governance["dispatch"]
 
 
-def test_migrate_omits_legacy_when_old_dispatch_is_empty_dict():
-    """dispatch: {} is treated the same as all-empty-values — no legacy stash."""
+def test_migrate_empty_dict_dispatch_is_noop():
+    """dispatch: {} has no legacy keys — migration is a no-op (post-review #3).
+    Defaults are still applied at read time via _load_dispatch_section."""
     settings = {"worca": {"governance": {"dispatch": {}}}}
     migrated, changes = _migrate_settings_paths(settings)
     governance = migrated["worca"]["governance"]
     assert "_dispatch_legacy" not in governance
-    assert "subagent_dispatch" in governance
-    assert not any("_dispatch_legacy" in c for c in changes)
+    assert "subagent_dispatch" not in governance
+    # No flat agent keys → migration leaves dispatch alone.
+    assert governance["dispatch"] == {}
+    # And nothing dispatch-related got logged.
+    assert not any("dispatch" in c.lower() for c in changes)
 
 
-def test_migrate_normalizes_lowercase_explore_to_capitalized():
-    """Lowercase "explore" from early W-038 installs is renamed to "Explore"."""
+def test_migrate_normalizes_lowercase_explore_then_nests():
+    """Lowercase "explore" is normalized (W-038 casing fix) then nested (W-054)."""
     settings = {
         "worca": {
             "governance": {
@@ -210,10 +225,10 @@ def test_migrate_normalizes_lowercase_explore_to_capitalized():
         }
     }
     migrated, changes = _migrate_settings_paths(settings)
-    sd = migrated["worca"]["governance"]["subagent_dispatch"]
-    assert sd["planner"] == ["Explore"]
-    assert sd["implementer"] == ["Explore", "feature-dev:code-reviewer"]
-    assert sd["coordinator"] == []
+    per_agent = migrated["worca"]["governance"]["dispatch"]["subagents"]["per_agent_allow"]
+    assert per_agent["planner"] == ["Explore"]
+    assert per_agent["implementer"] == ["Explore", "feature-dev:code-reviewer"]
+    assert per_agent["coordinator"] == []
     assert any('"explore" -> "Explore"' in c for c in changes)
 
 
@@ -231,7 +246,7 @@ def test_migrate_normalization_no_op_when_already_capitalized():
 
 
 def test_migrate_normalization_preserves_other_values():
-    """Non-explore entries (plugin subagents, custom names) are left alone."""
+    """Non-explore entries (plugin subagents, custom names) are left alone through the full migration."""
     settings = {
         "worca": {
             "governance": {
@@ -242,11 +257,308 @@ def test_migrate_normalization_preserves_other_values():
         }
     }
     migrated, _changes = _migrate_settings_paths(settings)
-    assert migrated["worca"]["governance"]["subagent_dispatch"]["planner"] == [
+    per_agent = migrated["worca"]["governance"]["dispatch"]["subagents"]["per_agent_allow"]
+    assert per_agent["planner"] == [
         "Explore",
         "feature-dev:code-reviewer",
         "custom",
     ]
+
+
+# ── W-054 §9: _migrate_dispatch_governance ───────────────────────────
+
+
+class TestMigrateDispatchGovernance:
+    """governance.subagent_dispatch → governance.dispatch.subagents (W-054)."""
+
+    def test_legacy_shape_migrated_to_nested_dispatch(self):
+        """subagent_dispatch per-agent values land under dispatch.subagents.per_agent_allow."""
+        governance_cfg = {
+            "subagent_dispatch": {
+                "planner": ["Explore"],
+                "coordinator": [],
+                "implementer": ["Explore", "feature-dev:code-reviewer"],
+                "tester": ["Explore"],
+                "guardian": ["Explore"],
+                "reviewer": ["Explore"],
+                "plan_reviewer": ["Explore"],
+                "learner": ["Explore"],
+            },
+            "guards": {"block_rm_rf": True},
+        }
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        assert "subagent_dispatch" not in governance_cfg
+        per_agent = governance_cfg["dispatch"]["subagents"]["per_agent_allow"]
+        assert per_agent["planner"] == ["Explore"]
+        assert per_agent["implementer"] == ["Explore", "feature-dev:code-reviewer"]
+        assert per_agent["coordinator"] == []
+        assert governance_cfg["guards"] == {"block_rm_rf": True}
+        assert len(changes) == 1
+
+    def test_defaults_seeded_from_dispatch_defaults(self):
+        """_defaults is seeded from _DISPATCH_DEFAULTS — fixes §1.2 workspace_planner defect."""
+        governance_cfg = {
+            "subagent_dispatch": {
+                "planner": ["Explore"],
+                "implementer": ["Explore"],
+            }
+        }
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        per_agent = governance_cfg["dispatch"]["subagents"]["per_agent_allow"]
+        assert "_defaults" in per_agent
+        assert per_agent["_defaults"] == _DISPATCH_DEFAULTS["subagents"]["per_agent_allow"]["_defaults"]
+
+    def test_existing_defaults_not_overwritten(self):
+        """If _defaults already exists (e.g. partially migrated), preserve it."""
+        governance_cfg = {
+            "subagent_dispatch": {
+                "_defaults": ["Explore", "feature-dev:code-reviewer"],
+                "planner": ["Explore"],
+            }
+        }
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        per_agent = governance_cfg["dispatch"]["subagents"]["per_agent_allow"]
+        assert per_agent["_defaults"] == ["Explore", "feature-dev:code-reviewer"]
+
+    def test_dispatch_legacy_dropped(self):
+        """_dispatch_legacy stash from W-038 migration is cleaned up."""
+        governance_cfg = {
+            "subagent_dispatch": {"planner": ["Explore"]},
+            "_dispatch_legacy": {"coordinator": ["implementer"]},
+        }
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        assert "_dispatch_legacy" not in governance_cfg
+
+    def test_tools_section_added_with_defaults(self):
+        """tools section is seeded from _DISPATCH_DEFAULTS."""
+        governance_cfg = {"subagent_dispatch": {"planner": ["Explore"]}}
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        tools = governance_cfg["dispatch"]["tools"]
+        assert tools["always_disallowed"] == _DISPATCH_DEFAULTS["tools"]["always_disallowed"]
+        assert tools["default_denied"] == _DISPATCH_DEFAULTS["tools"]["default_denied"]
+        assert tools["per_agent_allow"] == _DISPATCH_DEFAULTS["tools"]["per_agent_allow"]
+
+    def test_skills_section_added_with_defaults(self):
+        """skills section is seeded from _DISPATCH_DEFAULTS."""
+        governance_cfg = {"subagent_dispatch": {"planner": ["Explore"]}}
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        skills = governance_cfg["dispatch"]["skills"]
+        assert skills["always_disallowed"] == _DISPATCH_DEFAULTS["skills"]["always_disallowed"]
+        assert skills["default_denied"] == _DISPATCH_DEFAULTS["skills"]["default_denied"]
+        assert skills["per_agent_allow"] == _DISPATCH_DEFAULTS["skills"]["per_agent_allow"]
+
+    def test_subagents_always_disallowed_and_default_denied_seeded(self):
+        """subagents section gets always_disallowed + default_denied from defaults."""
+        governance_cfg = {"subagent_dispatch": {"planner": ["Explore"]}}
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        subagents = governance_cfg["dispatch"]["subagents"]
+        assert subagents["always_disallowed"] == _DISPATCH_DEFAULTS["subagents"]["always_disallowed"]
+        assert subagents["default_denied"] == _DISPATCH_DEFAULTS["subagents"]["default_denied"]
+
+    def test_idempotent_rerun_produces_no_changes(self):
+        """Running migration twice doesn't double-apply or generate spurious changes."""
+        governance_cfg = {
+            "subagent_dispatch": {
+                "planner": ["Explore"],
+                "implementer": ["Explore", "feature-dev:code-reviewer"],
+            }
+        }
+        changes1 = []
+        _migrate_dispatch_governance(governance_cfg, changes1)
+        assert len(changes1) == 1
+
+        snapshot = copy.deepcopy(governance_cfg)
+        changes2 = []
+        _migrate_dispatch_governance(governance_cfg, changes2)
+        assert changes2 == []
+        assert governance_cfg == snapshot
+
+    def test_noop_when_no_subagent_dispatch(self):
+        """Settings without subagent_dispatch pass through unchanged."""
+        governance_cfg = {"guards": {"block_rm_rf": True}}
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        assert changes == []
+        assert governance_cfg == {"guards": {"block_rm_rf": True}}
+
+    def test_tools_skills_not_overwritten_if_already_present(self):
+        """Pre-existing tools/skills sections (partial migration) are preserved."""
+        custom_tools = {
+            "always_disallowed": ["EnterPlanMode"],
+            "default_denied": ["Bash"],
+            "per_agent_allow": {"_defaults": ["*"]},
+        }
+        governance_cfg = {
+            "subagent_dispatch": {"planner": ["Explore"]},
+            "dispatch": {"tools": copy.deepcopy(custom_tools)},
+        }
+        changes = []
+        _migrate_dispatch_governance(governance_cfg, changes)
+
+        assert governance_cfg["dispatch"]["tools"] == custom_tools
+
+    def test_wired_into_migrate_settings_paths(self):
+        """_migrate_settings_paths calls _migrate_dispatch_governance."""
+        settings = {
+            "worca": {
+                "governance": {
+                    "subagent_dispatch": {
+                        "planner": ["Explore"],
+                        "implementer": ["Explore"],
+                    }
+                }
+            }
+        }
+        migrated, changes = _migrate_settings_paths(settings)
+        governance = migrated["worca"]["governance"]
+        assert "subagent_dispatch" not in governance
+        assert "dispatch" in governance
+        assert "subagents" in governance["dispatch"]
+        assert any("W-054" in c for c in changes)
+
+    def test_migrate_then_deep_merge_with_template_no_cycle(self):
+        """Migration → deep-merge with template → re-migration must not re-add stale keys.
+
+        Regression: if the bundled settings.json template still contains
+        subagent_dispatch, _deep_merge re-introduces it after migration removes
+        it — causing a destructive cycle on the next --upgrade where
+        per_agent.update(old) overwrites user customizations.
+        """
+        user_settings = {
+            "worca": {
+                "governance": {
+                    "subagent_dispatch": {
+                        "planner": ["Explore"],
+                        "implementer": ["Explore", "feature-dev:code-reviewer"],
+                        "coordinator": [],
+                    }
+                }
+            }
+        }
+        migrated, _ = _migrate_settings_paths(user_settings)
+        assert "subagent_dispatch" not in migrated["worca"]["governance"]
+        user_custom = migrated["worca"]["governance"]["dispatch"]["subagents"]["per_agent_allow"]["implementer"]
+        assert user_custom == ["Explore", "feature-dev:code-reviewer"]
+
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path) as f:
+            template = json.load(f)
+
+        merged = _deep_merge(migrated, template)
+        assert "subagent_dispatch" not in merged["worca"]["governance"], (
+            "deep-merge with template must not re-add stale subagent_dispatch key"
+        )
+
+        merged2, changes2 = _migrate_settings_paths(merged)
+        assert "subagent_dispatch" not in merged2["worca"]["governance"]
+        assert not any("W-054" in c for c in changes2), (
+            "re-migration should be a no-op — no dispatch changes recorded"
+        )
+        impl = merged2["worca"]["governance"]["dispatch"]["subagents"]["per_agent_allow"]["implementer"]
+        assert impl == ["Explore", "feature-dev:code-reviewer"], (
+            "user customization must survive the migrate→merge→re-migrate cycle"
+        )
+
+
+class TestSkillHookRegistration:
+    """W-054: hooks.PreToolUse[matcher=Skill] must be auto-wired on upgrade.
+
+    Without explicit injection, _deep_merge treats the existing PreToolUse
+    list as a scalar and silently drops the template's Skill matcher —
+    leaving skill_use.py dead and governance.dispatch.skills unenforced.
+    """
+
+    def _skill_hook_entries(self, settings):
+        entries = settings.get("hooks", {}).get("PreToolUse", [])
+        return [
+            e for e in entries
+            if any(
+                h.get("command", "").endswith("skill_use.py")
+                or h.get("command", "").endswith('skill_use.py"')
+                for h in e.get("hooks", [])
+            )
+        ]
+
+    def test_injected_when_pretooluse_has_other_matchers(self):
+        """Existing Bash|Write|Edit matcher must not block Skill injection."""
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash|Write|Edit",
+                        "hooks": [{"type": "command", "command": "python3 .../pre_tool_use.py"}],
+                    }
+                ]
+            }
+        }
+        migrated, changes = _migrate_settings_paths(settings)
+        skill_entries = self._skill_hook_entries(migrated)
+        assert len(skill_entries) == 1
+        assert skill_entries[0]["matcher"] == "Skill"
+        assert any("PreToolUse[Skill]" in c for c in changes)
+
+    def test_injected_when_pretooluse_missing(self):
+        """Fresh project with no PreToolUse array still gets the Skill hook."""
+        settings = {}
+        migrated, _changes = _migrate_settings_paths(settings)
+        skill_entries = self._skill_hook_entries(migrated)
+        assert len(skill_entries) == 1
+        assert skill_entries[0]["matcher"] == "Skill"
+
+    def test_idempotent_when_already_present(self):
+        """Re-running upgrade must not duplicate the Skill matcher."""
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash|Write|Edit",
+                        "hooks": [{"type": "command", "command": "python3 .../pre_tool_use.py"}],
+                    }
+                ]
+            }
+        }
+        first, first_changes = _migrate_settings_paths(settings)
+        second, second_changes = _migrate_settings_paths(first)
+        skill_entries = self._skill_hook_entries(second)
+        assert len(skill_entries) == 1
+        assert any("PreToolUse[Skill]" in c for c in first_changes)
+        assert not any("PreToolUse[Skill]" in c for c in second_changes), (
+            "second upgrade must be a no-op for Skill hook"
+        )
+
+    def test_existing_skill_matcher_preserved(self):
+        """User-customized Skill matcher (e.g. different command path) is untouched."""
+        custom_command = "python3 /custom/path/to/skill_use.py"
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Skill",
+                        "hooks": [{"type": "command", "command": custom_command}],
+                    }
+                ]
+            }
+        }
+        migrated, changes = _migrate_settings_paths(settings)
+        skill_entries = self._skill_hook_entries(migrated)
+        assert len(skill_entries) == 1
+        assert skill_entries[0]["hooks"][0]["command"] == custom_command
+        assert not any("PreToolUse[Skill]" in c for c in changes)
 
 
 # ── §11b: _migrate_global_keys_to_preferences ──────────────────────

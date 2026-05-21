@@ -26,6 +26,8 @@
     "server/**/*.js",
     "server/schemas/keys.json",
     "server/reserved-env-keys.json",
+    "server/known-tools.json",
+    "server/known-skills.json",
     "!server/**/*.test.js",
     "!server/test/**",
     "!server/**/test/**",

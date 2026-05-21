@@ -329,6 +329,33 @@ describe('POST /api/settings', () => {
       restart_planning: 1,
     });
   });
+
+  it('migrates subagent_dispatch to dispatch.subagents on save', async () => {
+    const res = await post({
+      worca: {
+        governance: {
+          subagent_dispatch: {
+            planner: [],
+            implementer: ['Explore', 'feature-dev:code-reviewer'],
+          },
+        },
+      },
+    });
+    expect(res.status).toBe(200);
+    const saved = JSON.parse(readFileSync(settingsPath, 'utf8'));
+    expect(saved.worca.governance.subagent_dispatch).toBeUndefined();
+    expect(
+      saved.worca.governance.dispatch.subagents.per_agent_allow.planner,
+    ).toEqual([]);
+    expect(
+      saved.worca.governance.dispatch.subagents.per_agent_allow.implementer,
+    ).toEqual(['Explore', 'feature-dev:code-reviewer']);
+    expect(
+      saved.worca.governance.dispatch.subagents.per_agent_allow._defaults,
+    ).toBeDefined();
+    expect(saved.worca.governance.dispatch.tools).toBeDefined();
+    expect(saved.worca.governance.dispatch.skills).toBeDefined();
+  });
 });
 
 describe('POST /api/settings - validation rejections', () => {

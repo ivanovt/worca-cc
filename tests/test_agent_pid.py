@@ -22,7 +22,7 @@ def test_agent_pid_written_when_log_path_provided(tmp_path):
     log_path = str(tmp_path / "agent.log")
     mock_proc = _make_mock_popen({"ok": True}, pid=42)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
-        run_agent("prompt", agent="planner", log_path=log_path)
+        run_agent("prompt", agent="planner", log_path=log_path, settings={})
     pid_path = str(tmp_path / "agent.pid")
     assert not os.path.exists(pid_path), "agent.pid should be cleaned up after run"
 
@@ -46,7 +46,7 @@ def test_agent_pid_contains_correct_pid(tmp_path):
     mock_proc = _make_mock_popen({"ok": True}, pid=9999)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         with patch("builtins.open", side_effect=capture_pid_write):
-            run_agent("prompt", agent="planner", log_path=log_path)
+            run_agent("prompt", agent="planner", log_path=log_path, settings={})
 
     assert "9999" in pid_written, f"agent.pid should contain proc.pid, got {pid_written}"
 
@@ -54,7 +54,7 @@ def test_agent_pid_contains_correct_pid(tmp_path):
 def test_agent_pid_not_written_without_log_path(tmp_path):
     mock_proc = _make_mock_popen({"ok": True}, pid=42)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
-        run_agent("prompt", agent="planner")
+        run_agent("prompt", agent="planner", settings={})
     assert not os.path.exists(tmp_path / "agent.pid")
 
 
@@ -62,7 +62,7 @@ def test_agent_pid_cleaned_up_on_success(tmp_path):
     log_path = str(tmp_path / "agent.log")
     mock_proc = _make_mock_popen({"ok": True}, pid=42)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
-        run_agent("prompt", agent="planner", log_path=log_path)
+        run_agent("prompt", agent="planner", log_path=log_path, settings={})
     pid_path = str(tmp_path / "agent.pid")
     assert not os.path.exists(pid_path), "agent.pid must be removed in finally block"
 
@@ -72,7 +72,7 @@ def test_agent_pid_cleaned_up_on_error(tmp_path):
     mock_proc = _make_mock_popen({"result": "failed"}, returncode=1, pid=42)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", log_path=log_path)
+            run_agent("prompt", agent="planner", log_path=log_path, settings={})
         except RuntimeError:
             pass
     pid_path = str(tmp_path / "agent.pid")

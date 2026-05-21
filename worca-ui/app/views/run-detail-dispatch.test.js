@@ -110,33 +110,44 @@ describe('iteration tags layout', () => {
 
   // --- Subagents row ---
 
-  it('renders dispatch events with Subagents label', () => {
+  it('renders subagent dispatches in a combined Skills/Subagents row', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
+              via: 'explicit',
               count: 1,
             },
           ],
         }),
       ),
     );
+    // Both section labels are always present — empty side becomes "(none)".
     expect(html).toContain('Subagents:');
-    expect(html).toContain('Explore dispatched');
+    expect(html).toContain('Skills:');
+    expect(html).toContain('(none)');
+    // Allowed badge: green (success variant) + check icon before the label.
+    expect(html).toMatch(/Explore<\/sl-badge>/);
+    expect(html).not.toContain('Explore dispatched');
     expect(html).toContain('variant="success"');
+    expect(html).toContain('dispatch-badge-icon');
+    // Tooltip leads with policy verdict so a hover is self-explanatory.
+    expect(html).toMatch(/content="Allowed by project dispatch policy[^"]*"/);
   });
 
-  it('renders blocked dispatch with tooltip', () => {
+  it('renders blocked subagent dispatch with tooltip and full row', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_blocked',
-              subagent_type: 'general-purpose',
+              section: 'subagents',
+              candidate: 'general-purpose',
               reason: 'denylist',
               count: 2,
             },
@@ -145,13 +156,152 @@ describe('iteration tags layout', () => {
       ),
     );
     expect(html).toContain('Subagents:');
-    expect(html).toContain('general-purpose blocked (×2)');
-    expect(html).toContain('title="denylist"');
+    expect(html).toContain('Skills:'); // always present now
+    // Blocked badge: red (danger) + X icon. "blocked" word dropped — the
+    // colour + icon now carry that signal.
+    expect(html).toContain('general-purpose (×2)');
+    expect(html).not.toContain('general-purpose blocked');
+    expect(html).toContain('variant="danger"');
+    expect(html).toContain('dispatch-badge-icon');
+    // Tooltip: lede + details, rendered via <sl-tooltip content="...">.
+    expect(html).toMatch(/content="Blocked by project dispatch policy[^"]*"/);
+    expect(html).toMatch(/content="[^"]*reason: denylist[^"]*"/);
+    expect(html).toMatch(/content="[^"]*section: subagents[^"]*"/);
   });
 
-  it('omits Subagents row when no dispatch events', () => {
+  it('renders skill dispatches in a combined Skills/Subagents row', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'skills',
+              candidate: 'review',
+              via: 'wildcard',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    // Both labels always rendered — Subagents side is "(none)" here.
+    expect(html).toContain('Skills:');
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('(none)');
+    expect(html).toMatch(/review<\/sl-badge>/);
+    expect(html).not.toContain('review dispatched');
+    // Wildcard allowed is still green (success) — the wildcard hint moves
+    // to a dedicated CSS class + tooltip, not a separate badge variant.
+    expect(html).toContain('variant="success"');
+    expect(html).toContain('dispatch-badge-wildcard');
+  });
+
+  it('combines mixed dispatches into a single row with both sections', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'subagents',
+              candidate: 'Explore',
+              via: 'explicit',
+              count: 1,
+            },
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'skills',
+              candidate: 'simplify',
+              via: 'explicit',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('Skills:');
+    expect(html).toContain('data-dispatch-section="subagents"');
+    expect(html).toContain('data-dispatch-section="skills"');
+    expect(html).toMatch(/>Explore<\/sl-badge>/);
+    expect(html).toMatch(/>simplify<\/sl-badge>/);
+    // Both sections populated — "(none)" only shows when a side is empty.
+    expect(html).not.toContain('(none)');
+  });
+
+  it('renders combined Skills/Subagents row with (none) on completed iterations with no dispatch', () => {
+    // Replaces the previous "Dispatch: No subagent or skill activity"
+    // empty-state collapse — the row keeps its shape for visual stability
+    // across iterations.
     const html = renderToString(runDetailView(makeRun()));
+    expect(html).toContain('Skills:');
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('(none)');
+    expect(html).not.toContain(
+      'No subagent or skill activity in this iteration',
+    );
+  });
+
+  it('omits Dispatch row for in-progress iterations with no events', () => {
+    // In-progress iterations stay blank so empty-state doesn't flicker into
+    // view before the first hook fires.
+    const html = renderToString(
+      runDetailView({
+        stages: {
+          implement: {
+            status: 'in_progress',
+            iterations: [
+              {
+                number: 1,
+                status: 'in_progress',
+                started_at: '2026-04-13T11:00:00.000Z',
+              },
+            ],
+          },
+        },
+      }),
+    );
+    expect(html).not.toContain('Dispatch:');
+    expect(html).not.toContain('No subagent or skill activity');
     expect(html).not.toContain('Subagents:');
+    expect(html).not.toContain('Skills:');
+  });
+
+  it('collapses dispatch events into a +N more overflow at 7+ entries', () => {
+    const events = Array.from({ length: 9 }, (_, i) => ({
+      type: 'pipeline.hook.dispatch_allowed',
+      section: 'subagents',
+      candidate: `Agent${i}`,
+      via: 'wildcard',
+      count: 1,
+    }));
+    const html = renderToString(
+      runDetailView(makeRun({ dispatch_events: events })),
+    );
+    expect(html).toContain('Subagents:');
+    // Six visible inline — bare candidate name, no "dispatched" suffix.
+    for (let i = 0; i < 6; i += 1) {
+      expect(html).toMatch(new RegExp(`>Agent${i}<\\/sl-badge>`));
+    }
+    // Remaining 3 sit behind the overflow control
+    expect(html).toContain('+3 more');
+    expect(html).toContain('dispatch-events-overflow');
+  });
+
+  it('does NOT show overflow when count is at or below the visible limit', () => {
+    const events = Array.from({ length: 6 }, (_, i) => ({
+      type: 'pipeline.hook.dispatch_allowed',
+      section: 'subagents',
+      candidate: `Agent${i}`,
+      via: 'wildcard',
+      count: 1,
+    }));
+    const html = renderToString(
+      runDetailView(makeRun({ dispatch_events: events })),
+    );
+    expect(html).not.toContain('more');
+    expect(html).not.toContain('dispatch-events-overflow');
   });
 
   it('renders ×N suffix only when count > 1', () => {
@@ -161,21 +311,44 @@ describe('iteration tags layout', () => {
           dispatch_events: [
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Explore',
+              section: 'subagents',
+              candidate: 'Explore',
+              via: 'explicit',
               count: 5,
             },
             {
               type: 'pipeline.hook.dispatch_allowed',
-              subagent_type: 'Plan',
+              section: 'subagents',
+              candidate: 'Plan',
+              via: 'wildcard',
               count: 1,
             },
           ],
         }),
       ),
     );
-    expect(html).toContain('Explore dispatched (×5)');
-    expect(html).toContain('Plan dispatched');
-    expect(html).not.toContain('Plan dispatched (×');
+    expect(html).toContain('Explore (×5)');
+    expect(html).toMatch(/>Plan<\/sl-badge>/);
+    expect(html).not.toMatch(/>Plan \(×/);
+  });
+
+  it('back-compat: legacy subagent_type payload key still renders', () => {
+    // Status snapshots written before W-054 PR D still carry the old field.
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              subagent_type: 'Explore',
+              via: 'explicit',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toMatch(/>Explore<\/sl-badge>/);
   });
 
   // --- Classification row ---
@@ -218,5 +391,87 @@ describe('iteration tags layout', () => {
   it('omits classification row when absent', () => {
     const html = renderToString(runDetailView(makeRun()));
     expect(html).not.toContain('Fail Category:');
+  });
+});
+
+describe('overview no longer shows the redundant hero "Dispatch activity" counter', () => {
+  it('does NOT render a Dispatch activity panel above the stage timeline', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'subagents',
+              candidate: 'Explore',
+              via: 'explicit',
+              count: 3,
+            },
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'subagents',
+              candidate: 'Plan',
+              via: 'wildcard',
+              count: 2,
+            },
+          ],
+        }),
+      ),
+    );
+    // The hero counter was removed — per-section iteration rows now carry
+    // the same information without duplicating it in the overview.
+    expect(html).not.toContain('Dispatch activity:');
+    expect(html).not.toContain('dispatch-activity-counter');
+    expect(html).not.toContain('dispatch-activity-tuples');
+  });
+
+  it('per-iteration Subagents/Skills rows still carry the counts', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'subagents',
+              candidate: 'Explore',
+              via: 'explicit',
+              count: 3,
+            },
+            {
+              type: 'pipeline.hook.dispatch_allowed',
+              section: 'skills',
+              candidate: 'simplify',
+              via: 'explicit',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).toContain('Subagents:');
+    expect(html).toContain('Skills:');
+    expect(html).toContain('Explore (×3)');
+    expect(html).toMatch(/>simplify<\/sl-badge>/);
+  });
+
+  // Kept here so future regressions that try to re-introduce the hero
+  // counter trip a test rather than slip through review.
+  it('synthetic placeholder so the suite keeps a recognizable name', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          dispatch_events: [
+            {
+              type: 'pipeline.hook.dispatch_blocked',
+              section: 'subagents',
+              candidate: 'general-purpose',
+              reason: 'denylist',
+              count: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    expect(html).not.toContain('Dispatch activity:');
   });
 });

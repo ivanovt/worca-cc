@@ -4,6 +4,7 @@ import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import {
   AlertTriangle,
+  CircleCheck,
   ClipboardCopy,
   Clock,
   Coins,
@@ -16,6 +17,7 @@ import {
   RefreshCw,
   RotateCcw,
   Timer,
+  X,
 } from '../utils/icons.js';
 import { scrollOnExpand } from '../utils/scroll.js';
 import { sortByStageOrder } from '../utils/stage-order.js';
@@ -400,23 +402,112 @@ function _classificationRowView(iter) {
   `;
 }
 
-function _dispatchEventsRowView(iter) {
-  const events = iter.dispatch_events;
-  if (!events || events.length === 0) return nothing;
+function _dispatchEventCandidate(ev) {
+  // Back-compat: accept the legacy `subagent_type` payload key during the
+  // event-shape rollout. Tests fed status snapshots written before W-054 PR D
+  // landed still use the old field name.
+  return ev.candidate || ev.subagent_type || '';
+}
+
+// PR D / B / follow-up: each iteration shows one row per dispatch section
+// ("Subagents:" + "Skills:") rather than a single mixed-bag "Dispatch:" line.
+// This restores the original per-section label semantics that PR D's unified
+// event family had blurred — and replaces the redundant hero-level
+// "Dispatch activity" counter that previously sat above the stage timeline.
+const _DISPATCH_VISIBLE_LIMIT = 6;
+const _DISPATCH_SECTIONS = [
+  { section: 'subagents', label: 'Subagents:' },
+  { section: 'skills', label: 'Skills:' },
+];
+
+function _dispatchBadgeView(ev) {
+  const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
+  const isWildcard = isAllowed && ev.via === 'wildcard';
+  // Dispatched → green (success); blocked → red (danger). Wildcard still
+  // counts as dispatched — the via/section is conveyed via tooltip, not
+  // via a separate variant.
+  const variant = isAllowed ? 'success' : 'danger';
+  const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
+  const suffix = count ? ` (×${count})` : '';
+  const candidate = _dispatchEventCandidate(ev);
+  // Drop the "blocked" suffix — the colour + icon now carry that signal.
+  const label = `${candidate}${suffix}`;
+  // Tooltip leads with a plain-language verdict so a reader hovering
+  // a single chip understands instantly why it's red or green, even
+  // without reading the section/via/reason details after the dash.
+  const lede = isAllowed
+    ? 'Allowed by project dispatch policy'
+    : 'Blocked by project dispatch policy';
+  const detailParts = [];
+  if (ev.section) detailParts.push(`section: ${ev.section}`);
+  if (ev.via) detailParts.push(`via: ${ev.via}`);
+  if (ev.reason) detailParts.push(`reason: ${ev.reason}`);
+  const tooltip = detailParts.length
+    ? `${lede} — ${detailParts.join(' · ')}`
+    : lede;
+  const cls = isWildcard
+    ? 'dispatch-badge dispatch-badge-wildcard'
+    : 'dispatch-badge';
+  const iconSvgString = iconSvg(isAllowed ? CircleCheck : X, 12);
+  // Wrap in <sl-tooltip> so hovers show a styled, fast-appearing tooltip
+  // (Shoelace default show-delay is ~150ms) rather than the browser-native
+  // `title` (500ms+). The badge itself stays on one line — the existing
+  // renderToString test helper matches against /Explore<\/sl-badge>/.
+  return html`<sl-tooltip content="${tooltip}"><sl-badge class="${cls}" variant="${variant}" pill><span class="dispatch-badge-icon">${unsafeHTML(iconSvgString)}</span>${label}</sl-badge></sl-tooltip>`;
+}
+
+function _dispatchSectionInlineView(label, sectionKey, events) {
+  const overflow = events.length > _DISPATCH_VISIBLE_LIMIT;
+  const inline = overflow ? events.slice(0, _DISPATCH_VISIBLE_LIMIT) : events;
+  const hidden = overflow ? events.slice(_DISPATCH_VISIBLE_LIMIT) : [];
+  // Empty-section placeholder so the row keeps its shape even when one
+  // dispatch family produced nothing this iteration — the user complaint
+  // was that the previous "Dispatch: No subagent or skill activity"
+  // collapse made the layout flicker between iterations.
+  const body =
+    events.length === 0
+      ? html`<span class="dispatch-events-empty">(none)</span>`
+      : html`${inline.map(_dispatchBadgeView)}${
+          overflow
+            ? html`<sl-details class="dispatch-events-overflow">
+              <span slot="summary" class="dispatch-events-overflow-summary"
+                >${`+${hidden.length} more`}</span
+              >
+              <div class="dispatch-events-overflow-content">
+                ${hidden.map(_dispatchBadgeView)}
+              </div>
+            </sl-details>`
+            : nothing
+        }`;
+  return html`<span
+    class="dispatch-events-section"
+    data-dispatch-section="${sectionKey}"
+    ><span class="meta-label">${label}</span>${body}</span
+  >`;
+}
+
+function _dispatchEventsRowsView(iter) {
+  const events = iter.dispatch_events || [];
+  const buckets = { subagents: [], skills: [] };
+  for (const ev of events) {
+    // Back-compat: pre-PR-D events carry no `section`. Treat them as subagents
+    // since that was the only emitter before the unification.
+    const s = ev.section || 'subagents';
+    if (buckets[s]) buckets[s].push(ev);
+  }
+  // Skip the row entirely on in-progress iterations with no events yet
+  // so empty placeholders don't flicker into view before the first hook
+  // fires. Once the iteration completes (or any dispatch lands), the
+  // row is always shown with both sections present — empty sections
+  // render a muted "(none)" inline rather than disappearing.
+  const anyEvents = buckets.subagents.length > 0 || buckets.skills.length > 0;
+  const iterDone = iter.status === 'completed' || iter.completed_at;
+  if (!anyEvents && !iterDone) return nothing;
   return html`
-    <div class="iteration-tags-row">
-      <span class="meta-label">Subagents:</span>
-      ${events.map((ev) => {
-        const isAllowed = ev.type === 'pipeline.hook.dispatch_allowed';
-        const variant = isAllowed ? 'success' : 'danger';
-        const count = Number.isInteger(ev.count) && ev.count > 1 ? ev.count : 0;
-        const suffix = count ? ` (×${count})` : '';
-        const label = isAllowed
-          ? `${ev.subagent_type} dispatched${suffix}`
-          : `${ev.subagent_type} blocked${suffix}`;
-        const tooltip = ev.reason || '';
-        return html`<sl-badge variant="${variant}" pill title="${tooltip}">${label}</sl-badge>`;
-      })}
+    <div class="iteration-tags-row dispatch-events-row">
+      ${_DISPATCH_SECTIONS.map(({ section, label }) =>
+        _dispatchSectionInlineView(label, section, buckets[section]),
+      )}
     </div>
   `;
 }
@@ -704,7 +795,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
           : nothing
       }
       ${_classificationRowView(iter)}
-      ${_dispatchEventsRowView(iter)}
+      ${_dispatchEventsRowsView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
     </div>
   `;
@@ -1224,7 +1315,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
-                      ${iterations.length === 1 ? _dispatchEventsRowView(iterations[0]) : nothing}
+                      ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}

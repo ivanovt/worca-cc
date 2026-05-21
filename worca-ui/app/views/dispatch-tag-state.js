@@ -93,3 +93,46 @@ export function isCustomized(current, defaults) {
   const sortedDefaults = [...defaults].sort();
   return sortedCurrent.some((v, i) => v !== sortedDefaults[i]);
 }
+
+/**
+ * Create an empty section state object for one dispatch section.
+ * Each agent gets { tags, input, showSuggestions, activeIndex }.
+ * @param {Record<string, string[]>} perAgentAllow - per_agent_allow from config
+ * @param {string[]} agentRoles - list of agent role names
+ * @returns {Record<string, { tags: string[], input: string, showSuggestions: boolean, activeIndex: number }>}
+ */
+export function createSectionState(perAgentAllow, agentRoles) {
+  const state = {};
+  for (const agent of ['_defaults', ...agentRoles]) {
+    state[agent] = {
+      tags: [...(perAgentAllow[agent] || [])],
+      input: '',
+      showSuggestions: false,
+      activeIndex: -1,
+    };
+  }
+  return state;
+}
+
+/**
+ * Create state containers for all three dispatch sections.
+ * @param {Object} dispatch - governance.dispatch config
+ * @param {string[]} agentRoles - agent role names
+ * @returns {{ toolsState: Object, skillsState: Object, subagentsState: Object }}
+ */
+export function createDispatchStates(dispatch, agentRoles) {
+  return {
+    toolsState: createSectionState(
+      dispatch?.tools?.per_agent_allow || {},
+      agentRoles,
+    ),
+    skillsState: createSectionState(
+      dispatch?.skills?.per_agent_allow || {},
+      agentRoles,
+    ),
+    subagentsState: createSectionState(
+      dispatch?.subagents?.per_agent_allow || {},
+      agentRoles,
+    ),
+  };
+}

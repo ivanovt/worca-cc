@@ -785,9 +785,31 @@ def test_hook_test_gate_payload_required_fields():
 
 def test_hook_dispatch_blocked_payload_required_fields():
     from worca.events.types import hook_dispatch_blocked_payload
-    p = hook_dispatch_blocked_payload(agent="implementer", subagent_type="Explore")
+    p = hook_dispatch_blocked_payload(agent="implementer", candidate="Explore")
     assert p["agent"] == "implementer"
-    assert p["subagent_type"] == "Explore"
+    assert p["section"] == "subagents"
+    assert p["candidate"] == "Explore"
+
+
+def test_hook_dispatch_blocked_payload_skills_section():
+    """PR D: section discriminator unifies skills with subagents."""
+    from worca.events.types import hook_dispatch_blocked_payload
+    p = hook_dispatch_blocked_payload(
+        agent="implementer", candidate="worca-install", section="skills",
+    )
+    assert p["section"] == "skills"
+    assert p["candidate"] == "worca-install"
+
+
+def test_hook_dispatch_allowed_payload_with_via():
+    from worca.events.types import hook_dispatch_allowed_payload
+    p = hook_dispatch_allowed_payload(
+        agent="tester", candidate="Explore", section="subagents", via="explicit",
+    )
+    assert p["agent"] == "tester"
+    assert p["section"] == "subagents"
+    assert p["candidate"] == "Explore"
+    assert p["via"] == "explicit"
 
 
 def test_preflight_completed_payload_required_fields():
@@ -928,7 +950,7 @@ def test_all_builders_return_dicts():
         "loop_exhausted_payload": dict(loop_key="k", iteration=3, limit=3),
         "hook_blocked_payload": dict(agent="implementer", tool="Bash", reason="r"),
         "hook_test_gate_payload": dict(agent="implementer", strike=1, action="warn"),
-        "hook_dispatch_blocked_payload": dict(agent="implementer", subagent_type="Explore"),
+        "hook_dispatch_blocked_payload": dict(agent="implementer", candidate="Explore"),
         "preflight_completed_payload": dict(checks=[], all_passed=True),
         "preflight_skipped_payload": dict(reason="r"),
         "control_milestone_approve_payload": dict(milestone="m", approved=True),

@@ -77,7 +77,7 @@ Agent config in `.claude/settings.json` under the `worca` namespace. Key section
 - `worca.models` — shorthand→full model ID mapping (supports per-model env vars)
 - `worca.loops` — max iterations for test/review/planning retry loops
 - `worca.circuit_breaker` — error classification and halt thresholds
-- `worca.governance` — hook guards and dispatch rules
+- `worca.governance` — hook guards and dispatch rules (see [`docs/governance.md`](./docs/governance.md) for the full reference)
 
 ### Model Profiles (`worca.models`)
 
@@ -222,7 +222,71 @@ The raw `coverage` CLI still works for ad-hoc use (`coverage combine && coverage
 - Only the **guardian** agent may run `git commit` (enforced by pre_tool_use hook checking `WORCA_AGENT` env var)
 - Source file writes are blocked until `MASTER_PLAN.md` exists (plan_check hook, only active when `WORCA_AGENT` is set)
 - The post_tool_use hook has a test gate: 2 consecutive pytest failures block further tool calls
-- Subagent dispatch is restricted per agent role (tracking hook)
+- Tool, skill, and subagent dispatch is governed per agent role via `worca.governance.dispatch`
+
+### Dispatch Governance (`worca.governance.dispatch`)
+
+Three sections — `tools`, `skills`, `subagents` — each with a consistent three-tier model:
+
+```jsonc
+"worca": {
+  "governance": {
+    "dispatch": {
+      "tools": {
+        "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
+        "default_denied":    [],
+        "per_agent_allow":   { "_defaults": ["*"] }
+      },
+      "skills": {
+        "always_disallowed": ["batch", "fewer-permission-prompts",
+                              "loop", "schedule", "worca-*", "update-config",
+                              "hookify:hookify", "hookify:configure", "hookify:list",
+                              "hookify:writing-rules", "init"],
+        "default_denied":    ["claude-api", "debug", "review", "security-review",
+                              "simplify", "feature-dev:feature-dev",
+                              "claude-md-management:revise-claude-md",
+                              "claude-md-management:claude-md-improver"],
+        "per_agent_allow": {
+          "_defaults":   ["*"],
+          "implementer": ["*", "simplify", "claude-api"],
+          "tester":      ["*", "debug"],
+          "reviewer":    ["*", "review", "security-review"],
+          "learner":     ["*", "claude-md-management:revise-claude-md",
+                          "claude-md-management:claude-md-improver"]
+        }
+      },
+      "subagents": {
+        "always_disallowed": ["general-purpose"],
+        "default_denied":    [],
+        "per_agent_allow":   { "_defaults": ["*"] }
+      }
+    }
+  }
+}
+```
+
+**Tiers:**
+
+1. **`always_disallowed`** — hard-deny defaults. The list ships from `_DISPATCH_DEFAULTS` in `tracking.py` (and is written into `settings.json` on `worca init`/`--upgrade`), but the resulting value is project-editable — projects can clear or override entries if they have a real reason. Edit sparingly.
+2. **`default_denied`** — blocked unless the agent explicitly names them in `per_agent_allow`. The `"*"` wildcard does **not** include them.
+3. **`per_agent_allow`** — per-agent allow list with `_defaults` fallback. Supports `"*"` (all available minus the two deny tiers), named entries, and mixed `["*", "extra"]` form. Per-agent entry **replaces** `_defaults` (no union).
+
+**Wildcards:** `"*"` means "allow any item not in `always_disallowed` or `default_denied`". An empty list `[]` falls through to `_defaults` — clearing the chip list in the UI does not silently brick an agent. To express full lockdown, use the singleton `["none"]` (the `LOCKDOWN_SENTINEL`).
+
+**Defaults:** all three sections default to `["*"]` — the `always_disallowed` tier carries the safety net (e.g. `general-purpose` for subagents). Projects that need narrower per-agent posture override `per_agent_allow` explicitly.
+
+**Tools section CLI mapping (PR C):**
+
+| `per_agent_allow` form | Claude CLI flag | Meaning |
+|---|---|---|
+| `["*"]` | `--tools default` | All built-ins allowed (minus `always_disallowed`) |
+| `["Read", "Grep"]` | `--tools Agent,Grep,Read,Skill` | Restricted to named built-ins; `Skill` + `Agent` auto-included so worca hooks fire |
+| `[]` (or missing key) | inherits `_defaults` | Falls through — clearing chips never bricks an agent |
+| `["none"]` | `--tools ""` | Explicit lockdown — no built-in tool available |
+
+MCP tools (`mcp_*`) are not covered by `--tools` — MCP governance flows through other channels.
+
+For the complete reference — including the skill denylist rationale, mixed form semantics, and resolution algorithm — see [`docs/governance.md`](./docs/governance.md).
 
 ## Guide Precedence
 

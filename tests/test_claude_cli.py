@@ -7,6 +7,8 @@ from unittest.mock import patch, MagicMock
 
 from worca.utils.claude_cli import (
     AgentSubprocessError,
+    _resolve_tool_args,
+    _resolve_tool_disallows,
     build_command,
     process_stream,
     run_agent,
@@ -137,7 +139,7 @@ def test_run_agent_parses_json():
     result_event = {"result": "success", "output": "done"}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
-        result = run_agent("do stuff", agent="planner", max_turns=40)
+        result = run_agent("do stuff", agent="planner", max_turns=40, settings={})
     assert result["result"] == "success"
     assert result["type"] == "result"
 
@@ -147,7 +149,7 @@ def test_run_agent_raises_on_failure():
     mock_proc = _make_mock_popen(result_event, returncode=1)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("fail", agent="planner", max_turns=5)
+            run_agent("fail", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except RuntimeError as e:
             assert "agent failed" in str(e)
@@ -162,7 +164,7 @@ def test_run_agent_raises_on_invalid_json():
     mock_proc.wait.return_value = 0
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except RuntimeError as e:
             assert "result" in str(e).lower() or "stream" in str(e).lower()
@@ -172,7 +174,7 @@ def test_run_agent_passes_correct_command():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("my prompt", agent="implementer", max_turns=20, json_schema='{"type":"object"}')
+        run_agent("my prompt", agent="implementer", max_turns=20, json_schema='{"type":"object"}', settings={})
     args = mock_popen.call_args[0][0]
     assert args[0] == "claude"
     assert "--agent" in args
@@ -185,7 +187,7 @@ def test_run_agent_max_turns_accepted_but_ignored():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("prompt", agent="planner", max_turns=999)
+        run_agent("prompt", agent="planner", max_turns=999, settings={})
     args = mock_popen.call_args[0][0]
     assert "--max-turns" not in args
 
@@ -194,7 +196,7 @@ def test_run_agent_passes_model_to_cli():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("prompt", agent="implementer", model="claude-sonnet-4-6")
+        run_agent("prompt", agent="implementer", model="claude-sonnet-4-6", settings={})
     args = mock_popen.call_args[0][0]
     assert "--model" in args
     idx = args.index("--model")
@@ -205,7 +207,7 @@ def test_run_agent_omits_model_when_none():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
-        run_agent("prompt", agent="planner")
+        run_agent("prompt", agent="planner", settings={})
     args = mock_popen.call_args[0][0]
     assert "--model" not in args
 
@@ -235,7 +237,7 @@ def test_run_agent_raises_subprocess_error_with_returncode_for_real_failures():
     mock_proc = _make_mock_popen(result_event, returncode=1)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("fail", agent="planner", max_turns=5)
+            run_agent("fail", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except AgentSubprocessError as e:
             assert e.returncode == 1
@@ -262,7 +264,7 @@ def test_run_agent_raises_interrupted_when_subprocess_killed_mid_stream():
     mock_proc.wait.return_value = -15
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised InterruptedError"
         except InterruptedError as e:
             # Message should mention the signal so logs are useful.
@@ -292,7 +294,7 @@ def test_run_agent_waits_briefly_for_returncode_when_stream_throws():
     mock_proc.wait.side_effect = _wait
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised InterruptedError"
         except InterruptedError:
             pass
@@ -317,7 +319,7 @@ def test_run_agent_stream_failure_with_clean_exit_still_raises_subprocess_error(
     mock_proc.wait.return_value = 0
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
             assert False, "Should have raised"
         except InterruptedError:
             assert False, "Clean exit must NOT be reclassified as interrupted"
@@ -333,6 +335,7 @@ def test_run_agent_merges_model_env_into_subprocess_env():
         run_agent(
             "prompt", agent="planner",
             model_env={"ANTHROPIC_BASE_URL": "http://x", "API_TIMEOUT_MS": "5000"},
+            settings={},
         )
     env = mock_popen.call_args[1]["env"]
     assert env["ANTHROPIC_BASE_URL"] == "http://x"
@@ -347,6 +350,7 @@ def test_run_agent_filters_reserved_keys_from_model_env(capsys):
         run_agent(
             "prompt", agent="planner",
             model_env={"WORCA_FOO": "1", "ANTHROPIC_BASE_URL": "http://x"},
+            settings={},
         )
     env = mock_popen.call_args[1]["env"]
     assert env["ANTHROPIC_BASE_URL"] == "http://x"
@@ -360,7 +364,7 @@ def test_run_agent_model_env_none_is_safe():
     result_event = {"ok": True}
     mock_proc = _make_mock_popen(result_event)
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
-        result = run_agent("prompt", agent="planner", model_env=None)
+        result = run_agent("prompt", agent="planner", model_env=None, settings={})
     assert result["ok"] is True
 
 
@@ -387,7 +391,7 @@ def test_run_agent_handles_wait_timeout_after_stream_failure():
     mock_proc.wait.side_effect = _wait
     with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
         try:
-            run_agent("prompt", agent="planner", max_turns=5)
+            run_agent("prompt", agent="planner", max_turns=5, settings={})
         except InterruptedError:
             pass  # acceptable
         except (AgentSubprocessError, RuntimeError):
@@ -505,3 +509,307 @@ def test_process_stream_third_event_with_new_structured_output_wins():
     result = process_stream(_stream(first, second, third))
     assert result["structured_output"] == {"passed": False, "failures": ["regressed"]}
     assert result["total_cost_usd"] == 0.30
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tool_disallows: settings-driven tool disallow list (W-054 §8)
+# ---------------------------------------------------------------------------
+
+
+def _settings_with_tools(tools_config):
+    """Build a settings dict for the tools dispatch section."""
+    return {"worca": {"governance": {"dispatch": {"tools": tools_config}}}}
+
+
+def test_resolve_tool_disallows_default():
+    """Default settings return always_disallowed items (EnterPlanMode, EnterWorktree, TodoWrite)."""
+    result = _resolve_tool_disallows("planner", settings={})
+    assert "EnterPlanMode" in result
+    assert "EnterWorktree" in result
+    assert "TodoWrite" in result
+
+
+def test_resolve_tool_disallows_drops_skill():
+    """Skill is never in the disallow list — governance moved to skill_use.py hook."""
+    result = _resolve_tool_disallows("planner", settings={})
+    assert "Skill" not in result
+    # Even if someone manually adds Skill to always_disallowed
+    settings = _settings_with_tools({
+        "always_disallowed": ["Skill", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("planner", settings=settings)
+    assert "Skill" not in result
+    assert "EnterPlanMode" in result
+
+
+def test_resolve_tool_disallows_drops_agent():
+    """Agent is never in the disallow list — governance moved to subagent_start.py hook.
+
+    Symmetric with Skill: if Agent lands in --disallowedTools, the Claude
+    CLI blocks the meta-tool before subagent_start.py can run, silently
+    bypassing dispatch governance. Filter it out even if a user adds it
+    to always_disallowed.
+    """
+    settings = _settings_with_tools({
+        "always_disallowed": ["Agent", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("planner", settings=settings)
+    assert "Agent" not in result
+    assert "EnterPlanMode" in result
+    # Both meta-tools together
+    settings = _settings_with_tools({
+        "always_disallowed": ["Skill", "Agent", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("planner", settings=settings)
+    assert "Skill" not in result
+    assert "Agent" not in result
+    assert "EnterPlanMode" in result
+
+
+def test_resolve_tool_disallows_custom_always_disallowed():
+    """User can customize always_disallowed via settings."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite", "CustomTool"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("implementer", settings=settings)
+    assert "CustomTool" in result
+    assert "EnterPlanMode" in result
+
+
+# ---------------------------------------------------------------------------
+# _resolve_tool_args — PR C: named-tool allowlists via --tools
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_tool_args_wildcard_returns_default():
+    """Wildcard '*' in per_agent_allow maps to the literal 'default' tools-arg."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    disallows, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == "default"
+    assert "EnterPlanMode" in disallows
+
+
+def test_resolve_tool_args_empty_falls_through_to_defaults():
+    """Empty per-agent list falls through to _defaults (post-review #2).
+    Clearing the chip list in the UI must not silently brick an agent — lockdown
+    is opt-in via the literal LOCKDOWN_SENTINEL singleton instead.
+    """
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "planner": []},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == "default"
+
+
+def test_resolve_tool_args_lockdown_sentinel_blocks_everything():
+    """['none'] is the explicit lockdown form — emits --tools "" """
+    from worca.hooks.tracking import LOCKDOWN_SENTINEL
+
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "planner": [LOCKDOWN_SENTINEL]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == ""
+
+
+def test_resolve_tool_args_named_list_includes_meta_tools():
+    """Named lists auto-include Skill + Agent so worca hooks still fire."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["Read", "Grep"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools, "Skill must auto-include so skill_use.py fires"
+    assert "Agent" in tools, "Agent must auto-include so subagent_start.py fires"
+
+
+def test_resolve_tool_args_named_list_dedup_meta_tools():
+    """If user already names Skill/Agent, the auto-include doesn't double-add."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["Read", "Skill", "Agent"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    tools = tools_arg.split(",")
+    assert tools.count("Skill") == 1
+    assert tools.count("Agent") == 1
+
+
+def test_resolve_tool_args_mixed_form_treats_wildcard_first():
+    """Mixed ['*', 'Read'] form uses wildcard — default tools-arg."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["*", "Read"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    assert tools_arg == "default"
+
+
+def test_resolve_tool_args_falls_back_to_defaults():
+    """Agent without per-agent entry uses _defaults."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["Read", "Grep"]},
+    })
+    _, tools_arg = _resolve_tool_args("planner", settings=settings)
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools
+    assert "Agent" in tools
+
+
+def test_resolve_tool_args_drops_skill_from_disallows():
+    """Skill is never in --disallowedTools — governed by skill_use.py hook."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["Skill", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    disallows, _ = _resolve_tool_args("planner", settings=settings)
+    assert "Skill" not in disallows
+    assert "EnterPlanMode" in disallows
+
+
+# ---------------------------------------------------------------------------
+# build_command: --tools + --disallowedTools wiring (PR C)
+# ---------------------------------------------------------------------------
+
+
+def test_build_command_emits_tools_default_under_wildcard():
+    """Wildcard default → --tools default."""
+    cmd, _ = build_command("prompt", agent="planner", settings={})
+    idx = cmd.index("--tools")
+    assert cmd[idx + 1] == "default"
+
+
+def test_build_command_emits_tools_named_list_with_meta_tools():
+    """Named per-agent list → --tools 'Agent,Read,Skill' (auto-includes meta)."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"planner": ["Read", "Grep"]},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    idx = cmd.index("--tools")
+    tools_arg = cmd[idx + 1]
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools
+    assert "Agent" in tools
+
+
+def test_build_command_emits_tools_empty_under_lockdown_sentinel():
+    """['none'] per-agent list → --tools '' (full lockdown, post-review #2)."""
+    from worca.hooks.tracking import LOCKDOWN_SENTINEL
+
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"planner": [LOCKDOWN_SENTINEL]},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    idx = cmd.index("--tools")
+    assert cmd[idx + 1] == ""
+
+
+def test_build_command_emits_disallowed_tools_when_non_empty():
+    """--disallowedTools is emitted only when the disallow list is non-empty."""
+    settings = _settings_with_tools({
+        "always_disallowed": ["EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    assert "--disallowedTools" in cmd
+    idx = cmd.index("--disallowedTools")
+    assert "EnterPlanMode" in cmd[idx + 1]
+
+
+def test_build_command_omits_disallowed_tools_when_empty():
+    """--disallowedTools is omitted when the disallow list is empty."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    cmd, _ = build_command("prompt", agent="planner.md", settings=settings)
+    assert "--disallowedTools" not in cmd
+
+
+def test_build_command_default_disallow_excludes_skill():
+    """Default disallows include EnterPlanMode etc. but never Skill."""
+    cmd, _ = build_command("prompt", agent="planner", settings={})
+    if "--disallowedTools" in cmd:
+        idx = cmd.index("--disallowedTools")
+        disallow_str = cmd[idx + 1]
+        assert "EnterPlanMode" in disallow_str
+        assert "EnterWorktree" in disallow_str
+        assert "TodoWrite" in disallow_str
+        assert "Skill" not in disallow_str
+
+
+def test_resolve_tool_args_matches_per_agent_on_resolved_filename():
+    """Regression: per_agent_allow is keyed by bare role, but build_command
+    receives the resolved-prompt basename like 'implement-implementer-iter-3'.
+    _resolve_tool_args must normalize via role_from_worca_agent before looking up.
+    """
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "implementer": ["Read", "Grep"]},
+    })
+    _, tools_arg = _resolve_tool_args("implement-implementer-iter-3", settings=settings)
+    tools = set(tools_arg.split(","))
+    assert "Read" in tools
+    assert "Grep" in tools
+    assert "Skill" in tools
+    assert "Agent" in tools
+    assert tools_arg != "default", (
+        "Expected per-agent allowlist to apply, but fell through to _defaults wildcard"
+    )
+
+
+def test_build_command_per_agent_tools_apply_on_resolved_path():
+    """End-to-end: a resolved agent .md path triggers per-agent tools lookup."""
+    settings = _settings_with_tools({
+        "always_disallowed": [],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"], "tester": ["Bash"]},
+    })
+    cmd, _ = build_command(
+        "prompt",
+        agent="/tmp/run/agents/resolved/test-tester-iter-2.md",
+        settings=settings,
+    )
+    idx = cmd.index("--tools")
+    tools_arg = cmd[idx + 1]
+    assert tools_arg != "default"
+    tools = set(tools_arg.split(","))
+    assert "Bash" in tools
+    assert "Skill" in tools  # auto-included so hook fires
+    assert "Agent" in tools

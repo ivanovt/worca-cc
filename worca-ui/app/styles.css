@@ -1928,6 +1928,25 @@ sl-input [slot="prefix"] {
   cursor: not-allowed;
 }
 
+.dispatch-suggestions .item.warn {
+  background: var(--sl-color-warning-50);
+  border-left: 3px solid var(--sl-color-warning-300);
+  padding-left: 9px;
+}
+
+.dispatch-suggestions .item.warn:hover,
+.dispatch-suggestions .item.warn.active {
+  background: var(--sl-color-warning-100);
+}
+
+.dispatch-suggestions .item-hint {
+  font-size: var(--sl-font-size-x-small);
+  color: var(--sl-color-warning-700);
+  margin-left: auto;
+  padding-left: 6px;
+  font-style: italic;
+}
+
 .dispatch-suggestions .item-label {
   font-size: 11px;
   color: var(--sl-color-neutral-500);
@@ -1949,6 +1968,128 @@ sl-input [slot="prefix"] {
 .dispatch-reset-placeholder {
   width: 28px;
   display: inline-block;
+}
+
+/* Dispatch chip variants */
+.dispatch-chip-wildcard {
+  --sl-color-neutral-200: var(--sl-color-primary-200);
+  background: var(--sl-color-primary-100);
+  font-weight: 600;
+}
+
+.dispatch-chip-locked {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+/* Auto-included meta-tool chips (Skill, Agent) — locked but not crossed-out;
+ * the line-through reads as "blocked", but these are present-and-required. */
+.dispatch-chip-auto {
+  text-decoration: none;
+  opacity: 0.75;
+  font-style: italic;
+  border-style: dashed;
+}
+
+.dispatch-chip-auto::part(base) {
+  border-style: dashed;
+}
+
+/* Lockdown placeholder — semantically distinct from a real chip. */
+.dispatch-chip-lockdown {
+  text-decoration: none;
+  opacity: 0.7;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-size: 10px;
+}
+
+.dispatch-chip-warn {
+  --sl-color-neutral-200: var(--sl-color-warning-200);
+  background: var(--sl-color-warning-100);
+}
+
+/* Dispatch section layout */
+.dispatch-section {
+  margin-bottom: 16px;
+}
+
+.dispatch-section-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 12px 0 4px;
+}
+
+.dispatch-section-hint {
+  font-size: 12px;
+  color: var(--sl-color-neutral-600);
+  line-height: 1.4;
+  margin: 0 0 8px;
+  max-width: 720px;
+}
+
+sl-alert.dispatch-wildcard-deny-warning {
+  margin: 0 0 12px;
+  font-size: 12px;
+  max-width: 720px;
+}
+
+sl-alert.dispatch-wildcard-deny-warning code {
+  font-size: 12px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--sl-color-neutral-100);
+}
+
+/* Collapsible wrapper for each dispatch section in the Governance tab.
+ * Mirrors .model-env-details so users get a consistent collapse pattern. */
+sl-details.dispatch-section-details {
+  margin-bottom: 0.5rem;
+}
+
+sl-details.dispatch-section-details::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+sl-details.dispatch-section-details::part(header) {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+}
+
+sl-details.dispatch-section-details::part(header):hover {
+  background: var(--hover, rgba(0, 0, 0, 0.04));
+}
+
+sl-details.dispatch-section-details::part(content) {
+  padding: 0.25rem 0 0.5rem;
+}
+
+.dispatch-section-details-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 0.75rem;
+}
+
+.dispatch-tier {
+  margin-bottom: 12px;
+}
+
+.dispatch-tier-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sl-color-neutral-600);
+  margin-bottom: 4px;
+}
+
+.dispatch-tier-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
 }
 
 /* Permissions list */
@@ -2128,6 +2269,95 @@ sl-input.pricing-input::part(input) {
   color: var(--fg);
   opacity: 0.7;
   margin: 0 2px;
+}
+
+/* PR B — wider subagent fanout under wildcard defaults. The badge row needs
+ * to wrap gracefully when an iteration dispatches 5+ distinct subagents.
+ * Inherits flex-wrap from .iteration-tags-row; adds a small visual cue so
+ * wildcard dispatches read differently from explicit ones. */
+/* One row with both sections: "Skills: <badges>  Subagents: <badges>".
+ * row-gap covers the case where chips wrap to a second line; column-gap
+ * spaces the two section groups apart so the eye finds the boundary. */
+.dispatch-events-row {
+  row-gap: 4px;
+  column-gap: 16px;
+}
+
+.dispatch-badge::part(base) {
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* CircleCheck (allowed) / X (blocked) glyph sits inline before the badge
+ * label, with the badge's own foreground colour. */
+.dispatch-badge-icon {
+  display: inline-flex;
+  align-items: center;
+  line-height: 0;
+}
+
+.dispatch-badge-icon svg {
+  display: block;
+}
+
+.dispatch-events-section {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Empty-section placeholder: keeps the label visible so layout stays
+ * stable across iterations. Muted on purpose — explicit absence. */
+.dispatch-events-empty {
+  font-size: 12px;
+  color: var(--sl-color-neutral-500);
+}
+
+.meta-value-muted {
+  color: var(--sl-color-neutral-500);
+}
+
+/* Overflow control: when an iteration dispatches more than _DISPATCH_VISIBLE_LIMIT
+ * candidates (typical under PR B's wildcard default), the tail goes inside a
+ * compact sl-details. */
+sl-details.dispatch-events-overflow {
+  display: inline-block;
+}
+
+sl-details.dispatch-events-overflow::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+sl-details.dispatch-events-overflow::part(header) {
+  padding: 0 0.4rem;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--sl-color-neutral-700);
+}
+
+sl-details.dispatch-events-overflow::part(header):hover {
+  background: var(--hover, rgba(0, 0, 0, 0.04));
+}
+
+sl-details.dispatch-events-overflow::part(content) {
+  padding: 0.25rem 0 0;
+}
+
+.dispatch-events-overflow-summary {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.dispatch-events-overflow-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
 }
 
 /* --- Agent Prompt Section --- */

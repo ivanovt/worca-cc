@@ -793,17 +793,35 @@ def hook_test_gate_payload(
 
 def hook_dispatch_blocked_payload(
     agent: str,
-    subagent_type: str,
+    candidate: str,
+    *,
+    section: str = "subagents",
     reason: str = None,
 ) -> dict:
-    p: dict = {"agent": agent, "subagent_type": subagent_type}
+    """Payload builder for pipeline.hook.dispatch_blocked.
+
+    PR D (W-054): unified across subagents and skills via the `section`
+    discriminator. Hooks emit `candidate` (not the legacy section-specific
+    `subagent_type` / `skill` keys).
+    """
+    p: dict = {"agent": agent, "section": section, "candidate": candidate}
     if reason is not None:
         p["reason"] = reason
     return p
 
 
-def hook_dispatch_allowed_payload(agent: str, subagent_type: str) -> dict:
-    return {"agent": agent, "subagent_type": subagent_type}
+def hook_dispatch_allowed_payload(
+    agent: str,
+    candidate: str,
+    *,
+    section: str = "subagents",
+    via: str | None = None,
+) -> dict:
+    """Payload builder for pipeline.hook.dispatch_allowed (PR D)."""
+    p: dict = {"agent": agent, "section": section, "candidate": candidate}
+    if via is not None:
+        p["via"] = via
+    return p
 
 
 # ---------------------------------------------------------------------------

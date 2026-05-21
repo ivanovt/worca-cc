@@ -9,87 +9,77 @@ import json
 import os
 import sys
 
-DEFAULT_SUBAGENT_DISPATCH = {
-    "planner": {"Explore"},
-    "coordinator": set(),
-    "implementer": {"Explore"},
-    "tester": {"Explore"},
-    "guardian": {"Explore"},
-    "reviewer": {"Explore"},
-    "plan_reviewer": {"Explore"},
-    "learner": {"Explore"},
+# Literal sentinel that means "lock this agent out — allow nothing".
+# Used as the sole entry of a per_agent_allow list, e.g. ["none"]. Any other
+# combination treats "none" as just a tool/skill/subagent name (it won't match
+# anything real). Empty list [] falls through to _defaults instead.
+LOCKDOWN_SENTINEL = "none"
+
+_DISPATCH_DEFAULTS = {
+    "tools": {
+        "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    },
+    "skills": {
+        "always_disallowed": [
+            "batch",
+            "fewer-permission-prompts",
+            "loop",
+            "schedule",
+            "worca-*",
+            "update-config",
+            "hookify:hookify",
+            "hookify:configure",
+            "hookify:list",
+            "hookify:writing-rules",
+            "init",
+        ],
+        "default_denied": [
+            "claude-api",
+            "debug",
+            "review",
+            "security-review",
+            "simplify",
+            "feature-dev:feature-dev",
+            "claude-md-management:revise-claude-md",
+            "claude-md-management:claude-md-improver",
+        ],
+        "per_agent_allow": {
+            "_defaults": ["*"],
+            "implementer": ["*", "simplify", "claude-api"],
+            "tester": ["*", "debug"],
+            "reviewer": ["*", "review", "security-review"],
+            "learner": [
+                "*",
+                "claude-md-management:revise-claude-md",
+                "claude-md-management:claude-md-improver",
+            ],
+        },
+    },
+    "subagents": {
+        "always_disallowed": ["general-purpose"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    },
 }
 
-# Keep in sync with SUBAGENT_DENYLIST in
-# worca-ui/app/views/dispatch-tag-state.js — the UI mirrors this to block the
-# same types from being added via the settings editor.
-_SUBAGENT_DENYLIST = frozenset({"general-purpose"})
-
-# Cache is process-lifetime. Hook subprocesses are short-lived so staleness is
-# not a concern in today's usage. If this module is ever imported from a
-# long-running process (e.g. a daemon), call _reset_dispatch_cache() when
-# settings.json changes or pass settings_override on every read.
-_cached_rules: dict | None = None
+# In-process cache for resolved dispatch sections. Each entry is keyed by section
+# and stores (resolved_dict, settings_mtime). On every read we re-stat
+# settings.json — if its mtime changed the cache is invalidated automatically.
+# This keeps the cache useful for repeated reads in a single process while
+# never serving stale config to long-running orchestrator runs that span a
+# settings.json edit.
+_cached_sections: dict[str, tuple[dict, float | None]] = {}
 
 
 def _reset_dispatch_cache() -> None:
-    """Reset the cached dispatch rules (used in tests and after config changes)."""
-    global _cached_rules
-    _cached_rules = None
+    """Reset the cached dispatch sections (used in tests and after config changes)."""
+    _cached_sections.clear()
 
 
-def _load_subagent_dispatch(settings_override: dict | None = None) -> dict:
-    """Load subagent dispatch rules from settings, with default fallback.
-
-    Args:
-        settings_override: If provided, use this dict instead of loading from disk.
-            The cache is bypassed when an override is given.
-    """
-    global _cached_rules
-    if _cached_rules is not None and settings_override is None:
-        return _cached_rules
-
-    rules = {agent: set(allowed) for agent, allowed in DEFAULT_SUBAGENT_DISPATCH.items()}
-
-    try:
-        if settings_override is not None:
-            raw_settings = settings_override
-        else:
-            raw_settings = _load_settings()
-
-        user_dispatch = (
-            raw_settings.get("worca", {})
-            .get("governance", {})
-            .get("subagent_dispatch", {})
-        )
-
-        for agent, allowed_list in user_dispatch.items():
-            allowed = set(allowed_list)
-            denied = allowed & _SUBAGENT_DENYLIST
-            if denied:
-                print(
-                    f"[tracking] Warning: stripped denied subagent(s) {denied} "
-                    f"from {agent} dispatch config",
-                    file=sys.stderr,
-                )
-                allowed -= denied
-            rules[agent] = allowed  # full replace per-agent key
-    except FileNotFoundError:
-        pass  # settings.json is optional; defaults apply silently
-    except (json.JSONDecodeError, KeyError, TypeError, AttributeError) as e:
-        print(
-            f"[tracking] Warning: failed to load subagent_dispatch from settings "
-            f"({type(e).__name__}: {e}); falling back to defaults",
-            file=sys.stderr,
-        )
-
-    if settings_override is None:
-        _cached_rules = rules
-    return rules
-
-
-def _load_settings() -> dict:
-    """Load settings.json from the project root."""
+def _settings_path() -> str | None:
+    """Return the absolute path to settings.json, or None if it can't be located."""
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
     if not project_dir:
         import subprocess
@@ -102,31 +92,175 @@ def _load_settings() -> dict:
         if result.returncode == 0:
             project_dir = result.stdout.strip()
     if not project_dir:
+        return None
+    return os.path.join(project_dir, ".claude", "settings.json")
+
+
+class ConfigUnreadable(Exception):
+    """Raised when settings.json exists on disk but cannot be parsed as JSON.
+
+    Distinguishes "no config, use defaults" (file absent) from "config is
+    present but broken" (file there, JSON invalid). Hooks that catch this
+    MUST fail-closed (exit 2) rather than fall back to defaults — under
+    the new dispatch model, defaults are effectively wildcard-allow, so a
+    silent fallback would grant near-full permissions while the user
+    believes their custom config is in effect. See preflight stage for
+    the corresponding startup-time check.
+    """
+
+
+def _load_settings() -> dict:
+    """Load settings.json from the project root.
+
+    Returns ``{}`` when no settings file exists (defaults apply).
+    Raises ``ConfigUnreadable`` when the file exists but is not valid JSON
+    — callers MUST treat this as a fail-closed condition.
+    """
+    path = _settings_path()
+    if not path or not os.path.exists(path):
         return {}
-    settings_path = os.path.join(project_dir, ".claude", "settings.json")
-    if not os.path.exists(settings_path):
-        return {}
-    with open(settings_path) as f:
-        return json.load(f)
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise ConfigUnreadable(f"{path}: invalid JSON ({e})") from e
+
+
+def _settings_mtime() -> float | None:
+    """Return settings.json mtime, or None if not stat-able. Used for cache invalidation."""
+    path = _settings_path()
+    if not path:
+        return None
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return None
+
+
+def _matches_any(candidate: str, patterns: list[str]) -> bool:
+    """Check if candidate matches any pattern in the list.
+
+    Supported: exact match, trailing-* prefix glob, bare '*' (matches all).
+    """
+    for pattern in patterns:
+        if pattern == candidate:
+            return True
+        if pattern == "*":
+            return True
+        if pattern.endswith("*") and len(pattern) > 1 and candidate.startswith(pattern[:-1]):
+            return True
+    return False
+
+
+def _load_dispatch_section(section: str, settings_override: dict | None = None) -> dict:
+    """Load worca.governance.dispatch.{tools,skills,subagents}.
+
+    Returns the normalized section dict with all three tiers populated.
+
+    Results are cached in-process per section, keyed by settings.json mtime —
+    if the file changes on disk the next read transparently picks up the new
+    config. ``settings_override`` bypasses the cache (used by tests and any
+    caller that needs a fresh read against a synthetic config).
+    """
+    if settings_override is None:
+        cached = _cached_sections.get(section)
+        current_mtime = _settings_mtime()
+        if cached is not None and cached[1] == current_mtime:
+            return cached[0]
+
+    settings = settings_override if settings_override is not None else _load_settings()
+    raw = (
+        settings
+        .get("worca", {})
+        .get("governance", {})
+        .get("dispatch", {})
+        .get(section, {})
+    )
+    defaults = _DISPATCH_DEFAULTS[section]
+    resolved = {
+        "always_disallowed": list(raw.get("always_disallowed", defaults["always_disallowed"])),
+        "default_denied": list(raw.get("default_denied", defaults["default_denied"])),
+        "per_agent_allow": {**defaults["per_agent_allow"], **raw.get("per_agent_allow", {})},
+    }
+
+    if settings_override is None:
+        _cached_sections[section] = (resolved, _settings_mtime())
+    return resolved
+
+
+def resolve_per_agent_entry(cfg: dict, agent: str) -> list[str]:
+    """Resolve the effective per_agent_allow entry for an agent.
+
+    Fall-through rules:
+      * Missing key for ``agent``     → use ``_defaults``.
+      * Empty list ``[]`` for ``agent`` → fall through to ``_defaults`` too,
+        because clearing the chip list in the UI shouldn't silently brick
+        an agent. To express lockdown, set the entry to ``[LOCKDOWN_SENTINEL]``.
+
+    The returned list may still contain ``"*"``, named entries, or be
+    ``[LOCKDOWN_SENTINEL]`` — callers interpret those.
+    """
+    entry = cfg["per_agent_allow"].get(agent)
+    if not entry:  # None or [] both fall through
+        entry = list(cfg["per_agent_allow"].get("_defaults", []))
+    return list(entry)
+
+
+def is_lockdown(entry: list[str]) -> bool:
+    """True iff ``entry`` is the lockdown sentinel (exactly ``[LOCKDOWN_SENTINEL]``)."""
+    return entry == [LOCKDOWN_SENTINEL]
+
+
+def check_allowed(
+    section: str,
+    agent: str,
+    candidate: str,
+    *,
+    settings_override: dict | None = None,
+) -> tuple:
+    """Returns (allowed: bool, reason: str, via: 'wildcard'|'explicit'|None)."""
+    if not agent:
+        return (True, "ok", None)
+
+    cfg = _load_dispatch_section(section, settings_override)
+
+    if _matches_any(candidate, cfg["always_disallowed"]):
+        return (False, "always_disallowed", None)
+
+    entry = resolve_per_agent_entry(cfg, agent)
+
+    if is_lockdown(entry):
+        return (False, "lockdown", None)
+
+    has_wildcard = "*" in entry
+    explicit = {x for x in entry if x != "*"}
+
+    if has_wildcard:
+        if candidate in explicit:
+            return (True, "ok", "explicit")
+        if _matches_any(candidate, cfg["default_denied"]):
+            return (False, "default_denied", None)
+        return (True, "ok", "wildcard")
+    else:
+        if candidate in explicit:
+            return (True, "ok", "explicit")
+        return (False, "not_in_allow_list", None)
 
 
 def check_dispatch(parent_agent: str, child_agent: str) -> tuple:
     """Check if parent_agent is allowed to dispatch child_agent.
 
     Returns (0, "") for allowed, (2, reason) for blocked.
-    Interactive mode (empty parent) allows all dispatches.
-    Denylist check happens first — cannot be bypassed by config.
+    Thin shim over check_allowed('subagents', ...).
     """
     if not parent_agent:
-        return (0, "")  # interactive mode, allow all
-
-    if child_agent in _SUBAGENT_DENYLIST:
-        return (2, f"Blocked: {child_agent} is on the subagent denylist")
-
-    rules = _load_subagent_dispatch()
-    allowed = rules.get(parent_agent, set())
-    if child_agent in allowed:
         return (0, "")
+
+    allowed, reason, via = check_allowed("subagents", parent_agent, child_agent)
+    if allowed:
+        return (0, "")
+    if reason == "always_disallowed":
+        return (2, f"Blocked: {child_agent} is on the subagent denylist")
     return (2, f"Blocked: {parent_agent} cannot dispatch {child_agent}")
 
 
@@ -144,7 +278,15 @@ def main():
     if event == "subagent_start":
         parent = os.environ.get("WORCA_AGENT", "")
         child = data.get("agent_type", "")
-        code, reason = check_dispatch(parent, child)
+        try:
+            code, reason = check_dispatch(parent, child)
+        except ConfigUnreadable as e:
+            print(
+                f"Blocked: settings.json malformed — pipeline runtime cannot "
+                f"evaluate dispatch governance. Fix and retry. ({e})",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         if code != 0:
             print(reason, file=sys.stderr)
         sys.exit(code)

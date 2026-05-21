@@ -522,6 +522,57 @@ All keys under `worca.workspace` are additive. Existing installs pick them up as
 
 **Full walkthrough:** [`docs/workspace-runs.md`](./docs/workspace-runs.md).
 
+### 0.29.x → 0.33.0+
+
+W-054: Configurable per-agent tool/skill/subagent dispatch governance.
+
+**Breaking changes:**
+
+1. **`governance.subagent_dispatch` replaced by `governance.dispatch`** — The flat `worca.governance.subagent_dispatch` key is replaced by a nested `worca.governance.dispatch` object with three sections (`tools`, `skills`, `subagents`), each carrying `always_disallowed`, `default_denied`, and `per_agent_allow` tiers. Existing per-agent subagent allow lists are preserved verbatim under `governance.dispatch.subagents.per_agent_allow`.
+
+2. **`Skill` tool unblocked** — The `Skill` tool is no longer in the hardcoded `--disallowedTools` list. A new `skill_use.py` PreToolUse hook gates every skill invocation through the `governance.dispatch.skills` section. Skills matching `always_disallowed` patterns (pipeline-recursion, governance self-modification) are blocked unconditionally. Skills in `default_denied` require explicit opt-in via `per_agent_allow`.
+
+3. **`--disallowedTools` is now settings-driven** — The tool disallow list is resolved from `governance.dispatch.tools.always_disallowed` instead of being hardcoded. The default list (`EnterPlanMode`, `EnterWorktree`, `TodoWrite`) matches the previous behavior.
+
+4. **`pipeline.hook.dispatch_allowed` event gains `via` field** — Telemetry events for dispatch decisions now include `via: "wildcard" | "explicit"`. Downstream consumers that validate event schemas strictly may need to accept the new field.
+
+5. **UI subagent dispatch card replaced** — The single-section subagent dispatch editor in the Governance settings panel is replaced with a three-section editor (Tools, Skills, Subagents). Bookmarks or screenshots of the old layout are stale.
+
+6. **Dispatch telemetry events unified (PR D)** — The two event-name conventions (`pipeline.hook.dispatch_*` for subagents, `pipeline.hook.skill_*` for skills) collapse into a single `pipeline.hook.dispatch_{allowed,blocked}` family. The payload now carries `section` (`"subagents"` or `"skills"`) and `candidate` instead of the section-specific `subagent_type` / `skill` keys.
+
+   ```jsonc
+   // OLD (skills)
+   { "event_type": "pipeline.hook.skill_allowed",
+     "payload": { "agent": "implementer", "skill": "review", "via": "wildcard" } }
+
+   // NEW (both sections)
+   { "event_type": "pipeline.hook.dispatch_allowed",
+     "payload": { "agent": "implementer", "section": "skills",
+                  "candidate": "review", "via": "wildcard" } }
+   ```
+
+   Downstream event consumers (webhooks, log scrapers) that filter by `event_type` or read `payload.subagent_type` / `payload.skill` need to read `payload.candidate` and discriminate by `payload.section`. The pre-PR-D `skill_*` event types are no longer emitted by `skill_use.py`. The UI aggregator drops the `payload.subagent_type || payload.skill` fallback and reads `payload.candidate` exclusively; it ignores legacy `skill_*` events that may linger in old event logs.
+
+**Automatic migration via `worca init --upgrade`:**
+
+```
+governance.subagent_dispatch -> governance.dispatch.subagents (W-054 — tools and skills sections added with defaults)
+```
+
+The migration:
+- Moves all per-agent entries from `governance.subagent_dispatch` into `governance.dispatch.subagents.per_agent_allow`
+- Seeds `_defaults` from the bundled defaults (`["Explore"]`) if not already present
+- Seeds `always_disallowed` and `default_denied` for the subagents section from bundled defaults
+- Adds `tools` and `skills` sections with their full default configuration
+- Removes the legacy `governance._dispatch_legacy` key if present
+- Is idempotent — re-running on already-migrated settings is a no-op
+
+**If you skip `worca init --upgrade`:**
+
+The UI's settings save handler runs the same migration automatically. The next time you save settings through the Governance panel, the old shape is migrated in place.
+
+**New reference:** [`docs/governance.md`](./docs/governance.md) — full reference for the three-tier dispatch model.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

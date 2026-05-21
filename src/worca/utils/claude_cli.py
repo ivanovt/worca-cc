@@ -15,6 +15,12 @@ import tempfile
 import threading
 from typing import Optional, Callable
 
+from worca.hooks.agent_role import role_from_worca_agent
+from worca.hooks.tracking import (
+    _load_dispatch_section,
+    is_lockdown,
+    resolve_per_agent_entry,
+)
 from worca.utils.env import get_env, filter_model_env
 
 # Linux ARG_MAX is typically 2 MiB but total argv+envp must fit.
@@ -86,12 +92,78 @@ def terminate_current():
         pass
 
 
+def _resolve_tool_args(
+    agent_name: str, settings: dict | None = None,
+) -> tuple[list[str], str]:
+    """Resolve --tools and --disallowedTools args for an agent (W-054 PR C).
+
+    Returns ``(disallowed_tools, tools_arg)``:
+
+      * ``disallowed_tools`` — the ``always_disallowed`` list minus the meta
+        tools that worca governs through its own hooks (``Skill`` is
+        delegated to ``skill_use.py``; ``Agent`` is delegated to
+        ``subagent_start.py``).
+      * ``tools_arg`` is one of:
+          - ``"default"`` — all built-in tools allowed (wildcard or no per-agent
+            entry). Passed to ``--tools default``.
+          - ``""`` — full lockdown. Emitted only when the per-agent entry is
+            the explicit lockdown sentinel ``["none"]``. An empty list ``[]``
+            falls through to ``_defaults`` instead — clearing the chip list
+            in the UI must not silently brick an agent.
+          - ``"A,B,C"`` — explicit list. Always auto-includes ``Skill`` and
+            ``Agent`` so worca's skill/subagent governance hooks still fire.
+
+    Notes:
+      * MCP tools (``mcp_*``) are not covered by ``--tools`` per the Claude
+        CLI ("from the built-in set"). MCP governance flows through other
+        channels.
+      * ``Skill`` and ``Agent`` are meta-tools — if they're excluded from
+        ``--tools``, the worca skill_use.py / subagent_start.py hooks never
+        fire and dispatch governance is silently disabled. Auto-inclusion
+        keeps the hooks in the loop.
+    """
+    cfg = _load_dispatch_section("tools", settings)
+    # Filter both meta-tools symmetrically: if either lands in
+    # --disallowedTools, the corresponding governance hook never fires
+    # and dispatch is silently bypassed at the CLI layer.
+    disallows = [t for t in cfg["always_disallowed"] if t not in ("Skill", "Agent")]
+
+    # agent_name arrives as the resolved-prompt basename (e.g.
+    # "implement-implementer-iter-3"); per_agent_allow is keyed by bare role
+    # (e.g. "implementer"). Normalize via role_from_worca_agent so per-agent
+    # entries actually match in production.
+    role = role_from_worca_agent(agent_name) or agent_name
+    entry = resolve_per_agent_entry(cfg, role)
+
+    if is_lockdown(entry):
+        return disallows, ""
+
+    if "*" in entry:
+        return disallows, "default"
+
+    tools = {t for t in entry if t != "*"}
+    tools.add("Skill")  # so skill_use.py hook fires
+    tools.add("Agent")  # so subagent_start.py hook fires
+    return disallows, ",".join(sorted(tools))
+
+
+# Back-compat shim: some external callers and older tests still import the
+# original name. The new function is the source of truth.
+def _resolve_tool_disallows(
+    agent_name: str, settings: dict | None = None,
+) -> list[str]:
+    """Deprecated: use _resolve_tool_args. Returns only the disallows tuple element."""
+    disallows, _ = _resolve_tool_args(agent_name, settings)
+    return disallows
+
+
 def build_command(
     prompt: str,
     agent: str,
     output_format: str = "stream-json",
     json_schema: Optional[str] = None,
     model: Optional[str] = None,
+    settings: Optional[dict] = None,
     **kwargs,
 ) -> tuple[list[str], Optional[str]]:
     """Build the claude CLI command list without executing.
@@ -130,6 +202,8 @@ def build_command(
     _claude_bin = shlex.split(_claude_bin_override or "claude")
     if _claude_bin_override:
         print(f"[worca] WORCA_CLAUDE_BIN override active: {_claude_bin_override}", file=sys.stderr)
+    agent_name = os.path.splitext(os.path.basename(agent))[0]
+    disallowed_tools, tools_arg = _resolve_tool_args(agent_name, settings)
     cmd = [
         *_claude_bin,
         "-p",
@@ -140,8 +214,10 @@ def build_command(
         output_format,
         "--no-session-persistence",
         "--dangerously-skip-permissions",
-        "--disallowedTools", "Skill,EnterPlanMode,EnterWorktree,TodoWrite",
+        "--tools", tools_arg,
     ]
+    if disallowed_tools:
+        cmd.extend(["--disallowedTools", ",".join(disallowed_tools)])
     if model:
         cmd.extend(["--model", model])
     if output_format == "stream-json":
@@ -312,6 +388,7 @@ def run_agent(
     model_env: Optional[dict] = None,
     log_path: Optional[str] = None,
     on_event: Optional[Callable[[dict], None]] = None,
+    settings: Optional[dict] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -334,6 +411,7 @@ def run_agent(
         output_format=output_format,
         json_schema=json_schema,
         model=model,
+        settings=settings,
     )
 
     global _current_proc

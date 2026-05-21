@@ -6,14 +6,14 @@
  * Works for both live and completed runs because it reads only persisted data
  * (events.jsonl is append-only and survives the pipeline process exiting).
  *
- * Aggregation: events are deduplicated per iteration by (type, subagent_type).
- * A `count` field tracks how many times the same (type, subagent_type) fired
- * in that iteration. The `reason` from the first occurrence is kept (reasons
- * for the same key are deterministic — derived from the denylist/rule check).
+ * Aggregation: events are deduplicated per iteration by (type, section, candidate).
+ * A `count` field tracks how many times the same key fired in that iteration.
+ * The `reason` from the first occurrence is kept (reasons for the same key are
+ * deterministic — derived from the denylist/rule check).
  *
  * Output shape per iteration:
  *   dispatch_events: [
- *     { type, subagent_type, reason?, count }
+ *     { type, section, candidate, via?, reason?, count }
  *   ]
  */
 
@@ -29,7 +29,7 @@ const DISPATCH_EVENT_TYPES = new Set([
  * Malformed lines are silently skipped so a corrupt event doesn't break the run view.
  *
  * @param {string} eventsPath — absolute path to events.jsonl
- * @returns {Array<{type, subagent_type, reason?, timestamp}>}
+ * @returns {Array<{type, section, candidate, via?, reason?, timestamp}>}
  */
 export function readDispatchEventsFromJsonl(eventsPath) {
   if (!eventsPath || !existsSync(eventsPath)) return [];
@@ -50,13 +50,17 @@ export function readDispatchEventsFromJsonl(eventsPath) {
     }
     if (!DISPATCH_EVENT_TYPES.has(e.event_type)) continue;
     const payload = e.payload || {};
-    if (!payload.subagent_type) continue;
-    out.push({
+    const candidate = payload.candidate;
+    if (!candidate) continue;
+    const entry = {
       type: e.event_type,
-      subagent_type: payload.subagent_type,
-      reason: payload.reason,
+      section: payload.section || 'subagents',
+      candidate,
       timestamp: e.timestamp,
-    });
+    };
+    if (payload.reason) entry.reason = payload.reason;
+    if (payload.via) entry.via = payload.via;
+    out.push(entry);
   }
   return out;
 }
@@ -64,13 +68,13 @@ export function readDispatchEventsFromJsonl(eventsPath) {
 /**
  * Given a list of dispatch events and a stages map from status.json, return
  * a new stages map where each iteration that overlaps an event's timestamp
- * is enriched with a `dispatch_events` array (deduplicated by type+subagent_type
+ * is enriched with a `dispatch_events` array (deduplicated by type+section+candidate
  * with a count).
  *
  * Non-destructive: input stages object is shallow-copied; iterations get new
  * objects with the extra field. Existing iteration fields are preserved.
  *
- * @param {Array<{type, subagent_type, reason?, timestamp}>} events
+ * @param {Array<{type, section, candidate, via?, reason?, timestamp}>} events
  * @param {object} stages — status.stages
  * @returns {object} enriched stages
  */
@@ -134,26 +138,28 @@ export function assignEventsToIterations(events, stages) {
 }
 
 /**
- * Deduplicate an array of dispatch events by (type, subagent_type) and count
- * occurrences. First reason wins for blocked events.
+ * Deduplicate an array of dispatch events by (type, section, candidate) and
+ * count occurrences. First reason wins for blocked events.
  *
- * @param {Array<{type, subagent_type, reason?}>} events
- * @returns {Array<{type, subagent_type, reason?, count}>}
+ * @param {Array<{type, section, candidate, via?, reason?}>} events
+ * @returns {Array<{type, section, candidate, via?, reason?, count}>}
  */
 function aggregate(events) {
   const map = new Map();
   for (const ev of events) {
-    const key = `${ev.type}|${ev.subagent_type}`;
+    const key = `${ev.type}|${ev.section}|${ev.candidate}`;
     const existing = map.get(key);
     if (existing) {
       existing.count += 1;
     } else {
       const entry = {
         type: ev.type,
-        subagent_type: ev.subagent_type,
+        section: ev.section,
+        candidate: ev.candidate,
         count: 1,
       };
       if (ev.reason) entry.reason = ev.reason;
+      if (ev.via) entry.via = ev.via;
       map.set(key, entry);
     }
   }
