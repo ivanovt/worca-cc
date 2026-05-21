@@ -43,6 +43,19 @@ def test_role_plan_reviewer_underscored():
     assert role_from_worca_agent("plan_review-plan_reviewer-iter-2") == "plan_reviewer"
 
 
+def test_role_bare_hyphenated_name_passes_through():
+    """Bare names with hyphens must pass through unchanged.
+
+    Without this guard, ``split('-')[-1]`` truncates any hyphenated bare
+    name to its last segment — silently misrouting per_agent_allow lookups
+    for a future role like ``workspace-planner`` (would land on
+    ``_defaults`` instead of its own entry).
+    """
+    assert role_from_worca_agent("workspace-planner") == "workspace-planner"
+    assert role_from_worca_agent("plan-reviewer") == "plan-reviewer"
+    assert role_from_worca_agent("my-cool-agent") == "my-cool-agent"
+
+
 # ── _extract_skill_name ────────────────────────────────────────────
 
 

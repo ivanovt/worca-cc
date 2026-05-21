@@ -101,7 +101,8 @@ def _resolve_tool_args(
 
       * ``disallowed_tools`` — the ``always_disallowed`` list minus the meta
         tools that worca governs through its own hooks (``Skill`` is
-        delegated to ``skill_use.py``).
+        delegated to ``skill_use.py``; ``Agent`` is delegated to
+        ``subagent_start.py``).
       * ``tools_arg`` is one of:
           - ``"default"`` — all built-in tools allowed (wildcard or no per-agent
             entry). Passed to ``--tools default``.
@@ -122,7 +123,10 @@ def _resolve_tool_args(
         keeps the hooks in the loop.
     """
     cfg = _load_dispatch_section("tools", settings)
-    disallows = [t for t in cfg["always_disallowed"] if t != "Skill"]
+    # Filter both meta-tools symmetrically: if either lands in
+    # --disallowedTools, the corresponding governance hook never fires
+    # and dispatch is silently bypassed at the CLI layer.
+    disallows = [t for t in cfg["always_disallowed"] if t not in ("Skill", "Agent")]
 
     # agent_name arrives as the resolved-prompt basename (e.g.
     # "implement-implementer-iter-3"); per_agent_allow is keyed by bare role

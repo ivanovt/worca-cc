@@ -544,6 +544,34 @@ def test_resolve_tool_disallows_drops_skill():
     assert "EnterPlanMode" in result
 
 
+def test_resolve_tool_disallows_drops_agent():
+    """Agent is never in the disallow list — governance moved to subagent_start.py hook.
+
+    Symmetric with Skill: if Agent lands in --disallowedTools, the Claude
+    CLI blocks the meta-tool before subagent_start.py can run, silently
+    bypassing dispatch governance. Filter it out even if a user adds it
+    to always_disallowed.
+    """
+    settings = _settings_with_tools({
+        "always_disallowed": ["Agent", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("planner", settings=settings)
+    assert "Agent" not in result
+    assert "EnterPlanMode" in result
+    # Both meta-tools together
+    settings = _settings_with_tools({
+        "always_disallowed": ["Skill", "Agent", "EnterPlanMode"],
+        "default_denied": [],
+        "per_agent_allow": {"_defaults": ["*"]},
+    })
+    result = _resolve_tool_disallows("planner", settings=settings)
+    assert "Skill" not in result
+    assert "Agent" not in result
+    assert "EnterPlanMode" in result
+
+
 def test_resolve_tool_disallows_custom_always_disallowed():
     """User can customize always_disallowed via settings."""
     settings = _settings_with_tools({
