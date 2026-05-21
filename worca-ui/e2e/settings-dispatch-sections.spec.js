@@ -441,9 +441,9 @@ test('tools section: wildcard row does not show auto-included meta-chips', async
   }
 });
 
-// ─── Lockdown chip (explicit empty per-agent list) ──────────────────────────
+// ─── Lockdown chip (["none"] sentinel) ──────────────────────────────────────
 
-test('lockdown chip renders for an agent with an explicit empty per-agent list', async ({
+test('lockdown chip renders for an agent with the ["none"] sentinel', async ({
   page,
 }) => {
   const ctx = await startServer();
@@ -453,7 +453,7 @@ test('lockdown chip renders for an agent with an explicit empty per-agent list',
         governance: {
           dispatch: {
             skills: {
-              per_agent_allow: { _defaults: ['*'], coordinator: [] },
+              per_agent_allow: { _defaults: ['*'], coordinator: ['none'] },
             },
           },
         },
@@ -469,6 +469,49 @@ test('lockdown chip renders for an agent with an explicit empty per-agent list',
     await expect(lockdown).toHaveAttribute('title', /lockdown/i);
     // Lockdown placeholder is not removable.
     await expect(lockdown).not.toHaveAttribute('removable', '');
+    // The raw "none" sentinel chip must NOT be surfaced separately.
+    await expect(
+      page.locator(
+        '#dispatch-skills-coordinator sl-tag[data-value="none"][removable]',
+      ),
+    ).toHaveCount(0);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('empty per-agent list shows the Inherits-defaults chip, not Lockdown', async ({
+  page,
+}) => {
+  // Empty [] falls through to _defaults at resolve time — must not be
+  // labeled lockdown. See src/worca/hooks/tracking.py:resolve_per_agent_entry
+  // and docs/governance.md:164-177.
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            skills: {
+              per_agent_allow: { _defaults: ['*'], coordinator: [] },
+            },
+          },
+        },
+      },
+    });
+    await expandDispatchSection(page, 'skills');
+
+    await expect(
+      page.locator(
+        '#dispatch-skills-coordinator sl-tag[data-lockdown="true"]',
+      ),
+    ).toHaveCount(0);
+
+    const inherits = page.locator(
+      '#dispatch-skills-coordinator sl-tag[data-inherits="true"]',
+    );
+    await expect(inherits).toBeVisible();
+    await expect(inherits).toContainText('Inherits defaults');
   } finally {
     await ctx.close();
   }
@@ -482,7 +525,7 @@ test('lockdown chip is absent when an agent inherits defaults', async ({
     await goToGovernance(page, ctx, {});
     await expandDispatchSection(page, 'skills');
 
-    // No agent has been customized to [], so no lockdown placeholder.
+    // No agent has been customized to ["none"], so no lockdown placeholder.
     await expect(
       page.locator('sl-tag[data-lockdown="true"]'),
     ).toHaveCount(0);
