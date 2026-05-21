@@ -100,22 +100,50 @@ function _autoIncludedMetaChips(section, tags) {
   );
 }
 
+// Must match LOCKDOWN_SENTINEL in src/worca/hooks/tracking.py. An entry of
+// exactly ["none"] means "lock this agent out — allow nothing"; any other
+// combination (including bare []) falls through to _defaults at resolve time.
+const LOCKDOWN_SENTINEL = 'none';
+
+function _isLockdownEntry(entry) {
+  return (
+    Array.isArray(entry) && entry.length === 1 && entry[0] === LOCKDOWN_SENTINEL
+  );
+}
+
+function _isEmptyExplicit(entry) {
+  return Array.isArray(entry) && entry.length === 0;
+}
+
 function _lockdownChip(section, agent, perAgentAllow) {
-  // Follow-up #4: show a "Lockdown" placeholder when a non-_defaults row
-  // has an *explicit* empty per_agent_allow entry. Distinguishes "I removed
-  // every chip" (lockdown) from "I never customized this agent" (inherits
-  // _defaults).
+  // True lockdown is the singleton sentinel ["none"] — matching the
+  // resolver in src/worca/hooks/tracking.py. An empty list [] is NOT
+  // lockdown; it falls through to _defaults (see _inheritsDefaultsChip).
   if (agent === '_defaults') return null;
-  const explicit = perAgentAllow?.[agent];
-  if (!Array.isArray(explicit) || explicit.length !== 0) return null;
+  if (!_isLockdownEntry(perAgentAllow?.[agent])) return null;
   const noun = section.slice(0, -1); // "tools" -> "tool"
   return html`<sl-tag
     size="small"
     class="dispatch-chip dispatch-chip-locked dispatch-chip-lockdown"
-    data-value=""
+    data-value="${LOCKDOWN_SENTINEL}"
     data-lockdown="true"
     title="Explicit lockdown — no ${noun} available to this agent"
     >Lockdown</sl-tag
+  >`;
+}
+
+function _inheritsDefaultsChip(_section, agent, perAgentAllow) {
+  // Explicit empty per_agent_allow entry falls through to _defaults at
+  // resolve time. The placeholder makes that explicit so users don't
+  // misread an empty chip row as a hard block.
+  if (agent === '_defaults') return null;
+  if (!_isEmptyExplicit(perAgentAllow?.[agent])) return null;
+  return html`<sl-tag
+    size="small"
+    class="dispatch-chip dispatch-chip-inherits"
+    data-inherits="true"
+    title="Empty list — falls through to _defaults at dispatch time"
+    >Inherits defaults</sl-tag
   >`;
 }
 
@@ -145,8 +173,16 @@ function perAgentRowView({
     ? filterSuggestions(rowState.input, knownItems, tags, deniedSet, warnSet)
     : [];
 
-  const autoIncludedChips = _autoIncludedMetaChips(section, tags);
+  // When lockdown is active, the sentinel ("none") lives in `tags` but we
+  // surface it as the Lockdown placeholder instead of a raw chip.
+  const lockdownActive = isAgent && _isLockdownEntry(perAgentAllow?.[agent]);
+  const visibleTags = lockdownActive
+    ? tags.filter((t) => t !== LOCKDOWN_SENTINEL)
+    : tags;
+
+  const autoIncludedChips = _autoIncludedMetaChips(section, visibleTags);
   const lockdownChip = _lockdownChip(section, agent, perAgentAllow);
+  const inheritsChip = _inheritsDefaultsChip(section, agent, perAgentAllow);
 
   return html`
     <div
@@ -167,7 +203,7 @@ function perAgentRowView({
             if (input && e.target !== input) input.focus();
           }}
         >
-          ${tags.map((tag) =>
+          ${visibleTags.map((tag) =>
             chipView(tag, {
               locked: false,
               warn: false,
@@ -177,11 +213,12 @@ function perAgentRowView({
           )}
           ${autoIncludedChips ?? nothing}
           ${lockdownChip ?? nothing}
+          ${inheritsChip ?? nothing}
           <input
             class="dispatch-tag-input-field"
             type="text"
             .value=${rowState.input || ''}
-            placeholder=${tags.length === 0 ? `Add ${section.slice(0, -1)}…` : ''}
+            placeholder=${visibleTags.length === 0 && !lockdownChip && !inheritsChip ? `Add ${section.slice(0, -1)}…` : ''}
             @input=${onInput}
             @focus=${onFocus}
             @blur=${onBlur}

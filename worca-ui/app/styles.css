@@ -2005,6 +2005,16 @@ sl-input [slot="prefix"] {
   font-size: 10px;
 }
 
+/* Inherits-defaults placeholder — shown when per-agent entry is an empty
+ * list, which the resolver treats as fall-through to _defaults. Visually
+ * lighter than lockdown so the two states are easy to distinguish. */
+.dispatch-chip-inherits {
+  text-decoration: none;
+  opacity: 0.6;
+  font-style: italic;
+  font-size: 10px;
+}
+
 .dispatch-chip-warn {
   --sl-color-neutral-200: var(--sl-color-warning-200);
   background: var(--sl-color-warning-100);

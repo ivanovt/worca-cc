@@ -348,7 +348,17 @@ describe('dispatch-section', () => {
       expect(html).not.toContain('data-auto-included="true"');
     });
 
-    it('does NOT render auto-included chips when tools per-agent is empty (lockdown)', () => {
+    it('does NOT render auto-included chips when tools per-agent is the lockdown sentinel', () => {
+      const html = render({ _defaults: ['*'], planner: ['none'] }, 'tools');
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      expect(plannerRow).not.toContain('data-auto-included="true"');
+    });
+
+    it('does NOT render auto-included chips when tools per-agent is empty (inherits defaults)', () => {
+      // Empty [] falls through to _defaults at resolve time, so no named-list
+      // restriction is in effect — the auto-included meta-tools are
+      // unnecessary here.
       const html = render({ _defaults: ['*'], planner: [] }, 'tools');
       const plannerRow =
         html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
@@ -380,7 +390,7 @@ describe('dispatch-section', () => {
     });
   });
 
-  describe('Lockdown chip for explicit empty lists', () => {
+  describe('Lockdown chip — only the ["none"] sentinel triggers it', () => {
     function render(perAgent, section) {
       return renderToString(
         dispatchSectionView({
@@ -398,8 +408,8 @@ describe('dispatch-section', () => {
       );
     }
 
-    it('renders Lockdown chip when per-agent list is explicitly empty', () => {
-      const html = render({ _defaults: ['*'], planner: [] }, 'skills');
+    it('renders Lockdown chip when per-agent list is the ["none"] sentinel', () => {
+      const html = render({ _defaults: ['*'], planner: ['none'] }, 'skills');
       const plannerRow =
         html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
       expect(plannerRow).toContain('data-lockdown="true"');
@@ -407,28 +417,96 @@ describe('dispatch-section', () => {
       expect(plannerRow).toContain('dispatch-chip-lockdown');
     });
 
+    it('hides the raw "none" sentinel chip when lockdown is active', () => {
+      const html = render({ _defaults: ['*'], planner: ['none'] }, 'skills');
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      // The Lockdown chip uses data-value="none"; assert there is NOT a
+      // separate raw chip rendering the bare sentinel.
+      const removableNoneChips = plannerRow.match(
+        /data-value="none"[^>]*removable/g,
+      );
+      expect(removableNoneChips).toBeNull();
+    });
+
+    it('does NOT render Lockdown when per-agent list is empty []', () => {
+      // Empty [] falls through to _defaults at resolve time — that's
+      // "inherits defaults", not lockdown.
+      const html = render({ _defaults: ['*'], planner: [] }, 'skills');
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      expect(plannerRow).not.toContain('data-lockdown="true"');
+      expect(plannerRow).not.toContain('dispatch-chip-lockdown');
+    });
+
     it('does NOT render Lockdown when row inherits non-empty defaults', () => {
       const html = render({ _defaults: ['*'] }, 'skills');
-      // No agent has an explicit empty list, so no lockdown anywhere.
       expect(html).not.toContain('data-lockdown="true"');
     });
 
     it('does NOT render Lockdown for the _defaults row itself', () => {
-      // Even when _defaults is explicitly [], that's "inherit nothing", not
-      // a per-agent lockdown — the placeholder would be confusing.
-      const html = render({ _defaults: [] }, 'skills');
+      const html = render({ _defaults: ['none'] }, 'skills');
       const defaultsRow =
         html.split('data-agent="_defaults"')[1]?.split('data-agent="')[0] || '';
       expect(defaultsRow).not.toContain('data-lockdown="true"');
     });
 
-    it('renders Lockdown across all three sections when applicable', () => {
+    it('renders Lockdown across all three sections when ["none"] is used', () => {
       for (const section of ['tools', 'skills', 'subagents']) {
-        const html = render({ _defaults: ['*'], planner: [] }, section);
+        const html = render({ _defaults: ['*'], planner: ['none'] }, section);
         const plannerRow =
           html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
         expect(plannerRow).toContain('data-lockdown="true"');
       }
+    });
+  });
+
+  describe('Inherits-defaults chip for empty per-agent lists', () => {
+    function render(perAgent, section) {
+      return renderToString(
+        dispatchSectionView({
+          section,
+          config: {
+            always_disallowed: [],
+            default_denied: [],
+            per_agent_allow: perAgent,
+          },
+          knownItems: [],
+          agentRoles: AGENT_ROLES,
+          defaults: DISPATCH_DEFAULTS[section],
+          onChange: vi.fn(),
+        }),
+      );
+    }
+
+    it('renders Inherits-defaults chip when per-agent list is empty []', () => {
+      const html = render({ _defaults: ['*'], planner: [] }, 'subagents');
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      expect(plannerRow).toContain('data-inherits="true"');
+      expect(plannerRow).toContain('Inherits defaults');
+      expect(plannerRow).toContain('dispatch-chip-inherits');
+    });
+
+    it('does NOT render Inherits chip when per-agent list is ["none"]', () => {
+      const html = render({ _defaults: ['*'], planner: ['none'] }, 'subagents');
+      const plannerRow =
+        html.split('data-agent="planner"')[1]?.split('data-agent="')[0] || '';
+      expect(plannerRow).not.toContain('data-inherits="true"');
+    });
+
+    it('does NOT render Inherits chip for an uncustomized agent', () => {
+      // When the agent has no explicit key, _effectiveTags falls back to
+      // _defaults visually — no placeholder needed.
+      const html = render({ _defaults: ['*'] }, 'subagents');
+      expect(html).not.toContain('data-inherits="true"');
+    });
+
+    it('does NOT render Inherits chip for the _defaults row itself', () => {
+      const html = render({ _defaults: [] }, 'subagents');
+      const defaultsRow =
+        html.split('data-agent="_defaults"')[1]?.split('data-agent="')[0] || '';
+      expect(defaultsRow).not.toContain('data-inherits="true"');
     });
   });
 
