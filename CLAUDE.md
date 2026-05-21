@@ -85,6 +85,8 @@ Project-level skills and subagents (under `.claude/skills/` and `.claude/agents/
 | `/worca-release` | Cutting a stable release (worca-cc, @worca/ui, or both). |
 | `/worca-rc` | Cutting a release candidate. |
 | `/state-action-matrix` | Loading the pipeline state-action spec before touching states/transitions/gating. |
+| `/worca-ui-add-page` | Scaffolding a new worca-ui section across all 4-5 routing wire-up points (view file, main dispatch, header title, sidebar entry, WS/fetch hooks). |
+| `/worca-ui-add-card` | Scaffolding a new card view following `worca-ui/docs/card-layout.md` — top/meta/(stages)/actions with central variant map. |
 
 ### Subagents (dispatch via Agent tool)
 
@@ -97,6 +99,9 @@ All prefixed `worca-*` to distinguish them from pipeline agents (planner, coordi
 | `worca-ui-design-reviewer` | After UI changes — checks badge color compliance, the lit-html template binding gotcha, and the npm `files` allowlist. |
 | `worca-stage-key-reviewer` | After changes to code that reads `status.json` or compares `stages.*` — catches the silent `'guardian'` (agent) vs `'pr'` (stage key) confusion. |
 | `worca-release-preflight` | Right before `/worca-release` or `/worca-rc`. Audits version-file parity, CI status, MIGRATION.md coverage. |
+| `worca-ui-routing-reviewer` | After adding or modifying a worca-ui section. Audits all 5 wire-up points (view, dispatch, header, sidebar, WS/fetch). |
+| `worca-ui-card-consistency-reviewer` | After changes to any `*-card.js` view. Audits the 4-section layout, `statusIcon`/`statusClass` usage, and per-domain variant map (no inline `variant="success"`). Spec: `worca-ui/docs/card-layout.md`. |
+| `worca-ui-a11y-reviewer` | After non-trivial UI changes (new views, dialogs, form controls, status indicators). Raises the a11y floor on new code without forcing global retrofit. |
 
 ### Why the prefix
 
@@ -352,6 +357,8 @@ See `src/worca/agents/core/planner.md`, `reviewer.md`, and `tester.md` for the p
 ## worca-ui Development
 
 **Badge color language:** all `sl-badge` variants and status colors follow the guide in [`worca-ui/docs/badge-color-language.md`](./worca-ui/docs/badge-color-language.md). Read it before adding or modifying badges — blue means active, orange means caution, green means done.
+
+**Card layout:** all card-style views (run, fleet, workspace, worktree) share the `.run-card` base structure documented in [`worca-ui/docs/card-layout.md`](./worca-ui/docs/card-layout.md). New card types must follow the 4-section pattern (top → meta → stages → actions) and route through `statusIcon`/`statusClass` + a per-domain variant map.
 
 After modifying any source files in `worca-ui/app/`, rebuild the bundle:
 
