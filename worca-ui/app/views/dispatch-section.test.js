@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
-import { dispatchSectionView } from './dispatch-section.js';
+import { dispatchSectionView, resetSectionConfig } from './dispatch-section.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -632,6 +632,110 @@ describe('dispatch-section', () => {
         ['review'],
       );
       expect(html).not.toContain('dispatch-wildcard-deny-warning');
+    });
+  });
+
+  describe('per-section reset', () => {
+    // Collect every function value (event handler) reachable in the template
+    // tree so we can invoke the section-reset handler directly — renderToString
+    // skips functions.
+    function collectHandlers(template, out = []) {
+      if (!template || !template.values) return out;
+      for (const v of template.values) {
+        if (typeof v === 'function') out.push(v);
+        else if (Array.isArray(v)) {
+          for (const item of v) collectHandlers(item, out);
+        } else if (v?.strings) collectHandlers(v, out);
+      }
+      return out;
+    }
+
+    for (const section of ['tools', 'skills', 'subagents']) {
+      it(`renders a per-section Reset button for ${section}`, () => {
+        const html = renderToString(
+          dispatchSectionView({
+            section,
+            config: {
+              always_disallowed: [],
+              default_denied: [],
+              per_agent_allow: { _defaults: ['*'] },
+            },
+            knownItems: [],
+            agentRoles: AGENT_ROLES,
+            defaults: DISPATCH_DEFAULTS[section],
+            onChange: vi.fn(),
+          }),
+        );
+        expect(html).toContain('dispatch-section-reset');
+        expect(html).toContain(`data-section="${section}"`);
+      });
+    }
+
+    it('reset handler emits onChange with the reset section config', () => {
+      const onChange = vi.fn();
+      // A customized config (planner pinned) that differs from defaults.
+      const config = {
+        always_disallowed: ['general-purpose'],
+        default_denied: [],
+        per_agent_allow: { planner: ['Explore'], _defaults: ['*'] },
+      };
+      const template = dispatchSectionView({
+        section: 'subagents',
+        config,
+        knownItems: KNOWN_SUBAGENTS,
+        agentRoles: AGENT_ROLES,
+        defaults: DISPATCH_DEFAULTS.subagents,
+        onChange,
+      });
+      for (const fn of collectHandlers(template)) {
+        try {
+          fn();
+        } catch {
+          /* per-agent input handlers expect a DOM event — ignore */
+        }
+      }
+      const expected = resetSectionConfig(config, DISPATCH_DEFAULTS.subagents);
+      const resetCall = onChange.mock.calls.find(
+        ([arg]) => JSON.stringify(arg) === JSON.stringify(expected),
+      );
+      expect(resetCall).toBeTruthy();
+      // planner is reset away from the customization, back to the wildcard.
+      expect(resetCall[0].per_agent_allow.planner).toEqual(['*']);
+    });
+  });
+
+  describe('resetSectionConfig (deep-merge-safe reset)', () => {
+    it('returns a deep copy of the defaults (no shared reference)', () => {
+      const out = resetSectionConfig(
+        { per_agent_allow: { _defaults: ['*'] } },
+        DISPATCH_DEFAULTS.skills,
+      );
+      expect(out).not.toBe(DISPATCH_DEFAULTS.skills);
+      expect(out.always_disallowed).toEqual(
+        DISPATCH_DEFAULTS.skills.always_disallowed,
+      );
+    });
+
+    it('overwrites a customized agent with its default value so save can clear it', () => {
+      // subagents defaults have no per-agent entries → planner falls back to the
+      // wildcard default rather than being silently dropped.
+      const out = resetSectionConfig(
+        { per_agent_allow: { planner: ['Explore', 'Plan'], _defaults: ['*'] } },
+        DISPATCH_DEFAULTS.subagents,
+      );
+      expect(out.per_agent_allow.planner).toEqual(['*']);
+    });
+
+    it('restores a section-default agent value (skills implementer)', () => {
+      const out = resetSectionConfig(
+        {
+          per_agent_allow: { implementer: ['custom-skill'], _defaults: ['*'] },
+        },
+        DISPATCH_DEFAULTS.skills,
+      );
+      expect(out.per_agent_allow.implementer).toEqual(
+        DISPATCH_DEFAULTS.skills.per_agent_allow.implementer,
+      );
     });
   });
 });

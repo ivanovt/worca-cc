@@ -36,7 +36,7 @@ import {
 import { STAGE_ORDER } from '../utils/stage-order.js';
 import { isVersionBehind } from '../utils/version-compare.js';
 import { AGENT_NAMES } from './agent-names.js';
-import { dispatchSectionView } from './dispatch-section.js';
+import { dispatchSectionView, resetSectionConfig } from './dispatch-section.js';
 import { KNOWN_TYPES } from './dispatch-tag-state.js';
 import { integrationsTab } from './integrations.js';
 
@@ -160,6 +160,7 @@ export const DEFAULT_GOVERNANCE = {
     restrict_git_commit: true,
   },
   test_gate_strikes: 2,
+  dispatch_migration_version: 1,
   dispatch: {
     tools: { ...DISPATCH_DEFAULTS.tools },
     skills: { ...DISPATCH_DEFAULTS.skills },
@@ -590,6 +591,46 @@ function confirmReset(section, rerender) {
       confirmLabel: 'Reset',
       confirmVariant: 'danger',
       onConfirm: () => resetSection(section, rerender),
+    },
+    rerender,
+  );
+}
+
+// Governance-tab reset is staged in memory (NOT an immediate server reset like
+// confirmReset/resetSection): it restores DEFAULT_GOVERNANCE in settingsData so
+// the form re-renders to defaults, and the user must click Save to persist —
+// matching the per-section Reset behaviour in the dispatch panels.
+function resetGovernanceTabInMemory(rerender) {
+  if (!settingsData?.worca) return;
+  const current = settingsData.worca.governance || {};
+  const reset = structuredClone(DEFAULT_GOVERNANCE);
+  // The save path deep-merges and never deletes keys, so reset each dispatch
+  // section through resetSectionConfig — that explicitly overwrites every
+  // currently-customized per-agent entry with its default value so the reset
+  // actually persists on Save (see resetSectionConfig).
+  for (const section of ['tools', 'skills', 'subagents']) {
+    reset.dispatch[section] = resetSectionConfig(
+      current.dispatch?.[section],
+      DISPATCH_DEFAULTS[section],
+    );
+  }
+  settingsData.worca.governance = reset;
+  resetDispatchEditState();
+  saveStatus = null;
+  saveMessage = '';
+  rerender();
+}
+
+function confirmResetGovernance(rerender) {
+  showConfirm(
+    {
+      label: 'Reset Governance',
+      message: html`Reset all <strong>Governance</strong> settings (guard rules,
+        test gate, and dispatch rules) to their defaults? Changes apply when you
+        click <strong>Save</strong>.`,
+      confirmLabel: 'Reset',
+      confirmVariant: 'danger',
+      onConfirm: () => resetGovernanceTabInMemory(rerender),
     },
     rerender,
   );
@@ -1252,7 +1293,7 @@ export function governanceTab(worca, permissions, rerender) {
           ${unsafeHTML(iconSvg(Save, 14))}
           Save
         </sl-button>
-        <sl-button variant="default" size="small" outline @click=${() => confirmReset('governance', rerender)}>
+        <sl-button variant="default" size="small" outline @click=${() => confirmResetGovernance(rerender)}>
           ${unsafeHTML(iconSvg(RefreshCw, 14))}
           Reset
         </sl-button>

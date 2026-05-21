@@ -574,3 +574,126 @@ test('Esc clears input and dismisses suggestions popup', async ({ page }) => {
     await ctx.close();
   }
 });
+
+// ─── W-054 follow-up: strikethrough removal + per-section / per-tab reset ─────
+
+test('always_disallowed chips are not struck through', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {});
+    await expandDispatchSection(page, 'tools');
+
+    const lockedChip = page.locator(
+      'sl-tag.dispatch-chip-locked[data-value="EnterPlanMode"]',
+    );
+    await expect(lockedChip).toBeVisible();
+    const decoration = await lockedChip.evaluate(
+      (el) => getComputedStyle(el).textDecorationLine,
+    );
+    expect(decoration).not.toBe('line-through');
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('per-section Reset stages defaults and persists on Save', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            subagents: {
+              always_disallowed: ['general-purpose'],
+              default_denied: [],
+              per_agent_allow: {
+                planner: ['Explore', 'Plan'],
+                _defaults: ['*'],
+              },
+            },
+          },
+        },
+      },
+    });
+    await expandDispatchSection(page, 'subagents');
+
+    const planChip = page.locator(
+      '#dispatch-subagents-planner sl-tag[data-value="Plan"]',
+    );
+    await expect(planChip).toBeVisible();
+
+    // Per-section Reset (top-right of the expanded panel) stages defaults.
+    await page
+      .locator('.dispatch-section-reset[data-section="subagents"]')
+      .click();
+    await expect(planChip).not.toBeAttached();
+
+    // Persist and round-trip.
+    await saveGovernanceTab(page);
+    await page.reload(GOTO_OPTS);
+    await page.locator('sl-tab[panel="governance"]').click();
+    await expandDispatchSection(page, 'subagents');
+    await expect(
+      page.locator('#dispatch-subagents-planner sl-tag[data-value="Plan"]'),
+    ).not.toBeAttached();
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('bottom Reset stages tab defaults in memory and requires Save to persist', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGovernance(page, ctx, {
+      worca: {
+        governance: {
+          dispatch: {
+            subagents: {
+              always_disallowed: ['general-purpose'],
+              default_denied: [],
+              per_agent_allow: {
+                planner: ['Explore', 'Plan'],
+                _defaults: ['*'],
+              },
+            },
+          },
+        },
+      },
+    });
+    await expandDispatchSection(page, 'subagents');
+    const planChip = page.locator(
+      '#dispatch-subagents-planner sl-tag[data-value="Plan"]',
+    );
+    await expect(planChip).toBeVisible();
+
+    // Bottom Reset (whole tab) → confirm dialog → reset staged in memory.
+    await page
+      .locator(
+        'sl-tab-panel[name="governance"] .settings-tab-actions sl-button[variant="default"]',
+      )
+      .click();
+    // showConfirm() opens the dialog via getElementById().show(); when more than
+    // one #global-confirm-dialog is mounted (app shell + settings view) only the
+    // opened one carries the [open] attribute.
+    const dialog = page.locator('#global-confirm-dialog[open]');
+    await expect(dialog).toBeVisible();
+    await dialog.locator('sl-button[variant="danger"]').click();
+
+    // Staged in memory — custom chip gone without a Save.
+    await expect(planChip).not.toBeAttached();
+
+    // Not persisted: reload (no Save) restores the on-disk customization.
+    await page.reload(GOTO_OPTS);
+    await page.locator('sl-tab[panel="governance"]').click();
+    await expandDispatchSection(page, 'subagents');
+    await expect(
+      page.locator('#dispatch-subagents-planner sl-tag[data-value="Plan"]'),
+    ).toBeVisible();
+  } finally {
+    await ctx.close();
+  }
+});

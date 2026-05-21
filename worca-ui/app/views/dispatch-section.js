@@ -1,6 +1,34 @@
 import { html, nothing } from 'lit-html';
 import { isCustomized } from './dispatch-tag-state.js';
 
+/**
+ * Build the section config to stage when resetting a dispatch section to its
+ * defaults. Returns a deep copy of `defaults`, but ALSO explicitly resets every
+ * per-agent entry currently present in `currentConfig` to its default value.
+ *
+ * This is required because the settings save path deep-merges over the on-disk
+ * config and never deletes keys: simply staging the bare defaults (which omit
+ * customized agents) would leave the customizations on disk. Overwriting each
+ * present agent with its default value (an array, which the merge replaces)
+ * makes the reset actually persist on Save.
+ */
+export function resetSectionConfig(currentConfig, defaults) {
+  const def = structuredClone(defaults || currentConfig || {});
+  const defPerAgent = def.per_agent_allow || {};
+  const merged = { ...defPerAgent };
+  const curPerAgent = currentConfig?.per_agent_allow || {};
+  for (const agent of Object.keys(curPerAgent)) {
+    if (agent === '_defaults') continue;
+    if (!(agent in merged)) {
+      merged[agent] = defPerAgent[agent]
+        ? [...defPerAgent[agent]]
+        : [...(defPerAgent._defaults || ['*'])];
+    }
+  }
+  def.per_agent_allow = merged;
+  return def;
+}
+
 // Follow-up #4: hovering over the `*` chip explains what wildcard means.
 // Hovering a locked chip explains why it's there (e.g. always_disallowed
 // or, in the Tools section, the auto-included Skill/Agent meta-tools).
@@ -341,6 +369,13 @@ export function dispatchSectionView({
     });
   }
 
+  // Per-section reset: replace the whole section config (all three tiers) with
+  // the shipped defaults. Stages in memory only — the user must Save for it to
+  // persist, same as any other dispatch edit.
+  function resetSectionToDefaults() {
+    onChange(resetSectionConfig(config, defaults));
+  }
+
   function _agentDefault(agent) {
     return (
       defaults?.per_agent_allow?.[agent] ||
@@ -423,11 +458,23 @@ export function dispatchSectionView({
 
   return html`
     <div class="dispatch-section">
-      ${
-        showTitle
-          ? html`<h4 class="dispatch-section-title">${capitalize(section)}</h4>`
-          : nothing
-      }
+      <div class="dispatch-section-header">
+        ${
+          showTitle
+            ? html`<h4 class="dispatch-section-title">${capitalize(section)}</h4>`
+            : html`<span></span>`
+        }
+        <sl-button
+          size="small"
+          variant="text"
+          class="dispatch-section-reset"
+          data-section="${section}"
+          title="Reset ${capitalize(section)} to defaults (applies on Save)"
+          @click=${resetSectionToDefaults}
+        >
+          Reset
+        </sl-button>
+      </div>
       ${
         sectionHint
           ? html`<p class="dispatch-section-hint">${sectionHint}</p>`

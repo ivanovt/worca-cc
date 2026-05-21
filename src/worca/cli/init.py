@@ -183,20 +183,29 @@ def _seed_dispatch_defaults(governance_cfg: dict) -> None:
 
 
 def _migrate_dispatch_governance(governance_cfg: dict, changes: list[str]) -> None:
-    """Migrate flat subagent_dispatch -> nested dispatch.subagents (W-054)."""
-    if "subagent_dispatch" not in governance_cfg:
-        return
-    old = governance_cfg.pop("subagent_dispatch")
-    dispatch = governance_cfg.setdefault("dispatch", {})
-    subagents = dispatch.setdefault("subagents", {})
-    per_agent = subagents.setdefault("per_agent_allow", {})
-    per_agent.update(old)
-    _seed_dispatch_defaults(governance_cfg)
-    governance_cfg.pop("_dispatch_legacy", None)
-    changes.append(
-        "  governance.subagent_dispatch -> governance.dispatch.subagents "
-        "(W-054 — tools and skills sections added with defaults)"
-    )
+    """Migrate flat subagent_dispatch -> nested dispatch.subagents (W-054), then
+    apply the one-time dispatch-default normalization (gated by a version stamp).
+
+    The normalization runs even when no legacy shape is present so that configs
+    already on the W-054 nested shape but still pinned to the stale Explore-only
+    subagent default (or the broad ``worca-*`` skills glob) self-heal on upgrade.
+    """
+    from worca.hooks.tracking import normalize_dispatch_defaults
+
+    if "subagent_dispatch" in governance_cfg:
+        old = governance_cfg.pop("subagent_dispatch")
+        dispatch = governance_cfg.setdefault("dispatch", {})
+        subagents = dispatch.setdefault("subagents", {})
+        per_agent = subagents.setdefault("per_agent_allow", {})
+        per_agent.update(old)
+        _seed_dispatch_defaults(governance_cfg)
+        governance_cfg.pop("_dispatch_legacy", None)
+        changes.append(
+            "  governance.subagent_dispatch -> governance.dispatch.subagents "
+            "(W-054 — tools and skills sections added with defaults)"
+        )
+
+    changes.extend(normalize_dispatch_defaults(governance_cfg))
 
 
 def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:

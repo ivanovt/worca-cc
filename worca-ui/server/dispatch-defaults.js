@@ -18,7 +18,22 @@ export const DISPATCH_DEFAULTS = {
       'fewer-permission-prompts',
       'loop',
       'schedule',
-      'worca-*',
+      // worca-* dev skills that genuinely must stay off-limits to pipeline
+      // agents: release/publish, PR merges, cross-repo sync, installation,
+      // agent/governance override (privilege escalation), pipeline launch
+      // (recursion), and autonomous issue/plan creation. The rest of the
+      // worca-* dev tooling (precommit, coverage, ui/event scaffolding,
+      // webhook-test, issue read) is allowed via the per-agent '*' wildcard.
+      'worca-release',
+      'worca-rc',
+      'worca-pr-prep',
+      'worca-install',
+      'worca-sync',
+      'worca-sync-commit',
+      'worca-sync-pr',
+      'worca-agent-override',
+      'worca-analyze',
+      'worca-plan-new',
       'update-config',
       'hookify:hookify',
       'hookify:configure',
