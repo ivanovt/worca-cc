@@ -6479,10 +6479,10 @@ sl-dialog.markdown-dialog::part(body) {
   display: block;
   margin: 0.25rem 0 0.75rem;
   padding: 0.4rem 0.6rem;
-  background: var(--sl-color-neutral-100, #f4f4f5);
-  border: 1px solid var(--sl-color-neutral-200, #e4e4e7);
-  border-radius: 4px;
-  font-family: var(--sl-font-mono, ui-monospace, monospace);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
   word-break: break-all;
   user-select: all;
