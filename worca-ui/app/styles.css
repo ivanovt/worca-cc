@@ -6473,3 +6473,17 @@ sl-dialog.markdown-dialog::part(body) {
 .conflict-icon {
   color: var(--status-blocked);
 }
+
+/* Graphify cache location — selectable monospace path (W-053 cache relocation) */
+.graphify-cache-path {
+  display: block;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--sl-color-neutral-100, #f4f4f5);
+  border: 1px solid var(--sl-color-neutral-200, #e4e4e7);
+  border-radius: 4px;
+  font-family: var(--sl-font-mono, ui-monospace, monospace);
+  font-size: 0.85rem;
+  word-break: break-all;
+  user-select: all;
+}

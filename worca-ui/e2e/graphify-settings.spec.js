@@ -139,6 +139,7 @@ test('Build/Clear cache actions are present when enabled', async ({ page }) => {
     await expect(page.locator('.graphify-cache-actions')).toBeAttached();
     await expect(page.locator('.graphify-build-btn')).toBeAttached();
     await expect(page.locator('.graphify-clear-btn')).toBeAttached();
+    await expect(page.locator('.graphify-cache-path')).toBeAttached();
   } finally {
     await ctx.close();
   }

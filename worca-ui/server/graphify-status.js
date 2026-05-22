@@ -101,11 +101,17 @@ export function snapshotDir(projectRoot) {
   return join(cacheDir(), 'ast', rid, sha);
 }
 
-/** Remove all cached snapshots for the project's repo. Returns the path or null. */
-export function clearRepoCache(projectRoot) {
+/** The per-project cache dir (<cache>/ast/<repo-id>/), or null if not a repo. */
+export function repoCacheDir(projectRoot) {
   const rid = repoId(projectRoot);
   if (!rid) return null;
-  const repoCache = join(cacheDir(), 'ast', rid);
+  return join(cacheDir(), 'ast', rid);
+}
+
+/** Remove all cached snapshots for the project's repo. Returns the path or null. */
+export function clearRepoCache(projectRoot) {
+  const repoCache = repoCacheDir(projectRoot);
+  if (!repoCache) return null;
   rmSync(repoCache, { recursive: true, force: true });
   return repoCache;
 }
@@ -205,7 +211,13 @@ export function createGraphifyStatus(opts = {}) {
     const graphStats = effective.enabled
       ? _graphStats(snapshotDir(projectRoot))
       : null;
-    return { ok: true, effective, detection, graph_stats: graphStats };
+    return {
+      ok: true,
+      effective,
+      detection,
+      graph_stats: graphStats,
+      cache_path: effective.enabled ? repoCacheDir(projectRoot) : null,
+    };
   }
 
   return { detect, invalidate, getStatus };

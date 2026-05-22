@@ -9,6 +9,7 @@ import {
   _effectiveConfig,
   _graphStats,
   createGraphifyStatus,
+  repoCacheDir,
   snapshotDir,
 } from './graphify-status.js';
 
@@ -234,6 +235,9 @@ describe('createGraphifyStatus', () => {
     expect(result.effective.enabled).toBe(true);
     expect(result.detection.installed).toBe(true);
     expect(result.graph_stats).not.toBeNull();
+    // cache_path is the per-project cache dir (<cache>/ast/<repo-id>/)
+    expect(result.cache_path).toBe(repoCacheDir(tmpDir));
+    expect(result.cache_path).toContain('ast');
 
     if (prevCache === undefined) delete process.env.WORCA_CACHE;
     else process.env.WORCA_CACHE = prevCache;

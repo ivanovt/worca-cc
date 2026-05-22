@@ -106,6 +106,9 @@ describe('graphifyTab rendering', () => {
     expect(html).toContain('graphify-clear-btn');
     expect(html).toContain('Build / refresh graph');
     expect(html).toContain('Clear cache');
+    // Selectable cache-location path field.
+    expect(html).toContain('Cache location');
+    expect(html).toContain('graphify-cache-path');
   });
 
   it('hides cache actions when off', async () => {

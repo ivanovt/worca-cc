@@ -31,11 +31,14 @@ export function graphifyStateValue(graphify = {}) {
 // long-running build/clear track progress here and re-render via rerender()).
 let _cacheBusy = false;
 let _cacheMsg = '';
+let _cachePath = null; // <cache>/ast/<repo-id>/ for this project (from the server)
+let _cacheStatusFetched = false;
 
 async function _refreshCacheStatus(rerender) {
   try {
     const j = await (await fetch('/api/graphify/status')).json();
     _cacheBusy = Boolean(j.building);
+    _cachePath = j.cache_path ?? _cachePath;
     if (j.graph_stats)
       _cacheMsg = 'Knowledge graph is built for the current commit.';
     else if (!_cacheBusy)
@@ -91,6 +94,12 @@ export function graphifyTab(worca, rerender) {
   const isFullMode = state === 'full';
   const backend = graphify.model_profile || '';
   const modelKeys = getModelKeys(worca);
+
+  // Load the cache path + build state once when the tab first shows enabled.
+  if (enabled && !_cacheStatusFetched) {
+    _cacheStatusFetched = true;
+    _refreshCacheStatus(rerender);
+  }
 
   // Edits update worca.graphify in-memory and re-render (same pattern as the
   // governance tab); the Save button persists via saveSettings().
@@ -182,6 +191,10 @@ export function graphifyTab(worca, rerender) {
           Snapshots are stored per-commit in the worca cache (not in the repo).
           Building can take a while on large repos and runs in the background.
         </p>
+        <label class="settings-label" for="graphify-cache-path">Cache location</label>
+        <code id="graphify-cache-path" class="graphify-cache-path"
+          >${_cachePath || 'resolving…'}</code
+        >
         <div class="graphify-cache-buttons">
           <sl-button
             class="graphify-build-btn"
