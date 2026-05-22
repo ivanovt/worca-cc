@@ -19,24 +19,27 @@ async function goToGraphifyTab(page, ctx, settings = {}) {
   await page.locator('sl-tab[panel="graphify"]').click();
 }
 
-test('renders Graphify tab with toggle, mode, and backend fields', async ({
+test('renders Graphify tab with the off/structural/full state control', async ({
   page,
 }) => {
   const ctx = await startServer();
   try {
     await goToGraphifyTab(page, ctx, {
-      worca: { graphify: { enabled: false } },
+      worca: { graphify: { enabled: true, mode: 'structural' } },
     });
 
-    await expect(page.locator('#graphify-enabled')).toBeAttached();
-    await expect(page.locator('#graphify-mode')).toBeAttached();
+    // Single combined control replaces the former switch + mode radios.
+    await expect(page.locator('#graphify-state')).toBeAttached();
+    await expect(page.locator('#graphify-enabled')).toHaveCount(0);
+    await expect(page.locator('#graphify-mode')).toHaveCount(0);
+    // Model Profile is shown only when not off.
     await expect(page.locator('#graphify-backend')).toBeAttached();
   } finally {
     await ctx.close();
   }
 });
 
-test('toggle on enables graphify and shows structural mode by default', async ({
+test('state control reflects off when graphify is disabled', async ({
   page,
 }) => {
   const ctx = await startServer();
@@ -45,16 +48,36 @@ test('toggle on enables graphify and shows structural mode by default', async ({
       worca: { graphify: { enabled: false } },
     });
 
-    const toggle = page.locator('#graphify-enabled');
-    await expect(toggle).toBeAttached();
+    const stateGroup = page.locator('#graphify-state');
+    await expect(stateGroup).toBeAttached();
+    const value = await stateGroup.evaluate((el) => el.value);
+    expect(value).toBe('off');
+    // Off hides the model profile + privacy notice.
+    await expect(page.locator('#graphify-backend')).toHaveCount(0);
+    await expect(page.locator('#graphify-privacy-notice')).toHaveCount(0);
+  } finally {
+    await ctx.close();
+  }
+});
 
-    const isChecked = await toggle.evaluate((el) => el.checked);
-    expect(isChecked).toBe(false);
+test('state control renders as registered sl-radio-button controls', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, {
+      worca: { graphify: { enabled: true, mode: 'structural' } },
+    });
 
-    const modeGroup = page.locator('#graphify-mode');
-    await expect(modeGroup).toBeAttached();
-    const modeValue = await modeGroup.evaluate((el) => el.value);
-    expect(modeValue).toBe('structural');
+    // Regression guard: the state control uses <sl-radio-button>, which must
+    // be registered (imported in main.js) or it renders as inert run-together
+    // text ("offstructuralfull") instead of a segmented toggle. radio-group's
+    // .value works regardless, so value-only assertions don't catch this.
+    const defined = await page.evaluate(() =>
+      Boolean(customElements.get('sl-radio-button')),
+    );
+    expect(defined).toBe(true);
+    await expect(page.locator('#graphify-state sl-radio-button')).toHaveCount(3);
   } finally {
     await ctx.close();
   }
@@ -87,26 +110,6 @@ test('switching mode to full shows full privacy notice', async ({ page }) => {
     const notice = page.locator('#graphify-privacy-notice');
     await expect(notice).toBeAttached();
     await expect(notice).toContainText('sends document and diagram summaries');
-  } finally {
-    await ctx.close();
-  }
-});
-
-test('graphify badge shows Disabled on dashboard when graphify is off', async ({
-  page,
-}) => {
-  const ctx = await startServer();
-  try {
-    writeFileSync(
-      join(ctx.dir, 'settings.json'),
-      JSON.stringify({ worca: { graphify: { enabled: false } } }, null, 2) +
-        '\n',
-      'utf8',
-    );
-    await page.goto(`${ctx.url}/#/dashboard`, GOTO_OPTS);
-
-    const badge = page.locator('.graphify-badge .graphify-status-badge');
-    await expect(badge).toContainText('Disabled');
   } finally {
     await ctx.close();
   }

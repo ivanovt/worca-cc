@@ -16,7 +16,6 @@ import {
   Zap,
 } from '../utils/icons.js';
 import { statusDotClass } from '../utils/status-badge.js';
-import { graphifyBadgeView } from './project-badge.js';
 
 /**
  * Derive aggregate status for a project from its runs.
@@ -210,15 +209,6 @@ export function sidebarView(
               ${unsafeHTML(iconSvg(Plus, 16))}
             </button>
           </div>
-          ${
-            state.graphifyStatus
-              ? html`
-            <div class="sidebar-graphify-badge">
-              ${graphifyBadgeView(state.graphifyStatus)}
-            </div>
-          `
-              : ''
-          }
         </div>
       `
           : ''

@@ -471,7 +471,7 @@ export async function loadSettings(projectId) {
   }
 }
 
-async function saveSettings(data, rerender, projectId) {
+export async function saveSettings(data, rerender, projectId) {
   saveStatus = 'saving';
   saveMessage = '';
   rerender();
@@ -581,7 +581,7 @@ const _RESET_DETAIL_MESSAGES = {
   `,
 };
 
-function confirmReset(section, rerender) {
+export function confirmReset(section, rerender) {
   const label = section.charAt(0).toUpperCase() + section.slice(1);
   const detail = _RESET_DETAIL_MESSAGES[section];
   showConfirm(

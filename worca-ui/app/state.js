@@ -62,7 +62,6 @@ export function createStore(initial = {}) {
     cleanupPolicy: initial.cleanupPolicy ?? 'never',
     maxConcurrentPipelines: initial.maxConcurrentPipelines ?? 10,
     totalRunning: initial.totalRunning ?? 0,
-    graphifyStatus: initial.graphifyStatus ?? null,
   };
 
   const subs = new Set();
@@ -114,8 +113,7 @@ export function createStore(initial = {}) {
         next.classifierModel === state.classifierModel &&
         next.cleanupPolicy === state.cleanupPolicy &&
         next.maxConcurrentPipelines === state.maxConcurrentPipelines &&
-        next.totalRunning === state.totalRunning &&
-        next.graphifyStatus === state.graphifyStatus
+        next.totalRunning === state.totalRunning
       )
         return;
       state = next;

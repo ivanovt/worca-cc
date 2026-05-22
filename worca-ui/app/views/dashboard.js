@@ -12,7 +12,6 @@ import { sortByStartDesc } from '../utils/sort-runs.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { fleetCardView } from './fleet-card.js';
 import { fleetStatusVariant } from './group-rendering.js';
-import { graphifyBadgeView } from './project-badge.js';
 import { runCardView } from './run-card.js';
 
 // Bucket fleets by their canonical (server-derived) status so the
@@ -424,16 +423,6 @@ export function dashboardView(
           </div>
         </div>
       </div>
-
-      ${
-        state.graphifyStatus
-          ? html`
-        <div class="dashboard-graphify-status">
-          ${graphifyBadgeView(state.graphifyStatus)}
-        </div>
-      `
-          : nothing
-      }
 
       <h3 class="dashboard-section-title">Active Runs</h3>
       ${

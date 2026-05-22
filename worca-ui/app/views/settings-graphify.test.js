@@ -20,21 +20,36 @@ function renderToString(template) {
 }
 
 describe('graphifyTab rendering', () => {
-  it('renders enabled toggle', async () => {
+  it('renders a single off/structural/full state control', async () => {
     const { graphifyTab } = await import('./settings-graphify.js');
     const worca = { graphify: { enabled: false } };
     const html = renderToString(graphifyTab(worca, () => {}));
-    expect(html).toContain('graphify-enabled');
-    expect(html).toContain('sl-switch');
+    // One combined control replaces the former switch + mode radios.
+    expect(html).toContain('graphify-state');
+    expect(html).not.toContain('graphify-enabled');
+    expect(html).not.toContain('sl-switch');
+    expect(html).toContain('Off');
+    expect(html).toContain('Structural');
+    expect(html).toContain('Full');
   });
 
-  it('renders mode radio group with structural and full options', async () => {
+  it('reflects the persisted state in the control value', async () => {
     const { graphifyTab } = await import('./settings-graphify.js');
-    const worca = { graphify: { enabled: true, mode: 'structural' } };
-    const html = renderToString(graphifyTab(worca, () => {}));
-    expect(html).toContain('graphify-mode');
-    expect(html).toContain('structural');
-    expect(html).toContain('full');
+    const off = renderToString(
+      graphifyTab({ graphify: { enabled: false } }, () => {}),
+    );
+    expect(off).toContain('value="off"');
+    const structural = renderToString(
+      graphifyTab(
+        { graphify: { enabled: true, mode: 'structural' } },
+        () => {},
+      ),
+    );
+    expect(structural).toContain('value="structural"');
+    const full = renderToString(
+      graphifyTab({ graphify: { enabled: true, mode: 'full' } }, () => {}),
+    );
+    expect(full).toContain('value="full"');
   });
 
   it('renders backend dropdown', async () => {
@@ -73,12 +88,27 @@ describe('graphifyTab rendering', () => {
     expect(html).toContain('Reset');
   });
 
-  it('disables mode and backend when graphify is disabled', async () => {
+  it('hides model profile and privacy notice when off', async () => {
     const { graphifyTab } = await import('./settings-graphify.js');
     const worca = { graphify: { enabled: false } };
     const html = renderToString(graphifyTab(worca, () => {}));
-    expect(html).toContain('graphify-mode');
-    expect(html).toContain('graphify-backend');
+    expect(html).not.toContain('graphify-backend');
+    expect(html).not.toContain('graphify-privacy-notice');
+    expect(html).toContain('graphify-disabled-hint');
+  });
+});
+
+describe('graphifyStateValue', () => {
+  it('maps enabled/mode onto the 3-way control value', async () => {
+    const { graphifyStateValue } = await import('./settings-graphify.js');
+    expect(graphifyStateValue({ enabled: false })).toBe('off');
+    expect(graphifyStateValue({})).toBe('off');
+    expect(graphifyStateValue({ enabled: true, mode: 'structural' })).toBe(
+      'structural',
+    );
+    expect(graphifyStateValue({ enabled: true, mode: 'full' })).toBe('full');
+    // enabled with no mode defaults to structural
+    expect(graphifyStateValue({ enabled: true })).toBe('structural');
   });
 });
 
@@ -86,5 +116,10 @@ describe('graphifyTab constants', () => {
   it('exports GRAPHIFY_MODES', async () => {
     const { GRAPHIFY_MODES } = await import('./settings-graphify.js');
     expect(GRAPHIFY_MODES).toEqual(['structural', 'full']);
+  });
+
+  it('exports GRAPHIFY_STATES', async () => {
+    const { GRAPHIFY_STATES } = await import('./settings-graphify.js');
+    expect(GRAPHIFY_STATES).toEqual(['off', 'structural', 'full']);
   });
 });
