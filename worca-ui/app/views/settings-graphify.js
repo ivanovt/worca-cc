@@ -16,10 +16,17 @@ export const GRAPHIFY_MODES = ['structural', 'full'];
 // src/worca/utils/graphify.py and GRAPHIFY_DEFAULTS in server/graphify-status.js.
 export const GRAPHIFY_VERSION_RANGE_DEFAULT = '>=0.7.10,<1';
 
-/** Suggested pip command to install a compatible graphify (shell-quoted). */
+// The PyPI distribution is `graphifyy` (double-y) even though the CLI it
+// installs is `graphify`. graphify is a CLI that must land on PATH, so the
+// project recommends `uv tool install` / `pipx` over plain `pip` (which often
+// installs into a venv/site that isn't on PATH). Ref:
+// https://github.com/safishamsi/graphify
+export const GRAPHIFY_PYPI_PACKAGE = 'graphifyy';
+
+/** Suggested command to install a compatible graphify CLI (shell-quoted). */
 export function graphifyInstallCommand(versionRange) {
   const range = versionRange || GRAPHIFY_VERSION_RANGE_DEFAULT;
-  return `pip install 'graphify${range}'`;
+  return `uv tool install '${GRAPHIFY_PYPI_PACKAGE}${range}'`;
 }
 
 const PRIVACY_STRUCTURAL =
@@ -271,6 +278,12 @@ export function graphifyTab(worca, rerender) {
               success-label="Copied"
             ></sl-copy-button>
           </div>
+          <p class="settings-tab-description graphify-install-hint">
+            PyPI package is <code>${GRAPHIFY_PYPI_PACKAGE}</code> (the CLI is
+            still <code>graphify</code>). No <code>uv</code>? <code>pipx install
+            '${GRAPHIFY_PYPI_PACKAGE}${_graphifyVersionRange}'</code> works too —
+            prefer uv/pipx over plain pip so the CLI lands on PATH.
+          </p>
         </div>`
             : ''
         }

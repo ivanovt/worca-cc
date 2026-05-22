@@ -202,27 +202,42 @@ describe('graphifyInstallCommand', () => {
     const { graphifyInstallCommand, GRAPHIFY_VERSION_RANGE_DEFAULT } =
       await import('./settings-graphify.js');
     expect(graphifyInstallCommand()).toBe(
-      `pip install 'graphify${GRAPHIFY_VERSION_RANGE_DEFAULT}'`,
+      `uv tool install 'graphifyy${GRAPHIFY_VERSION_RANGE_DEFAULT}'`,
     );
-    expect(graphifyInstallCommand()).toBe("pip install 'graphify>=0.7.10,<1'");
+    expect(graphifyInstallCommand()).toBe(
+      "uv tool install 'graphifyy>=0.7.10,<1'",
+    );
   });
 
   it('shell-quotes the package + range so the shell does not glob "<"', async () => {
     const { graphifyInstallCommand } = await import('./settings-graphify.js');
     const cmd = graphifyInstallCommand('>=0.8,<2');
-    expect(cmd).toBe("pip install 'graphify>=0.8,<2'");
+    expect(cmd).toBe("uv tool install 'graphifyy>=0.8,<2'");
     // The whole pinned package spec must be inside one quoted token.
-    expect(cmd).toMatch(/'graphify>=0\.8,<2'/);
+    expect(cmd).toMatch(/'graphifyy>=0\.8,<2'/);
   });
 
   it('falls back to the default for empty/nullish ranges', async () => {
     const { graphifyInstallCommand } = await import('./settings-graphify.js');
     expect(graphifyInstallCommand('')).toBe(
-      "pip install 'graphify>=0.7.10,<1'",
+      "uv tool install 'graphifyy>=0.7.10,<1'",
     );
     expect(graphifyInstallCommand(null)).toBe(
-      "pip install 'graphify>=0.7.10,<1'",
+      "uv tool install 'graphifyy>=0.7.10,<1'",
     );
+  });
+
+  it('targets the graphifyy PyPI package, not the bare graphify name', async () => {
+    // Regression: the PyPI distribution is `graphifyy` (double-y); the CLI it
+    // installs is `graphify`. Suggesting `graphify` (no double-y) points at an
+    // uninstallable package — the original bug.
+    const { graphifyInstallCommand, GRAPHIFY_PYPI_PACKAGE } = await import(
+      './settings-graphify.js'
+    );
+    expect(GRAPHIFY_PYPI_PACKAGE).toBe('graphifyy');
+    expect(graphifyInstallCommand()).toContain('graphifyy');
+    // The package token must be graphifyy, never the bare graphify name.
+    expect(graphifyInstallCommand()).not.toMatch(/install 'graphify[^y]/);
   });
 });
 

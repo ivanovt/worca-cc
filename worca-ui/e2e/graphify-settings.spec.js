@@ -194,11 +194,12 @@ test('build is gated on graphify CLI availability', async ({ page }) => {
         page.locator('#graphify-not-installed-notice'),
       ).toBeAttached();
       // A suggested install command + its copy button accompany the notice.
+      // The PyPI package is graphifyy (double-y); the CLI is graphify.
       await expect(page.locator('#graphify-install-cmd')).toContainText(
-        'pip install',
+        'uv tool install',
       );
       await expect(page.locator('#graphify-install-cmd')).toContainText(
-        'graphify',
+        'graphifyy',
       );
       await expect(page.locator('.graphify-copy-cmd-btn')).toBeAttached();
       await expect(page.locator('.graphify-build-btn')).toHaveJSProperty(
