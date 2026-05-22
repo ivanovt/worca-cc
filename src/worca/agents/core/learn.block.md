@@ -18,6 +18,12 @@ description, and surface it rather than silently resolving it.
 {{/if}}
 {{work_request}}
 
+{{#if has_graph}}
+## Codebase Structure (advisory)
+
+{{graph_context}}
+
+{{/if}}
 ## Termination
 
 **Type:** {{termination_type|unknown}}

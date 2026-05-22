@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Mock graphify CLI for integration tests.
+
+Supports two invocation modes:
+  graphify --version         → prints "graphify 4.2.1"
+  graphify --update [--no-llm] [--backend X]
+                             → writes a stub GRAPH_REPORT.md to graphify-out/
+  graphify build [--no-llm]  → same as --update (writes stub report)
+
+Env vars:
+  MOCK_GRAPHIFY_OUT_DIR  — override output dir (default: graphify-out)
+  MOCK_GRAPHIFY_FAIL     — if "1", exit with code 1 (simulate build failure)
+  MOCK_GRAPHIFY_LOG      — if set, append invocation args to this file (JSONL)
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def _log_invocation():
+    log_path = os.environ.get("MOCK_GRAPHIFY_LOG")
+    if not log_path:
+        return
+    entry = {"argv": sys.argv, "cwd": os.getcwd()}
+    with open(log_path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def main():
+    _log_invocation()
+
+    if os.environ.get("MOCK_GRAPHIFY_FAIL") == "1":
+        print("error: mock build failure", file=sys.stderr)
+        sys.exit(1)
+
+    if "--version" in sys.argv:
+        print("graphify 4.2.1")
+        sys.exit(0)
+
+    if "--update" in sys.argv or "build" in sys.argv:
+        out_dir = os.environ.get("MOCK_GRAPHIFY_OUT_DIR", "graphify-out")
+        out_path = Path(out_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        mode = "structural" if "--no-llm" in sys.argv else "full"
+        report = (
+            f"# Graph Report (mock)\n\n"
+            f"Mode: {mode}\n"
+            f"Nodes: 42\n"
+            f"Edges: 108\n"
+            f"Communities: 5\n"
+        )
+        (out_path / "GRAPH_REPORT.md").write_text(report)
+        print(f"Graph built ({mode} mode)")
+        sys.exit(0)
+
+    print(f"error: unknown arguments: {sys.argv[1:]}", file=sys.stderr)
+    sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

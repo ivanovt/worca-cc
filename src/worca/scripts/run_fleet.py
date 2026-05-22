@@ -16,12 +16,17 @@ import sys
 import time
 
 from worca.orchestrator.fleet_manifest import (
+    GRAPH_STATUS_DEGRADED,
+    GRAPH_STATUS_DISABLED,
+    GRAPH_STATUS_READY,
     read_fleet_manifest,
     register_fleet_child,
     update_fleet_status,
 )
 from worca.state.status import PipelineStatus, FleetStatus
+from worca.utils.graphify import detect_graphify, effective_graphify_config
 from worca.utils.paths import fleet_runs_dir as resolve_fleet_runs_dir
+from worca.utils.settings import load_global_settings, load_settings
 
 # Per W-040 §5: the fleet scrub list is fleet-specific. It is NOT the same as
 # `worca.utils.env.RESERVED_ENV_KEYS` (which is the denylist for per-model env
@@ -113,6 +118,26 @@ def check_target_readiness(project_dir: str) -> tuple[bool, str | None]:
         )
 
     return True, None
+
+
+def detect_child_graphify_status(project_dir: str) -> str:
+    """Return per-child graphify readiness: ready|degraded|disabled."""
+    try:
+        settings_path = os.path.join(project_dir, ".claude", "settings.json")
+        settings = load_settings(settings_path)
+        global_settings = load_global_settings()
+        cfg = effective_graphify_config(global_settings, settings)
+    except Exception:
+        return GRAPH_STATUS_DISABLED
+
+    if not cfg.enabled:
+        return GRAPH_STATUS_DISABLED
+
+    detection = detect_graphify(cfg.version_range)
+    if not detection.installed or not detection.compatible:
+        return GRAPH_STATUS_DEGRADED
+
+    return GRAPH_STATUS_READY
 
 
 def build_child_env(base_env: dict, *, fleet_id: str | None = None) -> dict:
@@ -330,6 +355,7 @@ def dispatch_fleet(
     if total == 0:
         return results
 
+    graph_status_by_project = {t["project_dir"]: t.get("graph_status") for t in targets}
     pending = [t["project_dir"] for t in targets]
     in_flight = {}  # project_dir -> Popen
     failed_count = 0
@@ -402,7 +428,10 @@ def dispatch_fleet(
                 run_id = _parse_run_id_from_stdout(stdout_str)
                 if run_id:
                     try:
-                        register_fleet_child(fleet_id, project_dir, run_id)
+                        register_fleet_child(
+                            fleet_id, project_dir, run_id,
+                            graph_status=graph_status_by_project.get(project_dir),
+                        )
                     except Exception as exc:
                         print(
                             f"warning: failed to register fleet child "
@@ -905,13 +934,21 @@ def main(argv=None) -> int:
         provisioned = [p for p in projects if p not in setup_failed]
         guide_abs = [os.path.abspath(g) for g in (args.guide or [])]
 
+        graphify_statuses = {p: detect_child_graphify_status(p) for p in provisioned}
+
         if _plan_first_ref is not None:
             # Reference already ran — dispatch remaining N-1 children with shared plan
             remaining = [p for p in provisioned if p != _plan_first_ref]
-            dispatch_targets = [{"project_dir": p, "status": PipelineStatus.PENDING} for p in remaining]
+            dispatch_targets = [
+                {"project_dir": p, "status": PipelineStatus.PENDING, "graph_status": graphify_statuses.get(p)}
+                for p in remaining
+            ]
             dispatch_plan = shared_plan
         else:
-            dispatch_targets = [{"project_dir": p, "status": PipelineStatus.PENDING} for p in provisioned]
+            dispatch_targets = [
+                {"project_dir": p, "status": PipelineStatus.PENDING, "graph_status": graphify_statuses.get(p)}
+                for p in provisioned
+            ]
             dispatch_plan = os.path.abspath(args.plan) if args.plan else None
 
         dispatch_fleet(

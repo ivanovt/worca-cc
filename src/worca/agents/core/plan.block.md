@@ -22,6 +22,12 @@ description, and surface it rather than silently resolving it.
 {{/if}}
 {{work_request}}
 
+{{#if has_graph}}
+## Codebase Structure (advisory)
+
+{{graph_context}}
+
+{{/if}}
 {{#if plan_content}}
 ## Current Plan
 
@@ -66,6 +72,12 @@ description, and surface it rather than silently resolving it.
 {{/if}}
 {{work_request}}
 
+{{#if has_graph}}
+## Codebase Structure (advisory)
+
+{{graph_context}}
+
+{{/if}}
 {{#if claude_md}}
 ## Project Context (from CLAUDE.md)
 

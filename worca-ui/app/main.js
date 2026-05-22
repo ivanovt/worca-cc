@@ -1343,6 +1343,7 @@ function fetchProjectScopedData() {
   fetchBeadsCounts();
   fetchProjectInfo();
   fetchWorktrees();
+  fetchGraphifyStatus();
 
   // Subscribe to active run if selected. Wait for runs to load so that
   // `_runProjectId(route.runId)` can resolve to the correct project — the
@@ -1459,6 +1460,7 @@ function handleProjectSwitch(newProjectId) {
   fetchBeadsCounts();
   fetchProjectInfo();
   fetchWorktrees();
+  fetchGraphifyStatus();
 }
 
 // --- Connection handling ---
@@ -2503,6 +2505,17 @@ function fetchProjectInfo() {
       if (name !== undefined) {
         store.setState({ projectName: name });
         document.title = formatTitle(name);
+      }
+    })
+    .catch(() => {});
+}
+
+function fetchGraphifyStatus() {
+  fetch('/api/graphify/status')
+    .then((r) => r.json())
+    .then((data) => {
+      if (data.ok) {
+        store.setState({ graphifyStatus: data });
       }
     })
     .catch(() => {});

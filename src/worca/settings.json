@@ -345,6 +345,19 @@
       "max_parallel": 5,
       "context_cap_bytes": 8192,
       "failure_threshold": 0.30
+    },
+    "graphify": {
+      "enabled": false,
+      "mode": "structural",
+      "backend": null,
+      "model_profile": null,
+      "out_dir": "graphify-out",
+      "update_on": {
+        "preflight": true,
+        "guardian_post_commit": true
+      },
+      "min_repo_files": 100,
+      "version_range": ">=4,<5"
     }
   }
 }

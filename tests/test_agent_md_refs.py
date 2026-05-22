@@ -421,3 +421,55 @@ def test_guide_header_not_in_python_source():
     assert "_GUIDE_HEADER" not in work_request_py, (
         "_GUIDE_HEADER constant should be removed from work_request.py"
     )
+
+
+# ---------------------------------------------------------------------------
+# Graph context block consistency across .block.md files (W-053 §4)
+#
+# The graph context envelope is duplicated across each stage's .block.md.
+# These tests assert byte-identical wrapper text so the advisory wording
+# cannot drift across stages.
+# ---------------------------------------------------------------------------
+
+
+GRAPH_WRAPPER_TEXT = """{{#if has_graph}}
+## Codebase Structure (advisory)
+
+{{graph_context}}
+
+{{/if}}"""
+
+
+def test_graph_wrapper_present_in_all_block_files():
+    """Every .block.md that interpolates {{work_request}} must include the
+    canonical graph context envelope."""
+    drift = []
+    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+        content = _read(fname)
+        if GRAPH_WRAPPER_TEXT not in content:
+            drift.append(fname)
+    assert not drift, (
+        "graph wrapper missing from: "
+        + ", ".join(drift)
+        + " — wrapper must be byte-identical across all .block.md files. "
+        "If you intentionally changed the graph wording, update "
+        "GRAPH_WRAPPER_TEXT in this test and apply the same change to every "
+        "file in BLOCK_FILES_WITH_WORK_REQUEST."
+    )
+
+
+def test_graph_block_appears_after_guide_block():
+    """In every .block.md, the graph context block must appear after the guide
+    block to respect authority order: guide > graph_context > description."""
+    wrong_order = []
+    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+        content = _read(fname)
+        guide_pos = content.find("{{#if has_guide}}")
+        graph_pos = content.find("{{#if has_graph}}")
+        if guide_pos >= 0 and graph_pos >= 0 and graph_pos < guide_pos:
+            wrong_order.append(fname)
+    assert not wrong_order, (
+        "graph block appears before guide block in: "
+        + ", ".join(wrong_order)
+        + " — authority order requires guide > graph_context."
+    )

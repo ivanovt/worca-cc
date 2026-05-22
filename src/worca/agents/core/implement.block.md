@@ -42,6 +42,13 @@ description, and surface it rather than silently resolving it.
 
 {{/if}}
 {{work_request}}
+
+{{#if has_graph}}
+## Codebase Structure (advisory)
+
+{{graph_context}}
+
+{{/if}}
 {{else}}
 Implement the code changes for the assigned task. Follow TDD: write a failing test first, then implement. When the assigned bead is complete, run `bd close <id>` and STOP — do not attempt `git commit` / `git push` / `git stash`. The guardian handles all git state changes.
 
@@ -68,4 +75,11 @@ description, and surface it rather than silently resolving it.
 
 {{/if}}
 {{work_request}}
+
+{{#if has_graph}}
+## Codebase Structure (advisory)
+
+{{graph_context}}
+
+{{/if}}
 {{/if}}

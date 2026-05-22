@@ -555,3 +555,40 @@ def test_load_agent_template_returns_empty_when_file_missing(tmp_path):
     pb = PromptBuilder("Add auth", "Desc", run_dir=str(tmp_path))
     result = pb._load_agent_template("plan")  # planner.md doesn't exist
     assert result == ""
+
+
+# --- graph_context / has_graph ---
+
+def test_build_context_has_graph_false_by_default():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_graph") is False
+    assert ctx.get("graph_context") == ""
+
+
+def test_build_context_has_graph_true_when_set():
+    pb = PromptBuilder("Add auth", "Desc", work_request_graph_context="# Modules\nfoo.py → bar.py")
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_graph") is True
+    assert "foo.py → bar.py" in ctx.get("graph_context", "")
+
+
+def test_build_context_graph_and_guide_independent():
+    """has_graph and has_guide are independent flags."""
+    pb = PromptBuilder(
+        "Add auth", "Desc",
+        work_request_guide_content="guide stuff",
+        work_request_graph_context="graph stuff",
+    )
+    ctx = pb.build_context("plan")
+    assert ctx["has_guide"] is True
+    assert ctx["has_graph"] is True
+    assert ctx["guide_content"] == "guide stuff"
+    assert ctx["graph_context"] == "graph stuff"
+
+
+def test_build_context_graph_without_guide():
+    pb = PromptBuilder("Add auth", "Desc", work_request_graph_context="graph only")
+    ctx = pb.build_context("implement")
+    assert ctx["has_graph"] is True
+    assert ctx["has_guide"] is False

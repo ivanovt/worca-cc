@@ -940,3 +940,114 @@ class TestResolveGuideMaxBytes:
         from worca.orchestrator.work_request import GUIDE_MAX_BYTES_DEFAULT
 
         assert GUIDE_MAX_BYTES_DEFAULT == 131072
+
+
+# --- attach_graph_report ---
+
+class TestAttachGraphReport:
+    """Tests for attach_graph_report(wr, report_path, max_bytes) -> WorkRequest."""
+
+    def test_attach_graph_report_truncation(self, tmp_path):
+        """Long reports are truncated at max_bytes with a [truncated] marker."""
+        from worca.orchestrator.work_request import attach_graph_report
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("x" * 50_000)
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_graph_report(wr, str(report), max_bytes=1000)
+
+        assert len(result.graph_context) < 1100
+        assert result.graph_context.endswith("\n\n[truncated]")
+        assert result.graph_context[:1000] == "x" * 1000
+
+    def test_no_truncation_marker_when_within_budget(self, tmp_path):
+        from worca.orchestrator.work_request import attach_graph_report
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("short content")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_graph_report(wr, str(report))
+
+        assert "[truncated]" not in result.graph_context
+        assert result.graph_context == "short content"
+
+    def test_attach_graph_report_authority_below_guide(self, tmp_path):
+        """Graph context is stored separately from guide; guide retains higher authority."""
+        from worca.orchestrator.work_request import attach_graph_report
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("# Module Overview\nfoo.py calls bar.py")
+
+        wr = WorkRequest(
+            source_type="prompt",
+            title="t",
+            description="task desc",
+            guide_content="Normative migration guide here",
+        )
+        result = attach_graph_report(wr, str(report))
+
+        # guide_content untouched — graph does NOT merge into it
+        assert result.guide_content == "Normative migration guide here"
+        # graph_context is a separate field
+        assert "Module Overview" in result.graph_context
+        assert "foo.py calls bar.py" in result.graph_context
+        # description also untouched
+        assert result.description == "task desc"
+
+    def test_preserves_all_metadata(self, tmp_path):
+        from worca.orchestrator.work_request import attach_graph_report
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("graph data")
+
+        wr = WorkRequest(
+            source_type="github_issue",
+            title="My Title",
+            description="d",
+            source_ref="gh:42",
+            priority=1,
+            plan_path="docs/plans/foo.md",
+            guide_content="guide",
+        )
+        result = attach_graph_report(wr, str(report))
+
+        assert result.source_type == "github_issue"
+        assert result.title == "My Title"
+        assert result.source_ref == "gh:42"
+        assert result.priority == 1
+        assert result.plan_path == "docs/plans/foo.md"
+        assert result.guide_content == "guide"
+        assert result.graph_context == "graph data"
+
+    def test_returns_new_instance(self, tmp_path):
+        from worca.orchestrator.work_request import attach_graph_report
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("data")
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_graph_report(wr, str(report))
+
+        assert result is not wr
+
+    def test_missing_file_raises(self, tmp_path):
+        from worca.orchestrator.work_request import attach_graph_report
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        with pytest.raises((FileNotFoundError, OSError)):
+            attach_graph_report(wr, str(tmp_path / "nonexistent.md"))
+
+    def test_default_max_bytes_is_32000(self, tmp_path):
+        """Default truncation budget is 32KB."""
+        from worca.orchestrator.work_request import attach_graph_report
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("y" * 40_000)
+
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        result = attach_graph_report(wr, str(report))
+
+        assert result.graph_context[:32_000] == "y" * 32_000
+        assert result.graph_context.endswith("\n\n[truncated]")

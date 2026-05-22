@@ -115,7 +115,18 @@ def resolve_model(name, models_cfg):
 
 
 def _default_global_path() -> str:
-    return os.path.expanduser("~/.worca/settings.json")
+    from worca.utils.paths import worca_home
+    return os.path.join(worca_home(), "settings.json")
+
+
+def load_global_settings(*, global_path: str | None = None) -> dict:
+    """Load global settings from ~/.worca/settings.json (with .local.json merge).
+
+    Returns {} if the file doesn't exist or contains invalid JSON.
+    """
+    if global_path is None:
+        global_path = _default_global_path()
+    return load_settings(global_path)
 
 
 def load_settings_with_global_fallback(

@@ -10,6 +10,7 @@ import express from 'express';
 
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { createFleetRouter } from './fleet-routes.js';
+import { _effectiveConfig, createGraphifyStatus } from './graphify-status.js';
 import { RAW_BODY } from './integrations/index.js';
 import { verify } from './integrations/verify.js';
 import { LaunchLock } from './launch-lock.js';
@@ -992,6 +993,105 @@ export function createApp(options = {}) {
     }
 
     res.json({ ok: true, path: configPath });
+  });
+
+  // ─── Graphify endpoints ──────────────────────────────────────────────
+  if (!app.locals.graphifyStatus) {
+    app.locals.graphifyStatus = createGraphifyStatus({});
+  }
+
+  function readGraphifySettings() {
+    const readJson = (p) => {
+      if (!p) return {};
+      try {
+        return JSON.parse(readFileSync(p, 'utf-8'));
+      } catch {
+        return {};
+      }
+    };
+    const globalSettingsPath = prefsDir
+      ? join(prefsDir, 'settings.json')
+      : settingsPath;
+    const projectSettingsPath =
+      settingsPath ||
+      (projectRoot ? join(projectRoot, '.claude', 'settings.json') : null);
+    return {
+      globalSettings: readJson(globalSettingsPath),
+      projectSettings: readJson(projectSettingsPath),
+      root: projectRoot || process.cwd(),
+    };
+  }
+
+  app.get('/api/graphify/status', async (_req, res) => {
+    try {
+      const { globalSettings, projectSettings, root } = readGraphifySettings();
+      const result = await app.locals.graphifyStatus.getStatus({
+        globalSettings,
+        projectSettings,
+        projectRoot: root,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/graphify/recheck', async (_req, res) => {
+    try {
+      app.locals.graphifyStatus.invalidate();
+      const { globalSettings, projectSettings, root } = readGraphifySettings();
+      const result = await app.locals.graphifyStatus.getStatus({
+        globalSettings,
+        projectSettings,
+        projectRoot: root,
+      });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/graphify/rebuild', async (_req, res) => {
+    try {
+      const { globalSettings, projectSettings, root } = readGraphifySettings();
+      const effective = _effectiveConfig(globalSettings, projectSettings);
+      if (!effective.enabled) {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'Graphify is not enabled' });
+      }
+      const detection = await app.locals.graphifyStatus.detect();
+      if (!detection.installed || !detection.compatible) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            detection.error || 'Graphify is not installed or not compatible',
+        });
+      }
+      const args = ['build'];
+      if (effective.mode === 'structural') args.push('--no-llm');
+      const child = spawn('graphify', args, {
+        cwd: root,
+        detached: true,
+        stdio: 'ignore',
+      });
+      child.on('error', () => {});
+      child.unref();
+      res.json({ ok: true, status: 'building' });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.get('/api/graphify/graph.html', (_req, res) => {
+    const root = projectRoot || process.cwd();
+    const { globalSettings, projectSettings } = readGraphifySettings();
+    const effective = _effectiveConfig(globalSettings, projectSettings);
+    const htmlPath = join(root, effective.out_dir, 'graph.html');
+    if (!existsSync(htmlPath)) {
+      return res.status(404).json({ ok: false, error: 'graph.html not found' });
+    }
+    res.sendFile(htmlPath);
   });
 
   // ─── Dynamic favicon ──────────────────────────────────────────────────

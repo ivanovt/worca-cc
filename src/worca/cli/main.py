@@ -236,6 +236,10 @@ def create_parser() -> argparse.ArgumentParser:
     from worca.cli.workspace import register_subcommand as register_workspace
     register_workspace(sub)
 
+    # graphify
+    from worca.cli.graphify_cmd import register_subcommand as register_graphify
+    register_graphify(sub)
+
     return parser
 
 
@@ -286,6 +290,9 @@ def main(argv=None):
         else:
             print("error: specify a subcommand, e.g. 'worca workspace init /path'", file=sys.stderr)
             raise SystemExit(1)
+    elif args.command == "graphify":
+        from worca.cli.graphify_cmd import cmd_graphify
+        cmd_graphify(args)
     else:
         print(f"error: unknown command {args.command!r}", file=sys.stderr)
         raise SystemExit(1)

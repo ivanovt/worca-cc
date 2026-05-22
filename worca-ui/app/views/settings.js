@@ -15,6 +15,7 @@ import {
   Coins,
   Copy,
   Cpu,
+  Database,
   FolderOpen,
   iconSvg,
   Pencil,
@@ -39,6 +40,7 @@ import { AGENT_NAMES } from './agent-names.js';
 import { dispatchSectionView, resetSectionConfig } from './dispatch-section.js';
 import { KNOWN_TYPES } from './dispatch-tag-state.js';
 import { integrationsTab } from './integrations.js';
+import { graphifyTab } from './settings-graphify.js';
 
 // Stage-to-agent mapping (from stages.py STAGE_AGENT_MAP)
 export const STAGE_AGENT_MAP = {
@@ -3481,6 +3483,10 @@ export function projectSettingsView(
           ${unsafeHTML(iconSvg(Zap, 14))}
           Webhooks
         </sl-tab>
+        <sl-tab slot="nav" panel="graphify">
+          ${unsafeHTML(iconSvg(Database, 14))}
+          Graphify
+        </sl-tab>
 
         <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="models">${modelsTab(worca, rerender)}</sl-tab-panel>
@@ -3489,6 +3495,7 @@ export function projectSettingsView(
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="webhooks">${webhooksTab(worca, rerender)}</sl-tab-panel>
+        <sl-tab-panel name="graphify">${graphifyTab(worca, rerender)}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;

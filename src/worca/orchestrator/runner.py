@@ -42,7 +42,9 @@ from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
-from worca.utils.settings import load_settings
+from worca.utils.settings import load_global_settings, load_settings
+from worca.scripts.graphify_preflight import run_graphify_preflight
+from worca.utils.graphify import detect_graphify, effective_graphify_config
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
 from worca.events.emitter import EventContext, emit_event, dispatch_event, _check_control_response
@@ -1313,6 +1315,48 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
     return PRVerification(ok=True, reason="")
 
 
+def _maybe_graphify_post_guardian(
+    *,
+    settings_path: str = ".claude/settings.json",
+    is_worktree: bool = False,
+) -> None:
+    """Fire-and-forget graphify update after successful guardian commit.
+
+    Skipped in worktree runs (single-writer invariant).
+    Failures are logged but never propagated.
+    """
+    if is_worktree:
+        return
+
+    try:
+        settings = load_settings(settings_path)
+        global_settings = load_global_settings()
+        cfg = effective_graphify_config(global_settings, settings)
+
+        if not cfg.enabled:
+            return
+        if not cfg.update_on_guardian_post_commit:
+            return
+
+        detect = detect_graphify(cfg.version_range)
+        if not detect.installed or not detect.compatible:
+            return
+
+        cmd = ["graphify", "--update"]
+        if cfg.mode == "structural":
+            cmd.append("--no-llm")
+
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _log("Graphify post-guardian refresh started (fire-and-forget)")
+    except Exception as exc:
+        _log(f"Graphify post-guardian refresh failed: {exc}", "warn")
+
+
 def run_preflight(
     context: dict,
     settings_path: str = ".claude/settings.json",
@@ -1383,6 +1427,13 @@ def run_preflight(
 
     if proc.returncode != 0:
         raise PipelineError(f"Preflight failed: {summary}")
+
+    graphify_result = run_graphify_preflight(settings_path=settings_path)
+    result["graphify_status"] = graphify_result.get("status", "skipped")
+    if graphify_result.get("report_path"):
+        result["graphify_report_path"] = graphify_result["report_path"]
+    if graphify_result.get("reason"):
+        result["graphify_reason"] = graphify_result["reason"]
 
     return result
 
@@ -1830,6 +1881,7 @@ def run_pipeline(
             template_agents_dir=_pb_template_agents_dir,
             run_dir=run_dir,
             work_request_guide_content=work_request.guide_content,
+            work_request_graph_context=work_request.graph_context,
         )
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
@@ -2531,8 +2583,19 @@ def run_pipeline(
                 iter_extras.setdefault("duration_session_ms", 0)
                 iter_extras.setdefault("duration_api_ms", 0)
                 complete_iteration(status, current_stage.value, **iter_extras)
-                update_stage(status, current_stage.value,
-                             **{**stage_extras, "skipped": preflight_skipped})
+                _pf_stage_extras = {**stage_extras, "skipped": preflight_skipped}
+                if result.get("graphify_status"):
+                    status["graphify_status"] = result["graphify_status"]
+                    _pf_stage_extras["graphify_status"] = result["graphify_status"]
+                if result.get("graphify_report_path"):
+                    status["graphify_report_path"] = result["graphify_report_path"]
+                    _pf_stage_extras["graphify_report_path"] = result["graphify_report_path"]
+                    _rp = result["graphify_report_path"]
+                    if os.path.isfile(_rp):
+                        from worca.orchestrator.work_request import attach_graph_report
+                        work_request = attach_graph_report(work_request, _rp)
+                        prompt_builder._graph_context = work_request.graph_context
+                update_stage(status, current_stage.value, **_pf_stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
                     if preflight_skipped:
@@ -3291,6 +3354,11 @@ def run_pipeline(
                                 target_branch=_target_branch,
                                 provider=_provider,
                             ))
+
+                    _maybe_graphify_post_guardian(
+                        settings_path=settings_path,
+                        is_worktree=bool(status.get("worktree")),
+                    )
 
             # Default: complete iteration for stages without special handling
             else:

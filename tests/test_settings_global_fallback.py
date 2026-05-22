@@ -118,7 +118,7 @@ class TestLoadSettingsWithGlobalFallback:
         assert result["worca"]["stages"]["plan"]["enabled"] is True
 
     def test_default_global_path(self, tmp_path, monkeypatch):
-        """Without explicit global_path, uses ~/.worca/settings.json."""
+        """Without explicit global_path, uses $WORCA_HOME/settings.json."""
         fake_home = tmp_path / "home"
         fake_home.mkdir()
         worca_dir = fake_home / ".worca"
@@ -128,7 +128,7 @@ class TestLoadSettingsWithGlobalFallback:
             "worca": {"circuit_breaker": {"classifier_model": "opus"}}
         }))
 
-        monkeypatch.setenv("HOME", str(fake_home))
+        monkeypatch.setenv("WORCA_HOME", str(worca_dir))
 
         project_file = tmp_path / "settings.json"
         project_file.write_text(json.dumps({

@@ -592,10 +592,71 @@ def _install_skills(source: Path, git_root: Path) -> list[str]:
     return changes
 
 
-def _ensure_gitignore(git_root: Path) -> list[str]:
+def _read_global_settings() -> dict:
+    """Read ~/.worca/settings.json for the global graphify kill-switch."""
+    path = os.path.expanduser("~/.worca/settings.json")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+
+
+def _load_graphify_hook_stanzas() -> list[dict]:
+    """Load graphify PreToolUse hook stanzas from the shipped template."""
+    return json.loads(
+        (importlib.resources.files("worca") / "templates" / "graphify-hooks.json")
+        .read_text()
+    )
+
+
+def _merge_graphify_hooks(settings: dict) -> list[str]:
+    """Inject Graphify PreToolUse hook stanza when enabled and ready.
+
+    Mutates settings in place. Returns list of change descriptions.
+    """
+    from worca.utils.graphify import detect_graphify, effective_graphify_config
+
+    changes: list[str] = []
+
+    global_settings = _read_global_settings()
+    cfg = effective_graphify_config(global_settings, settings)
+
+    if not cfg.enabled:
+        return changes
+
+    detect = detect_graphify(cfg.version_range)
+    if not detect.compatible:
+        return changes
+
+    stanzas = _load_graphify_hook_stanzas()
+
+    hooks = settings.setdefault("hooks", {})
+    pre_tool_hooks = hooks.setdefault("PreToolUse", [])
+    graphify_present = any(
+        any("graphify" in h.get("command", "") for h in entry.get("hooks", []))
+        for entry in pre_tool_hooks
+    )
+    if not graphify_present:
+        pre_tool_hooks.extend(stanzas)
+        changes.append("  hooks.PreToolUse[Grep|Glob]: registered graphify hook")
+
+    worca_cfg = settings.setdefault("worca", {})
+    governance = worca_cfg.setdefault("governance", {})
+    allowlist = governance.setdefault("bash_allowlist_extra", [])
+    if "graphify" not in allowlist:
+        allowlist.append("graphify")
+        changes.append("  governance.bash_allowlist_extra: added 'graphify'")
+
+    return changes
+
+
+def _ensure_gitignore(git_root: Path, *, graphify_enabled: bool = False) -> list[str]:
     """Add recommended .gitignore entries if missing."""
     gitignore = git_root / ".gitignore"
     entries_needed = [".worca/", "logs/", ".claude/settings.local.json"]
+    if graphify_enabled:
+        entries_needed.append("graphify-out/")
     changes = []
 
     existing = ""
@@ -879,8 +940,25 @@ def run_init(
                 f"({keys_str}) — gate now opt-in via Pipeline tab"
             )
 
+    # --- Graphify hook integration (after settings merge) ---
+    graphify_active = False
+    if settings_path.exists():
+        with open(settings_path) as f:
+            final_settings = json.load(f)
+        graphify_changes = _merge_graphify_hooks(final_settings)
+        if graphify_changes:
+            _atomic_write_json(str(settings_path), final_settings)
+            print("Graphify integration:")
+            for change in graphify_changes:
+                print(change)
+        pre_tool = final_settings.get("hooks", {}).get("PreToolUse", [])
+        graphify_active = any(
+            any("graphify" in h.get("command", "") for h in entry.get("hooks", []))
+            for entry in pre_tool
+        )
+
     # --- .gitignore ---
-    gitignore_changes = _ensure_gitignore(git_root)
+    gitignore_changes = _ensure_gitignore(git_root, graphify_enabled=graphify_active)
     if gitignore_changes:
         print(".gitignore updates:")
         for change in gitignore_changes:
