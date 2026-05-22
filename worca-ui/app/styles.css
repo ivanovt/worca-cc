@@ -6484,13 +6484,32 @@ sl-dialog.markdown-dialog::part(body) {
   border-radius: var(--radius);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 0.85rem;
+  color: var(--fg);
   word-break: break-all;
   user-select: all;
 }
 
-/* Shown when the graphify CLI is missing/incompatible — caution color so it
-   reads as "action needed" (install) rather than a hard failure. */
+/* A monospace value/command box with a copy button pinned to the right. */
+.graphify-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.graphify-copy-row .graphify-cache-path {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+/* Shown when the graphify CLI is missing/incompatible. */
 .graphify-not-installed {
   margin: 0 0 0.75rem;
+}
+
+/* Caution color (action needed: install) on the message text only — not the
+   install-command code box, which keeps normal monospace styling. */
+.graphify-not-installed .settings-tab-description {
   color: var(--status-paused);
 }

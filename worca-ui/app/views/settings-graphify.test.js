@@ -121,6 +121,9 @@ describe('graphifyTab rendering', () => {
     // Selectable cache-location path field.
     expect(html).toContain('Cache location');
     expect(html).toContain('graphify-cache-path');
+    // Copy-to-clipboard button to the right of the cache location.
+    expect(html).toContain('sl-copy-button');
+    expect(html).toContain('graphify-copy-path-btn');
   });
 
   it('hides cache actions when off', async () => {
@@ -191,6 +194,35 @@ describe('cachePathLabel', () => {
   it('shows "unavailable" after a response with no path (not a git repo)', async () => {
     const { cachePathLabel } = await import('./settings-graphify.js');
     expect(cachePathLabel(null, true)).toBe('unavailable');
+  });
+});
+
+describe('graphifyInstallCommand', () => {
+  it('uses the default version range when none is given', async () => {
+    const { graphifyInstallCommand, GRAPHIFY_VERSION_RANGE_DEFAULT } =
+      await import('./settings-graphify.js');
+    expect(graphifyInstallCommand()).toBe(
+      `pip install 'graphify${GRAPHIFY_VERSION_RANGE_DEFAULT}'`,
+    );
+    expect(graphifyInstallCommand()).toBe("pip install 'graphify>=0.7.10,<1'");
+  });
+
+  it('shell-quotes the package + range so the shell does not glob "<"', async () => {
+    const { graphifyInstallCommand } = await import('./settings-graphify.js');
+    const cmd = graphifyInstallCommand('>=0.8,<2');
+    expect(cmd).toBe("pip install 'graphify>=0.8,<2'");
+    // The whole pinned package spec must be inside one quoted token.
+    expect(cmd).toMatch(/'graphify>=0\.8,<2'/);
+  });
+
+  it('falls back to the default for empty/nullish ranges', async () => {
+    const { graphifyInstallCommand } = await import('./settings-graphify.js');
+    expect(graphifyInstallCommand('')).toBe(
+      "pip install 'graphify>=0.7.10,<1'",
+    );
+    expect(graphifyInstallCommand(null)).toBe(
+      "pip install 'graphify>=0.7.10,<1'",
+    );
   });
 });
 

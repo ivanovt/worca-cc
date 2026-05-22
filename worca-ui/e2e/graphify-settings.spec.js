@@ -155,6 +155,8 @@ test('Build/Clear cache actions are present when enabled', async ({ page }) => {
     await expect(page.locator('.graphify-build-btn')).toBeAttached();
     await expect(page.locator('.graphify-clear-btn')).toBeAttached();
     await expect(page.locator('.graphify-cache-path')).toBeAttached();
+    // Copy-to-clipboard button to the right of the cache location.
+    await expect(page.locator('.graphify-copy-path-btn')).toBeAttached();
   } finally {
     await ctx.close();
   }
@@ -182,6 +184,7 @@ test('build is gated on graphify CLI availability', async ({ page }) => {
       await expect(
         page.locator('#graphify-not-installed-notice'),
       ).toHaveCount(0);
+      await expect(page.locator('#graphify-install-cmd')).toHaveCount(0);
       await expect(page.locator('.graphify-build-btn')).toHaveJSProperty(
         'disabled',
         false,
@@ -190,6 +193,14 @@ test('build is gated on graphify CLI availability', async ({ page }) => {
       await expect(
         page.locator('#graphify-not-installed-notice'),
       ).toBeAttached();
+      // A suggested install command + its copy button accompany the notice.
+      await expect(page.locator('#graphify-install-cmd')).toContainText(
+        'pip install',
+      );
+      await expect(page.locator('#graphify-install-cmd')).toContainText(
+        'graphify',
+      );
+      await expect(page.locator('.graphify-copy-cmd-btn')).toBeAttached();
       await expect(page.locator('.graphify-build-btn')).toHaveJSProperty(
         'disabled',
         true,

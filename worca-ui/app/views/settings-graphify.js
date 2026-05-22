@@ -12,6 +12,16 @@ export const GRAPHIFY_STATES = ['off', 'structural', 'full'];
 // Retained for back-compat: the persisted `mode` values.
 export const GRAPHIFY_MODES = ['structural', 'full'];
 
+// Default version range — mirror of _GRAPHIFY_DEFAULTS["version_range"] in
+// src/worca/utils/graphify.py and GRAPHIFY_DEFAULTS in server/graphify-status.js.
+export const GRAPHIFY_VERSION_RANGE_DEFAULT = '>=0.7.10,<1';
+
+/** Suggested pip command to install a compatible graphify (shell-quoted). */
+export function graphifyInstallCommand(versionRange) {
+  const range = versionRange || GRAPHIFY_VERSION_RANGE_DEFAULT;
+  return `pip install 'graphify${range}'`;
+}
+
 const PRIVACY_STRUCTURAL =
   'Structural mode is fully local — zero outbound LLM calls. ' +
   'Captures call graphs, inline rationale, and Leiden communities without sending any data externally.';
@@ -40,6 +50,8 @@ let _cacheStatusReceived = false;
 // Latest graphify CLI detection from the server, or null until first fetch.
 // When the CLI is missing/incompatible, Build is disabled and a notice shows.
 let _graphifyDetection = null;
+// Effective version range from the server, used to suggest an install command.
+let _graphifyVersionRange = GRAPHIFY_VERSION_RANGE_DEFAULT;
 
 /**
  * True when the graphify CLI is known-missing or version-incompatible, so
@@ -67,6 +79,7 @@ async function _refreshCacheStatus(rerender) {
     _cacheBusy = Boolean(j.building);
     _cachePath = j.cache_path ?? _cachePath;
     _graphifyDetection = j.detection ?? _graphifyDetection;
+    _graphifyVersionRange = j.effective?.version_range ?? _graphifyVersionRange;
     if (j.graph_stats)
       _cacheMsg = 'Knowledge graph is built for the current commit.';
     else if (!_cacheBusy)
@@ -224,18 +237,41 @@ export function graphifyTab(worca, rerender) {
           Building can take a while on large repos and runs in the background.
         </p>
         <label class="settings-label" for="graphify-cache-path">Cache location</label>
-        <code id="graphify-cache-path" class="graphify-cache-path"
-          >${cachePathLabel(_cachePath, _cacheStatusReceived)}</code
-        >
+        <div class="graphify-copy-row">
+          <code id="graphify-cache-path" class="graphify-cache-path"
+            >${cachePathLabel(_cachePath, _cacheStatusReceived)}</code
+          >
+          <sl-copy-button
+            class="graphify-copy-path-btn"
+            value=${_cachePath || ''}
+            ?disabled=${!_cachePath}
+            copy-label="Copy cache location"
+            success-label="Copied"
+          ></sl-copy-button>
+        </div>
         ${
           isGraphifyUnavailable(_graphifyDetection)
             ? html`
-        <p id="graphify-not-installed-notice" class="settings-tab-description graphify-not-installed">
-          ${
-            _graphifyDetection?.error ||
-            'Graphify CLI not found on PATH — install it to build graphs.'
-          }
-        </p>`
+        <div id="graphify-not-installed-notice" class="graphify-not-installed">
+          <p class="settings-tab-description">
+            ${
+              _graphifyDetection?.error ||
+              'Graphify CLI not found on PATH — install it to build graphs.'
+            }
+          </p>
+          <label class="settings-label" for="graphify-install-cmd">Suggested install command</label>
+          <div class="graphify-copy-row">
+            <code id="graphify-install-cmd" class="graphify-cache-path"
+              >${graphifyInstallCommand(_graphifyVersionRange)}</code
+            >
+            <sl-copy-button
+              class="graphify-copy-cmd-btn"
+              value=${graphifyInstallCommand(_graphifyVersionRange)}
+              copy-label="Copy install command"
+              success-label="Copied"
+            ></sl-copy-button>
+          </div>
+        </div>`
             : ''
         }
         <div class="graphify-cache-buttons">
