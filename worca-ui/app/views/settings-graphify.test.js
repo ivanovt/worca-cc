@@ -59,7 +59,7 @@ describe('graphifyTab rendering', () => {
       models: { opus: 'claude-opus-4-6', sonnet: 'claude-sonnet-4-6' },
     };
     const html = renderToString(graphifyTab(worca, () => {}));
-    expect(html).toContain('graphify-backend');
+    expect(html).toContain('graphify-model-profile');
   });
 
   it('shows full-mode privacy text when mode is full', async () => {
@@ -92,7 +92,7 @@ describe('graphifyTab rendering', () => {
     const { graphifyTab } = await import('./settings-graphify.js');
     const worca = { graphify: { enabled: false } };
     const html = renderToString(graphifyTab(worca, () => {}));
-    expect(html).not.toContain('graphify-backend');
+    expect(html).not.toContain('graphify-model-profile');
     expect(html).not.toContain('graphify-privacy-notice');
     expect(html).toContain('graphify-disabled-hint');
   });

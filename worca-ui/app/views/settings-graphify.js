@@ -92,7 +92,7 @@ export function graphifyTab(worca, rerender) {
   const state = graphifyStateValue(graphify);
   const enabled = state !== 'off';
   const isFullMode = state === 'full';
-  const backend = graphify.model_profile || '';
+  const modelProfile = graphify.model_profile || '';
   const modelKeys = getModelKeys(worca);
 
   // Load the cache path + build state once when the tab first shows enabled.
@@ -113,7 +113,7 @@ export function graphifyTab(worca, rerender) {
     rerender();
   };
 
-  const onBackendChange = (value) => {
+  const onModelProfileChange = (value) => {
     worca.graphify = {
       ...(worca.graphify || {}),
       model_profile: value || null,
@@ -150,13 +150,13 @@ export function graphifyTab(worca, rerender) {
           enabled
             ? html`
         <div class="settings-field">
-          <label class="settings-label" for="graphify-backend">Model Profile</label>
+          <label class="settings-label" for="graphify-model-profile">Model Profile</label>
           <sl-select
-            id="graphify-backend"
-            value="${backend}"
+            id="graphify-model-profile"
+            value="${modelProfile}"
             placeholder="None (structural default)"
             clearable
-            @sl-change=${(e) => onBackendChange(e.target.value)}
+            @sl-change=${(e) => onModelProfileChange(e.target.value)}
           >
             ${modelKeys.map((k) => html`<sl-option value="${k}">${k}</sl-option>`)}
           </sl-select>
