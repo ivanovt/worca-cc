@@ -2,9 +2,15 @@
 
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 
@@ -1070,6 +1076,20 @@ export function createApp(options = {}) {
       }
       const args = ['build'];
       if (effective.mode === 'structural') args.push('--no-llm');
+      // Clean rebuild: clear out_dir first so stale nodes don't linger
+      // (matches `worca graphify rebuild`). Guard against a misconfigured
+      // out_dir that resolves to the project root or escapes it.
+      const rootAbs = resolve(root);
+      const outAbs = resolve(root, effective.out_dir || '');
+      if (
+        effective.out_dir &&
+        outAbs !== rootAbs &&
+        outAbs.startsWith(rootAbs + sep)
+      ) {
+        try {
+          rmSync(outAbs, { recursive: true, force: true });
+        } catch {}
+      }
       const child = spawn('graphify', args, {
         cwd: root,
         detached: true,

@@ -3,7 +3,12 @@
 import json
 import os
 
-from worca.utils.graphify import EffectiveGraphifyConfig, effective_graphify_config
+from worca.utils.graphify import (
+    EffectiveGraphifyConfig,
+    build_subprocess_env,
+    build_update_cmd,
+    effective_graphify_config,
+)
 from worca.utils.settings import load_settings
 
 
@@ -197,6 +202,7 @@ class TestGraphifyInSettingsJson:
         assert g["update_on"]["guardian_post_commit"] is True
         assert g["min_repo_files"] == 100
         assert g["version_range"] == ">=4,<5"
+        assert g["preflight_timeout_seconds"] == 300
 
     def test_graphify_merge_preserves_siblings(self, tmp_path):
         """Overriding graphify keys does not affect sibling worca sections."""
@@ -234,3 +240,80 @@ class TestGraphifyInSettingsJson:
         result = load_settings(str(settings_file))
         assert result["worca"]["graphify"]["enabled"] is True
         assert result["worca"]["graphify"]["mode"] == "structural"
+
+
+class TestPreflightTimeoutConfig:
+    """F4: preflight_timeout_seconds is configurable (not hardcoded 300)."""
+
+    def test_default_timeout(self):
+        result = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        assert result.preflight_timeout_seconds == 300
+
+    def test_project_override_timeout(self):
+        result = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True}}},
+            {"worca": {"graphify": {"enabled": True, "preflight_timeout_seconds": 900}}},
+        )
+        assert result.preflight_timeout_seconds == 900
+
+    def test_global_timeout_inherited(self):
+        result = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "preflight_timeout_seconds": 120}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        assert result.preflight_timeout_seconds == 120
+
+
+class TestBuildUpdateCmd:
+    """F1: build_update_cmd is the single source of the `graphify --update` argv."""
+
+    def test_structural_appends_no_llm(self):
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "mode": "structural"}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        cmd = build_update_cmd(cfg)
+        assert cmd[:2] == ["graphify", "--update"]
+        assert "--no-llm" in cmd
+
+    def test_full_omits_no_llm(self):
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "mode": "full"}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        assert "--no-llm" not in build_update_cmd(cfg)
+
+    def test_backend_flag(self):
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "mode": "full", "backend": "ollama"}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        cmd = build_update_cmd(cfg)
+        assert cmd[cmd.index("--backend") + 1] == "ollama"
+
+
+class TestBuildSubprocessEnv:
+    """F1: build_subprocess_env merges the model_profile env over the base."""
+
+    def test_no_profile_returns_base_copy(self):
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        env = build_subprocess_env(cfg, {"worca": {}}, base_env={"FOO": "bar"})
+        assert env == {"FOO": "bar"}
+
+    def test_merges_model_profile_env(self):
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True, "model_profile": "gp"}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        settings = {
+            "worca": {"models": {"gp": {"id": "x", "env": {"OPENAI_API_KEY": "sk-1"}}}}
+        }
+        env = build_subprocess_env(cfg, settings, base_env={"FOO": "bar"})
+        assert env["OPENAI_API_KEY"] == "sk-1"
+        assert env["FOO"] == "bar"

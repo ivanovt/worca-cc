@@ -105,7 +105,14 @@ class TestMergeGraphifyHooks:
         graphify_entries = [e for e in pre_tool if e.get("matcher") == "Grep|Glob"]
         assert len(graphify_entries) == 1
 
-    def test_bash_allowlist_populated(self):
+    def test_bash_allowlist_not_written_when_enabled(self):
+        """worca governs tool/skill/subagent *dispatch*, not Bash commands.
+
+        There is no bash-command allowlist for a hook to honor, so the graphify
+        hook merge must NOT write governance.bash_allowlist_extra (it would be
+        dead, misleading config). Graphify reaches agents via the unrestricted
+        Bash channel + the PreToolUse hook.
+        """
         from worca.cli.init import _merge_graphify_hooks
 
         settings = {"worca": {"graphify": {"enabled": True}}}
@@ -113,9 +120,9 @@ class TestMergeGraphifyHooks:
         with p_gs, p_det:
             changes = _merge_graphify_hooks(settings)
 
-        allowlist = settings["worca"]["governance"]["bash_allowlist_extra"]
-        assert "graphify" in allowlist
-        assert any("bash_allowlist_extra" in c for c in changes)
+        governance = settings.get("worca", {}).get("governance", {})
+        assert "bash_allowlist_extra" not in governance
+        assert not any("bash_allowlist_extra" in c for c in changes)
 
     def test_bash_allowlist_not_populated_when_disabled(self):
         from worca.cli.init import _merge_graphify_hooks
@@ -156,13 +163,14 @@ class TestMergeGraphifyHooks:
         assert "Grep|Glob" in matchers
         assert len(pre_tool) == 3
 
-    def test_bash_allowlist_idempotent(self):
+    def test_preexisting_bash_allowlist_left_untouched(self):
+        """A pre-existing allowlist is not modified by the graphify hook merge."""
         from worca.cli.init import _merge_graphify_hooks
 
         settings = {
             "worca": {
                 "graphify": {"enabled": True},
-                "governance": {"bash_allowlist_extra": ["graphify"]},
+                "governance": {"bash_allowlist_extra": ["something-else"]},
             }
         }
         p_gs, p_det = _patch_graphify()
@@ -170,7 +178,7 @@ class TestMergeGraphifyHooks:
             changes = _merge_graphify_hooks(settings)
 
         allowlist = settings["worca"]["governance"]["bash_allowlist_extra"]
-        assert allowlist.count("graphify") == 1
+        assert allowlist == ["something-else"]
         assert not any("bash_allowlist_extra" in c for c in changes)
 
 
@@ -215,3 +223,34 @@ class TestGraphifyGitignore:
         _ensure_gitignore(tmp_path)
         content = gitignore.read_text()
         assert "graphify-out/" not in content
+
+
+class TestReadGlobalSettings:
+    """F8: _read_global_settings honors $WORCA_HOME and the .local.json merge.
+
+    The original hardcoded ``~/.worca/settings.json`` ignored both, so the
+    global kill-switch could be misread (e.g. when set in settings.local.json
+    where the UI Secrets panel writes, or under a $WORCA_HOME sandbox).
+    """
+
+    def test_honors_worca_home_and_local_merge(self, tmp_path, monkeypatch):
+        import json
+        from worca.cli.init import _read_global_settings
+
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path))
+        (tmp_path / "settings.json").write_text(
+            json.dumps({"worca": {"graphify": {"enabled": False, "mode": "structural"}}})
+        )
+        (tmp_path / "settings.local.json").write_text(
+            json.dumps({"worca": {"graphify": {"enabled": True}}})
+        )
+
+        result = _read_global_settings()
+        assert result["worca"]["graphify"]["enabled"] is True
+        assert result["worca"]["graphify"]["mode"] == "structural"
+
+    def test_missing_global_returns_empty(self, tmp_path, monkeypatch):
+        from worca.cli.init import _read_global_settings
+
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path))
+        assert _read_global_settings() == {}

@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
+// Mirror of _GRAPHIFY_DEFAULTS in src/worca/utils/graphify.py — keep in sync.
 const GRAPHIFY_DEFAULTS = {
   enabled: false,
   mode: 'structural',
@@ -11,8 +12,13 @@ const GRAPHIFY_DEFAULTS = {
   update_on: { preflight: true, guardian_post_commit: true },
   min_repo_files: 100,
   version_range: '>=4,<5',
+  preflight_timeout_seconds: 300,
 };
 
+// Mirror of effective_graphify_config() in src/worca/utils/graphify.py.
+// The kill-switch + null-inherit resolution rules MUST match the Python
+// implementation; the parity is guarded by graphify-status.test.js
+// ("effective-config parity with Python"). Update both together.
 export function _effectiveConfig(globalSettings, projectSettings) {
   const gGraphify = globalSettings?.worca?.graphify ?? {};
   const pGraphify = projectSettings?.worca?.graphify ?? {};
@@ -44,6 +50,7 @@ export function _effectiveConfig(globalSettings, projectSettings) {
     update_on: merged.update_on,
     min_repo_files: merged.min_repo_files,
     version_range: merged.version_range,
+    preflight_timeout_seconds: merged.preflight_timeout_seconds,
     reason: null,
   };
 }

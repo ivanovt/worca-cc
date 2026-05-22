@@ -11,12 +11,19 @@ from worca.orchestrator.runner import _maybe_graphify_post_guardian
 from worca.utils.graphify import EffectiveGraphifyConfig
 
 
-def _make_config(*, enabled=True, mode="structural", update_on_guardian_post_commit=True):
+def _make_config(
+    *,
+    enabled=True,
+    mode="structural",
+    update_on_guardian_post_commit=True,
+    backend=None,
+    model_profile=None,
+):
     return EffectiveGraphifyConfig(
         enabled=enabled,
         mode=mode,
-        backend=None,
-        model_profile=None,
+        backend=backend,
+        model_profile=model_profile,
         out_dir="graphify-out",
         update_on_preflight=True,
         update_on_guardian_post_commit=update_on_guardian_post_commit,
@@ -156,6 +163,68 @@ class TestGraphifyPostGuardianSkippedWhenDisabled:
         )
 
         mock_popen.assert_not_called()
+
+
+class TestGraphifyPostGuardianHonorsBackendAndProfile:
+    """F1: post-guardian refresh uses the same argv + provider env as preflight.
+
+    Regression guard — the original post-guardian path hardcoded
+    ``["graphify", "--update"]`` (+ ``--no-llm``) and dropped both ``--backend``
+    and the ``model_profile`` env, so a full-mode refresh with a custom provider
+    silently failed and the graph went stale.
+    """
+
+    @patch("worca.orchestrator.runner.subprocess.Popen")
+    @patch(
+        "worca.orchestrator.runner.effective_graphify_config",
+        return_value=_make_config(mode="full", backend="openai"),
+    )
+    @patch("worca.orchestrator.runner.detect_graphify")
+    @patch("worca.orchestrator.runner.load_global_settings", return_value={})
+    @patch(
+        "worca.orchestrator.runner.load_settings",
+        return_value={"worca": {"graphify": {"enabled": True}}},
+    )
+    def test_passes_backend_flag(self, mock_settings, mock_global, mock_detect, mock_cfg, mock_popen):
+        mock_detect.return_value = MagicMock(installed=True, compatible=True)
+        mock_popen.return_value = MagicMock()
+
+        _maybe_graphify_post_guardian(
+            settings_path=".claude/settings.json",
+            is_worktree=False,
+        )
+
+        cmd = mock_popen.call_args[0][0]
+        assert "--backend" in cmd
+        assert cmd[cmd.index("--backend") + 1] == "openai"
+
+    @patch("worca.orchestrator.runner.subprocess.Popen")
+    @patch(
+        "worca.orchestrator.runner.effective_graphify_config",
+        return_value=_make_config(mode="full", model_profile="gp"),
+    )
+    @patch("worca.orchestrator.runner.detect_graphify")
+    @patch("worca.orchestrator.runner.load_global_settings", return_value={})
+    @patch(
+        "worca.orchestrator.runner.load_settings",
+        return_value={
+            "worca": {
+                "models": {"gp": {"id": "x", "env": {"OPENAI_API_KEY": "sk-test"}}},
+                "graphify": {"enabled": True},
+            }
+        },
+    )
+    def test_merges_model_profile_env(self, mock_settings, mock_global, mock_detect, mock_cfg, mock_popen):
+        mock_detect.return_value = MagicMock(installed=True, compatible=True)
+        mock_popen.return_value = MagicMock()
+
+        _maybe_graphify_post_guardian(
+            settings_path=".claude/settings.json",
+            is_worktree=False,
+        )
+
+        env = mock_popen.call_args.kwargs["env"]
+        assert env.get("OPENAI_API_KEY") == "sk-test"
 
 
 class TestGraphifyPostGuardianGlobalKillSwitch:

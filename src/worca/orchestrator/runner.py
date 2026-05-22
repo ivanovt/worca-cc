@@ -44,7 +44,12 @@ from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
 from worca.utils.settings import load_global_settings, load_settings
 from worca.scripts.graphify_preflight import run_graphify_preflight
-from worca.utils.graphify import detect_graphify, effective_graphify_config
+from worca.utils.graphify import (
+    build_subprocess_env,
+    build_update_cmd,
+    detect_graphify,
+    effective_graphify_config,
+)
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
 from worca.events.emitter import EventContext, emit_event, dispatch_event, _check_control_response
@@ -1315,6 +1320,26 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
     return PRVerification(ok=True, reason="")
 
 
+def _reattach_graph_on_resume(work_request, status, prompt_builder):
+    """Re-attach the graphify report when resuming past PREFLIGHT.
+
+    ``attach_graph_report()`` only runs inside the PREFLIGHT stage handler,
+    which is skipped on resume — so a resumed run would otherwise lose the
+    advisory graph context that a fresh run gets. The report path was persisted
+    in ``status['graphify_report_path']`` at the original preflight. Returns the
+    (possibly updated) work_request.
+    """
+    if work_request.graph_context:
+        return work_request
+    report_path = status.get("graphify_report_path")
+    if report_path and os.path.isfile(report_path):
+        from worca.orchestrator.work_request import attach_graph_report
+        work_request = attach_graph_report(work_request, report_path)
+        prompt_builder.set_graph_context(work_request.graph_context)
+        _log("Resume: re-attached graphify report context")
+    return work_request
+
+
 def _maybe_graphify_post_guardian(
     *,
     settings_path: str = ".claude/settings.json",
@@ -1342,12 +1367,14 @@ def _maybe_graphify_post_guardian(
         if not detect.installed or not detect.compatible:
             return
 
-        cmd = ["graphify", "--update"]
-        if cfg.mode == "structural":
-            cmd.append("--no-llm")
+        # Same argv + provider env as the preflight phase (build_*_ helpers)
+        # so the post-commit refresh honors --backend / model_profile too.
+        cmd = build_update_cmd(cfg)
+        env = build_subprocess_env(cfg, settings)
 
         subprocess.Popen(
             cmd,
+            env=env,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -1893,6 +1920,11 @@ def run_pipeline(
             resumed_beads = prompt_builder.get_context("beads_ids")
             if resumed_beads:
                 max_beads = len(resumed_beads)
+            # Re-attach the graph report on resume — attach_graph_report() only
+            # runs in the PREFLIGHT handler, which is skipped on resume.
+            work_request = _reattach_graph_on_resume(
+                work_request, status, prompt_builder
+            )
 
         # Transition pipeline to running state
         status["pipeline_status"] = PipelineStatus.RUNNING
@@ -2594,7 +2626,7 @@ def run_pipeline(
                     if os.path.isfile(_rp):
                         from worca.orchestrator.work_request import attach_graph_report
                         work_request = attach_graph_report(work_request, _rp)
-                        prompt_builder._graph_context = work_request.graph_context
+                        prompt_builder.set_graph_context(work_request.graph_context)
                 update_stage(status, current_stage.value, **_pf_stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:

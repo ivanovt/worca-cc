@@ -8,11 +8,13 @@ import os
 import subprocess
 from typing import Optional
 
-from worca.utils.graphify import detect_graphify, effective_graphify_config
-from worca.utils.settings import load_global_settings, load_settings, resolve_model
-
-
-_DEFAULT_TIMEOUT = 300
+from worca.utils.graphify import (
+    build_subprocess_env,
+    build_update_cmd,
+    detect_graphify,
+    effective_graphify_config,
+)
+from worca.utils.settings import load_global_settings, load_settings
 
 
 def run_graphify_preflight(
@@ -31,9 +33,6 @@ def run_graphify_preflight(
 
     Never raises — all errors are caught and returned as degraded status.
     """
-    if timeout is None:
-        timeout = _DEFAULT_TIMEOUT
-
     settings = load_settings(settings_path)
     if global_settings is None:
         global_settings = load_global_settings()
@@ -42,6 +41,10 @@ def run_graphify_preflight(
 
     if not cfg.enabled:
         return {"status": "skipped", "reason": "disabled"}
+
+    # Explicit timeout arg (tests) wins; otherwise use the configured value.
+    if timeout is None:
+        timeout = cfg.preflight_timeout_seconds
 
     detect = detect_graphify(cfg.version_range)
 
@@ -58,17 +61,8 @@ def run_graphify_preflight(
             return {"status": "ready", "report_path": report_path}
         return {"status": "skipped", "reason": "update_on_preflight disabled"}
 
-    cmd = ["graphify", "--update"]
-    if cfg.mode == "structural":
-        cmd.append("--no-llm")
-    if cfg.backend:
-        cmd.extend(["--backend", cfg.backend])
-
-    env = os.environ.copy()
-    if cfg.model_profile:
-        models_cfg = settings.get("worca", {}).get("models", {})
-        _, model_env = resolve_model(cfg.model_profile, models_cfg)
-        env.update(model_env)
+    cmd = build_update_cmd(cfg)
+    env = build_subprocess_env(cfg, settings)
 
     try:
         proc = subprocess.run(

@@ -22,18 +22,18 @@ description, and surface it rather than silently resolving it.
 {{/if}}
 {{work_request}}
 
-{{#if has_graph}}
-## Codebase Structure (advisory)
-
-{{graph_context}}
-
-{{/if}}
 {{#if plan_content}}
 ## Current Plan
 
 {{plan_content}}
 {{/if}}
 
+{{#if has_graph}}
+## Codebase Structure (advisory)
+
+{{graph_context}}
+
+{{/if}}
 {{#if plan_review_issues_formatted}}
 ## Issues to Address
 

@@ -593,13 +593,15 @@ def _install_skills(source: Path, git_root: Path) -> list[str]:
 
 
 def _read_global_settings() -> dict:
-    """Read ~/.worca/settings.json for the global graphify kill-switch."""
-    path = os.path.expanduser("~/.worca/settings.json")
-    try:
-        with open(path) as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
+    """Read global settings for the graphify kill-switch.
+
+    Delegates to ``load_global_settings`` so the path honors ``$WORCA_HOME``
+    and the ``.local.json`` deep-merge — matching how the runner and UI resolve
+    the global toggle. A hardcoded ``~/.worca/settings.json`` would miss both.
+    """
+    from worca.utils.settings import load_global_settings
+
+    return load_global_settings()
 
 
 def _load_graphify_hook_stanzas() -> list[dict]:
@@ -641,12 +643,10 @@ def _merge_graphify_hooks(settings: dict) -> list[str]:
         pre_tool_hooks.extend(stanzas)
         changes.append("  hooks.PreToolUse[Grep|Glob]: registered graphify hook")
 
-    worca_cfg = settings.setdefault("worca", {})
-    governance = worca_cfg.setdefault("governance", {})
-    allowlist = governance.setdefault("bash_allowlist_extra", [])
-    if "graphify" not in allowlist:
-        allowlist.append("graphify")
-        changes.append("  governance.bash_allowlist_extra: added 'graphify'")
+    # NOTE: worca governs tool/skill/subagent *dispatch*, not Bash commands —
+    # there is no bash-command allowlist for the hook to honor. The graphify
+    # CLI reaches agents via the unrestricted Bash channel + the PreToolUse
+    # hook above; no allowlist entry is required.
 
     return changes
 

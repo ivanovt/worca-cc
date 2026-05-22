@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -352,6 +358,32 @@ describe('POST /api/graphify/rebuild', () => {
     expect(json.ok).toBe(true);
     expect(json.status).toBe('building');
   });
+
+  // F6: a clean rebuild clears out_dir first (matches `worca graphify rebuild`)
+  // so stale nodes don't linger — previously the endpoint built into the old
+  // directory, diverging from the CLI's clean-rebuild semantics.
+  it('clears a stale out_dir before building (clean rebuild)', async () => {
+    writeFileSync(
+      join(tmpDir, 'settings.json'),
+      JSON.stringify({ worca: { graphify: { enabled: true } } }),
+    );
+    const outDir = join(tmpDir, 'graphify-out');
+    mkdirSync(outDir, { recursive: true });
+    writeFileSync(join(outDir, 'graph.html'), '<stale/>');
+    app.locals.graphifyStatus = createGraphifyStatus({
+      detectFn: async () => ({
+        installed: true,
+        version: '4.2.0',
+        compatible: true,
+        backend_env_present: [],
+        error: null,
+      }),
+    });
+
+    const res = await fetch(`${base}/api/graphify/rebuild`, { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(existsSync(outDir)).toBe(false);
+  });
 });
 
 describe('GET /api/graphify/graph.html', () => {
@@ -394,4 +426,88 @@ describe('GET /api/graphify/graph.html', () => {
     const text = await res.text();
     expect(text).toContain('<html>');
   });
+});
+
+// F3: _effectiveConfig() mirrors effective_graphify_config() in
+// src/worca/utils/graphify.py. This table mirrors the Python unit tests in
+// tests/test_graphify_settings.py::TestEffectiveGraphifyConfig so the two
+// implementations cannot silently drift. Update both together.
+describe('_effectiveConfig parity with Python', () => {
+  const G = (g) => ({ worca: { graphify: g } });
+  const cases = [
+    {
+      name: 'both disabled -> global-off',
+      global: G({ enabled: false }),
+      project: G({ enabled: false }),
+      want: { enabled: false, reason: 'global-off' },
+    },
+    {
+      name: 'global off + project on -> kill-switch (global-off)',
+      global: G({ enabled: false }),
+      project: G({ enabled: true, mode: 'full' }),
+      want: { enabled: false, reason: 'global-off' },
+    },
+    {
+      name: 'global on + project off -> project-off',
+      global: G({ enabled: true }),
+      project: G({ enabled: false }),
+      want: { enabled: false, reason: 'project-off' },
+    },
+    {
+      name: 'global on + project inherits -> enabled, inherits global',
+      global: G({ enabled: true, mode: 'full', out_dir: 'custom-out' }),
+      project: { worca: {} },
+      want: {
+        enabled: true,
+        reason: null,
+        mode: 'full',
+        out_dir: 'custom-out',
+      },
+    },
+    {
+      name: 'project overrides mode',
+      global: G({ enabled: true, mode: 'structural' }),
+      project: G({ enabled: true, mode: 'full' }),
+      want: { enabled: true, mode: 'full' },
+    },
+    {
+      name: 'empty settings -> global-off + defaults',
+      global: {},
+      project: {},
+      want: {
+        enabled: false,
+        reason: 'global-off',
+        mode: 'structural',
+        version_range: '>=4,<5',
+        min_repo_files: 100,
+      },
+    },
+    {
+      name: 'project null backend/profile inherits global',
+      global: G({ enabled: true, backend: 'ollama', model_profile: 'gp' }),
+      project: G({ enabled: true, backend: null, model_profile: null }),
+      want: { enabled: true, backend: 'ollama', model_profile: 'gp' },
+    },
+    {
+      name: 'preflight_timeout default 300',
+      global: G({ enabled: true }),
+      project: G({ enabled: true }),
+      want: { enabled: true, preflight_timeout_seconds: 300 },
+    },
+    {
+      name: 'project overrides preflight_timeout',
+      global: G({ enabled: true }),
+      project: G({ enabled: true, preflight_timeout_seconds: 900 }),
+      want: { enabled: true, preflight_timeout_seconds: 900 },
+    },
+  ];
+
+  for (const c of cases) {
+    it(c.name, () => {
+      const result = _effectiveConfig(c.global, c.project);
+      for (const [k, v] of Object.entries(c.want)) {
+        expect(result[k]).toEqual(v);
+      }
+    });
+  }
 });

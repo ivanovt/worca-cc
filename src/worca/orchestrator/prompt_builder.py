@@ -53,6 +53,14 @@ class PromptBuilder:
             pass
         return ""
 
+    def set_graph_context(self, graph_context: str) -> None:
+        """Set the advisory codebase-structure block (GRAPH_REPORT.md).
+
+        Used after PREFLIGHT attaches the graph report, and again on resume
+        when the PREFLIGHT handler is skipped.
+        """
+        self._graph_context = graph_context
+
     def update_context(self, key: str, value) -> None:
         """Store inter-stage output for use in downstream prompts."""
         self._context[key] = value

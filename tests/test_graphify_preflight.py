@@ -17,6 +17,7 @@ def _make_config(
     update_on_guardian_post_commit=True,
     min_repo_files=100,
     version_range=">=4,<5",
+    preflight_timeout_seconds=300,
     reason=None,
 ):
     return EffectiveGraphifyConfig(
@@ -29,6 +30,7 @@ def _make_config(
         update_on_guardian_post_commit=update_on_guardian_post_commit,
         min_repo_files=min_repo_files,
         version_range=version_range,
+        preflight_timeout_seconds=preflight_timeout_seconds,
         reason=reason,
     )
 
@@ -588,3 +590,139 @@ class TestRunnerGraphifyIntegration:
 
         assert result["status"] == "pass"
         assert result["graphify_status"] == "degraded"
+
+
+class TestGraphifyPreflightTimeoutConfig:
+    """F4: preflight uses the configured timeout instead of a hardcoded 300."""
+
+    def _setup(self, tmp_path, timeout):
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
+        report_path = tmp_path / "graphify-out" / "GRAPH_REPORT.md"
+        report_path.parent.mkdir(parents=True)
+        report_path.write_text("# Graph Report")
+        cfg = _make_config(
+            enabled=True,
+            out_dir=str(tmp_path / "graphify-out"),
+            preflight_timeout_seconds=timeout,
+        )
+        detect = GraphifyDetect(
+            installed=True, version="4.2.1", compatible=True,
+            backend_env_present=[], error=None,
+        )
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = ""
+        mock_proc.stderr = ""
+        return settings_file, cfg, detect, mock_proc
+
+    def test_uses_config_timeout_when_arg_none(self, tmp_path):
+        settings_file, cfg, detect, mock_proc = self._setup(tmp_path, timeout=42)
+        with patch(
+            "worca.scripts.graphify_preflight.effective_graphify_config",
+            return_value=cfg,
+        ), patch(
+            "worca.scripts.graphify_preflight.detect_graphify",
+            return_value=detect,
+        ), patch(
+            "worca.scripts.graphify_preflight.subprocess.run",
+            return_value=mock_proc,
+        ) as mock_run:
+            run_graphify_preflight(
+                settings_path=str(settings_file),
+                project_root=str(tmp_path),
+            )
+        assert mock_run.call_args.kwargs["timeout"] == 42
+
+    def test_explicit_timeout_arg_wins(self, tmp_path):
+        settings_file, cfg, detect, mock_proc = self._setup(tmp_path, timeout=42)
+        with patch(
+            "worca.scripts.graphify_preflight.effective_graphify_config",
+            return_value=cfg,
+        ), patch(
+            "worca.scripts.graphify_preflight.detect_graphify",
+            return_value=detect,
+        ), patch(
+            "worca.scripts.graphify_preflight.subprocess.run",
+            return_value=mock_proc,
+        ) as mock_run:
+            run_graphify_preflight(
+                settings_path=str(settings_file),
+                project_root=str(tmp_path),
+                timeout=7,
+            )
+        assert mock_run.call_args.kwargs["timeout"] == 7
+
+
+class _FakePromptBuilder:
+    """Minimal stand-in capturing set_graph_context() calls."""
+
+    def __init__(self):
+        self.graph_context = None
+
+    def set_graph_context(self, value):
+        self.graph_context = value
+
+
+class TestGraphifyResumeReattach:
+    """F5: resuming past PREFLIGHT re-attaches the persisted graph report.
+
+    attach_graph_report() runs only inside the PREFLIGHT stage handler, which
+    is skipped on resume — without _reattach_graph_on_resume a resumed run
+    loses the advisory graph context that a fresh run gets.
+    """
+
+    def test_reattaches_from_persisted_report_path(self, tmp_path):
+        from worca.orchestrator.runner import _reattach_graph_on_resume
+        from worca.orchestrator.work_request import WorkRequest
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("# Graph\nnodes: 5")
+        wr = WorkRequest(source_type="prompt", title="t")
+        assert wr.graph_context == ""
+        pb = _FakePromptBuilder()
+
+        wr2 = _reattach_graph_on_resume(
+            wr, {"graphify_report_path": str(report)}, pb
+        )
+
+        assert "# Graph" in wr2.graph_context
+        assert pb.graph_context == wr2.graph_context
+
+    def test_noop_when_already_has_context(self, tmp_path):
+        from worca.orchestrator.runner import _reattach_graph_on_resume
+        from worca.orchestrator.work_request import WorkRequest
+
+        report = tmp_path / "GRAPH_REPORT.md"
+        report.write_text("# NEW")
+        wr = WorkRequest(source_type="prompt", title="t", graph_context="# EXISTING")
+        pb = _FakePromptBuilder()
+
+        wr2 = _reattach_graph_on_resume(
+            wr, {"graphify_report_path": str(report)}, pb
+        )
+
+        assert wr2.graph_context == "# EXISTING"
+        assert pb.graph_context is None
+
+    def test_noop_when_no_report_path(self):
+        from worca.orchestrator.runner import _reattach_graph_on_resume
+        from worca.orchestrator.work_request import WorkRequest
+
+        wr = WorkRequest(source_type="prompt", title="t")
+        pb = _FakePromptBuilder()
+        wr2 = _reattach_graph_on_resume(wr, {}, pb)
+        assert wr2.graph_context == ""
+        assert pb.graph_context is None
+
+    def test_noop_when_report_missing_on_disk(self, tmp_path):
+        from worca.orchestrator.runner import _reattach_graph_on_resume
+        from worca.orchestrator.work_request import WorkRequest
+
+        wr = WorkRequest(source_type="prompt", title="t")
+        pb = _FakePromptBuilder()
+        wr2 = _reattach_graph_on_resume(
+            wr, {"graphify_report_path": str(tmp_path / "missing.md")}, pb
+        )
+        assert wr2.graph_context == ""
+        assert pb.graph_context is None

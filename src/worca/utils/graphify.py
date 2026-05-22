@@ -75,6 +75,7 @@ _GRAPHIFY_DEFAULTS = {
     },
     "min_repo_files": 100,
     "version_range": ">=4,<5",
+    "preflight_timeout_seconds": 300,
 }
 
 
@@ -158,7 +159,8 @@ class EffectiveGraphifyConfig:
     update_on_guardian_post_commit: bool
     min_repo_files: int
     version_range: str
-    reason: Optional[str]
+    preflight_timeout_seconds: int = 300
+    reason: Optional[str] = None
 
 
 def effective_graphify_config(
@@ -216,6 +218,9 @@ def effective_graphify_config(
         update_on_guardian_post_commit=update_on.get("guardian_post_commit", True),
         min_repo_files=merged.get("min_repo_files", defaults["min_repo_files"]),
         version_range=merged.get("version_range", defaults["version_range"]),
+        preflight_timeout_seconds=merged.get(
+            "preflight_timeout_seconds", defaults["preflight_timeout_seconds"]
+        ),
         reason=None,
     )
 
@@ -235,5 +240,41 @@ def _disabled_config(
         ),
         min_repo_files=defaults["min_repo_files"],
         version_range=defaults["version_range"],
+        preflight_timeout_seconds=defaults["preflight_timeout_seconds"],
         reason=reason,
     )
+
+
+def build_update_cmd(cfg: EffectiveGraphifyConfig) -> list[str]:
+    """Build the ``graphify --update`` argv for an effective config.
+
+    Shared by the preflight phase and the post-guardian refresh so the two
+    paths never drift (e.g. one forgetting ``--backend``).
+    """
+    cmd = ["graphify", "--update"]
+    if cfg.mode == "structural":
+        cmd.append("--no-llm")
+    if cfg.backend:
+        cmd.extend(["--backend", cfg.backend])
+    return cmd
+
+
+def build_subprocess_env(
+    cfg: EffectiveGraphifyConfig,
+    settings: dict,
+    base_env: Optional[dict] = None,
+) -> dict:
+    """Build the subprocess env for a graphify invocation.
+
+    Merges the ``worca.models[model_profile]`` env (provider routing) over a
+    copy of ``base_env`` (defaults to ``os.environ``). Shared by the preflight
+    phase and the post-guardian refresh.
+    """
+    from worca.utils.settings import resolve_model
+
+    env = dict(base_env if base_env is not None else os.environ)
+    if cfg.model_profile:
+        models_cfg = settings.get("worca", {}).get("models", {})
+        _, model_env = resolve_model(cfg.model_profile, models_cfg)
+        env.update(model_env)
+    return env
