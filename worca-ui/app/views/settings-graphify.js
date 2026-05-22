@@ -238,7 +238,7 @@ export function graphifyTab(worca, rerender) {
         </p>
         <label class="settings-label" for="graphify-cache-path">Cache location</label>
         <div class="graphify-copy-row">
-          <code id="graphify-cache-path" class="graphify-cache-path"
+          <code id="graphify-cache-path" class="graphify-codebox"
             >${cachePathLabel(_cachePath, _cacheStatusReceived)}</code
           >
           <sl-copy-button
@@ -261,7 +261,7 @@ export function graphifyTab(worca, rerender) {
           </p>
           <label class="settings-label" for="graphify-install-cmd">Suggested install command</label>
           <div class="graphify-copy-row">
-            <code id="graphify-install-cmd" class="graphify-cache-path"
+            <code id="graphify-install-cmd" class="graphify-codebox"
               >${graphifyInstallCommand(_graphifyVersionRange)}</code
             >
             <sl-copy-button

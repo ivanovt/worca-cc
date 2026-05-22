@@ -6475,7 +6475,7 @@ sl-dialog.markdown-dialog::part(body) {
 }
 
 /* Graphify cache location — selectable monospace path (W-053 cache relocation) */
-.graphify-cache-path {
+.graphify-codebox {
   display: block;
   margin: 0.25rem 0 0.75rem;
   padding: 0.4rem 0.6rem;
@@ -6497,7 +6497,7 @@ sl-dialog.markdown-dialog::part(body) {
   margin: 0.25rem 0 0.75rem;
 }
 
-.graphify-copy-row .graphify-cache-path {
+.graphify-copy-row .graphify-codebox {
   flex: 1;
   min-width: 0;
   margin: 0;
