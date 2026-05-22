@@ -146,6 +146,54 @@ describe('graphifyStateValue', () => {
   });
 });
 
+describe('isGraphifyUnavailable', () => {
+  it('treats null detection (not fetched yet) as available', async () => {
+    const { isGraphifyUnavailable } = await import('./settings-graphify.js');
+    expect(isGraphifyUnavailable(null)).toBe(false);
+    expect(isGraphifyUnavailable(undefined)).toBe(false);
+  });
+
+  it('is unavailable when not installed', async () => {
+    const { isGraphifyUnavailable } = await import('./settings-graphify.js');
+    expect(isGraphifyUnavailable({ installed: false, compatible: false })).toBe(
+      true,
+    );
+  });
+
+  it('is unavailable when installed but version-incompatible', async () => {
+    const { isGraphifyUnavailable } = await import('./settings-graphify.js');
+    expect(isGraphifyUnavailable({ installed: true, compatible: false })).toBe(
+      true,
+    );
+  });
+
+  it('is available only when installed AND compatible', async () => {
+    const { isGraphifyUnavailable } = await import('./settings-graphify.js');
+    expect(isGraphifyUnavailable({ installed: true, compatible: true })).toBe(
+      false,
+    );
+  });
+});
+
+describe('cachePathLabel', () => {
+  it('shows the resolved path when present', async () => {
+    const { cachePathLabel } = await import('./settings-graphify.js');
+    expect(cachePathLabel('/home/u/.worca/cache/ast/abc', true)).toBe(
+      '/home/u/.worca/cache/ast/abc',
+    );
+  });
+
+  it('shows "resolving…" before the first status response', async () => {
+    const { cachePathLabel } = await import('./settings-graphify.js');
+    expect(cachePathLabel(null, false)).toBe('resolving…');
+  });
+
+  it('shows "unavailable" after a response with no path (not a git repo)', async () => {
+    const { cachePathLabel } = await import('./settings-graphify.js');
+    expect(cachePathLabel(null, true)).toBe('unavailable');
+  });
+});
+
 describe('graphifyTab constants', () => {
   it('exports GRAPHIFY_MODES', async () => {
     const { GRAPHIFY_MODES } = await import('./settings-graphify.js');

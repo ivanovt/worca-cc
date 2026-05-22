@@ -216,7 +216,11 @@ export function createGraphifyStatus(opts = {}) {
       effective,
       detection,
       graph_stats: graphStats,
-      cache_path: effective.enabled ? repoCacheDir(projectRoot) : null,
+      // The cache path is a pure function of the repo location (it's null only
+      // when projectRoot isn't a git repo), so resolve it regardless of whether
+      // graphify is enabled. This lets the UI show the path immediately when
+      // the user toggles graphify on in-memory, before the setting is saved.
+      cache_path: repoCacheDir(projectRoot),
     };
   }
 

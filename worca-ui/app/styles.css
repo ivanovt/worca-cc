@@ -6487,3 +6487,10 @@ sl-dialog.markdown-dialog::part(body) {
   word-break: break-all;
   user-select: all;
 }
+
+/* Shown when the graphify CLI is missing/incompatible — caution color so it
+   reads as "action needed" (install) rather than a hard failure. */
+.graphify-not-installed {
+  margin: 0 0 0.75rem;
+  color: var(--status-paused);
+}

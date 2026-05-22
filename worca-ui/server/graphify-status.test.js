@@ -243,6 +243,44 @@ describe('createGraphifyStatus', () => {
     else process.env.WORCA_CACHE = prevCache;
     rmSync(tmpDir, { recursive: true, force: true });
   });
+
+  it('resolves cache_path even when graphify is disabled', async () => {
+    // Regression: cache_path is a pure function of the repo location, so it
+    // must resolve regardless of effective.enabled. Previously it was gated on
+    // enabled, leaving the UI stuck on "resolving…" when the user toggled
+    // graphify on in-memory (before saving the setting).
+    const tmpDir = mkdtempSync(join(tmpdir(), 'graphify-disabled-'));
+    execFileSync('git', ['-C', tmpDir, 'init', '-q']);
+
+    const prevCache = process.env.WORCA_CACHE;
+    process.env.WORCA_CACHE = join(tmpDir, 'cache');
+
+    const gs = createGraphifyStatus({
+      detectFn: async () => ({
+        installed: false,
+        version: null,
+        compatible: false,
+        backend_env_present: [],
+        error: 'graphify CLI not found on PATH',
+      }),
+    });
+
+    const result = await gs.getStatus({
+      globalSettings: { worca: { graphify: { enabled: false } } },
+      projectSettings: {},
+      projectRoot: tmpDir,
+    });
+
+    expect(result.effective.enabled).toBe(false);
+    expect(result.graph_stats).toBeNull();
+    // The path resolves despite graphify being disabled.
+    expect(result.cache_path).toBe(repoCacheDir(tmpDir));
+    expect(result.cache_path).toContain('ast');
+
+    if (prevCache === undefined) delete process.env.WORCA_CACHE;
+    else process.env.WORCA_CACHE = prevCache;
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
 });
 
 // ── Integration tests for HTTP endpoints ──────────────────────────────

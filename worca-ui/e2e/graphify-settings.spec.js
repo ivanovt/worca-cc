@@ -160,6 +160,66 @@ test('Build/Clear cache actions are present when enabled', async ({ page }) => {
   }
 });
 
+test('build is gated on graphify CLI availability', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, {
+      worca: { graphify: { enabled: true, mode: 'structural' } },
+    });
+
+    // The install notice + disabled Build appear iff the graphify CLI is
+    // missing/incompatible on this host, so adapt the assertion to the live
+    // detection rather than assuming the environment's graphify state.
+    const status = await page.evaluate(async () => {
+      const r = await fetch('/api/graphify/status');
+      return r.json();
+    });
+    const available = Boolean(
+      status.detection?.installed && status.detection?.compatible,
+    );
+
+    if (available) {
+      await expect(
+        page.locator('#graphify-not-installed-notice'),
+      ).toHaveCount(0);
+      await expect(page.locator('.graphify-build-btn')).toHaveJSProperty(
+        'disabled',
+        false,
+      );
+    } else {
+      await expect(
+        page.locator('#graphify-not-installed-notice'),
+      ).toBeAttached();
+      await expect(page.locator('.graphify-build-btn')).toHaveJSProperty(
+        'disabled',
+        true,
+      );
+    }
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('cache location resolves (path or "unavailable", never stuck)', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, {
+      worca: { graphify: { enabled: true, mode: 'structural' } },
+    });
+
+    // After the one-shot status fetch settles, the field must show a concrete
+    // value — a resolved path or "unavailable" — and never stay on "resolving…".
+    // (The e2e temp dir isn't a git repo, so cache_path is null → "unavailable".)
+    const field = page.locator('#graphify-cache-path');
+    await expect(field).not.toHaveText('resolving…');
+    await expect(field).not.toBeEmpty();
+  } finally {
+    await ctx.close();
+  }
+});
+
 test('cache actions hidden when graphify is off', async ({ page }) => {
   const ctx = await startServer();
   try {

@@ -33,12 +33,40 @@ let _cacheBusy = false;
 let _cacheMsg = '';
 let _cachePath = null; // <cache>/ast/<repo-id>/ for this project (from the server)
 let _cacheStatusFetched = false;
+// True once any status response has come back. Distinguishes "still loading"
+// (show "resolving…") from "loaded but path is null" (not a git repo / error —
+// show "unavailable") so the path field is never terminally stuck.
+let _cacheStatusReceived = false;
+// Latest graphify CLI detection from the server, or null until first fetch.
+// When the CLI is missing/incompatible, Build is disabled and a notice shows.
+let _graphifyDetection = null;
+
+/**
+ * True when the graphify CLI is known-missing or version-incompatible, so
+ * Build must be disabled and the install notice shown. `null` detection means
+ * "not fetched yet" → not unavailable (don't flash the notice while loading).
+ */
+export function isGraphifyUnavailable(detection) {
+  return detection ? !(detection.installed && detection.compatible) : false;
+}
+
+/**
+ * Label for the cache-location field. A resolved path wins; otherwise show
+ * "resolving…" until the first status response, then "unavailable" (the repo
+ * isn't a git repo, or the status fetch failed) — never terminally stuck.
+ */
+export function cachePathLabel(path, received) {
+  if (path) return path;
+  return received ? 'unavailable' : 'resolving…';
+}
 
 async function _refreshCacheStatus(rerender) {
   try {
     const j = await (await fetch('/api/graphify/status')).json();
+    _cacheStatusReceived = true;
     _cacheBusy = Boolean(j.building);
     _cachePath = j.cache_path ?? _cachePath;
+    _graphifyDetection = j.detection ?? _graphifyDetection;
     if (j.graph_stats)
       _cacheMsg = 'Knowledge graph is built for the current commit.';
     else if (!_cacheBusy)
@@ -46,6 +74,7 @@ async function _refreshCacheStatus(rerender) {
     rerender();
     if (_cacheBusy) setTimeout(() => _refreshCacheStatus(rerender), 2000);
   } catch {
+    _cacheStatusReceived = true;
     _cacheBusy = false;
     rerender();
   }
@@ -196,15 +225,26 @@ export function graphifyTab(worca, rerender) {
         </p>
         <label class="settings-label" for="graphify-cache-path">Cache location</label>
         <code id="graphify-cache-path" class="graphify-cache-path"
-          >${_cachePath || 'resolving…'}</code
+          >${cachePathLabel(_cachePath, _cacheStatusReceived)}</code
         >
+        ${
+          isGraphifyUnavailable(_graphifyDetection)
+            ? html`
+        <p id="graphify-not-installed-notice" class="settings-tab-description graphify-not-installed">
+          ${
+            _graphifyDetection?.error ||
+            'Graphify CLI not found on PATH — install it to build graphs.'
+          }
+        </p>`
+            : ''
+        }
         <div class="graphify-cache-buttons">
           <sl-button
             class="graphify-build-btn"
             variant="primary"
             outline
             ?loading=${_cacheBusy}
-            ?disabled=${_cacheBusy}
+            ?disabled=${_cacheBusy || isGraphifyUnavailable(_graphifyDetection)}
             @click=${() => _onBuildGraph(rerender)}
           >
             ${unsafeHTML(iconSvg(RefreshCw, 14))}
