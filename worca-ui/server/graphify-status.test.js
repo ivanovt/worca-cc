@@ -1,10 +1,5 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +9,7 @@ import {
   _effectiveConfig,
   _graphStats,
   createGraphifyStatus,
+  snapshotDir,
 } from './graphify-status.js';
 
 function startServer(opts = {}) {
@@ -90,34 +86,39 @@ describe('_graphStats', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns null when report does not exist', () => {
-    const result = _graphStats(tmpDir, 'graphify-out');
-    expect(result).toBeNull();
+  function _snap(dir) {
+    // Build a complete snapshot dir: <dir>/graphify/* + .complete
+    mkdirSync(join(dir, 'graphify'), { recursive: true });
+    writeFileSync(
+      join(dir, 'graphify', 'GRAPH_REPORT.md'),
+      '# Graph Report\nx',
+    );
+    writeFileSync(join(dir, '.complete'), 'ok\n');
+    return dir;
+  }
+
+  it('returns null when snapshot is missing/incomplete', () => {
+    expect(_graphStats(null)).toBeNull();
+    expect(_graphStats(join(tmpDir, 'nope'))).toBeNull();
+    // present report but no .complete marker → still null
+    mkdirSync(join(tmpDir, 'graphify'), { recursive: true });
+    writeFileSync(join(tmpDir, 'graphify', 'GRAPH_REPORT.md'), '# x');
+    expect(_graphStats(tmpDir)).toBeNull();
   });
 
-  it('returns stats when report exists', () => {
-    const outDir = join(tmpDir, 'graphify-out');
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(
-      join(outDir, 'GRAPH_REPORT.md'),
-      '# Graph Report\nSome content',
-    );
-    const result = _graphStats(tmpDir, 'graphify-out');
+  it('returns stats when snapshot is complete', () => {
+    const result = _graphStats(_snap(tmpDir));
     expect(result).not.toBeNull();
     expect(result.report_path).toContain('GRAPH_REPORT.md');
+    expect(result.snapshot_dir).toBe(tmpDir);
     expect(typeof result.age_seconds).toBe('number');
-    expect(result.age_seconds).toBeGreaterThanOrEqual(0);
-    expect(typeof result.size_bytes).toBe('number');
     expect(result.size_bytes).toBeGreaterThan(0);
   });
 
-  it('returns stats for graph.html when present', () => {
-    const outDir = join(tmpDir, 'graphify-out');
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, 'GRAPH_REPORT.md'), '# Report');
-    writeFileSync(join(outDir, 'graph.html'), '<html></html>');
-    const result = _graphStats(tmpDir, 'graphify-out');
-    expect(result.has_html).toBe(true);
+  it('reports has_html when graph.html present', () => {
+    _snap(tmpDir);
+    writeFileSync(join(tmpDir, 'graphify', 'graph.html'), '<html></html>');
+    expect(_graphStats(tmpDir).has_html).toBe(true);
   });
 });
 
@@ -195,14 +196,20 @@ describe('createGraphifyStatus', () => {
 
   it('getStatus combines effective config, detection, and graph stats', async () => {
     const tmpDir = mkdtempSync(join(tmpdir(), 'graphify-getstatus-'));
-    const outDir = join(tmpDir, 'graphify-out');
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, 'GRAPH_REPORT.md'), '# Report');
+    execFileSync('git', ['-C', tmpDir, 'init', '-q']);
+    execFileSync('git', ['-C', tmpDir, 'config', 'user.email', 't@t']);
+    execFileSync('git', ['-C', tmpDir, 'config', 'user.name', 't']);
+    writeFileSync(join(tmpDir, 'f.txt'), 'x');
+    execFileSync('git', ['-C', tmpDir, 'add', '-A']);
+    execFileSync('git', ['-C', tmpDir, 'commit', '-qm', 'init']);
+
+    const prevCache = process.env.WORCA_CACHE;
+    process.env.WORCA_CACHE = join(tmpDir, 'cache');
 
     const gs = createGraphifyStatus({
       detectFn: async () => ({
         installed: true,
-        version: '4.2.0',
+        version: '0.8.0',
         compatible: true,
         backend_env_present: [],
         error: null,
@@ -211,6 +218,12 @@ describe('createGraphifyStatus', () => {
 
     const globalSettings = { worca: { graphify: { enabled: true } } };
     const projectSettings = {};
+    // Seed a complete cache snapshot for the current HEAD.
+    const snap = snapshotDir(tmpDir);
+    mkdirSync(join(snap, 'graphify'), { recursive: true });
+    writeFileSync(join(snap, 'graphify', 'GRAPH_REPORT.md'), '# Report');
+    writeFileSync(join(snap, '.complete'), 'ok\n');
+
     const result = await gs.getStatus({
       globalSettings,
       projectSettings,
@@ -222,6 +235,8 @@ describe('createGraphifyStatus', () => {
     expect(result.detection.installed).toBe(true);
     expect(result.graph_stats).not.toBeNull();
 
+    if (prevCache === undefined) delete process.env.WORCA_CACHE;
+    else process.env.WORCA_CACHE = prevCache;
     rmSync(tmpDir, { recursive: true, force: true });
   });
 });
@@ -297,11 +312,11 @@ describe('POST /api/graphify/recheck', () => {
   });
 });
 
-describe('POST /api/graphify/rebuild', () => {
+describe('POST /api/graphify/build + /clear', () => {
   let server, base, app, tmpDir;
 
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'graphify-rebuild-'));
+    tmpDir = mkdtempSync(join(tmpdir(), 'graphify-build-'));
     writeFileSync(
       join(tmpDir, 'settings.json'),
       JSON.stringify({ worca: { graphify: { enabled: false } } }),
@@ -318,84 +333,76 @@ describe('POST /api/graphify/rebuild', () => {
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns error when graphify is not enabled', async () => {
-    const res = await fetch(`${base}/api/graphify/rebuild`, { method: 'POST' });
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
-    expect(json.error).toMatch(/not enabled/i);
-  });
-
-  it('returns error when graphify is enabled but not detected', async () => {
-    writeFileSync(
-      join(tmpDir, 'settings.json'),
-      JSON.stringify({ worca: { graphify: { enabled: true } } }),
-    );
-    const res = await fetch(`${base}/api/graphify/rebuild`, { method: 'POST' });
-    expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
-    expect(json.error).toBeTruthy();
-  });
-
-  it('returns ok:true with status building when graphify is ready', async () => {
-    writeFileSync(
-      join(tmpDir, 'settings.json'),
-      JSON.stringify({ worca: { graphify: { enabled: true } } }),
-    );
+  function _ready() {
     app.locals.graphifyStatus = createGraphifyStatus({
       detectFn: async () => ({
         installed: true,
-        version: '4.2.0',
+        version: '0.8.0',
         compatible: true,
         backend_env_present: [],
         error: null,
       }),
     });
-    const res = await fetch(`${base}/api/graphify/rebuild`, { method: 'POST' });
+  }
+
+  it('build returns error when graphify is not enabled', async () => {
+    const res = await fetch(`${base}/api/graphify/build`, { method: 'POST' });
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toMatch(/not enabled/i);
+  });
+
+  it('build returns error when enabled but not detected', async () => {
+    writeFileSync(
+      join(tmpDir, 'settings.json'),
+      JSON.stringify({ worca: { graphify: { enabled: true } } }),
+    );
+    const res = await fetch(`${base}/api/graphify/build`, { method: 'POST' });
+    expect(res.status).toBe(400);
+    expect((await res.json()).ok).toBe(false);
+  });
+
+  it('build returns ok:building when ready', async () => {
+    writeFileSync(
+      join(tmpDir, 'settings.json'),
+      JSON.stringify({ worca: { graphify: { enabled: true } } }),
+    );
+    _ready();
+    const res = await fetch(`${base}/api/graphify/build`, { method: 'POST' });
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.ok).toBe(true);
     expect(json.status).toBe('building');
   });
 
-  // F6: a clean rebuild clears out_dir first (matches `worca graphify rebuild`)
-  // so stale nodes don't linger — previously the endpoint built into the old
-  // directory, diverging from the CLI's clean-rebuild semantics.
-  it('clears a stale out_dir before building (clean rebuild)', async () => {
-    writeFileSync(
-      join(tmpDir, 'settings.json'),
-      JSON.stringify({ worca: { graphify: { enabled: true } } }),
-    );
-    const outDir = join(tmpDir, 'graphify-out');
-    mkdirSync(outDir, { recursive: true });
-    writeFileSync(join(outDir, 'graph.html'), '<stale/>');
-    app.locals.graphifyStatus = createGraphifyStatus({
-      detectFn: async () => ({
-        installed: true,
-        version: '4.2.0',
-        compatible: true,
-        backend_env_present: [],
-        error: null,
-      }),
-    });
-
-    const res = await fetch(`${base}/api/graphify/rebuild`, { method: 'POST' });
+  it('clear is graceful even with no cache', async () => {
+    const res = await fetch(`${base}/api/graphify/clear`, { method: 'POST' });
     expect(res.status).toBe(200);
-    expect(existsSync(outDir)).toBe(false);
+    expect((await res.json()).ok).toBe(true);
   });
 });
 
 describe('GET /api/graphify/graph.html', () => {
-  let server, base, _app, tmpDir;
+  let server, base, tmpDir, cacheDirEnv;
 
   beforeEach(async () => {
     tmpDir = mkdtempSync(join(tmpdir(), 'graphify-html-'));
+    // Make tmpDir a git repo so repoId/HEAD resolve.
+    execFileSync('git', ['-C', tmpDir, 'init', '-q']);
+    execFileSync('git', ['-C', tmpDir, 'config', 'user.email', 't@t']);
+    execFileSync('git', ['-C', tmpDir, 'config', 'user.name', 't']);
+    writeFileSync(join(tmpDir, 'f.txt'), 'x');
+    execFileSync('git', ['-C', tmpDir, 'add', '-A']);
+    execFileSync('git', ['-C', tmpDir, 'commit', '-qm', 'init']);
+
+    cacheDirEnv = process.env.WORCA_CACHE;
+    process.env.WORCA_CACHE = join(tmpDir, 'cache');
+
     writeFileSync(
       join(tmpDir, 'settings.json'),
       JSON.stringify({ worca: { graphify: { enabled: true } } }),
     );
-    ({ server, base, _app } = await startServer({
+    ({ server, base } = await startServer({
       prefsDir: tmpDir,
       projectRoot: tmpDir,
       settingsPath: join(tmpDir, 'settings.json'),
@@ -404,27 +411,27 @@ describe('GET /api/graphify/graph.html', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
+    if (cacheDirEnv === undefined) delete process.env.WORCA_CACHE;
+    else process.env.WORCA_CACHE = cacheDirEnv;
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('returns 404 when graph.html does not exist', async () => {
+  it('returns 404 when no snapshot graph.html exists', async () => {
     const res = await fetch(`${base}/api/graphify/graph.html`);
     expect(res.status).toBe(404);
-    const json = await res.json();
-    expect(json.ok).toBe(false);
+    expect((await res.json()).ok).toBe(false);
   });
 
-  it('serves graph.html when it exists', async () => {
-    const outDir = join(tmpDir, 'graphify-out');
-    mkdirSync(outDir, { recursive: true });
+  it('serves graph.html from the cache snapshot when present', async () => {
+    const snap = snapshotDir(tmpDir);
+    mkdirSync(join(snap, 'graphify'), { recursive: true });
     writeFileSync(
-      join(outDir, 'graph.html'),
+      join(snap, 'graphify', 'graph.html'),
       '<html><body>Graph</body></html>',
     );
     const res = await fetch(`${base}/api/graphify/graph.html`);
     expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).toContain('<html>');
+    expect(await res.text()).toContain('<html>');
   });
 });
 

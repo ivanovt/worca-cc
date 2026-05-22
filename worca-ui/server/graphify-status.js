@@ -1,6 +1,8 @@
-import { spawn } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { existsSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { isAbsolute, join } from 'node:path';
 
 // Mirror of _GRAPHIFY_DEFAULTS in src/worca/utils/graphify.py — keep in sync.
 const GRAPHIFY_DEFAULTS = {
@@ -57,16 +59,70 @@ export function _effectiveConfig(globalSettings, projectSettings) {
   };
 }
 
-export function _graphStats(projectRoot, outDir) {
-  const reportPath = join(projectRoot, outDir, 'GRAPH_REPORT.md');
+// ─── Per-commit cache resolution (mirrors utils/paths.py + utils/git.py) ────
+
+export function cacheDir() {
+  if (process.env.WORCA_CACHE) return process.env.WORCA_CACHE;
+  const home = process.env.WORCA_HOME || join(homedir(), '.worca');
+  return join(home, 'cache');
+}
+
+export function repoId(projectRoot) {
+  try {
+    const common = execFileSync(
+      'git',
+      ['-C', projectRoot, 'rev-parse', '--git-common-dir'],
+      { encoding: 'utf-8' },
+    ).trim();
+    if (!common) return null;
+    const abs = isAbsolute(common) ? common : join(projectRoot, common);
+    const real = realpathSync(abs);
+    return createHash('sha256').update(real).digest('hex').slice(0, 12);
+  } catch {
+    return null;
+  }
+}
+
+export function headSha(projectRoot) {
+  try {
+    return execFileSync('git', ['-C', projectRoot, 'rev-parse', 'HEAD'], {
+      encoding: 'utf-8',
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** Absolute snapshot dir for the project's current HEAD, or null. */
+export function snapshotDir(projectRoot) {
+  const rid = repoId(projectRoot);
+  const sha = headSha(projectRoot);
+  if (!rid || !sha) return null;
+  return join(cacheDir(), 'ast', rid, sha);
+}
+
+/** Remove all cached snapshots for the project's repo. Returns the path or null. */
+export function clearRepoCache(projectRoot) {
+  const rid = repoId(projectRoot);
+  if (!rid) return null;
+  const repoCache = join(cacheDir(), 'ast', rid);
+  rmSync(repoCache, { recursive: true, force: true });
+  return repoCache;
+}
+
+/** Stats for a per-commit snapshot dir, or null if not complete/present. */
+export function _graphStats(snapDir) {
+  if (!snapDir || !existsSync(join(snapDir, '.complete'))) return null;
+  const reportPath = join(snapDir, 'graphify', 'GRAPH_REPORT.md');
   if (!existsSync(reportPath)) return null;
 
   const stat = statSync(reportPath);
   const ageSeconds = Math.max(0, (Date.now() - stat.mtimeMs) / 1000);
-  const htmlPath = join(projectRoot, outDir, 'graph.html');
+  const htmlPath = join(snapDir, 'graphify', 'graph.html');
 
   return {
     report_path: reportPath,
+    snapshot_dir: snapDir,
     age_seconds: ageSeconds,
     size_bytes: stat.size,
     has_html: existsSync(htmlPath),
@@ -147,7 +203,7 @@ export function createGraphifyStatus(opts = {}) {
     const effective = _effectiveConfig(globalSettings, projectSettings);
     const detection = await detect();
     const graphStats = effective.enabled
-      ? _graphStats(projectRoot, effective.out_dir)
+      ? _graphStats(snapshotDir(projectRoot))
       : null;
     return { ok: true, effective, detection, graph_stats: graphStats };
   }

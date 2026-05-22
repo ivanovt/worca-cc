@@ -10,13 +10,18 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
 import { createFleetRouter } from './fleet-routes.js';
-import { _effectiveConfig, createGraphifyStatus } from './graphify-status.js';
+import {
+  _effectiveConfig,
+  clearRepoCache,
+  createGraphifyStatus,
+  snapshotDir,
+} from './graphify-status.js';
 import { RAW_BODY } from './integrations/index.js';
 import { verify } from './integrations/verify.js';
 import { LaunchLock } from './launch-lock.js';
@@ -1028,15 +1033,19 @@ export function createApp(options = {}) {
     };
   }
 
+  async function graphifyStatusPayload() {
+    const { globalSettings, projectSettings, root } = readGraphifySettings();
+    const result = await app.locals.graphifyStatus.getStatus({
+      globalSettings,
+      projectSettings,
+      projectRoot: root,
+    });
+    return { ...result, building: Boolean(app.locals.graphifyBuilding) };
+  }
+
   app.get('/api/graphify/status', async (_req, res) => {
     try {
-      const { globalSettings, projectSettings, root } = readGraphifySettings();
-      const result = await app.locals.graphifyStatus.getStatus({
-        globalSettings,
-        projectSettings,
-        projectRoot: root,
-      });
-      res.json(result);
+      res.json(await graphifyStatusPayload());
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -1045,19 +1054,17 @@ export function createApp(options = {}) {
   app.post('/api/graphify/recheck', async (_req, res) => {
     try {
       app.locals.graphifyStatus.invalidate();
-      const { globalSettings, projectSettings, root } = readGraphifySettings();
-      const result = await app.locals.graphifyStatus.getStatus({
-        globalSettings,
-        projectSettings,
-        projectRoot: root,
-      });
-      res.json(result);
+      res.json(await graphifyStatusPayload());
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
   });
 
-  app.post('/api/graphify/rebuild', async (_req, res) => {
+  // Build/refresh the current HEAD's cache snapshot (async, long-running).
+  // The lock + .complete publish discipline lives in run_graphify_preflight,
+  // so we drive it via a detached Python process and track a `building` flag
+  // the UI polls through /api/graphify/status.
+  app.post('/api/graphify/build', async (_req, res) => {
     try {
       const { globalSettings, projectSettings, root } = readGraphifySettings();
       const effective = _effectiveConfig(globalSettings, projectSettings);
@@ -1074,30 +1081,45 @@ export function createApp(options = {}) {
             detection.error || 'Graphify is not installed or not compatible',
         });
       }
-      const args = ['build'];
-      if (effective.mode === 'structural') args.push('--no-llm');
-      // Clean rebuild: clear out_dir first so stale nodes don't linger
-      // (matches `worca graphify rebuild`). Guard against a misconfigured
-      // out_dir that resolves to the project root or escapes it.
-      const rootAbs = resolve(root);
-      const outAbs = resolve(root, effective.out_dir || '');
-      if (
-        effective.out_dir &&
-        outAbs !== rootAbs &&
-        outAbs.startsWith(rootAbs + sep)
-      ) {
+      if (app.locals.graphifyBuilding) {
+        return res.json({ ok: true, status: 'building' });
+      }
+      // Fresh build for the current HEAD: clear its snapshot first.
+      const snap = snapshotDir(root);
+      if (snap) {
         try {
-          rmSync(outAbs, { recursive: true, force: true });
+          rmSync(snap, { recursive: true, force: true });
         } catch {}
       }
-      const child = spawn('graphify', args, {
-        cwd: root,
-        detached: true,
-        stdio: 'ignore',
-      });
-      child.on('error', () => {});
-      child.unref();
+      app.locals.graphifyBuilding = true;
+      const child = spawn(
+        'python3',
+        [
+          '-c',
+          'from worca.scripts.graphify_preflight import run_graphify_preflight as r; r()',
+        ],
+        { cwd: root, stdio: 'ignore' },
+      );
+      const done = () => {
+        app.locals.graphifyBuilding = false;
+        app.locals.graphifyStatus.invalidate();
+      };
+      child.on('exit', done);
+      child.on('error', done);
       res.json({ ok: true, status: 'building' });
+    } catch (err) {
+      app.locals.graphifyBuilding = false;
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // Clear ALL cached snapshots for this project's repo.
+  app.post('/api/graphify/clear', async (_req, res) => {
+    try {
+      const { root } = readGraphifySettings();
+      const cleared = clearRepoCache(root);
+      app.locals.graphifyStatus.invalidate();
+      res.json({ ok: true, cleared });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -1105,10 +1127,9 @@ export function createApp(options = {}) {
 
   app.get('/api/graphify/graph.html', (_req, res) => {
     const root = projectRoot || process.cwd();
-    const { globalSettings, projectSettings } = readGraphifySettings();
-    const effective = _effectiveConfig(globalSettings, projectSettings);
-    const htmlPath = join(root, effective.out_dir, 'graph.html');
-    if (!existsSync(htmlPath)) {
+    const snap = snapshotDir(root);
+    const htmlPath = snap ? join(snap, 'graphify', 'graph.html') : null;
+    if (!htmlPath || !existsSync(htmlPath)) {
       return res.status(404).json({ ok: false, error: 'graph.html not found' });
     }
     res.sendFile(htmlPath);

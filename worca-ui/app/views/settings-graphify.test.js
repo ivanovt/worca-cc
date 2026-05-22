@@ -96,6 +96,25 @@ describe('graphifyTab rendering', () => {
     expect(html).not.toContain('graphify-privacy-notice');
     expect(html).toContain('graphify-disabled-hint');
   });
+
+  it('renders Build/Clear cache actions when enabled', async () => {
+    const { graphifyTab } = await import('./settings-graphify.js');
+    const worca = { graphify: { enabled: true, mode: 'structural' } };
+    const html = renderToString(graphifyTab(worca, () => {}));
+    expect(html).toContain('graphify-cache-actions');
+    expect(html).toContain('graphify-build-btn');
+    expect(html).toContain('graphify-clear-btn');
+    expect(html).toContain('Build / refresh graph');
+    expect(html).toContain('Clear cache');
+  });
+
+  it('hides cache actions when off', async () => {
+    const { graphifyTab } = await import('./settings-graphify.js');
+    const worca = { graphify: { enabled: false } };
+    const html = renderToString(graphifyTab(worca, () => {}));
+    expect(html).not.toContain('graphify-cache-actions');
+    expect(html).not.toContain('graphify-build-btn');
+  });
 });
 
 describe('graphifyStateValue', () => {

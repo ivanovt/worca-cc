@@ -128,3 +128,28 @@ test('Save and Reset buttons are present', async ({ page }) => {
     await ctx.close();
   }
 });
+
+test('Build/Clear cache actions are present when enabled', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, {
+      worca: { graphify: { enabled: true, mode: 'structural' } },
+    });
+
+    await expect(page.locator('.graphify-cache-actions')).toBeAttached();
+    await expect(page.locator('.graphify-build-btn')).toBeAttached();
+    await expect(page.locator('.graphify-clear-btn')).toBeAttached();
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('cache actions hidden when graphify is off', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, { worca: { graphify: { enabled: false } } });
+    await expect(page.locator('.graphify-cache-actions')).toHaveCount(0);
+  } finally {
+    await ctx.close();
+  }
+});
