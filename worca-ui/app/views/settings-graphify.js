@@ -147,14 +147,17 @@ export function graphifyTab(worca, rerender) {
         </div>
 
         ${
-          enabled
+          // Model Profile only affects the Full-mode LLM pass. Structural mode
+          // runs graphify with --no-llm (zero outbound calls), so the profile
+          // is inert there — only render the control when state is full.
+          isFullMode
             ? html`
         <div class="settings-field">
           <label class="settings-label" for="graphify-model-profile">Model Profile</label>
           <sl-select
             id="graphify-model-profile"
             value="${modelProfile}"
-            placeholder="None (structural default)"
+            placeholder="None (graphify default)"
             clearable
             @sl-change=${(e) => onModelProfileChange(e.target.value)}
           >

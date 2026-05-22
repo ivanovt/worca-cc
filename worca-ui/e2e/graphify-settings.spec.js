@@ -25,15 +25,30 @@ test('renders Graphify tab with the off/structural/full state control', async ({
   const ctx = await startServer();
   try {
     await goToGraphifyTab(page, ctx, {
-      worca: { graphify: { enabled: true, mode: 'structural' } },
+      worca: { graphify: { enabled: true, mode: 'full' } },
     });
 
     // Single combined control replaces the former switch + mode radios.
     await expect(page.locator('#graphify-state')).toBeAttached();
     await expect(page.locator('#graphify-enabled')).toHaveCount(0);
     await expect(page.locator('#graphify-mode')).toHaveCount(0);
-    // Model Profile is shown only when not off.
+    // Model Profile is shown only in full mode (the LLM pass).
     await expect(page.locator('#graphify-model-profile')).toBeAttached();
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('model profile is hidden in structural mode', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, {
+      worca: { graphify: { enabled: true, mode: 'structural' } },
+    });
+
+    // Structural mode runs graphify with --no-llm, so the profile is inert.
+    await expect(page.locator('#graphify-state')).toBeAttached();
+    await expect(page.locator('#graphify-model-profile')).toHaveCount(0);
   } finally {
     await ctx.close();
   }

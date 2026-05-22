@@ -52,14 +52,26 @@ describe('graphifyTab rendering', () => {
     expect(full).toContain('value="full"');
   });
 
-  it('renders backend dropdown', async () => {
+  it('renders model profile dropdown in full mode', async () => {
+    const { graphifyTab } = await import('./settings-graphify.js');
+    const worca = {
+      graphify: { enabled: true, mode: 'full' },
+      models: { opus: 'claude-opus-4-6', sonnet: 'claude-sonnet-4-6' },
+    };
+    const html = renderToString(graphifyTab(worca, () => {}));
+    expect(html).toContain('graphify-model-profile');
+  });
+
+  it('hides model profile in structural mode (LLM-only setting)', async () => {
+    // Structural mode runs graphify with --no-llm, so the model profile is
+    // inert there — the control must not render.
     const { graphifyTab } = await import('./settings-graphify.js');
     const worca = {
       graphify: { enabled: true, mode: 'structural' },
       models: { opus: 'claude-opus-4-6', sonnet: 'claude-sonnet-4-6' },
     };
     const html = renderToString(graphifyTab(worca, () => {}));
-    expect(html).toContain('graphify-model-profile');
+    expect(html).not.toContain('graphify-model-profile');
   });
 
   it('shows full-mode privacy text when mode is full', async () => {
