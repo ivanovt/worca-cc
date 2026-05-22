@@ -1,7 +1,8 @@
 """Tests for worca graphify CLI subcommands (status, recommend, enable, disable, rebuild, update)."""
 
 import json
-from unittest.mock import patch, MagicMock
+import os
+from unittest.mock import patch
 
 import pytest
 
@@ -123,36 +124,45 @@ class TestGraphifyStatus:
         out = capsys.readouterr().out
         assert "not installed" in out.lower() or "not found" in out.lower()
 
-    def test_shows_graph_stats_when_present(self, project_dir, global_settings, capsys):
-        """When graph output dir exists with report, shows stats."""
-        settings_path = str(project_dir / ".claude" / "settings.json")
-        global_cfg = {"worca": {"graphify": {"enabled": True}}}
-        with open(global_settings, "w") as f:
-            json.dump(global_cfg, f)
-        project_cfg = {"worca": {"graphify": {"enabled": True}}}
-        with open(settings_path, "w") as f:
-            json.dump(project_cfg, f)
+    def test_shows_graph_stats_when_present(
+        self, project_dir, global_settings, capsys, tmp_path, monkeypatch
+    ):
+        """When a complete cache snapshot exists for HEAD, status shows it."""
+        from worca.utils.graphify import (
+            graphify_report_path,
+            graphify_snapshot_dir,
+            mark_snapshot_complete,
+        )
 
-        # Create graphify-out dir with a report
-        out_dir = project_dir / "graphify-out"
-        out_dir.mkdir()
-        (out_dir / "GRAPH_REPORT.md").write_text("# Graph Report\nSome content here.\n")
+        monkeypatch.setenv("WORCA_CACHE", str(tmp_path / "cache"))
+        settings_path = str(project_dir / ".claude" / "settings.json")
+        with open(global_settings, "w") as f:
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
+        with open(settings_path, "w") as f:
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
+
+        snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=str(tmp_path / "cache"))
+        os.makedirs(os.path.join(snap, "graphify"))
+        with open(graphify_report_path(snap), "w") as f:
+            f.write("# Graph Report\nSome content.\n")
+        mark_snapshot_complete(snap)
 
         detect = GraphifyDetect(
-            installed=True,
-            version="4.2.1",
-            compatible=True,
-            backend_env_present=[],
-            error=None,
+            installed=True, version="0.8.0", compatible=True,
+            backend_env_present=[], error=None,
         )
-        with patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect):
+        with (
+            patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect),
+            patch("worca.cli.graphify_cmd.repo_id", return_value="repo1"),
+            patch("worca.cli.graphify_cmd.get_current_git_head", return_value="deadbeef"),
+        ):
             cmd_graphify_status(
                 project_settings_path=settings_path,
                 global_settings_path=global_settings,
                 project_root=str(project_dir),
             )
         out = capsys.readouterr().out
-        assert "graphify-out" in out or "GRAPH_REPORT" in out
+        assert "deadbeef" in out and "built" in out
 
     def test_global_off_reason(self, project_dir, global_settings, capsys):
         """When global is off, status shows reason=global-off."""
@@ -341,34 +351,36 @@ class TestGraphifyDisable:
 
 
 class TestGraphifyRebuild:
-    def test_rebuild_deletes_out_dir_and_runs_build(
-        self, project_dir, global_settings, capsys
+    def test_rebuild_deletes_snapshot_and_builds(
+        self, project_dir, global_settings, capsys, tmp_path, monkeypatch
     ):
-        """Rebuild deletes graphify-out/ and invokes graphify build."""
-        settings_path = str(project_dir / ".claude" / "settings.json")
-        global_cfg = {"worca": {"graphify": {"enabled": True, "mode": "structural"}}}
-        with open(global_settings, "w") as f:
-            json.dump(global_cfg, f)
-        project_cfg = {"worca": {"graphify": {"enabled": True, "mode": "structural"}}}
-        with open(settings_path, "w") as f:
-            json.dump(project_cfg, f)
+        """Rebuild deletes the current HEAD's cache snapshot and rebuilds it."""
+        from worca.utils.graphify import graphify_snapshot_dir
 
-        out_dir = project_dir / "graphify-out"
-        out_dir.mkdir()
-        (out_dir / "GRAPH_REPORT.md").write_text("old report")
-        (out_dir / "graph.json").write_text("{}")
+        monkeypatch.setenv("WORCA_CACHE", str(tmp_path / "cache"))
+        settings_path = str(project_dir / ".claude" / "settings.json")
+        with open(global_settings, "w") as f:
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
+        with open(settings_path, "w") as f:
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
+
+        snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=str(tmp_path / "cache"))
+        os.makedirs(snap)
+        (snap and open(os.path.join(snap, "stale.txt"), "w")).write("old")
 
         detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
+            installed=True, version="0.8.0", compatible=True,
             backend_env_present=[], error=None,
         )
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect), \
-             patch("subprocess.run", return_value=mock_proc) as mock_run:
+        with (
+            patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect),
+            patch("worca.cli.graphify_cmd.repo_id", return_value="repo1"),
+            patch("worca.cli.graphify_cmd.get_current_git_head", return_value="deadbeef"),
+            patch(
+                "worca.scripts.graphify_preflight.run_graphify_preflight",
+                return_value={"status": "ready", "report_path": "/x/GRAPH_REPORT.md"},
+            ) as mock_pre,
+        ):
             cmd_graphify_rebuild(
                 project_settings_path=settings_path,
                 global_settings_path=global_settings,
@@ -376,78 +388,9 @@ class TestGraphifyRebuild:
                 mode=None,
             )
 
-        assert not (out_dir / "graph.json").exists()
-        mock_run.assert_called_once()
-        cmd_args = mock_run.call_args[0][0]
-        assert cmd_args[0] == "graphify"
-        assert "build" in cmd_args
-        assert "--no-llm" in cmd_args
-
-    def test_rebuild_full_mode_omits_no_llm(
-        self, project_dir, global_settings, capsys
-    ):
-        """Rebuild with --mode=full omits --no-llm flag."""
-        settings_path = str(project_dir / ".claude" / "settings.json")
-        global_cfg = {"worca": {"graphify": {"enabled": True, "mode": "full"}}}
-        with open(global_settings, "w") as f:
-            json.dump(global_cfg, f)
-        project_cfg = {"worca": {"graphify": {"enabled": True, "mode": "full"}}}
-        with open(settings_path, "w") as f:
-            json.dump(project_cfg, f)
-
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect), \
-             patch("subprocess.run", return_value=mock_proc) as mock_run:
-            cmd_graphify_rebuild(
-                project_settings_path=settings_path,
-                global_settings_path=global_settings,
-                project_root=str(project_dir),
-                mode=None,
-            )
-
-        cmd_args = mock_run.call_args[0][0]
-        assert "--no-llm" not in cmd_args
-
-    def test_rebuild_mode_override(
-        self, project_dir, global_settings, capsys
-    ):
-        """Rebuild with explicit --mode overrides settings mode."""
-        settings_path = str(project_dir / ".claude" / "settings.json")
-        global_cfg = {"worca": {"graphify": {"enabled": True, "mode": "full"}}}
-        with open(global_settings, "w") as f:
-            json.dump(global_cfg, f)
-        project_cfg = {"worca": {"graphify": {"enabled": True, "mode": "full"}}}
-        with open(settings_path, "w") as f:
-            json.dump(project_cfg, f)
-
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect), \
-             patch("subprocess.run", return_value=mock_proc) as mock_run:
-            cmd_graphify_rebuild(
-                project_settings_path=settings_path,
-                global_settings_path=global_settings,
-                project_root=str(project_dir),
-                mode="structural",
-            )
-
-        cmd_args = mock_run.call_args[0][0]
-        assert "--no-llm" in cmd_args
+        assert not os.path.exists(os.path.join(snap, "stale.txt"))
+        mock_pre.assert_called_once()
+        assert "Rebuild complete" in capsys.readouterr().out
 
     def test_rebuild_not_installed_errors(
         self, project_dir, global_settings, capsys
@@ -488,28 +431,29 @@ class TestGraphifyRebuild:
             )
 
     def test_rebuild_build_failure_reports_error(
-        self, project_dir, global_settings, capsys
+        self, project_dir, global_settings, capsys, monkeypatch, tmp_path
     ):
-        """Rebuild propagates build failure as SystemExit."""
+        """Rebuild propagates a degraded build as SystemExit."""
+        monkeypatch.setenv("WORCA_CACHE", str(tmp_path / "cache"))
         settings_path = str(project_dir / ".claude" / "settings.json")
-        global_cfg = {"worca": {"graphify": {"enabled": True}}}
         with open(global_settings, "w") as f:
-            json.dump(global_cfg, f)
-        project_cfg = {"worca": {"graphify": {"enabled": True}}}
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
         with open(settings_path, "w") as f:
-            json.dump(project_cfg, f)
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
 
         detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
+            installed=True, version="0.8.0", compatible=True,
             backend_env_present=[], error=None,
         )
-        mock_proc = MagicMock()
-        mock_proc.returncode = 1
-        mock_proc.stdout = ""
-        mock_proc.stderr = "AST parse error"
-
-        with patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect), \
-             patch("subprocess.run", return_value=mock_proc):
+        with (
+            patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect),
+            patch("worca.cli.graphify_cmd.repo_id", return_value="repo1"),
+            patch("worca.cli.graphify_cmd.get_current_git_head", return_value="deadbeef"),
+            patch(
+                "worca.scripts.graphify_preflight.run_graphify_preflight",
+                return_value={"status": "degraded", "reason": "build_failed"},
+            ),
+        ):
             with pytest.raises(SystemExit):
                 cmd_graphify_rebuild(
                     project_settings_path=settings_path,
@@ -520,45 +464,36 @@ class TestGraphifyRebuild:
 
 
 class TestGraphifyUpdate:
-    def test_update_runs_incremental(
-        self, project_dir, global_settings, capsys
+    def test_update_builds_head_snapshot(
+        self, project_dir, global_settings, capsys, monkeypatch, tmp_path
     ):
-        """Update runs graphify --update (incremental, no delete)."""
+        """Update builds the current HEAD snapshot via run_graphify_preflight."""
+        monkeypatch.setenv("WORCA_CACHE", str(tmp_path / "cache"))
         settings_path = str(project_dir / ".claude" / "settings.json")
-        global_cfg = {"worca": {"graphify": {"enabled": True, "mode": "structural"}}}
         with open(global_settings, "w") as f:
-            json.dump(global_cfg, f)
-        project_cfg = {"worca": {"graphify": {"enabled": True, "mode": "structural"}}}
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
         with open(settings_path, "w") as f:
-            json.dump(project_cfg, f)
-
-        out_dir = project_dir / "graphify-out"
-        out_dir.mkdir()
-        (out_dir / "GRAPH_REPORT.md").write_text("existing report")
+            json.dump({"worca": {"graphify": {"enabled": True}}}, f)
 
         detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
+            installed=True, version="0.8.0", compatible=True,
             backend_env_present=[], error=None,
         )
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect), \
-             patch("subprocess.run", return_value=mock_proc) as mock_run:
+        with (
+            patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect),
+            patch(
+                "worca.scripts.graphify_preflight.run_graphify_preflight",
+                return_value={"status": "ready", "report_path": "/x/GRAPH_REPORT.md"},
+            ) as mock_pre,
+        ):
             cmd_graphify_update(
                 project_settings_path=settings_path,
                 global_settings_path=global_settings,
                 project_root=str(project_dir),
             )
 
-        assert (out_dir / "GRAPH_REPORT.md").exists()
-        mock_run.assert_called_once()
-        cmd_args = mock_run.call_args[0][0]
-        assert cmd_args[0] == "graphify"
-        assert "--update" in cmd_args
-        assert "--no-llm" in cmd_args
+        mock_pre.assert_called_once()
+        assert "Update complete" in capsys.readouterr().out
 
     def test_update_not_installed_errors(
         self, project_dir, global_settings
@@ -596,37 +531,38 @@ class TestGraphifyUpdate:
                 project_root=str(project_dir),
             )
 
-    def test_update_full_mode_omits_no_llm(
-        self, project_dir, global_settings, capsys
-    ):
-        """Update with full mode omits --no-llm flag."""
-        settings_path = str(project_dir / ".claude" / "settings.json")
-        global_cfg = {"worca": {"graphify": {"enabled": True, "mode": "full"}}}
-        with open(global_settings, "w") as f:
-            json.dump(global_cfg, f)
-        project_cfg = {"worca": {"graphify": {"enabled": True, "mode": "full"}}}
-        with open(settings_path, "w") as f:
-            json.dump(project_cfg, f)
 
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
+class TestGraphifyGc:
+    def test_gc_clears_repo_cache(self, project_dir, global_settings, capsys, tmp_path, monkeypatch):
+        """gc removes the entire <cache>/ast/<repo-id>/ tree for the repo."""
+        from worca.cli.graphify_cmd import cmd_graphify_gc
 
-        with patch("worca.cli.graphify_cmd.detect_graphify", return_value=detect), \
-             patch("subprocess.run", return_value=mock_proc) as mock_run:
-            cmd_graphify_update(
-                project_settings_path=settings_path,
+        monkeypatch.setenv("WORCA_CACHE", str(tmp_path / "cache"))
+        repo_cache = tmp_path / "cache" / "ast" / "repo1"
+        (repo_cache / "deadbeef" / "graphify").mkdir(parents=True)
+        (repo_cache / "deadbeef" / "graphify" / "GRAPH_REPORT.md").write_text("x")
+
+        with patch("worca.cli.graphify_cmd.repo_id", return_value="repo1"):
+            cmd_graphify_gc(
+                project_settings_path=str(project_dir / ".claude" / "settings.json"),
                 global_settings_path=global_settings,
                 project_root=str(project_dir),
             )
 
-        cmd_args = mock_run.call_args[0][0]
-        assert "--no-llm" not in cmd_args
+        assert not repo_cache.exists()
+        assert "Cleared graph cache" in capsys.readouterr().out
+
+    def test_gc_no_cache_is_graceful(self, project_dir, global_settings, capsys, tmp_path, monkeypatch):
+        from worca.cli.graphify_cmd import cmd_graphify_gc
+
+        monkeypatch.setenv("WORCA_CACHE", str(tmp_path / "cache"))
+        with patch("worca.cli.graphify_cmd.repo_id", return_value="repo1"):
+            cmd_graphify_gc(
+                project_settings_path=str(project_dir / ".claude" / "settings.json"),
+                global_settings_path=global_settings,
+                project_root=str(project_dir),
+            )
+        assert "No graph cache" in capsys.readouterr().out
 
 
 class TestGraphifyCLIRegistration:

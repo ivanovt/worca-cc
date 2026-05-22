@@ -357,8 +357,9 @@
         "guardian_post_commit": true
       },
       "min_repo_files": 100,
-      "version_range": ">=4,<5",
-      "preflight_timeout_seconds": 300
+      "version_range": ">=0.7.10,<1",
+      "preflight_timeout_seconds": 300,
+      "freshness": "clean_only"
     }
   }
 }

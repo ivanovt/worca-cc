@@ -1,10 +1,25 @@
-"""Tests for graphify preflight script and runner integration."""
+"""Tests for graphify preflight (W-053 per-commit cache layout) + runner wiring.
 
-import subprocess
-from unittest.mock import patch, MagicMock
+The preflight resolves a content-addressed snapshot at
+<cache>/ast/<repo-id>/<commit-sha>/, building under a lock and publishing a
+.complete marker. Freshness controls dirty-tree handling.
+"""
+
+import contextlib
+import os
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 from worca.scripts.graphify_preflight import run_graphify_preflight
-from worca.utils.graphify import GraphifyDetect, EffectiveGraphifyConfig
+from worca.utils.graphify import (
+    EffectiveGraphifyConfig,
+    GraphifyDetect,
+    graphify_report_path,
+    graphify_snapshot_dir,
+    is_snapshot_complete,
+    mark_snapshot_complete,
+)
 
 
 def _make_config(
@@ -16,8 +31,9 @@ def _make_config(
     update_on_preflight=True,
     update_on_guardian_post_commit=True,
     min_repo_files=100,
-    version_range=">=4,<5",
+    version_range=">=0.7.10,<1",
     preflight_timeout_seconds=300,
+    freshness="clean_only",
     reason=None,
 ):
     return EffectiveGraphifyConfig(
@@ -31,487 +47,176 @@ def _make_config(
         min_repo_files=min_repo_files,
         version_range=version_range,
         preflight_timeout_seconds=preflight_timeout_seconds,
+        freshness=freshness,
         reason=reason,
     )
 
 
-class TestGraphifyPreflightDisabled:
-    def test_disabled_returns_skipped(self, tmp_path):
-        """When graphify is disabled in config, returns skipped without subprocess."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": false}}}')
+def _fake_build(report="# Graph Report (mock)\n", fail=False):
+    """A subprocess.run stand-in that writes GRAPH_REPORT.md into GRAPHIFY_OUT."""
 
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=_make_config(enabled=False, reason="global-off"),
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify"
-        ) as mock_detect:
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
+    def _run(cmd, cwd=None, env=None, capture_output=True, text=True, timeout=None):
+        if fail:
+            return MagicMock(returncode=1, stdout="", stderr="boom")
+        out = (env or {}).get("GRAPHIFY_OUT")
+        if out:
+            os.makedirs(out, exist_ok=True)
+            with open(os.path.join(out, "GRAPH_REPORT.md"), "w") as f:
+                f.write(report)
+        return MagicMock(returncode=0, stdout="", stderr="")
 
+    return _run
+
+
+@contextlib.contextmanager
+def _patched(cfg, *, clean=True, sha="deadbeef", rid="repo1", run=None,
+             installed=True, compatible=True):
+    detect = GraphifyDetect(
+        installed=installed,
+        version="0.8.0" if installed else None,
+        compatible=compatible,
+        backend_env_present=[],
+        error=None if (installed and compatible) else "incompatible",
+    )
+    run = run if run is not None else _fake_build()
+    with (
+        patch("worca.scripts.graphify_preflight.effective_graphify_config", return_value=cfg),
+        patch("worca.scripts.graphify_preflight.detect_graphify", return_value=detect),
+        patch("worca.scripts.graphify_preflight.repo_id", return_value=rid),
+        patch("worca.scripts.graphify_preflight.get_current_git_head", return_value=sha),
+        patch("worca.scripts.graphify_preflight.is_working_tree_clean", return_value=clean),
+        patch("worca.scripts.graphify_preflight.subprocess.run", side_effect=run) as mr,
+    ):
+        yield mr
+
+
+@pytest.fixture
+def cache(tmp_path, monkeypatch):
+    root = tmp_path / "cache"
+    monkeypatch.setenv("WORCA_CACHE", str(root))
+    return str(root)
+
+
+def _call(tmp_path):
+    return run_graphify_preflight(
+        settings_path=str(tmp_path / "s.json"), project_root=str(tmp_path)
+    )
+
+
+class TestPreflightGating:
+    def test_disabled_returns_skipped(self, tmp_path, cache):
+        with _patched(_make_config(enabled=False, reason="global-off")):
+            result = _call(tmp_path)
         assert result["status"] == "skipped"
         assert "disabled" in result["reason"]
-        mock_detect.assert_not_called()
 
-    def test_update_on_preflight_false_returns_skipped(self, tmp_path):
-        """When update_on.preflight is False, returns skipped even if enabled."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-
-        cfg = _make_config(enabled=True, update_on_preflight=False)
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run"
-        ) as mock_run:
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
-        assert result["status"] == "skipped"
-        assert "update_on_preflight" in result["reason"]
-        mock_run.assert_not_called()
-
-
-class TestGraphifyPreflightStructural:
-    def test_structural_uses_no_llm_flag(self, tmp_path):
-        """In structural mode, graphify is invoked with --no-llm."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-        report_path = tmp_path / "graphify-out" / "GRAPH_REPORT.md"
-        report_path.parent.mkdir(parents=True)
-        report_path.write_text("# Graph Report")
-
-        cfg = _make_config(enabled=True, mode="structural", out_dir=str(tmp_path / "graphify-out"))
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ) as mock_run:
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
-        assert result["status"] == "ready"
-        cmd = mock_run.call_args[0][0]
-        assert "--no-llm" in cmd
-        assert "--update" in cmd
-
-    def test_full_mode_omits_no_llm_flag(self, tmp_path):
-        """In full mode, graphify is invoked without --no-llm."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-        report_path = tmp_path / "graphify-out" / "GRAPH_REPORT.md"
-        report_path.parent.mkdir(parents=True)
-        report_path.write_text("# Graph Report")
-
-        cfg = _make_config(enabled=True, mode="full", out_dir=str(tmp_path / "graphify-out"))
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ) as mock_run:
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
-        assert result["status"] == "ready"
-        cmd = mock_run.call_args[0][0]
-        assert "--no-llm" not in cmd
-        assert "--update" in cmd
-
-
-class TestGraphifyPreflightDegraded:
-    def test_degraded_on_missing_cli(self, tmp_path):
-        """When graphify is not installed, returns degraded without failure."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-
-        cfg = _make_config(enabled=True)
-        detect = GraphifyDetect(
-            installed=False, version=None, compatible=False,
-            backend_env_present=[], error="graphify CLI not found on PATH",
-        )
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ):
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
+    def test_degraded_when_not_installed(self, tmp_path, cache):
+        with _patched(_make_config(), installed=False, compatible=False):
+            result = _call(tmp_path)
         assert result["status"] == "degraded"
-        assert "not found" in result["reason"] or "not installed" in result["reason"]
 
-    def test_degraded_on_incompatible_version(self, tmp_path):
-        """When graphify version is incompatible, returns degraded."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-
-        cfg = _make_config(enabled=True)
-        detect = GraphifyDetect(
-            installed=True, version="3.0.0", compatible=False,
-            backend_env_present=[], error="version 3.0.0 not in >=4,<5",
-        )
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ):
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
+    def test_degraded_when_not_a_git_repo(self, tmp_path, cache):
+        with _patched(_make_config(), rid="", sha=""):
+            result = _call(tmp_path)
         assert result["status"] == "degraded"
-        assert "version" in result["reason"] or "incompatible" in result["reason"]
-
-    def test_degraded_on_build_failure(self, tmp_path):
-        """When graphify --update fails, returns degraded without raising."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-
-        cfg = _make_config(enabled=True, out_dir=str(tmp_path / "graphify-out"))
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 1
-        mock_proc.stdout = ""
-        mock_proc.stderr = "Error: parse failed"
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ):
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
-        assert result["status"] == "degraded"
-        assert "build_failed" in result["reason"]
+        assert result["reason"] == "not_a_git_repo"
 
 
-class TestGraphifyPreflightModelProfile:
-    def test_model_profile_env_merge(self, tmp_path):
-        """model_profile env vars are merged into the subprocess environment."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}, "models": {"graphify-llm": {"id": "gpt-4", "env": {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "https://example.com"}}}}}')
-        report_path = tmp_path / "graphify-out" / "GRAPH_REPORT.md"
-        report_path.parent.mkdir(parents=True)
-        report_path.write_text("# Graph Report")
-
-        cfg = _make_config(
-            enabled=True,
-            mode="full",
-            model_profile="graphify-llm",
-            out_dir=str(tmp_path / "graphify-out"),
-        )
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ) as mock_run:
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
+class TestPreflightBuild:
+    def test_clean_build_publishes_snapshot(self, tmp_path, cache):
+        with _patched(_make_config(), clean=True) as mr:
+            result = _call(tmp_path)
         assert result["status"] == "ready"
-        call_kwargs = mock_run.call_args[1]
-        env = call_kwargs["env"]
-        assert env["OPENAI_API_KEY"] == "sk-test"
-        assert env["OPENAI_BASE_URL"] == "https://example.com"
+        snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
+        assert result["report_path"] == graphify_report_path(snap)
+        assert is_snapshot_complete(snap)
+        # built with `graphify build` into GRAPHIFY_OUT
+        cmd = mr.call_args[0][0]
+        assert cmd[:2] == ["graphify", "build"]
+        assert mr.call_args.kwargs["env"]["GRAPHIFY_OUT"] == os.path.join(snap, "graphify")
 
+    def test_structural_uses_no_llm(self, tmp_path, cache):
+        with _patched(_make_config(mode="structural")) as mr:
+            _call(tmp_path)
+        assert "--no-llm" in mr.call_args[0][0]
 
-class TestGraphifyPreflightTimeout:
-    def test_timeout_returns_degraded(self, tmp_path):
-        """When graphify --update times out, returns degraded."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
+    def test_full_omits_no_llm(self, tmp_path, cache):
+        with _patched(_make_config(mode="full")) as mr:
+            _call(tmp_path)
+        assert "--no-llm" not in mr.call_args[0][0]
 
-        cfg = _make_config(enabled=True, out_dir=str(tmp_path / "graphify-out"))
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            side_effect=subprocess.TimeoutExpired(cmd="graphify", timeout=300),
-        ):
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
-        assert result["status"] == "degraded"
-        assert "timeout" in result["reason"]
-
-    def test_custom_timeout_passed_to_subprocess(self, tmp_path):
-        """Custom timeout value is passed to subprocess.run."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-        report_path = tmp_path / "graphify-out" / "GRAPH_REPORT.md"
-        report_path.parent.mkdir(parents=True)
-        report_path.write_text("# Graph Report")
-
-        cfg = _make_config(enabled=True, out_dir=str(tmp_path / "graphify-out"))
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ) as mock_run:
-            run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-                timeout=120,
-            )
-
-        call_kwargs = mock_run.call_args[1]
-        assert call_kwargs["timeout"] == 120
-
-    def test_default_timeout_is_300(self, tmp_path):
-        """Default timeout is 300 seconds."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-        report_path = tmp_path / "graphify-out" / "GRAPH_REPORT.md"
-        report_path.parent.mkdir(parents=True)
-        report_path.write_text("# Graph Report")
-
-        cfg = _make_config(enabled=True, out_dir=str(tmp_path / "graphify-out"))
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ) as mock_run:
-            run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
-        call_kwargs = mock_run.call_args[1]
-        assert call_kwargs["timeout"] == 300
-
-
-class TestGraphifyPreflightReportPath:
-    def test_ready_includes_report_path(self, tmp_path):
-        """When graphify succeeds, report_path points to GRAPH_REPORT.md."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-        out_dir = tmp_path / "graphify-out"
-        report_path = out_dir / "GRAPH_REPORT.md"
-        report_path.parent.mkdir(parents=True)
-        report_path.write_text("# Graph Report")
-
-        cfg = _make_config(enabled=True, out_dir=str(out_dir))
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ):
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-
+    def test_cache_hit_skips_build(self, tmp_path, cache):
+        snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
+        os.makedirs(os.path.join(snap, "graphify"))
+        with open(graphify_report_path(snap), "w") as f:
+            f.write("# cached")
+        mark_snapshot_complete(snap)
+        with _patched(_make_config()) as mr:
+            result = _call(tmp_path)
         assert result["status"] == "ready"
-        assert result["report_path"] == str(report_path)
+        assert result["report_path"] == graphify_report_path(snap)
+        mr.assert_not_called()
+
+    def test_build_failure_degrades(self, tmp_path, cache):
+        with _patched(_make_config(), run=_fake_build(fail=True)):
+            result = _call(tmp_path)
+        assert result["status"] == "degraded"
 
 
-class TestGraphifyPreflightGlobalKillSwitch:
-    """Global enabled=false must override project enabled=true."""
+class TestPreflightFreshness:
+    def test_dirty_clean_only_builds_throwaway(self, tmp_path, cache):
+        with _patched(_make_config(freshness="clean_only"), clean=False) as mr:
+            result = _call(tmp_path)
+        assert result["status"] == "ready"
+        snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
+        # The real snapshot is NOT published; a ".dirty" throwaway is used.
+        assert not is_snapshot_complete(snap)
+        assert result["report_path"] == graphify_report_path(snap + ".dirty")
+        assert ".dirty" in mr.call_args.kwargs["env"]["GRAPHIFY_OUT"]
 
-    def test_global_off_overrides_project_on(self, tmp_path):
-        """When global has enabled=false and project has enabled=true, preflight is skipped."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
+    def test_dirty_base_sha_builds_real_snapshot(self, tmp_path, cache):
+        with _patched(_make_config(freshness="base_sha"), clean=False):
+            result = _call(tmp_path)
+        snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
+        assert result["status"] == "ready"
+        assert is_snapshot_complete(snap)
 
-        global_settings = {"worca": {"graphify": {"enabled": False}}}
 
-        with patch(
-            "worca.scripts.graphify_preflight.detect_graphify"
-        ) as mock_detect, patch(
-            "worca.scripts.graphify_preflight.subprocess.run"
-        ) as mock_run:
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-                global_settings=global_settings,
-            )
-
+class TestPreflightUpdateFlag:
+    def test_no_build_when_update_off_and_no_snapshot(self, tmp_path, cache):
+        with _patched(_make_config(update_on_preflight=False)) as mr:
+            result = _call(tmp_path)
         assert result["status"] == "skipped"
-        assert "disabled" in result["reason"]
-        mock_detect.assert_not_called()
-        mock_run.assert_not_called()
+        mr.assert_not_called()
 
-    def test_default_loads_global_from_home(self, tmp_path):
-        """When global_settings is not passed, load_global_settings() is called."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
+    def test_reads_existing_snapshot_when_update_off(self, tmp_path, cache):
+        snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
+        os.makedirs(os.path.join(snap, "graphify"))
+        with open(graphify_report_path(snap), "w") as f:
+            f.write("# cached")
+        mark_snapshot_complete(snap)
+        with _patched(_make_config(update_on_preflight=False)) as mr:
+            result = _call(tmp_path)
+        assert result["status"] == "ready"
+        mr.assert_not_called()
 
-        with patch(
-            "worca.scripts.graphify_preflight.load_global_settings",
-            return_value={"worca": {"graphify": {"enabled": False}}},
-        ) as mock_load_global, patch(
-            "worca.scripts.graphify_preflight.detect_graphify"
-        ) as mock_detect:
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
 
-        mock_load_global.assert_called_once()
-        assert result["status"] == "skipped"
-        mock_detect.assert_not_called()
+class TestPreflightTimeout:
+    def test_uses_config_timeout_when_arg_none(self, tmp_path, cache):
+        with _patched(_make_config(preflight_timeout_seconds=42)) as mr:
+            _call(tmp_path)
+        assert mr.call_args.kwargs["timeout"] == 42
 
-    def test_explicit_global_settings_skips_load(self, tmp_path):
-        """When global_settings is provided explicitly, load_global_settings() is not called."""
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
+    def test_timeout_degrades(self, tmp_path, cache):
+        import subprocess as _sp
 
-        with patch(
-            "worca.scripts.graphify_preflight.load_global_settings",
-        ) as mock_load_global, patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=_make_config(enabled=False, reason="global-off"),
-        ):
-            result = run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-                global_settings={"worca": {"graphify": {"enabled": False}}},
-            )
+        def _raise(*a, **k):
+            raise _sp.TimeoutExpired(cmd="graphify", timeout=1)
 
-        mock_load_global.assert_not_called()
-        assert result["status"] == "skipped"
+        with _patched(_make_config(), run=_raise):
+            result = _call(tmp_path)
+        assert result["status"] == "degraded"
+        assert result["reason"] == "timeout"
 
 
 class TestRunnerGraphifyIntegration:
@@ -592,68 +297,6 @@ class TestRunnerGraphifyIntegration:
         assert result["graphify_status"] == "degraded"
 
 
-class TestGraphifyPreflightTimeoutConfig:
-    """F4: preflight uses the configured timeout instead of a hardcoded 300."""
-
-    def _setup(self, tmp_path, timeout):
-        settings_file = tmp_path / "settings.json"
-        settings_file.write_text('{"worca": {"graphify": {"enabled": true}}}')
-        report_path = tmp_path / "graphify-out" / "GRAPH_REPORT.md"
-        report_path.parent.mkdir(parents=True)
-        report_path.write_text("# Graph Report")
-        cfg = _make_config(
-            enabled=True,
-            out_dir=str(tmp_path / "graphify-out"),
-            preflight_timeout_seconds=timeout,
-        )
-        detect = GraphifyDetect(
-            installed=True, version="4.2.1", compatible=True,
-            backend_env_present=[], error=None,
-        )
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = ""
-        mock_proc.stderr = ""
-        return settings_file, cfg, detect, mock_proc
-
-    def test_uses_config_timeout_when_arg_none(self, tmp_path):
-        settings_file, cfg, detect, mock_proc = self._setup(tmp_path, timeout=42)
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ) as mock_run:
-            run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-            )
-        assert mock_run.call_args.kwargs["timeout"] == 42
-
-    def test_explicit_timeout_arg_wins(self, tmp_path):
-        settings_file, cfg, detect, mock_proc = self._setup(tmp_path, timeout=42)
-        with patch(
-            "worca.scripts.graphify_preflight.effective_graphify_config",
-            return_value=cfg,
-        ), patch(
-            "worca.scripts.graphify_preflight.detect_graphify",
-            return_value=detect,
-        ), patch(
-            "worca.scripts.graphify_preflight.subprocess.run",
-            return_value=mock_proc,
-        ) as mock_run:
-            run_graphify_preflight(
-                settings_path=str(settings_file),
-                project_root=str(tmp_path),
-                timeout=7,
-            )
-        assert mock_run.call_args.kwargs["timeout"] == 7
-
-
 class _FakePromptBuilder:
     """Minimal stand-in capturing set_graph_context() calls."""
 
@@ -665,12 +308,7 @@ class _FakePromptBuilder:
 
 
 class TestGraphifyResumeReattach:
-    """F5: resuming past PREFLIGHT re-attaches the persisted graph report.
-
-    attach_graph_report() runs only inside the PREFLIGHT stage handler, which
-    is skipped on resume — without _reattach_graph_on_resume a resumed run
-    loses the advisory graph context that a fresh run gets.
-    """
+    """F5: resuming past PREFLIGHT re-attaches the persisted graph report."""
 
     def test_reattaches_from_persisted_report_path(self, tmp_path):
         from worca.orchestrator.runner import _reattach_graph_on_resume
@@ -682,9 +320,7 @@ class TestGraphifyResumeReattach:
         assert wr.graph_context == ""
         pb = _FakePromptBuilder()
 
-        wr2 = _reattach_graph_on_resume(
-            wr, {"graphify_report_path": str(report)}, pb
-        )
+        wr2 = _reattach_graph_on_resume(wr, {"graphify_report_path": str(report)}, pb)
 
         assert "# Graph" in wr2.graph_context
         assert pb.graph_context == wr2.graph_context
@@ -698,9 +334,7 @@ class TestGraphifyResumeReattach:
         wr = WorkRequest(source_type="prompt", title="t", graph_context="# EXISTING")
         pb = _FakePromptBuilder()
 
-        wr2 = _reattach_graph_on_resume(
-            wr, {"graphify_report_path": str(report)}, pb
-        )
+        wr2 = _reattach_graph_on_resume(wr, {"graphify_report_path": str(report)}, pb)
 
         assert wr2.graph_context == "# EXISTING"
         assert pb.graph_context is None

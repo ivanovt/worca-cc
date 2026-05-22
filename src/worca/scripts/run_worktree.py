@@ -34,57 +34,8 @@ from worca.utils.git import (
     detect_default_branch,
     init_worktree_beads,
 )
-from worca.utils.graphify import effective_graphify_config
 from worca.utils.runtime import copy_claude_config, validate_runtime
-from worca.utils.settings import load_global_settings, load_settings
-
-
-def _materialize_graphify_for_worktree(
-    parent_root: str,
-    worktree_path: str,
-    settings_path: str = ".claude/settings.json",
-) -> None:
-    """Materialize parent's graphify config into worktree settings.
-
-    Resolves the parent's graphify-out/ to an absolute path and writes it
-    into the worktree's settings.json with update_on disabled.  This ensures
-    worktrees read the parent's GRAPH_REPORT.md but never run
-    ``graphify --update`` (single-writer invariant).
-    """
-    import json as _json
-
-    parent_settings_path = os.path.join(parent_root, settings_path)
-    parent_settings = load_settings(parent_settings_path)
-    global_settings = load_global_settings()
-    cfg = effective_graphify_config(global_settings, parent_settings)
-
-    if not cfg.enabled:
-        return
-
-    out_dir = cfg.out_dir
-    if not os.path.isabs(out_dir):
-        out_dir = os.path.join(os.path.abspath(parent_root), out_dir)
-
-    wt_settings_path = os.path.join(worktree_path, settings_path)
-    try:
-        with open(wt_settings_path) as f:
-            wt_settings = _json.load(f)
-    except (OSError, _json.JSONDecodeError):
-        return
-
-    if not isinstance(wt_settings, dict):
-        return
-
-    worca = wt_settings.setdefault("worca", {})
-    graphify = worca.setdefault("graphify", {})
-    graphify["out_dir"] = out_dir
-    graphify.setdefault("update_on", {})
-    graphify["update_on"]["preflight"] = False
-    graphify["update_on"]["guardian_post_commit"] = False
-
-    with open(wt_settings_path, "w") as f:
-        _json.dump(wt_settings, f, indent=2)
-        f.write("\n")
+from worca.utils.settings import load_settings
 
 
 def _resolve_base_branch(args, settings: dict) -> str:
@@ -326,7 +277,6 @@ def main(argv=None) -> int:
     # fails on missing settings.json. Files git already placed in the
     # worktree are preserved.
     copy_claude_config(".claude", os.path.join(worktree_path, ".claude"))
-    _materialize_graphify_for_worktree(".", worktree_path)
 
     # Step 5: init beads in worktree
     init_worktree_beads(worktree_path)

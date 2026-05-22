@@ -11,8 +11,9 @@ const GRAPHIFY_DEFAULTS = {
   out_dir: 'graphify-out',
   update_on: { preflight: true, guardian_post_commit: true },
   min_repo_files: 100,
-  version_range: '>=4,<5',
+  version_range: '>=0.7.10,<1',
   preflight_timeout_seconds: 300,
+  freshness: 'clean_only',
 };
 
 // Mirror of effective_graphify_config() in src/worca/utils/graphify.py.
@@ -51,6 +52,7 @@ export function _effectiveConfig(globalSettings, projectSettings) {
     min_repo_files: merged.min_repo_files,
     version_range: merged.version_range,
     preflight_timeout_seconds: merged.preflight_timeout_seconds,
+    freshness: merged.freshness,
     reason: null,
   };
 }

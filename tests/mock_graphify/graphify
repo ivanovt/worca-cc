@@ -2,13 +2,17 @@
 """Mock graphify CLI for integration tests.
 
 Supports two invocation modes:
-  graphify --version         → prints "graphify 4.2.1"
-  graphify --update [--no-llm] [--backend X]
-                             → writes a stub GRAPH_REPORT.md to graphify-out/
-  graphify build [--no-llm]  → same as --update (writes stub report)
+  graphify --version         → prints "graphify 0.8.0"
+  graphify build [--no-llm] [--backend X]
+                             → writes stub graph artifacts to the output dir
+  graphify --update [--no-llm]  → same as build (writes stub artifacts)
+
+Output dir resolution (highest first):
+  GRAPHIFY_OUT           — the real graphify env var (per-commit cache snapshot)
+  MOCK_GRAPHIFY_OUT_DIR  — test override
+  graphify-out           — legacy default
 
 Env vars:
-  MOCK_GRAPHIFY_OUT_DIR  — override output dir (default: graphify-out)
   MOCK_GRAPHIFY_FAIL     — if "1", exit with code 1 (simulate build failure)
   MOCK_GRAPHIFY_LOG      — if set, append invocation args to this file (JSONL)
 """
@@ -35,11 +39,15 @@ def main():
         sys.exit(1)
 
     if "--version" in sys.argv:
-        print("graphify 4.2.1")
+        print("graphify 0.8.0")
         sys.exit(0)
 
     if "--update" in sys.argv or "build" in sys.argv:
-        out_dir = os.environ.get("MOCK_GRAPHIFY_OUT_DIR", "graphify-out")
+        out_dir = (
+            os.environ.get("GRAPHIFY_OUT")
+            or os.environ.get("MOCK_GRAPHIFY_OUT_DIR")
+            or "graphify-out"
+        )
         out_path = Path(out_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
@@ -52,6 +60,8 @@ def main():
             f"Communities: 5\n"
         )
         (out_path / "GRAPH_REPORT.md").write_text(report)
+        (out_path / "graph.json").write_text('{"nodes": 42, "edges": 108}\n')
+        (out_path / "graph.html").write_text("<html><body>mock graph</body></html>\n")
         print(f"Graph built ({mode} mode)")
         sys.exit(0)
 

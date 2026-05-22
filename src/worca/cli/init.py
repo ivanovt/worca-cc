@@ -651,12 +651,14 @@ def _merge_graphify_hooks(settings: dict) -> list[str]:
     return changes
 
 
-def _ensure_gitignore(git_root: Path, *, graphify_enabled: bool = False) -> list[str]:
-    """Add recommended .gitignore entries if missing."""
+def _ensure_gitignore(git_root: Path) -> list[str]:
+    """Add recommended .gitignore entries if missing.
+
+    Note: Graphify output is NOT gitignored — it lives in the user cache
+    (``$WORCA_CACHE/ast/<repo-id>/<commit-sha>/``), never in the repo tree.
+    """
     gitignore = git_root / ".gitignore"
     entries_needed = [".worca/", "logs/", ".claude/settings.local.json"]
-    if graphify_enabled:
-        entries_needed.append("graphify-out/")
     changes = []
 
     existing = ""
@@ -941,7 +943,6 @@ def run_init(
             )
 
     # --- Graphify hook integration (after settings merge) ---
-    graphify_active = False
     if settings_path.exists():
         with open(settings_path) as f:
             final_settings = json.load(f)
@@ -951,14 +952,9 @@ def run_init(
             print("Graphify integration:")
             for change in graphify_changes:
                 print(change)
-        pre_tool = final_settings.get("hooks", {}).get("PreToolUse", [])
-        graphify_active = any(
-            any("graphify" in h.get("command", "") for h in entry.get("hooks", []))
-            for entry in pre_tool
-        )
 
     # --- .gitignore ---
-    gitignore_changes = _ensure_gitignore(git_root, graphify_enabled=graphify_active)
+    gitignore_changes = _ensure_gitignore(git_root)
     if gitignore_changes:
         print(".gitignore updates:")
         for change in gitignore_changes:

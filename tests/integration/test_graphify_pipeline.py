@@ -83,15 +83,18 @@ def _run_pipeline_with_graphify(pipeline_env, scenario: dict, prompt: str,
 
 
 def _enable_graphify_settings(pipeline_env, mode: str = "structural") -> None:
-    """Enable graphify in project settings."""
+    """Enable graphify in project settings.
+
+    Uses freshness=base_sha so the per-commit snapshot is built deterministically
+    regardless of the working-tree state during the run.
+    """
     settings_path = pipeline_env.project / ".claude" / "settings.json"
     settings = json.loads(settings_path.read_text())
     settings["worca"]["graphify"] = {
         "enabled": True,
         "mode": mode,
-        "out_dir": "graphify-out",
         "update_on": {"preflight": True},
-        "version_range": ">=4,<5",
+        "freshness": "base_sha",
     }
     settings_path.write_text(json.dumps(settings, indent=2))
 
@@ -113,19 +116,23 @@ def test_graphify_preflight_invokes_mock_and_injects_graph(pipeline_env):
         f"Pipeline failed (rc={result.returncode}).\nstderr: {result.stderr[-2000:]}"
     )
 
-    # 1. Mock graphify was invoked with --update --no-llm
+    # 1. Mock graphify was invoked with `build --no-llm`
     assert log_path.exists(), f"Mock graphify was never invoked.\nstderr: {result.stderr[-1000:]}"
     invocations = [
         json.loads(line) for line in log_path.read_text().splitlines() if line.strip()
     ]
     assert len(invocations) >= 1
-    update_calls = [i for i in invocations if "--update" in i["argv"]]
-    assert update_calls, f"No --update invocation found in {invocations}"
-    assert "--no-llm" in update_calls[0]["argv"]
+    build_calls = [i for i in invocations if "build" in i["argv"]]
+    assert build_calls, f"No `build` invocation found in {invocations}"
+    assert "--no-llm" in build_calls[0]["argv"]
 
-    # 2. GRAPH_REPORT.md was created
-    report_path = pipeline_env.project / "graphify-out" / "GRAPH_REPORT.md"
-    assert report_path.exists(), "GRAPH_REPORT.md was not created by mock graphify"
+    # 2. GRAPH_REPORT.md was created in the per-commit cache (not the repo tree)
+    cache_root = pipeline_env.tmp_path / "worca_home" / "cache" / "ast"
+    reports = list(cache_root.glob("*/*/graphify/GRAPH_REPORT.md"))
+    assert reports, f"No cache snapshot report under {cache_root}"
+    assert not (pipeline_env.project / "graphify-out").exists(), (
+        "graphify-out/ must NOT be created in the repo tree (cache relocation)"
+    )
 
     # 3. Verify status records graphify state
     worca_dir = pipeline_env.project / ".worca"

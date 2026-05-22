@@ -35,6 +35,20 @@ def worca_home() -> str:
     return os.path.expanduser("~/.worca")
 
 
+def worca_cache_dir() -> str:
+    """Return the worca cache directory.
+
+    Honors ``$WORCA_CACHE`` if set, else falls back to ``<worca_home>/cache``.
+    Resolved on every call so tests can set the env var after import. Holds
+    derived/regenerable artifacts (e.g. the Graphify per-commit knowledge-graph
+    snapshots), distinct from durable state under ``worca_home()``.
+    """
+    override = os.environ.get("WORCA_CACHE")
+    if override:
+        return os.path.expanduser(override)
+    return os.path.join(worca_home(), "cache")
+
+
 def fleet_runs_dir(override: str | None = None) -> str:
     """Return the fleet-runs directory.
 

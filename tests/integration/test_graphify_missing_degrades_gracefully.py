@@ -86,9 +86,8 @@ def _enable_graphify_settings(pipeline_env) -> None:
     settings["worca"]["graphify"] = {
         "enabled": True,
         "mode": "structural",
-        "out_dir": "graphify-out",
         "update_on": {"preflight": True},
-        "version_range": ">=4,<5",
+        "version_range": ">=0.7.10,<1",
     }
     settings_path.write_text(json.dumps(settings, indent=2))
 

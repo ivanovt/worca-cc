@@ -5,8 +5,8 @@ import os
 
 from worca.utils.graphify import (
     EffectiveGraphifyConfig,
+    build_graph_cmd,
     build_subprocess_env,
-    build_update_cmd,
     effective_graphify_config,
 )
 from worca.utils.settings import load_settings
@@ -23,7 +23,7 @@ GRAPHIFY_DEFAULTS = {
         "guardian_post_commit": True,
     },
     "min_repo_files": 100,
-    "version_range": ">=4,<5",
+    "version_range": ">=0.7.10,<1",
 }
 
 
@@ -92,7 +92,7 @@ class TestEffectiveGraphifyConfig:
         assert result.enabled is False
         assert result.mode == "structural"
         assert result.out_dir == "graphify-out"
-        assert result.version_range == ">=4,<5"
+        assert result.version_range == ">=0.7.10,<1"
         assert result.min_repo_files == 100
         assert result.reason == "global-off"
 
@@ -201,8 +201,9 @@ class TestGraphifyInSettingsJson:
         assert g["update_on"]["preflight"] is True
         assert g["update_on"]["guardian_post_commit"] is True
         assert g["min_repo_files"] == 100
-        assert g["version_range"] == ">=4,<5"
+        assert g["version_range"] == ">=0.7.10,<1"
         assert g["preflight_timeout_seconds"] == 300
+        assert g["freshness"] == "clean_only"
 
     def test_graphify_merge_preserves_siblings(self, tmp_path):
         """Overriding graphify keys does not affect sibling worca sections."""
@@ -267,16 +268,16 @@ class TestPreflightTimeoutConfig:
         assert result.preflight_timeout_seconds == 120
 
 
-class TestBuildUpdateCmd:
-    """F1: build_update_cmd is the single source of the `graphify --update` argv."""
+class TestBuildGraphCmd:
+    """build_graph_cmd is the single source of the `graphify build` argv."""
 
     def test_structural_appends_no_llm(self):
         cfg = effective_graphify_config(
             {"worca": {"graphify": {"enabled": True, "mode": "structural"}}},
             {"worca": {"graphify": {"enabled": True}}},
         )
-        cmd = build_update_cmd(cfg)
-        assert cmd[:2] == ["graphify", "--update"]
+        cmd = build_graph_cmd(cfg)
+        assert cmd[:2] == ["graphify", "build"]
         assert "--no-llm" in cmd
 
     def test_full_omits_no_llm(self):
@@ -284,19 +285,19 @@ class TestBuildUpdateCmd:
             {"worca": {"graphify": {"enabled": True, "mode": "full"}}},
             {"worca": {"graphify": {"enabled": True}}},
         )
-        assert "--no-llm" not in build_update_cmd(cfg)
+        assert "--no-llm" not in build_graph_cmd(cfg)
 
     def test_backend_flag(self):
         cfg = effective_graphify_config(
             {"worca": {"graphify": {"enabled": True, "mode": "full", "backend": "ollama"}}},
             {"worca": {"graphify": {"enabled": True}}},
         )
-        cmd = build_update_cmd(cfg)
+        cmd = build_graph_cmd(cfg)
         assert cmd[cmd.index("--backend") + 1] == "ollama"
 
 
 class TestBuildSubprocessEnv:
-    """F1: build_subprocess_env merges the model_profile env over the base."""
+    """build_subprocess_env merges model_profile env + sets GRAPHIFY_OUT."""
 
     def test_no_profile_returns_base_copy(self):
         cfg = effective_graphify_config(
@@ -317,3 +318,48 @@ class TestBuildSubprocessEnv:
         env = build_subprocess_env(cfg, settings, base_env={"FOO": "bar"})
         assert env["OPENAI_API_KEY"] == "sk-1"
         assert env["FOO"] == "bar"
+
+    def test_sets_graphify_out_when_given(self):
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        env = build_subprocess_env(
+            cfg, {"worca": {}}, base_env={}, graphify_out="/cache/ast/r/sha/graphify"
+        )
+        assert env["GRAPHIFY_OUT"] == "/cache/ast/r/sha/graphify"
+
+    def test_no_graphify_out_key_when_omitted(self):
+        cfg = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        env = build_subprocess_env(cfg, {"worca": {}}, base_env={})
+        assert "GRAPHIFY_OUT" not in env
+
+
+class TestFreshnessResolution:
+    """worca.graphify.freshness: default clean_only, project-overridable."""
+
+    def test_default_is_clean_only(self):
+        result = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True}}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        assert result.freshness == "clean_only"
+
+    def test_project_override_base_sha(self):
+        result = effective_graphify_config(
+            {"worca": {"graphify": {"enabled": True}}},
+            {"worca": {"graphify": {"enabled": True, "freshness": "base_sha"}}},
+        )
+        assert result.freshness == "base_sha"
+
+    def test_invalid_freshness_raises(self):
+        import pytest
+
+        with pytest.raises(ValueError, match="freshness"):
+            effective_graphify_config(
+                {"worca": {"graphify": {"enabled": True, "freshness": "always"}}},
+                {"worca": {"graphify": {"enabled": True}}},
+            )

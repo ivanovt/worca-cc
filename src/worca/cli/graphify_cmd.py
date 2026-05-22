@@ -13,16 +13,29 @@ import argparse
 import json
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
+from worca.utils.git import get_current_git_head, repo_id
 from worca.utils.graphify import (
     _VALID_MODES,
     detect_graphify,
     effective_graphify_config,
+    graphify_report_path,
+    graphify_snapshot_dir,
+    is_snapshot_complete,
 )
+from worca.utils.paths import worca_cache_dir
 from worca.utils.settings import load_settings
+
+
+def _snapshot_for_head(project_root: str) -> tuple[str, str] | None:
+    """Return (repo_id, snapshot_dir) for the project's current HEAD, or None."""
+    rid = repo_id(project_root)
+    sha = get_current_git_head()
+    if not rid or not sha:
+        return None
+    return rid, graphify_snapshot_dir(rid, sha)
 
 
 def _count_source_files(project_root: str) -> int:
@@ -45,10 +58,15 @@ def _count_source_files(project_root: str) -> int:
     return count
 
 
-def _graph_stats(project_root: str, out_dir: str) -> dict | None:
-    """Read basic stats from graph output directory if present."""
-    graph_path = Path(project_root) / out_dir
-    report_path = graph_path / "GRAPH_REPORT.md"
+def _graph_stats(project_root: str) -> dict | None:
+    """Read basic stats from the current HEAD's cache snapshot, if complete."""
+    resolved = _snapshot_for_head(project_root)
+    if resolved is None:
+        return None
+    _rid, snapshot_dir = resolved
+    if not is_snapshot_complete(snapshot_dir):
+        return None
+    report_path = Path(graphify_report_path(snapshot_dir))
     if not report_path.exists():
         return None
     stat = report_path.stat()
@@ -56,6 +74,7 @@ def _graph_stats(project_root: str, out_dir: str) -> dict | None:
     age_seconds = time.time() - stat.st_mtime
     return {
         "report_path": str(report_path),
+        "snapshot_dir": snapshot_dir,
         "age_seconds": age_seconds,
         "size_bytes": stat.st_size,
     }
@@ -111,11 +130,17 @@ def cmd_graphify_status(
     if effective.model_profile:
         print(f"  Model profile: {effective.model_profile}")
 
-    stats = _graph_stats(project_root, effective.out_dir)
+    print(f"  Freshness: {effective.freshness}")
+    stats = _graph_stats(project_root)
     if stats:
-        print(f"  Graph: {effective.out_dir}/ (updated {_format_age(stats['age_seconds'])})")
+        print(
+            f"  Graph: {stats['snapshot_dir']} "
+            f"(built {_format_age(stats['age_seconds'])})"
+        )
     else:
-        print(f"  Graph: {effective.out_dir}/ (no report found)")
+        resolved = _snapshot_for_head(project_root)
+        loc = resolved[1] if resolved else f"{worca_cache_dir()}/ast/<repo>/<sha>"
+        print(f"  Graph: {loc} (no snapshot for current HEAD)")
 
 
 def cmd_graphify_recommend(
@@ -223,28 +248,19 @@ def cmd_graphify_rebuild(
     project_root: str,
     mode: str | None,
 ) -> None:
-    """Delete graphify-out/ and run a clean build."""
-    effective, _detect = _require_graphify_ready(
-        project_settings_path, global_settings_path,
-    )
+    """Delete the current HEAD's cache snapshot, then build a fresh one."""
+    _require_graphify_ready(project_settings_path, global_settings_path)
 
-    build_mode = mode or effective.mode
-    out_dir = Path(project_root) / effective.out_dir
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-        print(f"Deleted {effective.out_dir}/")
-
-    cmd = ["graphify", "build"]
-    if build_mode == "structural":
-        cmd.append("--no-llm")
-
-    print(f"Running: {' '.join(cmd)}")
-    proc = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True)
-    if proc.returncode != 0:
-        print(f"error: graphify build failed:\n{proc.stderr[:500]}", file=sys.stderr)
+    resolved = _snapshot_for_head(project_root)
+    if resolved is None:
+        print("error: not a git repository (no HEAD)", file=sys.stderr)
         raise SystemExit(1)
+    _rid, snapshot_dir = resolved
+    if Path(snapshot_dir).exists():
+        shutil.rmtree(snapshot_dir)
+        print(f"Deleted snapshot {snapshot_dir}")
 
-    print(f"Rebuild complete ({build_mode} mode).")
+    _build_head_snapshot(project_settings_path, project_root, label="Rebuild")
 
 
 def cmd_graphify_update(
@@ -253,22 +269,47 @@ def cmd_graphify_update(
     global_settings_path: str,
     project_root: str,
 ) -> None:
-    """Run an incremental graphify update."""
-    effective, _detect = _require_graphify_ready(
-        project_settings_path, global_settings_path,
+    """Build the current HEAD's cache snapshot if it isn't already present."""
+    _require_graphify_ready(project_settings_path, global_settings_path)
+    _build_head_snapshot(project_settings_path, project_root, label="Update")
+
+
+def _build_head_snapshot(project_settings_path: str, project_root: str, *, label: str) -> None:
+    """Build + publish the current HEAD snapshot via the locked preflight path."""
+    from worca.scripts.graphify_preflight import run_graphify_preflight
+
+    print(f"{label}: building knowledge graph for current HEAD…")
+    result = run_graphify_preflight(
+        settings_path=project_settings_path, project_root=project_root
     )
-
-    cmd = ["graphify", "--update"]
-    if effective.mode == "structural":
-        cmd.append("--no-llm")
-
-    print(f"Running: {' '.join(cmd)}")
-    proc = subprocess.run(cmd, cwd=project_root, capture_output=True, text=True)
-    if proc.returncode != 0:
-        print(f"error: graphify update failed:\n{proc.stderr[:500]}", file=sys.stderr)
+    if result.get("status") == "ready":
+        print(f"{label} complete: {result.get('report_path')}")
+    else:
+        print(
+            f"error: graphify {label.lower()} {result.get('status')}: "
+            f"{result.get('reason', '')}",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
 
-    print(f"Update complete ({effective.mode} mode).")
+
+def cmd_graphify_gc(
+    *,
+    project_settings_path: str,
+    global_settings_path: str,
+    project_root: str,
+) -> None:
+    """Remove ALL cached graph snapshots for this repository."""
+    rid = repo_id(project_root)
+    if not rid:
+        print("error: not a git repository", file=sys.stderr)
+        raise SystemExit(1)
+    repo_cache = Path(worca_cache_dir()) / "ast" / rid
+    if repo_cache.exists():
+        shutil.rmtree(repo_cache)
+        print(f"Cleared graph cache: {repo_cache}")
+    else:
+        print(f"No graph cache to clear ({repo_cache} does not exist).")
 
 
 def _update_project_graphify(settings_path: str, updates: dict) -> None:
@@ -307,7 +348,7 @@ def register_subcommand(sub) -> None:
     graphify_sub.add_parser("disable", help="Disable Graphify for this project")
 
     rebuild_parser = graphify_sub.add_parser(
-        "rebuild", help="Force clean build (deletes graphify-out/ first)",
+        "rebuild", help="Delete the current HEAD's cache snapshot and rebuild it",
     )
     rebuild_parser.add_argument(
         "--mode",
@@ -316,7 +357,8 @@ def register_subcommand(sub) -> None:
         help="Override build mode for this run",
     )
 
-    graphify_sub.add_parser("update", help="Incremental graph update")
+    graphify_sub.add_parser("update", help="Build the current HEAD snapshot if missing")
+    graphify_sub.add_parser("gc", help="Remove all cached graph snapshots for this repo")
 
 
 def cmd_graphify(args: argparse.Namespace) -> None:
@@ -359,6 +401,12 @@ def cmd_graphify(args: argparse.Namespace) -> None:
         )
     elif args.graphify_command == "update":
         cmd_graphify_update(
+            project_settings_path=project_settings_path,
+            global_settings_path=global_settings_path,
+            project_root=str(git_root),
+        )
+    elif args.graphify_command == "gc":
+        cmd_graphify_gc(
             project_settings_path=project_settings_path,
             global_settings_path=global_settings_path,
             project_root=str(git_root),

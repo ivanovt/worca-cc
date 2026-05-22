@@ -21,7 +21,8 @@ class TestGraphifyDetect:
         )
 
     def test_cli_present_compatible_version(self):
-        """When graphify --version returns a compatible version, both flags are True."""
+        """When graphify --version returns a compatible version (default range
+        >=0.7.10,<1), both flags are True."""
         with (
             patch("shutil.which", return_value="/usr/local/bin/graphify"),
             patch(
@@ -29,7 +30,7 @@ class TestGraphifyDetect:
                 return_value=subprocess.CompletedProcess(
                     args=["graphify", "--version"],
                     returncode=0,
-                    stdout="graphify 4.2.1\n",
+                    stdout="graphify 0.8.0\n",
                     stderr="",
                 ),
             ),
@@ -37,7 +38,7 @@ class TestGraphifyDetect:
             result = detect_graphify()
 
         assert result.installed is True
-        assert result.version == "4.2.1"
+        assert result.version == "0.8.0"
         assert result.compatible is True
         assert result.error is None
 

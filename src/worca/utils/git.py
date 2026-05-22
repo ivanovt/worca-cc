@@ -1,5 +1,6 @@
 """Git and worktree operations. All functions run git as a subprocess."""
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -63,6 +64,50 @@ def get_current_git_head() -> str:
     if result.returncode != 0:
         return ""
     return result.stdout.strip()
+
+
+def repo_id(path: str = ".") -> str:
+    """Stable identifier for a repository, shared across all its worktrees.
+
+    Derived from the SHA-256 of the realpath of the repo's git *common* dir
+    (``git -C <path> rev-parse --git-common-dir``). All worktrees of one
+    repository share the same common dir, so they map to the same id; no remote
+    is required; moving/recloning the repo yields a new id (a harmless cache
+    rebuild). Returns a 12-hex-char digest, or "" if <path> is not a git repo.
+    """
+    result = subprocess.run(
+        ["git", "-C", path, "rev-parse", "--git-common-dir"],
+        capture_output=True,
+        text=True,
+        env=get_env(),
+    )
+    if result.returncode != 0:
+        return ""
+    common = result.stdout.strip()
+    if not common:
+        return ""
+    # --git-common-dir may be relative to <path> (e.g. ".git" at the repo root).
+    if not os.path.isabs(common):
+        common = os.path.join(path, common)
+    real = os.path.realpath(common)
+    return hashlib.sha256(real.encode("utf-8")).hexdigest()[:12]
+
+
+def is_working_tree_clean(path: str = ".") -> bool:
+    """Return True if the working tree at <path> has no uncommitted changes.
+
+    Runs ``git -C <path> status --porcelain``; empty output = clean. Returns
+    False on any git error (treat unknown state as not-clean / conservative).
+    """
+    result = subprocess.run(
+        ["git", "-C", path, "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        env=get_env(),
+    )
+    if result.returncode != 0:
+        return False
+    return result.stdout.strip() == ""
 
 
 def detect_default_branch() -> str:

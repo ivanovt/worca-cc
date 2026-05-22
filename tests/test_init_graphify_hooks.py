@@ -183,46 +183,29 @@ class TestMergeGraphifyHooks:
 
 
 class TestGraphifyGitignore:
-    """graphify-out/ conditionally added to .gitignore."""
+    """Graphify output lives in the user cache, NOT the repo — so `worca init`
+    must NOT add graphify-out/ to .gitignore (W-053 cache relocation)."""
 
-    def test_gitignore_includes_graphify_out_when_enabled(self, tmp_path):
+    def test_gitignore_never_adds_graphify_out(self, tmp_path):
         from worca.cli.init import _ensure_gitignore
 
         gitignore = tmp_path / ".gitignore"
         gitignore.write_text(".worca/\nlogs/\n.claude/settings.local.json\n")
-        changes = _ensure_gitignore(tmp_path, graphify_enabled=True)
-        content = gitignore.read_text()
-        assert "graphify-out/" in content
-        assert any("graphify-out/" in c for c in changes)
-
-    def test_gitignore_no_graphify_out_when_disabled(self, tmp_path):
-        from worca.cli.init import _ensure_gitignore
-
-        gitignore = tmp_path / ".gitignore"
-        gitignore.write_text(".worca/\nlogs/\n.claude/settings.local.json\n")
-        _ensure_gitignore(tmp_path, graphify_enabled=False)
+        changes = _ensure_gitignore(tmp_path)
         content = gitignore.read_text()
         assert "graphify-out/" not in content
-
-    def test_gitignore_graphify_out_idempotent(self, tmp_path):
-        from worca.cli.init import _ensure_gitignore
-
-        gitignore = tmp_path / ".gitignore"
-        gitignore.write_text(".worca/\nlogs/\n.claude/settings.local.json\ngraphify-out/\n")
-        changes = _ensure_gitignore(tmp_path, graphify_enabled=True)
-        content = gitignore.read_text()
-        assert content.count("graphify-out/") == 1
         assert not any("graphify-out/" in c for c in changes)
 
-    def test_gitignore_default_no_graphify_out(self, tmp_path):
-        """Default (no parameter) does not add graphify-out/."""
+    def test_gitignore_still_adds_core_entries(self, tmp_path):
         from worca.cli.init import _ensure_gitignore
 
         gitignore = tmp_path / ".gitignore"
         gitignore.write_text("")
         _ensure_gitignore(tmp_path)
         content = gitignore.read_text()
-        assert "graphify-out/" not in content
+        assert ".worca/" in content
+        assert "logs/" in content
+        assert ".claude/settings.local.json" in content
 
 
 class TestReadGlobalSettings:

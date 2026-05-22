@@ -45,8 +45,6 @@ from worca.utils.pr_url import parse_pr_url
 from worca.utils.settings import load_global_settings, load_settings
 from worca.scripts.graphify_preflight import run_graphify_preflight
 from worca.utils.graphify import (
-    build_subprocess_env,
-    build_update_cmd,
     detect_graphify,
     effective_graphify_config,
 )
@@ -1345,10 +1343,13 @@ def _maybe_graphify_post_guardian(
     settings_path: str = ".claude/settings.json",
     is_worktree: bool = False,
 ) -> None:
-    """Fire-and-forget graphify update after successful guardian commit.
+    """Fire-and-forget: warm the per-commit graph cache for the NEW HEAD after
+    a successful guardian commit.
 
-    Skipped in worktree runs (single-writer invariant).
-    Failures are logged but never propagated.
+    The commit changed HEAD, so there's no in-place "update" — we build a fresh
+    snapshot for the new sha. Reuses the locked build+publish path in
+    run_graphify_preflight (run detached so the pipeline reports complete
+    immediately). Skipped in worktree runs. Failures are logged, never raised.
     """
     if is_worktree:
         return
@@ -1367,19 +1368,18 @@ def _maybe_graphify_post_guardian(
         if not detect.installed or not detect.compatible:
             return
 
-        # Same argv + provider env as the preflight phase (build_*_ helpers)
-        # so the post-commit refresh honors --backend / model_profile too.
-        cmd = build_update_cmd(cfg)
-        env = build_subprocess_env(cfg, settings)
-
         subprocess.Popen(
-            cmd,
-            env=env,
+            [
+                sys.executable,
+                "-c",
+                "from worca.scripts.graphify_preflight import "
+                "run_graphify_preflight as r; r()",
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
         )
-        _log("Graphify post-guardian refresh started (fire-and-forget)")
+        _log("Graphify post-guardian cache-warm started (fire-and-forget)")
     except Exception as exc:
         _log(f"Graphify post-guardian refresh failed: {exc}", "warn")
 

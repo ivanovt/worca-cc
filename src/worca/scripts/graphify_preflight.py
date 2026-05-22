@@ -1,20 +1,53 @@
-"""Graphify preflight: detect, build/update graph, return status.
+"""Graphify preflight: detect, build/reuse the per-commit graph snapshot.
 
-Called by runner.run_preflight() after base preflight succeeds.
-Never raises — returns a status dict indicating skipped/degraded/ready.
+Called by runner.run_preflight() after base preflight succeeds. Never raises —
+returns a status dict indicating skipped/degraded/ready.
+
+Snapshots are content-addressed at ``<cache>/ast/<repo-id>/<commit-sha>/`` and
+published atomically with a ``.complete`` marker under an exclusive lock, so
+parallel worktrees on the same base commit share one validated snapshot. See
+docs/plans/W-053 and utils/graphify.py for the layout.
 """
 
 import os
 import subprocess
 from typing import Optional
 
+from worca.utils.git import get_current_git_head, is_working_tree_clean, repo_id
 from worca.utils.graphify import (
+    build_graph_cmd,
     build_subprocess_env,
-    build_update_cmd,
     detect_graphify,
     effective_graphify_config,
+    graphify_out_path,
+    graphify_report_path,
+    graphify_snapshot_dir,
+    is_snapshot_complete,
+    mark_snapshot_complete,
+    snapshot_lock,
 )
 from worca.utils.settings import load_global_settings, load_settings
+
+
+def _run_build(cfg, settings, *, project_root, out_dir, timeout) -> tuple[bool, str]:
+    """Run `graphify build` writing into out_dir (GRAPHIFY_OUT). Returns (ok, stderr)."""
+    os.makedirs(out_dir, exist_ok=True)
+    cmd = build_graph_cmd(cfg)
+    env = build_subprocess_env(cfg, settings, graphify_out=out_dir)
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=project_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    if proc.returncode != 0:
+        return False, (proc.stderr or "")[:500]
+    return True, ""
 
 
 def run_graphify_preflight(
@@ -24,7 +57,7 @@ def run_graphify_preflight(
     timeout: Optional[int] = None,
     global_settings: Optional[dict] = None,
 ) -> dict:
-    """Run graphify preflight checks and optional graph update.
+    """Detect graphify and resolve the per-commit snapshot for this run.
 
     Returns a status dict with keys:
         status: "skipped" | "degraded" | "ready"
@@ -38,63 +71,56 @@ def run_graphify_preflight(
         global_settings = load_global_settings()
 
     cfg = effective_graphify_config(global_settings, settings)
-
     if not cfg.enabled:
         return {"status": "skipped", "reason": "disabled"}
 
-    # Explicit timeout arg (tests) wins; otherwise use the configured value.
     if timeout is None:
         timeout = cfg.preflight_timeout_seconds
 
     detect = detect_graphify(cfg.version_range)
-
     if not detect.installed or not detect.compatible:
-        reason = detect.error or "not installed or incompatible"
-        return {"status": "degraded", "reason": reason}
+        return {"status": "degraded", "reason": detect.error or "not installed or incompatible"}
 
+    rid = repo_id(project_root)
+    sha = get_current_git_head()
+    if not rid or not sha:
+        return {"status": "degraded", "reason": "not_a_git_repo"}
+
+    snapshot_dir = graphify_snapshot_dir(rid, sha)
+    out_dir = graphify_out_path(snapshot_dir)
+
+    # Dirty + clean_only: build a run-scoped throwaway (never published to the
+    # cache), so an in-progress working tree never poisons the per-commit entry.
+    if cfg.freshness == "clean_only" and not is_working_tree_clean(project_root):
+        throwaway = snapshot_dir + ".dirty"
+        throwaway_out = graphify_out_path(throwaway)
+        ok, err = _run_build(
+            cfg, settings, project_root=project_root, out_dir=throwaway_out, timeout=timeout
+        )
+        if not ok:
+            return {"status": "degraded", "reason": err or "build_failed"}
+        return {"status": "ready", "report_path": graphify_report_path(throwaway)}
+
+    # Cache hit: a published snapshot for this sha already exists.
+    if is_snapshot_complete(snapshot_dir):
+        return {"status": "ready", "report_path": graphify_report_path(snapshot_dir)}
+
+    # When preflight builds are disabled, only read an existing snapshot.
     if not cfg.update_on_preflight:
-        out_dir = cfg.out_dir
-        if not os.path.isabs(out_dir):
-            out_dir = os.path.join(project_root, out_dir)
-        report_path = os.path.join(out_dir, "GRAPH_REPORT.md")
-        if os.path.isfile(report_path):
-            return {"status": "ready", "report_path": report_path}
         return {"status": "skipped", "reason": "update_on_preflight disabled"}
 
-    cmd = build_update_cmd(cfg)
-    env = build_subprocess_env(cfg, settings)
-
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=project_root,
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+    # Build under an exclusive lock; re-check completion in case a parallel
+    # worktree published while we waited.
+    with snapshot_lock(snapshot_dir):
+        if is_snapshot_complete(snapshot_dir):
+            return {"status": "ready", "report_path": graphify_report_path(snapshot_dir)}
+        ok, err = _run_build(
+            cfg, settings, project_root=project_root, out_dir=out_dir, timeout=timeout
         )
-    except subprocess.TimeoutExpired:
-        return {"status": "degraded", "reason": "timeout"}
+        if not ok:
+            return {"status": "degraded", "reason": err or "build_failed"}
+        if not os.path.isfile(graphify_report_path(snapshot_dir)):
+            return {"status": "degraded", "reason": "report_not_found"}
+        mark_snapshot_complete(snapshot_dir)
 
-    if proc.returncode != 0:
-        return {
-            "status": "degraded",
-            "reason": "build_failed",
-            "stderr": proc.stderr[:500] if proc.stderr else "",
-        }
-
-    out_dir = cfg.out_dir
-    if not os.path.isabs(out_dir):
-        out_dir = os.path.join(project_root, out_dir)
-    report_path = os.path.join(out_dir, "GRAPH_REPORT.md")
-
-    if not os.path.isfile(report_path):
-        return {
-            "status": "degraded",
-            "reason": "report_not_found",
-        }
-
-    return {
-        "status": "ready",
-        "report_path": report_path,
-    }
+    return {"status": "ready", "report_path": graphify_report_path(snapshot_dir)}
