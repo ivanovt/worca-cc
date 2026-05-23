@@ -266,8 +266,10 @@ def _disabled_config(
     )
 
 
-def build_graph_cmd(cfg: EffectiveGraphifyConfig) -> list[str]:
-    """Build the ``graphify update`` argv for a per-commit snapshot.
+def build_graph_cmd(
+    cfg: EffectiveGraphifyConfig, project_root: str = "."
+) -> list[str]:
+    """Build the ``graphify update <path>`` argv for a per-commit snapshot.
 
     The graphifyy CLI re-extracts the code graph with ``graphify update <path>``
     — there is no ``build`` subcommand, and ``--no-llm`` / ``--backend`` are not
@@ -277,12 +279,14 @@ def build_graph_cmd(cfg: EffectiveGraphifyConfig) -> list[str]:
     ``GOOGLE_API_KEY``) is present in the subprocess env, which
     build_subprocess_env injects from the configured ``model_profile``.
 
-    Run with ``cwd`` set to the project root (see _run_build), so the path
-    argument is ``.``. Output is redirected via the ``GRAPHIFY_OUT`` env (see
-    build_subprocess_env), never the cwd. Shared by the preflight phase and the
-    post-guardian cache-warm so they never drift.
+    ``project_root`` is passed as the path argument (absolute, in practice) and
+    the process is run from a cache dir, NOT the project — graphify drops a
+    ``graphify-out/manifest.json`` relative to its cwd regardless of
+    ``GRAPHIFY_OUT``, so running from the project would dirty the working tree
+    (see _run_build). Output is redirected via the ``GRAPHIFY_OUT`` env. Shared
+    by the preflight phase and the post-guardian cache-warm so they never drift.
     """
-    return ["graphify", "update", "."]
+    return ["graphify", "update", project_root]
 
 
 def build_subprocess_env(

@@ -321,6 +321,21 @@ class TestBuildGraphCmd:
         assert "--backend" not in cmd
         assert "ollama" not in cmd
 
+    def test_project_root_passed_as_path_argument(self):
+        # The path to scan is the project; the process runs from the cache dir
+        # (see _run_build), so the path must be explicit, not ".".
+        cfg = effective_graphify_config(
+            {"worca": {}},
+            {"worca": {"graphify": {"enabled": True}}},
+        )
+        assert build_graph_cmd(cfg, "/abs/project") == [
+            "graphify",
+            "update",
+            "/abs/project",
+        ]
+        # Defaults to "." for callers that don't pass a root.
+        assert build_graph_cmd(cfg) == ["graphify", "update", "."]
+
 
 class TestBuildSubprocessEnv:
     """build_subprocess_env merges model_profile env + sets GRAPHIFY_OUT."""

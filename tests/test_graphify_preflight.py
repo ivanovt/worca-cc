@@ -130,22 +130,28 @@ class TestPreflightBuild:
         snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
         assert result["report_path"] == graphify_report_path(snap)
         assert is_snapshot_complete(snap)
-        # built with `graphify update .` into GRAPHIFY_OUT
+        # built with `graphify update <abs project>`, run FROM the cache dir
+        # (cwd == snapshot dir, not the project) so graphify's graphify-out/
+        # manifest side-effect can't dirty the project working tree. Output
+        # still redirected via GRAPHIFY_OUT.
         cmd = mr.call_args[0][0]
-        assert cmd == ["graphify", "update", "."]
+        assert cmd == ["graphify", "update", os.path.abspath(str(tmp_path))]
+        assert mr.call_args.kwargs["cwd"] == snap
         assert mr.call_args.kwargs["env"]["GRAPHIFY_OUT"] == os.path.join(snap, "graphify")
 
     def test_structural_uses_update_command(self, tmp_path, cache):
         with _patched(_make_config(mode="structural")) as mr:
             _call(tmp_path)
-        assert mr.call_args[0][0] == ["graphify", "update", "."]
+        assert mr.call_args[0][0] == ["graphify", "update", os.path.abspath(str(tmp_path))]
+        # never runs from the project tree
+        assert mr.call_args.kwargs["cwd"] != os.path.abspath(str(tmp_path))
 
     def test_full_uses_same_update_command(self, tmp_path, cache):
         # Full mode runs the same command; the LLM pass is env/key-driven, not
         # a CLI flag — so the argv is identical to structural.
         with _patched(_make_config(mode="full")) as mr:
             _call(tmp_path)
-        assert mr.call_args[0][0] == ["graphify", "update", "."]
+        assert mr.call_args[0][0] == ["graphify", "update", os.path.abspath(str(tmp_path))]
 
     def test_cache_hit_skips_build(self, tmp_path, cache):
         snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)

@@ -30,14 +30,23 @@ from worca.utils.settings import load_global_settings, load_settings
 
 
 def _run_build(cfg, settings, *, project_root, out_dir, timeout) -> tuple[bool, str]:
-    """Run `graphify update` writing into out_dir (GRAPHIFY_OUT). Returns (ok, stderr)."""
+    """Run `graphify update <project>` writing into out_dir (GRAPHIFY_OUT).
+
+    Runs from the cache dir (``cwd``), not the project, and scans the project by
+    absolute path. graphify writes a ``graphify-out/manifest.json`` relative to
+    its cwd independently of GRAPHIFY_OUT, so running from the project would
+    leave an untracked dir that dirties the working tree — which forces
+    clean_only into a throwaway snapshot that's never published. Pointing cwd at
+    the cache keeps every graphify side-effect out of the project. Returns
+    (ok, stderr).
+    """
     os.makedirs(out_dir, exist_ok=True)
-    cmd = build_graph_cmd(cfg)
+    cmd = build_graph_cmd(cfg, os.path.abspath(project_root))
     env = build_subprocess_env(cfg, settings, graphify_out=out_dir)
     try:
         proc = subprocess.run(
             cmd,
-            cwd=project_root,
+            cwd=os.path.dirname(out_dir),
             env=env,
             capture_output=True,
             text=True,
