@@ -2634,6 +2634,10 @@ def run_pipeline(
                         # prompt only carries a per-run availability note.
                         _graphify_out = os.path.dirname(_rp)
                         prompt_builder.set_graphify_available(True)
+                        _log(
+                            "Graphify: ready — agents query the cached graph via "
+                            f"GRAPHIFY_OUT={_graphify_out}"
+                        )
                 update_stage(status, current_stage.value, **_pf_stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
