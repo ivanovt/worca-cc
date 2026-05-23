@@ -13,7 +13,7 @@ const GRAPHIFY_DEFAULTS = {
   out_dir: 'graphify-out',
   update_on: { preflight: true, guardian_post_commit: true },
   min_repo_files: 100,
-  version_range: '>=0.7.10,<1',
+  version_range: '>=0.8.16,<1',
   preflight_timeout_seconds: 300,
   freshness: 'clean_only',
 };

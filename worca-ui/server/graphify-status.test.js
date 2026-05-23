@@ -87,7 +87,7 @@ describe('_effectiveConfig', () => {
     expect(result.enabled).toBe(true);
     expect(result.mode).toBe('structural');
     expect(result.out_dir).toBe('graphify-out');
-    expect(result.version_range).toBe('>=0.7.10,<1');
+    expect(result.version_range).toBe('>=0.8.16,<1');
     expect(result.min_repo_files).toBe(100);
   });
 
@@ -613,7 +613,7 @@ describe('_effectiveConfig parity with Python', () => {
         enabled: false,
         reason: 'project-off',
         mode: 'structural',
-        version_range: '>=0.7.10,<1',
+        version_range: '>=0.8.16,<1',
         min_repo_files: 100,
       },
     },

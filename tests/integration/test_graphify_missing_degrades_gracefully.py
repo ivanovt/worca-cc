@@ -87,21 +87,42 @@ def _enable_graphify_settings(pipeline_env) -> None:
         "enabled": True,
         "mode": "structural",
         "update_on": {"preflight": True},
-        "version_range": ">=0.7.10,<1",
+        "version_range": ">=0.8.16,<1",
     }
     settings_path.write_text(json.dumps(settings, indent=2))
 
 
-def _strip_graphify_from_path() -> str:
-    """Return a PATH string with mock_graphify dir (and any real graphify) removed.
+def _strip_graphify_from_path(sandbox_root) -> str:
+    """Return a PATH where ``graphify`` is unfindable but sibling tools survive.
 
-    Keeps only standard system paths and the Python runtime paths needed to
-    run the pipeline subprocess.
+    Name-based filtering isn't enough (a real install lives in a generic dir
+    like ~/.local/bin), and dropping the whole dir is too blunt — that dir also
+    holds tools the preflight checks for (e.g. ``claude``). So for any PATH dir
+    containing a ``graphify`` executable we substitute a sandbox dir that
+    symlinks every entry EXCEPT graphify; the mock_graphify dir is dropped
+    outright. The result has all the usual tools but no graphify.
     """
     original = os.environ.get("PATH", "")
-    parts = original.split(os.pathsep)
-    filtered = [p for p in parts if "mock_graphify" not in p and "graphify" not in p.lower()]
-    return os.pathsep.join(filtered)
+    out = []
+    for idx, p in enumerate(original.split(os.pathsep)):
+        if not p or "mock_graphify" in p:
+            continue
+        if os.path.exists(os.path.join(p, "graphify")):
+            shadow = os.path.join(sandbox_root, f"pathshadow-{idx}")
+            os.makedirs(shadow, exist_ok=True)
+            for name in os.listdir(p):
+                if name == "graphify":
+                    continue
+                link = os.path.join(shadow, name)
+                if not os.path.lexists(link):
+                    try:
+                        os.symlink(os.path.join(p, name), link)
+                    except OSError:
+                        pass
+            out.append(shadow)
+        else:
+            out.append(p)
+    return os.pathsep.join(out)
 
 
 # ===========================================================================
@@ -114,7 +135,7 @@ def test_graphify_missing_degrades_to_completed(pipeline_env):
     pipeline_env.enable_stages("preflight")
     _enable_graphify_settings(pipeline_env)
 
-    clean_path = _strip_graphify_from_path()
+    clean_path = _strip_graphify_from_path(pipeline_env.tmp_path / 'pathshadow')
     result = _run_pipeline(
         pipeline_env, _happy_scenario(), "graphify missing test",
         path_override=clean_path,
@@ -143,7 +164,7 @@ def test_graphify_missing_no_graph_in_prompt(pipeline_env):
     pipeline_env.enable_stages("preflight")
     _enable_graphify_settings(pipeline_env)
 
-    clean_path = _strip_graphify_from_path()
+    clean_path = _strip_graphify_from_path(pipeline_env.tmp_path / 'pathshadow')
     result = _run_pipeline(
         pipeline_env, _happy_scenario(), "graphify missing prompt test",
         path_override=clean_path,
@@ -178,7 +199,7 @@ def test_graphify_missing_logs_warning(pipeline_env):
     pipeline_env.enable_stages("preflight")
     _enable_graphify_settings(pipeline_env)
 
-    clean_path = _strip_graphify_from_path()
+    clean_path = _strip_graphify_from_path(pipeline_env.tmp_path / 'pathshadow')
     result = _run_pipeline(
         pipeline_env, _happy_scenario(), "graphify warning test",
         path_override=clean_path,

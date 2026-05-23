@@ -63,8 +63,8 @@ describe('graphifyTab rendering', () => {
   });
 
   it('hides model profile in structural mode (LLM-only setting)', async () => {
-    // Structural mode runs graphify with --no-llm, so the model profile is
-    // inert there — the control must not render.
+    // Structural mode runs `graphify update` with no provider key, so the
+    // model profile is inert there — the control must not render.
     const { graphifyTab } = await import('./settings-graphify.js');
     const worca = {
       graphify: { enabled: true, mode: 'structural' },
@@ -205,7 +205,7 @@ describe('graphifyInstallCommand', () => {
       `uv tool install 'graphifyy${GRAPHIFY_VERSION_RANGE_DEFAULT}'`,
     );
     expect(graphifyInstallCommand()).toBe(
-      "uv tool install 'graphifyy>=0.7.10,<1'",
+      "uv tool install 'graphifyy>=0.8.16,<1'",
     );
   });
 
@@ -220,10 +220,10 @@ describe('graphifyInstallCommand', () => {
   it('falls back to the default for empty/nullish ranges', async () => {
     const { graphifyInstallCommand } = await import('./settings-graphify.js');
     expect(graphifyInstallCommand('')).toBe(
-      "uv tool install 'graphifyy>=0.7.10,<1'",
+      "uv tool install 'graphifyy>=0.8.16,<1'",
     );
     expect(graphifyInstallCommand(null)).toBe(
-      "uv tool install 'graphifyy>=0.7.10,<1'",
+      "uv tool install 'graphifyy>=0.8.16,<1'",
     );
   });
 

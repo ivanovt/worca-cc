@@ -22,7 +22,7 @@ def _make_config(*, enabled=True, mode="structural", update_on_guardian_post_com
         update_on_preflight=True,
         update_on_guardian_post_commit=update_on_guardian_post_commit,
         min_repo_files=100,
-        version_range=">=0.7.10,<1",
+        version_range=">=0.8.16,<1",
         reason=None,
     )
 

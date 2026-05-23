@@ -23,7 +23,7 @@ GRAPHIFY_DEFAULTS = {
         "guardian_post_commit": True,
     },
     "min_repo_files": 100,
-    "version_range": ">=0.7.10,<1",
+    "version_range": ">=0.8.16,<1",
 }
 
 
@@ -108,7 +108,7 @@ class TestEffectiveGraphifyConfig:
         assert result.enabled is False
         assert result.mode == "structural"
         assert result.out_dir == "graphify-out"
-        assert result.version_range == ">=0.7.10,<1"
+        assert result.version_range == ">=0.8.16,<1"
         assert result.min_repo_files == 100
         assert result.reason == "project-off"
 
@@ -217,7 +217,7 @@ class TestGraphifyInSettingsJson:
         assert g["update_on"]["preflight"] is True
         assert g["update_on"]["guardian_post_commit"] is True
         assert g["min_repo_files"] == 100
-        assert g["version_range"] == ">=0.7.10,<1"
+        assert g["version_range"] == ">=0.8.16,<1"
         assert g["preflight_timeout_seconds"] == 300
         assert g["freshness"] == "clean_only"
 
@@ -285,31 +285,41 @@ class TestPreflightTimeoutConfig:
 
 
 class TestBuildGraphCmd:
-    """build_graph_cmd is the single source of the `graphify build` argv."""
+    """build_graph_cmd is the single source of the `graphify update` argv.
 
-    def test_structural_appends_no_llm(self):
+    The graphifyy CLI uses ``graphify update <path>`` (no ``build`` subcommand,
+    no ``--no-llm`` / ``--backend`` flags). Structural is the default (no LLM);
+    full mode is driven by a provider key in the env (see build_subprocess_env),
+    not by the argv — so the command is identical across modes.
+    """
+
+    def test_structural_uses_update(self):
         cfg = effective_graphify_config(
             {"worca": {"graphify": {"enabled": True, "mode": "structural"}}},
             {"worca": {"graphify": {"enabled": True}}},
         )
         cmd = build_graph_cmd(cfg)
-        assert cmd[:2] == ["graphify", "build"]
-        assert "--no-llm" in cmd
+        assert cmd == ["graphify", "update", "."]
+        # The invented build/--no-llm interface must never reappear.
+        assert "build" not in cmd
+        assert "--no-llm" not in cmd
 
-    def test_full_omits_no_llm(self):
+    def test_full_uses_same_update_command(self):
         cfg = effective_graphify_config(
             {"worca": {"graphify": {"enabled": True, "mode": "full"}}},
             {"worca": {"graphify": {"enabled": True}}},
         )
-        assert "--no-llm" not in build_graph_cmd(cfg)
+        assert build_graph_cmd(cfg) == ["graphify", "update", "."]
 
-    def test_backend_flag(self):
+    def test_backend_not_passed_as_flag(self):
+        # The real CLI has no --backend flag; backend config must not leak in.
         cfg = effective_graphify_config(
             {"worca": {"graphify": {"enabled": True, "mode": "full", "backend": "ollama"}}},
             {"worca": {"graphify": {"enabled": True}}},
         )
         cmd = build_graph_cmd(cfg)
-        assert cmd[cmd.index("--backend") + 1] == "ollama"
+        assert "--backend" not in cmd
+        assert "ollama" not in cmd
 
 
 class TestBuildSubprocessEnv:

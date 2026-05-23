@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Mock graphify CLI for integration tests.
 
-Supports two invocation modes:
-  graphify --version         → prints "graphify 0.8.0"
-  graphify build [--no-llm] [--backend X]
-                             → writes stub graph artifacts to the output dir
-  graphify --update [--no-llm]  → same as build (writes stub artifacts)
+Mirrors the real graphifyy CLI surface that worca depends on:
+  graphify --version         → prints "graphify 0.8.16"
+  graphify update <path>     → re-extracts the code graph, writing stub
+                               artifacts to the output dir. Structural by
+                               default; "full" when a provider key is present
+                               in the env (GEMINI_API_KEY / GOOGLE_API_KEY /
+                               OPENAI_API_KEY), matching the real tool's
+                               key-driven semantic pass.
 
 Output dir resolution (highest first):
   GRAPHIFY_OUT           — the real graphify env var (per-commit cache snapshot)
   MOCK_GRAPHIFY_OUT_DIR  — test override
-  graphify-out           — legacy default
+  graphify-out           — default
 
 Env vars:
   MOCK_GRAPHIFY_FAIL     — if "1", exit with code 1 (simulate build failure)
@@ -20,6 +23,8 @@ import json
 import os
 import sys
 from pathlib import Path
+
+_PROVIDER_KEYS = ("GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY")
 
 
 def _log_invocation():
@@ -39,10 +44,10 @@ def main():
         sys.exit(1)
 
     if "--version" in sys.argv:
-        print("graphify 0.8.0")
+        print("graphify 0.8.16")
         sys.exit(0)
 
-    if "--update" in sys.argv or "build" in sys.argv:
+    if "update" in sys.argv:
         out_dir = (
             os.environ.get("GRAPHIFY_OUT")
             or os.environ.get("MOCK_GRAPHIFY_OUT_DIR")
@@ -51,7 +56,10 @@ def main():
         out_path = Path(out_dir)
         out_path.mkdir(parents=True, exist_ok=True)
 
-        mode = "structural" if "--no-llm" in sys.argv else "full"
+        # Real `update` is code-only unless a provider key is present in env.
+        mode = (
+            "full" if any(os.environ.get(k) for k in _PROVIDER_KEYS) else "structural"
+        )
         report = (
             f"# Graph Report (mock)\n\n"
             f"Mode: {mode}\n"
@@ -62,10 +70,10 @@ def main():
         (out_path / "GRAPH_REPORT.md").write_text(report)
         (out_path / "graph.json").write_text('{"nodes": 42, "edges": 108}\n')
         (out_path / "graph.html").write_text("<html><body>mock graph</body></html>\n")
-        print(f"Graph built ({mode} mode)")
+        print(f"Code graph updated ({mode} mode)")
         sys.exit(0)
 
-    print(f"error: unknown arguments: {sys.argv[1:]}", file=sys.stderr)
+    print(f"error: unknown command: {sys.argv[1:]}", file=sys.stderr)
     sys.exit(1)
 
 

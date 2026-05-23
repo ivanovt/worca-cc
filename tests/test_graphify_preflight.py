@@ -31,7 +31,7 @@ def _make_config(
     update_on_preflight=True,
     update_on_guardian_post_commit=True,
     min_repo_files=100,
-    version_range=">=0.7.10,<1",
+    version_range=">=0.8.16,<1",
     preflight_timeout_seconds=300,
     freshness="clean_only",
     reason=None,
@@ -130,20 +130,22 @@ class TestPreflightBuild:
         snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
         assert result["report_path"] == graphify_report_path(snap)
         assert is_snapshot_complete(snap)
-        # built with `graphify build` into GRAPHIFY_OUT
+        # built with `graphify update .` into GRAPHIFY_OUT
         cmd = mr.call_args[0][0]
-        assert cmd[:2] == ["graphify", "build"]
+        assert cmd == ["graphify", "update", "."]
         assert mr.call_args.kwargs["env"]["GRAPHIFY_OUT"] == os.path.join(snap, "graphify")
 
-    def test_structural_uses_no_llm(self, tmp_path, cache):
+    def test_structural_uses_update_command(self, tmp_path, cache):
         with _patched(_make_config(mode="structural")) as mr:
             _call(tmp_path)
-        assert "--no-llm" in mr.call_args[0][0]
+        assert mr.call_args[0][0] == ["graphify", "update", "."]
 
-    def test_full_omits_no_llm(self, tmp_path, cache):
+    def test_full_uses_same_update_command(self, tmp_path, cache):
+        # Full mode runs the same command; the LLM pass is env/key-driven, not
+        # a CLI flag — so the argv is identical to structural.
         with _patched(_make_config(mode="full")) as mr:
             _call(tmp_path)
-        assert "--no-llm" not in mr.call_args[0][0]
+        assert mr.call_args[0][0] == ["graphify", "update", "."]
 
     def test_cache_hit_skips_build(self, tmp_path, cache):
         snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)

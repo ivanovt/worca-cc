@@ -116,15 +116,17 @@ def test_graphify_preflight_invokes_mock_and_injects_graph(pipeline_env):
         f"Pipeline failed (rc={result.returncode}).\nstderr: {result.stderr[-2000:]}"
     )
 
-    # 1. Mock graphify was invoked with `build --no-llm`
+    # 1. Mock graphify was invoked with `update .` (the real CLI's command;
+    #    there is no `build` / `--no-llm`).
     assert log_path.exists(), f"Mock graphify was never invoked.\nstderr: {result.stderr[-1000:]}"
     invocations = [
         json.loads(line) for line in log_path.read_text().splitlines() if line.strip()
     ]
     assert len(invocations) >= 1
-    build_calls = [i for i in invocations if "build" in i["argv"]]
-    assert build_calls, f"No `build` invocation found in {invocations}"
-    assert "--no-llm" in build_calls[0]["argv"]
+    update_calls = [i for i in invocations if "update" in i["argv"]]
+    assert update_calls, f"No `update` invocation found in {invocations}"
+    assert "build" not in update_calls[0]["argv"]
+    assert "--no-llm" not in update_calls[0]["argv"]
 
     # 2. GRAPH_REPORT.md was created in the per-commit cache (not the repo tree)
     cache_root = pipeline_env.tmp_path / "worca_home" / "cache" / "ast"

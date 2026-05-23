@@ -34,7 +34,7 @@ def _check_version_range(version: str, spec_str: str) -> bool:
     """Check whether version satisfies a comma-separated specifier string.
 
     Supports: >=, <=, >, <, ==, != with dotted version numbers.
-    Example: _check_version_range("0.8.0", ">=0.7.10,<1") -> True
+    Example: _check_version_range("0.8.0", ">=0.8.16,<1") -> True
     """
     ver = _version_tuple(version)
     for clause in spec_str.split(","):
@@ -75,7 +75,7 @@ _GRAPHIFY_DEFAULTS = {
         "guardian_post_commit": True,
     },
     "min_repo_files": 100,
-    "version_range": ">=0.7.10,<1",
+    "version_range": ">=0.8.16,<1",
     "preflight_timeout_seconds": 300,
     # "clean_only": cache the per-commit snapshot only when the working tree is
     # clean (dirty runs build a run-scoped throwaway). "base_sha": always
@@ -95,7 +95,7 @@ class GraphifyDetect:
     error: Optional[str]
 
 
-def detect_graphify(version_range: str = ">=0.7.10,<1") -> GraphifyDetect:
+def detect_graphify(version_range: str = ">=0.8.16,<1") -> GraphifyDetect:
     """Probe for the graphify CLI. Cached at call sites — never call per-tool-use."""
     backend_env = [k for k in _BACKEND_ENV_KEYS if os.environ.get(k)]
 
@@ -267,19 +267,22 @@ def _disabled_config(
 
 
 def build_graph_cmd(cfg: EffectiveGraphifyConfig) -> list[str]:
-    """Build the ``graphify build`` argv for a per-commit snapshot.
+    """Build the ``graphify update`` argv for a per-commit snapshot.
 
-    Each commit-sha snapshot is built fresh and treated as immutable, so this
-    uses ``build`` (not ``--update``). Output is redirected via the
-    ``GRAPHIFY_OUT`` env (see build_subprocess_env), never the cwd. Shared by
-    the preflight phase and the post-guardian cache-warm so they never drift.
+    The graphifyy CLI re-extracts the code graph with ``graphify update <path>``
+    — there is no ``build`` subcommand, and ``--no-llm`` / ``--backend`` are not
+    real flags. ``update`` is pure code extraction (no LLM) by default;
+    structural mode relies on that. Full mode runs the *same* command — the
+    semantic pass activates when a provider key (e.g. ``GEMINI_API_KEY`` /
+    ``GOOGLE_API_KEY``) is present in the subprocess env, which
+    build_subprocess_env injects from the configured ``model_profile``.
+
+    Run with ``cwd`` set to the project root (see _run_build), so the path
+    argument is ``.``. Output is redirected via the ``GRAPHIFY_OUT`` env (see
+    build_subprocess_env), never the cwd. Shared by the preflight phase and the
+    post-guardian cache-warm so they never drift.
     """
-    cmd = ["graphify", "build"]
-    if cfg.mode == "structural":
-        cmd.append("--no-llm")
-    if cfg.backend:
-        cmd.extend(["--backend", cfg.backend])
-    return cmd
+    return ["graphify", "update", "."]
 
 
 def build_subprocess_env(

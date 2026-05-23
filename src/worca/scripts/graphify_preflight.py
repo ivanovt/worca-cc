@@ -30,7 +30,7 @@ from worca.utils.settings import load_global_settings, load_settings
 
 
 def _run_build(cfg, settings, *, project_root, out_dir, timeout) -> tuple[bool, str]:
-    """Run `graphify build` writing into out_dir (GRAPHIFY_OUT). Returns (ok, stderr)."""
+    """Run `graphify update` writing into out_dir (GRAPHIFY_OUT). Returns (ok, stderr)."""
     os.makedirs(out_dir, exist_ok=True)
     cmd = build_graph_cmd(cfg)
     env = build_subprocess_env(cfg, settings, graphify_out=out_dir)

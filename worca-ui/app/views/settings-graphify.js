@@ -14,7 +14,7 @@ export const GRAPHIFY_MODES = ['structural', 'full'];
 
 // Default version range — mirror of _GRAPHIFY_DEFAULTS["version_range"] in
 // src/worca/utils/graphify.py and GRAPHIFY_DEFAULTS in server/graphify-status.js.
-export const GRAPHIFY_VERSION_RANGE_DEFAULT = '>=0.7.10,<1';
+export const GRAPHIFY_VERSION_RANGE_DEFAULT = '>=0.8.16,<1';
 
 // The PyPI distribution is `graphifyy` (double-y) even though the CLI it
 // installs is `graphify`. graphify is a CLI that must land on PATH, so the
@@ -210,8 +210,8 @@ export function graphifyTab(worca, rerender, projectId = null) {
 
         ${
           // Model Profile only affects the Full-mode LLM pass. Structural mode
-          // runs graphify with --no-llm (zero outbound calls), so the profile
-          // is inert there — only render the control when state is full.
+          // runs `graphify update` with no provider key (zero outbound calls),
+          // so the profile is inert there — only render when state is full.
           isFullMode
             ? html`
         <div class="settings-field">
