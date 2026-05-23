@@ -360,7 +360,8 @@
       "min_repo_files": 100,
       "version_range": ">=0.8.16,<1",
       "preflight_timeout_seconds": 300,
-      "freshness": "clean_only"
+      "freshness": "clean_only",
+      "nudge": "every"
     }
   }
 }

@@ -53,6 +53,22 @@ export function graphifyStateValue(graphify = {}) {
   return graphify.mode === 'full' ? 'full' : 'structural';
 }
 
+// `worca.graphify.nudge` — how often the pre_tool hook nudges agents to run
+// `graphify query` before a broad code search. Default (unset) is "every".
+export const GRAPHIFY_NUDGE_MODES = ['off', 'every', 'stage', 'run'];
+export const GRAPHIFY_NUDGE_LABELS = {
+  off: 'Off',
+  every: 'Every search',
+  stage: 'Once per stage',
+  run: 'First search per run',
+};
+
+/** Resolve the persisted nudge mode, defaulting to "every" when unset. */
+export function graphifyNudgeValue(graphify = {}) {
+  const v = graphify.nudge;
+  return GRAPHIFY_NUDGE_MODES.includes(v) ? v : 'every';
+}
+
 // Module-level cache-action state (the tab is a stateless lit-html template;
 // long-running build/clear track progress here and re-render via rerender()).
 let _cacheBusy = false;
@@ -169,6 +185,7 @@ export function graphifyTab(worca, rerender, projectId = null) {
   const isFullMode = state === 'full';
   const modelProfile = graphify.model_profile || '';
   const modelKeys = getModelKeys(worca);
+  const nudgeValue = graphifyNudgeValue(graphify);
 
   // Load the cache path + build state once when the tab first shows enabled.
   if (enabled && !_cacheStatusFetched) {
@@ -192,6 +209,14 @@ export function graphifyTab(worca, rerender, projectId = null) {
     worca.graphify = {
       ...(worca.graphify || {}),
       model_profile: value || null,
+    };
+    rerender();
+  };
+
+  const onNudgeChange = (value) => {
+    worca.graphify = {
+      ...(worca.graphify || {}),
+      nudge: value || 'every',
     };
     rerender();
   };
@@ -237,6 +262,29 @@ export function graphifyTab(worca, rerender, projectId = null) {
             @sl-change=${(e) => onModelProfileChange(e.target.value)}
           >
             ${modelKeys.map((k) => html`<sl-option value="${k}">${k}</sl-option>`)}
+          </sl-select>
+        </div>`
+            : ''
+        }
+
+        ${
+          // Nudge agents to run `graphify query` before broad code searches.
+          // Applies to any enabled mode; the pre_tool hook reads worca.graphify.nudge.
+          enabled
+            ? html`
+        <div class="settings-field">
+          <label class="settings-label" for="graphify-nudge">Query nudge</label>
+          <sl-select
+            id="graphify-nudge"
+            class="graphify-nudge-select"
+            value="${nudgeValue}"
+            help-text="Suggest a scoped graph query before grep/find (non-blocking)."
+            @sl-change=${(e) => onNudgeChange(e.target.value)}
+          >
+            ${GRAPHIFY_NUDGE_MODES.map(
+              (m) =>
+                html`<sl-option value="${m}">${GRAPHIFY_NUDGE_LABELS[m]}</sl-option>`,
+            )}
           </sl-select>
         </div>`
             : ''

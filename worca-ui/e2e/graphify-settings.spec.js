@@ -241,3 +241,33 @@ test('cache actions hidden when graphify is off', async ({ page }) => {
     await ctx.close();
   }
 });
+
+test('query nudge select renders with all options when enabled', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, {
+      worca: { graphify: { enabled: true, mode: 'structural', nudge: 'stage' } },
+    });
+    const sel = page.locator('#graphify-nudge');
+    await expect(sel).toBeAttached();
+    await expect(sel).toHaveAttribute('value', 'stage');
+    await expect(sel.locator('sl-option')).toHaveCount(4);
+  } finally {
+    await ctx.close();
+  }
+});
+
+test('query nudge select is hidden when graphify is off', async ({ page }) => {
+  const ctx = await startServer();
+  try {
+    await goToGraphifyTab(page, ctx, {
+      worca: { graphify: { enabled: false } },
+    });
+    await expect(page.locator('#graphify-state')).toBeAttached();
+    await expect(page.locator('#graphify-nudge')).toHaveCount(0);
+  } finally {
+    await ctx.close();
+  }
+});

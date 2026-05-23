@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 try:
     from worca.hooks.guard import check_guard
     from worca.hooks.plan_check import check_plan
+    from worca.hooks.graphify_nudge import graphify_nudge_context
 except ImportError:
     # Worca package not available — allow all operations
     sys.exit(0)
@@ -75,15 +76,25 @@ def main():
         print(reason, file=sys.stderr)
         sys.exit(code)
 
-    # If we modified the command, output the updated input via hook protocol
-    if command_modified:
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "updatedInput": {"command": tool_input["command"]},
-            }
-        }))
+    # Advisory, non-blocking graphify nudge: when an agent runs a broad code
+    # search and a graph is ready, suggest a scoped `graphify query` instead.
+    try:
+        nudge = graphify_nudge_context(tool_name, tool_input)
+    except Exception:
+        nudge = None
+
+    # Emit a single PreToolUse decision carrying any cwd-fix (updatedInput)
+    # and/or the nudge (additionalContext). Both are "allow".
+    if command_modified or nudge:
+        hook_output = {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+        }
+        if command_modified:
+            hook_output["updatedInput"] = {"command": tool_input["command"]}
+        if nudge:
+            hook_output["additionalContext"] = nudge
+        print(json.dumps({"hookSpecificOutput": hook_output}))
 
     sys.exit(0)
 

@@ -265,3 +265,51 @@ describe('graphifyTab constants', () => {
     expect(GRAPHIFY_STATES).toEqual(['off', 'structural', 'full']);
   });
 });
+
+describe('graphify query nudge control', () => {
+  it('graphifyNudgeValue defaults to "every" when unset or invalid', async () => {
+    const { graphifyNudgeValue } = await import('./settings-graphify.js');
+    expect(graphifyNudgeValue({})).toBe('every');
+    expect(graphifyNudgeValue({ nudge: 'bogus' })).toBe('every');
+  });
+
+  it('graphifyNudgeValue reflects persisted modes', async () => {
+    const { graphifyNudgeValue } = await import('./settings-graphify.js');
+    expect(graphifyNudgeValue({ nudge: 'off' })).toBe('off');
+    expect(graphifyNudgeValue({ nudge: 'stage' })).toBe('stage');
+    expect(graphifyNudgeValue({ nudge: 'run' })).toBe('run');
+  });
+
+  it('renders the nudge select with all four options when enabled', async () => {
+    const { graphifyTab } = await import('./settings-graphify.js');
+    const html = renderToString(
+      graphifyTab(
+        { graphify: { enabled: true, mode: 'structural' } },
+        () => {},
+      ),
+    );
+    expect(html).toContain('graphify-nudge');
+    expect(html).toContain('Every search');
+    expect(html).toContain('Once per stage');
+    expect(html).toContain('First search per run');
+  });
+
+  it('hides the nudge select when graphify is off', async () => {
+    const { graphifyTab } = await import('./settings-graphify.js');
+    const html = renderToString(
+      graphifyTab({ graphify: { enabled: false } }, () => {}),
+    );
+    expect(html).not.toContain('graphify-nudge');
+  });
+
+  it('reflects the persisted nudge value in the select', async () => {
+    const { graphifyTab } = await import('./settings-graphify.js');
+    const html = renderToString(
+      graphifyTab(
+        { graphify: { enabled: true, mode: 'structural', nudge: 'stage' } },
+        () => {},
+      ),
+    );
+    expect(html).toContain('value="stage"');
+  });
+});
