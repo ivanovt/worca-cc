@@ -159,8 +159,8 @@ def test_graphify_missing_degrades_to_completed(pipeline_env):
 # ===========================================================================
 
 def test_graphify_missing_no_graph_in_prompt(pipeline_env):
-    """When graphify is enabled but missing, the planner prompt has no
-    ## Codebase Structure section — identical to a disabled run."""
+    """When graphify is enabled but missing, the planner prompt carries no
+    graphify availability note — identical to a disabled run."""
     pipeline_env.enable_stages("preflight")
     _enable_graphify_settings(pipeline_env)
 
@@ -175,12 +175,13 @@ def test_graphify_missing_no_graph_in_prompt(pipeline_env):
     worca_dir = pipeline_env.project / ".worca"
     status = _find_latest_status(worca_dir)
 
-    # Plan stage prompt should not contain graph section
+    # Plan stage prompt should not contain the graphify availability note
     plan_stage = status.get("stages", {}).get("plan", {})
     plan_prompt = plan_stage.get("prompt", "")
-    assert "## Codebase Structure" not in plan_prompt, (
-        "Graph section should not appear when graphify is degraded"
+    assert "graphify query" not in plan_prompt, (
+        "Graphify availability note should not appear when graphify is degraded"
     )
+    assert "code knowledge graph is preloaded" not in plan_prompt
 
     # No graphify_report_path should be recorded
     assert not status.get("graphify_report_path"), (

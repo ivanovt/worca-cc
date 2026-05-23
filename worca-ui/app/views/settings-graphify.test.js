@@ -241,6 +241,19 @@ describe('graphifyInstallCommand', () => {
   });
 });
 
+describe('graphifyQuerySnippet', () => {
+  it('builds a read-only query passing the graph path with --graph', async () => {
+    const { graphifyQuerySnippet } = await import('./settings-graphify.js');
+    const path = '/home/u/.worca/cache/ast/abc/sha/graphify/graph.json';
+    const snippet = graphifyQuerySnippet(path);
+    expect(snippet).toBe(`graphify query "<your question>" --graph ${path}`);
+    // Must use the read-only `query` verb (never a mutating subcommand) and
+    // pass --graph explicitly (humans don't get GRAPHIFY_OUT).
+    expect(snippet.startsWith('graphify query ')).toBe(true);
+    expect(snippet).toContain(`--graph ${path}`);
+  });
+});
+
 describe('graphifyTab constants', () => {
   it('exports GRAPHIFY_MODES', async () => {
     const { GRAPHIFY_MODES } = await import('./settings-graphify.js');

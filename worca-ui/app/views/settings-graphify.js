@@ -29,6 +29,15 @@ export function graphifyInstallCommand(versionRange) {
   return `uv tool install '${GRAPHIFY_PYPI_PACKAGE}${range}'`;
 }
 
+/**
+ * A copy-able read-only query against the cached graph.json. Pipeline agents
+ * get the graph via the GRAPHIFY_OUT env var the runner injects; humans don't,
+ * so the snippet passes the path explicitly with `--graph`.
+ */
+export function graphifyQuerySnippet(graphJsonPath) {
+  return `graphify query "<your question>" --graph ${graphJsonPath}`;
+}
+
 const PRIVACY_STRUCTURAL =
   'Structural mode is fully local — zero outbound LLM calls. ' +
   'Captures call graphs, inline rationale, and Leiden communities without sending any data externally.';
@@ -49,6 +58,9 @@ export function graphifyStateValue(graphify = {}) {
 let _cacheBusy = false;
 let _cacheMsg = '';
 let _cachePath = null; // <cache>/ast/<repo-id>/ for this project (from the server)
+// Absolute path to the current commit's graph.json, or null when not built.
+// Drives the human "Query this graph" affordance.
+let _graphJsonPath = null;
 let _cacheStatusFetched = false;
 // True once any status response has come back. Distinguishes "still loading"
 // (show "resolving…") from "loaded but path is null" (not a git repo / error —
@@ -99,6 +111,7 @@ async function _refreshCacheStatus(rerender) {
     _cachePath = j.cache_path ?? _cachePath;
     _graphifyDetection = j.detection ?? _graphifyDetection;
     _graphifyVersionRange = j.effective?.version_range ?? _graphifyVersionRange;
+    _graphJsonPath = j.graph_stats?.graph_json_path ?? null;
     if (j.graph_stats)
       _cacheMsg = 'Knowledge graph is built for the current commit.';
     else if (!_cacheBusy)
@@ -326,6 +339,33 @@ export function graphifyTab(worca, rerender, projectId = null) {
         ${
           _cacheMsg
             ? html`<p class="settings-tab-description graphify-cache-msg">${_cacheMsg}</p>`
+            : ''
+        }
+        ${
+          // Human query affordance — only when a graph is actually built for
+          // the current commit. Agents query automatically via GRAPHIFY_OUT;
+          // humans pass the path explicitly with --graph.
+          _graphJsonPath
+            ? html`
+        <div class="settings-field graphify-query-hint">
+          <label class="settings-label" for="graphify-query-cmd">Query this graph</label>
+          <p class="settings-tab-description">
+            Pipeline agents query the graph automatically. To explore it
+            yourself, run a scoped query against the cached
+            <code>graph.json</code>:
+          </p>
+          <div class="graphify-copy-row">
+            <code id="graphify-query-cmd" class="graphify-codebox"
+              >${graphifyQuerySnippet(_graphJsonPath)}</code
+            >
+            <sl-copy-button
+              class="graphify-copy-query-btn"
+              value=${graphifyQuerySnippet(_graphJsonPath)}
+              copy-label="Copy query command"
+              success-label="Copied"
+            ></sl-copy-button>
+          </div>
+        </div>`
             : ''
         }
       </div>`

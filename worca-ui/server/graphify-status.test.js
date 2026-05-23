@@ -146,6 +146,15 @@ describe('_graphStats', () => {
     writeFileSync(join(tmpDir, 'graphify', 'graph.html'), '<html></html>');
     expect(_graphStats(tmpDir).has_html).toBe(true);
   });
+
+  it('exposes graph_json_path when graph.json present, null otherwise', () => {
+    _snap(tmpDir);
+    // Snapshot without graph.json → null (older/partial build)
+    expect(_graphStats(tmpDir).graph_json_path).toBeNull();
+    // With graph.json → absolute path to the queryable dataset
+    writeFileSync(join(tmpDir, 'graphify', 'graph.json'), '{"nodes":1}');
+    expect(_graphStats(tmpDir).graph_json_path).toContain('graph.json');
+  });
 });
 
 describe('createGraphifyStatus', () => {

@@ -3,7 +3,7 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Optional
 
 from worca.utils.env import get_env, filter_model_env
@@ -105,7 +105,6 @@ class WorkRequest:
     priority: int = 2
     plan_path: Optional[str] = None
     guide_content: str = ""  # populated by attach_guide() — body of normative reference material
-    graph_context: str = ""  # populated by attach_graph_report() — advisory codebase structure
 
 
 def normalize_plan_file(path: str, content: str = None) -> WorkRequest:
@@ -310,7 +309,6 @@ def attach_guide(
             priority=wr.priority,
             plan_path=wr.plan_path,
             guide_content=wr.guide_content,
-            graph_context=wr.graph_context,
         )
 
     sections = []
@@ -336,31 +334,7 @@ def attach_guide(
         priority=wr.priority,
         plan_path=wr.plan_path,
         guide_content="\n".join(sections),
-        graph_context=wr.graph_context,
     )
-
-
-GRAPH_REPORT_MAX_BYTES_DEFAULT = 32_000
-
-
-def attach_graph_report(
-    wr: WorkRequest,
-    report_path: str,
-    *,
-    max_bytes: int = GRAPH_REPORT_MAX_BYTES_DEFAULT,
-) -> WorkRequest:
-    """Return a new WorkRequest with GRAPH_REPORT.md content in graph_context.
-
-    Reads the report file and truncates at ``max_bytes`` with a ``[truncated]``
-    marker when the content exceeds the budget. The graph context is advisory
-    (structural orientation), not normative — authority order is:
-    guide > plan > graph_context > description.
-    """
-    with open(report_path, "r") as f:
-        content = f.read(max_bytes + 1)
-    truncated = len(content) > max_bytes
-    graph_text = content[:max_bytes] + ("\n\n[truncated]" if truncated else "")
-    return replace(wr, graph_context=graph_text)
 
 
 def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:

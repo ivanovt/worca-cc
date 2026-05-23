@@ -423,6 +423,34 @@ class TestRunAgent:
         assert result["type"] == "result"
         assert result["result"] == "hi"
 
+    @mock.patch("worca.utils.claude_cli.get_env", side_effect=lambda **kw: dict(kw))
+    @mock.patch("subprocess.Popen")
+    def test_graphify_out_injected_into_env(self, mock_popen_cls, mock_env):
+        """graphify_out is exported as GRAPHIFY_OUT in the agent subprocess env
+        (the seam that makes a bare `graphify query` read the cached graph)."""
+        events = [{"type": "result", "subtype": "success", "result": "ok"}]
+        mock_popen_cls.return_value = self._mock_popen(events)
+
+        run_agent(
+            prompt="hello", agent="planner.md",
+            graphify_out="/cache/ast/repo/sha/graphify",
+        )
+
+        env = mock_popen_cls.call_args.kwargs["env"]
+        assert env["GRAPHIFY_OUT"] == "/cache/ast/repo/sha/graphify"
+
+    @mock.patch("worca.utils.claude_cli.get_env", side_effect=lambda **kw: dict(kw))
+    @mock.patch("subprocess.Popen")
+    def test_no_graphify_out_leaves_env_unset(self, mock_popen_cls, mock_env):
+        """Without graphify_out, GRAPHIFY_OUT is never added to the agent env."""
+        events = [{"type": "result", "subtype": "success", "result": "ok"}]
+        mock_popen_cls.return_value = self._mock_popen(events)
+
+        run_agent(prompt="hello", agent="planner.md")
+
+        env = mock_popen_cls.call_args.kwargs["env"]
+        assert "GRAPHIFY_OUT" not in env
+
     @mock.patch("worca.utils.claude_cli.get_env", return_value={})
     @mock.patch("subprocess.Popen")
     def test_structured_output(self, mock_popen_cls, mock_env):

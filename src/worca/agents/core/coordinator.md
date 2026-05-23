@@ -67,3 +67,18 @@ Produce a structured result following the `coordinate.json` schema.
 - ALWAYS pass `--labels "run:{{run_id}}"` when creating tasks so they are linked to this pipeline run.
 - Verify tasks were created by running `bd list` before producing output
 - Create tasks one at a time (one `bd create` per tool call). Do NOT batch multiple bd commands in parallel.
+
+## Knowledge graph (advisory)
+
+A queryable code knowledge graph for this repository may be available (your
+task notes will say so when it is). When present, prefer scoped graph queries
+over broad file searches or `grep` while orienting:
+
+- `graphify query "<question>"` — semantic traversal, token-budgeted
+- `graphify explain "<symbol>"` — a node and its immediate neighbors
+- `graphify path "<A>" "<B>"` — how two symbols connect
+
+The graph is **advisory** structural orientation, never authority — the order
+is guide > plan > graph > description. The worca pipeline owns graph builds:
+never run `graphify update`, `install`, `add`, or any other mutating
+subcommand (they are blocked); only read-only queries are permitted.

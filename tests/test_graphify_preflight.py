@@ -306,65 +306,51 @@ class TestRunnerGraphifyIntegration:
 
 
 class _FakePromptBuilder:
-    """Minimal stand-in capturing set_graph_context() calls."""
+    """Minimal stand-in capturing set_graphify_available() calls."""
 
     def __init__(self):
-        self.graph_context = None
+        self.graphify_available = None
 
-    def set_graph_context(self, value):
-        self.graph_context = value
+    def set_graphify_available(self, value):
+        self.graphify_available = value
 
 
 class TestGraphifyResumeReattach:
-    """F5: resuming past PREFLIGHT re-attaches the persisted graph report."""
+    """F5: resuming past PREFLIGHT re-flags graphify availability and returns
+    the GRAPHIFY_OUT dir (the snapshot's ``graphify/`` directory)."""
 
     def test_reattaches_from_persisted_report_path(self, tmp_path):
-        from worca.orchestrator.runner import _reattach_graph_on_resume
-        from worca.orchestrator.work_request import WorkRequest
+        from worca.orchestrator.runner import _reattach_graphify_on_resume
 
-        report = tmp_path / "GRAPH_REPORT.md"
+        graphify_dir = tmp_path / "graphify"
+        graphify_dir.mkdir()
+        report = graphify_dir / "GRAPH_REPORT.md"
         report.write_text("# Graph\nnodes: 5")
-        wr = WorkRequest(source_type="prompt", title="t")
-        assert wr.graph_context == ""
         pb = _FakePromptBuilder()
 
-        wr2 = _reattach_graph_on_resume(wr, {"graphify_report_path": str(report)}, pb)
+        out = _reattach_graphify_on_resume(
+            {"graphify_report_path": str(report)}, pb
+        )
 
-        assert "# Graph" in wr2.graph_context
-        assert pb.graph_context == wr2.graph_context
-
-    def test_noop_when_already_has_context(self, tmp_path):
-        from worca.orchestrator.runner import _reattach_graph_on_resume
-        from worca.orchestrator.work_request import WorkRequest
-
-        report = tmp_path / "GRAPH_REPORT.md"
-        report.write_text("# NEW")
-        wr = WorkRequest(source_type="prompt", title="t", graph_context="# EXISTING")
-        pb = _FakePromptBuilder()
-
-        wr2 = _reattach_graph_on_resume(wr, {"graphify_report_path": str(report)}, pb)
-
-        assert wr2.graph_context == "# EXISTING"
-        assert pb.graph_context is None
+        # Returns the graphify/ dir (dirname of the report) → exported as
+        # GRAPHIFY_OUT for resumed agents; no report content is read.
+        assert out == str(graphify_dir)
+        assert pb.graphify_available is True
 
     def test_noop_when_no_report_path(self):
-        from worca.orchestrator.runner import _reattach_graph_on_resume
-        from worca.orchestrator.work_request import WorkRequest
+        from worca.orchestrator.runner import _reattach_graphify_on_resume
 
-        wr = WorkRequest(source_type="prompt", title="t")
         pb = _FakePromptBuilder()
-        wr2 = _reattach_graph_on_resume(wr, {}, pb)
-        assert wr2.graph_context == ""
-        assert pb.graph_context is None
+        out = _reattach_graphify_on_resume({}, pb)
+        assert out is None
+        assert pb.graphify_available is None
 
     def test_noop_when_report_missing_on_disk(self, tmp_path):
-        from worca.orchestrator.runner import _reattach_graph_on_resume
-        from worca.orchestrator.work_request import WorkRequest
+        from worca.orchestrator.runner import _reattach_graphify_on_resume
 
-        wr = WorkRequest(source_type="prompt", title="t")
         pb = _FakePromptBuilder()
-        wr2 = _reattach_graph_on_resume(
-            wr, {"graphify_report_path": str(tmp_path / "missing.md")}, pb
+        out = _reattach_graphify_on_resume(
+            {"graphify_report_path": str(tmp_path / "missing.md")}, pb
         )
-        assert wr2.graph_context == ""
-        assert pb.graph_context is None
+        assert out is None
+        assert pb.graphify_available is None

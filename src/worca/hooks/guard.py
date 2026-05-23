@@ -5,6 +5,7 @@ Exit code 0 = allow, exit code 2 = block (print reason to stderr).
 """
 import json
 import re
+import shlex
 import sys
 import os
 
@@ -194,6 +195,60 @@ def _is_file_write_via_bash(command: str) -> bool:
     return False
 
 
+# graphify subcommands that mutate state (build the graph, install hooks,
+# rewrite the consumer's config). The worca pipeline owns graph builds — it
+# runs `graphify update` itself at preflight as a detached subprocess that
+# never passes through this hook. Agents get the cached graph via the
+# GRAPHIFY_OUT env var and are restricted to read-only queries.
+_GRAPHIFY_MUTATION_VERBS = frozenset({
+    "update", "install", "uninstall", "add", "hook",
+    "merge-driver", "watch", "clone",
+})
+
+
+def _is_graphify_mutation(command: str) -> bool:
+    """Detect a mutating `graphify <verb>` invocation.
+
+    Read subcommands (query/explain/path/affected/diagnose) are allowed; only
+    the mutating verbs above are matched. Inspects the cd-stripped command so
+    the hook's ``cd <root> &&`` prefix doesn't hide the real invocation, and
+    matches on the first token after a ``graphify`` executable so a query whose
+    text mentions "update" (a later, quoted token) is not falsely flagged.
+    """
+    if _is_safe_command(command):
+        return False
+    actual = _extract_actual_command(command)
+    try:
+        tokens = shlex.split(actual)
+    except ValueError:
+        return False
+    for i, tok in enumerate(tokens):
+        if os.path.basename(tok) == "graphify" and i + 1 < len(tokens):
+            return tokens[i + 1] in _GRAPHIFY_MUTATION_VERBS
+    return False
+
+
+def _graphify_mutation_guard_enabled() -> bool:
+    """Whether the read-only graphify guard is active (default True).
+
+    Reads ``worca.governance.guards.block_graphify_mutation`` from the project
+    settings (resolved relative to the hook's cwd, which the pre_tool_use hook
+    pins to the project root). Defaults to True — and stays True on any read
+    error — so the guard is on unless a project explicitly opts out.
+    """
+    try:
+        from worca.utils.settings import load_settings
+        guards = (
+            load_settings(".claude/settings.json")
+            .get("worca", {})
+            .get("governance", {})
+            .get("guards", {})
+        )
+        return guards.get("block_graphify_mutation", True)
+    except Exception:
+        return True
+
+
 def check_guard(tool_name: str, tool_input: dict) -> tuple:
     """Check if tool use should be blocked.
 
@@ -215,6 +270,17 @@ def check_guard(tool_name: str, tool_input: dict) -> tuple:
     # Block force push
     if tool_name == "Bash" and _is_force_push(command):
         return (2, "Blocked: git push --force is not allowed.")
+
+    # Block mutating graphify subcommands (build/install/hook/etc.). Agents may
+    # only run read-only queries (query/explain/path/affected/diagnose); the
+    # worca pipeline owns graph builds. Role-independent, like the guards above.
+    if (tool_name == "Bash"
+            and _is_graphify_mutation(command)
+            and _graphify_mutation_guard_enabled()):
+        return (2, "Blocked: agents may only run read-only graphify queries "
+                   "(query/explain/path/affected/diagnose). graphify "
+                   "update/install/add and other mutations are reserved for "
+                   "the worca pipeline.")
 
     # Block WORCA_AGENT evasion attempts (unset / env -u / override).
     # Runs BEFORE role checks so the agent cannot first erase its identity

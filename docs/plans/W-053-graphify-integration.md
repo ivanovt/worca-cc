@@ -144,7 +144,33 @@ def run() -> dict:
 
 The runner records this status in the pipeline state and exposes it to downstream stages via the `WorkRequest` context.
 
-### 4. Pipeline implication — prompt injection
+### 4. Pipeline implication — agent consumption
+
+> **Update (query pivot — supersedes the static-injection design below).**
+> Agents no longer receive `GRAPH_REPORT.md` injected into their prompts. That
+> fed the *human-facing* artifact and contradicted graphify's intended use
+> (scoped `graphify query` over `graph.json`). The shipped model:
+>
+> - **Path delivery via env, not prompt.** When preflight resolves a `ready`
+>   snapshot, the runner exports `GRAPHIFY_OUT=<snapshot>/graphify` into every
+>   agent subprocess (`run_agent(..., graphify_out=…)`). graphify ≥0.8.16 honors
+>   it for *reads*, so a bare `graphify query "<q>"` hits the per-commit cache.
+> - **Behavior in the core agent `.md`** (`## Knowledge graph (advisory)`,
+>   static across all 8 pipeline agents); a one-line **availability note** in
+>   each `.block.md` gated on `{{#if has_graphify}}`. No report content, no
+>   graph path in any prompt.
+> - **Read-only guard.** The pre_tool_use hook blocks mutating graphify verbs
+>   (`update`/`install`/`add`/…) and allows reads (`query`/`explain`/`path`/
+>   `affected`/`diagnose`), gated by `worca.governance.guards.block_graphify_mutation`.
+>   The pipeline owns builds (preflight + post-guardian), run as detached
+>   subprocesses that never pass through the hook.
+> - Authority order: **guide > plan > graph > description** (unchanged intent;
+>   the graph is advisory orientation). The `attach_graph_report()` /
+>   `graph_context` / `has_graph` surface was removed.
+>
+> Build/cache machinery (preflight `graphify update`, content-addressed
+> snapshot, `.complete` marker, project-level enablement) is unchanged. Full
+> rationale: `docs/plans/W-053-followups-graphify-query-integration.md`.
 
 **Current state:** `src/worca/orchestrator/work_request.py:279-330` — `attach_guide()` reads guide files into `WorkRequest.guide_content`; per-stage block templates wrap it under `## Reference Guide (normative)` when `has_guide` is set.
 

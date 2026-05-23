@@ -1,8 +1,9 @@
-"""W-053 Phase 2 — full pipeline with graphify enabled (mode=structural).
+"""W-053 — full pipeline with graphify enabled (mode=structural).
 
 Asserts:
-- Preflight invokes mock graphify CLI (--update --no-llm)
-- Planner prompt contains graph section (## Codebase Structure)
+- Preflight invokes mock graphify CLI (`update <path>`)
+- Planner prompt carries the per-run availability note (NOT the static report)
+- The runner exports GRAPHIFY_OUT so an agent's `graphify query` reads the cache
 - Pipeline completes successfully
 - status.json records graphify_status=ready
 """
@@ -143,23 +144,80 @@ def test_graphify_preflight_invokes_mock_and_injects_graph(pipeline_env):
     assert status["pipeline_status"] == "completed"
     assert status.get("graphify_report_path")
 
-    # 4. The plan stage's rendered prompt (from plan.block.md) contains
-    #    the graph section. The rendered prompt is stored in the status.json
-    #    under stages.plan.prompt (written at runner.py:2221).
+    # 4. The plan stage's rendered prompt (from plan.block.md) carries the
+    #    per-run availability NOTE — not the static report block. Agents query
+    #    the graph on demand via GRAPHIFY_OUT; no report content is injected.
+    #    The rendered prompt is stored in status.json under stages.plan.prompt.
     plan_stage = status.get("stages", {}).get("plan", {})
     plan_prompt = plan_stage.get("prompt", "")
-    assert "## Codebase Structure (advisory)" in plan_prompt, (
-        f"Plan stage prompt missing graph section.\n"
+    assert "graphify query" in plan_prompt, (
+        f"Plan stage prompt missing graphify availability note.\n"
         f"graphify_report_path: {status.get('graphify_report_path')!r}\n"
         f"prompt preview:\n{plan_prompt[:1000]}"
     )
-    assert "Graph Report (mock)" in plan_prompt, (
-        "Plan stage prompt missing mock graph report content"
+    assert "code knowledge graph is preloaded" in plan_prompt
+    assert "## Codebase Structure" not in plan_prompt, (
+        "Static graph-report block must not be injected (W-053 query pivot)"
+    )
+    assert "Graph Report (mock)" not in plan_prompt, (
+        "Report content must not be injected into the prompt (W-053 query pivot)"
     )
 
 
 # ===========================================================================
-# 2. Pipeline completes identically when graphify disabled (regression guard)
+# 2. GRAPHIFY_OUT propagates to agents → `graphify query` reads the cache
+# ===========================================================================
+
+def _query_scenario() -> dict:
+    """Happy scenario where the planner issues a read-only `graphify query`.
+
+    The query runs in the planner's subprocess (which the runner spawned with
+    GRAPHIFY_OUT set), so it inherits that env and reads the per-commit cache.
+    """
+    return {
+        "agents": {
+            "planner": {
+                "action": "succeed", "delay_s": 0.05,
+                "run_command": 'graphify query "where is the entrypoint"',
+            },
+            "tester": _tester_pass(),
+            "reviewer": _review_approve(),
+        },
+        "default": {"action": "succeed", "delay_s": 0.05},
+    }
+
+
+def test_graphify_out_propagates_to_query_agent(pipeline_env):
+    """The runner exports GRAPHIFY_OUT into agent subprocesses so a bare
+    `graphify query` reads the per-commit cache snapshot, not ./graphify-out/."""
+    pipeline_env.enable_stages("preflight")
+    _enable_graphify_settings(pipeline_env, mode="structural")
+    log_path = pipeline_env.tmp_path / "mock_graphify_query.jsonl"
+
+    result = _run_pipeline_with_graphify(
+        pipeline_env, _query_scenario(), "graphify query propagation", log_path,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr[-2000:]}"
+
+    invocations = [
+        json.loads(line) for line in log_path.read_text().splitlines() if line.strip()
+    ]
+    query_calls = [i for i in invocations if "query" in i["argv"]]
+    assert query_calls, f"No `query` invocation found in {invocations}"
+
+    # The query inherited GRAPHIFY_OUT pointing at the per-commit cache snapshot
+    # (the graphify/ dir = dirname of the report path the preflight resolved).
+    worca_dir = pipeline_env.project / ".worca"
+    status = _find_latest_status(worca_dir)
+    expected_out = os.path.dirname(status["graphify_report_path"])
+    assert query_calls[0]["graphify_out"] == expected_out, (
+        f"query should read the cache via GRAPHIFY_OUT={expected_out!r}, "
+        f"got {query_calls[0]['graphify_out']!r}"
+    )
+
+
+# ===========================================================================
+# 3. Pipeline completes identically when graphify disabled (regression guard)
 # ===========================================================================
 
 def test_graphify_disabled_no_invocation(pipeline_env):

@@ -654,6 +654,42 @@ governance.dispatch.subagents: adopted new default (_defaults: ["*"]) for config
 governance.dispatch.skills.always_disallowed: narrowed legacy "worca-*" glob to the current must-disallow set
 ```
 
+### 0.35.x → 0.36.0
+
+W-053: Optional Graphify knowledge-graph integration (query-based agent consumption).
+
+**New feature — opt-in, off by default.** When `worca.graphify.enabled` is `true` (project-level), the Preflight stage builds a per-commit code knowledge graph (`graphify update`, content-addressed under `$WORCA_CACHE/ast/<repo-id>/<sha>/graphify/`) and pipeline agents query it on demand. With graphify disabled, pipeline behavior is byte-identical to before.
+
+**How agents consume it:**
+
+- Agents do **not** receive `GRAPH_REPORT.md` injected into their prompts. When a `ready` graph exists, the runner exports `GRAPHIFY_OUT=<snapshot>/graphify` into every agent subprocess, so a bare `graphify query "<question>"` reads the cached `graph.json`. Each stage prompt carries only a one-line availability note; the how-to-use guidance lives in each agent's core `.md` (`## Knowledge graph (advisory)`).
+- **Read-only guard:** the `pre_tool_use` hook blocks mutating graphify subcommands (`update`, `install`, `add`, …) and allows reads (`query`, `explain`, `path`, `affected`, `diagnose`). The pipeline owns graph builds.
+- `GRAPH_REPORT.md` is cached for humans only (surfaced in the UI Graphify tab with a copy-able query snippet).
+
+**Required tooling (only if you enable graphify):**
+
+- `uv tool install 'graphifyy>=0.8.16,<1'` — the PyPI package is `graphifyy` (double-y); the CLI it installs is `graphify`. Prefer `uv`/`pipx` over plain `pip` so the CLI lands on PATH. Worca pins `>=0.8.16` for the `update` command + `GRAPHIFY_OUT`-honoring reads.
+
+**New settings (additive):**
+
+```jsonc
+"worca": {
+  "graphify": {
+    "enabled": false,        // project-level opt-in
+    "mode": "structural"     // structural (fully local) | full (LLM semantic pass)
+  },
+  "governance": {
+    "guards": {
+      "block_graphify_mutation": true   // block agent-issued `graphify update/install/...`
+    }
+  }
+}
+```
+
+**No automatic migration required.** All changes are additive — `worca init --upgrade` merges the new defaults non-destructively. Graphify stays off unless a project sets `worca.graphify.enabled: true`.
+
+**Full reference:** [`docs/plans/W-053-graphify-integration.md`](./docs/plans/W-053-graphify-integration.md).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

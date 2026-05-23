@@ -1117,6 +1117,7 @@ def run_stage(
     agent_override: str = None,
     ctx: Optional[EventContext] = None,
     env_overrides: Optional[dict] = None,
+    graphify_out: Optional[str] = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -1133,6 +1134,9 @@ def run_stage(
             passed directly to the claude CLI.
         env_overrides: Extra env vars merged into model_env before passing to
             run_agent(). Used for CLAUDE_CODE_EFFORT_LEVEL injection.
+        graphify_out: When set, exported as GRAPHIFY_OUT in the agent
+            subprocess so on-demand `graphify query` reads the per-commit
+            cache snapshot. Resolved at preflight when the graph is ready.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
@@ -1168,6 +1172,7 @@ def run_stage(
         model_env=merged_env,
         log_path=log_path,
         on_event=on_event,
+        graphify_out=graphify_out,
     )
     # claude CLI returns a JSON envelope; extract structured_output if present
     if isinstance(raw, dict) and raw.get("structured_output"):
@@ -1318,24 +1323,23 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
     return PRVerification(ok=True, reason="")
 
 
-def _reattach_graph_on_resume(work_request, status, prompt_builder):
-    """Re-attach the graphify report when resuming past PREFLIGHT.
+def _reattach_graphify_on_resume(status, prompt_builder):
+    """Re-flag graphify availability when resuming past PREFLIGHT.
 
-    ``attach_graph_report()`` only runs inside the PREFLIGHT stage handler,
-    which is skipped on resume — so a resumed run would otherwise lose the
-    advisory graph context that a fresh run gets. The report path was persisted
-    in ``status['graphify_report_path']`` at the original preflight. Returns the
-    (possibly updated) work_request.
+    The PREFLIGHT handler that flips ``has_graphify`` and resolves the
+    ``GRAPHIFY_OUT`` dir is skipped on resume, so a resumed run would otherwise
+    lose on-demand graph access. The report path persisted in
+    ``status['graphify_report_path']`` at the original preflight identifies the
+    snapshot's ``graphify/`` directory. Returns that directory (the value to
+    export as ``GRAPHIFY_OUT`` for subsequent agents) when a ready snapshot
+    still exists on disk, else None.
     """
-    if work_request.graph_context:
-        return work_request
     report_path = status.get("graphify_report_path")
     if report_path and os.path.isfile(report_path):
-        from worca.orchestrator.work_request import attach_graph_report
-        work_request = attach_graph_report(work_request, report_path)
-        prompt_builder.set_graph_context(work_request.graph_context)
-        _log("Resume: re-attached graphify report context")
-    return work_request
+        prompt_builder.set_graphify_available(True)
+        _log("Resume: re-flagged graphify availability")
+        return os.path.dirname(report_path)
+    return None
 
 
 def _maybe_graphify_post_guardian(
@@ -1908,8 +1912,11 @@ def run_pipeline(
             template_agents_dir=_pb_template_agents_dir,
             run_dir=run_dir,
             work_request_guide_content=work_request.guide_content,
-            work_request_graph_context=work_request.graph_context,
         )
+        # Resolved <snapshot>/graphify dir exported as GRAPHIFY_OUT to each
+        # post-preflight agent when the graph is ready. Set at PREFLIGHT (fresh
+        # runs) or by _reattach_graphify_on_resume (resumed runs).
+        _graphify_out: Optional[str] = None
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
             _backfilled = backfill_prompt_context(prompt_builder, status, logs_dir)
@@ -1920,11 +1927,9 @@ def run_pipeline(
             resumed_beads = prompt_builder.get_context("beads_ids")
             if resumed_beads:
                 max_beads = len(resumed_beads)
-            # Re-attach the graph report on resume — attach_graph_report() only
-            # runs in the PREFLIGHT handler, which is skipped on resume.
-            work_request = _reattach_graph_on_resume(
-                work_request, status, prompt_builder
-            )
+            # Re-flag graphify availability on resume — the PREFLIGHT handler
+            # that sets has_graphify + GRAPHIFY_OUT is skipped on resume.
+            _graphify_out = _reattach_graphify_on_resume(status, prompt_builder)
 
         # Transition pipeline to running state
         status["pipeline_status"] = PipelineStatus.RUNNING
@@ -2363,6 +2368,7 @@ def run_pipeline(
                         agent_override=_agent_override,
                         ctx=ctx,
                         env_overrides=_effort_env_overrides,
+                        graphify_out=_graphify_out,
                     )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
@@ -2624,9 +2630,10 @@ def run_pipeline(
                     _pf_stage_extras["graphify_report_path"] = result["graphify_report_path"]
                     _rp = result["graphify_report_path"]
                     if os.path.isfile(_rp):
-                        from worca.orchestrator.work_request import attach_graph_report
-                        work_request = attach_graph_report(work_request, _rp)
-                        prompt_builder.set_graph_context(work_request.graph_context)
+                        # Agents query the graph on demand via GRAPHIFY_OUT; the
+                        # prompt only carries a per-run availability note.
+                        _graphify_out = os.path.dirname(_rp)
+                        prompt_builder.set_graphify_available(True)
                 update_stage(status, current_stage.value, **_pf_stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:

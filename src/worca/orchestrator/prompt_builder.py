@@ -27,12 +27,11 @@ class PromptBuilder:
                  master_plan_path: str = "MASTER_PLAN.md",
                  resolver=None, core_dir: str = None,
                  template_agents_dir: str = None, run_dir: str = None,
-                 work_request_guide_content: str = "",
-                 work_request_graph_context: str = ""):
+                 work_request_guide_content: str = ""):
         self._title = work_request_title
         self._description = work_request_description or work_request_title
         self._guide_content = work_request_guide_content
-        self._graph_context = work_request_graph_context
+        self._graphify_available = False
         self._context: dict = {}
         self._context_path = context_path
         self._claude_md_content = self._read_claude_md(claude_md_path)
@@ -53,13 +52,16 @@ class PromptBuilder:
             pass
         return ""
 
-    def set_graph_context(self, graph_context: str) -> None:
-        """Set the advisory codebase-structure block (GRAPH_REPORT.md).
+    def set_graphify_available(self, available: bool) -> None:
+        """Flag whether a queryable code knowledge graph is available this run.
 
-        Used after PREFLIGHT attaches the graph report, and again on resume
-        when the PREFLIGHT handler is skipped.
+        Set True after PREFLIGHT resolves a ready snapshot, and again on resume
+        when the PREFLIGHT handler is skipped. Agents query the graph on demand
+        via the ``GRAPHIFY_OUT`` env var the runner injects — no report content
+        is carried in the prompt; this only toggles the per-run availability
+        note exposed as ``has_graphify``.
         """
-        self._graph_context = graph_context
+        self._graphify_available = bool(available)
 
     def update_context(self, key: str, value) -> None:
         """Store inter-stage output for use in downstream prompts."""
@@ -164,8 +166,7 @@ class PromptBuilder:
         ctx["assigned_task"] = self._assigned_task_body()
         ctx["guide_content"] = self._guide_content
         ctx["has_guide"] = bool(self._guide_content)
-        ctx["graph_context"] = self._graph_context
-        ctx["has_graph"] = bool(self._graph_context)
+        ctx["has_graphify"] = self._graphify_available
         self._apply_stage_context(stage, iteration, ctx)
         return ctx
 

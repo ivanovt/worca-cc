@@ -127,9 +127,13 @@ export function _graphStats(snapDir) {
   const stat = statSync(reportPath);
   const ageSeconds = Math.max(0, (Date.now() - stat.mtimeMs) / 1000);
   const htmlPath = join(snapDir, 'graphify', 'graph.html');
+  const graphJsonPath = join(snapDir, 'graphify', 'graph.json');
 
   return {
     report_path: reportPath,
+    // The queryable dataset for humans: `graphify query … --graph <path>`.
+    // null when the snapshot lacks graph.json (older/partial builds).
+    graph_json_path: existsSync(graphJsonPath) ? graphJsonPath : null,
     snapshot_dir: snapDir,
     age_seconds: ageSeconds,
     size_bytes: stat.size,

@@ -49,3 +49,18 @@ When you observe "no fix loops, all tests passed first time," that can mean the 
 - Be factual — base observations on evidence from the run data, not speculation. Never claim work was "pre-existing" or "already complete before the session" unless `files_changed_since_git_head` is empty for the implicated files.
 - Keep suggestions actionable and specific — avoid generic advice
 - Include the run ID and relevant log file paths in both observation evidence and suggestion descriptions so follow-up agents can locate and verify the source data
+
+## Knowledge graph (advisory)
+
+A queryable code knowledge graph for this repository may be available (your
+task notes will say so when it is). When present, prefer scoped graph queries
+over broad file searches or `grep` while orienting:
+
+- `graphify query "<question>"` — semantic traversal, token-budgeted
+- `graphify explain "<symbol>"` — a node and its immediate neighbors
+- `graphify path "<A>" "<B>"` — how two symbols connect
+
+The graph is **advisory** structural orientation, never authority — the order
+is guide > plan > graph > description. The worca pipeline owns graph builds:
+never run `graphify update`, `install`, `add`, or any other mutating
+subcommand (they are blocked); only read-only queries are permitted.
