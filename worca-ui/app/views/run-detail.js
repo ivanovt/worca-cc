@@ -409,9 +409,31 @@ function _effortTooltip(effort) {
   return parts.join(' · ');
 }
 
-function _effortRowView(iter) {
+// Per-iteration read-only graphify query count, shown on the effort row.
+// Only agent iterations carry `graphify_invocations` (preflight never does).
+// When graphify is off for the project, show a plain "(disabled)" value
+// matching the skills/subagents empty style — not a badge. When enabled, an
+// integer badge: blue (primary) when the agent actually queried, grey for 0.
+function _graphifyBadge(iter, graphifyEnabled) {
+  if (iter.graphify_invocations == null) return nothing;
+  if (graphifyEnabled !== true) {
+    return html`<span class="meta-label">Graphify:</span> <span class="dispatch-events-empty">(disabled)</span>`;
+  }
+  const count = iter.graphify_invocations;
+  const variant = count > 0 ? 'primary' : 'neutral';
+  return html`<span class="meta-label">Graphify:</span> <sl-badge class="graphify-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
+}
+
+function _effortRowView(iter, graphifyEnabled) {
+  const gfx = _graphifyBadge(iter, graphifyEnabled);
   const e = iter.effort;
-  if (!e) return nothing;
+  if (!e) {
+    // No effort recorded (e.g. effort disabled) — still surface the graphify
+    // badge on its own row so agent iterations consistently show it.
+    return gfx === nothing
+      ? nothing
+      : html`<div class="iteration-tags-row">${gfx}</div>`;
+  }
   const levelText = e.level ?? '-';
   const variant = e.level ? _effortLevelVariant(e.level) : 'neutral';
   const sourceLabel = _effortSourceLabel(e.source);
@@ -433,6 +455,10 @@ function _effortRowView(iter) {
   const divergenceLabel =
     bc?.skip_reason === 'explicit_override' ? 'overridden' : 'ignored';
 
+  const gfxTail =
+    gfx === nothing
+      ? nothing
+      : html`<span class="iteration-tags-sep">·</span>${gfx}`;
   return html`
     <div class="iteration-tags-row" title="${tooltip}">
       <span class="meta-label">Effort:</span>
@@ -440,6 +466,7 @@ function _effortRowView(iter) {
       <sl-badge class="effort-source-chip" variant="neutral" pill>${sourceLabel}</sl-badge>
       ${escalationChips}
       ${cappedChip}
+      ${gfxTail}
     </div>
     ${
       showBeadRow
@@ -846,7 +873,13 @@ function timingStripView(startedAt, completedAt, extra = nothing) {
   `;
 }
 
-function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
+function _iterationDetailView(
+  iter,
+  stageKey,
+  stageAgent,
+  promptData,
+  graphifyEnabled,
+) {
   const agentName = iter.agent || stageAgent || stageKey;
   const model = iter.model || '';
   const iterNum = iter.number ?? 0;
@@ -881,7 +914,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
       `
           : nothing
       }
-      ${_effortRowView(iter)}
+      ${_effortRowView(iter, graphifyEnabled)}
       ${_classificationRowView(iter)}
       ${_dispatchEventsRowsView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
@@ -1378,7 +1411,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                         ${iterations.map(
                           (iter) => html`
                           <sl-tab-panel name="iter-${key}-${iter.number}">
-                            ${_iterationDetailView(iter, key, stageAgent, promptData)}
+                            ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled)}
                           </sl-tab-panel>
                         `,
                         )}
@@ -1411,7 +1444,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       }
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
-                      ${iterations.length === 1 ? _effortRowView(iterations[0]) : nothing}
+                      ${iterations.length === 1 ? _effortRowView(iterations[0], run.graphify_enabled) : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}

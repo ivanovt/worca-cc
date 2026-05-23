@@ -143,6 +143,12 @@ def test_graphify_preflight_invokes_mock_and_injects_graph(pipeline_env):
     assert status.get("graphify_status") == "ready"
     assert status["pipeline_status"] == "completed"
     assert status.get("graphify_report_path")
+    # Run-level enablement + per-iteration invocation count drive the UI badge.
+    assert status.get("graphify_enabled") is True
+    _plan_iters = status.get("stages", {}).get("plan", {}).get("iterations", [])
+    assert _plan_iters and "graphify_invocations" in _plan_iters[0], (
+        "agent-stage iterations must record graphify_invocations"
+    )
 
     # 4. The plan stage's rendered prompt (from plan.block.md) carries the
     #    per-run availability NOTE — not the static report block. Agents query
@@ -242,3 +248,4 @@ def test_graphify_disabled_no_invocation(pipeline_env):
     status = _find_latest_status(worca_dir)
     assert status["pipeline_status"] == "completed"
     assert status.get("graphify_status") in (None, "skipped")
+    assert not status.get("graphify_enabled")

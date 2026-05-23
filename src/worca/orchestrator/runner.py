@@ -9,6 +9,7 @@ import dataclasses
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -1018,6 +1019,30 @@ def _is_agent_telemetry_enabled(settings_path: str) -> bool:
         return True
 
 
+_GRAPHIFY_READ_VERBS = frozenset({"query", "explain", "path", "affected", "diagnose"})
+
+
+def _is_graphify_read_query(command: str) -> bool:
+    """True if a Bash command invokes a read-only graphify subcommand.
+
+    Counted per iteration for the run-detail "Graphify" badge. Mirrors the
+    guard's parsing (strips a leading ``cd … &&`` and matches the first token
+    after a ``graphify`` executable) but matches the *read* verbs, not the
+    blocked mutating ones.
+    """
+    if not command:
+        return False
+    actual = command.split("&&", 1)[1].strip() if "&&" in command else command.strip()
+    try:
+        tokens = shlex.split(actual)
+    except ValueError:
+        return False
+    for i, tok in enumerate(tokens):
+        if os.path.basename(tok) == "graphify" and i + 1 < len(tokens):
+            return tokens[i + 1] in _GRAPHIFY_READ_VERBS
+    return False
+
+
 def _make_agent_event_handler(
     ctx: Optional[EventContext],
     stage: Stage,
@@ -1157,7 +1182,27 @@ def run_stage(
     log_dir = os.path.join(logs_dir, stage.value)
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"iter-{iteration}.log")
-    on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
+    _telemetry_on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
+    # Count read-only graphify queries this iteration, independent of telemetry,
+    # for the run-detail "Graphify" badge. Wraps (not replaces) the telemetry
+    # handler so disabling agent_telemetry doesn't zero the count.
+    _gfx_metrics = {"graphify_invocations": 0}
+
+    def _on_event(event):
+        if event.get("type") == "assistant":
+            for _block in event.get("message", {}).get("content", []) or []:
+                if _block.get("type") == "tool_use" and _block.get("name") == "Bash":
+                    if _is_graphify_read_query((_block.get("input") or {}).get("command", "")):
+                        _gfx_metrics["graphify_invocations"] += 1
+        if _telemetry_on_event is not None:
+            _telemetry_on_event(event)
+
+    # Wire the counting wrapper only when there's an event context (always true
+    # in real runs, where run_dir/events.jsonl exist); without ctx we preserve
+    # the historical "no on_event handler" contract — and there's no
+    # status.json to record a count into anyway.
+    on_event = _on_event if ctx is not None else None
+
     agent = agent_override if agent_override is not None else _agent_path(config["agent"], run_dir=run_dir)
     merged_env = dict(config.get("model_env") or {})
     if env_overrides:
@@ -1174,8 +1219,12 @@ def run_stage(
         on_event=on_event,
         graphify_out=graphify_out,
     )
-    # claude CLI returns a JSON envelope; extract structured_output if present
+    _gfx = _gfx_metrics["graphify_invocations"]
+    # The per-iteration graphify count rides on the *envelope* (2nd return),
+    # never on the structured result, so it can't pollute the agent's output.
+    # claude CLI returns a JSON envelope; extract structured_output if present.
     if isinstance(raw, dict) and raw.get("structured_output"):
+        raw["graphify_invocations"] = _gfx
         return raw["structured_output"], raw
     # Fallback for stages whose agent occasionally returns prose instead of
     # JSON. Currently only Guardian (PR stage) — its prompt was rewritten to
@@ -1185,7 +1234,12 @@ def run_stage(
     if stage == Stage.PR and isinstance(raw, dict):
         recovered = _extract_pr_fields_from_text(raw.get("result"))
         if recovered:
+            raw["graphify_invocations"] = _gfx
             return recovered, raw
+    # Generic fallback: result == envelope here, so attach the count to a copy
+    # for the envelope and leave the returned result dict untouched.
+    if isinstance(raw, dict):
+        return raw, {**raw, "graphify_invocations": _gfx}
     return raw, raw
 
 
@@ -2588,6 +2642,10 @@ def run_pipeline(
                     iter_extras["turns"] = raw_envelope["num_turns"]
                 if raw_envelope.get("total_cost_usd"):
                     iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
+                # Per-iteration read-only graphify query count (drives the
+                # run-detail "Graphify" badge). Recorded for every agent stage,
+                # 0 when none — preflight (no agent) never sets it.
+                iter_extras["graphify_invocations"] = raw_envelope.get("graphify_invocations", 0)
             if usage:
                 iter_extras["token_usage"] = usage
             iter_extras["prompt"] = rendered_prompt
@@ -2622,6 +2680,15 @@ def run_pipeline(
                 iter_extras.setdefault("duration_api_ms", 0)
                 complete_iteration(status, current_stage.value, **iter_extras)
                 _pf_stage_extras = {**stage_extras, "skipped": preflight_skipped}
+                # Run-level graphify enablement (single source of truth for the
+                # UI: drives "(disabled)" vs an integer invocation count).
+                try:
+                    _gfx_cfg = effective_graphify_config(
+                        load_global_settings(), load_settings(settings_path)
+                    )
+                    status["graphify_enabled"] = bool(_gfx_cfg.enabled)
+                except Exception:
+                    status["graphify_enabled"] = False
                 if result.get("graphify_status"):
                     status["graphify_status"] = result["graphify_status"]
                     _pf_stage_extras["graphify_status"] = result["graphify_status"]
