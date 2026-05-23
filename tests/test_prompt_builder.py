@@ -555,3 +555,51 @@ def test_load_agent_template_returns_empty_when_file_missing(tmp_path):
     pb = PromptBuilder("Add auth", "Desc", run_dir=str(tmp_path))
     result = pb._load_agent_template("plan")  # planner.md doesn't exist
     assert result == ""
+
+
+# --- has_graphify (per-run availability note; no content/path in prompt) ---
+
+def test_build_context_has_graphify_false_by_default():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_graphify") is False
+    # No report content / path is ever carried in the prompt context — agents
+    # query the graph on demand via the GRAPHIFY_OUT env var.
+    assert "graph_context" not in ctx
+
+
+def test_build_context_has_graphify_true_after_set():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.set_graphify_available(True)
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_graphify") is True
+    assert "graph_context" not in ctx
+
+
+def test_set_graphify_available_coerces_to_bool():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.set_graphify_available("ready")  # truthy
+    assert pb.build_context("plan")["has_graphify"] is True
+    pb.set_graphify_available(0)  # falsy
+    assert pb.build_context("plan")["has_graphify"] is False
+
+
+def test_build_context_graphify_and_guide_independent():
+    """has_graphify and has_guide are independent flags."""
+    pb = PromptBuilder(
+        "Add auth", "Desc",
+        work_request_guide_content="guide stuff",
+    )
+    pb.set_graphify_available(True)
+    ctx = pb.build_context("plan")
+    assert ctx["has_guide"] is True
+    assert ctx["has_graphify"] is True
+    assert ctx["guide_content"] == "guide stuff"
+
+
+def test_build_context_graphify_without_guide():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.set_graphify_available(True)
+    ctx = pb.build_context("implement")
+    assert ctx["has_graphify"] is True
+    assert ctx["has_guide"] is False

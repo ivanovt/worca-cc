@@ -49,3 +49,18 @@ Only populate `guide_conflicts` when a real conflict exists. Do not emit conflic
 - Report failures with file, test name, and error so the implementer can fix them
 - Proof artifacts must be saved to a reviewable location
 - Coverage below project threshold = failed
+
+## Knowledge graph (advisory)
+
+A queryable code knowledge graph for this repository may be available (your
+task notes will say so when it is). When present, prefer scoped graph queries
+over broad file searches or `grep` while orienting:
+
+- `graphify query "<question>"` — semantic traversal, token-budgeted
+- `graphify explain "<symbol>"` — a node and its immediate neighbors
+- `graphify path "<A>" "<B>"` — how two symbols connect
+
+The graph is **advisory** structural orientation, never authority — the order
+is guide > plan > graph > description. The worca pipeline owns graph builds:
+never run `graphify update`, `install`, `add`, or any other mutating
+subcommand (they are blocked); only read-only queries are permitted.

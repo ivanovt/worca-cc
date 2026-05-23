@@ -389,6 +389,7 @@ def run_agent(
     log_path: Optional[str] = None,
     on_event: Optional[Callable[[dict], None]] = None,
     settings: Optional[dict] = None,
+    graphify_out: Optional[str] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -402,6 +403,11 @@ def run_agent(
         model: Model shorthand or full ID to pass via --model flag.
         log_path: If provided, write human-readable event summaries to this file.
         on_event: Optional callback invoked for each stream-json event.
+        graphify_out: When set, exported as ``GRAPHIFY_OUT`` in the agent
+            subprocess so a bare ``graphify query`` reads the per-commit cache
+            snapshot (graphify >=0.8.16 honors it for reads). The runner passes
+            the resolved ``<snapshot>/graphify`` dir when the preflight graph is
+            ready; None leaves the env untouched.
 
     Raises RuntimeError on subprocess failure or missing result.
     """
@@ -426,9 +432,16 @@ def run_agent(
             file=sys.stderr,
         )
 
+    agent_env = get_env(WORCA_AGENT=agent_name, **safe_env)
+    if graphify_out:
+        # Set outside filter_model_env so it's never stripped (GRAPHIFY_OUT is
+        # not a reserved key). graphify honors it for reads, so the agent's
+        # bare `graphify query` hits the per-commit cache, not ./graphify-out/.
+        agent_env["GRAPHIFY_OUT"] = graphify_out
+
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, env=get_env(WORCA_AGENT=agent_name, **safe_env), start_new_session=True,
+        text=True, env=agent_env, start_new_session=True,
     )
 
     with _proc_lock:

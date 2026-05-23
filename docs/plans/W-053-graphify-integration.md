@@ -1,9 +1,9 @@
 # W-053: Optional Graphify Knowledge-Graph Integration
 
-**Status:** Draft
+**Status:** Implemented on the W-053 PR. Build/cache machinery shipped as designed; **agent consumption is query-based, not static-injection** — see [Update (shipped): query-based agent consumption](#update-shipped-query-based-agent-consumption), which supersedes the Proposal's "inject GRAPH_REPORT.md" model and §4.
 **Priority:** P3
 **Area:** cc + ui
-**Date:** 2026-05-17
+**Date:** 2026-05-17 (updated 2026-05-23 — query pivot)
 **Depends on:** None (composes cleanly on top of W-051 model profiles)
 
 ## Problem
@@ -16,13 +16,61 @@ User-facing impact today: pipelines burn Opus tokens on orientation work that ha
 
 ## Proposal
 
-Add an **optional, three-state Graphify integration** controlled by a two-tier toggle (global + per-project) plus runtime detection. The integration rides on Graphify's existing PreToolUse hook (no changes to worca's `--disallowedTools`) and Bash invocations (also unrestricted), and injects `GRAPH_REPORT.md` into agent prompts via the same `attach_guide()` mechanism used today for normative reference material (`src/worca/orchestrator/work_request.py:279`). Three modes:
+Add an **optional, three-state Graphify integration** controlled by a two-tier toggle (global + per-project) plus runtime detection. worca builds a per-commit knowledge graph at preflight; agents then **query it on demand** via `graphify query`, with the cached graph delivered through the `GRAPHIFY_OUT` env var the runner injects (see [Update (shipped)](#update-shipped-query-based-agent-consumption) — the originally-planned static `GRAPH_REPORT.md` prompt injection was dropped). Three modes:
 
 - `disabled` (default): nothing happens, Graphify need not be installed.
-- `structural` (recommended when enabled): runs `graphify build --no-llm` — AST + clustering only, **zero outbound LLM calls**, fully local. Captures call graphs, inline `# WHY:`/`# NOTE:` rationale, and Leiden communities. Preserves worca's existing privacy posture verbatim.
-- `full`: runs `graphify build` with semantic pass over Markdown/PDFs/images — adds INFERRED edges, design-rationale linkage from `docs/plans/*.md`, and vision-pass over diagrams. Opt-in, with a privacy notice on first enable.
+- `structural` (recommended when enabled): runs `graphify update .` with no provider key — AST + clustering only, **zero outbound LLM calls**, fully local. Captures call graphs, inline `# WHY:`/`# NOTE:` rationale, and Leiden communities. Preserves worca's existing privacy posture verbatim.
+- `full`: runs the same `graphify update .` with a provider key (e.g. `GEMINI_API_KEY`, injected via `model_profile`) so graphify's semantic pass over Markdown/PDFs/images runs — adds INFERRED edges, design-rationale linkage from `docs/plans/*.md`, and vision-pass over diagrams. Opt-in, with a privacy notice on first enable. (The real graphifyy CLI has no `build`/`--no-llm`; the LLM pass is key-driven, not flag-driven.)
 
-Global is a **hard kill-switch** (project-level cannot override `false` global). Worca gracefully degrades when Graphify is enabled but missing/incompatible — pipelines never fail because of Graphify; they just lose the optimization.
+Enablement is **project-level**: a project opts in via `worca.graphify.enabled: true`. Global `enabled` is only an **explicit kill-switch** — an explicit global `false` disables graphify everywhere (admin / fleet / security lever); `true` or unset both defer to the project, which must opt in. (Earlier revisions made global a hard gate where unset == off and projects inherited global `true`; that was changed because it blocked simple per-project enablement.) Worca gracefully degrades when Graphify is enabled but missing/incompatible — pipelines never fail because of Graphify; they just lose the optimization.
+
+## Update (shipped): query-based agent consumption
+
+> **This supersedes the static `GRAPH_REPORT.md` prompt-injection model in the Proposal above and in §4.** The **build + cache** machinery (§3, §7, §8) shipped as designed; only how *agents consume* the graph changed. Originally drafted as a separate follow-up (`docs/plans/W-053-followups-graphify-query-integration.md`) and folded in here.
+
+### Why we changed direction (verified against graphifyy 0.8.16)
+
+The first cut injected `GRAPH_REPORT.md` into every stage prompt as a `## Codebase Structure (advisory)` block. Three findings made that the wrong model:
+
+1. **Wrong artifact.** graphify's README prefers scoped `graphify query "<q>"` over reading the full report. `GRAPH_REPORT.md` is the *human* artifact; `graph.json` is the queryable *agent* surface. Static injection wasted graphify's token-reduction pitch (its core value) and shipped ~32 KB of report into every prompt.
+2. **`GRAPHIFY_OUT` redirects reads, not just writes.** A bare `graphify query` with `GRAPHIFY_OUT` set reads that cached graph — identical to passing `--graph <path>`. This is the clean path-delivery seam.
+3. **Bare queries can't self-discover our cache.** Default discovery is `<cwd>/graphify-out/graph.json` (which we deliberately don't write) and the `~/.graphify` global registry is empty — so the graph path must be delivered out-of-band (the env var), not left to discovery or baked into the prompt.
+
+### Decisions of record
+
+- **D1 — Pure query.** Drop static report injection entirely. Agents query on demand; no report content and no graph path in any prompt.
+- **D2 — All 8 pipeline agents** receive the behavioral guidance (planner, plan_reviewer, coordinator, implementer, tester, reviewer, guardian, learner).
+- **D3 — Path via `GRAPHIFY_OUT` env, injected by the runner** into each agent subprocess when the preflight graph is `ready` (`run_agent(..., graphify_out=…)`). *Not* `--graph` in the prompt; *not* a graphify-installed hook.
+- **D4 — Read-only mutation guard** is the pre_tool hook's only graphify role: allow `query`/`explain`/`path`/`affected`/`diagnose`; block `update`/`install`/`uninstall`/`add`/`hook`/`merge-driver`/`watch`/`clone`. Gated by `worca.governance.guards.block_graphify_mutation` (default `true`).
+- **D5 — No `graphify install`, no `CLAUDE.md` mutation, no graphify-native hook.** worca owns the integration end-to-end.
+- **D6 — Prompt split:** behavioral guidance lives in each agent's **core `.md`** (`## Knowledge graph (advisory)`, static, self-gating); the per-run availability **note** lives in the `.block.md` (`{{#if has_graphify}}`). No path or content in either.
+- **D7 — `has_graph` / `graph_context` / `attach_graph_report()` removed**, replaced by `has_graphify` + `PromptBuilder.set_graphify_available(bool)`.
+- **D8 — Version floor `>=0.8.16,<1`** pins the `update` command + `GRAPHIFY_OUT`-honoring-reads behavior the design relies on.
+- **D9 — UI:** the Graphify tab surfaces the resolved `graph.json` path + a copy-able `graphify query "<question>" --graph <path>` snippet (humans don't get `GRAPHIFY_OUT` in their shell).
+- **D10 — Build/cache machinery unchanged** (preflight `graphify update`, per-commit content-addressed snapshot under `$WORCA_CACHE/ast/<repo-id>/<sha>/graphify/`, `.complete` marker, project-level enablement). Only consumption changed.
+
+### What stays vs. changes
+
+| Area | Stays | Changes |
+|---|---|---|
+| Preflight build, per-commit cache, `.complete` marker | ✅ | — |
+| Enablement / version floor / project-aware UI endpoints | ✅ | — |
+| Agent prompt content | — | report dump → behavior (core md) + one-line availability note (block) |
+| Path delivery | — | new: `GRAPHIFY_OUT` exported into each agent subprocess env |
+| pre_tool hook | cwd-fix + existing guards | new: read-only graphify mutation guard |
+| `GRAPH_REPORT.md` | still built & cached | now **human/UI only**, never injected into agents |
+| `graph.json` | built & cached | now the **agent** surface, reached via `graphify query` |
+
+### Observability
+
+At preflight, when the graph is `ready`, the runner logs:
+`Graphify: ready — agents query the cached graph via GRAPHIFY_OUT=<snapshot>/graphify`.
+
+### Validated end-to-end
+
+- The live pre_tool hook blocks mutating graphify verbs (exit 2, clear reason) and allows read verbs — confirmed with agent identity set, respecting the `cd` prefix, without false-flagging a query that merely mentions "update".
+- On a real pipeline run against a large (~138-file) project, an agent **organically** issued `graphify query` (no prompt nudge) and read the per-commit cache via the injected `GRAPHIFY_OUT`. On tiny repos agents still read files directly — the graph's payoff scales with repo size; the deferred **nudge hook** (Out of Scope) addresses determinism if needed.
+- **Indexing scope gotcha:** graphify scans the working tree and honors `.gitignore`, but has no `--exclude` flag. worca's own runtime under `.claude/` (e.g. `settings.json` exploding into config-key nodes) can dominate and *hijack* queries. Consumer projects should `.gitignore` `.claude/` (and worktree dirs) so the graph reflects project source — worth a `worca init` follow-up.
 
 ## Design
 
@@ -69,7 +117,7 @@ effective = (global.enabled === true) && (project.enabled ?? global.enabled)
           : { enabled: false, reason: "<global-off|project-off|inherit-off>" }
 ```
 
-The asymmetric semantics (global=false is a hard kill-switch) is intentional and matches worca's governance posture — one place to disable everything for security-conscious users.
+The semantics are: enablement is project-level (the project must opt in), while an *explicit* global `false` is a kill-switch that disables everything — one place to turn graphify off for security-conscious users / fleet runs, without forcing every project to enable through a global gate.
 
 ### 2. Detection layer
 
@@ -144,7 +192,33 @@ def run() -> dict:
 
 The runner records this status in the pipeline state and exposes it to downstream stages via the `WorkRequest` context.
 
-### 4. Pipeline implication — prompt injection
+### 4. Pipeline implication — agent consumption
+
+> **Update (query pivot — supersedes the static-injection design below).**
+> Agents no longer receive `GRAPH_REPORT.md` injected into their prompts. That
+> fed the *human-facing* artifact and contradicted graphify's intended use
+> (scoped `graphify query` over `graph.json`). The shipped model:
+>
+> - **Path delivery via env, not prompt.** When preflight resolves a `ready`
+>   snapshot, the runner exports `GRAPHIFY_OUT=<snapshot>/graphify` into every
+>   agent subprocess (`run_agent(..., graphify_out=…)`). graphify ≥0.8.16 honors
+>   it for *reads*, so a bare `graphify query "<q>"` hits the per-commit cache.
+> - **Behavior in the core agent `.md`** (`## Knowledge graph (advisory)`,
+>   static across all 8 pipeline agents); a one-line **availability note** in
+>   each `.block.md` gated on `{{#if has_graphify}}`. No report content, no
+>   graph path in any prompt.
+> - **Read-only guard.** The pre_tool_use hook blocks mutating graphify verbs
+>   (`update`/`install`/`add`/…) and allows reads (`query`/`explain`/`path`/
+>   `affected`/`diagnose`), gated by `worca.governance.guards.block_graphify_mutation`.
+>   The pipeline owns builds (preflight + post-guardian), run as detached
+>   subprocesses that never pass through the hook.
+> - Authority order: **guide > plan > graph > description** (unchanged intent;
+>   the graph is advisory orientation). The `attach_graph_report()` /
+>   `graph_context` / `has_graph` surface was removed.
+>
+> Build/cache machinery (preflight `graphify update`, content-addressed
+> snapshot, `.complete` marker, project-level enablement) is unchanged. Full
+> rationale: `docs/plans/W-053-followups-graphify-query-integration.md`.
 
 **Current state:** `src/worca/orchestrator/work_request.py:279-330` — `attach_guide()` reads guide files into `WorkRequest.guide_content`; per-stage block templates wrap it under `## Reference Guide (normative)` when `has_guide` is set.
 
@@ -425,8 +499,9 @@ Reserved-env-var denylist from W-051 applies — `WORCA_*`, `PATH`, `CLAUDECODE`
 |-------|------|-----------|
 | Python | `test_detect_graphify_missing` | Returns `installed=False` when CLI not on PATH |
 | Python | `test_detect_graphify_version_mismatch` | Returns `compatible=False` when version outside range |
-| Python | `test_effective_config_global_off_project_on` | Global=false hard kill-switches project=true |
-| Python | `test_effective_config_inherit` | Project `enabled=null` inherits global |
+| Python | `test_effective_config_global_off_project_on` | Explicit global=false kill-switches project=true |
+| Python | `test_global_unset_project_on_enables` | Unset global + project=true enables (no global gate) |
+| Python | `test_global_on_project_unset_requires_opt_in` | Global=true does not auto-enable; project must opt in |
 | Python | `test_attach_graph_report_truncation` | Long reports truncated at max_bytes with marker |
 | Python | `test_attach_graph_report_authority_below_guide` | Guide content rendered before graph context |
 | Python | `test_graphify_preflight_no_op_when_disabled` | Returns `skipped` without subprocess call |

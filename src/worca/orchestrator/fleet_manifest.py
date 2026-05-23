@@ -16,6 +16,10 @@ from worca.state.status import (
 )
 from worca.utils.paths import fleet_runs_dir
 
+GRAPH_STATUS_READY = "ready"
+GRAPH_STATUS_DEGRADED = "degraded"
+GRAPH_STATUS_DISABLED = "disabled"
+
 
 # Module-level override slot.  Resolution precedence (see paths.fleet_runs_dir):
 #   1. _FLEET_RUNS_DIR if set (typically via ``mock.patch`` in tests)
@@ -91,6 +95,7 @@ def register_fleet_child(
     project_path: str,
     run_id: str,
     *,
+    graph_status: str | None = None,
     base_dir: str = None,
 ) -> bool:
     """Append a dispatched child to the fleet manifest's children array.
@@ -114,9 +119,10 @@ def register_fleet_child(
         ):
             return False
 
-    children.append(
-        {"project_path": project_path, "run_id": run_id, "status": PipelineStatus.RUNNING}
-    )
+    entry = {"project_path": project_path, "run_id": run_id, "status": PipelineStatus.RUNNING}
+    if graph_status is not None:
+        entry["graph_status"] = graph_status
+    children.append(entry)
     manifest["children"] = children
     manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
     write_fleet_manifest(manifest, base_dir=base_dir)

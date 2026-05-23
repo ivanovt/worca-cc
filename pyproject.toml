@@ -50,6 +50,7 @@ worca = [
     "agents/core/*.md",
     "schemas/*.json",
     "settings.json",
+    "templates/*.json",
     "templates/*/template.json",
     "templates/*/agents/*.md",
     "skills/*/SKILL.md",

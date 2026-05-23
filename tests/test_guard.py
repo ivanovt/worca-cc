@@ -1,5 +1,8 @@
 """Tests for guard.py - PreToolUse safety gates."""
 import os
+
+import pytest
+
 from worca.hooks.guard import check_guard
 
 
@@ -919,3 +922,72 @@ class TestGuardianWriteScope:
             assert code == 0
         finally:
             del os.environ["WORCA_AGENT"]
+
+
+# --- Read-only graphify guard (W-053 query pivot) ---
+# Agents reach the cached graph through on-demand `graphify query` (the runner
+# injects GRAPHIFY_OUT). The worca pipeline owns graph builds, so mutating
+# subcommands are blocked. Role-independent, like rm -rf / force-push.
+
+
+class TestGraphifyMutationGuard:
+    @pytest.mark.parametrize("verb", [
+        "update", "install", "uninstall", "add", "hook",
+        "merge-driver", "watch", "clone",
+    ])
+    def test_blocks_mutating_verbs(self, verb):
+        os.environ.pop("WORCA_AGENT", None)
+        code, reason = check_guard("Bash", {"command": f"graphify {verb} ."})
+        assert code == 2
+        assert "graphify" in reason.lower()
+
+    @pytest.mark.parametrize("verb", [
+        "query", "explain", "path", "affected", "diagnose",
+    ])
+    def test_allows_read_verbs(self, verb):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard("Bash", {"command": f'graphify {verb} "where is X"'})
+        assert code == 0
+
+    def test_blocks_update_even_for_implementer(self):
+        os.environ["WORCA_AGENT"] = "implement-implementer-iter-1"
+        try:
+            code, _ = check_guard("Bash", {"command": "graphify update ."})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_respects_cd_prefix(self):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard(
+            "Bash", {"command": "cd /project && graphify update /project"}
+        )
+        assert code == 2
+
+    def test_query_mentioning_update_in_quotes_allowed(self):
+        """A read query whose text mentions a mutation verb (a later, quoted
+        token) must not be falsely flagged."""
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard(
+            "Bash", {"command": 'graphify query "how do I update the install hook"'}
+        )
+        assert code == 0
+
+    def test_env_prefixed_mutation_blocked(self):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard("Bash", {"command": "GRAPHIFY_OUT=/c graphify install"})
+        assert code == 2
+
+    def test_non_graphify_command_unaffected(self):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard("Bash", {"command": "git update-index --refresh"})
+        assert code == 0
+
+    def test_disabled_via_governance_flag(self, monkeypatch):
+        """With block_graphify_mutation disabled, mutations are allowed."""
+        os.environ.pop("WORCA_AGENT", None)
+        monkeypatch.setattr(
+            "worca.hooks.guard._graphify_mutation_guard_enabled", lambda: False
+        )
+        code, _ = check_guard("Bash", {"command": "graphify update ."})
+        assert code == 0

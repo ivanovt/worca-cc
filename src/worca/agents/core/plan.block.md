@@ -28,6 +28,10 @@ description, and surface it rather than silently resolving it.
 {{plan_content}}
 {{/if}}
 
+{{#if has_graphify}}
+_A code knowledge graph is preloaded for this repo — explore it on demand with `graphify query "<question>"` (see the Knowledge graph section of your role)._
+
+{{/if}}
 {{#if plan_review_issues_formatted}}
 ## Issues to Address
 
@@ -66,6 +70,10 @@ description, and surface it rather than silently resolving it.
 {{/if}}
 {{work_request}}
 
+{{#if has_graphify}}
+_A code knowledge graph is preloaded for this repo — explore it on demand with `graphify query "<question>"` (see the Knowledge graph section of your role)._
+
+{{/if}}
 {{#if claude_md}}
 ## Project Context (from CLAUDE.md)
 

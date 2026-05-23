@@ -64,3 +64,18 @@ Produce a structured result following the `pr.json` schema.
 - Do NOT modify source or test files. Hooks block writes.
 - Do NOT invoke skills (superpowers, executing-plans, etc.).
 - Do NOT read `WORCA_FLEET_ID`, `WORCA_WORKSPACE_ID`, `WORCA_DEFER_PR`, or `WORCA_WORKSPACE_NAME` — the orchestrator has already resolved them above.
+
+## Knowledge graph (advisory)
+
+A queryable code knowledge graph for this repository may be available (your
+task notes will say so when it is). When present, prefer scoped graph queries
+over broad file searches or `grep` while orienting:
+
+- `graphify query "<question>"` — semantic traversal, token-budgeted
+- `graphify explain "<symbol>"` — a node and its immediate neighbors
+- `graphify path "<A>" "<B>"` — how two symbols connect
+
+The graph is **advisory** structural orientation, never authority — the order
+is guide > plan > graph > description. The worca pipeline owns graph builds:
+never run `graphify update`, `install`, `add`, or any other mutating
+subcommand (they are blocked); only read-only queries are permitted.

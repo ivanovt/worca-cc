@@ -308,3 +308,38 @@ def test_test_gate_warns_then_blocks_on_two_failures(pipeline_env, tmp_path):
     )
     assert "blocked" in second.stderr.lower()
     assert "consecutive" in second.stderr.lower()
+
+
+# ---------------------------------------------------------------------------
+# graphify advisory nudge (W-053) — non-blocking additionalContext on search
+# ---------------------------------------------------------------------------
+
+
+def test_graphify_nudge_emitted_on_search_when_graph_ready(pipeline_env, tmp_path):
+    """A broad search Bash command yields allow + additionalContext nudge when
+    GRAPHIFY_OUT points at a ready graph (worca.graphify.nudge defaults every)."""
+    gdir = pipeline_env.project / ".graph"
+    gdir.mkdir()
+    (gdir / "graph.json").write_text("{}")
+    pipeline_env.set_governance_agent("implementer")
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Bash", "tool_input": {"command": "grep -r foo src/"}},
+        env_overrides={"GRAPHIFY_OUT": str(gdir), "WORCA_RUN_DIR": str(tmp_path)},
+    )
+    assert proc.returncode == 0, proc.stderr[:500]
+    out = json.loads(proc.stdout) if proc.stdout.strip() else {}
+    ac = out.get("hookSpecificOutput", {}).get("additionalContext", "")
+    assert "graphify query" in ac, f"expected nudge, got stdout: {proc.stdout[:400]}"
+
+
+def test_graphify_nudge_absent_without_graph(pipeline_env):
+    """No GRAPHIFY_OUT → no nudge (allowed, no additionalContext)."""
+    pipeline_env.set_governance_agent("implementer")
+    proc = pipeline_env.run_hook(
+        "pre_tool_use",
+        {"tool_name": "Bash", "tool_input": {"command": "grep -r foo src/"}},
+    )
+    assert proc.returncode == 0, proc.stderr[:500]
+    out = json.loads(proc.stdout) if proc.stdout.strip() else {}
+    assert "additionalContext" not in out.get("hookSpecificOutput", {})

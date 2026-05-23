@@ -277,7 +277,8 @@
         "block_rm_rf": true,
         "block_env_write": true,
         "block_force_push": true,
-        "restrict_git_commit": true
+        "restrict_git_commit": true,
+        "block_graphify_mutation": true
       },
       "test_gate_strikes": 2,
       "dispatch_migration_version": 1,
@@ -345,6 +346,22 @@
       "max_parallel": 5,
       "context_cap_bytes": 8192,
       "failure_threshold": 0.30
+    },
+    "graphify": {
+      "enabled": false,
+      "mode": "structural",
+      "backend": null,
+      "model_profile": null,
+      "out_dir": "graphify-out",
+      "update_on": {
+        "preflight": true,
+        "guardian_post_commit": true
+      },
+      "min_repo_files": 100,
+      "version_range": ">=0.8.16,<1",
+      "preflight_timeout_seconds": 300,
+      "freshness": "clean_only",
+      "nudge": "every"
     }
   }
 }

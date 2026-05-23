@@ -117,7 +117,10 @@ class TestRunPreflightSuccess:
 
         result = run_preflight(context, settings_path)
 
-        assert result == expected
+        assert result["status"] == "pass"
+        assert result["checks"] == []
+        assert result["summary"] == "all good"
+        assert "graphify_status" in result
 
     def test_reads_script_path_from_settings(self, tmp_path):
         from worca.orchestrator.runner import run_preflight

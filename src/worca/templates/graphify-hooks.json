@@ -1,0 +1,11 @@
+[
+  {
+    "matcher": "Grep|Glob",
+    "hooks": [
+      {
+        "type": "command",
+        "command": "graphify hook pre-tool-use"
+      }
+    ]
+  }
+]

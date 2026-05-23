@@ -940,3 +940,23 @@ class TestResolveGuideMaxBytes:
         from worca.orchestrator.work_request import GUIDE_MAX_BYTES_DEFAULT
 
         assert GUIDE_MAX_BYTES_DEFAULT == 131072
+
+
+# --- graph report static-injection surface removed (W-053 query pivot) ---
+
+class TestGraphReportSurfaceRemoved:
+    """The static GRAPH_REPORT.md injection surface was dropped in favor of
+    on-demand `graphify query` against the cached graph.json. Agents reach the
+    graph via the GRAPHIFY_OUT env var the runner injects — no report content
+    or graph path is carried on the WorkRequest or in any prompt.
+    """
+
+    def test_workrequest_has_no_graph_context_field(self):
+        wr = WorkRequest(source_type="prompt", title="t", description="d")
+        assert not hasattr(wr, "graph_context")
+
+    def test_attach_graph_report_is_gone(self):
+        import worca.orchestrator.work_request as wr_mod
+
+        assert not hasattr(wr_mod, "attach_graph_report")
+        assert not hasattr(wr_mod, "GRAPH_REPORT_MAX_BYTES_DEFAULT")

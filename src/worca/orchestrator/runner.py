@@ -9,6 +9,7 @@ import dataclasses
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -42,7 +43,12 @@ from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
-from worca.utils.settings import load_settings
+from worca.utils.settings import load_global_settings, load_settings
+from worca.scripts.graphify_preflight import run_graphify_preflight
+from worca.utils.graphify import (
+    detect_graphify,
+    effective_graphify_config,
+)
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
 from worca.events.emitter import EventContext, emit_event, dispatch_event, _check_control_response
@@ -1013,6 +1019,30 @@ def _is_agent_telemetry_enabled(settings_path: str) -> bool:
         return True
 
 
+_GRAPHIFY_READ_VERBS = frozenset({"query", "explain", "path", "affected", "diagnose"})
+
+
+def _is_graphify_read_query(command: str) -> bool:
+    """True if a Bash command invokes a read-only graphify subcommand.
+
+    Counted per iteration for the run-detail "Graphify" badge. Mirrors the
+    guard's parsing (strips a leading ``cd … &&`` and matches the first token
+    after a ``graphify`` executable) but matches the *read* verbs, not the
+    blocked mutating ones.
+    """
+    if not command:
+        return False
+    actual = command.split("&&", 1)[1].strip() if "&&" in command else command.strip()
+    try:
+        tokens = shlex.split(actual)
+    except ValueError:
+        return False
+    for i, tok in enumerate(tokens):
+        if os.path.basename(tok) == "graphify" and i + 1 < len(tokens):
+            return tokens[i + 1] in _GRAPHIFY_READ_VERBS
+    return False
+
+
 def _make_agent_event_handler(
     ctx: Optional[EventContext],
     stage: Stage,
@@ -1112,6 +1142,7 @@ def run_stage(
     agent_override: str = None,
     ctx: Optional[EventContext] = None,
     env_overrides: Optional[dict] = None,
+    graphify_out: Optional[str] = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -1128,6 +1159,9 @@ def run_stage(
             passed directly to the claude CLI.
         env_overrides: Extra env vars merged into model_env before passing to
             run_agent(). Used for CLAUDE_CODE_EFFORT_LEVEL injection.
+        graphify_out: When set, exported as GRAPHIFY_OUT in the agent
+            subprocess so on-demand `graphify query` reads the per-commit
+            cache snapshot. Resolved at preflight when the graph is ready.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
@@ -1148,7 +1182,27 @@ def run_stage(
     log_dir = os.path.join(logs_dir, stage.value)
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, f"iter-{iteration}.log")
-    on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
+    _telemetry_on_event = _make_agent_event_handler(ctx, stage, iteration, settings_path)
+    # Count read-only graphify queries this iteration, independent of telemetry,
+    # for the run-detail "Graphify" badge. Wraps (not replaces) the telemetry
+    # handler so disabling agent_telemetry doesn't zero the count.
+    _gfx_metrics = {"graphify_invocations": 0}
+
+    def _on_event(event):
+        if event.get("type") == "assistant":
+            for _block in event.get("message", {}).get("content", []) or []:
+                if _block.get("type") == "tool_use" and _block.get("name") == "Bash":
+                    if _is_graphify_read_query((_block.get("input") or {}).get("command", "")):
+                        _gfx_metrics["graphify_invocations"] += 1
+        if _telemetry_on_event is not None:
+            _telemetry_on_event(event)
+
+    # Wire the counting wrapper only when there's an event context (always true
+    # in real runs, where run_dir/events.jsonl exist); without ctx we preserve
+    # the historical "no on_event handler" contract — and there's no
+    # status.json to record a count into anyway.
+    on_event = _on_event if ctx is not None else None
+
     agent = agent_override if agent_override is not None else _agent_path(config["agent"], run_dir=run_dir)
     merged_env = dict(config.get("model_env") or {})
     if env_overrides:
@@ -1163,9 +1217,14 @@ def run_stage(
         model_env=merged_env,
         log_path=log_path,
         on_event=on_event,
+        graphify_out=graphify_out,
     )
-    # claude CLI returns a JSON envelope; extract structured_output if present
+    _gfx = _gfx_metrics["graphify_invocations"]
+    # The per-iteration graphify count rides on the *envelope* (2nd return),
+    # never on the structured result, so it can't pollute the agent's output.
+    # claude CLI returns a JSON envelope; extract structured_output if present.
     if isinstance(raw, dict) and raw.get("structured_output"):
+        raw["graphify_invocations"] = _gfx
         return raw["structured_output"], raw
     # Fallback for stages whose agent occasionally returns prose instead of
     # JSON. Currently only Guardian (PR stage) — its prompt was rewritten to
@@ -1175,7 +1234,12 @@ def run_stage(
     if stage == Stage.PR and isinstance(raw, dict):
         recovered = _extract_pr_fields_from_text(raw.get("result"))
         if recovered:
+            raw["graphify_invocations"] = _gfx
             return recovered, raw
+    # Generic fallback: result == envelope here, so attach the count to a copy
+    # for the envelope and leave the returned result dict untouched.
+    if isinstance(raw, dict):
+        return raw, {**raw, "graphify_invocations": _gfx}
     return raw, raw
 
 
@@ -1313,6 +1377,71 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
     return PRVerification(ok=True, reason="")
 
 
+def _reattach_graphify_on_resume(status, prompt_builder):
+    """Re-flag graphify availability when resuming past PREFLIGHT.
+
+    The PREFLIGHT handler that flips ``has_graphify`` and resolves the
+    ``GRAPHIFY_OUT`` dir is skipped on resume, so a resumed run would otherwise
+    lose on-demand graph access. The report path persisted in
+    ``status['graphify_report_path']`` at the original preflight identifies the
+    snapshot's ``graphify/`` directory. Returns that directory (the value to
+    export as ``GRAPHIFY_OUT`` for subsequent agents) when a ready snapshot
+    still exists on disk, else None.
+    """
+    report_path = status.get("graphify_report_path")
+    if report_path and os.path.isfile(report_path):
+        prompt_builder.set_graphify_available(True)
+        _log("Resume: re-flagged graphify availability")
+        return os.path.dirname(report_path)
+    return None
+
+
+def _maybe_graphify_post_guardian(
+    *,
+    settings_path: str = ".claude/settings.json",
+    is_worktree: bool = False,
+) -> None:
+    """Fire-and-forget: warm the per-commit graph cache for the NEW HEAD after
+    a successful guardian commit.
+
+    The commit changed HEAD, so there's no in-place "update" — we build a fresh
+    snapshot for the new sha. Reuses the locked build+publish path in
+    run_graphify_preflight (run detached so the pipeline reports complete
+    immediately). Skipped in worktree runs. Failures are logged, never raised.
+    """
+    if is_worktree:
+        return
+
+    try:
+        settings = load_settings(settings_path)
+        global_settings = load_global_settings()
+        cfg = effective_graphify_config(global_settings, settings)
+
+        if not cfg.enabled:
+            return
+        if not cfg.update_on_guardian_post_commit:
+            return
+
+        detect = detect_graphify(cfg.version_range)
+        if not detect.installed or not detect.compatible:
+            return
+
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "from worca.scripts.graphify_preflight import "
+                "run_graphify_preflight as r; r()",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _log("Graphify post-guardian cache-warm started (fire-and-forget)")
+    except Exception as exc:
+        _log(f"Graphify post-guardian refresh failed: {exc}", "warn")
+
+
 def run_preflight(
     context: dict,
     settings_path: str = ".claude/settings.json",
@@ -1383,6 +1512,13 @@ def run_preflight(
 
     if proc.returncode != 0:
         raise PipelineError(f"Preflight failed: {summary}")
+
+    graphify_result = run_graphify_preflight(settings_path=settings_path)
+    result["graphify_status"] = graphify_result.get("status", "skipped")
+    if graphify_result.get("report_path"):
+        result["graphify_report_path"] = graphify_result["report_path"]
+    if graphify_result.get("reason"):
+        result["graphify_reason"] = graphify_result["reason"]
 
     return result
 
@@ -1831,6 +1967,10 @@ def run_pipeline(
             run_dir=run_dir,
             work_request_guide_content=work_request.guide_content,
         )
+        # Resolved <snapshot>/graphify dir exported as GRAPHIFY_OUT to each
+        # post-preflight agent when the graph is ready. Set at PREFLIGHT (fresh
+        # runs) or by _reattach_graphify_on_resume (resumed runs).
+        _graphify_out: Optional[str] = None
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
             _backfilled = backfill_prompt_context(prompt_builder, status, logs_dir)
@@ -1841,6 +1981,9 @@ def run_pipeline(
             resumed_beads = prompt_builder.get_context("beads_ids")
             if resumed_beads:
                 max_beads = len(resumed_beads)
+            # Re-flag graphify availability on resume — the PREFLIGHT handler
+            # that sets has_graphify + GRAPHIFY_OUT is skipped on resume.
+            _graphify_out = _reattach_graphify_on_resume(status, prompt_builder)
 
         # Transition pipeline to running state
         status["pipeline_status"] = PipelineStatus.RUNNING
@@ -2279,6 +2422,7 @@ def run_pipeline(
                         agent_override=_agent_override,
                         ctx=ctx,
                         env_overrides=_effort_env_overrides,
+                        graphify_out=_graphify_out,
                     )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
@@ -2498,6 +2642,15 @@ def run_pipeline(
                     iter_extras["turns"] = raw_envelope["num_turns"]
                 if raw_envelope.get("total_cost_usd"):
                     iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
+                # Per-iteration read-only graphify query count (drives the
+                # run-detail "Graphify" badge). Recorded for every agent stage,
+                # 0 when none. Preflight has no agent and shares this iter_extras
+                # block, so skip it there — the UI omits the badge when the field
+                # is absent.
+                if current_stage != Stage.PREFLIGHT:
+                    iter_extras["graphify_invocations"] = raw_envelope.get(
+                        "graphify_invocations", 0
+                    )
             if usage:
                 iter_extras["token_usage"] = usage
             iter_extras["prompt"] = rendered_prompt
@@ -2531,8 +2684,33 @@ def run_pipeline(
                 iter_extras.setdefault("duration_session_ms", 0)
                 iter_extras.setdefault("duration_api_ms", 0)
                 complete_iteration(status, current_stage.value, **iter_extras)
-                update_stage(status, current_stage.value,
-                             **{**stage_extras, "skipped": preflight_skipped})
+                _pf_stage_extras = {**stage_extras, "skipped": preflight_skipped}
+                # Run-level graphify enablement (single source of truth for the
+                # UI: drives "(disabled)" vs an integer invocation count).
+                try:
+                    _gfx_cfg = effective_graphify_config(
+                        load_global_settings(), load_settings(settings_path)
+                    )
+                    status["graphify_enabled"] = bool(_gfx_cfg.enabled)
+                except Exception:
+                    status["graphify_enabled"] = False
+                if result.get("graphify_status"):
+                    status["graphify_status"] = result["graphify_status"]
+                    _pf_stage_extras["graphify_status"] = result["graphify_status"]
+                if result.get("graphify_report_path"):
+                    status["graphify_report_path"] = result["graphify_report_path"]
+                    _pf_stage_extras["graphify_report_path"] = result["graphify_report_path"]
+                    _rp = result["graphify_report_path"]
+                    if os.path.isfile(_rp):
+                        # Agents query the graph on demand via GRAPHIFY_OUT; the
+                        # prompt only carries a per-run availability note.
+                        _graphify_out = os.path.dirname(_rp)
+                        prompt_builder.set_graphify_available(True)
+                        _log(
+                            "Graphify: ready — agents query the cached graph via "
+                            f"GRAPHIFY_OUT={_graphify_out}"
+                        )
+                update_stage(status, current_stage.value, **_pf_stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
                     if preflight_skipped:
@@ -3291,6 +3469,11 @@ def run_pipeline(
                                 target_branch=_target_branch,
                                 provider=_provider,
                             ))
+
+                    _maybe_graphify_post_guardian(
+                        settings_path=settings_path,
+                        is_worktree=bool(status.get("worktree")),
+                    )
 
             # Default: complete iteration for stages without special handling
             else:

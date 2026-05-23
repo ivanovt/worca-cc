@@ -18,6 +18,10 @@ description, and surface it rather than silently resolving it.
 {{/if}}
 {{work_request}}
 
+{{#if has_graphify}}
+_A code knowledge graph is preloaded for this repo — explore it on demand with `graphify query "<question>"` (see the Knowledge graph section of your role)._
+
+{{/if}}
 {{#if implementation_summary}}
 ## Implementation Summary
 

@@ -409,9 +409,31 @@ function _effortTooltip(effort) {
   return parts.join(' · ');
 }
 
-function _effortRowView(iter) {
+// Per-iteration read-only graphify query count, shown on the effort row.
+// Only agent iterations carry `graphify_invocations` (preflight never does).
+// When graphify is off for the project, show a plain "(disabled)" value
+// matching the skills/subagents empty style — not a badge. When enabled, an
+// integer badge: blue (primary) when the agent actually queried, grey for 0.
+function _graphifyBadge(iter, graphifyEnabled) {
+  if (iter.graphify_invocations == null) return nothing;
+  if (graphifyEnabled !== true) {
+    return html`<span class="meta-label">Graphify:</span> <span class="dispatch-events-empty">(disabled)</span>`;
+  }
+  const count = iter.graphify_invocations;
+  const variant = count > 0 ? 'primary' : 'neutral';
+  return html`<span class="meta-label">Graphify:</span> <sl-badge class="graphify-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
+}
+
+function _effortRowView(iter, graphifyEnabled) {
+  const gfx = _graphifyBadge(iter, graphifyEnabled);
   const e = iter.effort;
-  if (!e) return nothing;
+  if (!e) {
+    // No effort recorded (e.g. effort disabled) — still surface the graphify
+    // badge on its own row so agent iterations consistently show it.
+    return gfx === nothing
+      ? nothing
+      : html`<div class="iteration-tags-row">${gfx}</div>`;
+  }
   const levelText = e.level ?? '-';
   const variant = e.level ? _effortLevelVariant(e.level) : 'neutral';
   const sourceLabel = _effortSourceLabel(e.source);
@@ -440,6 +462,7 @@ function _effortRowView(iter) {
       <sl-badge class="effort-source-chip" variant="neutral" pill>${sourceLabel}</sl-badge>
       ${escalationChips}
       ${cappedChip}
+      ${gfx}
     </div>
     ${
       showBeadRow
@@ -776,7 +799,12 @@ function _stageCost(iterations) {
   return iterations.reduce((sum, it) => sum + (it.cost_usd || 0), 0);
 }
 
-function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
+// Serialize a stage (and its iterations) to the JSON the "Copy" button hands
+// the user. Keep this in sync with everything the stage section *renders* —
+// effort, graphify invocations, dispatch (skills/subagents), classification,
+// token usage, structured output, and the preflight graphify fields — so the
+// copied data is the full stage record, not a stale subset.
+export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
   const iterations = stage.iterations || [];
   const wallMs = _stageWallMs(stage);
   return {
@@ -785,11 +813,17 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     agent: stageAgent || undefined,
     model: stageModel || undefined,
     cost_usd: _stageCost(iterations),
+    token_usage: stage.token_usage || undefined,
     duration: wallMs > 0 ? formatDuration(wallMs) : undefined,
     duration_ms: wallMs > 0 ? wallMs : undefined,
     started_at: stage.started_at || undefined,
     completed_at: stage.completed_at || undefined,
+    skipped: stage.skipped || undefined,
+    task_progress: stage.task_progress || undefined,
     error: stage.error || undefined,
+    plan_file: stage.plan_file || undefined,
+    graphify_status: stage.graphify_status || undefined,
+    graphify_report_path: stage.graphify_report_path || undefined,
     iterations: iterations.map((it) => ({
       number: it.number,
       status: it.status,
@@ -804,10 +838,15 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
       duration_api_ms: it.duration_api_ms || undefined,
       started_at: it.started_at || undefined,
       completed_at: it.completed_at || undefined,
+      effort: it.effort || undefined,
+      graphify_invocations:
+        it.graphify_invocations != null ? it.graphify_invocations : undefined,
+      token_usage: it.token_usage || undefined,
       classification: it.classification || undefined,
       dispatch_events: it.dispatch_events?.length
         ? it.dispatch_events
         : undefined,
+      output: it.output || undefined,
     })),
     prompts: promptData
       ? {
@@ -846,7 +885,13 @@ function timingStripView(startedAt, completedAt, extra = nothing) {
   `;
 }
 
-function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
+function _iterationDetailView(
+  iter,
+  stageKey,
+  stageAgent,
+  promptData,
+  graphifyEnabled,
+) {
   const agentName = iter.agent || stageAgent || stageKey;
   const model = iter.model || '';
   const iterNum = iter.number ?? 0;
@@ -881,7 +926,7 @@ function _iterationDetailView(iter, stageKey, stageAgent, promptData) {
       `
           : nothing
       }
-      ${_effortRowView(iter)}
+      ${_effortRowView(iter, graphifyEnabled)}
       ${_classificationRowView(iter)}
       ${_dispatchEventsRowsView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
@@ -1378,7 +1423,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                         ${iterations.map(
                           (iter) => html`
                           <sl-tab-panel name="iter-${key}-${iter.number}">
-                            ${_iterationDetailView(iter, key, stageAgent, promptData)}
+                            ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled)}
                           </sl-tab-panel>
                         `,
                         )}
@@ -1411,7 +1456,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       }
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
-                      ${iterations.length === 1 ? _effortRowView(iterations[0]) : nothing}
+                      ${iterations.length === 1 ? _effortRowView(iterations[0], run.graphify_enabled) : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}

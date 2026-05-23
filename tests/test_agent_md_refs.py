@@ -421,3 +421,100 @@ def test_guide_header_not_in_python_source():
     assert "_GUIDE_HEADER" not in work_request_py, (
         "_GUIDE_HEADER constant should be removed from work_request.py"
     )
+
+
+# ---------------------------------------------------------------------------
+# Knowledge-graph availability note across .block.md files (W-053 query pivot)
+#
+# Agents query the cached graph on demand (via the GRAPHIFY_OUT env var); the
+# .block.md files carry only a per-run availability note — no report content,
+# no graph path. The note must be byte-identical across stages so the wording
+# cannot drift, and must never regress to the old static-injection block.
+# ---------------------------------------------------------------------------
+
+
+GRAPHIFY_NOTE_TEXT = """{{#if has_graphify}}
+_A code knowledge graph is preloaded for this repo — explore it on demand with `graphify query "<question>"` (see the Knowledge graph section of your role)._
+
+{{/if}}"""
+
+
+def test_graphify_note_present_in_all_block_files():
+    """Every .block.md that interpolates {{work_request}} must include the
+    canonical per-run graphify availability note."""
+    drift = []
+    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+        content = _read(fname)
+        if GRAPHIFY_NOTE_TEXT not in content:
+            drift.append(fname)
+    assert not drift, (
+        "graphify note missing from: "
+        + ", ".join(drift)
+        + " — note must be byte-identical across all .block.md files. "
+        "If you intentionally changed the wording, update GRAPHIFY_NOTE_TEXT "
+        "in this test and apply the same change to every file in "
+        "BLOCK_FILES_WITH_WORK_REQUEST."
+    )
+
+
+def test_no_static_graph_report_injection_in_block_files():
+    """The old static report block (## Codebase Structure / {{graph_context}} /
+    {{#if has_graph}}) must not reappear — agents query the graph on demand,
+    they are not fed the human-facing report."""
+    offenders = []
+    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+        content = _read(fname)
+        if (
+            "## Codebase Structure" in content
+            or "{{graph_context}}" in content
+            or "{{#if has_graph}}" in content
+        ):
+            offenders.append(fname)
+    assert not offenders, (
+        "static graph-report injection found in: " + ", ".join(offenders)
+    )
+
+
+def test_graphify_note_appears_after_guide_block():
+    """In every .block.md, the graphify note must appear after the guide block
+    to respect authority order: guide > graph > description."""
+    wrong_order = []
+    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+        content = _read(fname)
+        guide_pos = content.find("{{#if has_guide}}")
+        graph_pos = content.find("{{#if has_graphify}}")
+        if guide_pos >= 0 and graph_pos >= 0 and graph_pos < guide_pos:
+            wrong_order.append(fname)
+    assert not wrong_order, (
+        "graphify note appears before guide block in: "
+        + ", ".join(wrong_order)
+        + " — authority order requires guide > graph."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Knowledge-graph behavior section in core agent .md files (W-053 query pivot)
+#
+# The how-to-use-the-graph guidance is static in each pipeline agent's core
+# .md (always present, self-gating on the per-run note), not in the .block.md.
+# ---------------------------------------------------------------------------
+
+
+CORE_AGENT_FILES = [
+    "planner.md", "plan_reviewer.md", "coordinator.md", "implementer.md",
+    "tester.md", "reviewer.md", "guardian.md", "learner.md",
+]
+
+KNOWLEDGE_GRAPH_HEADING = "## Knowledge graph (advisory)"
+
+
+def test_knowledge_graph_section_in_all_core_agents():
+    """Every pipeline agent's core .md defines the static how-to-use-the-graph
+    behavior. The per-run note in .block.md only flags availability."""
+    missing = []
+    for fname in CORE_AGENT_FILES:
+        if KNOWLEDGE_GRAPH_HEADING not in _read(fname):
+            missing.append(fname)
+    assert not missing, (
+        "Knowledge graph section missing from core agents: " + ", ".join(missing)
+    )

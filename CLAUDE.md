@@ -303,6 +303,20 @@ Agent behavior when a guide is present:
 
 See `src/worca/agents/core/planner.md`, `reviewer.md`, and `tester.md` for the per-agent instruction blocks.
 
+## Knowledge Graph (Graphify)
+
+Optional, **off by default**. When `worca.graphify.enabled` is `true` (project-level), the **Preflight** stage builds a per-commit code knowledge graph with the [graphify](https://github.com/safishamsi/graphify) CLI (`graphify update`), content-addressed under `$WORCA_CACHE/ast/<repo-id>/<sha>/graphify/` with a `.complete` marker. Nothing is written into the repo tree.
+
+**Agents query the graph on demand — they are not fed the report.** When a `ready` graph exists, the runner exports `GRAPHIFY_OUT=<snapshot>/graphify` into every agent subprocess (`run_agent(..., graphify_out=…)`), so a bare `graphify query "<question>"` reads the cached `graph.json` (graphify ≥0.8.16 honors `GRAPHIFY_OUT` for reads). Each stage prompt carries only a one-line availability note (`{{#if has_graphify}}` in the `.block.md`); the how-to-use guidance is a static `## Knowledge graph (advisory)` section in each agent's core `.md`. No report content or graph path is ever injected. Authority order: **guide > plan > graph > description** (the graph is advisory orientation).
+
+`GRAPH_REPORT.md` is built and cached for **humans** — the UI Graphify tab surfaces a copy-able `graphify query "<question>" --graph <path>` snippet — not for agents.
+
+**Governance:** the `pre_tool_use` hook blocks mutating graphify subcommands (`update`, `install`, `uninstall`, `add`, `hook`, `merge-driver`, `watch`, `clone`) and allows reads (`query`, `explain`, `path`, `affected`, `diagnose`), gated by `worca.governance.guards.block_graphify_mutation` (default `true`). The pipeline owns all graph builds (preflight + post-guardian cache-warm), run as detached subprocesses that bypass the hook.
+
+**Install (only if enabling):** `uv tool install 'graphifyy>=0.8.16,<1'` — the PyPI package is `graphifyy` (double-y); the CLI it installs is `graphify`. Prefer `uv`/`pipx` over plain `pip` so the CLI lands on PATH. Worca pins `>=0.8.16,<1` (the `update` command + `GRAPHIFY_OUT`-honoring reads).
+
+Spec: [`docs/plans/W-053-graphify-integration.md`](./docs/plans/W-053-graphify-integration.md).
+
 ## worca-ui Development
 
 **Badge color language:** all `sl-badge` variants and status colors follow the guide in [`worca-ui/docs/badge-color-language.md`](./worca-ui/docs/badge-color-language.md). Read it before adding or modifying badges — blue means active, orange means caution, green means done.
