@@ -28,7 +28,7 @@ import { LaunchLock } from './launch-lock.js';
 import { fleetRunsDir, workspaceRunsDir, workspacesDir } from './paths.js';
 import { createPreferencesRouter } from './preferences-routes.js';
 import { ProcessManager } from './process-manager.js';
-import { scanDirectory } from './project-registry.js';
+import { readProjects, scanDirectory } from './project-registry.js';
 import {
   createProjectRoutes,
   createProjectScopedRoutes,
@@ -1011,7 +1011,12 @@ export function createApp(options = {}) {
     app.locals.graphifyStatus = createGraphifyStatus({});
   }
 
-  function readGraphifySettings() {
+  // Resolve the graphify settings for a request. In single-project mode the
+  // server's own projectRoot/settingsPath are used. In global mode there is no
+  // fixed project, so the selected project is passed as ?project=<id> and we
+  // resolve its root + settings.json from the registry — otherwise the endpoint
+  // would be blind to every project and only ever see global settings.
+  function readGraphifySettings(projectId) {
     const readJson = (p) => {
       if (!p) return {};
       try {
@@ -1023,18 +1028,30 @@ export function createApp(options = {}) {
     const globalSettingsPath = prefsDir
       ? join(prefsDir, 'settings.json')
       : settingsPath;
-    const projectSettingsPath =
-      settingsPath ||
-      (projectRoot ? join(projectRoot, '.claude', 'settings.json') : null);
+
+    let projectSettingsPath = settingsPath;
+    let root = projectRoot || process.cwd();
+    if (projectId && prefsDir) {
+      const proj = readProjects(prefsDir).find((p) => p.name === projectId);
+      if (proj) {
+        projectSettingsPath =
+          proj.settingsPath || join(proj.path, '.claude', 'settings.json');
+        root = proj.path;
+      }
+    } else if (!projectSettingsPath && projectRoot) {
+      projectSettingsPath = join(projectRoot, '.claude', 'settings.json');
+    }
+
     return {
       globalSettings: readJson(globalSettingsPath),
       projectSettings: readJson(projectSettingsPath),
-      root: projectRoot || process.cwd(),
+      root,
     };
   }
 
-  async function graphifyStatusPayload() {
-    const { globalSettings, projectSettings, root } = readGraphifySettings();
+  async function graphifyStatusPayload(projectId) {
+    const { globalSettings, projectSettings, root } =
+      readGraphifySettings(projectId);
     const result = await app.locals.graphifyStatus.getStatus({
       globalSettings,
       projectSettings,
@@ -1043,18 +1060,18 @@ export function createApp(options = {}) {
     return { ...result, building: Boolean(app.locals.graphifyBuilding) };
   }
 
-  app.get('/api/graphify/status', async (_req, res) => {
+  app.get('/api/graphify/status', async (req, res) => {
     try {
-      res.json(await graphifyStatusPayload());
+      res.json(await graphifyStatusPayload(req.query.project));
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
   });
 
-  app.post('/api/graphify/recheck', async (_req, res) => {
+  app.post('/api/graphify/recheck', async (req, res) => {
     try {
       app.locals.graphifyStatus.invalidate();
-      res.json(await graphifyStatusPayload());
+      res.json(await graphifyStatusPayload(req.query.project));
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -1064,9 +1081,11 @@ export function createApp(options = {}) {
   // The lock + .complete publish discipline lives in run_graphify_preflight,
   // so we drive it via a detached Python process and track a `building` flag
   // the UI polls through /api/graphify/status.
-  app.post('/api/graphify/build', async (_req, res) => {
+  app.post('/api/graphify/build', async (req, res) => {
     try {
-      const { globalSettings, projectSettings, root } = readGraphifySettings();
+      const { globalSettings, projectSettings, root } = readGraphifySettings(
+        req.query.project,
+      );
       const effective = _effectiveConfig(globalSettings, projectSettings);
       if (!effective.enabled) {
         return res
@@ -1114,9 +1133,9 @@ export function createApp(options = {}) {
   });
 
   // Clear ALL cached snapshots for this project's repo.
-  app.post('/api/graphify/clear', async (_req, res) => {
+  app.post('/api/graphify/clear', async (req, res) => {
     try {
-      const { root } = readGraphifySettings();
+      const { root } = readGraphifySettings(req.query.project);
       const cleared = clearRepoCache(root);
       app.locals.graphifyStatus.invalidate();
       res.json({ ok: true, cleared });
@@ -1125,8 +1144,8 @@ export function createApp(options = {}) {
     }
   });
 
-  app.get('/api/graphify/graph.html', (_req, res) => {
-    const root = projectRoot || process.cwd();
+  app.get('/api/graphify/graph.html', (req, res) => {
+    const { root } = readGraphifySettings(req.query.project);
     const snap = snapshotDir(root);
     const htmlPath = snap ? join(snap, 'graphify', 'graph.html') : null;
     if (!htmlPath || !existsSync(htmlPath)) {

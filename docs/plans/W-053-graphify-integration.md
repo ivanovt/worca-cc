@@ -22,7 +22,7 @@ Add an **optional, three-state Graphify integration** controlled by a two-tier t
 - `structural` (recommended when enabled): runs `graphify build --no-llm` — AST + clustering only, **zero outbound LLM calls**, fully local. Captures call graphs, inline `# WHY:`/`# NOTE:` rationale, and Leiden communities. Preserves worca's existing privacy posture verbatim.
 - `full`: runs `graphify build` with semantic pass over Markdown/PDFs/images — adds INFERRED edges, design-rationale linkage from `docs/plans/*.md`, and vision-pass over diagrams. Opt-in, with a privacy notice on first enable.
 
-Global is a **hard kill-switch** (project-level cannot override `false` global). Worca gracefully degrades when Graphify is enabled but missing/incompatible — pipelines never fail because of Graphify; they just lose the optimization.
+Enablement is **project-level**: a project opts in via `worca.graphify.enabled: true`. Global `enabled` is only an **explicit kill-switch** — an explicit global `false` disables graphify everywhere (admin / fleet / security lever); `true` or unset both defer to the project, which must opt in. (Earlier revisions made global a hard gate where unset == off and projects inherited global `true`; that was changed because it blocked simple per-project enablement.) Worca gracefully degrades when Graphify is enabled but missing/incompatible — pipelines never fail because of Graphify; they just lose the optimization.
 
 ## Design
 
@@ -69,7 +69,7 @@ effective = (global.enabled === true) && (project.enabled ?? global.enabled)
           : { enabled: false, reason: "<global-off|project-off|inherit-off>" }
 ```
 
-The asymmetric semantics (global=false is a hard kill-switch) is intentional and matches worca's governance posture — one place to disable everything for security-conscious users.
+The semantics are: enablement is project-level (the project must opt in), while an *explicit* global `false` is a kill-switch that disables everything — one place to turn graphify off for security-conscious users / fleet runs, without forcing every project to enable through a global gate.
 
 ### 2. Detection layer
 
@@ -425,8 +425,9 @@ Reserved-env-var denylist from W-051 applies — `WORCA_*`, `PATH`, `CLAUDECODE`
 |-------|------|-----------|
 | Python | `test_detect_graphify_missing` | Returns `installed=False` when CLI not on PATH |
 | Python | `test_detect_graphify_version_mismatch` | Returns `compatible=False` when version outside range |
-| Python | `test_effective_config_global_off_project_on` | Global=false hard kill-switches project=true |
-| Python | `test_effective_config_inherit` | Project `enabled=null` inherits global |
+| Python | `test_effective_config_global_off_project_on` | Explicit global=false kill-switches project=true |
+| Python | `test_global_unset_project_on_enables` | Unset global + project=true enables (no global gate) |
+| Python | `test_global_on_project_unset_requires_opt_in` | Global=true does not auto-enable; project must opt in |
 | Python | `test_attach_graph_report_truncation` | Long reports truncated at max_bytes with marker |
 | Python | `test_attach_graph_report_authority_below_guide` | Guide content rendered before graph context |
 | Python | `test_graphify_preflight_no_op_when_disabled` | Returns `skipped` without subprocess call |

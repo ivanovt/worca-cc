@@ -3495,7 +3495,7 @@ export function projectSettingsView(
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="webhooks">${webhooksTab(worca, rerender)}</sl-tab-panel>
-        <sl-tab-panel name="graphify">${graphifyTab(worca, rerender)}</sl-tab-panel>
+        <sl-tab-panel name="graphify">${graphifyTab(worca, rerender, _settingsProjectId)}</sl-tab-panel>
       </sl-tab-group>
     </div>
   `;

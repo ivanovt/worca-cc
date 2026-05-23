@@ -61,8 +61,12 @@ class TestEffectiveGraphifyConfig:
         assert result.enabled is False
         assert result.reason == "project-off"
 
-    def test_global_on_project_inherits(self):
-        """When global is on and project has no graphify block, inherits global."""
+    def test_global_on_project_unset_requires_opt_in(self):
+        """Global enabled=true does NOT auto-enable a project; it must opt in.
+
+        Enablement is project-level. A global enabled=true is treated the same
+        as unset for the gate — the project must set its own enabled=true.
+        """
         global_cfg = {
             "worca": {
                 "graphify": {
@@ -74,9 +78,17 @@ class TestEffectiveGraphifyConfig:
         }
         project_cfg = {"worca": {}}
         result = effective_graphify_config(global_cfg, project_cfg)
+        assert result.enabled is False
+        assert result.reason == "project-off"
+
+    def test_global_unset_project_on_enables(self):
+        """Global unset (no graphify) no longer blocks: the project opts in."""
+        global_cfg = {"worca": {}}
+        project_cfg = {"worca": {"graphify": {"enabled": True, "mode": "full"}}}
+        result = effective_graphify_config(global_cfg, project_cfg)
         assert result.enabled is True
         assert result.mode == "full"
-        assert result.out_dir == "custom-out"
+        assert result.reason is None
 
     def test_project_overrides_mode(self):
         """Project mode overrides global mode when both enabled."""
@@ -87,21 +99,25 @@ class TestEffectiveGraphifyConfig:
         assert result.mode == "full"
 
     def test_defaults_when_no_graphify_block(self):
-        """When neither global nor project has graphify, defaults apply."""
+        """When neither global nor project has graphify, project-off + defaults.
+
+        Unset global is no longer a kill-switch (only an explicit false is), so
+        the disabled reason is the project not opting in.
+        """
         result = effective_graphify_config({"worca": {}}, {"worca": {}})
         assert result.enabled is False
         assert result.mode == "structural"
         assert result.out_dir == "graphify-out"
         assert result.version_range == ">=0.7.10,<1"
         assert result.min_repo_files == 100
-        assert result.reason == "global-off"
+        assert result.reason == "project-off"
 
     def test_defaults_when_empty_settings(self):
         """When settings are completely empty dicts, defaults apply."""
         result = effective_graphify_config({}, {})
         assert result.enabled is False
         assert result.mode == "structural"
-        assert result.reason == "global-off"
+        assert result.reason == "project-off"
 
     def test_project_overrides_backend_and_model_profile(self):
         """Project can override backend and model_profile."""

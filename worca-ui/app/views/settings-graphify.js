@@ -59,6 +59,16 @@ let _cacheStatusReceived = false;
 let _graphifyDetection = null;
 // Effective version range from the server, used to suggest an install command.
 let _graphifyVersionRange = GRAPHIFY_VERSION_RANGE_DEFAULT;
+// Selected project id (global mode). The graphify endpoints have no fixed
+// project there, so we pass ?project=<id> to scope status/build/clear to it.
+let _projectId = null;
+
+/** Append ?project=<id> when a project is selected (global mode). */
+function graphifyApiUrl(path) {
+  return _projectId
+    ? `${path}?project=${encodeURIComponent(_projectId)}`
+    : path;
+}
 
 /**
  * True when the graphify CLI is known-missing or version-incompatible, so
@@ -81,7 +91,9 @@ export function cachePathLabel(path, received) {
 
 async function _refreshCacheStatus(rerender) {
   try {
-    const j = await (await fetch('/api/graphify/status')).json();
+    const j = await (
+      await fetch(graphifyApiUrl('/api/graphify/status'))
+    ).json();
     _cacheStatusReceived = true;
     _cacheBusy = Boolean(j.building);
     _cachePath = j.cache_path ?? _cachePath;
@@ -106,7 +118,7 @@ async function _onBuildGraph(rerender) {
   rerender();
   try {
     const j = await (
-      await fetch('/api/graphify/build', { method: 'POST' })
+      await fetch(graphifyApiUrl('/api/graphify/build'), { method: 'POST' })
     ).json();
     if (!j.ok) {
       _cacheBusy = false;
@@ -127,7 +139,7 @@ async function _onClearCache(rerender) {
   _cacheMsg = 'Clearing graph cache…';
   rerender();
   try {
-    await fetch('/api/graphify/clear', { method: 'POST' });
+    await fetch(graphifyApiUrl('/api/graphify/clear'), { method: 'POST' });
     _cacheMsg = 'Graph cache cleared for this project.';
   } catch {
     _cacheMsg = 'Clear request failed.';
@@ -136,7 +148,8 @@ async function _onClearCache(rerender) {
   rerender();
 }
 
-export function graphifyTab(worca, rerender) {
+export function graphifyTab(worca, rerender, projectId = null) {
+  _projectId = projectId;
   const graphify = worca.graphify || {};
   const state = graphifyStateValue(graphify);
   const enabled = state !== 'off';

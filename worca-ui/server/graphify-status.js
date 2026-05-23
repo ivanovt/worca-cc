@@ -19,19 +19,21 @@ const GRAPHIFY_DEFAULTS = {
 };
 
 // Mirror of effective_graphify_config() in src/worca/utils/graphify.py.
-// The kill-switch + null-inherit resolution rules MUST match the Python
-// implementation; the parity is guarded by graphify-status.test.js
+// Enablement is project-level: the project opts in via graphify.enabled. Global
+// graphify.enabled is purely a kill-switch — an EXPLICIT global `false` disables
+// everywhere; `true`/unset defer to the project. These rules MUST match the
+// Python implementation; the parity is guarded by graphify-status.test.js
 // ("effective-config parity with Python"). Update both together.
 export function _effectiveConfig(globalSettings, projectSettings) {
   const gGraphify = globalSettings?.worca?.graphify ?? {};
   const pGraphify = projectSettings?.worca?.graphify ?? {};
 
-  const globalEnabled = gGraphify.enabled ?? GRAPHIFY_DEFAULTS.enabled;
-  if (!globalEnabled) {
+  // Only an explicit global `enabled: false` disables; `true`/unset defer.
+  if (gGraphify.enabled === false) {
     return { ...GRAPHIFY_DEFAULTS, enabled: false, reason: 'global-off' };
   }
 
-  const projectEnabled = pGraphify.enabled ?? globalEnabled;
+  const projectEnabled = pGraphify.enabled ?? false;
   if (!projectEnabled) {
     return { ...GRAPHIFY_DEFAULTS, enabled: false, reason: 'project-off' };
   }

@@ -32,14 +32,38 @@ function stopServer(server) {
 // ── Unit tests for graphify-status.js helpers ──────────────────────────
 
 describe('_effectiveConfig', () => {
-  it('returns disabled with reason when global graphify is off', () => {
+  it('returns project-off when nothing opts in (unset global no longer kills)', () => {
     const settings = { worca: {} };
     const result = _effectiveConfig(settings, {});
+    expect(result.enabled).toBe(false);
+    expect(result.reason).toBe('project-off');
+  });
+
+  it('explicit global enabled=false is a hard kill-switch', () => {
+    const global = { worca: { graphify: { enabled: false } } };
+    const project = { worca: { graphify: { enabled: true, mode: 'full' } } };
+    const result = _effectiveConfig(global, project);
     expect(result.enabled).toBe(false);
     expect(result.reason).toBe('global-off');
   });
 
-  it('returns disabled with project-off when global on but project off', () => {
+  it('enables on project opt-in when global is unset', () => {
+    const global = { worca: {} };
+    const project = { worca: { graphify: { enabled: true, mode: 'full' } } };
+    const result = _effectiveConfig(global, project);
+    expect(result.enabled).toBe(true);
+    expect(result.mode).toBe('full');
+    expect(result.reason).toBeNull();
+  });
+
+  it('global enabled=true does not auto-enable a project (must opt in)', () => {
+    const global = { worca: { graphify: { enabled: true } } };
+    const result = _effectiveConfig(global, { worca: {} });
+    expect(result.enabled).toBe(false);
+    expect(result.reason).toBe('project-off');
+  });
+
+  it('returns disabled with project-off when project explicitly off', () => {
     const global = { worca: { graphify: { enabled: true } } };
     const project = { worca: { graphify: { enabled: false } } };
     const result = _effectiveConfig(global, project);
@@ -58,7 +82,8 @@ describe('_effectiveConfig', () => {
 
   it('uses defaults for missing fields', () => {
     const global = { worca: { graphify: { enabled: true } } };
-    const result = _effectiveConfig(global, {});
+    const project = { worca: { graphify: { enabled: true } } };
+    const result = _effectiveConfig(global, project);
     expect(result.enabled).toBe(true);
     expect(result.mode).toBe('structural');
     expect(result.out_dir).toBe('graphify-out');
@@ -217,8 +242,8 @@ describe('createGraphifyStatus', () => {
       }),
     });
 
-    const globalSettings = { worca: { graphify: { enabled: true } } };
-    const projectSettings = {};
+    const globalSettings = { worca: {} };
+    const projectSettings = { worca: { graphify: { enabled: true } } };
     // Seed a complete cache snapshot for the current HEAD.
     const snap = snapshotDir(tmpDir);
     mkdirSync(join(snap, 'graphify'), { recursive: true });
@@ -395,6 +420,17 @@ describe('POST /api/graphify/build + /clear', () => {
   });
 
   it('build returns error when enabled but not detected', async () => {
+    // Inject a not-installed detection so the test is deterministic regardless
+    // of whether the graphify CLI happens to be installed on this machine.
+    app.locals.graphifyStatus = createGraphifyStatus({
+      detectFn: async () => ({
+        installed: false,
+        version: null,
+        compatible: false,
+        backend_env_present: [],
+        error: 'graphify CLI not found on PATH',
+      }),
+    });
     writeFileSync(
       join(tmpDir, 'settings.json'),
       JSON.stringify({ worca: { graphify: { enabled: true } } }),
@@ -477,6 +513,55 @@ describe('GET /api/graphify/graph.html', () => {
   });
 });
 
+describe('GET /api/graphify/status?project=<id> (global mode)', () => {
+  let server, base, tmpDir, projDir;
+
+  beforeEach(async () => {
+    tmpDir = mkdtempSync(join(tmpdir(), 'graphify-prefs-')); // prefsDir
+    projDir = mkdtempSync(join(tmpdir(), 'graphify-proj-')); // a project
+    // Global settings: no graphify block (unset — no longer a kill-switch).
+    writeFileSync(join(tmpDir, 'settings.json'), JSON.stringify({ worca: {} }));
+    // Register the project in the global registry.
+    mkdirSync(join(tmpDir, 'projects.d'), { recursive: true });
+    writeFileSync(
+      join(tmpDir, 'projects.d', 'proj-a.json'),
+      JSON.stringify({ name: 'proj-a', path: projDir }),
+    );
+    // The project opts graphify in.
+    mkdirSync(join(projDir, '.claude'), { recursive: true });
+    writeFileSync(
+      join(projDir, '.claude', 'settings.json'),
+      JSON.stringify({
+        worca: { graphify: { enabled: true, mode: 'structural' } },
+      }),
+    );
+    // Global mode: no fixed projectRoot/settingsPath.
+    ({ server, base } = await startServer({ prefsDir: tmpDir }));
+  });
+
+  afterEach(async () => {
+    if (server) await stopServer(server);
+    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(projDir, { recursive: true, force: true });
+  });
+
+  it('honors the selected project’s project-level enablement', async () => {
+    // Without ?project, global mode sees no project -> project-off.
+    const noProj = await (await fetch(`${base}/api/graphify/status`)).json();
+    expect(noProj.effective.enabled).toBe(false);
+    expect(noProj.effective.reason).toBe('project-off');
+
+    // With ?project, the selected project's opt-in is honored even though the
+    // global settings never enabled graphify.
+    const withProj = await (
+      await fetch(`${base}/api/graphify/status?project=proj-a`)
+    ).json();
+    expect(withProj.effective.enabled).toBe(true);
+    expect(withProj.effective.mode).toBe('structural');
+    expect(withProj.effective.reason).toBeNull();
+  });
+});
+
 // F3: _effectiveConfig() mirrors effective_graphify_config() in
 // src/worca/utils/graphify.py. This table mirrors the Python unit tests in
 // tests/test_graphify_settings.py::TestEffectiveGraphifyConfig so the two
@@ -503,15 +588,16 @@ describe('_effectiveConfig parity with Python', () => {
       want: { enabled: false, reason: 'project-off' },
     },
     {
-      name: 'global on + project inherits -> enabled, inherits global',
+      name: 'global on + project unset -> project-off (must opt in)',
       global: G({ enabled: true, mode: 'full', out_dir: 'custom-out' }),
       project: { worca: {} },
-      want: {
-        enabled: true,
-        reason: null,
-        mode: 'full',
-        out_dir: 'custom-out',
-      },
+      want: { enabled: false, reason: 'project-off' },
+    },
+    {
+      name: 'global unset + project on -> enabled (no global gate)',
+      global: { worca: {} },
+      project: G({ enabled: true, mode: 'full' }),
+      want: { enabled: true, reason: null, mode: 'full' },
     },
     {
       name: 'project overrides mode',
@@ -520,12 +606,12 @@ describe('_effectiveConfig parity with Python', () => {
       want: { enabled: true, mode: 'full' },
     },
     {
-      name: 'empty settings -> global-off + defaults',
+      name: 'empty settings -> project-off + defaults',
       global: {},
       project: {},
       want: {
         enabled: false,
-        reason: 'global-off',
+        reason: 'project-off',
         mode: 'structural',
         version_range: '>=0.7.10,<1',
         min_repo_files: 100,

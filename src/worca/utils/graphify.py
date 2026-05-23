@@ -178,8 +178,12 @@ def effective_graphify_config(
     """Resolve two-tier graphify config into a single effective config.
 
     global_settings and project_settings are full settings dicts (with the
-    "worca" key). Global enabled=false is a hard kill-switch — project
-    cannot override it.
+    "worca" key). Enablement is project-level: the project must opt in via
+    ``graphify.enabled: true``. Global ``graphify.enabled`` is purely a
+    kill-switch — an *explicit* global ``false`` disables graphify everywhere
+    (admin / fleet / security lever); any other global value (``true`` or
+    unset) defers entirely to the project. Global non-enable fields (mode,
+    version_range, …) still serve as defaults that the project can override.
     """
     g_graphify = (
         global_settings.get("worca", {}).get("graphify", {})
@@ -191,12 +195,12 @@ def effective_graphify_config(
     defaults = dict(_GRAPHIFY_DEFAULTS)
     defaults_update_on = dict(defaults["update_on"])
 
-    global_enabled = g_graphify.get("enabled", defaults["enabled"])
-
-    if not global_enabled:
+    # Explicit global ``enabled: false`` is the only global value that disables;
+    # ``true`` and unset both defer to the project's own opt-in.
+    if g_graphify.get("enabled") is False:
         return _disabled_config(defaults, defaults_update_on, reason="global-off")
 
-    project_enabled = p_graphify.get("enabled", global_enabled)
+    project_enabled = p_graphify.get("enabled", False)
     if not project_enabled:
         return _disabled_config(defaults, defaults_update_on, reason="project-off")
 
