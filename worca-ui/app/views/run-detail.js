@@ -455,10 +455,6 @@ function _effortRowView(iter, graphifyEnabled) {
   const divergenceLabel =
     bc?.skip_reason === 'explicit_override' ? 'overridden' : 'ignored';
 
-  const gfxTail =
-    gfx === nothing
-      ? nothing
-      : html`<span class="iteration-tags-sep">·</span>${gfx}`;
   return html`
     <div class="iteration-tags-row" title="${tooltip}">
       <span class="meta-label">Effort:</span>
@@ -466,7 +462,7 @@ function _effortRowView(iter, graphifyEnabled) {
       <sl-badge class="effort-source-chip" variant="neutral" pill>${sourceLabel}</sl-badge>
       ${escalationChips}
       ${cappedChip}
-      ${gfxTail}
+      ${gfx}
     </div>
     ${
       showBeadRow
@@ -803,7 +799,12 @@ function _stageCost(iterations) {
   return iterations.reduce((sum, it) => sum + (it.cost_usd || 0), 0);
 }
 
-function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
+// Serialize a stage (and its iterations) to the JSON the "Copy" button hands
+// the user. Keep this in sync with everything the stage section *renders* —
+// effort, graphify invocations, dispatch (skills/subagents), classification,
+// token usage, structured output, and the preflight graphify fields — so the
+// copied data is the full stage record, not a stale subset.
+export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
   const iterations = stage.iterations || [];
   const wallMs = _stageWallMs(stage);
   return {
@@ -812,11 +813,17 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     agent: stageAgent || undefined,
     model: stageModel || undefined,
     cost_usd: _stageCost(iterations),
+    token_usage: stage.token_usage || undefined,
     duration: wallMs > 0 ? formatDuration(wallMs) : undefined,
     duration_ms: wallMs > 0 ? wallMs : undefined,
     started_at: stage.started_at || undefined,
     completed_at: stage.completed_at || undefined,
+    skipped: stage.skipped || undefined,
+    task_progress: stage.task_progress || undefined,
     error: stage.error || undefined,
+    plan_file: stage.plan_file || undefined,
+    graphify_status: stage.graphify_status || undefined,
+    graphify_report_path: stage.graphify_report_path || undefined,
     iterations: iterations.map((it) => ({
       number: it.number,
       status: it.status,
@@ -831,10 +838,15 @@ function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
       duration_api_ms: it.duration_api_ms || undefined,
       started_at: it.started_at || undefined,
       completed_at: it.completed_at || undefined,
+      effort: it.effort || undefined,
+      graphify_invocations:
+        it.graphify_invocations != null ? it.graphify_invocations : undefined,
+      token_usage: it.token_usage || undefined,
       classification: it.classification || undefined,
       dispatch_events: it.dispatch_events?.length
         ? it.dispatch_events
         : undefined,
+      output: it.output || undefined,
     })),
     prompts: promptData
       ? {

@@ -149,6 +149,11 @@ def test_graphify_preflight_invokes_mock_and_injects_graph(pipeline_env):
     assert _plan_iters and "graphify_invocations" in _plan_iters[0], (
         "agent-stage iterations must record graphify_invocations"
     )
+    # Preflight has no agent and must NOT carry the badge field.
+    _pf_iters = status.get("stages", {}).get("preflight", {}).get("iterations", [])
+    assert _pf_iters and "graphify_invocations" not in _pf_iters[0], (
+        "preflight iterations must not record graphify_invocations"
+    )
 
     # 4. The plan stage's rendered prompt (from plan.block.md) carries the
     #    per-run availability NOTE — not the static report block. Agents query

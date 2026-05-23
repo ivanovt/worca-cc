@@ -2644,8 +2644,13 @@ def run_pipeline(
                     iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
                 # Per-iteration read-only graphify query count (drives the
                 # run-detail "Graphify" badge). Recorded for every agent stage,
-                # 0 when none — preflight (no agent) never sets it.
-                iter_extras["graphify_invocations"] = raw_envelope.get("graphify_invocations", 0)
+                # 0 when none. Preflight has no agent and shares this iter_extras
+                # block, so skip it there — the UI omits the badge when the field
+                # is absent.
+                if current_stage != Stage.PREFLIGHT:
+                    iter_extras["graphify_invocations"] = raw_envelope.get(
+                        "graphify_invocations", 0
+                    )
             if usage:
                 iter_extras["token_usage"] = usage
             iter_extras["prompt"] = rendered_prompt
