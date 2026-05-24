@@ -182,6 +182,16 @@ gh issue list --label area:cc --json number,title,labels --limit 30
 
 For a human-readable view, post-process with `--jq` (e.g. `--jq '"#\(.number) \(.title)"'`) instead of falling back to the unfiltered command.
 
+**Editing a PR/issue body — use the REST API, not `gh pr edit`.** `gh pr edit <N> --body …` hits the same classic-Projects deprecation (`repository.pullRequest.projectCards`) and **aborts without applying the change** — silently leaving the body unedited. Patch via REST instead (no `projectCards` path):
+
+```bash
+python3 -c "import json; print(json.dumps({'body': open('/tmp/body.md').read()}))" > /tmp/patch.json
+gh api --method PATCH repos/SinishaDjukic/worca-cc/pulls/<N> --input /tmp/patch.json
+# verify: gh pr view <N> --json body --jq .body
+```
+
+Build the JSON with `json.dumps` (or `jq`) so backticks/emoji in the body survive shell quoting and JSON escaping. Note: `gh pr merge` and `gh pr view --json …` do *not* trigger this — only the `gh pr edit` mutation does.
+
 The guardian agent uses this when creating PRs. Adapt this section for GitLab (`glab`), Bitbucket, or other hosting platforms.
 
 > Use `/worca-issue` to read/list/create issues — it bakes in the `--json` workaround, the W-NNN-vs-bug title rule, and the required label set. Use `/worca-pr-prep` to run the pre-merge gate.
