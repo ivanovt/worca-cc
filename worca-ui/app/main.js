@@ -519,6 +519,7 @@ let beadsStarting = null; // null | issueId
 let beadsStartError = null; // null | string
 const runBeads = new Map(); // runId → issues[]
 let beadsCounts = {}; // { runId: count }
+let lastBeadsPayload = null;
 let beadsRunIssues = []; // issues for the currently viewed run
 let beadsRunLoading = false;
 
@@ -765,6 +766,7 @@ function resetProjectState() {
   beadsStartError = null;
   runBeads.clear();
   beadsCounts = {};
+  lastBeadsPayload = null;
   beadsRunIssues = [];
   beadsRunLoading = false;
   // Stage iteration tabs
@@ -1026,6 +1028,9 @@ ws.on('beads-update', (payload, msg) => {
   const currentProject = store.getState().currentProjectId;
   if (msg?.project && currentProject && msg.project !== currentProject) return;
   if (payload) {
+    const serialized = JSON.stringify(payload);
+    if (serialized === lastBeadsPayload) return;
+    lastBeadsPayload = serialized;
     store.setState({
       beads: {
         issues: payload.issues || [],
