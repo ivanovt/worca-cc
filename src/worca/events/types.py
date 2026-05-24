@@ -315,6 +315,8 @@ def stage_completed_payload(
     turns: int,
     outcome: str,
     token_usage: dict = None,
+    beads_done: int = None,
+    beads_total: int = None,
 ) -> dict:
     p: dict = {
         "stage": stage,
@@ -326,6 +328,10 @@ def stage_completed_payload(
     }
     if token_usage is not None:
         p["token_usage"] = token_usage
+    if beads_done is not None:
+        p["beads_done"] = beads_done
+    if beads_total is not None:
+        p["beads_total"] = beads_total
     return p
 
 

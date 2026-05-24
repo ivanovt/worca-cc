@@ -181,6 +181,9 @@ function fmtStatusBlock(run) {
     const iterPart = iteration ? ` (iteration ${iteration})` : '';
     parts.push(`   **Stage:** ${stage}${iterPart}`);
   }
+  if (run.beads_total > 0) {
+    parts.push(`   **Beads:** ${run.beads_done ?? 0}/${run.beads_total}`);
+  }
   if (elapsed) parts.push(`   **Duration:** ${elapsed}`);
   if (cost) parts.push(`   **Cost:** ${cost}`);
   if (ps === 'completed' && run.pr_url)

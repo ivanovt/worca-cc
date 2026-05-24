@@ -22,6 +22,7 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   let BEADS_REFRESH_TIMER = null;
   let lastPayloadJson = null;
   let lastSelfReadWalStat = null;
+  let latestCounts = {};
 
   function scheduleBeadsRefresh() {
     if (BEADS_REFRESH_TIMER) clearTimeout(BEADS_REFRESH_TIMER);
@@ -32,6 +33,7 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
           listIssues(beadsDbPath),
           countIssuesByRunLabel(beadsDbPath).catch(() => ({})),
         ]);
+        latestCounts = counts;
         const payloadJson = JSON.stringify({ issues, counts });
         if (payloadJson === lastPayloadJson) return;
         lastPayloadJson = payloadJson;
@@ -96,5 +98,9 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
     }
   }
 
-  return { getBeadsDbPath, destroy };
+  function getLatestCounts() {
+    return latestCounts;
+  }
+
+  return { getBeadsDbPath, getLatestCounts, destroy };
 }

@@ -360,10 +360,29 @@ export function createProjectScopedRoutes({
   });
 
   // GET /api/projects/:projectId/runs — list runs for this project
-  router.get('/runs', requireWorcaDir, (req, res) => {
+  router.get('/runs', requireWorcaDir, async (req, res) => {
     try {
       const runs = discoverRuns(req.project.worcaDir);
       const default_branch = getDefaultBranch(req.project.projectRoot);
+
+      const { getBeadsCounts } = req.app.locals;
+      if (getBeadsCounts) {
+        try {
+          const counts = getBeadsCounts(req.project.name);
+          if (counts) {
+            for (const run of runs) {
+              const c = counts[run.id];
+              if (c) {
+                run.beads_done = c.done;
+                run.beads_total = c.total;
+              }
+            }
+          }
+        } catch {
+          /* non-fatal — runs returned without bead counts */
+        }
+      }
+
       const response = { ok: true, runs, default_branch };
       // Include settings so multi-project clients can use loop limits, etc.
       const { settingsPath } = req.project;

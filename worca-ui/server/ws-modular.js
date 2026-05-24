@@ -330,10 +330,16 @@ export function attachWsServer(httpServer, config) {
     return null;
   }
 
+  function getBeadsCounts(projectId) {
+    const wset = watcherSets.get(projectId);
+    return wset?.beadsWatcher?.getLatestCounts() ?? {};
+  }
+
   return {
     wss,
     broadcast: broadcaster.broadcast,
     scheduleRefresh,
     resolveRunProject,
+    getBeadsCounts,
   };
 }

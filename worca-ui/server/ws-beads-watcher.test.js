@@ -238,6 +238,94 @@ describe('payload dedup', () => {
   });
 });
 
+describe('getLatestCounts', () => {
+  let createBeadsWatcher;
+  let mockListIssues;
+  let mockCountIssuesByRunLabel;
+  let watchCallback;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    mockListIssues = vi
+      .fn()
+      .mockResolvedValue([{ id: '1', title: 'A', status: 'open' }]);
+    mockCountIssuesByRunLabel = vi.fn().mockResolvedValue({
+      'run-1': { total: 4, done: 1 },
+    });
+
+    vi.doMock('./beads-reader.js', () => ({
+      listIssues: mockListIssues,
+      countIssuesByRunLabel: mockCountIssuesByRunLabel,
+    }));
+
+    vi.doMock('node:fs', () => ({
+      existsSync: vi.fn(() => true),
+      watch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+      statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    const mod = await import('./ws-beads-watcher.js');
+    createBeadsWatcher = mod.createBeadsWatcher;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('returns empty object before any refresh', () => {
+    const watcher = createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster: { broadcast: vi.fn() },
+    });
+
+    expect(watcher.getLatestCounts()).toEqual({});
+  });
+
+  it('returns cached counts after a refresh', async () => {
+    const watcher = createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster: { broadcast: vi.fn() },
+    });
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(watcher.getLatestCounts()).toEqual({
+      'run-1': { total: 4, done: 1 },
+    });
+  });
+
+  it('updates cached counts on subsequent refreshes', async () => {
+    const watcher = createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster: { broadcast: vi.fn() },
+    });
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+
+    mockCountIssuesByRunLabel.mockResolvedValue({
+      'run-1': { total: 4, done: 3 },
+    });
+    mockListIssues.mockResolvedValue([{ id: '2', title: 'B', status: 'open' }]);
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(watcher.getLatestCounts()).toEqual({
+      'run-1': { total: 4, done: 3 },
+    });
+  });
+});
+
 describe('WAL self-read suppression', () => {
   let createBeadsWatcher;
   let mockListIssues;

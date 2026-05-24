@@ -1017,6 +1017,41 @@ def test_stage_completed_payload_optional_token_usage():
     assert p.get("token_usage") == {"input_tokens": 100, "output_tokens": 50}
 
 
+def test_stage_completed_payload_with_bead_counts():
+    """beads_done and beads_total included when provided."""
+    from worca.events.types import stage_completed_payload
+    p = stage_completed_payload(
+        stage="IMPLEMENT", iteration=1, duration_ms=5000,
+        cost_usd=0.5, turns=10, outcome="success",
+        beads_done=8, beads_total=8,
+    )
+    assert p["beads_done"] == 8
+    assert p["beads_total"] == 8
+
+
+def test_stage_completed_payload_bead_counts_omitted_when_none():
+    """beads_done/beads_total omitted from dict when not supplied."""
+    from worca.events.types import stage_completed_payload
+    p = stage_completed_payload(
+        stage="PLAN", iteration=1, duration_ms=1,
+        cost_usd=0.0, turns=1, outcome="success",
+    )
+    assert "beads_done" not in p
+    assert "beads_total" not in p
+
+
+def test_stage_completed_payload_partial_bead_counts():
+    """Only the supplied bead field appears when the other is None."""
+    from worca.events.types import stage_completed_payload
+    p = stage_completed_payload(
+        stage="IMPLEMENT", iteration=1, duration_ms=1,
+        cost_usd=0.0, turns=1, outcome="success",
+        beads_done=3,
+    )
+    assert p["beads_done"] == 3
+    assert "beads_total" not in p
+
+
 def test_bead_created_payload_optional_run_label():
     """run_label is optional in bead_created."""
     from worca.events.types import bead_created_payload

@@ -375,6 +375,74 @@ describe('createGlobalHandlers', () => {
     expect(reply).toContain('**Project:** myproj');
   });
 
+  // /active — beads line
+  it('/active includes Beads line when beads_total > 0', async () => {
+    const { mkdtempSync } = require('node:fs');
+    const { join } = require('node:path');
+    const tmp = mkdtempSync(join(require('node:os').tmpdir(), 'worca-test-'));
+    const prefsDir = makePrefsDir(tmp, [{ name: 'myproj', path: '/myproj' }]);
+    const rc = makeRestClient({
+      myproj: {
+        runs: [
+          {
+            id: 'run-beads',
+            pipeline_status: 'running',
+            stage: 'implement',
+            started_at: '2026-05-24T10:00:00Z',
+            beads_done: 4,
+            beads_total: 7,
+            work_request: { title: 'Add beads' },
+          },
+        ],
+      },
+    });
+    chatCtx.get.mockReturnValue({
+      active_project: 'myproj',
+      mute_until: null,
+      muted_messages: 0,
+    });
+    const handlers = createGlobalHandlers({
+      chatContext: chatCtx,
+      prefsDir,
+      restClient: rc,
+    });
+    const reply = await handlers.active(CHAT, []);
+    expect(reply).toContain('**Beads:** 4/7');
+  });
+
+  it('/active omits Beads line when beads_total is 0', async () => {
+    const { mkdtempSync } = require('node:fs');
+    const { join } = require('node:path');
+    const tmp = mkdtempSync(join(require('node:os').tmpdir(), 'worca-test-'));
+    const prefsDir = makePrefsDir(tmp, [{ name: 'myproj', path: '/myproj' }]);
+    const rc = makeRestClient({
+      myproj: {
+        runs: [
+          {
+            id: 'run-no-beads',
+            pipeline_status: 'running',
+            stage: 'implement',
+            started_at: '2026-05-24T10:00:00Z',
+            beads_done: 0,
+            beads_total: 0,
+          },
+        ],
+      },
+    });
+    chatCtx.get.mockReturnValue({
+      active_project: 'myproj',
+      mute_until: null,
+      muted_messages: 0,
+    });
+    const handlers = createGlobalHandlers({
+      chatContext: chatCtx,
+      prefsDir,
+      restClient: rc,
+    });
+    const reply = await handlers.active(CHAT, []);
+    expect(reply).not.toContain('**Beads:**');
+  });
+
   // /active — no runs
   it('/active returns no-active-pipelines message when all runs are non-running', async () => {
     const { mkdtempSync } = require('node:fs');

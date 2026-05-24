@@ -211,6 +211,11 @@ export function createGlobalHandlers({ chatContext, prefsDir, restClient }) {
           } else if (elapsed) {
             parts.push(`   **Duration:** ${elapsed}`);
           }
+          if (run.beads_total > 0) {
+            parts.push(
+              `   **Beads:** ${run.beads_done ?? 0}/${run.beads_total}`,
+            );
+          }
           lines.push(parts.join('\n'));
         }
       }
