@@ -522,13 +522,13 @@ class TestEffortSettings:
         result = load_settings(settings_path)
         assert result["worca"]["agents"]["planner"]["effort"] == "xhigh"
 
-    def test_coordinator_effort_medium(self):
-        """Coordinator has effort 'medium' (mechanical decomposition)."""
+    def test_coordinator_effort_high(self):
+        """Coordinator has effort 'high' (complexity classification is judgment)."""
         settings_path = os.path.join(
             os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
         )
         result = load_settings(settings_path)
-        assert result["worca"]["agents"]["coordinator"]["effort"] == "medium"
+        assert result["worca"]["agents"]["coordinator"]["effort"] == "high"
 
     def test_guardian_effort_high(self):
         """Guardian has effort 'high' (high vigilance)."""
@@ -554,13 +554,29 @@ class TestEffortSettings:
         result = load_settings(settings_path)
         assert "effort" not in result["worca"]["agents"]["tester"]
 
-    def test_reviewer_effort_unset(self):
-        """Reviewer has no effort field (model default)."""
+    def test_reviewer_effort_high(self):
+        """Reviewer has effort 'high' (loop-controlling judgment gate)."""
         settings_path = os.path.join(
             os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
         )
         result = load_settings(settings_path)
-        assert "effort" not in result["worca"]["agents"]["reviewer"]
+        assert result["worca"]["agents"]["reviewer"]["effort"] == "high"
+
+    def test_plan_reviewer_effort_high(self):
+        """Plan reviewer has effort 'high' (judgment gate, only active when enabled)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert result["worca"]["agents"]["plan_reviewer"]["effort"] == "high"
+
+    def test_learner_effort_unset(self):
+        """Learner has no effort field (low stakes, disabled by default)."""
+        settings_path = os.path.join(
+            os.path.dirname(__file__), '..', 'src', 'worca', 'settings.json'
+        )
+        result = load_settings(settings_path)
+        assert "effort" not in result["worca"]["agents"]["learner"]
 
     def test_local_override_auto_mode(self, tmp_path):
         """Local override can change auto_mode."""

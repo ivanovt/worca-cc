@@ -139,6 +139,42 @@ def test_coordinator_effort_mode_independent_emission():
 
 
 # ---------------------------------------------------------------------------
+# coordinator.md — Structured effort map (effort-system-reliable-labels)
+# ---------------------------------------------------------------------------
+
+
+def test_coordinator_effort_map_in_structured_output():
+    """The coordinator must be told to populate the `effort` field in its output."""
+    content = _read("coordinator.md")
+    assert '"effort"' in content or "`effort`" in content, (
+        "coordinator.md must reference the `effort` field for structured output"
+    )
+    lower = content.lower()
+    assert "map" in lower or "mapping" in lower, (
+        "coordinator.md must describe effort as a map/mapping of bead IDs to levels"
+    )
+
+
+def test_coordinator_effort_map_documents_bead_id_key():
+    """The effort map instruction must explain that keys are bead IDs."""
+    content = _read("coordinator.md")
+    assert "bead_id" in content or "bead ID" in content or "bead id" in content.lower(), (
+        "coordinator.md must document that effort map keys are bead IDs"
+    )
+
+
+def test_coordinator_effort_map_belt_and_suspenders():
+    """Both --labels instruction AND structured effort map must coexist."""
+    content = _read("coordinator.md")
+    assert "--labels" in content, (
+        "coordinator.md must retain --labels instruction (belt-and-suspenders)"
+    )
+    assert ('"effort"' in content or "`effort`" in content), (
+        "coordinator.md must also instruct structured effort map output"
+    )
+
+
+# ---------------------------------------------------------------------------
 # implementer.md
 # ---------------------------------------------------------------------------
 

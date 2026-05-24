@@ -1,10 +1,10 @@
 import { nothing } from 'lit-html';
 import { describe, expect, it } from 'vitest';
+import { effortLevelVariant } from '../utils/effort-badge.js';
 import {
   beadEffortBadgeView,
   beadIterationMiniTable,
   beadNotesView,
-  effortLevelVariant,
   effortSourceLabel,
   extractEffortLabel,
 } from './beads-panel.js';
@@ -12,6 +12,8 @@ import {
 function renderToString(template) {
   if (!template || template === nothing) return '';
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -22,6 +24,7 @@ function renderToString(template) {
       else if (typeof v === 'number') result += String(v);
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;
@@ -109,28 +112,38 @@ describe('beadEffortBadgeView — effort label badge', () => {
     expect(html).toContain('high');
   });
 
+  it('renders Zap icon via shared effortLevelBadge', () => {
+    const issue = { labels: ['worca-effort:high'] };
+    const html = renderToString(beadEffortBadgeView(issue, 'adaptive'));
+    expect(html).toContain('effort-zap-icon');
+  });
+
   it('renders low with neutral variant', () => {
     const issue = { labels: ['worca-effort:low'] };
     const html = renderToString(beadEffortBadgeView(issue, 'adaptive'));
-    expect(html).toMatch(/variant="neutral"[^>]*>low/s);
+    expect(html).toContain('variant="neutral"');
+    expect(html).toContain('low</sl-badge>');
   });
 
   it('renders high with primary variant', () => {
     const issue = { labels: ['worca-effort:high'] };
     const html = renderToString(beadEffortBadgeView(issue, 'adaptive'));
-    expect(html).toMatch(/variant="primary"[^>]*>high/s);
+    expect(html).toContain('variant="primary"');
+    expect(html).toContain('high</sl-badge>');
   });
 
   it('renders xhigh with warning variant', () => {
     const issue = { labels: ['worca-effort:xhigh'] };
     const html = renderToString(beadEffortBadgeView(issue, 'adaptive'));
-    expect(html).toMatch(/variant="warning"[^>]*>xhigh/s);
+    expect(html).toContain('variant="warning"');
+    expect(html).toContain('xhigh</sl-badge>');
   });
 
   it('renders max with danger variant', () => {
     const issue = { labels: ['worca-effort:max'] };
     const html = renderToString(beadEffortBadgeView(issue, 'adaptive'));
-    expect(html).toMatch(/variant="danger"[^>]*>max/s);
+    expect(html).toContain('variant="danger"');
+    expect(html).toContain('max</sl-badge>');
   });
 
   it('renders "ignored: reactive" chip when auto_mode is reactive', () => {

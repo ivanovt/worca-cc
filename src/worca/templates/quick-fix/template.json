@@ -11,10 +11,13 @@
       "review": { "enabled": false },
       "pr":     { "enabled": false }
     },
+    "effort": {
+      "auto_mode": "disabled"
+    },
     "agents": {
-      "planner":     { "model": "opus", "max_turns": 50 },
-      "coordinator": { "model": "opus", "max_turns": 50 },
-      "implementer": { "model": "sonnet", "max_turns": 100 }
+      "planner":     { "model": "opus", "max_turns": 50, "effort": "medium" },
+      "coordinator": { "model": "opus", "max_turns": 50, "effort": "low" },
+      "implementer": { "model": "sonnet", "max_turns": 100, "effort": "low" }
     },
     "loops": {
       "implement_test": 0

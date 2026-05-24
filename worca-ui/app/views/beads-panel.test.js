@@ -11,6 +11,8 @@ import {
 function renderToString(template) {
   if (!template) return '';
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -21,7 +23,7 @@ function renderToString(template) {
       else if (typeof v === 'number') result += String(v);
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
-      // unsafeHTML directives / functions — skip
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;
@@ -395,6 +397,28 @@ describe('beadTooltipContent', () => {
     const out = renderToString(beadTooltipContent(issue));
     expect(out).toContain('bead-tooltip-copy');
     expect(out).toContain('Copy');
+  });
+
+  it('shows effort badge when issue.effort is set', () => {
+    const issueWithEffort = { ...issue, effort: 'high' };
+    const out = renderToString(beadTooltipContent(issueWithEffort));
+    expect(out).toContain('bead-tooltip-effort');
+    expect(out).toContain('effort-zap-icon');
+    expect(out).toContain('high');
+  });
+
+  it('shows dash effort badge when issue.effort is null', () => {
+    const issueNoEffort = { ...issue, effort: null };
+    const out = renderToString(beadTooltipContent(issueNoEffort));
+    expect(out).toContain('bead-tooltip-effort');
+    expect(out).toContain('effort-zap-icon');
+    expect(out).toContain('-');
+  });
+
+  it('omits effort badge when issue has no effort field', () => {
+    const out = renderToString(beadTooltipContent(issue));
+    expect(out).not.toContain('bead-tooltip-effort');
+    expect(out).not.toContain('effort-zap-icon');
   });
 });
 
