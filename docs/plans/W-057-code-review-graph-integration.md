@@ -26,6 +26,14 @@ Add **code-review-graph as an optional, off-by-default second AST engine** along
 
 Structural-only for v1 (no embeddings / `semantic_search` / `embed_graph`). worca never runs `code-review-graph install`.
 
+## Decisions
+
+Locked via `/worca-analyze` triage (2026-05-24):
+
+1. **Blocking validation gates** (read tools emit no DML; `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for reads) — clear them with a **standalone spike *before* the Phase 3 build**, not inline. The read-only governance model (§5) and the copied-base-DB design (§3) both rest on these gates, so a short spike beats discovering a violation mid-build and reworking Phases 3-5. *(Resolves Known-unknowns 1-2.)*
+2. **CRG MCP `serve` lifecycle** — **per-invocation stdio child**: one `code-review-graph serve` per `claude` process, torn down on exit (§4 as written). Zero port/concurrency management, safe for parallel agents and worktrees. Defer server warming; revisit only if the startup-latency measurement (Known-unknown 3) proves prohibitive. *(Resolves Known-unknown 3.)*
+3. **WAL checkpoint before base-DB copy** — run `PRAGMA wal_checkpoint(TRUNCATE)` after the base build, before copying `graph.db` into the run-scoped dir (§3). Yields a clean single-file copy with no `-wal` side-file and avoids "copied DB missing recent writes" bugs. *(Resolves Known-unknown 4.)*
+
 ## Design
 
 ### 1. Settings schema — `worca.code_review_graph` block
@@ -276,13 +284,13 @@ worca crg rebuild       # force clean base build
 
 ### Known unknowns (validation/spike — resolve in Phase 2/3)
 
-**Items 1–2 are BLOCKING GATES for Phase 3** — the entire MCP-read-only governance model rests on them, so they are done-criteria, not optional spikes. Items 3–5 are tuning.
+**Items 1–2 are BLOCKING GATES for Phase 3** — the entire MCP-read-only governance model rests on them, so they are done-criteria, not optional spikes. **Decided** (Decisions §1): clear them via a standalone spike *before* the Phase 3 build. Items 3–5 are tuning.
 
 1. Confirm allow-listed read tools emit **no DML** under a real `serve` (CRG's `tests/test_tools.py` asserts this via `set_trace_callback` — verify for our subset). *[blocking]*
 2. Confirm `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for **reads** (CHANGELOG: "supported by CLI, MCP tools, and registry"). *[blocking]*
-3. Measure per-agent `serve` **startup latency** (`MCP_TIMEOUT`); decide whether to keep the server warm across iterations vs. per-invocation.
-4. Decide whether to `PRAGMA wal_checkpoint(TRUNCATE)` after build before copying the base DB (cleaner copy, no `-wal` side-file).
-5. Confirm CRG `visualize` HTML output path for the `/api/crg/graph.html` endpoint.
+3. Measure per-agent `serve` **startup latency** (`MCP_TIMEOUT`). **Decided** (Decisions §2): per-invocation stdio child; server warming deferred, revisit only if latency is prohibitive.
+4. **Decided** (Decisions §3): `PRAGMA wal_checkpoint(TRUNCATE)` after build, before copying the base DB (clean single-file copy, no `-wal` side-file).
+5. Confirm CRG `visualize` HTML output path for the `/api/crg/graph.html` endpoint. *(still open)*
 
 ## Test Plan
 
