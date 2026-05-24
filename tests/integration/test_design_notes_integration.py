@@ -17,16 +17,16 @@ import time
 
 import pytest
 
-# Integration tests run the full pipeline as a subprocess; a background
-# worca-ui server writing to ~/.worca/worca-ui-global.log during that
-# window is falsely attributed to the test by the leak detector.
-pytestmark = pytest.mark.allow_worca_writes
-
 from tests.integration.helpers import (
     _find_latest_run_id,
     run_and_act,
     send_sigkill,
 )
+
+# Integration tests run the full pipeline as a subprocess; a background
+# worca-ui server writing to ~/.worca/worca-ui-global.log during that
+# window is falsely attributed to the test by the leak detector.
+pytestmark = pytest.mark.allow_worca_writes
 
 
 # ---------------------------------------------------------------------------
