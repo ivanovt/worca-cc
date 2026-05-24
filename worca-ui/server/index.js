@@ -90,22 +90,21 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
-const { broadcast, scheduleRefresh, resolveRunProject } = attachWsServer(
-  server,
-  {
+const { broadcast, scheduleRefresh, resolveRunProject, getBeadsCounts } =
+  attachWsServer(server, {
     worcaDir,
     settingsPath,
     prefsPath: preferencesPath(),
     prefsDir,
     webhookInbox,
     projectRoot,
-  },
-);
+  });
 
-// Expose broadcast, scheduleRefresh, and resolveRunProject to REST route handlers
+// Expose broadcast, scheduleRefresh, resolveRunProject, and getBeadsCounts to REST route handlers
 app.locals.broadcast = broadcast;
 app.locals.scheduleRefresh = scheduleRefresh;
 app.locals.resolveRunProject = resolveRunProject;
+app.locals.getBeadsCounts = getBeadsCounts;
 
 // Boot chat integrations only in global mode — project-scoped instances skip
 // integrations to avoid duplicate Telegram long-poll connections on the same bot.

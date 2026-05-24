@@ -424,6 +424,41 @@ describe('renderEvent', () => {
       expect(bodyText(msg)).toContain('completed');
       expect(bodyText(msg)).toContain('1m05s');
     });
+
+    it('includes beads tally when beads_total > 0', () => {
+      const msg = renderEvent(
+        envelope('pipeline.stage.completed', {
+          stage: 'implement',
+          duration_ms: 120000,
+          beads_done: 6,
+          beads_total: 8,
+        }),
+      );
+      expect(bodyText(msg)).toContain('Beads');
+      expect(bodyText(msg)).toContain('6/8');
+    });
+
+    it('omits beads line when beads_total is 0', () => {
+      const msg = renderEvent(
+        envelope('pipeline.stage.completed', {
+          stage: 'implement',
+          duration_ms: 120000,
+          beads_total: 0,
+          beads_done: 0,
+        }),
+      );
+      expect(bodyText(msg)).not.toContain('Beads');
+    });
+
+    it('omits beads line when bead fields are absent', () => {
+      const msg = renderEvent(
+        envelope('pipeline.stage.completed', {
+          stage: 'implement',
+          duration_ms: 120000,
+        }),
+      );
+      expect(bodyText(msg)).not.toContain('Beads');
+    });
   });
 
   describe('pipeline.stage.interrupted', () => {
@@ -743,6 +778,57 @@ describe('renderEvent', () => {
       expect(text).toContain('plan');
       expect(text).toContain('run-789');
       expect(text).toContain('Description requests X');
+    });
+  });
+
+  describe('pipeline.bead.next (opt-in)', () => {
+    it('is NOT in the default Tier-1 map', () => {
+      const msg = renderEvent(
+        envelope('pipeline.bead.next', {
+          next_bead_id: 'beads-abc',
+          bead_iteration: 3,
+          max_beads: 8,
+        }),
+      );
+      expect(msg).toBeNull();
+    });
+
+    it('is NOT in TIER1_EVENTS', () => {
+      expect(TIER1_EVENTS).not.toContain('pipeline.bead.next');
+    });
+
+    it('is exported via OPT_IN_RENDERERS', () => {
+      expect(OPT_IN_RENDERERS['pipeline.bead.next']).toBeTypeOf('function');
+    });
+
+    it('renders bead_iteration/max_beads', () => {
+      const render = OPT_IN_RENDERERS['pipeline.bead.next'];
+      const msg = render(
+        envelope('pipeline.bead.next', {
+          next_bead_id: 'beads-abc',
+          bead_iteration: 3,
+          max_beads: 8,
+        }),
+      );
+      expect(isValidMessage(msg)).toBe(true);
+      expect(msg.severity).toBe('info');
+      const text = bodyText(msg);
+      expect(text).toContain('run-abc123');
+      expect(text).toContain('3/8');
+    });
+
+    it('renders without max_beads', () => {
+      const render = OPT_IN_RENDERERS['pipeline.bead.next'];
+      const msg = render(
+        envelope('pipeline.bead.next', {
+          next_bead_id: 'beads-xyz',
+          bead_iteration: 2,
+        }),
+      );
+      expect(isValidMessage(msg)).toBe(true);
+      const text = bodyText(msg);
+      expect(text).toContain('2');
+      expect(text).not.toContain('/');
     });
   });
 

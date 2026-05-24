@@ -3072,6 +3072,10 @@ def run_pipeline(
                 update_stage(status, current_stage.value, **stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
+                    _bead_kwargs = {}
+                    if max_beads:
+                        _bead_kwargs["beads_done"] = loop_counters.get("bead_iteration", 0)
+                        _bead_kwargs["beads_total"] = max_beads
                     _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
                         stage=current_stage.value, iteration=iter_num,
                         duration_ms=iter_extras.get("duration_ms", 0),
@@ -3079,6 +3083,7 @@ def run_pipeline(
                         turns=iter_extras.get("turns", 0),
                         outcome=iter_extras["outcome"],
                         token_usage=iter_extras.get("token_usage"),
+                        **_bead_kwargs,
                     ))
                     if _sc_event:
                         _action = _check_control_response(ctx, _sc_event)

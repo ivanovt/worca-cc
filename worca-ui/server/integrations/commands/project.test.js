@@ -219,6 +219,110 @@ describe('/status', () => {
   });
 });
 
+// --- /status with beads ---
+
+describe('/status beads line', () => {
+  it('includes Beads line when beads_total > 0', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          {
+            id: 'run-beads',
+            pipeline_status: 'running',
+            stage: 'implement',
+            started_at: '2026-05-24T10:00:00Z',
+            beads_done: 3,
+            beads_total: 8,
+            stages: {},
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.status(CHAT, ['run-beads']);
+    expect(reply).toContain('**Beads:** 3/8');
+  });
+
+  it('omits Beads line when beads_total is 0', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          {
+            id: 'run-no-beads',
+            pipeline_status: 'running',
+            stage: 'implement',
+            started_at: '2026-05-24T10:00:00Z',
+            beads_done: 0,
+            beads_total: 0,
+            stages: {},
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.status(CHAT, ['run-no-beads']);
+    expect(reply).not.toContain('**Beads:**');
+  });
+
+  it('omits Beads line when beads fields are absent', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          {
+            id: 'run-legacy',
+            pipeline_status: 'completed',
+            stage: 'guardian',
+            stages: {},
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.status(CHAT, ['run-legacy']);
+    expect(reply).not.toContain('**Beads:**');
+  });
+
+  it('places Beads line after Stage line', async () => {
+    const chatCtx = makeChatContext(PROJECT);
+    const restClient = makeRestClient({
+      '/runs': {
+        runs: [
+          {
+            id: 'run-order',
+            pipeline_status: 'running',
+            stage: 'implement',
+            started_at: '2026-05-24T10:00:00Z',
+            beads_done: 5,
+            beads_total: 10,
+            stages: {},
+          },
+        ],
+      },
+    });
+    const handlers = createProjectHandlers({
+      chatContext: chatCtx,
+      restClient,
+    });
+    const reply = await handlers.status(CHAT, ['run-order']);
+    const stageIdx = reply.indexOf('**Stage:**');
+    const beadsIdx = reply.indexOf('**Beads:**');
+    expect(stageIdx).toBeGreaterThan(-1);
+    expect(beadsIdx).toBeGreaterThan(stageIdx);
+  });
+});
+
 // --- /runs ---
 
 describe('/runs', () => {

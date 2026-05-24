@@ -114,6 +114,9 @@ function renderStageCompleted(envelope) {
   parts.push(`   **Stage:** ${p.stage ?? 'unknown'} completed`);
   const dur = fmtMs(p.duration_ms);
   if (dur) parts.push(`   **Duration:** ${dur}`);
+  if (p.beads_total > 0) {
+    parts.push(`   **Beads:** ${p.beads_done ?? 0}/${p.beads_total}`);
+  }
   return mdMsg(parts.join('\n'), 'success');
 }
 
@@ -504,6 +507,17 @@ function renderWorkspaceGuideConflict(envelope) {
   return mdMsg(parts.join('\n'), 'warning');
 }
 
+function renderBeadNext(envelope) {
+  const p = envelope.payload;
+  const parts = [`⚙ **Run:** \`${runId(envelope)}\``];
+  const label =
+    p.max_beads != null
+      ? `${p.bead_iteration}/${p.max_beads}`
+      : `${p.bead_iteration}`;
+  parts.push(`   **Bead:** ${label}`);
+  return mdMsg(parts.join('\n'), 'info');
+}
+
 // ---------------------------------------------------------------------------
 // Registry
 // ---------------------------------------------------------------------------
@@ -550,6 +564,7 @@ const EVENT_RENDERERS = {
 // than Tier-1 defaults. Callers that want them can pull from this export and
 // register them in their own pipeline.
 export const OPT_IN_RENDERERS = {
+  'pipeline.bead.next': renderBeadNext,
   'fleet.launched': renderFleetLaunched,
   'workspace.launched': renderWorkspaceLaunched,
   'workspace.plan.started': renderWorkspacePlanStarted,

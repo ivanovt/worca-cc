@@ -11,7 +11,6 @@ import { join } from 'node:path';
 import { isRequest, makeError, makeOk } from '../app/protocol.js';
 import {
   dbExists as beadsDbExists,
-  countIssuesByRunLabel,
   getIssue,
   listDistinctRunLabels,
   listIssues,
@@ -35,6 +34,7 @@ import {
 import { resolveRunDir } from './run-dir-resolver.js';
 import { readSettings } from './settings-reader.js';
 import { discoverRuns } from './watcher.js';
+import { resolveBeadsCounts } from './ws-beads-watcher.js';
 
 /**
  * @param {{
@@ -643,19 +643,12 @@ export function createMessageRouter({
       return;
     }
 
-    // list-beads-counts
+    // list-beads-counts — tier-independent: resolveBeadsCounts falls back to
+    // an on-demand DB read when no beadsWatcher exists (TIER_POLLING), so
+    // chat/REST callers with no browser open still get counts.
     if (req.type === 'list-beads-counts') {
       const proj = resolveProject(ws, req.payload);
-      if (!proj.wset.beadsWatcher) {
-        ws.send(JSON.stringify(makeOk(req, { counts: {} })));
-        return;
-      }
-      const beadsDbPath = proj.wset.beadsWatcher.getBeadsDbPath();
-      if (!beadsDbExists(beadsDbPath)) {
-        ws.send(JSON.stringify(makeOk(req, { counts: {} })));
-        return;
-      }
-      const counts = await countIssuesByRunLabel(beadsDbPath);
+      const counts = await resolveBeadsCounts(proj.wset);
       ws.send(JSON.stringify(makeOk(req, { counts })));
       return;
     }

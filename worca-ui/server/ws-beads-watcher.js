@@ -12,16 +12,28 @@ const BEADS_DEBOUNCE_MS = 500;
 const BEADS_POLL_MS = 2000;
 
 /**
+ * Resolve the beads.db path for a project's worcaDir, independent of any
+ * watcher instance. Used by tier-independent count lookups (chat-only mode,
+ * where no beadsWatcher exists because the WatcherSet is in TIER_POLLING).
+ * @param {string} worcaDir
+ * @returns {string}
+ */
+export function beadsDbPathFor(worcaDir) {
+  return resolve(join(worcaDir, '..', '.beads', 'beads.db'));
+}
+
+/**
  * @param {{ worcaDir: string, broadcaster: { broadcast: Function }, projectId?: string }} deps
  */
 export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
-  const beadsDbPath = resolve(join(worcaDir, '..', '.beads', 'beads.db'));
+  const beadsDbPath = beadsDbPathFor(worcaDir);
   const beadsDir = resolve(join(worcaDir, '..', '.beads'));
   const beadsWalPath = `${beadsDbPath}-wal`;
   let fsWatcher = null;
   let BEADS_REFRESH_TIMER = null;
   let lastPayloadJson = null;
   let lastSelfReadWalStat = null;
+  let latestCounts = {};
 
   function scheduleBeadsRefresh() {
     if (BEADS_REFRESH_TIMER) clearTimeout(BEADS_REFRESH_TIMER);
@@ -32,6 +44,7 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
           listIssues(beadsDbPath),
           countIssuesByRunLabel(beadsDbPath).catch(() => ({})),
         ]);
+        latestCounts = counts;
         const payloadJson = JSON.stringify({ issues, counts });
         if (payloadJson === lastPayloadJson) return;
         lastPayloadJson = payloadJson;
@@ -96,5 +109,57 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
     }
   }
 
-  return { getBeadsDbPath, destroy };
+  function getLatestCounts() {
+    return latestCounts;
+  }
+
+  return { getBeadsDbPath, getLatestCounts, destroy };
+}
+
+const FALLBACK_TTL_MS = 5000;
+/** @type {Map<string, { ts: number, counts: object }>} */
+const fallbackCache = new Map();
+/** @type {Map<string, Promise<object>>} */
+const fallbackInflight = new Map();
+
+/**
+ * Resolve per-run bead counts for a WatcherSet, independent of its tier.
+ *
+ * Fast path: the live watcher cache, populated only while a UI client is
+ * subscribed (TIER_FULL). Fallback: an on-demand DB read for callers that
+ * have no active watcher — e.g. chat integrations hitting REST with no
+ * browser open, where the WatcherSet sits in TIER_POLLING and `beadsWatcher`
+ * is null. The fallback is TTL-cached and in-flight-deduplicated so repeated
+ * chat polling does not spawn a `bd` subprocess per request.
+ *
+ * @param {{ projectId?: string, worcaDir?: string, beadsWatcher?: { getLatestCounts: () => object } | null }} [wset]
+ * @returns {Promise<Record<string, { total: number, done: number }>>}
+ */
+export async function resolveBeadsCounts(wset) {
+  if (!wset || !wset.worcaDir) return {};
+
+  const live = wset.beadsWatcher?.getLatestCounts();
+  if (live && Object.keys(live).length > 0) return live;
+
+  const key = wset.projectId ?? wset.worcaDir;
+  const cached = fallbackCache.get(key);
+  if (cached && Date.now() - cached.ts < FALLBACK_TTL_MS) return cached.counts;
+  if (fallbackInflight.has(key)) return fallbackInflight.get(key);
+
+  const dbPath = beadsDbPathFor(wset.worcaDir);
+  if (!existsSync(dbPath)) return {};
+
+  const promise = (async () => {
+    try {
+      const counts = await countIssuesByRunLabel(dbPath);
+      fallbackCache.set(key, { ts: Date.now(), counts });
+      return counts;
+    } catch {
+      return {};
+    } finally {
+      fallbackInflight.delete(key);
+    }
+  })();
+  fallbackInflight.set(key, promise);
+  return promise;
 }
