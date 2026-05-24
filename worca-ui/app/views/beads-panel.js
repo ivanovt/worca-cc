@@ -275,9 +275,9 @@ export function beadTooltipContent(issue) {
               ? html`<sl-badge variant="warning" pill>blocked</sl-badge>`
               : html`<sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>`
           }
+          ${'effort' in issue ? unsafeHTML(effortLevelBadge(issue.effort)) : nothing}
         </span>
       </div>
-      ${'effort' in issue ? html`<span class="bead-tooltip-effort">${unsafeHTML(effortLevelBadge(issue.effort))}</span>` : nothing}
       <hr class="bead-tooltip-separator">
       <div class="bead-tooltip-label">Title:</div>
       <div class="bead-tooltip-title">${issue.title}</div>

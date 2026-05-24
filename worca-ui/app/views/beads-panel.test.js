@@ -399,25 +399,29 @@ describe('beadTooltipContent', () => {
     expect(out).toContain('Copy');
   });
 
-  it('shows effort badge when issue.effort is set', () => {
+  it('shows effort badge inside bead-tooltip-badges when issue.effort is set', () => {
     const issueWithEffort = { ...issue, effort: 'high' };
     const out = renderToString(beadTooltipContent(issueWithEffort));
-    expect(out).toContain('bead-tooltip-effort');
     expect(out).toContain('effort-zap-icon');
     expect(out).toContain('high');
+    const badgesStart = out.indexOf('bead-tooltip-badges');
+    const effortIdx = out.indexOf('effort-zap-icon');
+    expect(badgesStart).toBeGreaterThan(-1);
+    expect(effortIdx).toBeGreaterThan(badgesStart);
   });
 
-  it('shows dash effort badge when issue.effort is null', () => {
+  it('shows dash effort badge inside bead-tooltip-badges when issue.effort is null', () => {
     const issueNoEffort = { ...issue, effort: null };
     const out = renderToString(beadTooltipContent(issueNoEffort));
-    expect(out).toContain('bead-tooltip-effort');
     expect(out).toContain('effort-zap-icon');
     expect(out).toContain('-');
+    const badgesStart = out.indexOf('bead-tooltip-badges');
+    const effortIdx = out.indexOf('effort-zap-icon');
+    expect(effortIdx).toBeGreaterThan(badgesStart);
   });
 
   it('omits effort badge when issue has no effort field', () => {
     const out = renderToString(beadTooltipContent(issue));
-    expect(out).not.toContain('bead-tooltip-effort');
     expect(out).not.toContain('effort-zap-icon');
   });
 });

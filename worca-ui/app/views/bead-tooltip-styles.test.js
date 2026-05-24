@@ -34,6 +34,20 @@ describe('bead tooltip CSS styles', () => {
       expect(match).not.toBeNull();
       expect(match[1]).toContain('display: flex');
     });
+
+    it('uses column direction to stack ID above badges', () => {
+      const match = css.match(/\.bead-tooltip-header\s*\{([^}]+)\}/);
+      expect(match).not.toBeNull();
+      expect(match[1]).toContain('flex-direction: column');
+    });
+  });
+
+  describe('.bead-tooltip-badges', () => {
+    it('uses flex-wrap so badges wrap at narrow widths', () => {
+      const match = css.match(/\.bead-tooltip-badges\s*\{([^}]+)\}/);
+      expect(match).not.toBeNull();
+      expect(match[1]).toContain('flex-wrap: wrap');
+    });
   });
 
   describe('.bead-tooltip-label', () => {
