@@ -13,6 +13,7 @@ import { fleetRunsDir, workspaceRunsDir } from './paths.js';
 import { readProjects, synthesizeDefaultProject } from './project-registry.js';
 import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
 import { readProjectWorcaVersion } from './worca-setup.js';
+import { resolveBeadsCounts } from './ws-beads-watcher.js';
 import { createBroadcaster } from './ws-broadcaster.js';
 import { createClientManager } from './ws-client-manager.js';
 import { createFleetManifestWatcher } from './ws-fleet-manifest-watcher.js';
@@ -331,8 +332,7 @@ export function attachWsServer(httpServer, config) {
   }
 
   function getBeadsCounts(projectId) {
-    const wset = watcherSets.get(projectId);
-    return wset?.beadsWatcher?.getLatestCounts() ?? {};
+    return resolveBeadsCounts(watcherSets.get(projectId));
   }
 
   return {

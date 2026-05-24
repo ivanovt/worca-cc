@@ -326,6 +326,110 @@ describe('getLatestCounts', () => {
   });
 });
 
+describe('resolveBeadsCounts', () => {
+  let resolveBeadsCounts;
+  let mockCountIssuesByRunLabel;
+  let mockExistsSync;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    mockCountIssuesByRunLabel = vi
+      .fn()
+      .mockResolvedValue({ 'run-1': { total: 4, done: 1 } });
+    mockExistsSync = vi.fn(() => true);
+
+    vi.doMock('./beads-reader.js', () => ({
+      listIssues: vi.fn().mockResolvedValue([]),
+      countIssuesByRunLabel: mockCountIssuesByRunLabel,
+    }));
+
+    vi.doMock('node:fs', () => ({
+      existsSync: mockExistsSync,
+      watch: vi.fn(() => ({ close: vi.fn() })),
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+      statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    const mod = await import('./ws-beads-watcher.js');
+    resolveBeadsCounts = mod.resolveBeadsCounts;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const POLLING_WSET = { projectId: 'p1', worcaDir: '/fake/p1/.claude/worca' };
+
+  it('returns {} for a missing wset', async () => {
+    expect(await resolveBeadsCounts(undefined)).toEqual({});
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+
+  it('returns the live watcher cache without a DB read when non-empty', async () => {
+    const wset = {
+      ...POLLING_WSET,
+      beadsWatcher: {
+        getLatestCounts: () => ({ 'run-x': { total: 2, done: 2 } }),
+      },
+    };
+    expect(await resolveBeadsCounts(wset)).toEqual({
+      'run-x': { total: 2, done: 2 },
+    });
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+
+  it('falls back to a DB read when there is no beadsWatcher (TIER_POLLING)', async () => {
+    expect(await resolveBeadsCounts(POLLING_WSET)).toEqual({
+      'run-1': { total: 4, done: 1 },
+    });
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to a DB read when the live cache is empty', async () => {
+    const wset = {
+      ...POLLING_WSET,
+      beadsWatcher: { getLatestCounts: () => ({}) },
+    };
+    expect(await resolveBeadsCounts(wset)).toEqual({
+      'run-1': { total: 4, done: 1 },
+    });
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('TTL-caches the fallback (no second DB read within the window)', async () => {
+    await resolveBeadsCounts(POLLING_WSET);
+    await resolveBeadsCounts(POLLING_WSET);
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-reads the DB after the TTL expires', async () => {
+    await resolveBeadsCounts(POLLING_WSET);
+    await vi.advanceTimersByTimeAsync(5001);
+    await resolveBeadsCounts(POLLING_WSET);
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(2);
+  });
+
+  it('de-duplicates concurrent in-flight reads', async () => {
+    const [a, b] = await Promise.all([
+      resolveBeadsCounts(POLLING_WSET),
+      resolveBeadsCounts(POLLING_WSET),
+    ]);
+    expect(a).toEqual({ 'run-1': { total: 4, done: 1 } });
+    expect(b).toEqual({ 'run-1': { total: 4, done: 1 } });
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns {} when the beads DB does not exist', async () => {
+    mockExistsSync.mockReturnValue(false);
+    expect(await resolveBeadsCounts(POLLING_WSET)).toEqual({});
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+});
+
 describe('WAL self-read suppression', () => {
   let createBeadsWatcher;
   let mockListIssues;

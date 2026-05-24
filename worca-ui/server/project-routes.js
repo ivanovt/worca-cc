@@ -368,7 +368,7 @@ export function createProjectScopedRoutes({
       const { getBeadsCounts } = req.app.locals;
       if (getBeadsCounts) {
         try {
-          const counts = getBeadsCounts(req.project.name);
+          const counts = await getBeadsCounts(req.project.name);
           if (counts) {
             for (const run of runs) {
               const c = counts[run.id];
