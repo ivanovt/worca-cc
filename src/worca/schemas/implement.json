@@ -12,6 +12,10 @@
     "tests_added": {
       "type": "array",
       "items": { "type": "string" }
+    },
+    "design_notes": {
+      "type": "string",
+      "maxLength": 400
     }
   }
 }

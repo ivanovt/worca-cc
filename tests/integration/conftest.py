@@ -70,10 +70,13 @@ def pipeline_env(tmp_path):
     subprocess.run(["git", "commit", "-m", "init"], cwd=str(project),
                    check=True, capture_output=True)
 
-    # 2. Run worca init to copy full runtime (agents, schemas, hooks, scripts)
+    # 2. Run worca init to copy full runtime (agents, schemas, hooks, scripts).
+    #    PYTHONPATH ensures init copies from the worktree source tree (not a
+    #    stale site-packages install) — mirrors pyproject.toml pythonpath=["src"].
+    _init_env = {**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")}
     subprocess.run(
         [sys.executable, "-m", "worca.cli.main", "init"],
-        cwd=str(project), check=True, capture_output=True,
+        cwd=str(project), check=True, capture_output=True, env=_init_env,
     )
 
 
@@ -123,6 +126,7 @@ def pipeline_env(tmp_path):
             "WORCA_CLAUDE_BIN": f"{sys.executable} {MOCK_CLAUDE_BIN}",
             "WORCA_AGENT": "",  # not in agent mode — hooks should not enforce agent guards
             "WORCA_SKIP_BEADS": "1",  # bd binary may not work in CI
+            "PYTHONPATH": str(REPO_ROOT / "src"),
         }
         # Strip pipeline-specific WORCA_* vars that leak from the parent shell.
         # WORCA_PLAN_FILE and WORCA_PROJECT_ROOT in particular cause plan_check
