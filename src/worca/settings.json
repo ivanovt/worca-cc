@@ -175,7 +175,7 @@
       "coordinator": {
         "model": "opus",
         "max_turns": 300,
-        "effort": "medium"
+        "effort": "high"
       },
       "implementer": {
         "model": "sonnet",
@@ -187,7 +187,8 @@
       },
       "reviewer": {
         "model": "opus",
-        "max_turns": 50
+        "max_turns": 50,
+        "effort": "high"
       },
       "guardian": {
         "model": "opus",
@@ -200,7 +201,8 @@
       },
       "plan_reviewer": {
         "model": "opus",
-        "max_turns": 50
+        "max_turns": 50,
+        "effort": "high"
       }
     },
     "models": {

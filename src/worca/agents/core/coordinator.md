@@ -54,6 +54,26 @@ This is required regardless of pipeline `auto_mode` — labels under `reactive`/
 
 Produce a structured result following the `coordinate.json` schema.
 
+Include the `effort` map in your output: an object mapping each bead ID to its
+complexity level (`low`, `medium`, `high`, or `xhigh`). Every bead you created
+must have an entry. Use the same rubric as the `--labels` classification above.
+
+Example (partial):
+
+```json
+{
+  "beads_ids": ["beads-abc", "beads-def"],
+  "effort": {
+    "beads-abc": "medium",
+    "beads-def": "high"
+  }
+}
+```
+
+The runner uses this map as the reliable, programmatic source for per-bead
+effort labels. The `--labels` flag on `bd create` is the best-effort
+first pass; the structured `effort` map is the authoritative fallback.
+
 ## Rules
 
 <!-- governance -->

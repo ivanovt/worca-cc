@@ -97,6 +97,9 @@ class TestBugfixConfig:
     def test_coordinator_model_opus(self):
         assert self._config()["agents"]["coordinator"]["model"] == "opus"
 
+    def test_effort_auto_cap_high(self):
+        assert self._config()["effort"]["auto_cap"] == "high"
+
 
 class TestFeatureConfig:
     def _config(self):
@@ -107,6 +110,9 @@ class TestFeatureConfig:
 
     def test_learn_enabled(self):
         assert self._config()["stages"]["learn"]["enabled"] is True
+
+    def test_no_effort_override(self):
+        assert "effort" not in self._config()
 
 
 class TestRefactorConfig:
@@ -139,6 +145,18 @@ class TestQuickFixConfig:
 
     def test_review_stage_disabled(self):
         assert self._config()["stages"]["review"]["enabled"] is False
+
+    def test_effort_auto_mode_disabled(self):
+        assert self._config()["effort"]["auto_mode"] == "disabled"
+
+    def test_planner_effort_medium(self):
+        assert self._config()["agents"]["planner"]["effort"] == "medium"
+
+    def test_coordinator_effort_low(self):
+        assert self._config()["agents"]["coordinator"]["effort"] == "low"
+
+    def test_implementer_effort_low(self):
+        assert self._config()["agents"]["implementer"]["effort"] == "low"
 
 
 class TestInvestigateConfig:

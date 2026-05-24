@@ -27,7 +27,7 @@ from worca.orchestrator.registry import update_pipeline
 from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
-from worca.orchestrator.effort import resolve_effort, escalation_iter_num
+from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
     is_learn_enabled,
@@ -2967,9 +2967,30 @@ def run_pipeline(
                             ))
                     else:
                         _log(f"Failed to label beads with {run_label}", "warn")
+                # Effort label backfill from structured output
+                _effort_backfilled = set()
+                effort_map = result.get("effort", {})
+                if beads_ids and effort_map:
+                    beads_set = set(beads_ids)
+                    for bid, level in effort_map.items():
+                        if bid not in beads_set:
+                            _log(f"Effort backfill: skip unknown bead {bid}", "warn")
+                            continue
+                        if level not in EFFORT_LEVELS:
+                            _log(f"Effort backfill: skip invalid level '{level}' for {bid}", "warn")
+                            continue
+                        if bd_get_effort_label(bid):
+                            continue
+                        if bd_label_add([bid], f"worca-effort:{level}"):
+                            _effort_backfilled.add(bid)
+                    if _effort_backfilled:
+                        _log(f"Effort backfill: labeled {len(_effort_backfilled)} bead(s) from structured output", "ok")
                 # Best-effort check: warn about beads missing worca-effort:* labels
                 if beads_ids:
-                    _unlabeled = [bid for bid in beads_ids if not bd_get_effort_label(bid)]
+                    _unlabeled = [
+                        bid for bid in beads_ids
+                        if bid not in _effort_backfilled and not bd_get_effort_label(bid)
+                    ]
                     if _unlabeled:
                         _log(f"{len(_unlabeled)} bead(s) missing worca-effort label: {', '.join(_unlabeled)}", "warn")
 

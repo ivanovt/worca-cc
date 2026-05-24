@@ -14,6 +14,13 @@ async function runBd(args, dbPath) {
   return JSON.parse(stdout);
 }
 
+export function extractEffortFromLabels(labels) {
+  if (!labels || labels.length === 0) return null;
+  const match = labels.find((l) => l.startsWith('worca-effort:'));
+  if (!match) return null;
+  return match.slice('worca-effort:'.length);
+}
+
 function transformIssue(issue, deps) {
   const depends_on = (deps || []).map((d) => d.id);
   const blocked_by = (deps || [])
@@ -29,17 +36,18 @@ function transformIssue(issue, deps) {
     external_ref: issue.external_ref || null,
     depends_on,
     blocked_by,
+    effort: extractEffortFromLabels(issue.labels),
   };
 }
 
 async function enrichWithDeps(issues, dbPath) {
-  const needDeps = issues.filter((i) => i.dependency_count > 0);
-  if (needDeps.length === 0) {
-    return issues.map((i) => transformIssue(i, []));
-  }
-  const detailed = await runBd(['show', ...needDeps.map((i) => i.id)], dbPath);
-  const depMap = new Map(detailed.map((d) => [d.id, d.dependencies || []]));
-  return issues.map((i) => transformIssue(i, depMap.get(i.id) || []));
+  if (issues.length === 0) return [];
+  const detailed = await runBd(['show', ...issues.map((i) => i.id)], dbPath);
+  const detailMap = new Map(detailed.map((d) => [d.id, d]));
+  return issues.map((i) => {
+    const d = detailMap.get(i.id);
+    return transformIssue(d || i, d?.dependencies || []);
+  });
 }
 
 export function dbExists(beadsDb) {
@@ -89,10 +97,9 @@ export async function listUnlinkedIssues(beadsDb) {
       const labels = d?.labels || [];
       return !labels.some((l) => l.startsWith('run:'));
     });
-    // detailed already has dependencies, use them directly
     return unlinked.map((i) => {
       const d = detailMap.get(i.id);
-      return transformIssue(i, d?.dependencies || []);
+      return transformIssue(d || i, d?.dependencies || []);
     });
   } catch {
     return [];

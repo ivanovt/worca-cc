@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { effortLevelBadge, effortLevelVariant } from '../utils/effort-badge.js';
 import {
   Circle,
   CircleCheck,
@@ -23,12 +24,7 @@ export function extractEffortLabel(labels) {
   return null;
 }
 
-export function effortLevelVariant(level) {
-  if (level === 'high') return 'primary';
-  if (level === 'xhigh') return 'warning';
-  if (level === 'max') return 'danger';
-  return 'neutral';
-}
+export { effortLevelVariant };
 
 export function effortSourceLabel(source) {
   if (source === 'adaptive:llm') return 'adaptive';
@@ -39,11 +35,10 @@ export function effortSourceLabel(source) {
 export function beadEffortBadgeView(issue, autoMode) {
   const level = extractEffortLabel(issue?.labels);
   if (!level) return nothing;
-  const variant = effortLevelVariant(level);
   const showIgnored = autoMode === 'reactive' || autoMode === 'disabled';
   return html`
     <span class="bead-effort-badge">
-      <sl-badge variant="${variant}" pill>${level}</sl-badge>
+      ${unsafeHTML(effortLevelBadge(level))}
       ${showIgnored ? html`<sl-badge class="bead-effort-ignored" variant="warning" pill>ignored: ${autoMode}</sl-badge>` : nothing}
     </span>
   `;
@@ -282,6 +277,7 @@ export function beadTooltipContent(issue) {
           }
         </span>
       </div>
+      ${'effort' in issue ? html`<span class="bead-tooltip-effort">${unsafeHTML(effortLevelBadge(issue.effort))}</span>` : nothing}
       <hr class="bead-tooltip-separator">
       <div class="bead-tooltip-label">Title:</div>
       <div class="bead-tooltip-title">${issue.title}</div>

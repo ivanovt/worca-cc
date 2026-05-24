@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
+import { effortLevelBadge } from '../utils/effort-badge.js';
 import {
   AlertTriangle,
   CircleCheck,
@@ -368,13 +369,6 @@ function _outcomeBadge(outcome) {
   return html`<sl-badge variant="${_outcomeVariant(outcome)}" pill>${outcome.replace(/_/g, ' ')}</sl-badge>`;
 }
 
-function _effortLevelVariant(level) {
-  if (level === 'high') return 'primary';
-  if (level === 'xhigh') return 'warning';
-  if (level === 'max') return 'danger';
-  return 'neutral';
-}
-
 function _effortSourceLabel(source) {
   if (source === 'adaptive:llm') return 'adaptive';
   if (source === 'model_default') return 'model default';
@@ -434,8 +428,6 @@ function _effortRowView(iter, graphifyEnabled) {
       ? nothing
       : html`<div class="iteration-tags-row">${gfx}</div>`;
   }
-  const levelText = e.level ?? '-';
-  const variant = e.level ? _effortLevelVariant(e.level) : 'neutral';
   const sourceLabel = _effortSourceLabel(e.source);
   const tooltip = _effortTooltip(e);
 
@@ -458,7 +450,7 @@ function _effortRowView(iter, graphifyEnabled) {
   return html`
     <div class="iteration-tags-row" title="${tooltip}">
       <span class="meta-label">Effort:</span>
-      <sl-badge class="effort-level-badge" variant="${variant}" pill>${levelText}</sl-badge>
+      ${unsafeHTML(effortLevelBadge(e.level))}
       <sl-badge class="effort-source-chip" variant="neutral" pill>${sourceLabel}</sl-badge>
       ${escalationChips}
       ${cappedChip}
@@ -469,7 +461,7 @@ function _effortRowView(iter, graphifyEnabled) {
         ? html`
       <div class="iteration-tags-row">
         <span class="meta-label">Bead:</span>
-        <sl-badge class="effort-bead-level" variant="${_effortLevelVariant(bc.level)}" pill>${bc.level}</sl-badge>
+        ${unsafeHTML(effortLevelBadge(bc.level))}
         <sl-badge class="effort-divergence-chip" variant="warning" pill>${divergenceLabel}</sl-badge>
       </div>
     `

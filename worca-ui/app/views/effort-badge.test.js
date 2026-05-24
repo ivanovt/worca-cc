@@ -6,6 +6,8 @@ function renderToString(template) {
   if (template.overview)
     return renderToString(template.overview) + renderToString(template.stages);
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -15,6 +17,7 @@ function renderToString(template) {
       if (typeof v === 'string') result += v;
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;
@@ -53,8 +56,8 @@ describe('effort level badge variant mapping', () => {
         makeRun({ level: 'medium', source: 'explicit', base: 'medium' }),
       ),
     );
-    expect(html).toContain('effort-level-badge');
-    expect(html).toMatch(/variant="neutral"[^>]*>medium/s);
+    expect(html).toContain('effort-zap-icon');
+    expect(html).toMatch(/variant="neutral"[^>]*>.*medium/s);
   });
 
   it('renders high effort with primary variant', () => {
@@ -63,8 +66,8 @@ describe('effort level badge variant mapping', () => {
         makeRun({ level: 'high', source: 'adaptive:llm', base: 'high' }),
       ),
     );
-    expect(html).toContain('effort-level-badge');
-    expect(html).toMatch(/variant="primary"[^>]*>high/s);
+    expect(html).toContain('effort-zap-icon');
+    expect(html).toMatch(/variant="primary"[^>]*>.*high/s);
   });
 
   it('renders xhigh effort with warning variant', () => {
@@ -73,8 +76,8 @@ describe('effort level badge variant mapping', () => {
         makeRun({ level: 'xhigh', source: 'explicit', base: 'xhigh' }),
       ),
     );
-    expect(html).toContain('effort-level-badge');
-    expect(html).toMatch(/variant="warning"[^>]*>xhigh/s);
+    expect(html).toContain('effort-zap-icon');
+    expect(html).toMatch(/variant="warning"[^>]*>.*xhigh/s);
   });
 
   it('renders max effort with danger variant', () => {
@@ -83,8 +86,8 @@ describe('effort level badge variant mapping', () => {
         makeRun({ level: 'max', source: 'reactive', base: 'high' }),
       ),
     );
-    expect(html).toContain('effort-level-badge');
-    expect(html).toMatch(/variant="danger"[^>]*>max/s);
+    expect(html).toContain('effort-zap-icon');
+    expect(html).toMatch(/variant="danger"[^>]*>.*max/s);
   });
 
   it('renders model default as neutral dash badge', () => {
@@ -94,8 +97,8 @@ describe('effort level badge variant mapping', () => {
       ),
     );
     expect(html).toContain('Effort:');
-    expect(html).toContain('effort-level-badge');
-    expect(html).toMatch(/variant="neutral"[^>]*>-/s);
+    expect(html).toContain('effort-zap-icon');
+    expect(html).toMatch(/variant="neutral"[^>]*>.*-/s);
   });
 });
 
@@ -188,7 +191,8 @@ describe('effort bead classified row', () => {
       ),
     );
     expect(html).toContain('Bead:');
-    expect(html).toContain('effort-bead-level');
+    const beadSection = html.split('Bead:')[1];
+    expect(beadSection).toContain('effort-zap-icon');
     expect(html).toContain('medium');
     expect(html).toContain('overridden');
   });
@@ -238,7 +242,7 @@ describe('effort bead classified row', () => {
         makeRun({ level: 'high', source: 'explicit', base: 'high' }),
       ),
     );
-    expect(html).not.toContain('effort-bead-level');
+    expect(html).not.toContain('Bead:');
   });
 
   it('does not render bead row when applied is true and levels match', () => {
@@ -276,7 +280,50 @@ describe('effort bead classified row', () => {
         }),
       ),
     );
-    expect(html).not.toContain('effort-bead-level');
+    expect(html).not.toContain('Bead:');
+  });
+});
+
+describe('effort row uses shared effortLevelBadge (Zap icon)', () => {
+  it('renders Zap icon in the effort level badge', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({ level: 'high', source: 'explicit', base: 'high' }),
+      ),
+    );
+    expect(html).toContain('effort-zap-icon');
+  });
+
+  it('renders Zap icon in the bead divergence badge', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          level: 'high',
+          source: 'explicit',
+          base: 'high',
+          bead_classified: {
+            level: 'medium',
+            applied: false,
+            skip_reason: 'explicit_override',
+          },
+        }),
+      ),
+    );
+    const beadSection = html.split('Bead:')[1];
+    expect(beadSection).toContain('effort-zap-icon');
+  });
+
+  it('does not render Zap icon when effort data is absent', () => {
+    const run = {
+      stages: {
+        implement: {
+          status: 'completed',
+          iterations: [{ number: 1, status: 'completed', outcome: 'success' }],
+        },
+      },
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).not.toContain('effort-zap-icon');
   });
 });
 
@@ -291,7 +338,7 @@ describe('effort row absent when no effort data', () => {
       },
     };
     const html = renderToString(runDetailView(run));
-    expect(html).not.toContain('effort-level-badge');
+    expect(html).not.toContain('effort-zap-icon');
     expect(html).not.toContain('effort-source-chip');
   });
 });

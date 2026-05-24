@@ -21,6 +21,13 @@
         "type": "array",
         "items": { "type": "string" }
       }
+    },
+    "effort": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["low", "medium", "high", "xhigh", "max"]
+      }
     }
   }
 }

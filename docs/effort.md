@@ -4,6 +4,30 @@ Worca surfaces Claude Code's reasoning-effort scale (`low | medium | high | xhig
 
 Configuration lives under `worca.effort` and `worca.agents.<agent>.effort` in `.claude/settings.json`.
 
+## Precedence
+
+Effort values resolve through three layers, each overriding the previous:
+
+**template > project > model default**
+
+1. **Model default** — when no `effort` value is configured, the env var is omitted and Claude Code uses its built-in default.
+2. **Project settings** — `worca.agents.<agent>.effort` in `.claude/settings.json`. Applies to all runs in the project.
+3. **Template override** — the template `config` block is deep-merged over project `worca` settings (`templates.py:deep_merge_config`; template scalars win) into the temp settings file the runner reads end-to-end (`run_pipeline.py:271-294`); worktree runs forward `--template` through (`run_worktree.py:166`). Unspecified keys fall through to the project value.
+
+Under `adaptive` mode, per-bead labels add a fourth dimension: the coordinator's structured-output classification drives the implementer's starting point when no explicit per-agent value is set. This interacts with precedence as follows: an explicit template or project value overrides the bead label (`skip_reason = "explicit_override"`); an unset value lets the label through.
+
+### Design principle
+
+Set explicit effort for:
+- **High-stakes/irreversible work** (guardian — commit/PR is permanent)
+- **Heavy upfront reasoning** (planner — plan quality compounds)
+- **Loop-controlling judgment gates** (reviewer, plan_reviewer, coordinator — review quality drives `review_changes` loop count; coordinator effort determines classification quality)
+
+Leave unset for:
+- **Mechanical/verification work** (tester — deterministic pass/fail)
+- **Adaptive-label-driven work** (implementer — bead label is the intended driver under `adaptive` mode)
+- **Low-stakes/disabled-by-default stages** (learner)
+
 ## Mode semantics
 
 The `worca.effort.auto_mode` field controls two orthogonal axes: **starting point** (where does the effort level come from?) and **escalation** (does loopback bump it?).
@@ -130,11 +154,22 @@ The coordinator classifies effort for every bead during decomposition, regardles
 | `xhigh` | Schema/migration work, concurrency, security-sensitive paths, multi-stage refactors with subtle invariants. |
 | `max` | Never pick autonomously. Reserved for explicit human or template signal. |
 
-Labels are attached via `bd create --labels "run:<run_id>,worca-effort:<level>"` and reasoning is written via `bd update <id> --notes "Effort: <level> -- <reasoning>"`.
+### Reliable labels via structured output
+
+Labels reach beads through two complementary paths (belt-and-suspenders):
+
+1. **`--labels` flag on `bd create`** — the coordinator attaches `worca-effort:<level>` during decomposition. This is best-effort; the model may omit the flag.
+2. **`effort` map in structured output** — the coordinator returns an `effort` object in its `coordinate.json` response, mapping each bead ID to its classified level. The runner applies `worca-effort:<level>` labels programmatically from this map immediately after the existing `run:` label backfill (`runner.py:2970`).
+
+The structured output is the reliable fallback. The runner applies from the map only when no `worca-effort:*` label is already present on the bead, so a coordinator-set or user-set label is never overwritten. Unknown bead IDs and invalid levels are skipped with a stderr warning — the pipeline never halts on label issues.
+
+The `effort` field in `coordinate.json` is optional and validated against a `low|medium|high|xhigh|max` enum. Runs that omit it keep pre-existing behavior (model-default fallback + warning).
+
+Reasoning is written via `bd update <id> --notes "Effort: <level> -- <reasoning>"`.
 
 If a bead already has a `worca-effort:*` label (user-set), the coordinator preserves it. User-set labels are authoritative.
 
-If a bead is missing a label after the coordinator finishes, the runner logs a warning and `resolve_effort()` falls back to model default. The pipeline does not halt.
+If a bead is missing a label after both paths, the runner logs a warning and `resolve_effort()` falls back to model default. The pipeline does not halt.
 
 ## Per-agent override examples
 
@@ -150,16 +185,31 @@ Per-agent `effort` values are set in `worca.agents.<agent>.effort`. They accept 
       "auto_cap": "xhigh"
     },
     "agents": {
-      "planner":     { "effort": "xhigh"  },  // heavy reasoning
-      "coordinator": { "effort": "medium" },  // mechanical decomposition
-      "implementer": { },                     // unset — adaptive path drives base
-      "tester":      { },                     // unset — model default
-      "reviewer":    { },                     // unset — model default
-      "guardian":    { "effort": "high"   }   // high vigilance
+      "planner":      { "effort": "xhigh" },  // heavy upfront reasoning
+      "coordinator":  { "effort": "high"  },   // complexity classification is a judgment call
+      "implementer":  { },                     // unset — adaptive bead label drives base
+      "tester":       { },                     // unset — mechanical verification
+      "reviewer":     { "effort": "high"  },   // review quality controls loop count
+      "plan_reviewer":{ "effort": "high"  },   // judgment gate (disabled by default)
+      "guardian":     { "effort": "high"  },   // irreversible commit/PR work
+      "learner":     { }                      // unset — low stakes, disabled by default
     }
   }
 }
 ```
+
+| Agent | Level | Rationale |
+|---|---|---|
+| planner | `xhigh` | Heavy upfront reasoning; plan quality compounds downstream |
+| coordinator | `high` | Complexity classification is a judgment call, not mechanical decomposition |
+| reviewer | `high` | Review quality directly controls `review_changes` loop count |
+| plan_reviewer | `high` | Judgment gate (only active when `worca.stages.plan_review.enabled`) |
+| guardian | `high` | Irreversible commit and PR creation |
+| implementer | unset | Adaptive bead label drives starting point; explicit value would override classification |
+| tester | unset | Deterministic verification; model default is sufficient |
+| learner | unset | Low stakes, disabled by default |
+
+**Caveat:** the shipped `opus` alias resolves to Opus 4.6, which has a 4-rung ladder (`low/medium/high/max` — no `xhigh`). The planner's `xhigh` collapses to `high` at runtime (`status.json` records `level: "high"`, `requested: "xhigh"`). Pointing `worca.models.opus` at Opus 4.7 activates the full 5-rung ladder.
 
 ### Pin all agents to model defaults (pre-W-052 behavior)
 
@@ -201,6 +251,23 @@ Escalation fires on loopbacks but never exceeds `high`. Bead labels are emitted 
 ```
 
 Under `adaptive` mode, this explicit value overrides the coordinator's bead label. The label is still recorded with `bead_classified.skip_reason = "explicit_override"`.
+
+## Shipped template effort divergences
+
+Templates override the project defaults via deep-merge (see [Precedence](#precedence)). Unspecified keys fall through to the baseline. Only templates that diverge from the default `adaptive` + shipped agent values are listed:
+
+| Template | Divergence | Why |
+|---|---|---|
+| `quick-fix` | `effort.auto_mode: disabled`; planner `medium`, coordinator `low`, implementer `low` | Trivial work — deterministic and cheap; intentional disable prevents wasted escalation |
+| `bugfix` | `effort.auto_cap: high` | Clamp escalation cost on focused fixes; prevents auto-escalation to `max` |
+| `feature` | none (baseline + adaptive) | Complex beads get `high`/`xhigh` naturally via the coordinator's classification |
+| `investigate` | none (baseline + adaptive) | Same as feature |
+| `refactor` | none (baseline + adaptive) | Same as feature |
+| `test-only` | none (baseline + adaptive) | Same as feature |
+
+The `quick-fix` template is the only one that disables `auto_mode`. This is intentional: for trivial one-liner changes, adaptive classification adds overhead with no benefit — the work is known-simple at template selection time. All agent efforts are pinned low, and no escalation fires.
+
+The `bugfix` template keeps `auto_mode: adaptive` (labels still drive the implementer) but caps escalation at `high` to bound cost. On the shipped 4-rung models this prevents the `high → max` jump on the first `test_failure` loopback.
 
 ## Output-token truncation at high/max effort
 

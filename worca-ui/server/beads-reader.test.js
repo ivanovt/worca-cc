@@ -29,6 +29,7 @@ const { execFile } = await import('node:child_process');
 const { existsSync } = await import('node:fs');
 const {
   dbExists,
+  extractEffortFromLabels,
   getIssue,
   listDistinctRunLabels,
   listIssues,
@@ -78,6 +79,7 @@ describe('listIssues', () => {
   });
 
   it('returns transformed issues without deps', async () => {
+    // bd list
     mockBdResult([
       {
         id: '1',
@@ -88,6 +90,19 @@ describe('listIssues', () => {
         created_at: '2026-01-01',
         dependency_count: 0,
         dependent_count: 0,
+      },
+    ]);
+    // bd show (enrichWithDeps always calls it)
+    mockBdResult([
+      {
+        id: '1',
+        title: 'Open',
+        description: 'body text',
+        status: 'open',
+        priority: 2,
+        created_at: '2026-01-01',
+        labels: [],
+        dependencies: [],
       },
     ]);
     const issues = await listIssues(DB);
@@ -102,6 +117,7 @@ describe('listIssues', () => {
         external_ref: null,
         depends_on: [],
         blocked_by: [],
+        effort: null,
       },
     ]);
   });
@@ -126,8 +142,18 @@ describe('listIssues', () => {
         dependency_count: 1,
       },
     ]);
-    // Second call: bd show for issues with deps
+    // Second call: bd show for all issues
     mockBdResult([
+      {
+        id: '1',
+        title: 'Dep',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: [],
+        dependencies: [],
+      },
       {
         id: '2',
         title: 'B',
@@ -135,6 +161,7 @@ describe('listIssues', () => {
         status: 'open',
         priority: 2,
         created_at: '',
+        labels: [],
         dependencies: [
           {
             id: '1',
@@ -278,6 +305,7 @@ describe('getIssue', () => {
 
 describe('listIssuesByLabel', () => {
   it('returns issues matching the given label', async () => {
+    // bd list
     mockBdResult([
       {
         id: '1',
@@ -298,6 +326,29 @@ describe('listIssuesByLabel', () => {
         dependency_count: 0,
       },
     ]);
+    // bd show (enrichWithDeps always calls it)
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: [],
+        dependencies: [],
+      },
+      {
+        id: '2',
+        title: 'B',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: [],
+        dependencies: [],
+      },
+    ]);
     const issues = await listIssuesByLabel(DB, 'run:run-1');
     expect(issues.length).toBe(2);
     expect(issues.map((i) => i.title).sort()).toEqual(['A', 'B']);
@@ -316,9 +367,22 @@ describe('listIssuesByLabel', () => {
   it('retries once on failure and returns the second attempt result', async () => {
     // First attempt: bd list fails.
     mockBdError('SIGTERM');
-    // Second attempt: bd list succeeds, no deps needed.
+    // Second attempt: bd list succeeds.
     mockBdResult([
       { id: '1', title: 'A', status: 'open', priority: 2, dependency_count: 0 },
+    ]);
+    // bd show (enrichWithDeps always calls it)
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: [],
+        dependencies: [],
+      },
     ]);
     const issues = await listIssuesByLabel(DB, 'run:run-1');
     expect(issues.length).toBe(1);
@@ -557,5 +621,157 @@ describe('countIssuesByRunLabel observability', () => {
     expect(warn).toHaveBeenCalled();
     expect(warn.mock.calls[0][0]).toMatch(/countIssuesByRunLabel/);
     warn.mockRestore();
+  });
+});
+
+describe('extractEffortFromLabels', () => {
+  it('returns null for undefined labels', () => {
+    expect(extractEffortFromLabels(undefined)).toBeNull();
+  });
+
+  it('returns null for empty labels', () => {
+    expect(extractEffortFromLabels([])).toBeNull();
+  });
+
+  it('returns null when no worca-effort label present', () => {
+    expect(extractEffortFromLabels(['run:abc', 'component:auth'])).toBeNull();
+  });
+
+  it('extracts effort level from worca-effort label', () => {
+    expect(extractEffortFromLabels(['run:abc', 'worca-effort:high'])).toBe(
+      'high',
+    );
+  });
+
+  it('handles all valid effort levels', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh', 'max']) {
+      expect(extractEffortFromLabels([`worca-effort:${level}`])).toBe(level);
+    }
+  });
+});
+
+describe('effort field in output', () => {
+  it('getIssue includes effort from worca-effort label', async () => {
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: ['worca-effort:high'],
+        dependencies: [],
+      },
+    ]);
+    const issue = await getIssue(DB, '1');
+    expect(issue.effort).toBe('high');
+  });
+
+  it('getIssue effort is null when no worca-effort label', async () => {
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: ['run:abc'],
+        dependencies: [],
+      },
+    ]);
+    const issue = await getIssue(DB, '1');
+    expect(issue.effort).toBeNull();
+  });
+
+  it('listIssues includes effort via enrichWithDeps bd show', async () => {
+    // bd list
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        dependency_count: 0,
+      },
+    ]);
+    // bd show (enrichWithDeps always calls it now)
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: ['worca-effort:medium'],
+        dependencies: [],
+      },
+    ]);
+    const issues = await listIssues(DB);
+    expect(issues[0].effort).toBe('medium');
+  });
+
+  it('listUnlinkedIssues includes effort from bd show labels', async () => {
+    // bd list
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        dependency_count: 0,
+      },
+    ]);
+    // bd show
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: ['worca-effort:low'],
+        dependencies: [],
+      },
+    ]);
+    const issues = await listUnlinkedIssues(DB);
+    expect(issues[0].effort).toBe('low');
+  });
+
+  it('enrichWithDeps calls bd show even when no issues have deps', async () => {
+    // bd list — no issues have dependency_count > 0
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        dependency_count: 0,
+      },
+    ]);
+    // bd show (always called now)
+    mockBdResult([
+      {
+        id: '1',
+        title: 'A',
+        description: '',
+        status: 'open',
+        priority: 2,
+        created_at: '',
+        labels: ['worca-effort:high'],
+        dependencies: [],
+      },
+    ]);
+    await listIssues(DB);
+    expect(execFile).toHaveBeenCalledTimes(2);
+    const showArgs = execFile.mock.calls[1][1];
+    expect(showArgs).toContain('show');
+    expect(showArgs).toContain('1');
   });
 });
