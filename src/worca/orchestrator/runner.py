@@ -1576,6 +1576,30 @@ def handle_pr_review(outcome: str, status: dict) -> tuple:
         return (None, status)
 
 
+def _accumulate_design_note(prompt_builder, result: dict, trigger: str) -> None:
+    """Accumulate design_notes from an implement result into prompt context."""
+    new_note = result.get("design_notes", "")
+    all_notes = prompt_builder.get_context("all_design_notes") or []
+
+    if trigger in ("initial", "next_bead"):
+        if new_note:
+            bead_id = result.get("bead_id", "")
+            all_notes.append({"bead_id": bead_id, "note": new_note})
+        prompt_builder.update_context("all_design_notes", all_notes)
+    elif trigger in ("test_failure", "review_changes"):
+        if new_note:
+            bead_id = prompt_builder.get_context("assigned_bead_id") or result.get("bead_id", "")
+            replaced = False
+            for i, entry in enumerate(all_notes):
+                if entry["bead_id"] == bead_id:
+                    all_notes[i] = {"bead_id": bead_id, "note": new_note}
+                    replaced = True
+                    break
+            if not replaced:
+                all_notes.append({"bead_id": bead_id, "note": new_note})
+            prompt_builder.update_context("all_design_notes", all_notes)
+
+
 def _query_ready_bead(allowed_ids: list[str] | None = None, run_id: str | None = None) -> dict | None:
     """Query bd ready and return the first available bead, or None.
 
@@ -3006,6 +3030,7 @@ def run_pipeline(
                 prompt_builder.update_context("tests_added", new_tests)
 
                 impl_trigger = trigger  # trigger was popped earlier in the loop
+                _accumulate_design_note(prompt_builder, result, impl_trigger)
                 if impl_trigger in ("initial", "next_bead"):
                     # Phase 1: close the bead we just implemented
                     claimed_bead = prompt_builder.get_context("assigned_bead_id")

@@ -196,6 +196,26 @@ def test_implementer_has_stage_key_nudge():
     )
 
 
+def test_implementer_has_design_notes_write_guidance():
+    content = _read("implementer.md")
+    assert "design_notes" in content, (
+        "implementer.md must instruct the implementer to populate design_notes"
+    )
+    assert "plan didn" in content.lower() or "plan did not" in content.lower(), (
+        "write guidance must scope design_notes to decisions the plan didn't specify"
+    )
+
+
+def test_implementer_has_design_notes_read_guidance():
+    content = _read("implementer.md")
+    assert "Accumulated design notes" in content, (
+        "implementer.md must explain the accumulated design notes block"
+    )
+    assert "advisory" in content.lower(), (
+        "read guidance must state that accumulated design notes are advisory"
+    )
+
+
 # ---------------------------------------------------------------------------
 # tester.md
 # ---------------------------------------------------------------------------

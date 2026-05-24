@@ -9,6 +9,19 @@ import tempfile
 from pathlib import Path
 
 _MAX_CONTEXT_BYTES = 100_000  # 100KB cap for prompt_context.json
+_DESIGN_NOTES_CAP = 2000
+
+
+def _render_notes(notes: list[dict], cap: int) -> str:
+    """Render design notes as an attributed bullet list, drop-oldest to fit cap."""
+    if not notes or cap <= 0:
+        return ""
+    lines = [f"- [{n['bead_id']}] {n['note']}" for n in notes]
+    result = "\n".join(lines)
+    while len(result) > cap and lines:
+        lines.pop(0)
+        result = "\n".join(lines)
+    return result
 
 
 class PromptBuilder:
@@ -167,6 +180,14 @@ class PromptBuilder:
         ctx["guide_content"] = self._guide_content
         ctx["has_guide"] = bool(self._guide_content)
         ctx["has_graphify"] = self._graphify_available
+
+        all_notes = ctx.get("all_design_notes") or []
+        assigned = ctx.get("assigned_bead_id") or ""
+        sibling_notes = [n for n in all_notes if n.get("bead_id") != assigned]
+        rendered = _render_notes(sibling_notes, _DESIGN_NOTES_CAP)
+        ctx["accumulated_design_notes"] = rendered
+        ctx["has_design_notes"] = bool(rendered)
+
         self._apply_stage_context(stage, iteration, ctx)
         return ctx
 

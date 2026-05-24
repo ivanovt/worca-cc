@@ -47,6 +47,10 @@ When your prompt says "Fix All Issues" or "Fix Test Failures" or "Fix Review Iss
 Produce a structured result following the `implement.json` schema.
 In fix mode, set `bead_id` to `"fix"` (sentinel value).
 
+Set `design_notes` when you made a design decision the plan did not specify — naming convention, error strategy, where shared state lives, etc. Keep it to 2–3 sentences (max 400 chars). Omit the field when the plan already covered everything.
+
+Your task prompt may include an **Accumulated design notes (advisory)** block containing decisions recorded by earlier sibling beads in this run. Use them as a consistency nudge — prefer aligning with sibling choices unless the plan or guide says otherwise. Authority order: guide > plan > graph > description > accumulated design notes.
+
 > When reading `status.json`, `stages` is keyed by stage name (`preflight`, `plan`, …, `pr`, `learn`), never by agent name. The `pr` stage is run by the `guardian` agent — `guardian` will never appear as a stage key. Writing `stages.guardian` will silently no-op in production while passing tests.
 
 ## Rules

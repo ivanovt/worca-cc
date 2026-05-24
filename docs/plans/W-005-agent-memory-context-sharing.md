@@ -64,20 +64,41 @@ all_files.extend(new_files)
 prompt_builder.update_context("all_files_changed", all_files)
 ```
 
-- **Resolution:** `design_notes` slots into the identical spot, one idiom over. Read it from the same `result` dict that yields `new_files` (`runner.py:2982`):
+- **Resolution:** `design_notes` is read **unconditionally** from `result` — alongside `files_changed`/`tests_added` at `runner.py:3002-3006`, outside the `if impl_trigger in ("initial", "next_bead")` guard. This ensures retries (`test_failure`, `review_changes`) can surface or revise design notes.
 
 ```python
-# alongside runner.py:2982-2985
+# alongside runner.py:3003-3004 (unconditional, all trigger types)
 new_note = (result.get("design_notes") or "").strip()
+```
 
-# alongside the accumulation block at runner.py:3007-3013
+Accumulation into `all_design_notes` differs by trigger:
+
+- **`initial` / `next_bead`** (first implementation of a bead): append `{bead_id, note}` if non-empty.
+- **`test_failure` / `review_changes`** (retry of the same bead): if the retry emits a note, **replace** the existing entry for this `bead_id` in `all_design_notes`. If the retry emits no note, leave the original entry unchanged. Rationale: a retry may change the design decision (e.g., switching from exceptions to Result types after a test failure), and the stale original note would mislead subsequent beads.
+
+```python
+# inside the bead-close block at runner.py:3028 (initial/next_bead only)
 all_notes = prompt_builder.get_context("all_design_notes") or []
 if new_note:
     all_notes.append({"bead_id": claimed_bead, "note": new_note})
 prompt_builder.update_context("all_design_notes", all_notes)
+
+# outside the bead-close guard, for retry triggers (test_failure/review_changes)
+if impl_trigger not in ("initial", "next_bead") and new_note:
+    all_notes = prompt_builder.get_context("all_design_notes") or []
+    claimed_bead = prompt_builder.get_context("assigned_bead_id")
+    replaced = False
+    for i, entry in enumerate(all_notes):
+        if entry.get("bead_id") == claimed_bead:
+            all_notes[i] = {"bead_id": claimed_bead, "note": new_note}
+            replaced = True
+            break
+    if not replaced:
+        all_notes.append({"bead_id": claimed_bead, "note": new_note})
+    prompt_builder.update_context("all_design_notes", all_notes)
 ```
 
-The accumulated structure is a list of `{bead_id, note}` so each rendered bullet can be attributed (attribution also lets a reader discount a note whose bead was later redone).
+The accumulated structure is a list of `{bead_id, note}` so each rendered bullet can be attributed (attribution also lets a reader discount a note whose bead was later redone). At most one entry exists per `bead_id` — retries replace, they do not append a second entry for the same bead.
 
 ### 3. Rendering — `PromptBuilder` + `implement.block.md`
 
@@ -85,15 +106,17 @@ The accumulated structure is a list of `{bead_id, note}` so each rendered bullet
 - **Resolution:** add two keys in the same place:
 
 ```python
+_DESIGN_NOTES_CAP = 2000  # chars — ~5 full notes; <2% of _MAX_CONTEXT_BYTES (100KB)
+
 # build_context(), alongside prompt_builder.py:167-169
 notes = self._context.get("all_design_notes") or []
 current = ctx.get("assigned_bead_id")
 siblings = [n for n in notes if n.get("bead_id") != current]   # self-exclusion
-ctx["accumulated_design_notes"] = _render_notes(siblings)       # bullet list, drop-oldest cap
+ctx["accumulated_design_notes"] = _render_notes(siblings, cap=_DESIGN_NOTES_CAP)
 ctx["has_design_notes"] = bool(siblings)
 ```
 
-`_render_notes` emits an attributed bullet list and applies a block-level character cap (drop-oldest — recent beads' decisions are likeliest to bear on current work) on top of the per-note `maxLength`:
+`_render_notes` emits an attributed bullet list and applies a **block-level character cap of 2000 characters** (constant `_DESIGN_NOTES_CAP = 2000` in `prompt_builder.py`), using drop-oldest semantics — recent beads' decisions are likeliest to bear on current work. The cap sits on top of the per-note `maxLength: 400`. Sizing rationale: 2000 chars ≈ 5 full-length notes, which covers typical sequential runs (3-8 beads) while consuming <2% of the 100KB `prompt_context.json` cap (`_MAX_CONTEXT_BYTES`) and staying small relative to plan/guide content that occupies the higher-authority prompt space. When notes exceed the cap, the oldest entries (earliest `bead_id`s) are dropped first until the rendered block fits:
 
 ```markdown
 ## Accumulated design notes (advisory)
@@ -149,14 +172,17 @@ Within one pipeline, beads are sequential (`runner.py:2266`), so bead *N* determ
 ### Phase 2: Accumulation
 **Files:** `src/worca/orchestrator/runner.py`
 **Tasks:**
-1. Read `new_note` from `result` near `runner.py:2982`.
-2. Append `{bead_id, note}` to `all_design_notes` in `_context` in the accumulation block at `runner.py:3007-3013`. No new save call — the existing `save_context` at `:3026-3027` persists it.
+1. Read `new_note` from `result` **unconditionally** alongside `files_changed`/`tests_added` at `runner.py:3003-3004` — outside the `if impl_trigger in ("initial", "next_bead")` guard.
+2. For `initial`/`next_bead` triggers: append `{bead_id, note}` to `all_design_notes` in `_context` in the bead-close block at `runner.py:3028`.
+3. For retry triggers (`test_failure`/`review_changes`): if `new_note` is non-empty, replace the existing entry for this `bead_id` in `all_design_notes` (or append if none exists). If `new_note` is empty, leave the existing entry unchanged.
+4. No new save call — the existing `save_context` at `:3048` persists it.
 
 ### Phase 3: Rendering
 **Files:** `src/worca/orchestrator/prompt_builder.py`, `src/worca/agents/core/implement.block.md`
 **Tasks:**
-1. In `build_context()` (alongside `:167-169`) compute `accumulated_design_notes` (attributed bullet list, self-exclusion of `assigned_bead_id`, drop-oldest block cap) and `has_design_notes`. Add a small `_render_notes` helper.
-2. In `implement.block.md`, add the `{{#if has_design_notes}} ## Accumulated design notes (advisory) … {{/if}}` block below `{{work_request}}` in **both** the `is_retry` and first-run branches.
+1. Add constant `_DESIGN_NOTES_CAP = 2000` at module level in `prompt_builder.py`.
+2. In `build_context()` (alongside `:167-169`) compute `accumulated_design_notes` (attributed bullet list, self-exclusion of `assigned_bead_id`, drop-oldest to fit within `_DESIGN_NOTES_CAP`) and `has_design_notes`. Add a small `_render_notes(notes, cap=_DESIGN_NOTES_CAP)` helper.
+3. In `implement.block.md`, add the `{{#if has_design_notes}} ## Accumulated design notes (advisory) … {{/if}}` block below `{{work_request}}` in **both** the `is_retry` and first-run branches.
 
 ### Phase 4: Implementer prompt
 **Files:** `src/worca/agents/core/implementer.md`
@@ -178,6 +204,7 @@ Within one pipeline, beads are sequential (`runner.py:2266`), so bead *N* determ
 
 - **Advisory ≠ enforced.** A non-binding note relies on the model voluntarily aligning; convergence is probabilistic, not guaranteed. Accepted: the cheaper, no-arbiter design is worth more than enforced consistency, and the cost of a note being ignored is "no worse than today."
 - **The implementer is poorly positioned to judge cross-bead relevance** (it sees only its own bead). Mitigated, not solved, by the "plan didn't specify" criterion + the 400-char cap + a small per-run volume. A note that strays into restating what the code does is redundant with reading the code/graph and should be discouraged in the prompt.
+- **Retry semantics.** When the implementer re-runs due to `test_failure` or `review_changes`, a new note **replaces** the original for that bead (at most one entry per `bead_id`). If the retry emits no note, the original stands. This is correct because a retry may revise the design decision (e.g., switching error-handling strategy after a test failure), and subsequent beads should see the final decision, not the stale original.
 - **Ordering.** A note is only visible to beads that start after the authoring bead closes. Sequential execution makes this deterministic; parallel execution (W-002/W-030) breaks it and is out of scope.
 - **Governance:** no new governed surface. The implementer does **not** write a file — it returns a structured field; the runner does the accumulation. So there is no `pre_tool_use` hook carve-out to add, and no file-write race.
 - **Breaking changes:** none. `design_notes` is optional and additive; existing implementer outputs validate unchanged; absent the field, no block renders.
@@ -192,9 +219,12 @@ Within one pipeline, beads are sequential (`runner.py:2266`), so bead *N* determ
 | Python | `test_implement_schema_rejects_overlong_design_notes` | `maxLength` 400 enforced |
 | Python | `test_runner_accumulates_design_notes` | `result["design_notes"]` appends `{bead_id, note}` to `all_design_notes` |
 | Python | `test_runner_skips_empty_design_notes` | Empty/absent note adds nothing |
+| Python | `test_runner_retry_replaces_design_note` | `test_failure`/`review_changes` trigger with new note replaces the existing entry for that bead |
+| Python | `test_runner_retry_empty_note_preserves_original` | Retry with empty/absent note leaves the original entry unchanged |
+| Python | `test_runner_retry_appends_if_no_prior_note` | Retry that emits a note for a bead with no existing entry appends it |
 | Python | `test_build_context_renders_accumulated_notes` | `has_design_notes` true, bullet list present |
 | Python | `test_build_context_excludes_current_bead` | A bead does not see its own note |
-| Python | `test_render_notes_drop_oldest_cap` | Block-level cap drops oldest, keeps most recent |
+| Python | `test_render_notes_drop_oldest_cap` | Block-level cap (2000 chars) drops oldest entries, keeps most recent |
 | Python | `test_implement_block_no_notes_no_section` | `has_design_notes` false → no `## Accumulated design notes` heading |
 
 ### Integration / E2E Tests
