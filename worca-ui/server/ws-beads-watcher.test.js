@@ -131,9 +131,9 @@ describe('payload dedup', () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    mockListIssues = vi.fn().mockResolvedValue([
-      { id: '1', title: 'A', status: 'closed' },
-    ]);
+    mockListIssues = vi
+      .fn()
+      .mockResolvedValue([{ id: '1', title: 'A', status: 'closed' }]);
     mockCountIssuesByRunLabel = vi.fn().mockResolvedValue({
       'run-1': { total: 2, done: 1 },
     });
@@ -250,9 +250,9 @@ describe('WAL self-read suppression', () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    mockListIssues = vi.fn().mockResolvedValue([
-      { id: '1', title: 'A', status: 'closed' },
-    ]);
+    mockListIssues = vi
+      .fn()
+      .mockResolvedValue([{ id: '1', title: 'A', status: 'closed' }]);
     mockCountIssuesByRunLabel = vi.fn().mockResolvedValue({});
 
     vi.doMock('./beads-reader.js', () => ({
@@ -329,9 +329,7 @@ describe('WAL self-read suppression', () => {
     expect(broadcasts.length).toBe(1);
 
     // Mutate data so payload dedup doesn't suppress
-    mockListIssues.mockResolvedValue([
-      { id: '1', title: 'A', status: 'open' },
-    ]);
+    mockListIssues.mockResolvedValue([{ id: '1', title: 'A', status: 'open' }]);
 
     // WAL event with a DIFFERENT stat than what the watcher recorded
     const externalStat = { mtimeMs: 2000, size: 16384 };
