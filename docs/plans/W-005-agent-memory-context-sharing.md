@@ -1,530 +1,243 @@
-# W-005: Agent Memory & Context Sharing
+# W-005: Cross-Bead Design Notes (Advisory)
 
+**Status:** Draft (re-scoped 2026-05-24 — supersedes the original "Agent Memory & Context Sharing" design below)
+**Priority:** P2
+**Area:** cc
+**Date:** 2026-05-24
+**Depends on:** None. Builds on mechanisms already shipped in current HEAD: the `.block.md` template rail + `build_context()` (W-037), the conditional prompt-injection idiom and authority order established by the guide (W-040) and graphify (W-053), and the `prompt_context.json` resume lane (W-001 checkpointing).
+
+## Problem
+
+Each bead's implementer runs as a fresh Claude subprocess. The coordinator decomposes a run into beads that the runner then implements **sequentially** — "Phase 1: implement all beads sequentially", `src/worca/orchestrator/runner.py:2266`, claiming the next ready bead one at a time (`_query_ready_bead` → `_claim_bead`, `runner.py:2269-2272`). Bead *N* has no visibility into design decisions bead *N-1* made that the plan did not anticipate. The result is locally-reasonable but globally-inconsistent micro-decisions: one bead returns `Result<T>`, another throws; one caches config in a module singleton, another re-reads it; naming and error-handling conventions diverge.
+
+The information that *would* prevent this is not carried anywhere a sibling bead can see it:
+
+- **The plan** (`MASTER_PLAN.md`, injected as `plan_content`) carries only what the planner anticipated. Emergent, in-the-trenches decisions are by definition not in it.
+- **The committed code** is ground truth, but the guardian commits only at the *end* of the run — mid-run, beads are closed (`runner.py:2992`) without their code being committed, so a sibling bead cannot read another bead's work.
+- **The knowledge graph** (W-053, `has_graphify` at `src/worca/orchestrator/prompt_builder.py:169`) reflects *committed* structure from prior commits, not the current run's pre-commit intent.
+
+So there is a genuine, uncovered slice: **pre-commit design intent and rationale, shared across sibling beads within a run.**
+
+> **Note on the re-scope.** The original W-005 (preserved verbatim under "Superseded design" below) proposed a much broader `ContextManager` owning a `context.md` file as the *sole* vehicle for all cross-stage context, written by the planner, coordinator, and guardian. That over-reached on two counts. (1) The planner already emits `MASTER_PLAN.md`; a planner→`context.md` lane is a second home for plan-level truth and invites drift. The same logic removes the coordinator writer (decomposition lives in bead structure) and the guardian writer. (2) Its core premise — "`_context` is lost on resume" — is no longer true: the resume lane (`save_context`/`load_context` at `prompt_builder.py:96,131`, `backfill_prompt_context` at `resume.py:168`, wired at `runner.py:1955,1976`) already persists operational `_context` across pause/resume. This rework narrows W-005 to the one slice none of those mechanisms cover, and rides the existing rails rather than introducing a competing persistence layer.
+
+## Proposal
+
+Add an optional `design_notes` string to the implementer's structured output (`implement.json`). After each bead completes, the runner accumulates the per-bead note into `_context` (riding the existing `prompt_context.json` resume lane — not a new file). Each subsequent bead's implementer prompt renders an `## Accumulated design notes (advisory)` block, using the same conditional-injection idiom as the guide's `## Reference Guide (normative)` (W-040) and graphify's advisory note (W-053). Notes are **advisory and lowest-authority** (`guide > plan > graph > description > accumulated design notes`). No new file, no new persistence layer, no arbiter.
+
+## Design
+
+### 1. Authoring — `implement.json` + selection criterion
+
+- **Current state:** `src/worca/schemas/implement.json` requires `bead_id` + `files_changed`, with optional `tests_added`. The implementer already emits structured output that the runner extracts (`runner.py:1226`, parsed into `result` at `runner.py:2982`).
+- **Resolution:** add one optional scalar.
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ImplementOutput",
+  "type": "object",
+  "required": ["bead_id", "files_changed"],
+  "properties": {
+    "bead_id": { "type": "string" },
+    "files_changed": { "type": "array", "items": { "type": "string" } },
+    "tests_added": { "type": "array", "items": { "type": "string" } },
+    "design_notes": {
+      "type": "string",
+      "maxLength": 400,
+      "description": "Optional: design decisions the plan did not specify. 2-3 sentences max."
+    }
+  }
+}
+```
+
+`maxLength: 400` makes brevity a contract, not a hope — the model cannot blow past ~2-3 sentences without violating the schema. The field stays out of `required`, so beads with no novel decision emit nothing and validation is unchanged for them.
+
+**Selection criterion (lives in the prompt, not the schema).** The implementer's role template instructs: *record a note only when the decision is one the plan did not already specify.* This is deliberately the criterion the implementer can actually execute — it can read the plan and check — rather than "a decision a sibling might contradict," which would require reasoning about beads it cannot see. The reader-facing block title can be general; the write-side gate stays "plan didn't specify."
+
+### 2. Accumulation in `runner.py`
+
+- **Current state:** after each bead, the runner already accumulates artifacts across beads in `_context` (`runner.py:3007-3013`):
+
+```python
+all_files = prompt_builder.get_context("all_files_changed") or []
+all_files.extend(new_files)
+prompt_builder.update_context("all_files_changed", all_files)
+```
+
+- **Resolution:** `design_notes` slots into the identical spot, one idiom over. Read it from the same `result` dict that yields `new_files` (`runner.py:2982`):
+
+```python
+# alongside runner.py:2982-2985
+new_note = (result.get("design_notes") or "").strip()
+
+# alongside the accumulation block at runner.py:3007-3013
+all_notes = prompt_builder.get_context("all_design_notes") or []
+if new_note:
+    all_notes.append({"bead_id": claimed_bead, "note": new_note})
+prompt_builder.update_context("all_design_notes", all_notes)
+```
+
+The accumulated structure is a list of `{bead_id, note}` so each rendered bullet can be attributed (attribution also lets a reader discount a note whose bead was later redone).
+
+### 3. Rendering — `PromptBuilder` + `implement.block.md`
+
+- **Current state:** `build_context()` already exposes per-stage gates and bodies — `guide_content`/`has_guide` (`prompt_builder.py:167-168`) and `has_graphify` (`:169`).
+- **Resolution:** add two keys in the same place:
+
+```python
+# build_context(), alongside prompt_builder.py:167-169
+notes = self._context.get("all_design_notes") or []
+current = ctx.get("assigned_bead_id")
+siblings = [n for n in notes if n.get("bead_id") != current]   # self-exclusion
+ctx["accumulated_design_notes"] = _render_notes(siblings)       # bullet list, drop-oldest cap
+ctx["has_design_notes"] = bool(siblings)
+```
+
+`_render_notes` emits an attributed bullet list and applies a block-level character cap (drop-oldest — recent beads' decisions are likeliest to bear on current work) on top of the per-note `maxLength`:
+
+```markdown
+## Accumulated design notes (advisory)
+
+- [bead-001] Errors returned as Result<T>, not exceptions.
+- [bead-003] Config cached in a module singleton, loaded once at startup.
+```
+
+Only `implement.block.md` renders the block — only implementers author and consume these notes. It is gated exactly like `has_guide`, and added to **both** branches (`is_retry` and first-run) so a note survives the implement↔test/review loopback. The block renders *below* `{{work_request}}` (lower authority sits nearer the task; the guide stays the top normative anchor):
+
+```markdown
+{{#if has_design_notes}}
+{{accumulated_design_notes}}
+
+_Advisory: sibling beads' decisions for consistency. The plan and guide override these._
+{{/if}}
+```
+
+### 4. Authority & advisory semantics
+
+The notes are the lowest tier in the existing authority order — extending `guide > plan > graph > description` (established by W-040/W-053, documented in `CLAUDE.md` "Guide Precedence" and "Knowledge Graph") to:
+
+```
+guide > plan > graph > description > accumulated design notes
+```
+
+Because entries are *observations of what a sibling did*, not *instructions*, two contradictory entries are not a crisis demanding reconciliation — they are simply visible, and the reading implementer applies judgment. This is what lets W-005 drop the arbiter/reconciler entirely. The trade-off is explicit (see Considerations): this **nudges** consistency, it does not **enforce** it.
+
+### 5. Persistence & resume — coexistence with `prompt_context.json`
+
+Because `all_design_notes` lives in `_context`, it is written to `prompt_context.json` at the existing between-bead checkpoint — `prompt_builder.save_context(prompt_context_path)` at `runner.py:3026-3027` — so resume preserves it with **zero new persistence code**. On resume, `load_context` / `backfill_prompt_context` (`runner.py:1976`) restore it alongside everything else. This is precisely the coexistence the issue review asked for: notes ride the operational JSON resume lane (W-001) rather than becoming a second memory system. `prompt_context.json` stays operational resume state; `all_design_notes` is just another key in it.
+
+### 6. Relationship to shipped mechanisms
+
+| Mechanism (origin) | What it carries | Direction | Authority | This feature reuses |
+|---|---|---|---|---|
+| Guide — `## Reference Guide (normative)` (W-040, `work_request.py` `attach_guide`, `has_guide`) | External normative spec | Inbound, static | Highest | The conditional `{{#if …}}` injection idiom and the authority order |
+| Graphify — advisory note (W-053, `has_graphify` `prompt_builder.py:169`) | Committed-code structure | Query-on-demand | Advisory | The advisory-injection pattern; complementary content (graph = committed, notes = pre-commit) |
+| `.block.md` + `build_context()` (W-037) | Per-stage prompt assembly | — | — | The exact rail; two new ctx keys |
+| `prompt_context.json` resume lane (W-001) | Operational `_context` | Persisted | — | Free persistence + resume; no new layer |
+
+### 7. Bead ordering & the parallelism boundary
+
+Within one pipeline, beads are sequential (`runner.py:2266`), so bead *N* deterministically sees notes from beads *1…N-1*. There is **no within-run race**. The parallelism caveat applies only across *separate* pipelines (parallel-implementer execution, W-002; parallel pipeline execution, W-030) — those run beads concurrently in different processes and would not share `_context`. That case is explicitly out of scope here; this feature targets the sequential bead loop only.
+
+## Implementation Plan
+
+### Phase 1: Schema
+**Files:** `src/worca/schemas/implement.json`
+**Tasks:**
+1. Add the optional `design_notes` property (Design §1). Keep it out of `required`.
+
+### Phase 2: Accumulation
+**Files:** `src/worca/orchestrator/runner.py`
+**Tasks:**
+1. Read `new_note` from `result` near `runner.py:2982`.
+2. Append `{bead_id, note}` to `all_design_notes` in `_context` in the accumulation block at `runner.py:3007-3013`. No new save call — the existing `save_context` at `:3026-3027` persists it.
+
+### Phase 3: Rendering
+**Files:** `src/worca/orchestrator/prompt_builder.py`, `src/worca/agents/core/implement.block.md`
+**Tasks:**
+1. In `build_context()` (alongside `:167-169`) compute `accumulated_design_notes` (attributed bullet list, self-exclusion of `assigned_bead_id`, drop-oldest block cap) and `has_design_notes`. Add a small `_render_notes` helper.
+2. In `implement.block.md`, add the `{{#if has_design_notes}} ## Accumulated design notes (advisory) … {{/if}}` block below `{{work_request}}` in **both** the `is_retry` and first-run branches.
+
+### Phase 4: Implementer prompt
+**Files:** `src/worca/agents/core/implementer.md`
+**Tasks:**
+1. Write side: instruct the implementer to populate `design_notes` only for decisions the plan did not specify (2-3 sentences).
+2. Read side: explain the `## Accumulated design notes (advisory)` block — sibling beads' decisions, advisory only, plan and guide override.
+
+### Files Changed Summary
+
+| File | Change |
+|------|--------|
+| `src/worca/schemas/implement.json` | Add optional `design_notes` (string, `maxLength` 400) |
+| `src/worca/orchestrator/runner.py` | Read `result["design_notes"]`; accumulate `all_design_notes` in `_context` |
+| `src/worca/orchestrator/prompt_builder.py` | Add `accumulated_design_notes` + `has_design_notes` to `build_context()`; `_render_notes` helper |
+| `src/worca/agents/core/implement.block.md` | Render the advisory block (both branches) |
+| `src/worca/agents/core/implementer.md` | Write criterion + read-side note |
+
+## Considerations
+
+- **Advisory ≠ enforced.** A non-binding note relies on the model voluntarily aligning; convergence is probabilistic, not guaranteed. Accepted: the cheaper, no-arbiter design is worth more than enforced consistency, and the cost of a note being ignored is "no worse than today."
+- **The implementer is poorly positioned to judge cross-bead relevance** (it sees only its own bead). Mitigated, not solved, by the "plan didn't specify" criterion + the 400-char cap + a small per-run volume. A note that strays into restating what the code does is redundant with reading the code/graph and should be discouraged in the prompt.
+- **Ordering.** A note is only visible to beads that start after the authoring bead closes. Sequential execution makes this deterministic; parallel execution (W-002/W-030) breaks it and is out of scope.
+- **Governance:** no new governed surface. The implementer does **not** write a file — it returns a structured field; the runner does the accumulation. So there is no `pre_tool_use` hook carve-out to add, and no file-write race.
+- **Breaking changes:** none. `design_notes` is optional and additive; existing implementer outputs validate unchanged; absent the field, no block renders.
+- **Migration:** none.
+
+## Test Plan
+
+### Unit Tests
+| Layer | Test | Validates |
+|-------|------|-----------|
+| Python | `test_implement_schema_allows_missing_design_notes` | Output without `design_notes` validates |
+| Python | `test_implement_schema_rejects_overlong_design_notes` | `maxLength` 400 enforced |
+| Python | `test_runner_accumulates_design_notes` | `result["design_notes"]` appends `{bead_id, note}` to `all_design_notes` |
+| Python | `test_runner_skips_empty_design_notes` | Empty/absent note adds nothing |
+| Python | `test_build_context_renders_accumulated_notes` | `has_design_notes` true, bullet list present |
+| Python | `test_build_context_excludes_current_bead` | A bead does not see its own note |
+| Python | `test_render_notes_drop_oldest_cap` | Block-level cap drops oldest, keeps most recent |
+| Python | `test_implement_block_no_notes_no_section` | `has_design_notes` false → no `## Accumulated design notes` heading |
+
+### Integration / E2E Tests
+- Mock multi-bead run (≥3 sequential beads): bead 1 emits a note; assert bead 2's rendered implement prompt contains `## Accumulated design notes (advisory)` with bead 1's note and **not** bead 2's own.
+- Resume: pause mid-run after bead 1, resume; assert `all_design_notes` survives via `prompt_context.json` and is injected into the next bead.
+
+### Existing Tests to Update
+- `tests/test_event_types.py` / schema-validation tests if they assert the exact `implement.json` property set — extend to allow `design_notes`.
+
+## Files to Create/Modify
+
+| File | New/Modify | Purpose |
+|------|------------|---------|
+| `src/worca/schemas/implement.json` | Modify | Optional `design_notes` field |
+| `src/worca/orchestrator/runner.py` | Modify | Read + accumulate notes |
+| `src/worca/orchestrator/prompt_builder.py` | Modify | Render block + gate in `build_context()` |
+| `src/worca/agents/core/implement.block.md` | Modify | Advisory block (both branches) |
+| `src/worca/agents/core/implementer.md` | Modify | Write criterion + read note |
+| `tests/test_prompt_builder*.py` | Modify | Render/gate/self-exclusion/cap tests |
+| `tests/integration/` | Modify | Multi-bead + resume scenarios |
+
+## Out of Scope
+
+- **Within-bead loopback memory** (the implementer remembering its *own* prior attempts) — operational retry context already flows via `previous_attempts` / `test_failures_formatted`.
+- **Planner / coordinator / guardian writers** — removed in this re-scope (redundant with `MASTER_PLAN.md` and bead structure).
+- **Cross-pipeline / parallel-implementer visibility** (W-002, W-030).
+- **Cross-run memory** — notes do not persist between runs.
+- **An arbiter/reconciler** for contradictory notes — advisory framing makes one unnecessary.
+- **A `context.md` file / `ContextManager`** — replaced by the structured-field + `_context` approach.
+- **UI display of notes** — worca-ui reads `status.json`.
+
+---
+
+---
+
+# Superseded design (original W-005, pre-2026-05-24)
+
+> The content below is the original "Agent Memory & Context Sharing" plan. It is retained for history and is **superseded** by the re-scoped design above. Do not implement it.
 
 **Goal:** Give every pipeline stage a durable, human-readable view of accumulated decisions, rationale, failures, and artifacts from all prior stages. Loop-backs (test failure → implement retry, review changes → implement retry) automatically inject the failure context so the retrying agent understands exactly what went wrong and why. Crucially, the context survives pause/resume — a resumed pipeline picks up the full history without loss.
 
 **Architecture:** A new `ContextManager` class owns one Markdown file per run at `.worca/runs/{run_id}/context.md`. This file is the **primary and sole vehicle** for accumulated cross-stage context. The `runner.py` creates the file at run start, passes a `ContextManager` instance through the pipeline loop, and calls `append_stage_entry()` after each stage completes. `PromptBuilder` reads the file via `ContextManager.build_prompt_section()` and injects a `## Shared Run Context` section into every agent prompt. On resume, `PromptBuilder` starts with an empty `_context` dict, but the context file on disk preserves the full run history — this is the key advantage over in-memory accumulation.
 
-**Design decision — file as primary context source:** The existing `prompt_builder._context` dict accumulates stage results in memory, but this state is lost on pause/resume (a fresh `PromptBuilder` is created). Rather than serializing the dict to disk (reinventing the file with worse readability) or reconstructing from `status.json` (which lacks rationale, decisions, and failure details), the context file serves as both the persistence layer and the richer accumulator. Agents receive context exclusively via `PromptBuilder`'s prompt injection — they do not read the file directly via tool calls. The `{context_file}` template variable in agent `.md` files is removed; agents rely on the `## Shared Run Context` section that `PromptBuilder` injects into their prompts.
+**Design decision — file as primary context source:** The existing `prompt_builder._context` dict accumulates stage results in memory, but this state is lost on pause/resume (a fresh `PromptBuilder` is created). Rather than serializing the dict to disk (reinventing the file with worse readability) or reconstructing from `status.json` (which lacks rationale, decisions, and failure details), the context file serves as both the persistence layer and the richer accumulator. Agents receive context exclusively via `PromptBuilder`'s prompt injection — they do not read the file directly via tool calls.
 
-**Tech Stack:** Python stdlib only (no new dependencies). Markdown for the context file format. Touches `runner.py`, `prompt_builder.py`, and all five agent `.md` files.
-
-**Depends on:** Nothing. This is a standalone enhancement to the existing pipeline.
-
----
-
-## 1. Scope and Boundaries
-
-### In scope
-
-- `ContextManager` class in `src/worca/orchestrator/context_manager.py`
-- Context file format: `.worca/runs/{run_id}/context.md` (one file per run)
-- Runner creates the file on fresh start; on resume, `ContextManager` opens the existing file and `PromptBuilder` reads accumulated history from it — this is the primary mechanism for restoring cross-stage context after pause/resume
-- Each pipeline stage appends a structured entry on completion
-- Loop-back stages (implement retry on test failure, implement retry on review changes) inject the failure/feedback entry into the prompt
-- `PromptBuilder` gains a `set_context_manager()` method and injects a `## Shared Run Context` section into every stage prompt by reading the file via `ContextManager.build_prompt_section()`
-- Size limit: 8,000 character safety cap (rarely hit with design-only content); truncation from start when building prompt section
-- Unit tests for `ContextManager`: create, append, read, truncation
-
-### Out of scope
-
-- Cross-run memory (context does not persist between runs)
-- Vector embedding or semantic search of past decisions
-- UI display of the context file (worca-ui reads status.json only)
-- Sharing context between parallel implementers (W-002 is a separate feature)
-- Modifying the JSON output schemas (`plan.json`, `implement.json`, etc.)
-
----
-
-## 2. Context File Format
-
-The context file is a Markdown document with a fixed header and one fenced section per stage completion. This makes it readable by humans and straightforwardly parseable by agents as plain text.
-
-### 2.1 File location
-
-```
-.worca/runs/{run_id}/context.md
-```
-
-The file is created when `run_pipeline()` sets up the run directory. On resume, the existing file is left intact — `ContextManager` opens it in append mode.
-
-### 2.2 Document structure
-
-The context file records **design decisions only** — not implementation details, test results, or per-bead progress. This keeps the file small and stable even with 30+ beads and multiple retry cycles. Implementation tracking (files changed, test pass/fail, beads completed) stays in `status.json` and `PromptBuilder._context` where it belongs.
-
-```markdown
-# Run Context
-
-**Run:** 20260310-143022
-**Request:** Add user authentication
-**Branch:** worca/add-user-authentication-4Xp
-
----
-
-## Plan
-
-Implement JWT-based auth with a /api/auth/login endpoint.
-Use the existing Express middleware pattern. No external auth library.
-
-**Decisions:**
-- JWT over sessions: stateless, fits current API pattern
-- Token expiry: 24h access, 7d refresh in HttpOnly cookie
-- New file server/auth.js; register route in server/app.js
-
----
-
-## Decomposition
-
-3 tasks, sequential: auth module → route wiring → tests.
-Auth module is self-contained; route wiring depends on it; tests depend on both.
-
----
-
-## Guardian Feedback (iter 1)
-
-**Rejected:** auth middleware does not validate token audience claim.
-Add `aud` check to prevent cross-service token reuse.
-
----
-```
-
-**What gets written and when:**
-
-| Event | Written? | Content |
-|-------|----------|---------|
-| Plan approved | Yes | Approach, key decisions, constraints, trade-offs |
-| Coordinate completes | Yes | Decomposition rationale, dependency logic |
-| Implement completes | **No** | Implementation details tracked in status.json |
-| Test pass/fail | **No** | Test results tracked in PromptBuilder._context |
-| Guardian rejects | Yes | Design-level feedback — what to change and why |
-| Guardian approves | No | Nothing design-relevant to record |
-| Review raises design issues | Yes | Only design-level issues (pattern violations, architectural concerns) |
-
-This means the file typically has 2-3 sections (plan + decomposition + maybe guardian feedback), regardless of how many beads or retry cycles the run goes through.
-
-### 2.3 Section schema
-
-Each section uses a simple `## Title` header followed by freeform Markdown. No timestamps, iteration numbers, or structured metadata in headers — the chronological order is implicit from file position.
-
-### 2.4 Size limit
-
-With design-decisions-only content, the file will rarely exceed a few hundred characters. The **8,000 character** limit is a safety net, not an expected constraint. If exceeded (e.g., multiple guardian rejections with lengthy feedback), `ContextManager` truncates from the start when building the prompt section, preserving the most recent decisions.
-
----
-
-## 3. ContextManager Class
-
-### 3.1 Module location
-
-`src/worca/orchestrator/context_manager.py`
-
-### 3.2 Public API
-
-```python
-class ContextManager:
-    MAX_CHARS = 8_000
-
-    def __init__(self, context_path: str):
-        """
-        Args:
-            context_path: Absolute or relative path to the context.md file.
-                          File need not exist yet; create() initialises it.
-        """
-
-    def create(self, run_id: str, title: str, branch: str) -> None:
-        """Write the file header. Overwrites any existing file.
-        Called once at the start of a fresh run."""
-
-    def append_section(self, heading: str, body: str) -> None:
-        """Append a new ## section to the context file."""
-
-    def read_full(self) -> str:
-        """Return the full content of the context file, or '' if it does not exist."""
-
-    def build_prompt_section(self, max_chars: int = 4_000) -> str:
-        """Return content suitable for injection into an agent prompt.
-        Truncates from the start (most recent content preserved)
-        with a leading note if truncated."""
-```
-
-`ContextManager` does not know about stage semantics — it accepts any heading and Markdown body. `runner.py` decides *when* to write and *what* to write.
-
----
-
-## 4. Integration with runner.py
-
-### 4.1 Initialization at run start
-
-After the run directory is created and `status["run_id"]` is set, create the context file:
-
-```python
-from worca.orchestrator.context_manager import ContextManager
-
-context_file = os.path.join(run_dir, "context.md")
-ctx = ContextManager(context_file)
-if not resume_stage:
-    ctx.create(
-        run_id=status["run_id"],
-        title=work_request.title,
-        branch=branch_name,
-    )
-# else: resume — context.md already exists, ContextManager will append
-```
-
-### 4.2 PromptBuilder wiring
-
-After creating `prompt_builder`, call:
-
-```python
-prompt_builder.set_context_manager(ctx)
-```
-
-### 4.3 Design-decision appends
-
-Only design-relevant events write to the context file. This happens in three places:
-
-**After PLAN is approved:**
-
-```python
-ctx.append_section("Plan", plan_design_summary)
-```
-
-Where `plan_design_summary` is built from `result["approach"]` and `result["key_decisions"]` — the design rationale, not the task list.
-
-**After COORDINATE completes:**
-
-```python
-ctx.append_section("Decomposition", decomposition_rationale)
-```
-
-Where `decomposition_rationale` summarizes the dependency logic and grouping rationale, not the bead IDs.
-
-**After GUARDIAN rejects:**
-
-```python
-ctx.append_section(
-    f"Guardian Feedback (iter {iter_num})",
-    guardian_design_feedback,
-)
-```
-
-Where `guardian_design_feedback` captures what design-level change the guardian requires. Only written on rejection — approvals don't add design context.
-
-Implement, test, and PR stages do **not** write to the context file. Their operational details (files changed, test results, beads completed) remain in `status.json` and `PromptBuilder._context`.
-
-### 4.4 Loop-back context
-
-Test failures and implementation details continue to flow through the existing `PromptBuilder._context` mechanism (`update_context("test_failures", ...)`). The context file is not involved in the implement↔test retry loop — those are operational details, not design decisions.
-
-On resume after a pause, the `_context` dict is empty but `runner.py` already reconstructs test failure context from `status.json`. The context file preserves only the design decisions that `status.json` does not carry (approach, trade-offs, guardian feedback).
-
----
-
-## 5. PromptBuilder Changes
-
-### 5.1 New method: `set_context_manager()`
-
-```python
-def set_context_manager(self, ctx) -> None:
-    """Attach a ContextManager. When set, build() injects context into prompts."""
-    self._ctx = ctx
-```
-
-Add `self._ctx = None` to `__init__`.
-
-### 5.2 New method: `_context_section()`
-
-```python
-def _context_section(self) -> str:
-    """Return a ## Shared Run Context section for injection into prompts.
-    Returns '' if no ContextManager is attached or context file is empty."""
-    if not self._ctx:
-        return ""
-    snippet = self._ctx.build_prompt_section(max_chars=4_000)
-    if not snippet:
-        return ""
-    return f"## Shared Run Context\n\n{snippet}"
-```
-
-### 5.3 Injection into each stage builder
-
-Each `_build_{stage}()` method appends `self._context_section()` to its `parts` list before joining. The section is always appended last so the work-request and structured data appear first (agents read top-to-bottom).
-
-Example diff for `_build_plan`:
-
-```python
-def _build_plan(self, iteration: int) -> str:
-    parts = [
-        "Create a detailed implementation plan ...",
-        ...
-        self._work_request_section(),
-    ]
-    if self._claude_md_content:
-        parts.append(f"## Project Context (from CLAUDE.md)\n\n{self._claude_md_content}")
-    context_section = self._context_section()   # new
-    if context_section:                          # new
-        parts.append(context_section)            # new
-    return "\n\n".join(parts)
-```
-
-Apply the same three-line addition to `_build_coordinate`, `_build_implement`, `_build_test`, `_build_review`, and `_build_pr`.
-
-For `_build_plan` specifically, the context file will be empty on the first run (it was just created). On a `restart_planning` loop, the context file will contain all prior stage entries — this is intentional and valuable: the planner can see what the guardian objected to.
-
----
-
-## 6. Agent Prompt Template Changes
-
-Agents receive context exclusively through `PromptBuilder`'s `## Shared Run Context` prompt injection — they do **not** read the context file directly via tool calls. This avoids the dual-channel problem (stale file reads vs. fresh prompt content) and keeps agent templates simple.
-
-No `{context_file}` template variable is added. No changes to `_render_agent_templates` are needed.
-
-The five agent `.md` files in `src/worca/agents/core/` receive a single addition each: a note in their **Context** section explaining that shared run context is injected into their prompt automatically.
-
-### 6.1 planner.md
-
-Add to the **Context** section:
-
-```markdown
-If this is a restart (e.g., after a guardian rejection), your prompt includes a `## Shared Run Context` section with prior stage decisions, rationale, and feedback. Use it to understand what was tried before and why it was rejected.
-```
-
-### 6.2 coordinator.md
-
-Add to the **Context** section:
-
-```markdown
-Your prompt includes a `## Shared Run Context` section with the planner's approach and key decisions. Use it to inform your task decomposition.
-```
-
-### 6.3 implementer.md
-
-Add to the **Context** section:
-
-```markdown
-Your prompt includes a `## Shared Run Context` section with the plan's design decisions and decomposition rationale. Use it to understand the architectural intent behind your assigned task.
-```
-
-### 6.4 tester.md
-
-Add to the **Context** section:
-
-```markdown
-Your prompt includes a `## Shared Run Context` section with design decisions and constraints. Use it to understand the architectural intent when evaluating test coverage.
-```
-
-### 6.5 guardian.md
-
-Add to the **Context** section:
-
-```markdown
-Your prompt includes a `## Shared Run Context` section with the plan's design decisions, decomposition rationale, and any prior guardian feedback. Review it before forming a judgment.
-```
-
----
-
-## 7. Implementation Tasks
-
-Tasks are ordered so that each step is independently testable and no task depends on a later one.
-
----
-
-### Task 1: Create `context_manager.py`
-
-**File:**
-- Create: `src/worca/orchestrator/context_manager.py`
-
-Implement the `ContextManager` class with the public API described in Section 3.
-
-**Implementation details:**
-
-`create(run_id, title, branch)`:
-- Build the header block as shown in Section 2.2.
-- Write the file with `open(self._path, 'w')`.
-
-`append_section(heading, body)`:
-- Append `\n---\n\n## {heading}\n\n{body}\n` to the file using `open(self._path, 'a')`.
-
-`read_full()`:
-- `open(self._path)` and return content. Return `''` if `FileNotFoundError`.
-
-`build_prompt_section(max_chars=4_000)`:
-- Call `read_full()`.
-- If content is empty, return `''`.
-- If `len(content) <= max_chars`, return content.
-- Otherwise, return the last `max_chars` characters prefixed with:
-  `"[Context truncated — showing most recent {max_chars} characters]\n\n"`.
-
----
-
-### Task 2: Add unit tests for `ContextManager`
-
-**File:**
-- Create: `tests/test_context_manager.py`
-
-**Test cases:**
-
-`test_create_writes_header`: Call `create()`, read the file, assert header contains run_id, title, branch.
-
-`test_append_section`: Call `create()`, then `append_section("Plan", "some body")`. Read the file. Assert `## Plan` heading and body are present.
-
-`test_append_multiple_sections_ordered`: Append Plan, Decomposition sections. Assert they appear in order in the file.
-
-`test_build_prompt_section_under_limit`: Create a context file under `max_chars`. Assert `build_prompt_section()` returns the full content.
-
-`test_build_prompt_section_truncates`: Create a context file over `max_chars`. Assert `build_prompt_section(max_chars=100)` returns only the last 100 chars plus the truncation prefix.
-
-`test_read_full_nonexistent_returns_empty`: Call `read_full()` on a non-existent path. Assert returns `''`.
-
-`test_create_overwrites_existing`: Write a file, call `create()` again with a different run_id. Assert the old content is gone.
-
-All tests use `tmp_path` from pytest fixtures. No mocking needed — `ContextManager` only touches the filesystem.
-
----
-
-### Task 3: Update `PromptBuilder` to inject context
-
-**File:**
-- Modify: `src/worca/orchestrator/prompt_builder.py`
-
-**Changes:**
-
-1. Add `self._ctx = None` in `__init__`.
-
-2. Add `set_context_manager(self, ctx) -> None` method (sets `self._ctx`).
-
-3. Add `_context_section(self) -> str` method (calls `self._ctx.build_prompt_section(max_chars=4_000)` if `self._ctx` is set, wraps in `## Shared Run Context` header, returns `''` if empty).
-
-4. In each of the six `_build_{stage}()` methods, append `self._context_section()` to `parts` before the final `return "\n\n".join(parts)`. Use `if context_section: parts.append(context_section)` pattern to avoid empty sections.
-
----
-
-### Task 4: Add unit tests for `PromptBuilder` context injection
-
-**File:**
-- Modify: `tests/test_prompt_builder.py` (extend existing test file)
-
-**Test cases:**
-
-`test_build_plan_without_context_manager`: Existing tests should still pass unchanged — verify `set_context_manager` was not called, `build()` returns no `## Shared Run Context` section.
-
-`test_build_plan_with_empty_context`: Attach a `ContextManager` pointing to a nonexistent file. Assert the built prompt has no `## Shared Run Context` section.
-
-`test_build_plan_with_context`: Create a temp context file with one stage entry. Attach a `ContextManager`. Call `build("plan", 0)`. Assert the prompt contains `## Shared Run Context` and the stage entry text.
-
-`test_build_implement_with_context`: Same but for the implement stage.
-
-`test_build_test_with_context`: Same but for the test stage.
-
-`test_context_section_truncates_large_context`: Create a context file with 10,000 characters. Attach `ContextManager`. Call `build("implement", 0)`. Assert the `## Shared Run Context` section is present but truncated.
-
----
-
-### Task 5: Wire `ContextManager` into `runner.py`
-
-**File:**
-- Modify: `src/worca/orchestrator/runner.py`
-
-**Changes:**
-
-1. Import `ContextManager` and initialize as described in Section 4.1.
-2. Wire into `PromptBuilder` as described in Section 4.2.
-3. Add `ctx.append_section()` calls after PLAN approval, COORDINATE completion, and GUARDIAN rejection as described in Section 4.3.
-
-Only three append points — implement, test, and PR stages do not write to the context file.
-
----
-
-### Task 6: Update agent `.md` templates
-
-**Files:**
-- Modify: `src/worca/agents/core/planner.md`
-- Modify: `src/worca/agents/core/coordinator.md`
-- Modify: `src/worca/agents/core/implementer.md`
-- Modify: `src/worca/agents/core/tester.md`
-- Modify: `src/worca/agents/core/guardian.md`
-
-Apply the additions described in Section 6 to each file. Agents receive context exclusively through `PromptBuilder`'s `## Shared Run Context` prompt injection — no `{context_file}` template variable, no tool-call-based reading. Each agent's **Context** section gets a note explaining what the injected context contains and when it is present.
-
-No changes to agent **Process** sections are needed — agents do not need to perform any action to receive the context (it is injected into their prompt automatically).
-
----
-
-### Task 7: Integration test — full pipeline with context file
-
-**File:**
-- Create: `tests/test_runner_context.py`
-
-This test runs a trimmed mock pipeline through `run_pipeline()` with all agents mocked to return minimal valid structured outputs. It verifies:
-
-1. The context file is created at the expected path.
-2. After the PLAN stage, the context file contains a `## Plan` section with design decisions.
-3. After the COORDINATE stage, the context file contains a `## Decomposition` section.
-4. After a simulated GUARDIAN rejection, the context file contains a `## Guardian Feedback` section.
-5. The rendered prompt for the next stage contains `## Shared Run Context` with the accumulated design decisions.
-6. On resume (`resume=True`), the context file is not overwritten — the existing design context is preserved and injected into prompts.
-7. After 30+ implement/test cycles, the context file has **not** grown — only the initial plan/decomposition sections exist.
-
-**Setup approach:**
-
-- Use `unittest.mock.patch` to mock `run_agent` in `runner.py` so no actual Claude CLI calls are made.
-- Return minimal valid structured outputs for each stage: `{"approved": True, "approach": "test approach", "tasks_outline": []}` for plan, etc.
-- Simulate test failure on first TEST call by returning `{"passed": False, "failures": [{"test_name": "t1", "error": "oops"}]}`, then pass on second.
-- Use `tmp_path` (pytest) for all file system paths.
-
----
-
-## 8. File Summary
-
-### New files
-
-| File | Purpose |
-|------|---------|
-| `src/worca/orchestrator/context_manager.py` | `ContextManager` class: create, append, compact, read |
-| `tests/test_context_manager.py` | Unit tests for `ContextManager` |
-| `tests/test_runner_context.py` | Integration test: full pipeline with context file verification |
-
-### Modified files
-
-| File | Changes |
-|------|---------|
-| `src/worca/orchestrator/prompt_builder.py` | Add `set_context_manager()`, `_context_section()`, inject context in all 6 `_build_*` methods |
-| `src/worca/orchestrator/runner.py` | Import `ContextManager`, create/resume context file, pass to `PromptBuilder`, append entries after each stage |
-| `src/worca/agents/core/planner.md` | Add note about injected `## Shared Run Context` section |
-| `src/worca/agents/core/coordinator.md` | Add note about injected `## Shared Run Context` section |
-| `src/worca/agents/core/implementer.md` | Add note about injected `## Shared Run Context` section |
-| `src/worca/agents/core/tester.md` | Add note about injected `## Shared Run Context` section |
-| `src/worca/agents/core/guardian.md` | Add note about injected `## Shared Run Context` section |
-| `tests/test_prompt_builder.py` | Add context injection tests |
-
----
-
-## 9. Rollout Order
-
-Tasks should be implemented in this order. Each task is independently testable before proceeding.
-
-1. **Task 1** (`context_manager.py`) — simple class, no dependencies
-2. **Task 2** (unit tests for `ContextManager`) — validates Task 1
-3. **Task 3** (`PromptBuilder` changes) — depends on Task 1
-4. **Task 4** (unit tests for `PromptBuilder`) — validates Task 3
-5. **Task 5** (`runner.py` wiring) — depends on Tasks 1 and 3; only 3 append points
-6. **Task 6** (agent `.md` templates) — independent, can run in parallel with Tasks 3-5
-7. **Task 7** (integration test) — depends on Tasks 1, 3, 5; confirms resume and design-only scoping
-
----
-
-## 10. Acceptance Criteria
-
-- [ ] A file `.worca/runs/{run_id}/context.md` is created for every fresh pipeline run.
-- [ ] The context file contains design-decision sections only: Plan, Decomposition, and Guardian Feedback (on rejection). No implement, test, or PR sections.
-- [ ] Every agent prompt includes a `## Shared Run Context` section with the accumulated design decisions.
-- [ ] On pipeline resume, the context file is not overwritten; `PromptBuilder` reads the existing file and injects design decisions into prompts — no context lost across pause/resume.
-- [ ] The context file stays small regardless of bead count or retry cycles (only plan/decomposition/guardian-feedback write to it).
-- [ ] `build_prompt_section(max_chars=4_000)` never returns more than 4,000 characters.
-- [ ] All five agent `.md` templates document the `## Shared Run Context` prompt injection in their Context section.
-- [ ] Agents do **not** read the context file directly — context is delivered exclusively via `PromptBuilder` prompt injection.
-- [ ] All unit tests in `tests/test_context_manager.py` pass.
-- [ ] All new tests in `tests/test_prompt_builder.py` pass without breaking existing tests.
-- [ ] The integration test in `tests/test_runner_context.py` passes including the resume scenario.
-- [ ] No new Python package dependencies are introduced.
-- [ ] The existing `tests/` suite continues to pass with no regressions.
+*(The full original Sections 1–10 — `ContextManager` API, the `context.md` format, per-stage append points for plan/coordinate/guardian, the six `_build_*` injection sites, and the original task breakdown — are preserved in version control history prior to the 2026-05-24 re-scope. They are intentionally not reproduced here to avoid presenting two competing designs as both live.)*
