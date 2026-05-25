@@ -109,6 +109,35 @@ class TestIsAliveAndOurs:
         assert is_alive_and_ours(pgid=pgid, pid=pid, start_time=0.0) is False
 
 
+class TestPosixCapabilityGuard:
+    """On platforms without process groups (Windows), group ops degrade to
+    no-ops instead of raising AttributeError on os.getpgid / os.killpg."""
+
+    def test_is_alive_and_ours_false_without_proc_groups(self):
+        from worca.utils import proc_registry
+        pid = os.getpid()
+        with mock.patch.object(proc_registry, "_HAS_PROC_GROUPS", False):
+            # Even our own live process reports not-ours: no group probe runs.
+            assert is_alive_and_ours(pgid=pid, pid=pid, start_time=time.time()) is False
+
+    def test_kill_group_noop_without_proc_groups(self):
+        from worca.utils import proc_registry
+        with mock.patch.object(proc_registry, "_HAS_PROC_GROUPS", False), \
+                mock.patch.object(proc_registry.os, "killpg") as killpg:
+            proc_registry._kill_group(12345)  # must not raise
+            killpg.assert_not_called()
+
+    def test_kill_all_tracked_drains_registry_without_proc_groups(self, procs_dir):
+        from worca.utils import proc_registry
+        record_spawn(procs_dir, pgid=4242, pid=4242, stage="implement", iteration=1)
+        with mock.patch.object(proc_registry, "_HAS_PROC_GROUPS", False):
+            killed = kill_all_tracked(procs_dir)
+        # Nothing killed (can't verify/signal groups), but entries are pruned so
+        # the registry never accumulates stale data on non-POSIX platforms.
+        assert killed == 0
+        assert list_spawns(procs_dir) == []
+
+
 class TestKillAllTracked:
     def test_kills_live_process_and_prunes(self, procs_dir):
         import subprocess

@@ -13,6 +13,12 @@ import time
 SIGTERM_TIMEOUT = 3.0
 SIGKILL_TIMEOUT = 2.0
 
+# Process-group signalling is POSIX-only. On platforms without os.getpgid /
+# os.killpg (Windows), group tracking and killing degrade to no-ops and callers
+# fall back to direct-child termination. Tracking is never recorded there, so
+# the registry stays empty and kill_all_tracked has nothing to do.
+_HAS_PROC_GROUPS = hasattr(os, "getpgid") and hasattr(os, "killpg")
+
 
 def _validate_pid(value: object) -> int:
     pid = int(value)
@@ -66,6 +72,8 @@ def is_alive_and_ours(*, pgid: int, pid: int | None = None, start_time: float) -
     With ``start_new_session=True`` they are equal, but accepting both keeps the
     guard correct if that invariant ever breaks.
     """
+    if not _HAS_PROC_GROUPS:
+        return False
     pgid = _validate_pid(pgid)
     check_pid = _validate_pid(pid if pid is not None else pgid)
     try:
@@ -93,6 +101,8 @@ def kill_all_tracked(procs_dir: str) -> int:
 
 
 def _kill_group(pgid: int) -> None:
+    if not _HAS_PROC_GROUPS:
+        return
     pgid = _validate_pid(pgid)
     try:
         os.killpg(pgid, signal.SIGTERM)

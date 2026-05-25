@@ -40,7 +40,7 @@ from worca.state.status import (
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
-from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
+from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
 from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
@@ -237,7 +237,11 @@ def _check_control_file(
         sys.exit(0)
 
     elif action == "stop":
-        terminate_current()
+        # Kill ALL tracked process groups for this run, not just the current
+        # agent — a prior iteration's group may still be alive (e.g. a retry
+        # spawned a new agent while the previous one outlived its reap).
+        # run_id is guaranteed set here (early-returned above when falsy).
+        terminate_all(os.path.join(worca_dir, "runs", run_id))
         status["pipeline_status"] = PipelineStatus.INTERRUPTED
         status["stop_reason"] = "control_file"
         save_status(status, status_path)
@@ -3752,6 +3756,17 @@ def run_pipeline(
             _log("Skipping RUN_FAILED — run is already terminal on disk", "warn")
         raise
     finally:
+        # Final sweep: kill any process groups still tracked for this run. The
+        # signal handler only fast-kills the current agent; this main-thread
+        # sweep (full SIGTERM→SIGKILL escalation) catches prior-iteration groups
+        # on the interrupt unwind, and anything left after an unexpected exit.
+        # No-op on the happy path (entries already removed as agents finished)
+        # and on non-POSIX (nothing was ever recorded).
+        try:
+            if run_dir:
+                kill_all_tracked(os.path.join(run_dir, "procs"))
+        except Exception:
+            pass
         # Dispatch any signal-stashed interrupted event to webhooks/integrations.
         # Must run BEFORE ctx.close() so the dispatch helper can read ctx state.
         # No-op if the signal handler didn't fire or the dispatch already happened.

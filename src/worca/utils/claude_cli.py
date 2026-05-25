@@ -23,6 +23,7 @@ from worca.hooks.tracking import (
 )
 from worca.utils.env import get_env, filter_model_env
 from worca.utils.proc_registry import (
+    _HAS_PROC_GROUPS,
     kill_all_tracked,
     record_spawn,
     remove_spawn,
@@ -69,9 +70,14 @@ def _reap_returncode(proc):
     try:
         proc.wait(timeout=_REAP_WAIT_TIMEOUT)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (ProcessLookupError, OSError):
+        _killed = False
+        if _HAS_PROC_GROUPS:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                _killed = True
+            except (ProcessLookupError, OSError):
+                pass
+        if not _killed:
             try:
                 proc.kill()
             except (ProcessLookupError, OSError):
@@ -88,16 +94,24 @@ def _reap_returncode(proc):
 def terminate_current():
     """Terminate the currently running claude subprocess, if any.
 
-    Sends SIGTERM to the process group so child processes are also killed.
+    On POSIX, sends SIGTERM to the process group so child processes are also
+    killed. On platforms without process groups (Windows), falls back to
+    terminating the direct child only.
     """
     with _proc_lock:
         proc = _current_proc
     if proc is None:
         return
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        pass
+    if _HAS_PROC_GROUPS:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+    else:
+        try:
+            proc.terminate()
+        except (ProcessLookupError, OSError):
+            pass
 
 
 def terminate_all(run_dir: str) -> int:
@@ -534,12 +548,15 @@ def run_agent(
     procs_dir = None
     pgid = None
     agent_pid_path = None
-    if run_dir and stage is not None and iteration is not None:
+    # Process-group tracking is POSIX-only; on Windows (_HAS_PROC_GROUPS False)
+    # os.getpgid doesn't exist, so fall through to the agent.pid path instead of
+    # raising AttributeError on the spawn hot path.
+    if run_dir and stage is not None and iteration is not None and _HAS_PROC_GROUPS:
         procs_dir = os.path.join(run_dir, "procs")
         try:
             pgid = os.getpgid(proc.pid)
             record_spawn(procs_dir, pgid=pgid, pid=proc.pid, stage=stage, iteration=iteration)
-        except (ProcessLookupError, OSError):
+        except (ProcessLookupError, OSError, AttributeError):
             procs_dir = None
             pgid = None
     elif log_path:
