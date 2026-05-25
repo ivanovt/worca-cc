@@ -9,7 +9,7 @@ def test_snapshot_worca_home_ignores_ephemeral_files(monkeypatch):
     """_snapshot_worca_home should exclude *.log, *.pid, .DS_Store, and cache/**
     while including durable state files (projects.d/, fleet-runs/, settings.json).
     """
-    from tests.conftest import _snapshot_worca_home, _REAL_WORCA_HOME
+    from tests.conftest import _snapshot_worca_home
 
     with tempfile.TemporaryDirectory(prefix="worca-home-test-") as tmp:
         monkeypatch.setattr("tests.conftest._REAL_WORCA_HOME", tmp)
