@@ -22,6 +22,11 @@ from worca.hooks.tracking import (
     resolve_per_agent_entry,
 )
 from worca.utils.env import get_env, filter_model_env
+from worca.utils.proc_registry import (
+    kill_all_tracked,
+    record_spawn,
+    remove_spawn,
+)
 
 # Linux ARG_MAX is typically 2 MiB but total argv+envp must fit.
 # Use a conservative 128 KiB threshold for the prompt argument.
@@ -65,9 +70,12 @@ def _reap_returncode(proc):
         proc.wait(timeout=_REAP_WAIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         try:
-            proc.kill()
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
         except (ProcessLookupError, OSError):
-            pass
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
         try:
             proc.wait(timeout=_REAP_WAIT_TIMEOUT)
         except subprocess.TimeoutExpired:
@@ -90,6 +98,16 @@ def terminate_current():
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
     except (ProcessLookupError, OSError):
         pass
+
+
+def terminate_all(run_dir: str) -> int:
+    """Kill all tracked process groups for a run, plus the current proc.
+
+    Returns the number of tracked groups killed (excludes _current_proc).
+    """
+    terminate_current()
+    procs_dir = os.path.join(run_dir, "procs")
+    return kill_all_tracked(procs_dir)
 
 
 def _resolve_tool_args(
@@ -453,6 +471,9 @@ def run_agent(
     on_event: Optional[Callable[[dict], None]] = None,
     settings: Optional[dict] = None,
     graphify_out: Optional[str] = None,
+    run_dir: Optional[str] = None,
+    stage: Optional[str] = None,
+    iteration: Optional[int] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -510,12 +531,22 @@ def run_agent(
     with _proc_lock:
         _current_proc = proc
 
+    procs_dir = None
+    pgid = None
     agent_pid_path = None
-    if log_path:
-        run_dir = os.path.dirname(log_path)
-        agent_pid_path = os.path.join(run_dir, "agent.pid")
+    if run_dir and stage is not None and iteration is not None:
+        procs_dir = os.path.join(run_dir, "procs")
         try:
-            os.makedirs(run_dir, exist_ok=True)
+            pgid = os.getpgid(proc.pid)
+            record_spawn(procs_dir, pgid=pgid, pid=proc.pid, stage=stage, iteration=iteration)
+        except (ProcessLookupError, OSError):
+            procs_dir = None
+            pgid = None
+    elif log_path:
+        _run_dir = os.path.dirname(log_path)
+        agent_pid_path = os.path.join(_run_dir, "agent.pid")
+        try:
+            os.makedirs(_run_dir, exist_ok=True)
             with open(agent_pid_path, "w") as f:
                 f.write(str(proc.pid))
         except OSError:
@@ -572,6 +603,8 @@ def run_agent(
     finally:
         with _proc_lock:
             _current_proc = None
+        if procs_dir and pgid is not None:
+            remove_spawn(procs_dir, pgid=pgid)
         if agent_pid_path:
             try:
                 os.unlink(agent_pid_path)

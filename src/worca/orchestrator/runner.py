@@ -36,11 +36,12 @@ from worca.orchestrator.work_request import WorkRequest
 from worca.state.status import (
     load_status, save_status, update_stage, set_milestone, init_status,
     start_iteration, complete_iteration,
-    PipelineStatus, PIPELINE_TERMINAL,
+    PipelineStatus, PIPELINE_TERMINAL, PIPELINE_ALL_TERMINAL,
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, AgentSubprocessError
+from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
 from worca.utils.settings import load_global_settings, load_settings
@@ -443,6 +444,20 @@ def _is_same_work_request(existing_wr: dict, new_wr: WorkRequest) -> bool:
 
 
 _TERMINAL_STATUSES = PIPELINE_TERMINAL
+
+
+def _is_already_terminal(status_path: str) -> bool:
+    """Read status.json from disk and return True if the run is already in a terminal state.
+
+    Disk read is required because the duplicate terminal event can arrive from a
+    separate (orphaned) process — an in-process flag would not catch it.
+    """
+    try:
+        with open(status_path) as f:
+            data = json.load(f)
+        return data.get("pipeline_status") in PIPELINE_ALL_TERMINAL
+    except (OSError, json.JSONDecodeError, ValueError):
+        return False
 
 
 def _find_active_runs(worca_dir: str) -> list:
@@ -1218,6 +1233,9 @@ def run_stage(
         log_path=log_path,
         on_event=on_event,
         graphify_out=graphify_out,
+        run_dir=run_dir,
+        stage=stage.value,
+        iteration=iteration,
     )
     _gfx = _gfx_metrics["graphify_invocations"]
     # The per-iteration graphify count rides on the *envelope* (2nd return),
@@ -1833,6 +1851,11 @@ def run_pipeline(
             # command and immediately stop/pause again.
             if status.get("run_id"):
                 delete_control(status["run_id"], base=worca_dir)
+
+            if run_dir:
+                orphans = kill_all_tracked(os.path.join(run_dir, "procs"))
+                if orphans:
+                    _log(f"Killed {orphans} orphaned process group(s) from previous run", "warn")
         else:
             _log("Pipeline already completed", "ok")
             return existing  # all done
@@ -2571,6 +2594,10 @@ def run_pipeline(
                                     consecutive_failures=get_circuit_breaker_state(status)["consecutive_failures"],
                                 ))
                             time.sleep(_delay)
+                            if run_dir:
+                                _orphans = kill_all_tracked(os.path.join(run_dir, "procs"))
+                                if _orphans:
+                                    _log(f"Killed {_orphans} tracked process group(s) before retry", "warn")
                             continue
 
                 raise
@@ -3581,112 +3608,129 @@ def run_pipeline(
         total_cost = run_token.get("total_cost_usd", 0)
         total_turns = run_token.get("num_turns", 0)
 
-        # Mark pipeline as completed with timestamp
-        status["pipeline_status"] = PipelineStatus.COMPLETED
-        status["completed_at"] = datetime.now(timezone.utc).isoformat()
-        save_status(status, actual_status_path)
+        # Persistent guard: skip terminal state-write + event if another process
+        # (e.g. an orphaned subagent) already drove the run to a terminal state.
+        if _is_already_terminal(actual_status_path):
+            _log("Skipping RUN_COMPLETED — run is already terminal on disk", "warn")
+        else:
+            # Mark pipeline as completed with timestamp
+            status["pipeline_status"] = PipelineStatus.COMPLETED
+            status["completed_at"] = datetime.now(timezone.utc).isoformat()
+            save_status(status, actual_status_path)
 
-        # Update multi-pipeline registry on completion (worktree mode)
-        if status.get("worktree") and status.get("run_id"):
-            update_pipeline(status["run_id"], status="completed", base=registry_dir)
+            # Update multi-pipeline registry on completion (worktree mode)
+            if status.get("worktree") and status.get("run_id"):
+                update_pipeline(status["run_id"], status="completed", base=registry_dir)
 
-        # Update GitHub issue (post summary, remove label, close)
-        gh_issue_complete(status)
+            # Update GitHub issue (post summary, remove label, close)
+            gh_issue_complete(status)
 
-        # Update cumulative stats
-        stats_dir = os.path.join(os.path.dirname(actual_status_path), "..", "..", "stats")
-        if run_dir:
-            stats_dir = os.path.join(os.path.dirname(os.path.dirname(run_dir)), "stats")
-        stats_path = os.path.join(stats_dir, "cumulative.json")
-        try:
-            update_cumulative_stats(status, stats_path)
-        except Exception as e:
-            _log(f"Warning: failed to update cumulative stats: {e}", "warn")
+            # Update cumulative stats
+            stats_dir = os.path.join(os.path.dirname(actual_status_path), "..", "..", "stats")
+            if run_dir:
+                stats_dir = os.path.join(os.path.dirname(os.path.dirname(run_dir)), "stats")
+            stats_path = os.path.join(stats_dir, "cumulative.json")
+            try:
+                update_cumulative_stats(status, stats_path)
+            except Exception as e:
+                _log(f"Warning: failed to update cumulative stats: {e}", "warn")
 
-        _log(f"Pipeline completed in {_format_duration(total_elapsed)}", "ok")
-        summary_parts = []
-        if total_turns:
-            summary_parts.append(f"turns={total_turns}")
-        if total_cost:
-            summary_parts.append(f"cost=${total_cost:.2f}")
-        total_tokens = run_token.get("input_tokens", 0) + run_token.get("output_tokens", 0)
-        if total_tokens:
-            summary_parts.append(f"tokens={total_tokens:,}")
-        if summary_parts:
-            _log(f"Totals: {' | '.join(summary_parts)}")
+            _log(f"Pipeline completed in {_format_duration(total_elapsed)}", "ok")
+            summary_parts = []
+            if total_turns:
+                summary_parts.append(f"turns={total_turns}")
+            if total_cost:
+                summary_parts.append(f"cost=${total_cost:.2f}")
+            total_tokens = run_token.get("input_tokens", 0) + run_token.get("output_tokens", 0)
+            if total_tokens:
+                summary_parts.append(f"tokens={total_tokens:,}")
+            if summary_parts:
+                _log(f"Totals: {' | '.join(summary_parts)}")
 
-        _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                         "success", "", msize, logs_dir, ctx=ctx)
+            _run_learn_stage(status, prompt_builder, settings_path, run_dir,
+                             "success", "", msize, logs_dir, ctx=ctx)
 
-        if ctx:
-            _stages_done = [s for s, d in status.get("stages", {}).items() if d.get("status") == PipelineStatus.COMPLETED]
-            emit_event(ctx, RUN_COMPLETED, run_completed_payload(
-                duration_ms=int(total_elapsed * 1000),
-                total_cost_usd=total_cost,
-                total_turns=total_turns,
-                total_tokens=total_tokens,
-                stages_completed=_stages_done,
-            ))
+            if ctx:
+                _stages_done = [s for s, d in status.get("stages", {}).items() if d.get("status") == PipelineStatus.COMPLETED]
+                emit_event(ctx, RUN_COMPLETED, run_completed_payload(
+                    duration_ms=int(total_elapsed * 1000),
+                    total_cost_usd=total_cost,
+                    total_turns=total_turns,
+                    total_tokens=total_tokens,
+                    stages_completed=_stages_done,
+                ))
 
         return status
     except PipelineInterrupted as exc:
-        status["pipeline_status"] = PipelineStatus.INTERRUPTED
-        status["stop_reason"] = exc.stop_reason
-        save_status(status, actual_status_path)
-        # Mirror terminal status into the multi-pipeline registry so global-mode
-        # views don't keep showing the run as "running" after SIGTERM/control_file.
-        if status.get("worktree") and status.get("run_id"):
-            try:
-                update_pipeline(status["run_id"], status="interrupted", base=registry_dir)
-            except Exception:
-                pass  # registry sync is best-effort; status.json is canonical
-        if ctx and _pending_signal_event is None and not _signal_event_emitted:
-            emit_event(ctx, RUN_INTERRUPTED, run_interrupted_payload(
-                interrupted_stage=status.get("stage", ""),
-                elapsed_ms=int((time.time() - pipeline_t0) * 1000),
-                source=exc.stop_reason,
-            ))
+        if not _is_already_terminal(actual_status_path):
+            status["pipeline_status"] = PipelineStatus.INTERRUPTED
+            status["stop_reason"] = exc.stop_reason
+            save_status(status, actual_status_path)
+            # Mirror terminal status into the multi-pipeline registry so global-mode
+            # views don't keep showing the run as "running" after SIGTERM/control_file.
+            if status.get("worktree") and status.get("run_id"):
+                try:
+                    update_pipeline(status["run_id"], status="interrupted", base=registry_dir)
+                except Exception:
+                    pass  # registry sync is best-effort; status.json is canonical
+            if ctx and _pending_signal_event is None and not _signal_event_emitted:
+                emit_event(ctx, RUN_INTERRUPTED, run_interrupted_payload(
+                    interrupted_stage=status.get("stage", ""),
+                    elapsed_ms=int((time.time() - pipeline_t0) * 1000),
+                    source=exc.stop_reason,
+                ))
+        else:
+            _log("Skipping RUN_INTERRUPTED — run is already terminal on disk", "warn")
         raise  # Do NOT run learn on user interruption
     except LoopExhaustedError as e:
-        status["pipeline_status"] = PipelineStatus.FAILED
-        status["stop_reason"] = "loop_exhausted"
-        save_status(status, actual_status_path)
-        _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                         "loop_exhausted", str(e), msize, logs_dir, ctx=ctx)
-        if ctx:
-            emit_event(ctx, RUN_FAILED, run_failed_payload(
-                error=str(e),
-                failed_stage=status.get("stage"),
-                error_type="loop_exhausted",
-            ))
+        if not _is_already_terminal(actual_status_path):
+            status["pipeline_status"] = PipelineStatus.FAILED
+            status["stop_reason"] = "loop_exhausted"
+            save_status(status, actual_status_path)
+            _run_learn_stage(status, prompt_builder, settings_path, run_dir,
+                             "loop_exhausted", str(e), msize, logs_dir, ctx=ctx)
+            if ctx:
+                emit_event(ctx, RUN_FAILED, run_failed_payload(
+                    error=str(e),
+                    failed_stage=status.get("stage"),
+                    error_type="loop_exhausted",
+                ))
+        else:
+            _log("Skipping RUN_FAILED — run is already terminal on disk", "warn")
         raise
     except PipelineError as e:
-        status["pipeline_status"] = PipelineStatus.FAILED
-        status["stop_reason"] = "pipeline_error"
-        save_status(status, actual_status_path)
-        # Skip LEARN when preflight fails — environment is broken, claude CLI unavailable
-        if status.get("stage") != "preflight":
-            _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                             "failure", str(e), msize, logs_dir, ctx=ctx)
-        if ctx:
-            emit_event(ctx, RUN_FAILED, run_failed_payload(
-                error=str(e),
-                failed_stage=status.get("stage"),
-                error_type="pipeline_error",
-            ))
+        if not _is_already_terminal(actual_status_path):
+            status["pipeline_status"] = PipelineStatus.FAILED
+            status["stop_reason"] = "pipeline_error"
+            save_status(status, actual_status_path)
+            # Skip LEARN when preflight fails — environment is broken, claude CLI unavailable
+            if status.get("stage") != "preflight":
+                _run_learn_stage(status, prompt_builder, settings_path, run_dir,
+                                 "failure", str(e), msize, logs_dir, ctx=ctx)
+            if ctx:
+                emit_event(ctx, RUN_FAILED, run_failed_payload(
+                    error=str(e),
+                    failed_stage=status.get("stage"),
+                    error_type="pipeline_error",
+                ))
+        else:
+            _log("Skipping RUN_FAILED — run is already terminal on disk", "warn")
         raise
     except Exception as e:
-        status["pipeline_status"] = PipelineStatus.FAILED
-        status["stop_reason"] = type(e).__name__
-        save_status(status, actual_status_path)
-        _run_learn_stage(status, prompt_builder, settings_path, run_dir,
-                         "failure", str(e), msize, logs_dir, ctx=ctx)
-        if ctx:
-            emit_event(ctx, RUN_FAILED, run_failed_payload(
-                error=str(e),
-                failed_stage=status.get("stage"),
-                error_type=type(e).__name__,
-            ))
+        if not _is_already_terminal(actual_status_path):
+            status["pipeline_status"] = PipelineStatus.FAILED
+            status["stop_reason"] = type(e).__name__
+            save_status(status, actual_status_path)
+            _run_learn_stage(status, prompt_builder, settings_path, run_dir,
+                             "failure", str(e), msize, logs_dir, ctx=ctx)
+            if ctx:
+                emit_event(ctx, RUN_FAILED, run_failed_payload(
+                    error=str(e),
+                    failed_stage=status.get("stage"),
+                    error_type=type(e).__name__,
+                ))
+        else:
+            _log("Skipping RUN_FAILED — run is already terminal on disk", "warn")
         raise
     finally:
         # Dispatch any signal-stashed interrupted event to webhooks/integrations.

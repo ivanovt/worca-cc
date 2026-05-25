@@ -361,6 +361,41 @@ def test_resume_noop_when_no_control_file(tmp_path):
     delete_control(run_id, base=worca_dir)
 
 
+def test_resume_kills_orphaned_processes(tmp_path):
+    """On resume, kill_all_tracked cleans up the run's procs dir,
+    pruning stale entries and killing live tracked groups."""
+    from worca.utils.proc_registry import kill_all_tracked, record_spawn
+
+    run_id = "20260322-150000"
+    run_dir = tmp_path / "runs" / run_id
+    run_dir.mkdir(parents=True)
+    procs_dir = str(run_dir / "procs")
+
+    record_spawn(procs_dir, pgid=999999, pid=999999, stage="implement", iteration=3)
+    record_spawn(procs_dir, pgid=999998, pid=999998, stage="implement", iteration=4)
+    assert os.path.exists(os.path.join(procs_dir, "999999.json"))
+    assert os.path.exists(os.path.join(procs_dir, "999998.json"))
+
+    killed = kill_all_tracked(procs_dir)
+    assert killed == 0
+    assert not os.path.exists(os.path.join(procs_dir, "999999.json"))
+    assert not os.path.exists(os.path.join(procs_dir, "999998.json"))
+
+
+def test_circuit_breaker_retry_kills_tracked_processes():
+    """The circuit-breaker retry path in run_pipeline calls kill_all_tracked
+    before continuing, so orphaned process groups from the failed iteration
+    are cleaned up before spawning the next one."""
+    import inspect
+    source = inspect.getsource(runner.run_pipeline)
+    retry_section = source[source.index("Transient error"):]
+    kill_pos = retry_section.index("kill_all_tracked")
+    continue_pos = retry_section.index("continue")
+    assert kill_pos < continue_pos, (
+        "kill_all_tracked must appear before continue in the circuit-breaker retry path"
+    )
+
+
 # --- Bead assignment: _query_ready_bead filtering ---
 
 
@@ -592,3 +627,45 @@ def test_clear_stale_daemon_lock_leaves_files_on_permission_error(tmp_path):
 
     assert pid_file.exists()
     assert lock_file.exists()
+
+
+# --- Persistent terminal-event guard ---
+
+
+class TestIsAlreadyTerminal:
+    """_is_already_terminal reads status.json from disk and returns True
+    when the run has already reached a terminal pipeline_status."""
+
+    def test_returns_true_for_completed(self, tmp_path):
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "completed", "completed_at": "2026-01-01T00:00:00Z"}, status_path)
+        assert runner._is_already_terminal(status_path) is True
+
+    def test_returns_true_for_failed(self, tmp_path):
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "failed"}, status_path)
+        assert runner._is_already_terminal(status_path) is True
+
+    def test_returns_true_for_interrupted(self, tmp_path):
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "interrupted"}, status_path)
+        assert runner._is_already_terminal(status_path) is True
+
+    def test_returns_false_for_running(self, tmp_path):
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "running"}, status_path)
+        assert runner._is_already_terminal(status_path) is False
+
+    def test_returns_false_for_paused(self, tmp_path):
+        status_path = str(tmp_path / "status.json")
+        save_status({"pipeline_status": "paused"}, status_path)
+        assert runner._is_already_terminal(status_path) is False
+
+    def test_returns_false_when_file_missing(self, tmp_path):
+        status_path = str(tmp_path / "nonexistent.json")
+        assert runner._is_already_terminal(status_path) is False
+
+    def test_returns_false_on_corrupt_json(self, tmp_path):
+        status_path = str(tmp_path / "status.json")
+        (tmp_path / "status.json").write_text("not json")
+        assert runner._is_already_terminal(status_path) is False
