@@ -1132,3 +1132,27 @@ def test_process_stream_missing_usage_fields_handled_gracefully():
     u = result["usage"]
     assert u["input_tokens"] == 100
     assert u["output_tokens"] == 35
+
+
+def test_process_stream_preserves_non_numeric_usage_keys_across_resumes():
+    """Multi-resume accumulation must not drop non-numeric or unrecognized
+    usage keys (e.g. service_tier).  The summed envelope merges numeric totals
+    over the last event's full usage block rather than rebuilding it from
+    scratch, so unknown keys survive — taking the last event's value, just like
+    total_cost_usd."""
+    r1 = {"type": "result", "duration_ms": 1000, "num_turns": 2,
+           "total_cost_usd": 0.10,
+           "usage": {"input_tokens": 100, "output_tokens": 20,
+                     "service_tier": "standard"}}
+    r2 = {"type": "result", "duration_ms": 2000, "num_turns": 3,
+           "total_cost_usd": 0.20,
+           "usage": {"input_tokens": 50, "output_tokens": 10,
+                     "service_tier": "priority"}}
+    result = process_stream(_stream(r1, r2))
+
+    u = result["usage"]
+    # numeric fields are summed across segments
+    assert u["input_tokens"] == 150
+    assert u["output_tokens"] == 30
+    # non-numeric / unrecognized keys survive, taking the last event's value
+    assert u["service_tier"] == "priority"

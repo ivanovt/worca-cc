@@ -417,7 +417,19 @@ def process_stream(
         result_event["duration_api_ms"] = _accum_duration_api_ms
         result_event["num_turns"] = _accum_num_turns
         if _accum_usage:
-            result_event["usage"] = _accum_usage
+            # Merge summed totals over the last event's full usage block so
+            # non-numeric / unrecognized keys (e.g. service_tier) survive
+            # instead of being dropped when accumulation rebuilds usage. Nested
+            # sub-dicts are likewise overlaid, preserving any non-numeric keys.
+            merged = dict(result_event.get("usage") or {})
+            for key, val in _accum_usage.items():
+                if isinstance(val, dict):
+                    sub = dict(merged.get(key) or {})
+                    sub.update(val)
+                    merged[key] = sub
+                else:
+                    merged[key] = val
+            result_event["usage"] = merged
 
     if sticky_structured_output and not result_event.get("structured_output"):
         result_event["structured_output"] = sticky_structured_output
