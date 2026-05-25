@@ -119,7 +119,17 @@ def test_resume_kills_orphaned_process_groups(pipeline_env):
     resumed = pipeline_env.run(_ALL_SUCCEED, extra_args=["--resume"], timeout=60)
 
     # 4. Verify the orphan was killed.
-    time.sleep(0.3)  # small grace period for signal delivery
+    # pytest is the orphan's parent here, so a killed orphan lingers as a zombie
+    # until reaped — os.killpg(pgid, 0) still succeeds for a zombie on Linux. In
+    # production the orphan's parent (the crashed runner) is gone, so init reaps
+    # it immediately. Reap it ourselves to mirror that. If the resume did NOT
+    # kill it, this wait() times out (the orphan is a 300s sleep) and the group
+    # stays alive below, so the assertion still catches a real regression.
+    try:
+        orphan.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+    time.sleep(0.3)  # grace for process-group teardown after reap
     assert not _is_group_alive(pgid), (
         "orphan process group should have been killed during resume"
     )
@@ -135,7 +145,10 @@ def test_resume_kills_orphaned_process_groups(pipeline_env):
         os.killpg(pgid, signal.SIGKILL)
     except (ProcessLookupError, OSError):
         pass
-    orphan.wait(timeout=5)
+    try:
+        orphan.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 # ---------------------------------------------------------------------------
