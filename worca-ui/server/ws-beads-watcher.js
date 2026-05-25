@@ -163,3 +163,50 @@ export async function resolveBeadsCounts(wset) {
   fallbackInflight.set(key, promise);
   return promise;
 }
+
+/**
+ * Non-blocking variant of {@link resolveBeadsCounts}: returns whatever counts
+ * are already available (the live watcher cache, or a fresh TTL-cached fallback)
+ * WITHOUT ever awaiting the cold `bd` query. When nothing is cached it kicks off
+ * a background refresh (reusing the same TTL cache + in-flight dedup) so a later
+ * caller gets real data, and returns {} immediately.
+ *
+ * Used by the REST `/runs` endpoint: a cold `bd show` on a large beads db
+ * (worca-cc has hundreds of issues — the cold read takes ~10s) would otherwise
+ * block the run list and, fanned out across every project, stall the whole UI.
+ * Bead counts on run cards are advisory and arrive via the `beads-update`
+ * broadcast once warm; the web run-detail does not use them at all.
+ *
+ * @param {{ projectId?: string, worcaDir?: string, beadsWatcher?: { getLatestCounts: () => object } | null }} [wset]
+ * @returns {Record<string, { total: number, done: number }>}
+ */
+export function peekBeadsCounts(wset) {
+  if (!wset || !wset.worcaDir) return {};
+
+  const live = wset.beadsWatcher?.getLatestCounts();
+  if (live && Object.keys(live).length > 0) return live;
+
+  const key = wset.projectId ?? wset.worcaDir;
+  const cached = fallbackCache.get(key);
+  if (cached && Date.now() - cached.ts < FALLBACK_TTL_MS) return cached.counts;
+
+  // Cold cache: warm it in the background (dedup'd), but never block the caller.
+  if (!fallbackInflight.has(key)) {
+    const dbPath = beadsDbPathFor(wset.worcaDir);
+    if (existsSync(dbPath)) {
+      const promise = (async () => {
+        try {
+          const counts = await countIssuesByRunLabel(dbPath);
+          fallbackCache.set(key, { ts: Date.now(), counts });
+          return counts;
+        } catch {
+          return {};
+        } finally {
+          fallbackInflight.delete(key);
+        }
+      })();
+      fallbackInflight.set(key, promise);
+    }
+  }
+  return {};
+}

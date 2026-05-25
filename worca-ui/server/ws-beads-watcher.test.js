@@ -430,6 +430,92 @@ describe('resolveBeadsCounts', () => {
   });
 });
 
+describe('peekBeadsCounts (non-blocking)', () => {
+  let peekBeadsCounts;
+  let mockCountIssuesByRunLabel;
+  let mockExistsSync;
+  let resolveCount;
+
+  beforeEach(async () => {
+    vi.resetModules();
+
+    mockExistsSync = vi.fn(() => true);
+    // A controllable promise so we can assert peek returns BEFORE the bd read
+    // resolves (i.e. it never awaits the cold query).
+    resolveCount = undefined;
+    mockCountIssuesByRunLabel = vi.fn(
+      () =>
+        new Promise((res) => {
+          resolveCount = res;
+        }),
+    );
+
+    vi.doMock('./beads-reader.js', () => ({
+      listIssues: vi.fn().mockResolvedValue([]),
+      countIssuesByRunLabel: mockCountIssuesByRunLabel,
+    }));
+
+    vi.doMock('node:fs', () => ({
+      existsSync: mockExistsSync,
+      watch: vi.fn(() => ({ close: vi.fn() })),
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+      statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    const mod = await import('./ws-beads-watcher.js');
+    peekBeadsCounts = mod.peekBeadsCounts;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const WSET = { projectId: 'p1', worcaDir: '/fake/p1/.claude/worca' };
+
+  it('returns {} for a missing wset without a DB read', () => {
+    expect(peekBeadsCounts(undefined)).toEqual({});
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+
+  it('returns the live watcher cache synchronously without a DB read', () => {
+    const wset = {
+      ...WSET,
+      beadsWatcher: {
+        getLatestCounts: () => ({ 'run-x': { total: 2, done: 2 } }),
+      },
+    };
+    expect(peekBeadsCounts(wset)).toEqual({ 'run-x': { total: 2, done: 2 } });
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+
+  it('returns {} immediately on a cold cache but warms it in the background', async () => {
+    // Synchronous {} even though the bd read is still pending.
+    expect(peekBeadsCounts(WSET)).toEqual({});
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+
+    // Resolve the background read and let the microtask settle.
+    resolveCount({ 'run-1': { total: 4, done: 1 } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Now warm: a second peek returns cached counts, no new read.
+    expect(peekBeadsCounts(WSET)).toEqual({ 'run-1': { total: 4, done: 1 } });
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('de-duplicates concurrent cold peeks (one background read)', () => {
+    peekBeadsCounts(WSET);
+    peekBeadsCounts(WSET);
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns {} and skips the read when the beads DB does not exist', () => {
+    mockExistsSync.mockReturnValue(false);
+    expect(peekBeadsCounts(WSET)).toEqual({});
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+});
+
 describe('WAL self-read suppression', () => {
   let createBeadsWatcher;
   let mockListIssues;
