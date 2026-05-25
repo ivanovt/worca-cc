@@ -33,18 +33,29 @@ if "WORCA_HOME" not in os.environ:
 _leak_baseline: dict | None = None
 
 
+_IGNORED_SUFFIXES = {".log", ".pid"}
+_IGNORED_NAMES = {".DS_Store"}
+_IGNORED_DIRS = {"cache"}
+
+
 def _snapshot_worca_home() -> dict:
     """Return {relative_path: (size, mtime_ns)} for every file under the
     real ~/.worca/.
 
     Cheap stat-only scan — does not read file contents. Returns {} when the
-    directory does not exist.
+    directory does not exist. Filters out process-owned ephemera (logs, pid
+    files, shared cache) that external processes may write concurrently.
     """
     if not os.path.isdir(_REAL_WORCA_HOME):
         return {}
     snap: dict = {}
-    for dirpath, _, filenames in os.walk(_REAL_WORCA_HOME):
+    for dirpath, dirnames, filenames in os.walk(_REAL_WORCA_HOME):
+        dirnames[:] = [d for d in dirnames if d not in _IGNORED_DIRS]
         for name in filenames:
+            if name in _IGNORED_NAMES:
+                continue
+            if any(name.endswith(s) for s in _IGNORED_SUFFIXES):
+                continue
             full = os.path.join(dirpath, name)
             try:
                 st = os.stat(full)

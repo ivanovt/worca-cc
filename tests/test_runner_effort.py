@@ -11,11 +11,6 @@ from worca.orchestrator.runner import run_stage, run_pipeline
 from worca.orchestrator.stages import Stage
 from worca.orchestrator.work_request import WorkRequest
 
-# Pipeline tests trigger run_pipeline which takes non-trivial wall time;
-# a background worca-ui server writing to ~/.worca/worca-ui-global.log
-# during that window is falsely attributed to the test by the leak detector.
-pytestmark = pytest.mark.allow_worca_writes
-
 
 @pytest.fixture(autouse=True)
 def _mock_beads_init():

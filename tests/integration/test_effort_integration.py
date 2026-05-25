@@ -8,8 +8,6 @@ import json
 
 import pytest
 
-pytestmark = pytest.mark.allow_worca_writes
-
 from tests.integration.helpers import make_iteration_scenario  # noqa: E402
 
 
