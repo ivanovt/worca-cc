@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Zap,
 } from '../utils/icons.js';
+import { renderMarkdown } from '../utils/markdown.js';
 import { scrollOnExpand } from '../utils/scroll.js';
 
 /**
@@ -131,7 +132,7 @@ function observationsTableView(observations) {
             </sl-badge>
           </span>
           <span class="learnings-category">${obs.category}</span>
-          <span>${obs.description}</span>
+          <span class="markdown-body markdown-inline">${unsafeHTML(renderMarkdown(obs.description))}</span>
           <span class="learnings-evidence">${obs.evidence}</span>
           <span class="col-center">${obs.occurrences || 1}</span>
           <sl-tooltip content="Copy investigation prompt">
@@ -160,7 +161,7 @@ function suggestionsTableView(suggestions) {
         (s) => html`
         <div class="learnings-table-row learnings-table-row--suggestions">
           <span class="learnings-target">${s.target}</span>
-          <span>${s.description}</span>
+          <span class="markdown-body markdown-inline">${unsafeHTML(renderMarkdown(s.description))}</span>
           <span class="learnings-rationale">${s.rationale}</span>
           <sl-tooltip content="Copy implementation prompt">
             <button class="learnings-copy-btn" @click=${(e) => copyToClipboard(suggestionPrompt(s), e.currentTarget)}>

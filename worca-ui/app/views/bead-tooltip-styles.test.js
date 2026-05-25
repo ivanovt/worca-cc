@@ -65,10 +65,10 @@ describe('bead tooltip CSS styles', () => {
       expect(match[1]).toContain('font-size:');
     });
 
-    it('uses pre-wrap whitespace', () => {
+    it('uses normal whitespace for rendered markdown', () => {
       const match = css.match(/\.bead-tooltip-excerpt\s*\{([^}]+)\}/);
       expect(match).not.toBeNull();
-      expect(match[1]).toContain('white-space: pre-wrap');
+      expect(match[1]).toContain('white-space: normal');
     });
   });
 

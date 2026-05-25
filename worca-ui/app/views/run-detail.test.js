@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import {
   prApprovalPanelView,
@@ -8,6 +9,8 @@ import {
 function renderToString(template) {
   if (!template) return '';
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -18,6 +21,7 @@ function renderToString(template) {
       else if (typeof v === 'number') result += String(v);
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;
@@ -510,5 +514,57 @@ describe('runDetailView - source/target branch display', () => {
     expect(out).toContain('Source Branch:');
     expect(out).toContain('run-pr-link');
     expect(out).toContain('https://github.com/org/repo/pull/42');
+  });
+});
+
+// ─── agent prompt section ─────────────────────────────────────────────────────
+
+describe('runDetailView — agent prompt markdown rendering', () => {
+  function render(result) {
+    return renderToString(result?.stages ?? result);
+  }
+
+  it('renders agent instructions as markdown, not inside <pre>', () => {
+    const run = {
+      stages: {
+        planner: {
+          status: 'completed',
+          iterations: [{ number: 1, status: 'completed' }],
+        },
+      },
+    };
+    const options = {
+      promptCache: {
+        planner: {
+          agentInstructions: '## Role\n\nYou are a planner.',
+          userPrompt: null,
+        },
+      },
+    };
+    const out = render(runDetailView(run, {}, options));
+    expect(out).toContain('markdown-body');
+    expect(out).not.toContain('<pre class="agent-prompt-content">');
+  });
+
+  it('renders user message as markdown, not inside <pre>', () => {
+    const run = {
+      stages: {
+        planner: {
+          status: 'completed',
+          iterations: [{ number: 1, status: 'completed' }],
+        },
+      },
+    };
+    const options = {
+      promptCache: {
+        planner: {
+          agentInstructions: null,
+          userPrompt: '**Important**: do this task.',
+        },
+      },
+    };
+    const out = render(runDetailView(run, {}, options));
+    expect(out).toContain('markdown-body');
+    expect(out).not.toContain('<pre class="agent-prompt-content">');
   });
 });

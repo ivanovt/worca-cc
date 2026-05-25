@@ -1,9 +1,12 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { beadsPanelView } from './beads-panel.js';
 
 function renderToString(template) {
   if (!template) return '';
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -14,6 +17,7 @@ function renderToString(template) {
       else if (typeof v === 'number') result += String(v);
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;

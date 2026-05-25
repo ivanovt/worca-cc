@@ -1,6 +1,5 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { effortLevelBadge } from '../utils/effort-badge.js';
 import {
@@ -20,6 +19,7 @@ import {
   Timer,
   X,
 } from '../utils/icons.js';
+import { renderMarkdown } from '../utils/markdown.js';
 import { scrollOnExpand } from '../utils/scroll.js';
 import { sortByStageOrder } from '../utils/stage-order.js';
 import {
@@ -42,29 +42,9 @@ import { stageTimelineView } from './stage-timeline.js';
 // cached per-run. Same UX shape as the workspace-detail plan dialog: marked
 // renders the markdown, .markdown-dialog widens the panel, Copy footer
 // hands the raw source back to the user.
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-  mangle: false,
-  headerIds: false,
-});
-
 const _runPlanCache = new Map(); // run_id -> markdown text | null (404)
 const _runPlanFetching = new Set();
 let _planDialogRunId = null; // null when closed; run_id when open
-
-function _renderMarkdown(text) {
-  if (!text) return '';
-  try {
-    return marked.parse(text);
-  } catch {
-    const esc = String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    return `<pre>${esc}</pre>`;
-  }
-}
 
 function _ensureRunPlanFetched(run, rerender) {
   const runId = run?.id;
@@ -155,7 +135,7 @@ function _planArtifactDialog(run, rerender) {
     if (planText === null) {
       return html`<div class="plan-error">No plan file found for this run.</div>`;
     }
-    return html`<div class="markdown-body">${unsafeHTML(_renderMarkdown(planText || ''))}</div>`;
+    return html`<div class="markdown-body">${unsafeHTML(renderMarkdown(planText || ''))}</div>`;
   })();
   return html`
     <sl-dialog
@@ -756,7 +736,7 @@ function _preflightChecksView(stage, iter) {
   if (!checks.length && !summary) return nothing;
   return html`
     <div class="preflight-checks-view">
-      ${summary ? html`<div class="preflight-summary">${summary}</div>` : nothing}
+      ${summary ? html`<div class="preflight-summary markdown-body">${unsafeHTML(renderMarkdown(summary))}</div>` : nothing}
       ${
         checks.length > 0
           ? html`
@@ -774,7 +754,7 @@ function _preflightChecksView(stage, iter) {
               <tr>
                 <td><sl-badge variant="${_preflightCheckBadgeVariant(check.status)}" pill>${check.status}</sl-badge></td>
                 <td class="preflight-check-name">${check.name}</td>
-                <td class="preflight-check-message">${check.message || ''}</td>
+                <td class="preflight-check-message markdown-body markdown-inline">${unsafeHTML(renderMarkdown(check.message || ''))}</td>
               </tr>
             `,
             )}
@@ -955,7 +935,7 @@ function _agentPromptSection(_stageKey, promptData) {
               ${unsafeHTML(iconSvg(ClipboardCopy, 11))} Copy
             </button>
           </div>
-          <pre class="agent-prompt-content">${agentInstructions}</pre>
+          <div class="markdown-body">${unsafeHTML(renderMarkdown(agentInstructions))}</div>
         </div>
       `
           : nothing
@@ -970,7 +950,7 @@ function _agentPromptSection(_stageKey, promptData) {
               ${unsafeHTML(iconSvg(ClipboardCopy, 11))} Copy
             </button>
           </div>
-          <pre class="agent-prompt-content">${userPrompt}</pre>
+          <div class="markdown-body">${unsafeHTML(renderMarkdown(userPrompt))}</div>
         </div>
       `
           : nothing

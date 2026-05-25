@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   resetWorkspaceDetailState,
@@ -7,6 +8,8 @@ import {
 function renderToString(template) {
   if (!template) return '';
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -17,6 +20,7 @@ function renderToString(template) {
       else if (typeof v === 'number') result += String(v);
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;
@@ -328,6 +332,12 @@ describe('workspaceDetailView — context artifacts panel', () => {
     const ws = { ...BASE_WORKSPACE, context_artifacts: null };
     const out = renderToString(workspaceDetailView(ws, {}));
     expect(out).not.toContain('context-artifacts-panel');
+  });
+
+  it('renders context artifact content as markdown, not inside <pre>', () => {
+    const out = renderToString(workspaceDetailView(BASE_WORKSPACE, {}));
+    expect(out).toContain('markdown-body');
+    expect(out).toContain('context-artifact-content');
   });
 });
 
