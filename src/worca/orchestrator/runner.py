@@ -446,18 +446,37 @@ def _is_same_work_request(existing_wr: dict, new_wr: WorkRequest) -> bool:
 _TERMINAL_STATUSES = PIPELINE_TERMINAL
 
 
-def _is_already_terminal(status_path: str) -> bool:
-    """Read status.json from disk and return True if the run is already in a terminal state.
+def _is_already_terminal(status_path: str, in_memory_status: dict | None = None) -> bool:
+    """Return True if ANOTHER process already drove this run to a terminal state on disk.
 
     Disk read is required because the duplicate terminal event can arrive from a
-    separate (orphaned) process — an in-process flag would not catch it.
+    separate (orphaned) process — an in-process flag would not catch it (#113).
+
+    A terminal status on disk only counts as "already terminal" (owned by someone
+    else) when THIS process's in-memory status is itself still non-terminal.
+    Otherwise we would suppress the run's *own* first terminal event: the
+    control-file stop path writes pipeline_status=INTERRUPTED to disk *before*
+    raising PipelineInterrupted, so by the time the except handler runs the disk
+    is already terminal even though nobody else emitted anything. Passing the
+    in-memory status lets the guard tell "we just wrote it" (emit) apart from
+    "a different process wrote it" (skip).
     """
     try:
         with open(status_path) as f:
             data = json.load(f)
-        return data.get("pipeline_status") in PIPELINE_ALL_TERMINAL
     except (OSError, json.JSONDecodeError, ValueError):
         return False
+    if data.get("pipeline_status") not in PIPELINE_ALL_TERMINAL:
+        return False
+    # Disk is terminal. If our own in-memory status is already terminal too, this
+    # process drove it there — let the emit proceed. Only treat a terminal disk
+    # state as a cross-process duplicate when our in-memory status is non-terminal.
+    if (
+        in_memory_status is not None
+        and in_memory_status.get("pipeline_status") in PIPELINE_ALL_TERMINAL
+    ):
+        return False
+    return True
 
 
 def _find_active_runs(worca_dir: str) -> list:
@@ -3610,7 +3629,7 @@ def run_pipeline(
 
         # Persistent guard: skip terminal state-write + event if another process
         # (e.g. an orphaned subagent) already drove the run to a terminal state.
-        if _is_already_terminal(actual_status_path):
+        if _is_already_terminal(actual_status_path, status):
             _log("Skipping RUN_COMPLETED — run is already terminal on disk", "warn")
         else:
             # Mark pipeline as completed with timestamp
@@ -3662,7 +3681,7 @@ def run_pipeline(
 
         return status
     except PipelineInterrupted as exc:
-        if not _is_already_terminal(actual_status_path):
+        if not _is_already_terminal(actual_status_path, status):
             status["pipeline_status"] = PipelineStatus.INTERRUPTED
             status["stop_reason"] = exc.stop_reason
             save_status(status, actual_status_path)
@@ -3683,7 +3702,7 @@ def run_pipeline(
             _log("Skipping RUN_INTERRUPTED — run is already terminal on disk", "warn")
         raise  # Do NOT run learn on user interruption
     except LoopExhaustedError as e:
-        if not _is_already_terminal(actual_status_path):
+        if not _is_already_terminal(actual_status_path, status):
             status["pipeline_status"] = PipelineStatus.FAILED
             status["stop_reason"] = "loop_exhausted"
             save_status(status, actual_status_path)
@@ -3699,7 +3718,7 @@ def run_pipeline(
             _log("Skipping RUN_FAILED — run is already terminal on disk", "warn")
         raise
     except PipelineError as e:
-        if not _is_already_terminal(actual_status_path):
+        if not _is_already_terminal(actual_status_path, status):
             status["pipeline_status"] = PipelineStatus.FAILED
             status["stop_reason"] = "pipeline_error"
             save_status(status, actual_status_path)
@@ -3717,7 +3736,7 @@ def run_pipeline(
             _log("Skipping RUN_FAILED — run is already terminal on disk", "warn")
         raise
     except Exception as e:
-        if not _is_already_terminal(actual_status_path):
+        if not _is_already_terminal(actual_status_path, status):
             status["pipeline_status"] = PipelineStatus.FAILED
             status["stop_reason"] = type(e).__name__
             save_status(status, actual_status_path)

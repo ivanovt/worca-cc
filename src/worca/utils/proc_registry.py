@@ -134,9 +134,30 @@ def _get_process_create_time(pid: int) -> float | None:
             # is starttime in clock ticks since boot.
             starttime_ticks = int(fields[19])
             clk_tck = os.sysconf("SC_CLK_TCK")
-            with open("/proc/uptime") as f:
-                uptime = float(f.read().split()[0])
-            boot_time = time.time() - uptime
-            return boot_time + starttime_ticks / clk_tck
+            # Anchor to the kernel's fixed boot epoch (/proc/stat 'btime') rather
+            # than reconstructing it from time.time() - uptime. The reconstruction
+            # jitters between calls (the two reads aren't simultaneous), so the
+            # same process can yield create-times differing by >2s under load —
+            # enough to fail the is_alive_and_ours PID-reuse tolerance and skip a
+            # real orphan kill on resume. btime is a constant integer, so the
+            # create-time is identical across every call and process.
+            return _linux_boot_time() + starttime_ticks / clk_tck
     except Exception:
         return None
+
+
+def _linux_boot_time() -> float:
+    """System boot time (epoch seconds) from /proc/stat 'btime'.
+
+    Falls back to ``time.time() - /proc/uptime`` only if btime is unavailable.
+    btime is a fixed integer, so callers get a stable, jitter-free create-time.
+    """
+    try:
+        with open("/proc/stat") as f:
+            for line in f:
+                if line.startswith("btime "):
+                    return float(line.split()[1])
+    except OSError:
+        pass
+    with open("/proc/uptime") as f:
+        return time.time() - float(f.read().split()[0])
