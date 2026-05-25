@@ -9,8 +9,6 @@ import pytest
 from worca.orchestrator.runner import run_pipeline
 from worca.orchestrator.work_request import WorkRequest
 
-pytestmark = pytest.mark.allow_worca_writes
-
 
 @pytest.fixture(autouse=True)
 def _mock_beads_init():
