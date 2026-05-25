@@ -59,6 +59,12 @@ jobs:
         working-directory: worca-ui
         run: npx playwright install-deps chromium
 
+      # The beads-rendering e2e specs seed a real beads db via the `bd` CLI, and
+      # the server reads it back through `bd` too. Pin 0.49.0 (README): later
+      # versions require Dolt DB.
+      - name: Install bd CLI
+        run: npm install -g @beads/bd@0.49.0
+
       - name: Run Playwright tests
         working-directory: worca-ui
         run: npx playwright test --workers=1
