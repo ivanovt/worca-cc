@@ -308,6 +308,38 @@ def _format_log_line(event: dict) -> Optional[str]:
     return None
 
 
+_USAGE_NUMERIC_KEYS = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+)
+
+_USAGE_SUB_DICTS = ("server_tool_use", "cache_creation")
+
+
+def _accumulate_usage(acc: dict, usage: dict) -> None:
+    """Sum numeric token fields from *usage* into *acc* in place.
+
+    Top-level numeric fields (input_tokens, output_tokens, etc.) are summed
+    directly.  Nested sub-dicts (server_tool_use, cache_creation) are merged
+    key-by-key, summing every numeric value found.
+    """
+    for key in _USAGE_NUMERIC_KEYS:
+        val = usage.get(key)
+        if isinstance(val, (int, float)):
+            acc[key] = acc.get(key, 0) + val
+
+    for sub_key in _USAGE_SUB_DICTS:
+        sub = usage.get(sub_key)
+        if not isinstance(sub, dict):
+            continue
+        acc_sub = acc.setdefault(sub_key, {})
+        for k, v in sub.items():
+            if isinstance(v, (int, float)):
+                acc_sub[k] = acc_sub.get(k, 0) + v
+
+
 def process_stream(
     stdout,
     log_file=None,
@@ -327,6 +359,11 @@ def process_stream(
     result_event = None
     resolved_model = None
     sticky_structured_output = None
+    _accum_duration_ms = 0
+    _accum_duration_api_ms = 0
+    _accum_num_turns = 0
+    _accum_usage: dict = {}
+    _result_count = 0
 
     for raw_line in stdout:
         line = raw_line.strip()
@@ -363,10 +400,24 @@ def process_stream(
             so = event.get("structured_output")
             if so:
                 sticky_structured_output = so
+            _result_count += 1
+            _accum_duration_ms += event.get("duration_ms", 0)
+            _accum_duration_api_ms += event.get("duration_api_ms", 0)
+            _accum_num_turns += event.get("num_turns", 0)
+            usage = event.get("usage")
+            if isinstance(usage, dict):
+                _accumulate_usage(_accum_usage, usage)
             result_event = event
 
     if result_event is None:
         raise RuntimeError("No result event found in stream-json output")
+
+    if _result_count > 1:
+        result_event["duration_ms"] = _accum_duration_ms
+        result_event["duration_api_ms"] = _accum_duration_api_ms
+        result_event["num_turns"] = _accum_num_turns
+        if _accum_usage:
+            result_event["usage"] = _accum_usage
 
     if sticky_structured_output and not result_event.get("structured_output"):
         result_event["structured_output"] = sticky_structured_output

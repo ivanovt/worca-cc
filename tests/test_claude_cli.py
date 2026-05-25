@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 
 from worca.utils.claude_cli import (
     AgentSubprocessError,
+    _accumulate_usage,
     _resolve_tool_args,
     _resolve_tool_disallows,
     build_command,
@@ -437,9 +438,10 @@ def test_process_stream_preserves_structured_output_across_task_notification_res
 
     # structured_output must stick from the first result event
     assert result["structured_output"] == {"passed": True, "failures": []}
-    # but cost / turns continue updating from the latest event
+    # cost is cumulative from the CLI — take the last event's value
     assert result["total_cost_usd"] == 0.13
-    assert result["num_turns"] == 9
+    # num_turns is now accumulated across result events
+    assert result["num_turns"] == 17
 
 
 def test_process_stream_single_result_with_structured_output_passthrough():
@@ -813,3 +815,320 @@ def test_build_command_per_agent_tools_apply_on_resolved_path():
     assert "Bash" in tools
     assert "Skill" in tools  # auto-included so hook fires
     assert "Agent" in tools
+
+
+# --- _accumulate_usage ---
+
+
+def test_accumulate_usage_sums_top_level_fields():
+    acc = {}
+    usage = {
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "cache_creation_input_tokens": 10,
+        "cache_read_input_tokens": 20,
+    }
+    _accumulate_usage(acc, usage)
+    assert acc["input_tokens"] == 100
+    assert acc["output_tokens"] == 50
+    assert acc["cache_creation_input_tokens"] == 10
+    assert acc["cache_read_input_tokens"] == 20
+
+
+def test_accumulate_usage_sums_across_calls():
+    acc = {}
+    _accumulate_usage(acc, {"input_tokens": 100, "output_tokens": 50})
+    _accumulate_usage(acc, {"input_tokens": 200, "output_tokens": 30})
+    assert acc["input_tokens"] == 300
+    assert acc["output_tokens"] == 80
+
+
+def test_accumulate_usage_handles_server_tool_use():
+    acc = {}
+    usage = {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "server_tool_use": {
+            "web_search_requests": 3,
+            "web_fetch_requests": 1,
+        },
+    }
+    _accumulate_usage(acc, usage)
+    assert acc["server_tool_use"]["web_search_requests"] == 3
+    assert acc["server_tool_use"]["web_fetch_requests"] == 1
+
+
+def test_accumulate_usage_handles_cache_creation_sub_dict():
+    acc = {}
+    usage = {
+        "input_tokens": 10,
+        "output_tokens": 5,
+        "cache_creation": {
+            "ephemeral_1h_input_tokens": 100,
+            "ephemeral_5m_input_tokens": 200,
+        },
+    }
+    _accumulate_usage(acc, usage)
+    assert acc["cache_creation"]["ephemeral_1h_input_tokens"] == 100
+    assert acc["cache_creation"]["ephemeral_5m_input_tokens"] == 200
+
+
+def test_accumulate_usage_sums_nested_dicts_across_calls():
+    acc = {}
+    _accumulate_usage(acc, {
+        "input_tokens": 10,
+        "server_tool_use": {"web_search_requests": 2},
+        "cache_creation": {"ephemeral_5m_input_tokens": 50},
+    })
+    _accumulate_usage(acc, {
+        "input_tokens": 20,
+        "server_tool_use": {"web_search_requests": 1, "web_fetch_requests": 3},
+        "cache_creation": {"ephemeral_5m_input_tokens": 30, "ephemeral_1h_input_tokens": 10},
+    })
+    assert acc["input_tokens"] == 30
+    assert acc["server_tool_use"]["web_search_requests"] == 3
+    assert acc["server_tool_use"]["web_fetch_requests"] == 3
+    assert acc["cache_creation"]["ephemeral_5m_input_tokens"] == 80
+    assert acc["cache_creation"]["ephemeral_1h_input_tokens"] == 10
+
+
+def test_accumulate_usage_missing_fields_default_zero():
+    acc = {}
+    _accumulate_usage(acc, {"input_tokens": 5})
+    assert acc.get("output_tokens", 0) == 0
+    assert acc["input_tokens"] == 5
+
+
+def test_accumulate_usage_empty_usage():
+    acc = {"input_tokens": 10}
+    _accumulate_usage(acc, {})
+    assert acc["input_tokens"] == 10
+
+
+def test_accumulate_usage_preserves_non_numeric_fields():
+    acc = {}
+    _accumulate_usage(acc, {"input_tokens": 5, "speed": "fast"})
+    assert acc["input_tokens"] == 5
+    assert "speed" not in acc
+
+
+# --- process_stream: multi-result metric accumulation ---
+
+
+def test_process_stream_accumulates_duration_across_results():
+    r1 = {"type": "result", "duration_ms": 5000, "duration_api_ms": 3000,
+           "num_turns": 10, "total_cost_usd": 0.50,
+           "usage": {"input_tokens": 100, "output_tokens": 50}}
+    r2 = {"type": "result", "duration_ms": 2000, "duration_api_ms": 1000,
+           "num_turns": 3, "total_cost_usd": 0.80,
+           "usage": {"input_tokens": 200, "output_tokens": 30}}
+    result = process_stream(_stream(r1, r2))
+    assert result["duration_ms"] == 7000
+    assert result["duration_api_ms"] == 4000
+    assert result["num_turns"] == 13
+    assert result["total_cost_usd"] == 0.80  # cumulative, not summed
+    assert result["usage"]["input_tokens"] == 300
+    assert result["usage"]["output_tokens"] == 80
+
+
+def test_process_stream_single_result_no_accumulation():
+    usage = {"input_tokens": 100, "output_tokens": 50,
+             "cache_read_input_tokens": 2000,
+             "server_tool_use": {"input_tokens": 10}}
+    r1 = {"type": "result", "duration_ms": 5000, "duration_api_ms": 4500,
+           "num_turns": 10, "total_cost_usd": 0.50, "usage": usage}
+    result = process_stream(_stream(r1))
+    assert result["duration_ms"] == 5000
+    assert result["duration_api_ms"] == 4500
+    assert result["num_turns"] == 10
+    assert result["total_cost_usd"] == 0.50
+    assert result["usage"] == usage
+    assert result["usage"]["input_tokens"] == 100
+    assert result["usage"]["output_tokens"] == 50
+    assert result["usage"]["cache_read_input_tokens"] == 2000
+    assert result["usage"]["server_tool_use"]["input_tokens"] == 10
+
+
+def test_process_stream_accumulates_three_results():
+    events = [
+        {"type": "result", "duration_ms": 1000, "num_turns": 5,
+         "total_cost_usd": 0.10,
+         "usage": {"input_tokens": 50, "output_tokens": 20}},
+        {"type": "result", "duration_ms": 2000, "num_turns": 3,
+         "total_cost_usd": 0.25,
+         "usage": {"input_tokens": 100, "output_tokens": 40}},
+        {"type": "result", "duration_ms": 500, "num_turns": 1,
+         "total_cost_usd": 0.30,
+         "usage": {"input_tokens": 10, "output_tokens": 5}},
+    ]
+    result = process_stream(_stream(*events))
+    assert result["duration_ms"] == 3500
+    assert result["num_turns"] == 9
+    assert result["usage"]["input_tokens"] == 160
+    assert result["usage"]["output_tokens"] == 65
+    assert result["total_cost_usd"] == 0.30
+
+
+def test_process_stream_accumulates_nested_usage_sub_dicts():
+    r1 = {"type": "result", "duration_ms": 1000, "num_turns": 1,
+           "total_cost_usd": 0.10,
+           "usage": {"input_tokens": 50, "cache_read_input_tokens": 1000,
+                     "server_tool_use": {"input_tokens": 10}}}
+    r2 = {"type": "result", "duration_ms": 2000, "num_turns": 2,
+           "total_cost_usd": 0.20,
+           "usage": {"input_tokens": 30, "cache_read_input_tokens": 500,
+                     "server_tool_use": {"input_tokens": 20}}}
+    result = process_stream(_stream(r1, r2))
+    assert result["usage"]["input_tokens"] == 80
+    assert result["usage"]["cache_read_input_tokens"] == 1500
+    assert result["usage"]["server_tool_use"]["input_tokens"] == 30
+
+
+def test_process_stream_accumulation_preserves_structured_output():
+    r1 = {"type": "result", "duration_ms": 5000, "num_turns": 10,
+           "total_cost_usd": 0.50,
+           "usage": {"output_tokens": 50},
+           "structured_output": {"passed": True, "failures": []}}
+    r2 = {"type": "result", "duration_ms": 2000, "num_turns": 2,
+           "total_cost_usd": 0.80,
+           "usage": {"output_tokens": 30}}
+    result = process_stream(_stream(r1, r2))
+    assert result["duration_ms"] == 7000
+    assert result["structured_output"] == {"passed": True, "failures": []}
+
+
+def test_process_stream_multi_resume_metrics_accumulation():
+    """Regression test: 3 result events (2 auto-resumes) must sum duration_ms,
+    duration_api_ms, num_turns, and all usage token fields, while
+    total_cost_usd takes the last event's cumulative value."""
+    r1 = {"type": "result", "duration_ms": 120000, "duration_api_ms": 80000,
+           "num_turns": 45, "total_cost_usd": 1.20,
+           "usage": {"input_tokens": 50000, "output_tokens": 8000,
+                     "cache_read_input_tokens": 200000,
+                     "cache_creation_input_tokens": 5000}}
+    r2 = {"type": "result", "duration_ms": 90000, "duration_api_ms": 60000,
+           "num_turns": 30, "total_cost_usd": 2.50,
+           "usage": {"input_tokens": 40000, "output_tokens": 6000,
+                     "cache_read_input_tokens": 180000,
+                     "cache_creation_input_tokens": 3000}}
+    r3 = {"type": "result", "duration_ms": 19000, "duration_api_ms": 12000,
+           "num_turns": 2, "total_cost_usd": 3.45,
+           "usage": {"input_tokens": 5000, "output_tokens": 466,
+                     "cache_read_input_tokens": 258000,
+                     "cache_creation_input_tokens": 0}}
+    result = process_stream(_stream(r1, r2, r3))
+
+    assert result["duration_ms"] == 229000
+    assert result["duration_api_ms"] == 152000
+    assert result["num_turns"] == 77
+
+    assert result["total_cost_usd"] == 3.45
+
+    u = result["usage"]
+    assert u["input_tokens"] == 95000
+    assert u["output_tokens"] == 14466
+    assert u["cache_read_input_tokens"] == 638000
+    assert u["cache_creation_input_tokens"] == 8000
+
+
+def test_process_stream_cost_not_summed_across_resumes():
+    """total_cost_usd must NOT be accumulated across resumes — it stays at the
+    last event's value.  The CLI already reports cumulative session cost in each
+    result event, so summing would double-count.  This is intentionally
+    asymmetric with duration_ms/num_turns/usage which ARE per-segment and must
+    be summed."""
+    r1 = {"type": "result", "duration_ms": 60000, "num_turns": 20,
+           "total_cost_usd": 0.50,
+           "usage": {"input_tokens": 10000, "output_tokens": 2000}}
+    r2 = {"type": "result", "duration_ms": 30000, "num_turns": 10,
+           "total_cost_usd": 0.85,
+           "usage": {"input_tokens": 8000, "output_tokens": 1500}}
+
+    result = process_stream(_stream(r1, r2))
+
+    # Cost: last event's cumulative value, NOT 0.50 + 0.85
+    assert result["total_cost_usd"] == 0.85
+
+    # Contrast: these ARE summed across segments
+    assert result["duration_ms"] == 90000
+    assert result["num_turns"] == 30
+    assert result["usage"]["input_tokens"] == 18000
+    assert result["usage"]["output_tokens"] == 3500
+
+
+def test_process_stream_no_duration_fields_still_works():
+    r1 = {"type": "result", "total_cost_usd": 0.10,
+           "usage": {"input_tokens": 50}}
+    r2 = {"type": "result", "total_cost_usd": 0.20,
+           "usage": {"input_tokens": 30}}
+    result = process_stream(_stream(r1, r2))
+    assert result["usage"]["input_tokens"] == 80
+    assert result["total_cost_usd"] == 0.20
+
+
+def test_process_stream_accumulates_nested_server_tool_use_and_cache_creation():
+    r1 = {"type": "result", "duration_ms": 3000, "num_turns": 5,
+           "total_cost_usd": 0.30,
+           "usage": {"input_tokens": 100, "output_tokens": 20,
+                     "server_tool_use": {
+                         "web_search_requests": 2,
+                         "web_fetch_requests": 1,
+                     },
+                     "cache_creation": {
+                         "ephemeral_1h_input_tokens": 500,
+                         "ephemeral_5m_input_tokens": 200,
+                     }}}
+    r2 = {"type": "result", "duration_ms": 2000, "num_turns": 3,
+           "total_cost_usd": 0.50,
+           "usage": {"input_tokens": 80, "output_tokens": 15,
+                     "server_tool_use": {
+                         "web_search_requests": 1,
+                         "web_fetch_requests": 3,
+                     },
+                     "cache_creation": {
+                         "ephemeral_1h_input_tokens": 300,
+                     }}}
+    r3 = {"type": "result", "duration_ms": 1000, "num_turns": 1,
+           "total_cost_usd": 0.70,
+           "usage": {"input_tokens": 40, "output_tokens": 10,
+                     "server_tool_use": {
+                         "web_search_requests": 4,
+                     },
+                     "cache_creation": {
+                         "ephemeral_5m_input_tokens": 100,
+                     }}}
+    result = process_stream(_stream(r1, r2, r3))
+
+    assert result["duration_ms"] == 6000
+    assert result["num_turns"] == 9
+    assert result["total_cost_usd"] == 0.70
+
+    u = result["usage"]
+    assert u["input_tokens"] == 220
+    assert u["output_tokens"] == 45
+    assert u["server_tool_use"]["web_search_requests"] == 7
+    assert u["server_tool_use"]["web_fetch_requests"] == 4
+    assert u["cache_creation"]["ephemeral_1h_input_tokens"] == 800
+    assert u["cache_creation"]["ephemeral_5m_input_tokens"] == 300
+
+
+def test_process_stream_missing_usage_fields_handled_gracefully():
+    """Result events with missing usage or partial sub-fields must not raise
+    KeyError, and partial fields still accumulate correctly."""
+    r1 = {"type": "result", "duration_ms": 1000, "num_turns": 3,
+           "total_cost_usd": 0.10,
+           "usage": {"input_tokens": 100, "output_tokens": 20}}
+    r2 = {"type": "result", "duration_ms": 2000, "num_turns": 2,
+           "total_cost_usd": 0.25}
+    r3 = {"type": "result", "duration_ms": 500, "num_turns": 1,
+           "total_cost_usd": 0.40,
+           "usage": {"output_tokens": 15}}
+    result = process_stream(_stream(r1, r2, r3))
+
+    assert result["duration_ms"] == 3500
+    assert result["num_turns"] == 6
+    assert result["total_cost_usd"] == 0.40
+
+    u = result["usage"]
+    assert u["input_tokens"] == 100
+    assert u["output_tokens"] == 35
