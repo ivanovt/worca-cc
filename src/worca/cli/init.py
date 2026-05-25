@@ -684,6 +684,8 @@ def _ensure_gitignore(git_root: Path) -> list[str]:
 
 def _init_beads(git_root: Path) -> bool:
     """Run bd init if .beads/ doesn't exist. Returns True if initialized."""
+    if os.environ.get("WORCA_SKIP_BEADS"):
+        return False
     if (git_root / ".beads").is_dir():
         return False
     try:
@@ -700,6 +702,8 @@ def _init_beads(git_root: Path) -> bool:
 
 def _upgrade_beads(git_root: Path) -> bool:
     """Update beads repo fingerprint if .beads/ exists. Idempotent."""
+    if os.environ.get("WORCA_SKIP_BEADS"):
+        return False
     if not (git_root / ".beads").is_dir():
         return False
     try:

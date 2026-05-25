@@ -54,6 +54,7 @@ def _setup_repo(path: Path) -> None:
         cwd=str(path),
         check=True,
         capture_output=True,
+        env={**os.environ, "WORCA_SKIP_BEADS": "1"},
     )
     settings_path = path / ".claude" / "settings.json"
     settings = json.loads(settings_path.read_text())

@@ -71,6 +71,7 @@ def _setup_repo(path: Path) -> None:
         cwd=str(path),
         check=True,
         capture_output=True,
+        env={**os.environ, "WORCA_SKIP_BEADS": "1"},
     )
     # Speed up: disable slow stages and cap max_turns
     settings_path = path / ".claude" / "settings.json"
