@@ -5,7 +5,9 @@ entries that would then show up in the global worca-ui.
 """
 import atexit
 import os
+import signal
 import shutil
+import subprocess
 import tempfile
 
 import pytest
@@ -171,3 +173,75 @@ def _isolate_project_registry(monkeypatch, tmp_path):
         return _original(project_root, prefs_dir=prefs_dir)
 
     monkeypatch.setattr(reg, "auto_register_project", _isolated)
+
+
+# ---------------------------------------------------------------------------
+# Session-end orphan bd-daemon sweep
+# ---------------------------------------------------------------------------
+
+def _find_bd_daemon_pids() -> list[int]:
+    """Return PIDs of all `bd daemon start` processes via pgrep."""
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "bd daemon start"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return []
+        return [int(p) for p in result.stdout.strip().splitlines() if p.strip()]
+    except Exception:
+        return []
+
+
+def _get_pid_cwd(pid: int) -> str | None:
+    """Return the cwd of a process via lsof (macOS) or /proc (Linux)."""
+    proc_cwd = f"/proc/{pid}/cwd"
+    if os.path.islink(proc_cwd):
+        try:
+            return os.readlink(proc_cwd)
+        except OSError:
+            return None
+    try:
+        result = subprocess.run(
+            ["lsof", "-a", "-d", "cwd", "-p", str(pid), "-Fpn"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode != 0:
+            return None
+        for line in result.stdout.splitlines():
+            if line.startswith("n") and line != "n":
+                return line[1:]
+        return None
+    except Exception:
+        return None
+
+
+def _sweep_orphan_bd_daemons(pytest_tmp_root: str) -> None:
+    """SIGTERM any `bd daemon start` process whose cwd is under the pytest
+    tmp root or no longer exists on disk. Best-effort, all failures swallowed."""
+    try:
+        pids = _find_bd_daemon_pids()
+        for pid in pids:
+            try:
+                cwd = _get_pid_cwd(pid)
+                if cwd is None:
+                    continue
+                should_kill = (
+                    not os.path.isdir(cwd)
+                    or os.path.commonpath([cwd, pytest_tmp_root]) == pytest_tmp_root
+                )
+                if should_kill:
+                    os.kill(pid, signal.SIGTERM)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Sweep orphan bd daemon processes after the entire test session."""
+    try:
+        tmp_root = str(session.config._tmp_path_factory.getbasetemp())
+    except Exception:
+        tmp_root = tempfile.gettempdir()
+    _sweep_orphan_bd_daemons(tmp_root)

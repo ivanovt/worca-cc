@@ -49,6 +49,25 @@ def _wrap_with_coverage(cmd: list) -> list:
     ] + cmd[1:]
 
 
+def _stop_beads_daemons(project: Path, worktree_paths: list[str]) -> None:
+    """Best-effort stop of beads daemons for the main project and worktrees."""
+    from worca.utils.beads import bd_daemon_stop
+
+    targets = []
+    main_beads = project / ".beads"
+    if main_beads.is_dir():
+        targets.append(str(main_beads))
+    for wt in worktree_paths:
+        wt_beads = Path(wt) / ".beads"
+        if wt_beads.is_dir():
+            targets.append(str(wt_beads))
+    for beads_dir in targets:
+        try:
+            bd_daemon_stop(beads_dir)
+        except Exception:
+            pass
+
+
 # ---------------------------------------------------------------------------
 # pipeline_env fixture
 # ---------------------------------------------------------------------------
@@ -480,6 +499,8 @@ def pipeline_env(tmp_path):
         stub_log_path=_stub_log_path,
         stub_response_files=_stub_response_files,
     )
+
+    _stop_beads_daemons(project, _created_worktrees)
 
     # W-050 Phase 3 — fixture finalizer (plan rule #15): always remove
     # worktrees we created, even on test failure, so the parent repo isn't
