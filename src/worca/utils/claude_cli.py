@@ -22,6 +22,12 @@ from worca.hooks.tracking import (
     resolve_per_agent_entry,
 )
 from worca.utils.env import get_env, filter_model_env
+from worca.utils.proc_registry import (
+    _HAS_PROC_GROUPS,
+    kill_all_tracked,
+    record_spawn,
+    remove_spawn,
+)
 
 # Linux ARG_MAX is typically 2 MiB but total argv+envp must fit.
 # Use a conservative 128 KiB threshold for the prompt argument.
@@ -64,10 +70,18 @@ def _reap_returncode(proc):
     try:
         proc.wait(timeout=_REAP_WAIT_TIMEOUT)
     except subprocess.TimeoutExpired:
-        try:
-            proc.kill()
-        except (ProcessLookupError, OSError):
-            pass
+        _killed = False
+        if _HAS_PROC_GROUPS:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                _killed = True
+            except (ProcessLookupError, OSError):
+                pass
+        if not _killed:
+            try:
+                proc.kill()
+            except (ProcessLookupError, OSError):
+                pass
         try:
             proc.wait(timeout=_REAP_WAIT_TIMEOUT)
         except subprocess.TimeoutExpired:
@@ -80,16 +94,34 @@ def _reap_returncode(proc):
 def terminate_current():
     """Terminate the currently running claude subprocess, if any.
 
-    Sends SIGTERM to the process group so child processes are also killed.
+    On POSIX, sends SIGTERM to the process group so child processes are also
+    killed. On platforms without process groups (Windows), falls back to
+    terminating the direct child only.
     """
     with _proc_lock:
         proc = _current_proc
     if proc is None:
         return
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-    except (ProcessLookupError, OSError):
-        pass
+    if _HAS_PROC_GROUPS:
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+    else:
+        try:
+            proc.terminate()
+        except (ProcessLookupError, OSError):
+            pass
+
+
+def terminate_all(run_dir: str) -> int:
+    """Kill all tracked process groups for a run, plus the current proc.
+
+    Returns the number of tracked groups killed (excludes _current_proc).
+    """
+    terminate_current()
+    procs_dir = os.path.join(run_dir, "procs")
+    return kill_all_tracked(procs_dir)
 
 
 def _resolve_tool_args(
@@ -453,6 +485,9 @@ def run_agent(
     on_event: Optional[Callable[[dict], None]] = None,
     settings: Optional[dict] = None,
     graphify_out: Optional[str] = None,
+    run_dir: Optional[str] = None,
+    stage: Optional[str] = None,
+    iteration: Optional[int] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -510,12 +545,25 @@ def run_agent(
     with _proc_lock:
         _current_proc = proc
 
+    procs_dir = None
+    pgid = None
     agent_pid_path = None
-    if log_path:
-        run_dir = os.path.dirname(log_path)
-        agent_pid_path = os.path.join(run_dir, "agent.pid")
+    # Process-group tracking is POSIX-only; on Windows (_HAS_PROC_GROUPS False)
+    # os.getpgid doesn't exist, so fall through to the agent.pid path instead of
+    # raising AttributeError on the spawn hot path.
+    if run_dir and stage is not None and iteration is not None and _HAS_PROC_GROUPS:
+        procs_dir = os.path.join(run_dir, "procs")
         try:
-            os.makedirs(run_dir, exist_ok=True)
+            pgid = os.getpgid(proc.pid)
+            record_spawn(procs_dir, pgid=pgid, pid=proc.pid, stage=stage, iteration=iteration)
+        except (ProcessLookupError, OSError, AttributeError):
+            procs_dir = None
+            pgid = None
+    elif log_path:
+        _run_dir = os.path.dirname(log_path)
+        agent_pid_path = os.path.join(_run_dir, "agent.pid")
+        try:
+            os.makedirs(_run_dir, exist_ok=True)
             with open(agent_pid_path, "w") as f:
                 f.write(str(proc.pid))
         except OSError:
@@ -572,6 +620,8 @@ def run_agent(
     finally:
         with _proc_lock:
             _current_proc = None
+        if procs_dir and pgid is not None:
+            remove_spawn(procs_dir, pgid=pgid)
         if agent_pid_path:
             try:
                 os.unlink(agent_pid_path)

@@ -1,6 +1,7 @@
 """Tests for control file polling in the runner iteration loop."""
 
 import json
+import os
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -75,21 +76,23 @@ def test_pause_deletes_control_file(tmp_path):
 # --- stop action ---
 
 
-def test_stop_calls_terminate_current(tmp_path):
+def test_stop_calls_terminate_all(tmp_path):
+    # Stop kills ALL tracked process groups for the run (not just the current
+    # agent) via terminate_all(run_dir), where run_dir = <worca_dir>/runs/<run_id>.
     write_control("run-1", "stop", base=str(tmp_path))
     status = {"run_id": "run-1", "pipeline_status": "running"}
     status_path = str(tmp_path / "status.json")
-    with patch("worca.orchestrator.runner.terminate_current") as mock_term:
+    with patch("worca.orchestrator.runner.terminate_all") as mock_term:
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
-    mock_term.assert_called_once()
+    mock_term.assert_called_once_with(os.path.join(str(tmp_path), "runs", "run-1"))
 
 
 def test_stop_sets_pipeline_status_failed(tmp_path):
     write_control("run-1", "stop", base=str(tmp_path))
     status = {"run_id": "run-1", "pipeline_status": "running"}
     status_path = str(tmp_path / "status.json")
-    with patch("worca.orchestrator.runner.terminate_current"):
+    with patch("worca.orchestrator.runner.terminate_all"):
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
     assert status["pipeline_status"] == "interrupted"
@@ -99,7 +102,7 @@ def test_stop_sets_stop_reason(tmp_path):
     write_control("run-1", "stop", base=str(tmp_path))
     status = {"run_id": "run-1", "pipeline_status": "running"}
     status_path = str(tmp_path / "status.json")
-    with patch("worca.orchestrator.runner.terminate_current"):
+    with patch("worca.orchestrator.runner.terminate_all"):
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
     assert status.get("stop_reason") == "control_file"
@@ -109,7 +112,7 @@ def test_stop_raises_pipeline_interrupted(tmp_path):
     write_control("run-1", "stop", base=str(tmp_path))
     status = {"run_id": "run-1", "pipeline_status": "running"}
     status_path = str(tmp_path / "status.json")
-    with patch("worca.orchestrator.runner.terminate_current"):
+    with patch("worca.orchestrator.runner.terminate_all"):
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
 
@@ -118,7 +121,7 @@ def test_stop_saves_status(tmp_path):
     write_control("run-1", "stop", base=str(tmp_path))
     status = {"run_id": "run-1", "pipeline_status": "running"}
     status_path = str(tmp_path / "status.json")
-    with patch("worca.orchestrator.runner.terminate_current"):
+    with patch("worca.orchestrator.runner.terminate_all"):
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
     with open(status_path) as f:
@@ -133,7 +136,7 @@ def test_stop_deletes_control_file(tmp_path):
     assert control_file.exists()
     status = {"run_id": "run-1", "pipeline_status": "running"}
     status_path = str(tmp_path / "status.json")
-    with patch("worca.orchestrator.runner.terminate_current"):
+    with patch("worca.orchestrator.runner.terminate_all"):
         with pytest.raises(PipelineInterrupted):
             _check_control_file("run-1", str(tmp_path), status, status_path, None)
     assert not control_file.exists()
