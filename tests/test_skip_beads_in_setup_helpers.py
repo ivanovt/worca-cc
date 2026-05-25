@@ -78,3 +78,13 @@ class TestWorkspaceE2eSetupRepo:
         with patch("subprocess.run", side_effect=_make_tracking_run(calls, git_repo)):
             _setup_workspace_repo(git_repo)
         _assert_skip_beads_in_env(calls)
+
+
+class TestWorkspaceFullstackSetupRepo:
+    def test_worca_init_passes_skip_beads(self, git_repo):
+        from tests.integration.test_workspace_fullstack import _setup_workspace_repo
+
+        calls = []
+        with patch("subprocess.run", side_effect=_make_tracking_run(calls, git_repo)):
+            _setup_workspace_repo(git_repo)
+        _assert_skip_beads_in_env(calls)
