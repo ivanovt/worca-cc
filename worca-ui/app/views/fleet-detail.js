@@ -1,6 +1,7 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
+import { renderMarkdown } from '../utils/markdown.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { projectBadgesView } from './fleet-card.js';
 import { runCardView } from './run-card.js';
@@ -235,7 +236,7 @@ function _guideSection(fleet, { rerender } = {}) {
       return html`<div class="guide-error">${guideError}</div>`;
     }
     if (guideContent) {
-      return html`<pre class="guide-content">${guideContent}</pre>`;
+      return html`<div class="markdown-body guide-content">${unsafeHTML(renderMarkdown(guideContent))}</div>`;
     }
     return nothing;
   })();

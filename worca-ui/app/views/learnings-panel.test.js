@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import {
   importanceBadge,
@@ -9,6 +10,8 @@ import {
 function renderToString(template) {
   if (!template) return '';
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -20,7 +23,7 @@ function renderToString(template) {
       else if (typeof v === 'boolean') result += '';
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
-      // unsafeHTML directives, functions, etc. — skip
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;
@@ -431,6 +434,45 @@ describe('suggestionPrompt', () => {
     expect(prompt).toContain('Add edge case guidance');
     expect(prompt).toContain('Prevents loops');
     expect(prompt).toContain('Locate the target');
+  });
+});
+
+describe('markdown rendering in learnings', () => {
+  it('renders observation descriptions as markdown HTML', () => {
+    const data = {
+      ...SAMPLE_OUTPUT,
+      observations: [
+        {
+          category: 'test_loop',
+          importance: 'high',
+          description: '**bold failure** in `auth` module',
+          evidence: 'evidence text',
+          occurrences: 1,
+        },
+      ],
+    };
+    const html = renderToString(
+      learningsSectionView(completedStage(data), { onRunLearn: () => {} }),
+    );
+    expect(html).toContain('<strong>bold failure</strong>');
+    expect(html).toContain('<code>auth</code>');
+  });
+
+  it('renders suggestion descriptions as markdown HTML', () => {
+    const data = {
+      ...SAMPLE_OUTPUT,
+      suggestions: [
+        {
+          target: 'prompt:tester',
+          description: 'Add **edge case** coverage',
+          rationale: 'Prevents loops',
+        },
+      ],
+    };
+    const html = renderToString(
+      learningsSectionView(completedStage(data), { onRunLearn: () => {} }),
+    );
+    expect(html).toContain('<strong>edge case</strong>');
   });
 });
 

@@ -1,39 +1,12 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { marked } from 'marked';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { ClipboardCopy, iconSvg } from '../utils/icons.js';
+import { renderMarkdown } from '../utils/markdown.js';
 import { statusClass, statusIcon } from '../utils/status-badge.js';
 import { WORKSPACE_TERMINAL } from '../utils/status-constants.js';
 import { dagGraphView } from './dag-graph.js';
 import { runCardView } from './run-card.js';
-
-// `marked` is configured once for the whole module. GitHub-flavoured Markdown
-// + line-break = newline so the planner's bullet/heading output renders the
-// way it reads in the source file. `mangle:false` keeps email-like strings
-// untouched. `headerIds:false` because we render into a sl-dialog body where
-// auto-generated id collisions across openings would just be noise.
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-  mangle: false,
-  headerIds: false,
-});
-
-function _renderMarkdown(text) {
-  if (!text) return '';
-  try {
-    return marked.parse(text);
-  } catch {
-    // Fall back to an escaped <pre> so a parser blow-up still shows the
-    // raw content instead of a blank dialog.
-    const esc = String(text)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-    return `<pre>${esc}</pre>`;
-  }
-}
 
 function _copyToClipboard(text, label) {
   if (!text) return;
@@ -409,7 +382,7 @@ function _planPanel(ws, { rerender, onSavePlan } = {}) {
           }
         ></sl-textarea>
       `
-    : html`<div class="workspace-plan-content markdown-body">${unsafeHTML(_renderMarkdown(planText))}</div>`;
+    : html`<div class="workspace-plan-content markdown-body">${unsafeHTML(renderMarkdown(planText))}</div>`;
 
   return html`
     <div class="new-run-section workspace-plan-panel">
@@ -535,7 +508,7 @@ function _contextArtifactsPanel(ws) {
           ([edge, content], i) => html`
             <sl-tab slot="nav" panel="artifact-${i}">${edge}</sl-tab>
             <sl-tab-panel name="artifact-${i}">
-              <pre class="context-artifact-content">${content}</pre>
+              <div class="markdown-body context-artifact-content">${unsafeHTML(renderMarkdown(content))}</div>
             </sl-tab-panel>
           `,
         )}
@@ -683,7 +656,7 @@ function _guideSection(ws, { rerender } = {}) {
       return html`<div class="guide-error">${guideError}</div>`;
     }
     if (guideContent) {
-      return html`<div class="guide-content markdown-body">${unsafeHTML(_renderMarkdown(guideContent))}</div>`;
+      return html`<div class="guide-content markdown-body">${unsafeHTML(renderMarkdown(guideContent))}</div>`;
     }
     return nothing;
   })();

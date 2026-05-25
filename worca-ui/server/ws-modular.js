@@ -13,7 +13,7 @@ import { fleetRunsDir, workspaceRunsDir } from './paths.js';
 import { readProjects, synthesizeDefaultProject } from './project-registry.js';
 import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
 import { readProjectWorcaVersion } from './worca-setup.js';
-import { resolveBeadsCounts } from './ws-beads-watcher.js';
+import { peekBeadsCounts } from './ws-beads-watcher.js';
 import { createBroadcaster } from './ws-broadcaster.js';
 import { createClientManager } from './ws-client-manager.js';
 import { createFleetManifestWatcher } from './ws-fleet-manifest-watcher.js';
@@ -331,8 +331,10 @@ export function attachWsServer(httpServer, config) {
     return null;
   }
 
+  // Non-blocking: returns cached/live counts and warms cold caches in the
+  // background. The REST /runs endpoint must never block on a slow `bd` read.
   function getBeadsCounts(projectId) {
-    return resolveBeadsCounts(watcherSets.get(projectId));
+    return peekBeadsCounts(watcherSets.get(projectId));
   }
 
   return {

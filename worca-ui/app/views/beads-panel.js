@@ -11,6 +11,7 @@ import {
   Loader,
   Lock,
 } from '../utils/icons.js';
+import { renderMarkdown, stripMarkdown } from '../utils/markdown.js';
 import { sortByStartDesc } from '../utils/sort-runs.js';
 import { runCardView } from './run-card.js';
 
@@ -281,7 +282,7 @@ export function beadTooltipContent(issue) {
       <hr class="bead-tooltip-separator">
       <div class="bead-tooltip-label">Title:</div>
       <div class="bead-tooltip-title">${issue.title}</div>
-      ${issue.body ? html`<div class="bead-tooltip-label">Description:</div><div class="bead-tooltip-excerpt">${issue.body}</div>` : ''}
+      ${issue.body ? html`<div class="bead-tooltip-label">Description:</div><div class="bead-tooltip-excerpt markdown-body">${unsafeHTML(renderMarkdown(issue.body))}</div>` : ''}
       <div class="bead-tooltip-footer">
         <button class="bead-tooltip-copy" @click=${copyBead}>${unsafeHTML(iconSvg(ClipboardCopy, 12))} Copy</button>
       </div>
@@ -324,7 +325,7 @@ export function beadsIssueRow(issue, { starting, onStartIssue, issuesById }) {
       }
       <div class="beads-issue-body">
         <div class="beads-issue-title">${issue.title}</div>
-        ${issue.body ? html`<div class="beads-issue-excerpt">${(issue.body || '').slice(0, 120)}</div>` : ''}
+        ${issue.body ? html`<div class="beads-issue-excerpt">${stripMarkdown(issue.body).slice(0, 120)}</div>` : ''}
         ${
           issue.depends_on && issue.depends_on.length > 0
             ? html`

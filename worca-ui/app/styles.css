@@ -4833,7 +4833,7 @@ sl-tooltip.bead-tooltip::part(body) {
 
 .bead-tooltip-excerpt {
   font-size: 12px;
-  white-space: pre-wrap;
+  white-space: normal;
   margin-bottom: 2px;
 }
 
@@ -6246,6 +6246,47 @@ sl-dialog.markdown-dialog::part(body) {
   border: 1px solid var(--border-subtle);
   padding: 4px 8px;
   text-align: left;
+}
+
+/* --- Markdown context overrides --- */
+
+.markdown-inline.markdown-body {
+  display: inline;
+  font-size: inherit;
+  line-height: inherit;
+}
+.markdown-inline.markdown-body p {
+  display: inline;
+  margin: 0;
+}
+.markdown-inline.markdown-body code {
+  font-size: 0.85em;
+}
+
+.agent-prompt-content .markdown-body {
+  white-space: normal;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.agent-prompt-content .markdown-body h1,
+.agent-prompt-content .markdown-body h2,
+.agent-prompt-content .markdown-body h3 {
+  margin: 0.8em 0 0.3em;
+}
+
+.bead-tooltip-excerpt.markdown-body {
+  white-space: normal;
+  font-size: 12px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.bead-tooltip-excerpt.markdown-body p {
+  margin: 0.3em 0;
+}
+.bead-tooltip-excerpt.markdown-body pre {
+  font-size: 11px;
+  max-height: 120px;
+  overflow: auto;
 }
 
 .workspace-run-card .workspace-card-root,

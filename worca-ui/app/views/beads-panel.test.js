@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import {
   beadChipTooltip,
   beadsDependencyGraph,
+  beadsIssueRow,
   beadsPanelView,
   beadsRunListView,
   beadTooltipContent,
@@ -568,5 +570,69 @@ describe('beadsDependencyGraph - edge CSS classes', () => {
   it('blocking arrow marker uses var(--status-blocked) for amber color', () => {
     const { svg } = beadsDependencyGraph([dep, task]);
     expect(svg).toContain('fill="var(--status-blocked)"');
+  });
+});
+
+describe('beadTooltipContent - markdown rendering', () => {
+  it('renders body as markdown HTML in tooltip', () => {
+    const issue = {
+      id: 'worca-cc-md1',
+      title: 'Markdown bead',
+      body: '**bold description** with `code`',
+      status: 'open',
+      priority: 2,
+      depends_on: [],
+    };
+    const out = renderToString(beadTooltipContent(issue));
+    expect(out).toContain('<strong>bold description</strong>');
+    expect(out).toContain('<code>code</code>');
+  });
+});
+
+describe('beadsIssueRow - stripMarkdown excerpt', () => {
+  it('strips markdown syntax from body excerpt', () => {
+    const issue = {
+      id: 'worca-cc-strip1',
+      title: 'Strip test',
+      body: '**bold** and `code` in body',
+      status: 'open',
+      priority: 2,
+      depends_on: [],
+    };
+    const out = renderToString(
+      beadsIssueRow(issue, {
+        starting: null,
+        onStartIssue: () => {},
+        issuesById: new Map(),
+      }),
+    );
+    expect(out).toContain('bold and code in body');
+    expect(out).not.toContain('**bold**');
+    expect(out).not.toContain('`code`');
+  });
+
+  it('truncates stripped body to 120 characters', () => {
+    const longBody = `**bold** ${'x'.repeat(200)}`;
+    const issue = {
+      id: 'worca-cc-trunc1',
+      title: 'Truncation test',
+      body: longBody,
+      status: 'open',
+      priority: 2,
+      depends_on: [],
+    };
+    const out = renderToString(
+      beadsIssueRow(issue, {
+        starting: null,
+        onStartIssue: () => {},
+        issuesById: new Map(),
+      }),
+    );
+    expect(out).not.toContain('**bold**');
+    expect(out).toContain('bold ');
+    const excerptMatch = out.match(/beads-issue-excerpt[^>]*>([^<]*)/);
+    if (excerptMatch) {
+      expect(excerptMatch[1].length).toBeLessThanOrEqual(120);
+    }
   });
 });

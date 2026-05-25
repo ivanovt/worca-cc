@@ -4,6 +4,9 @@ export default defineConfig({
   test: {
     // Exclude Playwright e2e tests from Vitest runs
     exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],
+    environmentMatchGlobs: [
+      ['app/**/*.test.js', 'jsdom'],
+    ],
     coverage: {
       // v8 is built into Node — no native deps, fast.
       provider: 'v8',

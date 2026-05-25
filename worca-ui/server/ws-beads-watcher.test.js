@@ -408,7 +408,7 @@ describe('resolveBeadsCounts', () => {
 
   it('re-reads the DB after the TTL expires', async () => {
     await resolveBeadsCounts(POLLING_WSET);
-    await vi.advanceTimersByTimeAsync(5001);
+    await vi.advanceTimersByTimeAsync(30001);
     await resolveBeadsCounts(POLLING_WSET);
     expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(2);
   });
@@ -426,6 +426,187 @@ describe('resolveBeadsCounts', () => {
   it('returns {} when the beads DB does not exist', async () => {
     mockExistsSync.mockReturnValue(false);
     expect(await resolveBeadsCounts(POLLING_WSET)).toEqual({});
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+});
+
+describe('refresh in-flight guard', () => {
+  let createBeadsWatcher;
+  let mockListIssues;
+  let mockCountIssuesByRunLabel;
+  let watchCallback;
+  let inFlight;
+  let maxInFlight;
+  let resolvers;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    inFlight = 0;
+    maxInFlight = 0;
+    resolvers = [];
+    // listIssues hangs until manually resolved, so a refresh can be held
+    // "in flight" while we fire more change events during it.
+    mockListIssues = vi.fn(
+      () =>
+        new Promise((res) => {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          resolvers.push(() => {
+            inFlight--;
+            res([{ id: '1', title: 'A', status: 'open' }]);
+          });
+        }),
+    );
+    mockCountIssuesByRunLabel = vi
+      .fn()
+      .mockResolvedValue({ 'run-1': { total: 1, done: 0 } });
+
+    vi.doMock('./beads-reader.js', () => ({
+      listIssues: mockListIssues,
+      countIssuesByRunLabel: mockCountIssuesByRunLabel,
+    }));
+
+    vi.doMock('node:fs', () => ({
+      existsSync: vi.fn(() => true),
+      watch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+      statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    const mod = await import('./ws-beads-watcher.js');
+    createBeadsWatcher = mod.createBeadsWatcher;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('never overlaps refreshes; coalesces mid-flight events into one trailing pass', async () => {
+    createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster: { broadcast: vi.fn() },
+      projectId: 'p1',
+    });
+
+    // Change #1 → first refresh starts and hangs on listIssues.
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    expect(inFlight).toBe(1);
+
+    // Changes #2 and #3 arrive WHILE refresh #1 is in flight → guarded: no
+    // overlapping computation, just a coalesced pending flag.
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    expect(maxInFlight).toBe(1);
+
+    // Finish refresh #1 → exactly one trailing (coalesced) refresh runs.
+    resolvers[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockListIssues).toHaveBeenCalledTimes(2);
+    expect(maxInFlight).toBe(1);
+
+    // Finish the trailing refresh → nothing else pending.
+    resolvers[1]();
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockListIssues).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('peekBeadsCounts (non-blocking)', () => {
+  let peekBeadsCounts;
+  let mockCountIssuesByRunLabel;
+  let mockExistsSync;
+  let resolveCount;
+
+  beforeEach(async () => {
+    vi.resetModules();
+
+    mockExistsSync = vi.fn(() => true);
+    // A controllable promise so we can assert peek returns BEFORE the bd read
+    // resolves (i.e. it never awaits the cold query).
+    resolveCount = undefined;
+    mockCountIssuesByRunLabel = vi.fn(
+      () =>
+        new Promise((res) => {
+          resolveCount = res;
+        }),
+    );
+
+    vi.doMock('./beads-reader.js', () => ({
+      listIssues: vi.fn().mockResolvedValue([]),
+      countIssuesByRunLabel: mockCountIssuesByRunLabel,
+    }));
+
+    vi.doMock('node:fs', () => ({
+      existsSync: mockExistsSync,
+      watch: vi.fn(() => ({ close: vi.fn() })),
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+      statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    const mod = await import('./ws-beads-watcher.js');
+    peekBeadsCounts = mod.peekBeadsCounts;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const WSET = { projectId: 'p1', worcaDir: '/fake/p1/.claude/worca' };
+
+  it('returns {} for a missing wset without a DB read', () => {
+    expect(peekBeadsCounts(undefined)).toEqual({});
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+
+  it('returns the live watcher cache synchronously without a DB read', () => {
+    const wset = {
+      ...WSET,
+      beadsWatcher: {
+        getLatestCounts: () => ({ 'run-x': { total: 2, done: 2 } }),
+      },
+    };
+    expect(peekBeadsCounts(wset)).toEqual({ 'run-x': { total: 2, done: 2 } });
+    expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
+  });
+
+  it('returns {} immediately on a cold cache but warms it in the background', async () => {
+    // Synchronous {} even though the bd read is still pending.
+    expect(peekBeadsCounts(WSET)).toEqual({});
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+
+    // Resolve the background read and let the microtask settle.
+    resolveCount({ 'run-1': { total: 4, done: 1 } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Now warm: a second peek returns cached counts, no new read.
+    expect(peekBeadsCounts(WSET)).toEqual({ 'run-1': { total: 4, done: 1 } });
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('de-duplicates concurrent cold peeks (one background read)', () => {
+    peekBeadsCounts(WSET);
+    peekBeadsCounts(WSET);
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns {} and skips the read when the beads DB does not exist', () => {
+    mockExistsSync.mockReturnValue(false);
+    expect(peekBeadsCounts(WSET)).toEqual({});
     expect(mockCountIssuesByRunLabel).not.toHaveBeenCalled();
   });
 });

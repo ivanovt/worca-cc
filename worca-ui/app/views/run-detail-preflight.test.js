@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { runDetailView } from './run-detail.js';
 
@@ -6,6 +7,8 @@ function renderToString(template) {
   if (template.overview)
     return renderToString(template.overview) + renderToString(template.stages);
   if (typeof template === 'string') return template;
+  if (template._$litDirective$ && template.values)
+    return template.values[0] || '';
   if (!template.strings) return String(template);
   let result = '';
   template.strings.forEach((s, i) => {
@@ -15,6 +18,7 @@ function renderToString(template) {
       if (typeof v === 'string') result += v;
       else if (Array.isArray(v)) result += v.map(renderToString).join('');
       else if (v?.strings) result += renderToString(v);
+      else if (v?._$litDirective$ && v?.values) result += v.values[0] || '';
     }
   });
   return result;
@@ -165,6 +169,61 @@ describe('runDetailView preflight stage', () => {
     const html = renderToString(runDetailView(run));
     expect(html).toContain('Skipped');
     expect(html).not.toContain('preflight-table');
+  });
+
+  it('renders preflight summary as markdown HTML', () => {
+    const run = {
+      stages: {
+        preflight: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'success',
+              output: {
+                status: 'pass',
+                checks: [],
+                summary: '**All checks** passed',
+              },
+            },
+          ],
+        },
+      },
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('<strong>All checks</strong>');
+  });
+
+  it('renders preflight check messages as markdown HTML', () => {
+    const run = {
+      stages: {
+        preflight: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'success',
+              output: {
+                status: 'pass',
+                checks: [
+                  {
+                    name: 'test_check',
+                    status: 'pass',
+                    message: 'Found `claude` CLI version **1.0**',
+                  },
+                ],
+                summary: '',
+              },
+            },
+          ],
+        },
+      },
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('<strong>1.0</strong>');
+    expect(html).toContain('<code>claude</code>');
   });
 
   it('does not render preflight-checks-view for non-preflight stages', () => {
