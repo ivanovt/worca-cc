@@ -26,10 +26,18 @@ _HANG_SCENARIO = {
 
 
 def _mock_claude_children() -> list[dict]:
-    """Return a list of {pid, ppid, command} for live mock_claude.py processes."""
+    """Return a list of {pid, ppid, command} for live mock_claude.py processes.
+
+    Uses ``ps -ww`` (unlimited width): procps ``ps`` truncates the command
+    column to 80 cols when stdout is not a tty (e.g. CI under pytest), which
+    cuts off ``mock_claude`` since it sits ~col 100 in the absolute
+    ``{python} {repo}/tests/mock_claude/mock_claude.py`` invocation. Without
+    ``-ww`` the grep silently finds nothing on Linux CI while passing on macOS
+    (BSD ps does not truncate the trailing column).
+    """
     try:
         out = subprocess.check_output(
-            ["ps", "-Ao", "pid,ppid,command"],
+            ["ps", "-ww", "-Ao", "pid,ppid,command"],
             text=True, stderr=subprocess.DEVNULL,
         )
     except (OSError, subprocess.CalledProcessError):
@@ -47,6 +55,19 @@ def _mock_claude_children() -> list[dict]:
 
 def _pids_from(procs: list[dict]) -> set[int]:
     return {p["pid"] for p in procs}
+
+
+def _ps_snapshot() -> str:
+    """Diagnostic for failure messages: ps -ww lines mentioning claude/.py."""
+    try:
+        out = subprocess.check_output(
+            ["ps", "-ww", "-Ao", "pid,ppid,command"],
+            text=True, stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return "(ps failed)"
+    hits = [ln for ln in out.splitlines() if "claude" in ln or ".py" in ln]
+    return "ps -ww lines with claude/.py:\n" + "\n".join(hits[:25])
 
 
 class TestFixtureReapsBackgroundProcs:
@@ -67,7 +88,7 @@ class TestFixtureReapsBackgroundProcs:
                 break
             time.sleep(0.3)
 
-        assert new, "mock_claude processes never appeared"
+        assert new, f"mock_claude processes never appeared\n{_ps_snapshot()}"
         # Store PIDs so the post-yield check below (run by the class-level
         # helper) can verify they're gone. We stash on the env's tmp_path.
         pid_file = pipeline_env.tmp_path / "_reap_test_pids.json"
@@ -95,7 +116,7 @@ class TestFixtureReapsWorktreeProcs:
                 break
             time.sleep(0.3)
 
-        assert new, "mock_claude processes never appeared for worktree run"
+        assert new, f"mock_claude never appeared for worktree run\n{_ps_snapshot()}"
         pid_file = pipeline_env.tmp_path / "_reap_wt_test_pids.json"
         pid_file.write_text(json.dumps(list(new)))
 
@@ -119,7 +140,7 @@ def test_orphan_pids_gone_after_background_teardown(tmp_path, pipeline_env):
             break
         time.sleep(0.3)
 
-    assert new, "mock_claude processes never appeared"
+    assert new, f"mock_claude processes never appeared\n{_ps_snapshot()}"
 
     # The fixture finalizer hasn't run yet (we're still inside the test).
     # Verify the processes are alive right now.
@@ -160,7 +181,7 @@ def test_reap_kills_process_group(pipeline_env):
             break
         time.sleep(0.3)
 
-    assert new, "mock_claude processes never appeared"
+    assert new, f"mock_claude processes never appeared\n{_ps_snapshot()}"
 
     # Kill the process group
     try:
