@@ -1,6 +1,7 @@
 """Pytest fixtures for integration tests: pipeline_env and webhook_server."""
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -9,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import pytest
+
+from worca.utils.proc_registry import _HAS_PROC_GROUPS, kill_all_tracked
 
 from tests.integration.helpers import (
     ParallelResult,
@@ -66,6 +69,89 @@ def _stop_beads_daemons(project: Path, worktree_paths: list[str]) -> None:
             bd_daemon_stop(beads_dir)
         except Exception:
             pass
+
+
+_SIGTERM_GRACE = 3.0
+
+
+def _kill_pgroup(pid: int) -> None:
+    """SIGTERM then SIGKILL a process group. No-op on non-POSIX or if already dead."""
+    if not _HAS_PROC_GROUPS:
+        return
+    try:
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, OSError):
+        return
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, OSError):
+        return
+    deadline = time.monotonic() + _SIGTERM_GRACE
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(pgid, 0)
+        except (ProcessLookupError, OSError):
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+
+
+def _read_pipeline_pid(run_dir: Path) -> int | None:
+    """Read the pipeline PID from <run_dir>/pipeline.pid, or None."""
+    pid_path = run_dir / "pipeline.pid"
+    try:
+        return int(pid_path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _reap_all_processes(
+    background_procs: list[subprocess.Popen],
+    created_worktrees: list[str],
+    worca_dir: Path,
+) -> None:
+    """Kill all spawned process groups before worktree removal.
+
+    Order: background Popens → worktree pipeline groups → procs/ registries
+    → main project run registries. This ensures the procs/ directories are
+    still intact when kill_all_tracked reads them.
+    """
+    # 1. Kill background Popen process groups (run_background launches)
+    for proc in background_procs:
+        _kill_pgroup(proc.pid)
+
+    # 2. For each worktree, discover the pipeline PID and kill its group,
+    #    then kill_all_tracked on the run's procs/ directory.
+    for wt_path in created_worktrees:
+        wt = Path(wt_path)
+        runs_dir = wt / ".worca" / "runs"
+        if not runs_dir.is_dir():
+            continue
+        for run_dir in runs_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            pid = _read_pipeline_pid(run_dir)
+            if pid is not None:
+                _kill_pgroup(pid)
+            procs_dir = run_dir / "procs"
+            if procs_dir.is_dir():
+                kill_all_tracked(str(procs_dir))
+
+    # 3. Scan main project worca_dir runs
+    runs_dir = worca_dir / "runs"
+    if runs_dir.is_dir():
+        for run_dir in runs_dir.iterdir():
+            if not run_dir.is_dir():
+                continue
+            pid = _read_pipeline_pid(run_dir)
+            if pid is not None:
+                _kill_pgroup(pid)
+            procs_dir = run_dir / "procs"
+            if procs_dir.is_dir():
+                kill_all_tracked(str(procs_dir))
 
 
 # ---------------------------------------------------------------------------
@@ -209,11 +295,15 @@ def pipeline_env(tmp_path):
             cmd.extend(extra_args)
         cmd = _wrap_with_coverage(cmd)
 
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             cmd, cwd=str(project), env=_base_env(scenario_path),
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True,  # own process group so signals target full tree
         )
+        _background_procs.append(proc)
+        return proc
+
+    _background_procs: list[subprocess.Popen] = []
 
     # W-050 Phase 3: track worktrees created via run_worktree / run_parallel
     # so the fixture finalizer can `git worktree remove --force` them on
@@ -501,6 +591,10 @@ def pipeline_env(tmp_path):
     )
 
     _stop_beads_daemons(project, _created_worktrees)
+
+    # Reap all spawned process groups BEFORE removing worktrees — the
+    # procs/ registry must still be on disk for kill_all_tracked to read.
+    _reap_all_processes(_background_procs, _created_worktrees, worca_dir)
 
     # W-050 Phase 3 — fixture finalizer (plan rule #15): always remove
     # worktrees we created, even on test failure, so the parent repo isn't

@@ -25,6 +25,7 @@ import re
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 # Resolved template path stems look like ``{stage}-{agent}-iter-{N}``
@@ -33,6 +34,8 @@ import time
 # _RESOLVED_RE must not be changed — _ITER_RE is the iteration-side companion.
 _RESOLVED_RE = re.compile(r"^[a-z_]+-([a-z_]+)-iter-\d+$")
 _ITER_RE = re.compile(r"-iter-(\d+)$")
+
+_START_PPID = os.getppid() if os.name == "posix" else None
 
 
 def _extract_agent_name(agent_path):
@@ -102,7 +105,23 @@ def _substitute_head_placeholder(obj):
     return obj
 
 
+def _start_orphan_watchdog():
+    """POSIX daemon thread: self-terminate when reparented (parent exited)."""
+    if _START_PPID is None:
+        return
+
+    def _poll():
+        while True:
+            time.sleep(1)
+            if os.getppid() != _START_PPID:
+                os._exit(0)
+
+    t = threading.Thread(target=_poll, daemon=True)
+    t.start()
+
+
 def main():
+    _start_orphan_watchdog()
     scenario_path = os.environ.get("MOCK_CLAUDE_SCENARIO")
     if not scenario_path:
         print(json.dumps({"type": "error", "error": "MOCK_CLAUDE_SCENARIO env var not set"}),

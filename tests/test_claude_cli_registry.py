@@ -16,6 +16,11 @@ import pytest
 
 from worca.utils.claude_cli import run_agent, terminate_all
 
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="Mocks os.getpgid/os.killpg which do not exist on Windows",
+)
+
 
 # ---------------------------------------------------------------------------
 # Registry integration in run_agent
