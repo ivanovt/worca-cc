@@ -245,6 +245,14 @@ This closes the feedback loop inside the implementer → tester iteration instea
 
 If the Chromium binary is missing (`npx playwright install chromium` was never run in this environment), state that explicitly in your verdict — do not silently skip the suite.
 
+**Playwright `test.describe() called in unexpected context`.** This is almost always a stale Playwright transform cache — not a bug in your spec — and shows up most often right after rewriting a spec file. Recover with one cache-bust and move on:
+
+```bash
+cd worca-ui && rm -rf node_modules/.cache && npx playwright test e2e/<spec>.spec.js --workers=1
+```
+
+Do **not** binary-bisect the spec to find the offending block — the file is fine; the cache is stale. And do not try to "reproduce" it by importing the spec outside the test runner (`node -e "import('./e2e/x.spec.js')"`) — running a Playwright spec outside `npx playwright test` *always* throws this exact error, so it is not a signal.
+
 **Coverage runs** (Python) use the centralized runner in `scripts/coverage.py`:
 
 ```bash
@@ -332,6 +340,10 @@ Spec: [`docs/plans/W-053-graphify-integration.md`](./docs/plans/W-053-graphify-i
 **Badge color language:** all `sl-badge` variants and status colors follow the guide in [`worca-ui/docs/badge-color-language.md`](./worca-ui/docs/badge-color-language.md). Read it before adding or modifying badges — blue means active, orange means caution, green means done.
 
 **Card layout:** all card-style views (run, fleet, workspace, worktree) share the `.run-card` base structure documented in [`worca-ui/docs/card-layout.md`](./worca-ui/docs/card-layout.md). New card types must follow the 4-section pattern (top → meta → stages → actions) and route through `statusIcon`/`statusClass` + a per-domain variant map.
+
+**Working directory resets every command.** Under the pipeline, a hook prefixes every Bash command with `cd <project-root>`, so `cd` does **not** persist between commands — each command starts from the repo root, even after a previous `cd worca-ui`. Always combine the directory change with the command (`cd worca-ui && npm run build`) or use absolute paths. A bare `npx playwright …` / `npm run …` issued after an earlier `cd worca-ui` will silently run from the repo root and fail.
+
+**Read the component before writing E2E selectors.** Selectors live in `worca-ui/app/views/*.js` — confirm class names and tag types against the source rather than guessing, then write the test. Two recurring gotchas: the launcher prompt is an `sl-textarea.textarea-fleet-prompt` (not `.input-prompt` / `sl-input`), and the header **Launch** button is a plain `<button class="action-btn action-btn--primary">` (not `sl-button`).
 
 After modifying any source files in `worca-ui/app/`, rebuild the bundle:
 
