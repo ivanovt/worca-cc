@@ -34,6 +34,7 @@ const {
   listDistinctRunLabels,
   listIssues,
   listIssuesByLabel,
+  listIssuesShallow,
   listUnlinkedIssues,
   countIssuesByRunLabel,
 } = await import('./beads-reader.js');
@@ -69,6 +70,35 @@ describe('dbExists', () => {
   it('returns true when the db file exists', () => {
     existsSync.mockReturnValue(true);
     expect(dbExists(DB)).toBe(true);
+  });
+});
+
+describe('listIssuesShallow', () => {
+  it('returns raw issues from bd list without enrichment', async () => {
+    mockBdResult([
+      { id: '1', title: 'A', status: 'open', priority: 2, updated_at: '2026-01-01' },
+      { id: '2', title: 'B', status: 'closed', priority: 1, updated_at: '2026-01-02' },
+    ]);
+    const issues = await listIssuesShallow(DB);
+    expect(issues).toEqual([
+      { id: '1', title: 'A', status: 'open', priority: 2, updated_at: '2026-01-01' },
+      { id: '2', title: 'B', status: 'closed', priority: 1, updated_at: '2026-01-02' },
+    ]);
+    expect(execFile).toHaveBeenCalledTimes(1);
+    const args = execFile.mock.calls[0][1];
+    expect(args).toContain('list');
+    expect(args).toContain('--limit');
+    expect(args).toContain('0');
+  });
+
+  it('returns [] when bd fails', async () => {
+    mockBdError('bd not found');
+    expect(await listIssuesShallow(DB)).toEqual([]);
+  });
+
+  it('returns [] when bd list returns empty', async () => {
+    mockBdResult([]);
+    expect(await listIssuesShallow(DB)).toEqual([]);
   });
 });
 

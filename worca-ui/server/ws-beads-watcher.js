@@ -6,7 +6,11 @@
 
 import { existsSync, statSync, unwatchFile, watch, watchFile } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { countIssuesByRunLabel, listIssues } from './beads-reader.js';
+import {
+  countIssuesByRunLabel,
+  enrichIssuesWithDeps,
+  listIssuesShallow,
+} from './beads-reader.js';
 
 const BEADS_DEBOUNCE_MS = 500;
 const BEADS_POLL_MS = 2000;
@@ -42,6 +46,29 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   // flight; events arriving mid-refresh collapse into a single trailing pass.
   let refreshing = false;
   let refreshPending = false;
+  let lastListFingerprint = null;
+
+  function computeFingerprint(issues) {
+    const sorted = [...issues].sort((a, b) => (a.id < b.id ? -1 : 1));
+    return JSON.stringify(
+      sorted.map((i) => ({
+        id: i.id,
+        status: i.status,
+        priority: i.priority,
+        title: i.title,
+        updated_at: i.updated_at,
+      })),
+    );
+  }
+
+  function recordWalStat() {
+    try {
+      const s = statSync(beadsWalPath);
+      lastSelfReadWalStat = { mtimeMs: s.mtimeMs, size: s.size };
+    } catch {
+      lastSelfReadWalStat = null;
+    }
+  }
 
   function scheduleBeadsRefresh() {
     if (BEADS_REFRESH_TIMER) clearTimeout(BEADS_REFRESH_TIMER);
@@ -56,8 +83,16 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
     }
     refreshing = true;
     try {
+      const shallowIssues = await listIssuesShallow(beadsDbPath);
+      const fingerprint = computeFingerprint(shallowIssues);
+      if (fingerprint === lastListFingerprint) {
+        recordWalStat();
+        return;
+      }
+      lastListFingerprint = fingerprint;
+
       const [issues, counts] = await Promise.all([
-        listIssues(beadsDbPath),
+        enrichIssuesWithDeps(shallowIssues, beadsDbPath),
         countIssuesByRunLabel(beadsDbPath).catch(() => ({})),
       ]);
       latestCounts = counts;
@@ -74,19 +109,12 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
           },
           projectId,
         );
-        try {
-          const s = statSync(beadsWalPath);
-          lastSelfReadWalStat = { mtimeMs: s.mtimeMs, size: s.size };
-        } catch {
-          lastSelfReadWalStat = null;
-        }
       }
+      recordWalStat();
     } catch {
       /* ignore */
     } finally {
       refreshing = false;
-      // A change arrived while we were busy — run exactly one more pass,
-      // re-debounced so a sustained burst still collapses to a single refresh.
       if (refreshPending) {
         refreshPending = false;
         scheduleBeadsRefresh();

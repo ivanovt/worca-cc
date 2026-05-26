@@ -40,7 +40,7 @@ function transformIssue(issue, deps) {
   };
 }
 
-async function enrichWithDeps(issues, dbPath) {
+export async function enrichIssuesWithDeps(issues, dbPath) {
   if (issues.length === 0) return [];
   const detailed = await runBd(['show', ...issues.map((i) => i.id)], dbPath);
   const detailMap = new Map(detailed.map((d) => [d.id, d]));
@@ -54,13 +54,21 @@ export function dbExists(beadsDb) {
   return existsSync(beadsDb);
 }
 
+export async function listIssuesShallow(beadsDb) {
+  try {
+    return await runBd(['list', '--limit', '0'], beadsDb);
+  } catch {
+    return [];
+  }
+}
+
 export async function listIssues(beadsDb) {
   try {
     const issues = await runBd(['list', '--limit', '0'], beadsDb);
-    // Must await here — without it, an enrichWithDeps rejection (e.g. bd show
+    // Must await here — without it, an enrichIssuesWithDeps rejection (e.g. bd show
     // SIGTERM under daemon contention) escapes the try/catch and propagates
     // to the WS handler as an unhandled rejection, crashing Node.
-    return await enrichWithDeps(issues, beadsDb);
+    return await enrichIssuesWithDeps(issues, beadsDb);
   } catch {
     return [];
   }
@@ -72,7 +80,7 @@ export async function listIssuesByLabel(beadsDb, label) {
       ['list', '--label-any', label, '--all', '--limit', '0'],
       beadsDb,
     );
-    return await enrichWithDeps(issues, beadsDb);
+    return await enrichIssuesWithDeps(issues, beadsDb);
   };
   try {
     return await attempt();
