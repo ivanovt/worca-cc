@@ -6,7 +6,11 @@
 
 import { existsSync, statSync, unwatchFile, watch, watchFile } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { countIssuesByRunLabel, listIssues } from './beads-reader.js';
+import {
+  countIssuesByRunLabel,
+  enrichIssuesWithDeps,
+  listIssuesShallow,
+} from './beads-reader.js';
 
 const BEADS_DEBOUNCE_MS = 500;
 const BEADS_POLL_MS = 2000;
@@ -35,13 +39,43 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   let lastSelfReadWalStat = null;
   let latestCounts = {};
   // In-flight guard + trailing coalesce. The refresh body spawns several `bd`
-  // subprocesses (listIssues + countIssuesByRunLabel) that, on a large beads db,
-  // take seconds. The debounce only collapses scheduling — once the async body
+  // subprocesses (listIssuesShallow, then enrichIssuesWithDeps +
+  // countIssuesByRunLabel when the fingerprint changes) that, on a large beads
+  // db, take seconds. The debounce only collapses scheduling — once the async body
   // is awaiting, a fresh db/WAL event would otherwise start an overlapping
   // refresh and pile up bd processes unbounded. Allow at most one refresh in
   // flight; events arriving mid-refresh collapse into a single trailing pass.
   let refreshing = false;
   let refreshPending = false;
+  let lastListFingerprint = null;
+
+  function computeFingerprint(issues) {
+    const sorted = [...issues].sort((a, b) => (a.id < b.id ? -1 : 1));
+    return JSON.stringify(
+      sorted.map((i) => ({
+        id: i.id,
+        status: i.status,
+        priority: i.priority,
+        title: i.title,
+        updated_at: i.updated_at,
+        // dependency_count/dependent_count come free in `bd list` (no `bd show`).
+        // They catch dependency-edge changes (`bd dep add/remove`) that don't
+        // bump an issue's own updated_at — without them the fingerprint would
+        // bail and leave depends_on/blocked_by (and blocked badges) stale.
+        dependency_count: i.dependency_count,
+        dependent_count: i.dependent_count,
+      })),
+    );
+  }
+
+  function recordWalStat() {
+    try {
+      const s = statSync(beadsWalPath);
+      lastSelfReadWalStat = { mtimeMs: s.mtimeMs, size: s.size };
+    } catch {
+      lastSelfReadWalStat = null;
+    }
+  }
 
   function scheduleBeadsRefresh() {
     if (BEADS_REFRESH_TIMER) clearTimeout(BEADS_REFRESH_TIMER);
@@ -56,8 +90,16 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
     }
     refreshing = true;
     try {
+      const shallowIssues = await listIssuesShallow(beadsDbPath);
+      const fingerprint = computeFingerprint(shallowIssues);
+      if (fingerprint === lastListFingerprint) {
+        recordWalStat();
+        return;
+      }
+      lastListFingerprint = fingerprint;
+
       const [issues, counts] = await Promise.all([
-        listIssues(beadsDbPath),
+        enrichIssuesWithDeps(shallowIssues, beadsDbPath),
         countIssuesByRunLabel(beadsDbPath).catch(() => ({})),
       ]);
       latestCounts = counts;
@@ -74,19 +116,12 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
           },
           projectId,
         );
-        try {
-          const s = statSync(beadsWalPath);
-          lastSelfReadWalStat = { mtimeMs: s.mtimeMs, size: s.size };
-        } catch {
-          lastSelfReadWalStat = null;
-        }
       }
+      recordWalStat();
     } catch {
       /* ignore */
     } finally {
       refreshing = false;
-      // A change arrived while we were busy — run exactly one more pass,
-      // re-debounced so a sustained burst still collapses to a single refresh.
       if (refreshPending) {
         refreshPending = false;
         scheduleBeadsRefresh();

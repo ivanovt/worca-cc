@@ -19,7 +19,8 @@ describe('ws-beads-watcher debounce', () => {
 
 describe('scheduleBeadsRefresh broadcast payload', () => {
   let createBeadsWatcher;
-  let mockListIssues;
+  let mockListIssuesShallow;
+  let mockEnrichIssuesWithDeps;
   let mockCountIssuesByRunLabel;
   let watchCallback;
 
@@ -27,7 +28,23 @@ describe('scheduleBeadsRefresh broadcast payload', () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    mockListIssues = vi.fn().mockResolvedValue([
+    mockListIssuesShallow = vi.fn().mockResolvedValue([
+      {
+        id: '1',
+        title: 'A',
+        status: 'closed',
+        priority: 2,
+        updated_at: '2026-01-01',
+      },
+      {
+        id: '2',
+        title: 'B',
+        status: 'open',
+        priority: 1,
+        updated_at: '2026-01-02',
+      },
+    ]);
+    mockEnrichIssuesWithDeps = vi.fn().mockResolvedValue([
       { id: '1', title: 'A', status: 'closed' },
       { id: '2', title: 'B', status: 'open' },
     ]);
@@ -37,7 +54,8 @@ describe('scheduleBeadsRefresh broadcast payload', () => {
     });
 
     vi.doMock('./beads-reader.js', () => ({
-      listIssues: mockListIssues,
+      listIssuesShallow: mockListIssuesShallow,
+      enrichIssuesWithDeps: mockEnrichIssuesWithDeps,
       countIssuesByRunLabel: mockCountIssuesByRunLabel,
     }));
 
@@ -96,6 +114,16 @@ describe('scheduleBeadsRefresh broadcast payload', () => {
 
   it('includes empty counts when countIssuesByRunLabel fails', async () => {
     mockCountIssuesByRunLabel.mockRejectedValueOnce(new Error('bd fail'));
+    // Ensure fingerprint changes so enrichment proceeds
+    mockListIssuesShallow.mockResolvedValueOnce([
+      {
+        id: '1',
+        title: 'A',
+        status: 'closed',
+        priority: 2,
+        updated_at: '2026-01-01-fail',
+      },
+    ]);
 
     const broadcasts = [];
     const broadcaster = {
@@ -123,15 +151,30 @@ describe('scheduleBeadsRefresh broadcast payload', () => {
 
 describe('payload dedup', () => {
   let createBeadsWatcher;
-  let mockListIssues;
+  let mockListIssuesShallow;
+  let mockEnrichIssuesWithDeps;
   let mockCountIssuesByRunLabel;
   let watchCallback;
+  let shallowCallCount;
 
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    mockListIssues = vi
+    shallowCallCount = 0;
+    mockListIssuesShallow = vi.fn(() => {
+      shallowCallCount++;
+      return Promise.resolve([
+        {
+          id: '1',
+          title: 'A',
+          status: 'closed',
+          priority: 2,
+          updated_at: `t${shallowCallCount}`,
+        },
+      ]);
+    });
+    mockEnrichIssuesWithDeps = vi
       .fn()
       .mockResolvedValue([{ id: '1', title: 'A', status: 'closed' }]);
     mockCountIssuesByRunLabel = vi.fn().mockResolvedValue({
@@ -139,7 +182,8 @@ describe('payload dedup', () => {
     });
 
     vi.doMock('./beads-reader.js', () => ({
-      listIssues: mockListIssues,
+      listIssuesShallow: mockListIssuesShallow,
+      enrichIssuesWithDeps: mockEnrichIssuesWithDeps,
       countIssuesByRunLabel: mockCountIssuesByRunLabel,
     }));
 
@@ -204,7 +248,7 @@ describe('payload dedup', () => {
     expect(broadcasts.length).toBe(1);
 
     // Mutate the data so payload differs
-    mockListIssues.mockResolvedValue([
+    mockEnrichIssuesWithDeps.mockResolvedValue([
       { id: '1', title: 'A', status: 'closed' },
       { id: '3', title: 'C', status: 'open' },
     ]);
@@ -240,15 +284,30 @@ describe('payload dedup', () => {
 
 describe('getLatestCounts', () => {
   let createBeadsWatcher;
-  let mockListIssues;
+  let mockListIssuesShallow;
+  let mockEnrichIssuesWithDeps;
   let mockCountIssuesByRunLabel;
   let watchCallback;
+  let shallowCallCount;
 
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    mockListIssues = vi
+    shallowCallCount = 0;
+    mockListIssuesShallow = vi.fn(() => {
+      shallowCallCount++;
+      return Promise.resolve([
+        {
+          id: '1',
+          title: 'A',
+          status: 'open',
+          priority: 2,
+          updated_at: `t${shallowCallCount}`,
+        },
+      ]);
+    });
+    mockEnrichIssuesWithDeps = vi
       .fn()
       .mockResolvedValue([{ id: '1', title: 'A', status: 'open' }]);
     mockCountIssuesByRunLabel = vi.fn().mockResolvedValue({
@@ -256,7 +315,8 @@ describe('getLatestCounts', () => {
     });
 
     vi.doMock('./beads-reader.js', () => ({
-      listIssues: mockListIssues,
+      listIssuesShallow: mockListIssuesShallow,
+      enrichIssuesWithDeps: mockEnrichIssuesWithDeps,
       countIssuesByRunLabel: mockCountIssuesByRunLabel,
     }));
 
@@ -315,7 +375,9 @@ describe('getLatestCounts', () => {
     mockCountIssuesByRunLabel.mockResolvedValue({
       'run-1': { total: 4, done: 3 },
     });
-    mockListIssues.mockResolvedValue([{ id: '2', title: 'B', status: 'open' }]);
+    mockEnrichIssuesWithDeps.mockResolvedValue([
+      { id: '2', title: 'B', status: 'open' },
+    ]);
 
     watchCallback('change', 'beads.db');
     await vi.advanceTimersByTimeAsync(600);
@@ -341,7 +403,8 @@ describe('resolveBeadsCounts', () => {
     mockExistsSync = vi.fn(() => true);
 
     vi.doMock('./beads-reader.js', () => ({
-      listIssues: vi.fn().mockResolvedValue([]),
+      listIssuesShallow: vi.fn().mockResolvedValue([]),
+      enrichIssuesWithDeps: vi.fn().mockResolvedValue([]),
       countIssuesByRunLabel: mockCountIssuesByRunLabel,
     }));
 
@@ -432,7 +495,8 @@ describe('resolveBeadsCounts', () => {
 
 describe('refresh in-flight guard', () => {
   let createBeadsWatcher;
-  let mockListIssues;
+  let mockListIssuesShallow;
+  let mockEnrichIssuesWithDeps;
   let mockCountIssuesByRunLabel;
   let watchCallback;
   let inFlight;
@@ -446,25 +510,37 @@ describe('refresh in-flight guard', () => {
     inFlight = 0;
     maxInFlight = 0;
     resolvers = [];
-    // listIssues hangs until manually resolved, so a refresh can be held
-    // "in flight" while we fire more change events during it.
-    mockListIssues = vi.fn(
+    let callCount = 0;
+    mockListIssuesShallow = vi.fn(
       () =>
         new Promise((res) => {
+          callCount++;
           inFlight++;
           maxInFlight = Math.max(maxInFlight, inFlight);
           resolvers.push(() => {
             inFlight--;
-            res([{ id: '1', title: 'A', status: 'open' }]);
+            res([
+              {
+                id: '1',
+                title: 'A',
+                status: 'open',
+                priority: 2,
+                updated_at: `t${callCount}`,
+              },
+            ]);
           });
         }),
     );
+    mockEnrichIssuesWithDeps = vi
+      .fn()
+      .mockResolvedValue([{ id: '1', title: 'A', status: 'open' }]);
     mockCountIssuesByRunLabel = vi
       .fn()
       .mockResolvedValue({ 'run-1': { total: 1, done: 0 } });
 
     vi.doMock('./beads-reader.js', () => ({
-      listIssues: mockListIssues,
+      listIssuesShallow: mockListIssuesShallow,
+      enrichIssuesWithDeps: mockEnrichIssuesWithDeps,
       countIssuesByRunLabel: mockCountIssuesByRunLabel,
     }));
 
@@ -498,7 +574,7 @@ describe('refresh in-flight guard', () => {
     // Change #1 → first refresh starts and hangs on listIssues.
     watchCallback('change', 'beads.db');
     await vi.advanceTimersByTimeAsync(600);
-    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(1);
     expect(inFlight).toBe(1);
 
     // Changes #2 and #3 arrive WHILE refresh #1 is in flight → guarded: no
@@ -507,21 +583,21 @@ describe('refresh in-flight guard', () => {
     await vi.advanceTimersByTimeAsync(600);
     watchCallback('change', 'beads.db');
     await vi.advanceTimersByTimeAsync(600);
-    expect(mockListIssues).toHaveBeenCalledTimes(1);
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(1);
     expect(maxInFlight).toBe(1);
 
     // Finish refresh #1 → exactly one trailing (coalesced) refresh runs.
     resolvers[0]();
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(600);
-    expect(mockListIssues).toHaveBeenCalledTimes(2);
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(2);
     expect(maxInFlight).toBe(1);
 
     // Finish the trailing refresh → nothing else pending.
     resolvers[1]();
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(600);
-    expect(mockListIssues).toHaveBeenCalledTimes(2);
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -546,7 +622,8 @@ describe('peekBeadsCounts (non-blocking)', () => {
     );
 
     vi.doMock('./beads-reader.js', () => ({
-      listIssues: vi.fn().mockResolvedValue([]),
+      listIssuesShallow: vi.fn().mockResolvedValue([]),
+      enrichIssuesWithDeps: vi.fn().mockResolvedValue([]),
       countIssuesByRunLabel: mockCountIssuesByRunLabel,
     }));
 
@@ -611,25 +688,260 @@ describe('peekBeadsCounts (non-blocking)', () => {
   });
 });
 
-describe('WAL self-read suppression', () => {
+describe('list fingerprint bail', () => {
   let createBeadsWatcher;
-  let mockListIssues;
+  let mockListIssuesShallow;
+  let mockEnrichIssuesWithDeps;
   let mockCountIssuesByRunLabel;
   let watchCallback;
-  let watchFileCallback;
   let mockStatSync;
 
   beforeEach(async () => {
     vi.useFakeTimers();
     vi.resetModules();
 
-    mockListIssues = vi
+    mockListIssuesShallow = vi.fn().mockResolvedValue([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        updated_at: '2026-01-01',
+      },
+      {
+        id: '2',
+        title: 'B',
+        status: 'closed',
+        priority: 1,
+        updated_at: '2026-01-02',
+      },
+    ]);
+    mockEnrichIssuesWithDeps = vi.fn().mockResolvedValue([
+      { id: '1', title: 'A', status: 'open' },
+      { id: '2', title: 'B', status: 'closed' },
+    ]);
+    mockCountIssuesByRunLabel = vi.fn().mockResolvedValue({});
+    mockStatSync = vi.fn(() => ({ mtimeMs: 1000, size: 8192 }));
+
+    vi.doMock('./beads-reader.js', () => ({
+      listIssuesShallow: mockListIssuesShallow,
+      enrichIssuesWithDeps: mockEnrichIssuesWithDeps,
+      countIssuesByRunLabel: mockCountIssuesByRunLabel,
+    }));
+
+    vi.doMock('node:fs', () => ({
+      existsSync: vi.fn(() => true),
+      watch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+      statSync: mockStatSync,
+    }));
+
+    const mod = await import('./ws-beads-watcher.js');
+    createBeadsWatcher = mod.createBeadsWatcher;
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('skips enrichment when list fingerprint is unchanged', async () => {
+    const broadcaster = { broadcast: vi.fn() };
+
+    createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster,
+      projectId: 'p1',
+    });
+
+    // First refresh — full pipeline
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(1);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(1);
+    expect(broadcaster.broadcast).toHaveBeenCalledTimes(1);
+
+    // Second refresh — same shallow list → bail before enrichment
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(2);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(1); // NOT called again
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(1); // NOT called again
+  });
+
+  it('proceeds with enrichment when list fingerprint changes', async () => {
+    const broadcaster = { broadcast: vi.fn() };
+
+    createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster,
+      projectId: 'p1',
+    });
+
+    // First refresh
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(1);
+
+    // Shallow list changes
+    mockListIssuesShallow.mockResolvedValue([
+      {
+        id: '1',
+        title: 'A',
+        status: 'closed',
+        priority: 2,
+        updated_at: '2026-01-01',
+      },
+      {
+        id: '2',
+        title: 'B',
+        status: 'closed',
+        priority: 1,
+        updated_at: '2026-01-02',
+      },
+    ]);
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(2); // called again
+    expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-enriches when a dependency edge changes even if updated_at is unchanged', async () => {
+    const broadcaster = { broadcast: vi.fn() };
+
+    // Seed both reads with dependency_count so the first fingerprint captures it.
+    mockListIssuesShallow.mockResolvedValue([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        updated_at: '2026-01-01',
+        dependency_count: 0,
+        dependent_count: 0,
+      },
+    ]);
+
+    createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster,
+      projectId: 'p1',
+    });
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(1);
+
+    // A `bd dep add` changes dependency_count but NOT updated_at/status/etc.
+    // The fingerprint must still change so depends_on/blocked_by stays fresh.
+    mockListIssuesShallow.mockResolvedValue([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        updated_at: '2026-01-01',
+        dependency_count: 1,
+        dependent_count: 0,
+      },
+    ]);
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(2); // NOT bailed
+  });
+
+  it('records WAL stat on fingerprint bail', async () => {
+    const broadcaster = { broadcast: vi.fn() };
+    let watchFileCallback;
+
+    vi.resetModules();
+    vi.doMock('./beads-reader.js', () => ({
+      listIssuesShallow: mockListIssuesShallow,
+      enrichIssuesWithDeps: mockEnrichIssuesWithDeps,
+      countIssuesByRunLabel: mockCountIssuesByRunLabel,
+    }));
+    vi.doMock('node:fs', () => ({
+      existsSync: vi.fn(() => true),
+      watch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
+      watchFile: vi.fn((_path, _opts, cb) => {
+        watchFileCallback = cb;
+      }),
+      unwatchFile: vi.fn(),
+      statSync: mockStatSync,
+    }));
+    const mod = await import('./ws-beads-watcher.js');
+
+    mod.createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster,
+      projectId: 'p1',
+    });
+
+    // First refresh
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+
+    // Second refresh — fingerprint bail, but WAL stat {1000, 8192} should still be recorded
+    mockStatSync.mockReturnValue({ mtimeMs: 2000, size: 12288 });
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(1); // bailed
+
+    // WAL poll with the stat from the bailed refresh's own read — should be suppressed
+    watchFileCallback(
+      { mtimeMs: 2000, size: 12288 },
+      { mtimeMs: 1000, size: 8192 },
+    );
+    await vi.advanceTimersByTimeAsync(600);
+    // If WAL stat was recorded during bail, this self-read is suppressed
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(2); // no 3rd call
+  });
+});
+
+describe('WAL self-read suppression', () => {
+  let createBeadsWatcher;
+  let mockListIssuesShallow;
+  let mockEnrichIssuesWithDeps;
+  let mockCountIssuesByRunLabel;
+  let watchCallback;
+  let watchFileCallback;
+  let mockStatSync;
+  let shallowCallCount;
+
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    vi.resetModules();
+
+    shallowCallCount = 0;
+    mockListIssuesShallow = vi.fn(() => {
+      shallowCallCount++;
+      return Promise.resolve([
+        {
+          id: '1',
+          title: 'A',
+          status: 'closed',
+          priority: 2,
+          updated_at: `t${shallowCallCount}`,
+        },
+      ]);
+    });
+    mockEnrichIssuesWithDeps = vi
       .fn()
       .mockResolvedValue([{ id: '1', title: 'A', status: 'closed' }]);
     mockCountIssuesByRunLabel = vi.fn().mockResolvedValue({});
 
     vi.doMock('./beads-reader.js', () => ({
-      listIssues: mockListIssues,
+      listIssuesShallow: mockListIssuesShallow,
+      enrichIssuesWithDeps: mockEnrichIssuesWithDeps,
       countIssuesByRunLabel: mockCountIssuesByRunLabel,
     }));
 
@@ -684,6 +996,43 @@ describe('WAL self-read suppression', () => {
     expect(broadcasts.length).toBe(1);
   });
 
+  it('records WAL stat after refresh even when payload is unchanged', async () => {
+    const broadcasts = [];
+    const broadcaster = {
+      broadcast: (_event, payload) => broadcasts.push(payload),
+    };
+
+    createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster,
+      projectId: 'p1',
+    });
+
+    // First refresh — broadcasts and records WAL stat {1000, 8192}
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(broadcasts.length).toBe(1);
+
+    // Second refresh triggered by an external WAL change (different stat).
+    // Payload is identical → no broadcast, but WAL stat MUST still be recorded.
+    mockStatSync.mockReturnValue({ mtimeMs: 2000, size: 12288 });
+    const externalStat = { mtimeMs: 1500, size: 10000 };
+    watchFileCallback(externalStat, { mtimeMs: 1000, size: 8192 });
+    await vi.advanceTimersByTimeAsync(600);
+    expect(broadcasts.length).toBe(1); // no broadcast (payload unchanged)
+
+    // Now a WAL poll fires with the stat from the second refresh's own read.
+    // If the watcher recorded it, this should be suppressed as a self-read.
+    watchFileCallback(
+      { mtimeMs: 2000, size: 12288 },
+      { mtimeMs: 1500, size: 10000 },
+    );
+    await vi.advanceTimersByTimeAsync(600);
+    // Must still be 1 — the self-read guard should have caught it
+    expect(broadcasts.length).toBe(1);
+    expect(mockListIssuesShallow).toHaveBeenCalledTimes(2); // only the 2 real refreshes
+  });
+
   it('processes WAL event with different signature', async () => {
     const broadcasts = [];
     const broadcaster = {
@@ -702,7 +1051,9 @@ describe('WAL self-read suppression', () => {
     expect(broadcasts.length).toBe(1);
 
     // Mutate data so payload dedup doesn't suppress
-    mockListIssues.mockResolvedValue([{ id: '1', title: 'A', status: 'open' }]);
+    mockEnrichIssuesWithDeps.mockResolvedValue([
+      { id: '1', title: 'A', status: 'open' },
+    ]);
 
     // WAL event with a DIFFERENT stat than what the watcher recorded
     const externalStat = { mtimeMs: 2000, size: 16384 };

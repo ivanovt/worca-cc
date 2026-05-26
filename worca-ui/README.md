@@ -21,6 +21,16 @@ worca-ui --help                  # show all commands and options
 worca-ui --version               # print version
 ```
 
+> **Don't watch the same project from two servers.** Global mode (the default)
+> already watches every project registered in `~/.worca/projects.d/`. Running a
+> second `--project /path` server on a project that global mode already covers
+> points two watchers at the same `.beads` directory. Each watcher's `bd` reads
+> mutate the SQLite WAL, which the other watcher sees as an external change — a
+> cheap mutual refresh that never settles. The watcher bails cheaply on an
+> unchanged content fingerprint, so this is harmless, but it's wasted work: use
+> either global mode **or** a single `--project` server for a given project, not
+> both.
+
 ## Features
 
 - **Real-time WebSocket streaming** — no polling, no page refreshes
