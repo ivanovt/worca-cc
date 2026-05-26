@@ -106,6 +106,7 @@ class TestSnapshotLock:
         with snapshot_lock(d):
             pass
 
+    @pytest.mark.skipif(os.name != "posix", reason="fcntl.flock is POSIX-only")
     def test_lock_is_exclusive_across_processes(self, tmp_path):
         """A second flock attempt while held must block; non-blocking probe fails."""
         import fcntl

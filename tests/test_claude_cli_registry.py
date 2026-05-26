@@ -14,6 +14,11 @@ from unittest import mock
 
 import pytest
 
+pytestmark = pytest.mark.skipif(
+    os.name != "posix",
+    reason="Mocks os.getpgid/os.killpg which do not exist on Windows",
+)
+
 from worca.utils.claude_cli import run_agent, terminate_all
 
 

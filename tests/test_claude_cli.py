@@ -8,6 +8,8 @@ from io import StringIO
 from unittest import mock
 from unittest.mock import patch, MagicMock
 
+import pytest
+
 from worca.utils.claude_cli import (
     AgentSubprocessError,
     _accumulate_usage,
@@ -1311,6 +1313,7 @@ def test_run_agent_large_prompt_cleanup_handles_oserror_silently():
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(os.name != "posix", reason="os.getpgid/os.killpg are POSIX-only")
 def test_terminate_current_sends_sigterm():
     import worca.utils.claude_cli as cli
     mock_proc = MagicMock()

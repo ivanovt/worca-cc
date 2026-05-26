@@ -91,6 +91,7 @@ class TestListSpawns:
         assert entries[0]["pgid"] == 1
 
 
+@pytest.mark.skipif(os.name != "posix", reason="os.getpgid is POSIX-only")
 class TestIsAliveAndOurs:
     def test_dead_process_returns_false(self):
         assert is_alive_and_ours(pgid=999999, pid=999999, start_time=time.monotonic()) is False
@@ -138,6 +139,7 @@ class TestPosixCapabilityGuard:
         assert list_spawns(procs_dir) == []
 
 
+@pytest.mark.skipif(os.name != "posix", reason="os.getpgid/killpg and 'sleep' command are POSIX-only")
 class TestKillAllTracked:
     def test_kills_live_process_and_prunes(self, procs_dir):
         import subprocess
