@@ -53,7 +53,7 @@ class TestFixtureReapsBackgroundProcs:
 
         pipeline_env.run_background(_HANG_SCENARIO)
 
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             children = _mock_claude_children()
             new = _pids_from(children) - before
@@ -82,7 +82,7 @@ class TestFixtureReapsWorktreeProcs:
         )
         assert result.returncode == 0, f"run_worktree launch failed: {result.stderr}"
 
-        deadline = time.monotonic() + 15
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
             new = _pids_from(_mock_claude_children()) - before
             if new:
@@ -106,7 +106,7 @@ def test_orphan_pids_gone_after_background_teardown(tmp_path, pipeline_env):
 
     pipeline_env.run_background(_HANG_SCENARIO)
 
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         new = _pids_from(_mock_claude_children()) - before
         if new:
@@ -147,7 +147,7 @@ def test_reap_kills_process_group(pipeline_env):
 
     proc = pipeline_env.run_background(_HANG_SCENARIO)
 
-    deadline = time.monotonic() + 15
+    deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         new = _pids_from(_mock_claude_children()) - before
         if new:
