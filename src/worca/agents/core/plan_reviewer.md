@@ -58,6 +58,8 @@ Produce a structured result following the `plan_review.json` schema:
 
 Only `critical` and `major` issues trigger a `"revise"` outcome. `minor` and `suggestion` issues are logged but the outcome is `"approve"`.
 
+Severity reflects **implementation-blocking impact**, not plan polish. Reserve `critical`/`major` for issues that would actually derail implementation; an issue an implementer can resolve in stride is `minor` or `suggestion`. This matters most on revision rounds, where over-escalating newly-exposed detail prevents the plan from ever converging.
+
 ## Rules
 
 <!-- governance -->

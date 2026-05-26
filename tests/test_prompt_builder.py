@@ -365,6 +365,24 @@ def test_build_context_coordinate_no_plan_summary_without_approach():
     assert not ctx.get("plan_summary")
 
 
+def test_build_context_coordinate_formats_unresolved_plan_issues():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("unresolved_plan_issues", [
+        {"category": "completeness", "severity": "critical", "description": "Missing error handling"},
+        {"category": "risk", "severity": "major", "description": "No rollback strategy"},
+    ])
+    ctx = pb.build_context("coordinate")
+    formatted = ctx.get("unresolved_plan_issues_formatted", "")
+    assert "[critical] (completeness) Missing error handling" in formatted
+    assert "[major] (risk) No rollback strategy" in formatted
+
+
+def test_build_context_coordinate_empty_string_when_unresolved_plan_issues_absent():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("coordinate")
+    assert ctx.get("unresolved_plan_issues_formatted") == ""
+
+
 def test_build_context_implement_initial_is_retry_false():
     pb = PromptBuilder("Add auth", "Desc")
     ctx = pb.build_context("implement", iteration=0)

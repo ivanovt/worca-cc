@@ -242,6 +242,12 @@ class PromptBuilder:
             else:
                 ctx["plan_summary"] = ""
 
+            unresolved = ctx.get("unresolved_plan_issues")
+            if unresolved:
+                ctx["unresolved_plan_issues_formatted"] = self._format_plan_review_issues(unresolved)
+            else:
+                ctx["unresolved_plan_issues_formatted"] = ""
+
         elif stage == "implement":
             ctx["is_retry"] = iteration > 0
             if iteration > 0:

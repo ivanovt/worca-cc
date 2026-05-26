@@ -86,6 +86,21 @@ def test_plan_review_block_has_history_conditional():
     assert "{{#if plan_review_history_formatted}}" in content
 
 
+def test_plan_review_block_has_convergence_directive():
+    content = _read("plan-review.block.md")
+    assert "verify convergence" in content
+
+
+def test_plan_review_block_convergence_inside_history_conditional():
+    content = _read("plan-review.block.md")
+    if_tag = "{{#if plan_review_history_formatted}}"
+    endif_tag = "{{/if}}"
+    start = content.index(if_tag)
+    end = content.index(endif_tag, start)
+    history_block = content[start:end]
+    assert "verify convergence" in history_block
+
+
 # ---------------------------------------------------------------------------
 # coordinate.block.md
 # ---------------------------------------------------------------------------
@@ -99,6 +114,11 @@ def test_coordinate_block_has_work_request():
 def test_coordinate_block_has_plan_summary_conditional():
     content = _read("coordinate.block.md")
     assert "{{#if plan_summary}}" in content
+
+
+def test_coordinate_block_has_unresolved_plan_issues_conditional():
+    content = _read("coordinate.block.md")
+    assert "{{#if unresolved_plan_issues_formatted}}" in content
 
 
 # ---------------------------------------------------------------------------
