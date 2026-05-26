@@ -1,18 +1,23 @@
 """Tests for worca.utils.claude_cli - Claude CLI wrapper."""
 
 import json
+import os
+import signal
 import subprocess
 from io import StringIO
+from unittest import mock
 from unittest.mock import patch, MagicMock
 
 from worca.utils.claude_cli import (
     AgentSubprocessError,
     _accumulate_usage,
+    _ARG_INLINE_LIMIT,
     _resolve_tool_args,
     _resolve_tool_disallows,
     build_command,
     process_stream,
     run_agent,
+    terminate_current,
 )
 
 
@@ -1156,3 +1161,199 @@ def test_process_stream_preserves_non_numeric_usage_keys_across_resumes():
     assert u["output_tokens"] == 30
     # non-numeric / unrecognized keys survive, taking the last event's value
     assert u["service_tier"] == "priority"
+
+
+# ---------------------------------------------------------------------------
+# build_command: unique cases migrated from src/worca/utils/test_claude_cli.py
+# ---------------------------------------------------------------------------
+
+
+def test_build_command_json_schema_missing_file():
+    cmd, pf = build_command("hello", agent="agent.md", json_schema="/no/such/file.json")
+    assert pf is None
+    idx = cmd.index("--json-schema")
+    assert cmd[idx + 1] == "/no/such/file.json"
+
+
+def test_build_command_large_prompt_offloaded_to_file():
+    large_prompt = "x" * (_ARG_INLINE_LIMIT + 1)
+    cmd, pf = build_command(large_prompt, agent="agent.md")
+    assert pf is not None
+    try:
+        with open(pf) as f:
+            assert f.read() == large_prompt
+        prompt_arg = cmd[cmd.index("-p") + 1]
+        assert pf in prompt_arg
+        assert len(prompt_arg) < 1024
+    finally:
+        os.unlink(pf)
+
+
+def test_build_command_small_prompt_stays_inline():
+    small_prompt = "x" * 1000
+    cmd, pf = build_command(small_prompt, agent="agent.md")
+    assert pf is None
+    prompt_arg = cmd[cmd.index("-p") + 1]
+    assert prompt_arg == small_prompt
+
+
+# ---------------------------------------------------------------------------
+# run_agent: unique cases migrated from src/worca/utils/test_claude_cli.py
+# ---------------------------------------------------------------------------
+
+
+def test_run_agent_graphify_out_injected_into_env():
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.get_env", side_effect=lambda **kw: dict(kw)):
+        with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            run_agent(
+                prompt="hello", agent="planner.md",
+                graphify_out="/cache/ast/repo/sha/graphify",
+                settings={},
+            )
+    env = mock_popen.call_args[1]["env"]
+    assert env["GRAPHIFY_OUT"] == "/cache/ast/repo/sha/graphify"
+
+
+def test_run_agent_no_graphify_out_leaves_env_unset():
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.get_env", side_effect=lambda **kw: dict(kw)):
+        with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+            run_agent(prompt="hello", agent="planner.md", settings={})
+    env = mock_popen.call_args[1]["env"]
+    assert "GRAPHIFY_OUT" not in env
+
+
+def test_run_agent_log_file_created(tmp_path):
+    events = [
+        {"type": "system", "subtype": "init", "model": "opus"},
+        {"type": "result", "subtype": "success", "result": "ok",
+         "total_cost_usd": 0.01, "num_turns": 1, "duration_ms": 1000},
+    ]
+    ndjson = "".join(json.dumps(e) + "\n" for e in events)
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter([ndjson.split("\n")[0] + "\n", ndjson.split("\n")[1] + "\n"])
+    mock_proc.stderr = iter([])
+    mock_proc.returncode = 0
+    mock_proc.pid = 12345
+    mock_proc.wait.return_value = 0
+    log_path = str(tmp_path / "logs" / "test.log")
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        run_agent(prompt="hello", agent="agent.md", log_path=log_path, settings={})
+    assert os.path.exists(log_path)
+    contents = open(log_path).read()
+    assert "[init]" in contents
+    assert "[done]" in contents
+
+
+def test_run_agent_on_event_callback():
+    events = [
+        {"type": "system", "subtype": "init", "model": "opus"},
+        {"type": "result", "subtype": "success", "result": "ok"},
+    ]
+    ndjson_lines = [json.dumps(e) + "\n" for e in events]
+    mock_proc = MagicMock()
+    mock_proc.stdout = iter(ndjson_lines)
+    mock_proc.stderr = iter([])
+    mock_proc.returncode = 0
+    mock_proc.pid = 12345
+    mock_proc.wait.return_value = 0
+    captured = []
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        run_agent(prompt="hello", agent="agent.md", on_event=captured.append, settings={})
+    assert len(captured) == 2
+
+
+def test_run_agent_large_prompt_cleanup_on_success():
+    large_prompt = "x" * (_ARG_INLINE_LIMIT + 1)
+    result_event = {"result": "ok", "total_cost_usd": 0.01, "num_turns": 1, "duration_ms": 1000}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        result = run_agent(prompt=large_prompt, agent="agent.md", settings={})
+    assert result["type"] == "result"
+    call_args = mock_popen.call_args[0][0]
+    prompt_arg = call_args[call_args.index("-p") + 1]
+    assert "Read the file at" in prompt_arg
+    tmp_path = prompt_arg.split("Read the file at ")[1].split(" and follow")[0]
+    assert not os.path.exists(tmp_path), "Temp prompt file should be deleted after success"
+
+
+def test_run_agent_large_prompt_cleanup_on_failure():
+    large_prompt = "x" * (_ARG_INLINE_LIMIT + 1)
+    result_event = {"is_error": True, "result": "something went wrong"}
+    mock_proc = _make_mock_popen(result_event, returncode=1)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        try:
+            run_agent(prompt=large_prompt, agent="agent.md", settings={})
+        except RuntimeError:
+            pass
+    call_args = mock_popen.call_args[0][0]
+    prompt_arg = call_args[call_args.index("-p") + 1]
+    tmp_path = prompt_arg.split("Read the file at ")[1].split(" and follow")[0]
+    assert not os.path.exists(tmp_path), "Temp prompt file should be deleted after failure"
+
+
+def test_run_agent_large_prompt_cleanup_handles_oserror_silently():
+    large_prompt = "x" * (_ARG_INLINE_LIMIT + 1)
+    result_event = {"result": "ok", "total_cost_usd": 0.01, "num_turns": 1, "duration_ms": 1000}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        with mock.patch("os.unlink", side_effect=OSError("disk error")):
+            result = run_agent(prompt=large_prompt, agent="agent.md", settings={})
+            assert result["type"] == "result"
+            assert result["result"] == "ok"
+
+
+# ---------------------------------------------------------------------------
+# terminate_current: migrated from src/worca/utils/test_claude_cli.py
+# ---------------------------------------------------------------------------
+
+
+def test_terminate_current_sends_sigterm():
+    import worca.utils.claude_cli as cli
+    mock_proc = MagicMock()
+    mock_proc.pid = 123
+    with cli._proc_lock:
+        cli._current_proc = mock_proc
+    try:
+        with mock.patch("os.getpgid", return_value=999), \
+             mock.patch("os.killpg") as mock_killpg:
+            terminate_current()
+            mock_killpg.assert_called_once_with(999, signal.SIGTERM)
+    finally:
+        with cli._proc_lock:
+            cli._current_proc = None
+
+
+def test_terminate_current_no_proc():
+    import worca.utils.claude_cli as cli
+    with cli._proc_lock:
+        cli._current_proc = None
+    terminate_current()
+
+
+# ---------------------------------------------------------------------------
+# Runner integration: structured_output extraction compatibility
+# ---------------------------------------------------------------------------
+
+
+def test_structured_output_extraction_compatible_with_runner():
+    raw = {
+        "type": "result",
+        "subtype": "success",
+        "result": "",
+        "structured_output": {
+            "approach": "incremental",
+            "tasks_outline": [{"title": "task 1", "description": "do thing"}],
+            "branch_name": "worca/feature-x",
+        },
+        "total_cost_usd": 0.5,
+    }
+    if isinstance(raw, dict) and "structured_output" in raw:
+        structured, envelope = raw["structured_output"], raw
+    else:
+        structured, envelope = raw, raw
+    assert structured["approach"] == "incremental"
+    assert envelope["total_cost_usd"] == 0.5
