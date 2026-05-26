@@ -44,7 +44,39 @@ function timingStripView(startedAt, completedAt) {
   `;
 }
 
-export function observationPrompt(obs) {
+export function buildRunMeta(run, routeRunId) {
+  if (!run) return null;
+  return {
+    project: run.project || run._project,
+    runId: run.id || routeRunId,
+    workRequest: run.work_request?.title,
+    branch: run.head_branch || run.branch || run.work_request?.branch,
+    startedAt: run.started_at,
+    fleetId: run.fleet_id,
+    workspaceId: run.workspace_id,
+  };
+}
+
+export function sourceBlock(meta) {
+  if (!meta) return '';
+  const lines = [];
+  if (meta.project) lines.push(`- **Project**: ${meta.project}`);
+  if (meta.runId) {
+    lines.push(`- **Pipeline run**: ${meta.runId}`);
+    lines.push(
+      `- **Run artifacts**: .worca/runs/${meta.runId}/ (status.json, plan-NNN.md, agent logs)`,
+    );
+  }
+  if (meta.workRequest) lines.push(`- **Work request**: "${meta.workRequest}"`);
+  if (meta.branch) lines.push(`- **Branch**: ${meta.branch}`);
+  if (meta.startedAt) lines.push(`- **Started**: ${meta.startedAt}`);
+  if (meta.fleetId) lines.push(`- **Fleet**: ${meta.fleetId}`);
+  if (meta.workspaceId) lines.push(`- **Workspace**: ${meta.workspaceId}`);
+  if (lines.length === 0) return '';
+  return `\n## Source\n${lines.join('\n')}\n`;
+}
+
+export function observationPrompt(obs, meta) {
   return `Investigate the following observation from a pipeline learning analysis and suggest concrete fixes.
 
 ## Observation
@@ -59,10 +91,10 @@ export function observationPrompt(obs) {
 2. Find the specific files and code sections involved.
 3. Propose concrete changes to prevent this from recurring.
 4. If this relates to test failures or loops, identify what test coverage or prompt changes would help.
-`;
+${sourceBlock(meta)}`;
 }
 
-export function suggestionPrompt(s) {
+export function suggestionPrompt(s, meta) {
   return `Implement the following suggestion from a pipeline learning analysis.
 
 ## Suggestion
@@ -75,7 +107,7 @@ export function suggestionPrompt(s) {
 2. Understand the current behavior and why the suggestion was made.
 3. Implement the suggested change with minimal disruption.
 4. Verify the change doesn't break existing functionality.
-`;
+${sourceBlock(meta)}`;
 }
 
 function copyToClipboard(text, btn) {
@@ -110,7 +142,7 @@ function sortByImportance(observations) {
   );
 }
 
-function observationsTableView(observations) {
+function observationsTableView(observations, meta) {
   const sorted = sortByImportance(observations);
   return html`
     <h4 class="learnings-table-title">Observations</h4>
@@ -136,7 +168,7 @@ function observationsTableView(observations) {
           <span class="learnings-evidence">${obs.evidence}</span>
           <span class="col-center">${obs.occurrences || 1}</span>
           <sl-tooltip content="Copy investigation prompt">
-            <button class="learnings-copy-btn" @click=${(e) => copyToClipboard(observationPrompt(obs), e.currentTarget)}>
+            <button class="learnings-copy-btn" @click=${(e) => copyToClipboard(observationPrompt(obs, meta), e.currentTarget)}>
               <span class="copy-icon">${unsafeHTML(iconSvg(ClipboardCopy, 14))}</span>
             </button>
           </sl-tooltip>
@@ -147,7 +179,7 @@ function observationsTableView(observations) {
   `;
 }
 
-function suggestionsTableView(suggestions) {
+function suggestionsTableView(suggestions, meta) {
   return html`
     <h4 class="learnings-table-title">Suggestions</h4>
     <div class="learnings-table">
@@ -164,7 +196,7 @@ function suggestionsTableView(suggestions) {
           <span class="markdown-body markdown-inline">${unsafeHTML(renderMarkdown(s.description))}</span>
           <span class="learnings-rationale">${s.rationale}</span>
           <sl-tooltip content="Copy implementation prompt">
-            <button class="learnings-copy-btn" @click=${(e) => copyToClipboard(suggestionPrompt(s), e.currentTarget)}>
+            <button class="learnings-copy-btn" @click=${(e) => copyToClipboard(suggestionPrompt(s, meta), e.currentTarget)}>
               <span class="copy-icon">${unsafeHTML(iconSvg(ClipboardCopy, 14))}</span>
             </button>
           </sl-tooltip>
@@ -353,8 +385,8 @@ export function learningsSectionView(learnStage, options = {}) {
         ${costUsd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(costUsd).toFixed(2)}</span></span>` : nothing}
       </div>
       ${summaryStripView(output.run_summary)}
-      ${observationsTableView(output.observations)}
-      ${suggestionsTableView(output.suggestions || [])}
+      ${observationsTableView(output.observations, options.runMeta)}
+      ${suggestionsTableView(output.suggestions || [], options.runMeta)}
       ${recurringPatternsView(output.recurring_patterns)}
       ${
         options.onRunLearn
