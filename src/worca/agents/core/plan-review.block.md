@@ -38,6 +38,15 @@ _A code knowledge graph is preloaded for this repo — explore it on demand with
 
 {{plan_review_history_formatted}}
 
-Check whether the issues from previous review attempts have been addressed
-in the revised plan above.
+**This is a revision round — your primary task is to verify convergence, not to
+re-review the whole plan from scratch.**
+
+- Confirm each prior critical/major issue is resolved. If one is still
+  unresolved, re-raise it at its original severity.
+- A plan grows as it fixes issues; added detail exposes new surface. Raise a
+  *newly observed* problem as `critical` or `major` ONLY if it would genuinely
+  block implementation. Otherwise record it as `minor`/`suggestion` so the
+  plan can converge — an implementer can handle reasonable refinements.
+- Return `outcome: "approve"` once no blocking (critical/major) issues remain,
+  even if further polish is possible.
 {{/if}}

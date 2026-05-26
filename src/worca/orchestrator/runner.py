@@ -2973,8 +2973,8 @@ def run_pipeline(
                         stage_idx = stage_order.index(Stage.PLAN)
                         continue  # Loop back to PLAN
                     else:
-                        # Loop exhausted — clean up revision context keys so they
-                        # don't leak into COORDINATE or later PLAN re-runs.
+                        if critical_issues:
+                            prompt_builder.update_context("unresolved_plan_issues", list(critical_issues))
                         prompt_builder.pop_context("plan_review_issues")
                         prompt_builder.pop_context("plan_revision_mode")
                         prompt_builder.pop_context("plan_review_history")
@@ -2987,7 +2987,8 @@ def run_pipeline(
                                 iteration=loop_counters["plan_review"],
                                 limit=_get_loop_limit("plan_review", settings_path, mloops),
                             ))
-                        _log("Plan review loop exhausted -- proceeding to COORDINATE", "warn")
+                        n_carried = len(critical_issues) if critical_issues else 0
+                        _log(f"Plan review loop exhausted — {n_carried} unresolved issues carried to COORDINATE", "warn")
                 else:
                     # Approve path — pop cross-context keys to prevent leaking
                     prompt_builder.pop_context("plan_review_issues")
@@ -3029,6 +3030,7 @@ def run_pipeline(
                 max_beads = len(beads_ids)
                 prompt_builder.update_context("beads_ids", beads_ids)
                 prompt_builder.update_context("dependency_graph", result.get("dependency_graph", {}))
+                prompt_builder.pop_context("unresolved_plan_issues")
                 # Link beads to this run via label
                 if beads_ids:
                     run_label = f"run:{status['run_id']}"

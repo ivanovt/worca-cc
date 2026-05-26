@@ -721,6 +721,124 @@ class TestPlanReviewLoopExhaustion:
         # Counter should be 1 (one revise iteration)
         assert final_status["loop_counters"].get("plan_review", 0) == 1
 
+    def test_loop_exhaustion_carries_unresolved_issues(self, tmp_path):
+        """On exhaustion, unresolved_plan_issues is set in prompt context before COORDINATE."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=1)
+        critical_issue = {"category": "risk", "severity": "critical",
+                          "description": "No rollback strategy"}
+        major_issue = {"category": "feasibility", "severity": "major",
+                       "description": "Infeasible timeline"}
+
+        from worca.orchestrator.prompt_builder import PromptBuilder
+        updated_keys = {}
+        original_update = PromptBuilder.update_context
+
+        def tracking_update(self, key, value):
+            import copy
+            updated_keys[key] = copy.deepcopy(value)
+            return original_update(self, key, value)
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "revise",
+                    "issues": [critical_issue, major_issue],
+                    "summary": "Blocking issues",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch.object(PromptBuilder, "update_context", tracking_update):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert "unresolved_plan_issues" in updated_keys, (
+            "unresolved_plan_issues must be set in prompt context before COORDINATE"
+        )
+        carried = updated_keys["unresolved_plan_issues"]
+        assert len(carried) == 2
+        severities = {i["severity"] for i in carried}
+        assert severities == {"critical", "major"}
+
+    def test_loop_exhaustion_pops_unresolved_after_coordinate(self, tmp_path):
+        """unresolved_plan_issues is popped after COORDINATE (not in final context)."""
+        settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=1)
+        critical_issue = {"category": "risk", "severity": "critical",
+                          "description": "Critical gap"}
+
+        from worca.orchestrator.prompt_builder import PromptBuilder
+        popped_keys = []
+        original_pop = PromptBuilder.pop_context
+
+        def tracking_pop(self, key):
+            popped_keys.append(key)
+            return original_pop(self, key)
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "revise",
+                    "issues": [critical_issue],
+                    "summary": "Issues",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch.object(PromptBuilder, "pop_context", tracking_pop):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert "unresolved_plan_issues" in popped_keys, (
+            "unresolved_plan_issues must be popped after COORDINATE to prevent leaking"
+        )
+
+    def test_approve_path_does_not_set_unresolved_issues(self, tmp_path):
+        """The approve path never sets unresolved_plan_issues."""
+        settings_path, status_path, wr = _make_runner(tmp_path)
+
+        from worca.orchestrator.prompt_builder import PromptBuilder
+        updated_keys = set()
+        original_update = PromptBuilder.update_context
+
+        def tracking_update(self, key, value):
+            updated_keys.add(key)
+            return original_update(self, key, value)
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch.object(PromptBuilder, "update_context", tracking_update):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert "unresolved_plan_issues" not in updated_keys, (
+            "unresolved_plan_issues must never be set on the approve path"
+        )
+
     def test_persist_calls_happen_before_plan_reruns(self, tmp_path):
         """save_status and save_context are called before PLAN re-runs on loop-back."""
         settings_path, status_path, wr = _make_runner(tmp_path, plan_review_loops=2)

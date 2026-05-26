@@ -36,3 +36,16 @@ _A code knowledge graph is preloaded for this repo — explore it on demand with
 {{plan_summary}}
 </approved_plan>
 {{/if}}
+
+{{#if unresolved_plan_issues_formatted}}
+## Unresolved plan concerns (from Plan Reviewer)
+
+The Plan Reviewer flagged these blocking issues, and the plan-review loop was
+exhausted before they were resolved. They are NOT addressed in the plan above.
+
+When decomposing, account for each one — either create an explicit bead to
+resolve it, or record it in the description of the bead it affects so the
+implementer is aware. Do not silently ignore them.
+
+{{unresolved_plan_issues_formatted}}
+{{/if}}
