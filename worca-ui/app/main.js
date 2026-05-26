@@ -43,7 +43,7 @@ import {
   resetLauncherState,
   submitFleetLauncher,
 } from './views/fleet-launcher.js';
-import { learningsSectionView } from './views/learnings-panel.js';
+import { buildRunMeta, learningsSectionView } from './views/learnings-panel.js';
 import {
   clearLiveTerminal,
   disposeLiveTerminal,
@@ -3239,6 +3239,7 @@ function mainContentView() {
             onRunLearn: actionAllowed('learn', run?.pipeline_status)
               ? handleRunLearn
               : null,
+            runMeta: buildRunMeta(run, route.runId),
           })}
         </div>
       </div>
