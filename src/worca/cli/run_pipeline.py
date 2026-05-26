@@ -37,9 +37,6 @@ def _validate_worktree_args(args: Namespace) -> None:
         if args.branch:
             print("error: --branch requires --worktree", file=sys.stderr)
             raise SystemExit(2)
-        if args.guide:
-            print("error: --guide requires --worktree", file=sys.stderr)
-            raise SystemExit(2)
 
 
 def cmd_run(args: Namespace) -> None:
@@ -85,11 +82,11 @@ def cmd_run(args: Namespace) -> None:
     for p in args.param or []:
         cmd.extend(["--param", p])
 
+    for g in args.guide or []:
+        cmd.extend(["--guide", g])
     if use_worktree:
         if args.branch:
             cmd.extend(["--branch", args.branch])
-        for g in args.guide or []:
-            cmd.extend(["--guide", g])
 
     result = subprocess.run(cmd, cwd=str(git_root))
     raise SystemExit(result.returncode)
