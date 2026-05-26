@@ -86,18 +86,29 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run pytest
-        # tests/integration drives the pipeline via POSIX signals/process-groups,
-        # which hang on Windows and trip pytest-timeout before JUnit XML is written
-        # (no artifact). Exclude it here so the unit suite produces a clean report.
-        # See W-058: Windows integration support is out of scope (use WSL2).
-        run: pytest tests/ --ignore=tests/integration --junitxml=test-results/pytest-results.xml
+        # tests/integration drives the pipeline via POSIX signals/process-groups
+        # and hangs on Windows; a hanging *unit* test likewise trips pytest-timeout's
+        # thread-method os._exit(1), which skips pytest's JUnit write (no artifact).
+        # So: exclude integration AND tee the console — PYTHONUNBUFFERED + -v make the
+        # per-test names and the faulthandler timeout dump reach disk before os._exit,
+        # and we upload the whole dir. `-o addopts=` clears the ini -q so -v takes
+        # effect. See W-058: Windows integration support is out of scope (use WSL2).
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          PYTHONUNBUFFERED=1 pytest tests/ --ignore=tests/integration \
+            -o addopts= -v -rA --tb=short \
+            --junitxml=test-results/pytest-results.xml \
+            2>&1 | tee test-results/pytest-console.log
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: pytest-results-windows
-          path: test-results/pytest-results.xml
+          path: test-results/
+          if-no-files-found: warn
 
   python-tests-macos:
     runs-on: macos-latest
