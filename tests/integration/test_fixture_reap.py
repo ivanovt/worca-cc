@@ -13,8 +13,14 @@ import pytest
 
 pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX process groups")
 
+# Hang the FIRST agent (planner) rather than the implementer: the test only
+# needs *a* lingering mock_claude to appear so it can verify teardown reaps it.
+# Hanging the implementer means the pipeline must traverse plan→coordinate→
+# implement first, which under CI's coverage-wrapped subprocesses can exceed the
+# 30s pytest-timeout before any lingering agent shows up (passes locally in ~5s,
+# timed out on ubuntu CI). The planner spawns almost immediately on any runner.
 _HANG_SCENARIO = {
-    "agents": {"implementer": {"action": "hang"}},
+    "agents": {"planner": {"action": "hang"}},
     "default": {"action": "succeed", "delay_s": 0.1},
 }
 
@@ -53,7 +59,7 @@ class TestFixtureReapsBackgroundProcs:
 
         pipeline_env.run_background(_HANG_SCENARIO)
 
-        deadline = time.monotonic() + 60
+        deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             children = _mock_claude_children()
             new = _pids_from(children) - before
@@ -82,7 +88,7 @@ class TestFixtureReapsWorktreeProcs:
         )
         assert result.returncode == 0, f"run_worktree launch failed: {result.stderr}"
 
-        deadline = time.monotonic() + 60
+        deadline = time.monotonic() + 20
         while time.monotonic() < deadline:
             new = _pids_from(_mock_claude_children()) - before
             if new:
@@ -106,7 +112,7 @@ def test_orphan_pids_gone_after_background_teardown(tmp_path, pipeline_env):
 
     pipeline_env.run_background(_HANG_SCENARIO)
 
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         new = _pids_from(_mock_claude_children()) - before
         if new:
@@ -147,7 +153,7 @@ def test_reap_kills_process_group(pipeline_env):
 
     proc = pipeline_env.run_background(_HANG_SCENARIO)
 
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         new = _pids_from(_mock_claude_children()) - before
         if new:
