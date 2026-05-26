@@ -86,7 +86,11 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Run pytest
-        run: pytest tests/ --junitxml=test-results/pytest-results.xml
+        # tests/integration drives the pipeline via POSIX signals/process-groups,
+        # which hang on Windows and trip pytest-timeout before JUnit XML is written
+        # (no artifact). Exclude it here so the unit suite produces a clean report.
+        # See W-058: Windows integration support is out of scope (use WSL2).
+        run: pytest tests/ --ignore=tests/integration --junitxml=test-results/pytest-results.xml
 
       - name: Upload test results
         if: always()
