@@ -69,13 +69,14 @@ No native Win32 implementation in this phase — degrade + document only.
 
 ### Phase 0: CI scaffold + visibility
 **Files:** `.github/workflows/test.yml`
-**Tasks:** add non-blocking `windows` Python + vitest jobs; emit `--junitxml`; upload artifact; capture the true failure set.
+**Tasks:** add non-blocking `windows` Python + vitest jobs; emit `--junitxml`; upload artifact; capture the true failure set. `test-e2e.yml` stays Ubuntu-only (Windows e2e is out of scope).
 
 ### Phase 1: Green cross-platform layers
-**Files:** the test files surfaced by Phase 0 (subset of the 31 with `/tmp`), the 4 POSIX-only modules (skip markers), `test.yml` (flip blocking).
+**Files:** the test files surfaced by Phase 0 (the real-I/O subset of the ~31 with `/tmp` — reproduce the upper bound with `rg -l '/tmp/' tests/ | wc -l`), the 4 POSIX-only modules (skip markers), `test.yml` (flip blocking).
+**Done when:** both `windows` jobs pass with 0 failures and are promoted to branch-protection required checks.
 
 ### Phase 2: Runtime degradation audit + docs hooks
-**Files:** `src/worca/utils/proc_registry.py`, `src/worca/utils/claude_cli.py`, `src/worca/orchestrator/runner.py`, `src/worca/utils/worca_lifecycle.py`, `src/worca/scripts/run_worktree.py`, `run_fleet.py`, `run_workspace.py` — audit + guards only.
+**Files:** `src/worca/utils/proc_registry.py`, `src/worca/utils/claude_cli.py`, `src/worca/orchestrator/runner.py`, `src/worca/scripts/worca_lifecycle.py`, `src/worca/scripts/run_worktree.py`, `src/worca/scripts/run_fleet.py`, `src/worca/scripts/run_workspace.py` — audit + guards only.
 
 ### Phase 3: Platform-support docs
 **Files:** `docs/platform-support.md` (new), `README.md`, `CLAUDE.md`.
@@ -116,8 +117,8 @@ The `/tmp`-hardcoded subset enumerated from the Phase 0 JUnit artifact; POSIX-on
 |------|---------------|---------|
 | `.github/workflows/test.yml` | Modify | Windows jobs + JUnit artifact |
 | `tests/*.py` (subset) | Modify | Windows portability (`/tmp`, skips) |
-| `src/worca/utils/proc_registry.py`, `claude_cli.py`, `worca_lifecycle.py` | Modify | Degradation audit/guards |
-| `src/worca/orchestrator/runner.py`, `scripts/run_worktree.py`, `run_fleet.py`, `run_workspace.py` | Modify | Degradation audit/guards |
+| `src/worca/utils/proc_registry.py`, `src/worca/utils/claude_cli.py` | Modify | Degradation audit/guards |
+| `src/worca/orchestrator/runner.py`, `src/worca/scripts/{worca_lifecycle,run_worktree,run_fleet,run_workspace}.py` | Modify | Degradation audit/guards |
 | `docs/platform-support.md` | Create | Platform×capability matrix + limitations |
 
 ## Out of Scope
