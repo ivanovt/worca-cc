@@ -10,7 +10,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 import time
 
 import pytest
@@ -108,5 +107,5 @@ class TestWatchdogLiveParent:
             timeout=10,
         )
         assert result.returncode == 0
-        lines = [l for l in result.stdout.strip().split("\n") if l]
-        assert any('"type": "result"' in l or '"subtype": "success"' in l for l in lines)
+        lines = [ln for ln in result.stdout.strip().split("\n") if ln]
+        assert any('"type": "result"' in ln or '"subtype": "success"' in ln for ln in lines)

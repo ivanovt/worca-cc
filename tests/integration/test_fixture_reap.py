@@ -51,7 +51,7 @@ class TestFixtureReapsBackgroundProcs:
         fixture tear down, then verify no mock_claude orphans survive."""
         before = _pids_from(_mock_claude_children())
 
-        proc = pipeline_env.run_background(_HANG_SCENARIO)
+        pipeline_env.run_background(_HANG_SCENARIO)
 
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -104,7 +104,7 @@ def test_orphan_pids_gone_after_background_teardown(tmp_path, pipeline_env):
     """
     before = _pids_from(_mock_claude_children())
 
-    proc = pipeline_env.run_background(_HANG_SCENARIO)
+    pipeline_env.run_background(_HANG_SCENARIO)
 
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
