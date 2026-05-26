@@ -30,6 +30,7 @@ import {
 
 const GUIDE_CAP_BYTES_DEFAULT = 64 * 1024;
 const PROJECT_PLAN_CAP_BYTES = 256 * 1024;
+const WORKSPACE_PLAN_CAP_BYTES = 256 * 1024;
 
 const WS_ID_RE = /^ws_\d{12}_[0-9a-f]{1,32}$/;
 
@@ -640,16 +641,18 @@ export function _resolvePlanStrategy(
     };
   }
 
-  // master (default)
+  // master (default) — ignore any stray plan inputs. master mode always runs
+  // the master planner; the Python CLI infers its mode from which flags are
+  // present, so passing --workspace-plan/--project-plan through here would
+  // silently run the job as existing/per-repo while the manifest (and badge)
+  // still claimed "master". Null them out to keep declared mode and actual
+  // behavior in lockstep.
   return {
     ok: true,
     fields: {
       plan_mode: 'master',
-      workspace_plan_path: workspace_plan_path ?? null,
-      project_plans:
-        project_plans && Object.keys(project_plans).length > 0
-          ? project_plans
-          : null,
+      workspace_plan_path: null,
+      project_plans: null,
       skip_planning: false,
     },
   };
@@ -1152,6 +1155,12 @@ export function createWorkspaceRouter({
       // ── workspace plan file upload / server-side path ──────────────
       let workspacePlanPath = null;
       if (workspacePlanFileData) {
+        if (workspacePlanFileData.content.length > WORKSPACE_PLAN_CAP_BYTES) {
+          return res.status(400).json({
+            ok: false,
+            error: 'Workspace plan exceeds 256 KB limit',
+          });
+        }
         workspacePlanPath = join(wsRunDir, 'workspace-plan.json');
         writeFileSync(workspacePlanPath, workspacePlanFileData.content);
       } else if (fields.workspace_plan) {

@@ -318,6 +318,32 @@ describe('Workspace Routes — Plan File Upload (multipart)', () => {
     expect(res.status).toBe(201);
   });
 
+  it('rejects uploaded workspace plan exceeding 256KB with 400', async () => {
+    const boundary = 'WSOVERCAP';
+    const bigContent = `${'x'.repeat(256 * 1024 + 1)}`;
+    const body = buildMultipart(
+      { workspace_name: 'plan-test', prompt: 'test', plan_mode: 'existing' },
+      [
+        {
+          name: 'workspace_plan_file',
+          filename: 'workspace-plan.json',
+          content: bigContent,
+        },
+      ],
+      boundary,
+    );
+
+    const res = await fetch(`${base}/api/workspace-runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.ok).toBe(false);
+    expect(data.error).toMatch(/256 KB/i);
+  });
+
   // ── workspace_plan server-side path fallback ────────────────────────
 
   it('accepts workspace_plan string field as server-side path', async () => {
@@ -473,6 +499,41 @@ describe('Workspace Routes — Plan File Upload (multipart)', () => {
     const manifest = readManifestFromResponse(wsRunsDir, data.workspace_id);
     expect(manifest.project_plans).toBeNull();
     expect(manifest.workspace_plan_path).toBeNull();
+  });
+
+  it('master mode ignores stray uploaded plan files (no mode divergence)', async () => {
+    const boundary = 'MASTERSTRAY';
+    const body = buildMultipart(
+      { workspace_name: 'plan-test', prompt: 'test', plan_mode: 'master' },
+      [
+        {
+          name: 'workspace_plan_file',
+          filename: 'workspace-plan.json',
+          content: '{"projects":{}}',
+        },
+        {
+          name: 'project_plan_api',
+          filename: 'api-plan.md',
+          content: '# API Plan',
+        },
+      ],
+      boundary,
+    );
+
+    const res = await fetch(`${base}/api/workspace-runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+      body,
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    const manifest = readManifestFromResponse(wsRunsDir, data.workspace_id);
+    // master mode must not carry plan inputs through — otherwise the Python CLI
+    // would infer 'existing'/'per-repo' from the flags while the manifest (and
+    // plan-mode badge) still claimed 'master'.
+    expect(manifest.plan_mode).toBe('master');
+    expect(manifest.workspace_plan_path).toBeNull();
+    expect(manifest.project_plans).toBeNull();
   });
 
   // ── _resolvePlanStrategy validation ────────────────────────────────

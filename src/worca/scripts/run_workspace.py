@@ -1455,6 +1455,13 @@ def main(argv=None) -> int:
         project_plan_paths = manifest.get("plan", {}).get("project_plans", {})
         print(f"Plan loaded ({plan_mode}): {len(project_plan_paths)} project plan(s)")
 
+    # Persist the resolved planning mode so the UI plan-mode badge has a
+    # source of truth. The server seeds manifest["plan_mode"] before spawning
+    # this process, but create_workspace_manifest() rebuilds the manifest from
+    # scratch and write_workspace_manifest() below overwrites the same file —
+    # without this line the server's value is clobbered and the badge always
+    # falls back to "master".
+    manifest["plan_mode"] = plan_mode
     manifest["status"] = WorkspaceStatus.RUNNING
     write_workspace_manifest(manifest, run_dir)
 

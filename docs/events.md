@@ -193,6 +193,8 @@ These are inbound to worca (typically posted to the inbox or returned in a contr
 | `workspace.plan.started` | `WORKSPACE_PLAN_STARTED` |
 | `workspace.plan.completed` | `WORKSPACE_PLAN_COMPLETED` |
 | `workspace.plan.failed` | `WORKSPACE_PLAN_FAILED` |
+| `workspace.plan.loaded` | `WORKSPACE_PLAN_LOADED` |
+| `workspace.plan.partial` | `WORKSPACE_PLAN_PARTIAL` |
 | `workspace.tier.started` | `WORKSPACE_TIER_STARTED` |
 | `workspace.tier.completed` | `WORKSPACE_TIER_COMPLETED` |
 | `workspace.tier.failed` | `WORKSPACE_TIER_FAILED` |

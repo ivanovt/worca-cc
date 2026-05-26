@@ -134,6 +134,26 @@ def _child_cmds_from_manifest(manifest):
     return cmds
 
 
+def _read_persisted_manifest(manifest):
+    """Load the on-disk workspace-manifest.json — the file the UI/badge reads.
+
+    Reconstructs the run-dir path from the manifest's own fields so the
+    assertion targets the persisted artifact, not the in-memory dict. This is
+    what guards against run_workspace.main() rebuilding the manifest from
+    scratch and clobbering the server-seeded plan_mode (the plan-mode badge
+    regression).
+    """
+    path = (
+        Path(manifest["workspace_root"])
+        / ".worca"
+        / "workspace-runs"
+        / manifest["workspace_id"]
+        / "workspace-manifest.json"
+    )
+    assert path.is_file(), f"persisted manifest missing: {path}"
+    return json.loads(path.read_text())
+
+
 # ---------------------------------------------------------------------------
 # Mode: master — workspace planner runs, all children get --plan
 # ---------------------------------------------------------------------------
@@ -583,6 +603,9 @@ class TestMainDispatchesModes:
         for proj in ("shared-lib", "backend", "frontend"):
             assert "--plan" in cmds[proj]
 
+        persisted = _read_persisted_manifest(manifest)
+        assert persisted["plan_mode"] == "master"
+
     def test_main_existing_mode(self, workspace_root, tmp_path):
         plan_file = tmp_path / "ws-plan.json"
         plan_file.write_text(json.dumps(_valid_workspace_plan()))
@@ -596,6 +619,9 @@ class TestMainDispatchesModes:
         cmds = _child_cmds_from_manifest(manifest)
         for proj in ("shared-lib", "backend", "frontend"):
             assert "--plan" in cmds[proj]
+
+        persisted = _read_persisted_manifest(manifest)
+        assert persisted["plan_mode"] == "existing"
 
     def test_main_per_repo_partial(self, workspace_root, tmp_path):
         lib_plan = tmp_path / "lib.md"
@@ -612,6 +638,9 @@ class TestMainDispatchesModes:
         assert "--plan" not in cmds["backend"]
         assert "--plan" not in cmds["frontend"]
 
+        persisted = _read_persisted_manifest(manifest)
+        assert persisted["plan_mode"] == "per-repo"
+
     def test_main_independent_mode(self, workspace_root):
         manifest = self._run_main([
             str(workspace_root), "--prompt", "Refactor shared types",
@@ -622,3 +651,6 @@ class TestMainDispatchesModes:
         cmds = _child_cmds_from_manifest(manifest)
         for proj in ("shared-lib", "backend", "frontend"):
             assert "--plan" not in cmds[proj]
+
+        persisted = _read_persisted_manifest(manifest)
+        assert persisted["plan_mode"] == "independent"
