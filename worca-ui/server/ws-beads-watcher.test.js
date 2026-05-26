@@ -29,8 +29,20 @@ describe('scheduleBeadsRefresh broadcast payload', () => {
     vi.resetModules();
 
     mockListIssuesShallow = vi.fn().mockResolvedValue([
-      { id: '1', title: 'A', status: 'closed', priority: 2, updated_at: '2026-01-01' },
-      { id: '2', title: 'B', status: 'open', priority: 1, updated_at: '2026-01-02' },
+      {
+        id: '1',
+        title: 'A',
+        status: 'closed',
+        priority: 2,
+        updated_at: '2026-01-01',
+      },
+      {
+        id: '2',
+        title: 'B',
+        status: 'open',
+        priority: 1,
+        updated_at: '2026-01-02',
+      },
     ]);
     mockEnrichIssuesWithDeps = vi.fn().mockResolvedValue([
       { id: '1', title: 'A', status: 'closed' },
@@ -104,7 +116,13 @@ describe('scheduleBeadsRefresh broadcast payload', () => {
     mockCountIssuesByRunLabel.mockRejectedValueOnce(new Error('bd fail'));
     // Ensure fingerprint changes so enrichment proceeds
     mockListIssuesShallow.mockResolvedValueOnce([
-      { id: '1', title: 'A', status: 'closed', priority: 2, updated_at: '2026-01-01-fail' },
+      {
+        id: '1',
+        title: 'A',
+        status: 'closed',
+        priority: 2,
+        updated_at: '2026-01-01-fail',
+      },
     ]);
 
     const broadcasts = [];
@@ -147,7 +165,13 @@ describe('payload dedup', () => {
     mockListIssuesShallow = vi.fn(() => {
       shallowCallCount++;
       return Promise.resolve([
-        { id: '1', title: 'A', status: 'closed', priority: 2, updated_at: `t${shallowCallCount}` },
+        {
+          id: '1',
+          title: 'A',
+          status: 'closed',
+          priority: 2,
+          updated_at: `t${shallowCallCount}`,
+        },
       ]);
     });
     mockEnrichIssuesWithDeps = vi
@@ -274,7 +298,13 @@ describe('getLatestCounts', () => {
     mockListIssuesShallow = vi.fn(() => {
       shallowCallCount++;
       return Promise.resolve([
-        { id: '1', title: 'A', status: 'open', priority: 2, updated_at: `t${shallowCallCount}` },
+        {
+          id: '1',
+          title: 'A',
+          status: 'open',
+          priority: 2,
+          updated_at: `t${shallowCallCount}`,
+        },
       ]);
     });
     mockEnrichIssuesWithDeps = vi
@@ -345,7 +375,9 @@ describe('getLatestCounts', () => {
     mockCountIssuesByRunLabel.mockResolvedValue({
       'run-1': { total: 4, done: 3 },
     });
-    mockEnrichIssuesWithDeps.mockResolvedValue([{ id: '2', title: 'B', status: 'open' }]);
+    mockEnrichIssuesWithDeps.mockResolvedValue([
+      { id: '2', title: 'B', status: 'open' },
+    ]);
 
     watchCallback('change', 'beads.db');
     await vi.advanceTimersByTimeAsync(600);
@@ -487,7 +519,15 @@ describe('refresh in-flight guard', () => {
           maxInFlight = Math.max(maxInFlight, inFlight);
           resolvers.push(() => {
             inFlight--;
-            res([{ id: '1', title: 'A', status: 'open', priority: 2, updated_at: `t${callCount}` }]);
+            res([
+              {
+                id: '1',
+                title: 'A',
+                status: 'open',
+                priority: 2,
+                updated_at: `t${callCount}`,
+              },
+            ]);
           });
         }),
     );
@@ -661,8 +701,20 @@ describe('list fingerprint bail', () => {
     vi.resetModules();
 
     mockListIssuesShallow = vi.fn().mockResolvedValue([
-      { id: '1', title: 'A', status: 'open', priority: 2, updated_at: '2026-01-01' },
-      { id: '2', title: 'B', status: 'closed', priority: 1, updated_at: '2026-01-02' },
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        updated_at: '2026-01-01',
+      },
+      {
+        id: '2',
+        title: 'B',
+        status: 'closed',
+        priority: 1,
+        updated_at: '2026-01-02',
+      },
     ]);
     mockEnrichIssuesWithDeps = vi.fn().mockResolvedValue([
       { id: '1', title: 'A', status: 'open' },
@@ -737,14 +789,71 @@ describe('list fingerprint bail', () => {
 
     // Shallow list changes
     mockListIssuesShallow.mockResolvedValue([
-      { id: '1', title: 'A', status: 'closed', priority: 2, updated_at: '2026-01-01' },
-      { id: '2', title: 'B', status: 'closed', priority: 1, updated_at: '2026-01-02' },
+      {
+        id: '1',
+        title: 'A',
+        status: 'closed',
+        priority: 2,
+        updated_at: '2026-01-01',
+      },
+      {
+        id: '2',
+        title: 'B',
+        status: 'closed',
+        priority: 1,
+        updated_at: '2026-01-02',
+      },
     ]);
 
     watchCallback('change', 'beads.db');
     await vi.advanceTimersByTimeAsync(600);
     expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(2); // called again
     expect(mockCountIssuesByRunLabel).toHaveBeenCalledTimes(2);
+  });
+
+  it('re-enriches when a dependency edge changes even if updated_at is unchanged', async () => {
+    const broadcaster = { broadcast: vi.fn() };
+
+    // Seed both reads with dependency_count so the first fingerprint captures it.
+    mockListIssuesShallow.mockResolvedValue([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        updated_at: '2026-01-01',
+        dependency_count: 0,
+        dependent_count: 0,
+      },
+    ]);
+
+    createBeadsWatcher({
+      worcaDir: '/fake/project/.claude/worca',
+      broadcaster,
+      projectId: 'p1',
+    });
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(1);
+
+    // A `bd dep add` changes dependency_count but NOT updated_at/status/etc.
+    // The fingerprint must still change so depends_on/blocked_by stays fresh.
+    mockListIssuesShallow.mockResolvedValue([
+      {
+        id: '1',
+        title: 'A',
+        status: 'open',
+        priority: 2,
+        updated_at: '2026-01-01',
+        dependency_count: 1,
+        dependent_count: 0,
+      },
+    ]);
+
+    watchCallback('change', 'beads.db');
+    await vi.advanceTimersByTimeAsync(600);
+    expect(mockEnrichIssuesWithDeps).toHaveBeenCalledTimes(2); // NOT bailed
   });
 
   it('records WAL stat on fingerprint bail', async () => {
@@ -816,7 +925,13 @@ describe('WAL self-read suppression', () => {
     mockListIssuesShallow = vi.fn(() => {
       shallowCallCount++;
       return Promise.resolve([
-        { id: '1', title: 'A', status: 'closed', priority: 2, updated_at: `t${shallowCallCount}` },
+        {
+          id: '1',
+          title: 'A',
+          status: 'closed',
+          priority: 2,
+          updated_at: `t${shallowCallCount}`,
+        },
       ]);
     });
     mockEnrichIssuesWithDeps = vi
@@ -936,7 +1051,9 @@ describe('WAL self-read suppression', () => {
     expect(broadcasts.length).toBe(1);
 
     // Mutate data so payload dedup doesn't suppress
-    mockEnrichIssuesWithDeps.mockResolvedValue([{ id: '1', title: 'A', status: 'open' }]);
+    mockEnrichIssuesWithDeps.mockResolvedValue([
+      { id: '1', title: 'A', status: 'open' },
+    ]);
 
     // WAL event with a DIFFERENT stat than what the watcher recorded
     const externalStat = { mtimeMs: 2000, size: 16384 };

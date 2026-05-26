@@ -39,8 +39,9 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   let lastSelfReadWalStat = null;
   let latestCounts = {};
   // In-flight guard + trailing coalesce. The refresh body spawns several `bd`
-  // subprocesses (listIssues + countIssuesByRunLabel) that, on a large beads db,
-  // take seconds. The debounce only collapses scheduling — once the async body
+  // subprocesses (listIssuesShallow, then enrichIssuesWithDeps +
+  // countIssuesByRunLabel when the fingerprint changes) that, on a large beads
+  // db, take seconds. The debounce only collapses scheduling — once the async body
   // is awaiting, a fresh db/WAL event would otherwise start an overlapping
   // refresh and pile up bd processes unbounded. Allow at most one refresh in
   // flight; events arriving mid-refresh collapse into a single trailing pass.
@@ -57,6 +58,12 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
         priority: i.priority,
         title: i.title,
         updated_at: i.updated_at,
+        // dependency_count/dependent_count come free in `bd list` (no `bd show`).
+        // They catch dependency-edge changes (`bd dep add/remove`) that don't
+        // bump an issue's own updated_at — without them the fingerprint would
+        // bail and leave depends_on/blocked_by (and blocked badges) stale.
+        dependency_count: i.dependency_count,
+        dependent_count: i.dependent_count,
       })),
     );
   }
