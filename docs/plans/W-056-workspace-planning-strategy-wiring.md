@@ -70,9 +70,10 @@ plan_source.add_argument(
 Update the help text on `--skip-planning` from `"use --plan per-project instead"` to `"every child runs its own Planner"` so the docstring matches reality.
 
 Validation rules enforced in `main()`:
-- `--workspace-plan` is mutually exclusive with `--project-plan` AND `--skip-planning`. argparse covers the first; an explicit check covers the second.
+- `--workspace-plan` is mutually exclusive with `--project-plan`. argparse enforces this via the `plan_source` group.
+- `--skip-planning` is NOT added to the argparse mutual-exclusion group (it is an existing standalone `store_true` flag and moving it would be a disruptive refactor). Instead, `_materialize_plan()` performs an explicit conflict check at the top: if `args.skip_planning` is set alongside `args.workspace_plan` or `args.project_plan`, it calls `parser.error(...)` before any branch executes (see Design §2).
 - `--workspace-plan PATH` must exist, be readable JSON, and validate against the `workspace_plan.json` schema via the existing `validate_workspace_plan()` helper (`src/worca/scripts/run_workspace.py:388`).
-- `--project-plan NAME=PATH` entries: NAME must appear in `ws.projects`; PATH must exist and be readable; duplicate NAMEs are an error. Projects not covered by any `--project-plan` are recorded for fallback (per-child Planner).
+- `--project-plan NAME=PATH` entries: NAME must appear in `ws.projects`; PATH must exist, be readable, and be non-empty (size > 0 after stripping whitespace); duplicate NAMEs are an error. Projects not covered by any `--project-plan` are recorded for fallback (per-child Planner).
 
 ### 2. CLI: plan-loading branches in `main()`
 
@@ -81,8 +82,17 @@ Validation rules enforced in `main()`:
 **Resolution:** Refactor the planning section into a small dispatcher with four sub-paths:
 
 ```python
-def _materialize_plan(args, ws, run_dir, manifest):
+def _materialize_plan(args, ws, run_dir, manifest, parser):
     """Populate manifest['plan']; return ('master'|'existing'|'per-repo'|'independent')."""
+    # Explicit conflict check: --skip-planning is not in the argparse
+    # mutual-exclusion group (it's a standalone store_true flag), so we
+    # guard here before any branch can silently win.
+    if args.skip_planning and (args.workspace_plan or args.project_plan):
+        parser.error(
+            "--skip-planning cannot be combined with "
+            "--workspace-plan or --project-plan"
+        )
+
     if args.skip_planning:
         return "independent"
 
@@ -116,19 +126,42 @@ def _materialize_plan(args, ws, run_dir, manifest):
     return "master"
 ```
 
-`_materialize_per_project_plans()` parses `NAME=PATH` entries, copies each file into the run dir as `{name}-plan.md` (so the dispatched children get a stable absolute path that survives `worca cleanup --workspace-id`), and returns the `{name: abs_path}` map. Projects missing from the map are not added — the DagExecutor's existing `.get(project)` lookup already returns `None` for those, which means the child runs without `--plan` (its own Planner runs). Emit a `workspace.plan.partial` event listing the uncovered projects.
+`_materialize_per_project_plans()` parses `NAME=PATH` entries, validates each file exists and is non-empty (size > 0 / non-whitespace content — empty plan files fail fast at launch rather than silently confusing the child Planner), copies each file into the run dir as `{name}-plan.md` (so the dispatched children get a stable absolute path that survives `worca cleanup --workspace-id`), and returns the `{name: abs_path}` map. Projects missing from the map are not added — the DagExecutor's existing `.get(project)` lookup already returns `None` for those, which means the child runs without `--plan` (its own Planner runs). Emit a `workspace.plan.partial` event listing the uncovered projects.
 
 `_load_workspace_plan_from_file()` reads the JSON and raises `WorkspacePlanError` on parse failure with a useful error message.
 
 Emit new events to match new modes:
-- `workspace.plan.loaded` — when `existing` or `per-repo` mode skips the master planner (payload: `mode`, `project_count`, `covered_projects`, `uncovered_projects`).
+- `workspace.plan.loaded` — when `existing` or fully-covered `per-repo` mode skips the master planner (payload: `mode`, `project_count`, `covered_projects`).
+- `workspace.plan.partial` — when `per-repo` mode has uncovered projects falling back to per-child Planner (payload: `mode`, `project_count`, `covered_projects`, `uncovered_projects`). This is a distinct, actionable condition: partial coverage means some children will plan independently, which a chat subscriber or webhook consumer may want to know about. Severity: warning.
 - Existing `workspace.plan.started` / `workspace.plan.completed` / `workspace.plan.failed` continue to fire only for `master` mode.
 
 ### 3. Server route: translate `plan_mode` to CLI flags
 
 **Current state:** `worca-ui/server/workspace-routes.js:952-1070` reads `plan_mode` from the form, sets `manifest.skip_planning = plan_mode === 'skip'`, drops `workspace_plan`. The dispatcher (`worca-ui/server/app.js:678-707`) reads from the manifest, not from the route, and only forwards `--skip-integration` and `--skip-planning`.
 
-**Resolution:** Two changes.
+**Resolution:** Three changes: multipart parser dispatch, plan-strategy resolver, and CLI dispatcher.
+
+**Multipart parser dispatch (`workspace-routes.js`):** The existing multipart parsing loop (lines 941-946) routes ALL filename-bearing parts to `guideFiles` via a blanket `if (part.filename != null)` check. Plan-related file uploads (`workspace_plan_file`, `project_plan_<name>`) would be misclassified as guide files. Update the loop to route parts by `part.name` before falling through to the `guideFiles` catch-all:
+
+```js
+let workspacePlanFileData = null;
+const projectPlanFiles = {};
+
+for (const part of parts) {
+  if (part.name === 'workspace_plan_file' && part.filename != null) {
+    workspacePlanFileData = { filename: part.filename, content: part.content };
+  } else if (part.name?.startsWith('project_plan_') && part.filename != null) {
+    const projectName = part.name.slice('project_plan_'.length);
+    projectPlanFiles[projectName] = { filename: part.filename, content: part.content };
+  } else if (part.filename != null) {
+    guideFiles.push({ filename: part.filename, content: part.content });
+  } else if (part.name) {
+    fields[part.name] = part.content.toString('utf8');
+  }
+}
+```
+
+The name-based checks (`workspace_plan_file`, `project_plan_*`) are tested before the generic `part.filename` catch-all, so guide files continue to work unchanged. `workspacePlanFileData` and `projectPlanFiles` are consumed below by `_resolvePlanStrategy()`.
 
 **Route (`workspace-routes.js`):** Replace the one-liner with a small mapping function and persist its outputs on the manifest:
 
@@ -155,10 +188,50 @@ function _resolvePlanStrategy(plan_mode, workspace_plan_path, project_plans, ws)
 }
 ```
 
+**Per-project plan upload handling:** The `projectPlanFiles` map (populated by the multipart dispatch above) contains one `{filename, content}` entry per project. Before calling `_resolvePlanStrategy()`, write each to `wsRunDir/plans/{sanitizedName}.md`, cap each at 256 KB (reject with 400 if exceeded — same shape as the existing `guide_files` cap), and build the `project_plans` path map:
+
+```js
+const projectPlans = {};
+for (const [name, file] of Object.entries(projectPlanFiles)) {
+  if (file.content.length > 256 * 1024) {
+    return res.status(400).json({
+      ok: false,
+      error: `Project plan for "${name}" exceeds 256 KB limit`,
+    });
+  }
+  const safeName = sanitizeFilename(name);
+  const planPath = join(wsRunDir, 'plans', `${safeName}.md`);
+  mkdirSync(dirname(planPath), { recursive: true });
+  writeFileSync(planPath, file.content);
+  projectPlans[name] = planPath;  // original name as key, safe path as value
+}
+```
+
+**Existing workspace plan upload handling:** When `plan_mode === 'existing'`, the upload comes via the `workspacePlanFileData` variable (from the multipart dispatch above) OR as a `workspace_plan` string field (server-side path, for power users / tests). File upload takes precedence. Write the uploaded file to `wsRunDir/workspace-plan.json` and pass its absolute path:
+
+```js
+let workspacePlanPath = null;
+if (workspacePlanFileData) {
+  workspacePlanPath = join(wsRunDir, 'workspace-plan.json');
+  writeFileSync(workspacePlanPath, workspacePlanFileData.content);
+} else if (fields.workspace_plan) {
+  // Server-side path: validate existence before passing through
+  if (!existsSync(fields.workspace_plan)) {
+    return res.status(400).json({
+      ok: false,
+      error: `workspace_plan path not found: ${fields.workspace_plan}`,
+    });
+  }
+  workspacePlanPath = fields.workspace_plan;
+}
+```
+
 Persist the resolved fields on the manifest:
 
 ```js
-const planResolution = _resolvePlanStrategy(plan_mode, ..., ws);
+const planResolution = _resolvePlanStrategy(
+  plan_mode, workspacePlanPath, projectPlans, ws,
+);
 const manifest = {
   ...,
   plan_mode,                                  // record what UI asked for
@@ -167,10 +240,6 @@ const manifest = {
   project_plans: planResolution.project_plans ?? null,
 };
 ```
-
-**Per-project plan upload handling:** the `per-repo` mode arrives as multipart form fields named `project_plan_<name>` (one file per project). The route writes each into `wsRunDir/plans/{name}.md` and builds the `project_plans` map of absolute paths before manifest write. Cap each plan at 256 KB and reject the request if exceeded — same shape as the existing `guide_files` cap (`guideCapBytes`).
-
-**Existing workspace plan upload handling:** when `plan_mode === 'existing'`, accept a `workspace_plan_file` multipart field (file) OR a `workspace_plan` field (server-side path string, for power users / tests). Write the file to `wsRunDir/workspace-plan.json` and pass its absolute path.
 
 **Dispatcher (`app.js`):** Forward the new manifest fields:
 
@@ -184,26 +253,81 @@ for (const [name, path] of Object.entries(manifest.project_plans || {})) {
 }
 ```
 
-### 4. UI: per-project plan upload widget
+### 4. UI: file upload widgets and plan mode controls
 
 **Current state:** `worca-ui/app/views/fleet-launcher.js:820-890` (`_workspacePlanSection`). When `existing` is selected, a single `sl-input` for `workspacePlanPath` appears. When `per-repo` or `independent` is selected, only a hint/alert appears. The form never actually uploads anything for these modes.
 
+**Important: Shoelace does not support `sl-input type="file"`.** Shoelace's `sl-input` only accepts text/number/search/etc. — `type="file"` silently falls back to a plain text input. All file pickers in this plan use the proven pattern from `launcher-shared.js:80-93`: an `sl-button` that programmatically creates a native `<input type="file">` via `document.createElement('input')`, clicks it, and reads the result in `onchange`. This pattern is already used by `guideUploadWidget()` for guide file uploads.
+
 **Resolution:**
 
-For `existing`, replace the text input with a file picker that uploads the JSON:
+**Shared helper:** Extract a reusable `filePickerButton()` from the `guideUploadWidget()` pattern in `launcher-shared.js`. This keeps the file-picker logic DRY across the guide upload, workspace plan upload, and per-project plan upload widgets:
+
+```js
+export function filePickerButton({ label, accept, multiple, onFiles, className }) {
+  return html`
+    <sl-button
+      size="small"
+      variant="default"
+      class=${className || 'btn-file-browse'}
+      @click=${() => {
+        const inp = document.createElement('input');
+        inp.type = 'file';
+        if (accept) inp.accept = accept;
+        if (multiple) inp.multiple = true;
+        inp.onchange = () => {
+          const files = [...(inp.files || [])];
+          if (files.length) onFiles(files);
+        };
+        inp.click();
+      }}
+    >${label || 'Browse files'}</sl-button>
+  `;
+}
+```
+
+Refactor `guideUploadWidget()` to call `filePickerButton()` internally (no behavior change, just dedup).
+
+**For `existing` mode — file picker + advanced server-side path toggle:**
+
+The primary input is a file upload button. Below it, an `sl-details` toggle reveals a text input for a server-side path — this is the "advanced" affordance for power users running the UI server on the same host as the workspace files (per the Decisions section). Only one is used: if a file is uploaded, it takes precedence over the path string; the path string is submitted only when no file is selected.
 
 ```js
 ${workspacePlanMode === 'existing' ? html`
-  <sl-input
-    class="input-workspace-plan-file"
-    type="file"
-    accept="application/json,.json"
-    @sl-change=${onWorkspacePlanFileSelected}
-  ></sl-input>
+  <div class="workspace-plan-upload">
+    ${filePickerButton({
+      label: 'Choose workspace plan…',
+      accept: 'application/json,.json',
+      className: 'btn-workspace-plan-browse',
+      onFiles: ([file]) => {
+        workspacePlanFile = file;
+        workspacePlanPath = null;  // file takes precedence
+        rerender();
+      },
+    })}
+    ${workspacePlanFile ? html`
+      <sl-tag
+        removable
+        class="workspace-plan-tag"
+        @sl-remove=${() => { workspacePlanFile = null; rerender(); }}
+      >${workspacePlanFile.name} (${_formatBytes(workspacePlanFile.size)})</sl-tag>
+    ` : nothing}
+    <sl-details summary="Advanced: server-side path" class="workspace-plan-advanced">
+      <sl-input
+        class="input-workspace-plan-path"
+        placeholder="/path/to/workspace-plan.json"
+        value=${workspacePlanPath || ''}
+        @sl-input=${(e) => { workspacePlanPath = e.target.value; }}
+      ></sl-input>
+      <small>Use when the plan file is already on the server host. Ignored if a file is uploaded above.</small>
+    </sl-details>
+  </div>
 ` : nothing}
 ```
 
-For `per-repo`, render one file picker per project (after a workspace is selected so `workspaceData.projects` is populated):
+**For `per-repo` mode — per-project file pickers:**
+
+Render one file-picker row per project (after a workspace is selected so `workspaceData.projects` is populated):
 
 ```js
 ${workspacePlanMode === 'per-repo' && workspaceData ? html`
@@ -211,13 +335,26 @@ ${workspacePlanMode === 'per-repo' && workspaceData ? html`
     ${workspaceData.projects.map(p => html`
       <div class="per-project-plan-row">
         <span class="per-project-plan-name">${p.name}</span>
-        <sl-input
-          type="file"
-          accept=".md,.markdown,text/markdown"
-          data-project=${p.name}
-          @sl-change=${onProjectPlanSelected}
-        ></sl-input>
-        ${perRepoPlans[p.name] ? html`<sl-icon name="check"></sl-icon>` : nothing}
+        ${filePickerButton({
+          label: 'Choose plan…',
+          accept: '.md,.markdown,text/markdown',
+          className: 'btn-project-plan-browse',
+          onFiles: ([file]) => {
+            perRepoPlans = { ...perRepoPlans, [p.name]: file };
+            rerender();
+          },
+        })}
+        ${perRepoPlans[p.name] ? html`
+          <sl-tag
+            removable
+            class="project-plan-tag"
+            @sl-remove=${() => {
+              const { [p.name]: _, ...rest } = perRepoPlans;
+              perRepoPlans = rest;
+              rerender();
+            }}
+          >${perRepoPlans[p.name].name}</sl-tag>
+        ` : nothing}
       </div>
     `)}
     <sl-alert variant="primary" open>
@@ -227,12 +364,16 @@ ${workspacePlanMode === 'per-repo' && workspaceData ? html`
 ` : nothing}
 ```
 
-Submit payload (`_submitWorkspaceLauncher`):
+**Submit payload (`_submitWorkspaceLauncher`):**
 
 ```js
 formData.append('plan_mode', workspacePlanMode);
-if (workspacePlanMode === 'existing' && workspacePlanFile) {
-  formData.append('workspace_plan_file', workspacePlanFile, workspacePlanFile.name);
+if (workspacePlanMode === 'existing') {
+  if (workspacePlanFile) {
+    formData.append('workspace_plan_file', workspacePlanFile, workspacePlanFile.name);
+  } else if (workspacePlanPath) {
+    formData.append('workspace_plan', workspacePlanPath);
+  }
 }
 if (workspacePlanMode === 'per-repo') {
   for (const [name, file] of Object.entries(perRepoPlans)) {
@@ -241,16 +382,53 @@ if (workspacePlanMode === 'per-repo') {
 }
 ```
 
-State additions to `fleet-launcher.js`:
+**State additions to `fleet-launcher.js`:**
 
 ```js
-let workspacePlanFile = null;             // File for 'existing'
+let workspacePlanFile = null;             // File for 'existing' (upload)
+let workspacePlanPath = null;             // string for 'existing' (server-side path)
 let perRepoPlans = {};                    // {projectName: File} for 'per-repo'
 ```
 
-`resetLauncherState()` clears both.
+`resetLauncherState()` clears all three.
 
-### 5. Manifest schema additions
+### 5. Chat renderers for new events
+
+**Current state:** `worca-ui/server/integrations/renderers.js:566-577` registers opt-in renderers for `workspace.plan.started`, `.completed`, and `.failed`. New event types need renderer entries to be visible to chat/webhook subscribers.
+
+**Resolution:** Add two new opt-in renderers matching the existing pattern:
+
+```js
+function renderWorkspacePlanLoaded(envelope) {
+  const p = envelope.payload ?? {};
+  const mode = p.mode === 'per-repo' ? 'per-repo plans' : 'existing workspace plan';
+  const parts = [`📋 **Workspace plan loaded:** ${workspaceTitle(envelope)}`];
+  parts.push(`   **Mode:** ${mode} (${p.project_count} project${p.project_count === 1 ? '' : 's'})`);
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspacePlanPartial(envelope) {
+  const p = envelope.payload ?? {};
+  const uncovered = (p.uncovered_projects || []).join(', ');
+  const parts = [`⚠️ **Partial plan coverage:** ${workspaceTitle(envelope)}`];
+  parts.push(`   **Covered:** ${(p.covered_projects || []).length} / ${p.project_count}`);
+  parts.push(`   **Falling back to per-child Planner:** ${uncovered}`);
+  return mdMsg(parts.join('\n'), 'warning');
+}
+```
+
+Register both in `OPT_IN_RENDERERS`:
+
+```js
+export const OPT_IN_RENDERERS = {
+  ...
+  'workspace.plan.loaded': renderWorkspacePlanLoaded,
+  'workspace.plan.partial': renderWorkspacePlanPartial,
+  ...
+};
+```
+
+### 6. Manifest schema additions
 
 | Field | Type | When set |
 |-------|------|----------|
@@ -264,53 +442,67 @@ UI run-detail can read `manifest.plan_mode` to show a "Planning: existing plan" 
 
 ## Implementation Plan
 
-### Phase 1: CLI flags + tests (Python)
+### Phase 1: CLI flags + events + tests (Python)
 
-**Files:** `src/worca/scripts/run_workspace.py`, `tests/test_run_workspace.py`
+**Files:** `src/worca/scripts/run_workspace.py`, `src/worca/events/types.py`, `tests/test_run_workspace.py`
 
 1. Add `--workspace-plan` and `--project-plan` flags in `create_parser()`.
 2. Implement `_load_workspace_plan_from_file()`, `_materialize_per_project_plans()`, `_materialize_plan()`.
 3. Refactor `main()`'s planning section to call `_materialize_plan()`.
 4. Update `--skip-planning` help text.
-5. Add `workspace.plan.loaded` event type in `src/worca/events/event_types.py`.
+5. Add `WORKSPACE_PLAN_LOADED` and `WORKSPACE_PLAN_PARTIAL` event constants in `src/worca/events/types.py`, with `workspace_plan_loaded_payload()` and `workspace_plan_partial_payload()` builder functions.
 6. Tests:
    - Each flag parses correctly; mutual exclusion enforced.
    - `--workspace-plan` happy path seeds manifest correctly.
    - `--workspace-plan` with invalid JSON / schema-failing JSON fails cleanly.
    - `--project-plan` with unknown project name fails cleanly.
+   - `--project-plan` with empty / whitespace-only plan file fails cleanly.
    - `--project-plan` partial coverage leaves uncovered projects to per-child Planner.
+   - `--project-plan` partial coverage emits `workspace.plan.partial` event with correct `covered_projects` / `uncovered_projects` lists.
    - `--workspace-plan` + `--skip-planning` rejected.
 
-### Phase 2: Server route + dispatcher (JS)
+### Phase 2: Server route + dispatcher + renderers (JS)
 
-**Files:** `worca-ui/server/workspace-routes.js`, `worca-ui/server/app.js`, `worca-ui/server/workspace-routes.test.js`
+**Files:** `worca-ui/server/workspace-routes.js`, `worca-ui/server/app.js`, `worca-ui/server/integrations/renderers.js`, `worca-ui/server/workspace-routes.test.js`, `worca-ui/server/integrations/renderers.test.js`
 
-1. Add `_resolvePlanStrategy()` helper in `workspace-routes.js`.
-2. Handle multipart fields `workspace_plan_file` and `project_plan_<name>` in the POST handler; write to `wsRunDir/workspace-plan.json` and `wsRunDir/plans/{name}.md`.
-3. Persist `plan_mode`, `workspace_plan_path`, `project_plans` on the manifest.
-4. Update dispatcher in `app.js` to forward `--workspace-plan` and `--project-plan` flags.
-5. Tests:
+1. Update the multipart parsing loop in `workspace-routes.js` to route `workspace_plan_file` and `project_plan_<name>` parts to dedicated variables before the `guideFiles` catch-all (see Design §3 multipart dispatch).
+2. Add `_resolvePlanStrategy()` helper in `workspace-routes.js`.
+3. Write uploaded plan files to `wsRunDir/` paths and build the `workspacePlanPath` / `projectPlans` maps before calling `_resolvePlanStrategy()`.
+4. Accept `workspace_plan` string field (server-side path) as fallback when no file is uploaded for `existing` mode.
+5. Persist `plan_mode`, `workspace_plan_path`, `project_plans` on the manifest.
+6. Update dispatcher in `app.js` to forward `--workspace-plan` and `--project-plan` flags.
+7. Add `renderWorkspacePlanLoaded` and `renderWorkspacePlanPartial` to `renderers.js`, registered in `OPT_IN_RENDERERS`.
+8. Tests:
    - Each `plan_mode` value produces the expected manifest fields.
-   - `existing` without `workspace_plan_file` → 400.
+   - `existing` without `workspace_plan_file` or `workspace_plan` string → 400.
+   - `existing` with file upload writes to expected path; `workspace_plan` string also accepted.
    - `per-repo` with no project plans → 400.
    - `per-repo` with unknown project name → 422.
-   - Uploaded files land in the expected paths.
+   - Uploaded plan files land in plan-specific paths, NOT in `guideFiles`.
+   - Guide file uploads still route to `guideFiles` when plan files are also present.
+   - Per-project plan file exceeding 256 KB → 400.
    - Dispatcher snapshot includes the new flags.
+   - `renderWorkspacePlanLoaded` produces info-severity message with mode and project count.
+   - `renderWorkspacePlanPartial` produces warning-severity message listing uncovered projects.
 
 ### Phase 3: UI launcher (JS)
 
-**Files:** `worca-ui/app/views/fleet-launcher.js`, `worca-ui/app/views/fleet-launcher.test.js`, `worca-ui/app/styles.css`
+**Files:** `worca-ui/app/views/launcher-shared.js`, `worca-ui/app/views/fleet-launcher.js`, `worca-ui/app/views/fleet-launcher.test.js`, `worca-ui/app/styles.css`
 
-1. Add `workspacePlanFile` and `perRepoPlans` state.
-2. Replace the `existing` text input with a file picker.
-3. Add per-project file pickers for `per-repo` mode.
-4. Wire `_submitWorkspaceLauncher()` to append the new multipart fields.
-5. Update `resetLauncherState()` and `getFleetLauncherSubmitState()` (if it surfaces plan state).
-6. Add minimal CSS for the per-project-plans grid.
-7. Tests (vitest):
-   - `existing` mode renders file picker, not text input.
-   - `per-repo` mode renders one row per project from `workspaceData.projects`.
+1. Extract `filePickerButton()` helper in `launcher-shared.js` from the existing `guideUploadWidget()` pattern; refactor `guideUploadWidget()` to use it.
+2. Add `workspacePlanFile`, `workspacePlanPath`, and `perRepoPlans` state to `fleet-launcher.js`.
+3. Replace the `existing` text input with a file-picker button (via `filePickerButton()`) plus an `sl-details` "Advanced: server-side path" toggle that reveals the existing text input.
+4. Add per-project file-picker rows for `per-repo` mode (one `filePickerButton()` per project).
+5. Wire `_submitWorkspaceLauncher()` to append the new multipart fields (file upload takes precedence over path string for `existing`).
+6. Update `resetLauncherState()` and `getFleetLauncherSubmitState()` (if it surfaces plan state).
+7. Add CSS for `.workspace-plan-upload`, `.workspace-plan-advanced`, `.per-project-plans`, `.per-project-plan-row`.
+8. Tests (vitest):
+   - `filePickerButton()` renders an `sl-button` with the given label and class.
+   - `existing` mode renders `.btn-workspace-plan-browse` button, not a file-type input.
+   - `existing` mode renders `sl-details` with "Advanced: server-side path" summary.
+   - `per-repo` mode renders one `.per-project-plan-row` per project from `workspaceData.projects`.
    - Submit FormData contains expected fields for each mode.
+   - `existing` submit prefers file over path string when both are set.
    - `independent` mode submits `plan_mode=independent` with no plan files.
 
 ### Phase 4: Integration + Playwright
@@ -333,16 +525,19 @@ UI run-detail can read `manifest.plan_mode` to show a "Planning: existing plan" 
 | File | Change |
 |------|--------|
 | `src/worca/scripts/run_workspace.py` | New `--workspace-plan`, `--project-plan` flags; `_materialize_plan()` dispatcher; updated `--skip-planning` help text |
-| `src/worca/events/event_types.py` | Add `WORKSPACE_PLAN_LOADED` event + payload helper |
-| `tests/test_run_workspace.py` | Add coverage for the two new flags and the dispatcher branches |
+| `src/worca/events/types.py` | Add `WORKSPACE_PLAN_LOADED` + `workspace_plan_loaded_payload()` and `WORKSPACE_PLAN_PARTIAL` + `workspace_plan_partial_payload()` |
+| `tests/test_run_workspace.py` | Add coverage for the two new flags, the dispatcher branches, and `workspace.plan.partial` event emission |
 | `tests/integration/test_workspace_planning_modes.py` | NEW — end-to-end Python integration for all four modes |
-| `worca-ui/server/workspace-routes.js` | `_resolvePlanStrategy()`; multipart upload handling for plans; manifest fields |
+| `worca-ui/server/workspace-routes.js` | `_resolvePlanStrategy()`; multipart upload handling for plans; `workspace_plan` string field for server-side path; manifest fields |
 | `worca-ui/server/app.js` | Forward `--workspace-plan` and `--project-plan` in dispatcher |
-| `worca-ui/server/workspace-routes.test.js` | Coverage for each `plan_mode` → manifest mapping; validation errors |
-| `worca-ui/app/views/fleet-launcher.js` | File pickers for `existing` and `per-repo`; new state; submit changes |
-| `worca-ui/app/views/fleet-launcher.test.js` | Coverage for new UI states + FormData shapes |
+| `worca-ui/server/integrations/renderers.js` | Add `renderWorkspacePlanLoaded` (info) and `renderWorkspacePlanPartial` (warning) to `OPT_IN_RENDERERS` |
+| `worca-ui/server/workspace-routes.test.js` | Coverage for each `plan_mode` → manifest mapping; validation errors; file vs path-string acceptance |
+| `worca-ui/server/integrations/renderers.test.js` | Coverage for new renderer output and severity |
+| `worca-ui/app/views/launcher-shared.js` | Extract `filePickerButton()` helper; refactor `guideUploadWidget()` to use it |
+| `worca-ui/app/views/fleet-launcher.js` | File-picker buttons for `existing` and `per-repo`; `sl-details` path toggle for `existing`; new state; submit changes |
+| `worca-ui/app/views/fleet-launcher.test.js` | Coverage for new UI states, file-picker rendering, path toggle, FormData shapes |
 | `worca-ui/app/views/run-detail.js` | Show `Planning: <mode>` badge from `manifest.plan_mode` |
-| `worca-ui/app/styles.css` | `.per-project-plans` grid styles |
+| `worca-ui/app/styles.css` | `.workspace-plan-upload`, `.workspace-plan-advanced`, `.per-project-plans` grid styles |
 | `worca-ui/e2e/workspace-launcher.spec.js` | NEW — Playwright happy path per mode |
 | `docs/workspace-runs.md` | Planning strategy section with mode comparison table |
 | `CLAUDE.md` | Cross-reference W-056 in the workspace section |
@@ -350,10 +545,15 @@ UI run-detail can read `manifest.plan_mode` to show a "Planning: existing plan" 
 ## Considerations
 
 - **Backward compatibility:** existing manifests have no `plan_mode` field. The run-detail badge code must default to `'master'` when the field is absent. The dispatcher already does the right thing for old manifests (no new flags forwarded if the fields aren't set).
-- **Partial coverage policy (`per-repo`):** uncovered projects fall back to per-child Planner with a warning, rather than failing the run. This matches the "make the labels honest" goal without forcing users to draft a plan for every project up front. The warning fires both as a stderr line and a `workspace.plan.partial` event.
+- **Partial coverage policy (`per-repo`):** uncovered projects fall back to per-child Planner with a warning, rather than failing the run. This matches the "make the labels honest" goal without forcing users to draft a plan for every project up front. The warning fires both as a stderr line and a `workspace.plan.partial` event (with a chat renderer at warning severity).
 - **Schema validation for `existing` mode:** reuses the existing `workspace_plan.json` schema and `validate_workspace_plan()`. Errors are surfaced as `workspace.plan.failed` events with `error_type=ValidationError`, matching the master-planner failure path.
+- **Markdown plan validation (`per-repo`):** existence + readability + non-empty (size > 0 / non-whitespace) sanity check before dispatch. Empty plan files fail fast at launch rather than silently confusing the child Planner. No schema — markdown plans stay free-form.
 - **Upload size caps:** per-project plans capped at 256 KB each, workspace plan capped at the existing `guideCapBytes` total (default 1 MB). Both raise 400 with a clear message.
 - **Multipart field naming:** `project_plan_<name>` lets the server reconstruct the project mapping without a separate `projects=[]` field. Names are sanitized via the existing `sanitizeFilename()` helper before being used as on-disk filenames; the original project name (unsanitized) is the map key.
+- **Multipart parser dispatch order:** The existing multipart loop routes all filename-bearing parts to `guideFiles`. The updated loop checks `part.name` for `workspace_plan_file` and `project_plan_*` prefixes before the `guideFiles` catch-all, so plan uploads are routed to dedicated variables and guide uploads continue to work unchanged.
+- **`--skip-planning` conflict guard:** `--skip-planning` remains a standalone `store_true` flag (not added to the argparse mutual-exclusion group — moving it would be a disruptive refactor of the existing CLI). Instead, `_materialize_plan()` performs an explicit `parser.error(...)` check at the top before any branch executes. This prevents `--skip-planning --workspace-plan foo.json` from silently taking the skip path and dropping the plan.
+- **Shoelace file picker pattern:** Shoelace's `sl-input` does not support `type="file"`. All file pickers use the proven `sl-button` + native `document.createElement('input')` pattern from `launcher-shared.js:80-93` (`guideUploadWidget()`), extracted into a shared `filePickerButton()` helper.
+- **Server-side path toggle (`existing` mode):** an `sl-details` "Advanced: server-side path" toggle exposes a text input for users running the server on the same host as the workspace files. File upload takes precedence; the path string is only submitted when no file is selected. This keeps the primary UX simple (file picker) while providing a real UI affordance for the path-string route — not just API/test-only.
 - **Governance:** no hook changes needed. Pre-prepared plans still flow through `--plan` to children, which already triggers the governance plan_check hook satisfaction in the child pipeline.
 - **Breaking changes:** none. The default `master` mode is unchanged. The three previously-broken modes now do what their labels say; users who somehow depended on the broken behavior will see the new (correct) behavior, but there is no plausible workflow that depends on the old silent fall-through.
 
@@ -370,16 +570,28 @@ UI run-detail can read `manifest.plan_mode` to show a "Planning: existing plan" 
 | Python | `test_materialize_plan_existing_happy_path` | `_materialize_plan()` seeds manifest from valid JSON |
 | Python | `test_materialize_plan_existing_invalid_schema` | Raises `WorkspacePlanError` with schema messages |
 | Python | `test_materialize_plan_per_repo_partial_coverage` | Uncovered projects omitted from `project_plans`; warning emitted |
+| Python | `test_materialize_plan_per_repo_emits_partial_event` | `workspace.plan.partial` fires with correct `covered_projects` / `uncovered_projects` lists |
+| Python | `test_materialize_plan_per_repo_full_coverage_emits_loaded` | `workspace.plan.loaded` fires (not `.partial`) when all projects are covered |
 | Python | `test_materialize_plan_per_repo_unknown_project` | Raises with clear message |
+| Python | `test_materialize_plan_per_repo_empty_plan_file` | Raises with clear message for empty / whitespace-only plan file |
 | Python | `test_materialize_plan_independent_sets_no_plan` | Manifest has no `plan` key; `skip_planning=true` |
+| JS | `multipart routes plan files to dedicated vars` | `workspace_plan_file` and `project_plan_*` parts are NOT in `guideFiles` |
+| JS | `multipart routes guide files alongside plan files` | Guide file uploads still land in `guideFiles` when plan parts are also present |
+| JS | `per-project plan over 256KB rejected` | 400 with size-limit error message |
 | JS | `resolvePlanStrategy maps each mode` | Server-side helper for all four values |
 | JS | `route rejects existing without file` | 400 with clear error |
+| JS | `route accepts existing with server-side path string` | Path-string field accepted when no file uploaded |
 | JS | `route rejects per-repo with no plans` | 400 with clear error |
 | JS | `route rejects per-repo with unknown project` | 422 with clear error |
 | JS | `dispatcher forwards new flags` | Snapshot of spawn args per manifest shape |
-| JS | `launcher renders file picker for existing` | DOM contains `.input-workspace-plan-file` |
+| JS | `renderWorkspacePlanLoaded produces info message` | Renderer output contains mode and project count at info severity |
+| JS | `renderWorkspacePlanPartial produces warning message` | Renderer lists uncovered projects at warning severity |
+| JS | `filePickerButton renders sl-button` | Helper produces `sl-button` with expected label and class |
+| JS | `launcher renders file picker for existing` | DOM contains `.btn-workspace-plan-browse` button |
+| JS | `launcher renders path toggle for existing` | DOM contains `sl-details` with "Advanced: server-side path" summary |
 | JS | `launcher renders one row per project for per-repo` | DOM contains N `.per-project-plan-row` elements |
 | JS | `launcher submit FormData per mode` | Each mode produces the expected multipart fields |
+| JS | `launcher submit existing prefers file over path` | File upload present → path string omitted from FormData |
 
 ### Integration / E2E Tests
 

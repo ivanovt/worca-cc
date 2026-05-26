@@ -65,6 +65,39 @@ function runWorcaCleanupSubprocess(flag, id) {
   });
 }
 
+export function buildWorkspaceArgs(workspace_root, workspace_id, manifest) {
+  const args = [
+    '-m',
+    'worca.scripts.run_workspace',
+    workspace_root,
+    '--workspace-id',
+    workspace_id,
+  ];
+  if (manifest.work_request?.source) {
+    args.push('--source', manifest.work_request.source);
+  } else {
+    args.push('--prompt', manifest.work_request?.description ?? '');
+  }
+  if (manifest.branch_template) {
+    args.push('--branch', manifest.branch_template);
+  }
+  if (manifest.skip_integration) args.push('--skip-integration');
+  if (manifest.skip_planning) args.push('--skip-planning');
+  if (manifest.max_parallel) {
+    args.push('--max-parallel', String(manifest.max_parallel));
+  }
+  for (const p of manifest.guide?.paths || []) {
+    args.push('--guide', p);
+  }
+  if (manifest.workspace_plan_path) {
+    args.push('--workspace-plan', manifest.workspace_plan_path);
+  }
+  for (const [name, path] of Object.entries(manifest.project_plans || {})) {
+    args.push('--project-plan', `${name}=${path}`);
+  }
+  return args;
+}
+
 export function createApp(options = {}) {
   const app = express();
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
@@ -733,29 +766,7 @@ export function createApp(options = {}) {
           child.unref();
           return;
         }
-        const args = [
-          '-m',
-          'worca.scripts.run_workspace',
-          workspace_root,
-          '--workspace-id',
-          workspace_id,
-        ];
-        if (manifest.work_request?.source) {
-          args.push('--source', manifest.work_request.source);
-        } else {
-          args.push('--prompt', manifest.work_request?.description ?? '');
-        }
-        if (manifest.branch_template) {
-          args.push('--branch', manifest.branch_template);
-        }
-        if (manifest.skip_integration) args.push('--skip-integration');
-        if (manifest.skip_planning) args.push('--skip-planning');
-        if (manifest.max_parallel) {
-          args.push('--max-parallel', String(manifest.max_parallel));
-        }
-        for (const p of manifest.guide?.paths || []) {
-          args.push('--guide', p);
-        }
+        const args = buildWorkspaceArgs(workspace_root, workspace_id, manifest);
         const child = spawn('python3', args, {
           detached: true,
           stdio: 'ignore',

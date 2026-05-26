@@ -40,6 +40,40 @@ function _resolveTemplate(template, projectPath) {
 }
 
 /**
+ * @param {{ label?: string, accept?: string, multiple?: boolean, onFiles?: function, className?: string }} opts
+ */
+export function filePickerButton({
+  label = 'Browse files',
+  accept,
+  multiple = true,
+  onFiles,
+  className = 'btn-file-picker',
+} = {}) {
+  return html`
+    <sl-button
+      size="small"
+      variant="default"
+      class="${className}"
+      @click=${
+        onFiles
+          ? () => {
+              const inp = document.createElement('input');
+              inp.type = 'file';
+              inp.multiple = multiple;
+              if (accept) inp.accept = accept;
+              inp.onchange = () => {
+                const files = [...(inp.files || [])];
+                if (files.length) onFiles(files);
+              };
+              inp.click();
+            }
+          : null
+      }
+    >${label}</sl-button>
+  `;
+}
+
+/**
  * @param {{ guides: Array<{name: string, size: number}> }} state
  * @param {{ onChange?: function, maxBytes?: number }} opts
  */
@@ -73,25 +107,12 @@ export function guideUploadWidget(
             : null
         }
       >
-        <sl-button
-          size="small"
-          variant="default"
-          class="btn-guide-browse"
-          @click=${
-            onChange
-              ? () => {
-                  const inp = document.createElement('input');
-                  inp.type = 'file';
-                  inp.multiple = true;
-                  inp.onchange = () => {
-                    const files = [...(inp.files || [])];
-                    if (files.length) onChange({ type: 'add-files', files });
-                  };
-                  inp.click();
-                }
-              : null
-          }
-        >Browse files</sl-button>
+        ${filePickerButton({
+          className: 'btn-guide-browse',
+          onFiles: onChange
+            ? (files) => onChange({ type: 'add-files', files })
+            : undefined,
+        })}
       </div>
       ${
         guides.length > 0

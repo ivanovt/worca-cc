@@ -65,6 +65,8 @@ describe('TIER1_EVENTS', () => {
     expect(TIER1_EVENTS).not.toContain('workspace.plan.started');
     expect(TIER1_EVENTS).not.toContain('workspace.plan.completed');
     expect(TIER1_EVENTS).not.toContain('workspace.plan.failed');
+    expect(TIER1_EVENTS).not.toContain('workspace.plan.loaded');
+    expect(TIER1_EVENTS).not.toContain('workspace.plan.partial');
     expect(TIER1_EVENTS).not.toContain('workspace.tier.started');
     expect(TIER1_EVENTS).not.toContain('workspace.tier.completed');
     expect(TIER1_EVENTS).not.toContain('workspace.integration_test.started');
@@ -901,6 +903,49 @@ describe('renderEvent', () => {
         'function',
       );
       expect(OPT_IN_RENDERERS['workspace.plan.failed']).toBeTypeOf('function');
+    });
+
+    it('OPT_IN_RENDERERS.workspace.plan.loaded/partial export', () => {
+      expect(OPT_IN_RENDERERS['workspace.plan.loaded']).toBeTypeOf('function');
+      expect(OPT_IN_RENDERERS['workspace.plan.partial']).toBeTypeOf('function');
+    });
+
+    it('workspace.plan.loaded renders info with mode and project count', () => {
+      const renderer = OPT_IN_RENDERERS['workspace.plan.loaded'];
+      const msg = renderer({
+        event_type: 'workspace.plan.loaded',
+        payload: {
+          workspace_name: 'my-ws',
+          mode: 'existing',
+          project_count: 3,
+          covered_projects: ['api', 'web', 'lib'],
+        },
+      });
+      expect(msg).not.toBeNull();
+      expect(msg.severity).toBe('info');
+      expect(bodyText(msg)).toContain('my-ws');
+      expect(bodyText(msg)).toContain('existing');
+      expect(bodyText(msg)).toContain('3');
+    });
+
+    it('workspace.plan.partial renders warning with uncovered projects', () => {
+      const renderer = OPT_IN_RENDERERS['workspace.plan.partial'];
+      const msg = renderer({
+        event_type: 'workspace.plan.partial',
+        payload: {
+          workspace_name: 'my-ws',
+          mode: 'per-repo',
+          project_count: 4,
+          covered_projects: ['api', 'web'],
+          uncovered_projects: ['lib', 'cli'],
+        },
+      });
+      expect(msg).not.toBeNull();
+      expect(msg.severity).toBe('warning');
+      expect(bodyText(msg)).toContain('my-ws');
+      expect(bodyText(msg)).toContain('per-repo');
+      expect(bodyText(msg)).toContain('lib');
+      expect(bodyText(msg)).toContain('cli');
     });
 
     it('OPT_IN_RENDERERS.workspace.integration_test.started/passed export', () => {

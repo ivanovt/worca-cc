@@ -420,7 +420,7 @@ Coordinate changes across interdependent projects with dependency-ordered execut
 
 A workspace is defined by `workspace.json` in a parent directory listing sibling projects with `depends_on` relationships, an optional `integration_test` command, and an optional `umbrella_repo`. Initialize with `worca workspace init <parent>`. Child pipelines are standard worca runs via `run_worktree.py` — governance, hooks, and stage machinery are unchanged.
 
-Supports `--guide`, `--skip-integration`, `--skip-planning` (each project plans independently), `--resume`, `--dry-run` (prints the DAG and exits), `--max-parallel` (default 5). Worktree cleanup via `worca cleanup --workspace-id <id>`.
+Supports `--guide`, `--skip-integration`, `--skip-planning` (each project plans independently), `--workspace-plan PATH` (reuse an existing workspace-plan.json), `--project-plan NAME=PATH` (repeatable, per-repo markdown plans), `--resume`, `--dry-run` (prints the DAG and exits), `--max-parallel` (default 5). Worktree cleanup via `worca cleanup --workspace-id <id>`. See W-056 for planning strategy options — four modes are documented in [`docs/workspace-runs.md` § Planning strategies](./docs/workspace-runs.md#planning-strategies).
 
 Full walkthrough (workspace.json schema, master-planner role, DAG executor + context injection between tiers, integration testing, PR linking with dependency comments, umbrella issue): [`docs/workspace-runs.md`](./docs/workspace-runs.md).
 

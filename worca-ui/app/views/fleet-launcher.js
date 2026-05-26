@@ -1,7 +1,11 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { dagGraphView } from './dag-graph.js';
-import { guideUploadWidget, planModeRadio } from './launcher-shared.js';
+import {
+  filePickerButton,
+  guideUploadWidget,
+  planModeRadio,
+} from './launcher-shared.js';
 import { isAtCapacity } from './new-run.js';
 
 const GUIDE_CAP_BYTES_DEFAULT = 128 * 1024; // matches src/worca/settings.json + GUIDE_MAX_BYTES_DEFAULT in work_request.py
@@ -47,6 +51,8 @@ let selectedWorkspace = '';
 let workspaceData = null; // { name, repos: [{name, depends_on, ...}] }
 let workspacePlanMode = 'master'; // master | existing | per-repo | independent
 let workspacePlanPath = '';
+let workspacePlanFile = null; // File object from file picker
+let perRepoPlans = {}; // { projectName: { name, size, file } }
 let ghAuthStatus = null; // null | 'checking' | 'ok' | 'failed'
 let ghAuthErrors = []; // [{org, command}]
 let skipAuthCheck = false;
@@ -80,6 +86,8 @@ export function resetLauncherState(overrides = {}) {
   workspaceData = overrides.workspaceData ?? null;
   workspacePlanMode = overrides.workspacePlanMode ?? 'master';
   workspacePlanPath = overrides.workspacePlanPath ?? '';
+  workspacePlanFile = overrides.workspacePlanFile ?? null;
+  perRepoPlans = overrides.perRepoPlans ?? {};
   ghAuthStatus = overrides.ghAuthStatus ?? null;
   ghAuthErrors = overrides.ghAuthErrors ?? [];
   skipAuthCheck = overrides.skipAuthCheck ?? false;
@@ -256,8 +264,24 @@ async function _submitWorkspaceLauncher({ rerender, onStarted } = {}) {
     // up — keeping the legacy field name unsent avoids confusion.
     if (headTemplate) formData.append('branch_template', headTemplate);
     formData.append('plan_mode', workspacePlanMode);
-    if (workspacePlanMode === 'existing' && workspacePlanPath)
-      formData.append('workspace_plan', workspacePlanPath);
+    if (workspacePlanMode === 'existing') {
+      if (workspacePlanFile?.file) {
+        formData.append(
+          'workspace_plan_file',
+          workspacePlanFile.file,
+          workspacePlanFile.name,
+        );
+      } else if (workspacePlanPath) {
+        formData.append('workspace_plan', workspacePlanPath);
+      }
+    }
+    if (workspacePlanMode === 'per-repo') {
+      for (const [projName, entry] of Object.entries(perRepoPlans)) {
+        if (entry?.file) {
+          formData.append(`project_plan_${projName}`, entry.file, entry.name);
+        }
+      }
+    }
     formData.append('max_parallel', String(maxParallel));
     for (const g of guides) {
       if (g.file) formData.append('guide_files', g.file, g.name);
@@ -857,19 +881,121 @@ function _workspacePlanSection({ rerender } = {}) {
         ${
           workspacePlanMode === 'existing'
             ? html`
-              <sl-input
-                class="input-workspace-plan-path"
-                placeholder="workspace-plan.json"
-                value="${workspacePlanPath}"
-                @sl-input=${
-                  rerender
-                    ? (e) => {
-                        workspacePlanPath = e.target.value;
+              <div class="workspace-plan-upload">
+                ${filePickerButton({
+                  label: 'Browse workspace plan',
+                  accept: '.json',
+                  multiple: false,
+                  className: 'btn-workspace-plan-browse',
+                  onFiles: rerender
+                    ? (files) => {
+                        workspacePlanFile = files[0]
+                          ? {
+                              name: files[0].name,
+                              size: files[0].size,
+                              file: files[0],
+                            }
+                          : null;
                         rerender();
                       }
-                    : null
+                    : undefined,
+                })}
+                ${
+                  workspacePlanFile
+                    ? html`
+                      <sl-tag
+                        removable
+                        class="workspace-plan-tag"
+                        @sl-remove=${
+                          rerender
+                            ? () => {
+                                workspacePlanFile = null;
+                                rerender();
+                              }
+                            : null
+                        }
+                      >${workspacePlanFile.name}</sl-tag>
+                    `
+                    : nothing
                 }
-              ></sl-input>
+                <sl-details class="workspace-plan-advanced" summary="Advanced: server-side path">
+                  <sl-input
+                    class="input-workspace-plan-path"
+                    placeholder="workspace-plan.json"
+                    value="${workspacePlanPath}"
+                    @sl-input=${
+                      rerender
+                        ? (e) => {
+                            workspacePlanPath = e.target.value;
+                            rerender();
+                          }
+                        : null
+                    }
+                  ></sl-input>
+                  <span class="settings-field-hint">File upload takes precedence over this path.</span>
+                </sl-details>
+              </div>
+            `
+            : nothing
+        }
+        ${
+          workspacePlanMode === 'per-repo'
+            ? html`
+              <div class="per-project-plans">
+                ${(workspaceData?.projects || []).map(
+                  (proj) => html`
+                    <div class="per-project-plan-row">
+                      <span class="per-project-plan-name">${proj.name}</span>
+                      ${filePickerButton({
+                        label: perRepoPlans[proj.name]
+                          ? perRepoPlans[proj.name].name
+                          : 'Browse plan',
+                        accept: '.md,.txt',
+                        multiple: false,
+                        className: 'btn-per-repo-plan-browse',
+                        onFiles: rerender
+                          ? (files) => {
+                              if (files[0]) {
+                                perRepoPlans = {
+                                  ...perRepoPlans,
+                                  [proj.name]: {
+                                    name: files[0].name,
+                                    size: files[0].size,
+                                    file: files[0],
+                                  },
+                                };
+                              }
+                              rerender();
+                            }
+                          : undefined,
+                      })}
+                      ${
+                        perRepoPlans[proj.name]
+                          ? html`
+                            <sl-tag
+                              removable
+                              class="per-project-plan-tag"
+                              @sl-remove=${
+                                rerender
+                                  ? () => {
+                                      const next = { ...perRepoPlans };
+                                      delete next[proj.name];
+                                      perRepoPlans = next;
+                                      rerender();
+                                    }
+                                  : null
+                              }
+                            >${perRepoPlans[proj.name].name}</sl-tag>
+                          `
+                          : nothing
+                      }
+                    </div>
+                  `,
+                )}
+                <sl-alert variant="neutral" open class="per-repo-fallback-alert">
+                  Projects without a plan file will fallback to their own Planner.
+                </sl-alert>
+              </div>
             `
             : nothing
         }

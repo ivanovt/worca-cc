@@ -177,6 +177,10 @@ def _read_log_tail(log_path: str | None, max_lines: int = 10) -> str | None:
     tail = "".join(lines[-max_lines:])
     return tail[-2048:] if len(tail) > 2048 else tail
 
+class WorkspacePlanError(Exception):
+    """Raised when a user-supplied workspace plan is invalid."""
+
+
 _AGENTS_DIR = os.path.join(os.path.dirname(worca.__file__), "agents", "core")
 _SCHEMAS_DIR = os.path.join(os.path.dirname(worca.__file__), "schemas")
 
@@ -474,6 +478,140 @@ def write_workspace_plan_files(plan: dict, run_dir: str) -> dict[str, str]:
     return project_plan_paths
 
 
+def _load_workspace_plan_from_file(path: str) -> dict:
+    """Read and parse a workspace-plan.json from disk."""
+    if not os.path.isfile(path):
+        raise WorkspacePlanError(f"workspace plan not found: {path}")
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        raise WorkspacePlanError(f"failed to parse workspace plan: {e}") from e
+
+
+def _materialize_per_project_plans(
+    project_plan_args: list[str],
+    workspace: Workspace,
+    run_dir: str,
+) -> dict[str, str]:
+    """Parse NAME=PATH entries, validate, copy into run_dir, return {name: path}."""
+    import shutil
+
+    known_projects = {p.name for p in workspace.projects}
+    project_plan_paths: dict[str, str] = {}
+
+    for entry in project_plan_args:
+        if "=" not in entry:
+            raise WorkspacePlanError(
+                f"invalid --project-plan format '{entry}': expected NAME=PATH"
+            )
+        name, path = entry.split("=", 1)
+        if name not in known_projects:
+            raise WorkspacePlanError(
+                f"unknown project '{name}' in --project-plan; "
+                f"known projects: {', '.join(sorted(known_projects))}"
+            )
+        if not os.path.isfile(path):
+            raise WorkspacePlanError(
+                f"project plan not found for '{name}': {path}"
+            )
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+        if not content.strip():
+            raise WorkspacePlanError(
+                f"project plan for '{name}' is empty: {path}"
+            )
+        dest = os.path.join(run_dir, f"{name}-plan.md")
+        shutil.copy2(path, dest)
+        project_plan_paths[name] = dest
+
+    return project_plan_paths
+
+
+def _materialize_plan(
+    args, ws, run_dir, manifest, parser,
+    *, workspace_id=None, settings_path=None,
+) -> str:
+    """Populate manifest['plan']; return the planning mode used."""
+    if args.skip_planning and (args.workspace_plan or args.project_plan):
+        parser.error(
+            "--skip-planning cannot be combined with "
+            "--workspace-plan or --project-plan"
+        )
+
+    if args.skip_planning:
+        return "independent"
+
+    if args.workspace_plan:
+        plan = _load_workspace_plan_from_file(args.workspace_plan)
+        errors = validate_workspace_plan(plan, ws)
+        if errors:
+            raise WorkspacePlanError("; ".join(errors))
+        project_plan_paths = write_workspace_plan_files(plan, run_dir)
+        manifest["plan"] = {
+            "workspace_plan_path": os.path.join(run_dir, "workspace-plan.json"),
+            "project_plans": project_plan_paths,
+            "source": "existing",
+        }
+        if workspace_id and settings_path:
+            emit_workspace_event(
+                workspace_id,
+                event_types.WORKSPACE_PLAN_LOADED,
+                event_types.workspace_plan_loaded_payload(
+                    ws.name,
+                    mode="existing",
+                    project_count=len(project_plan_paths),
+                    covered_projects=sorted(project_plan_paths),
+                ),
+                settings_path=settings_path,
+            )
+        return "existing"
+
+    if args.project_plan:
+        project_plan_paths = _materialize_per_project_plans(
+            args.project_plan, ws, run_dir,
+        )
+        all_projects = {p.name for p in ws.projects}
+        covered = set(project_plan_paths)
+        uncovered = sorted(all_projects - covered)
+
+        manifest["plan"] = {
+            "workspace_plan_path": None,
+            "project_plans": project_plan_paths,
+            "source": "per-repo",
+        }
+
+        if workspace_id and settings_path:
+            if uncovered:
+                emit_workspace_event(
+                    workspace_id,
+                    event_types.WORKSPACE_PLAN_PARTIAL,
+                    event_types.workspace_plan_partial_payload(
+                        ws.name,
+                        mode="per-repo",
+                        project_count=len(all_projects),
+                        covered_projects=sorted(covered),
+                        uncovered_projects=uncovered,
+                    ),
+                    settings_path=settings_path,
+                )
+            else:
+                emit_workspace_event(
+                    workspace_id,
+                    event_types.WORKSPACE_PLAN_LOADED,
+                    event_types.workspace_plan_loaded_payload(
+                        ws.name,
+                        mode="per-repo",
+                        project_count=len(all_projects),
+                        covered_projects=sorted(covered),
+                    ),
+                    settings_path=settings_path,
+                )
+        return "per-repo"
+
+    return "master"
+
+
 def run_workspace_planner(
     prompt: str,
     run_dir: str,
@@ -741,11 +879,24 @@ def create_parser() -> argparse.ArgumentParser:
         help="Skip the integration test phase",
     )
 
+    plan_source = parser.add_mutually_exclusive_group()
+    plan_source.add_argument(
+        "--workspace-plan",
+        metavar="PATH",
+        help="Path to an existing workspace-plan.json to reuse",
+    )
+    plan_source.add_argument(
+        "--project-plan",
+        action="append",
+        metavar="NAME=PATH",
+        help="Per-project plan file as NAME=PATH (repeatable)",
+    )
+
     parser.add_argument(
         "--skip-planning",
         action="store_true",
         default=False,
-        help="Skip the master planner; use --plan per-project instead",
+        help="Skip the master planner; every child runs its own Planner",
     )
 
     parser.add_argument(
@@ -1165,7 +1316,41 @@ def main(argv=None) -> int:
         settings_path=settings_path,
     )
 
-    if not args.skip_planning:
+    try:
+        plan_mode = _materialize_plan(
+            args, ws, run_dir, manifest, parser,
+            workspace_id=ws_id, settings_path=settings_path,
+        )
+    except WorkspacePlanError as e:
+        print(f"error: {e}", file=sys.stderr)
+        manifest["status"] = WorkspaceStatus.FAILED
+        write_workspace_manifest(manifest, run_dir)
+        emit_workspace_event(
+            ws_id,
+            event_types.WORKSPACE_PLAN_FAILED,
+            event_types.workspace_plan_failed_payload(
+                workspace_name=ws.name,
+                error=str(e),
+                error_type=type(e).__name__,
+                duration_ms=_ms_since(workspace_started_at),
+            ),
+            settings_path=settings_path,
+        )
+        emit_workspace_event(
+            ws_id,
+            event_types.WORKSPACE_FAILED,
+            event_types.workspace_failed_payload(
+                workspace_name=ws.name,
+                tier_count=len(ws.tiers),
+                completed_count=0,
+                failed_count=0,
+                duration_ms=_ms_since(workspace_started_at),
+            ),
+            settings_path=settings_path,
+        )
+        return 1
+
+    if plan_mode == "master":
         print(f"Running workspace planner for {ws.name}...")
         plan_started_at = datetime.now(timezone.utc).isoformat()
         emit_workspace_event(
@@ -1250,12 +1435,10 @@ def main(argv=None) -> int:
             return 1
 
         project_plan_paths = write_workspace_plan_files(plan, run_dir)
-        manifest["status"] = WorkspaceStatus.RUNNING
         manifest["plan"] = {
             "workspace_plan_path": os.path.join(run_dir, "workspace-plan.json"),
             "project_plans": project_plan_paths,
         }
-        write_workspace_manifest(manifest, run_dir)
         print(f"Workspace plan written: {len(project_plan_paths)} project plan(s)")
         emit_workspace_event(
             ws_id,
@@ -1268,9 +1451,19 @@ def main(argv=None) -> int:
             ),
             settings_path=settings_path,
         )
-    else:
-        manifest["status"] = WorkspaceStatus.RUNNING
-        write_workspace_manifest(manifest, run_dir)
+    elif plan_mode in ("existing", "per-repo"):
+        project_plan_paths = manifest.get("plan", {}).get("project_plans", {})
+        print(f"Plan loaded ({plan_mode}): {len(project_plan_paths)} project plan(s)")
+
+    # Persist the resolved planning mode so the UI plan-mode badge has a
+    # source of truth. The server seeds manifest["plan_mode"] before spawning
+    # this process, but create_workspace_manifest() rebuilds the manifest from
+    # scratch and write_workspace_manifest() below overwrites the same file —
+    # without this line the server's value is clobbered and the badge always
+    # falls back to "master".
+    manifest["plan_mode"] = plan_mode
+    manifest["status"] = WorkspaceStatus.RUNNING
+    write_workspace_manifest(manifest, run_dir)
 
     from worca.workspace.dag_executor import DagExecutor
     from worca.workspace.integration_test import run_integration_test
