@@ -4415,35 +4415,35 @@ def test_target_branch_none_when_absent(tmp_path, monkeypatch):
 
 # ---- _resolve_project_root_for_registration ----
 
-def test_resolve_project_root_in_place_mode():
+def test_resolve_project_root_in_place_mode(tmp_path):
     """Without registry_base, derive from <project>/.claude/settings.json."""
     from worca.orchestrator.runner import _resolve_project_root_for_registration
 
+    settings_path = str(tmp_path / ".claude" / "settings.json")
     result = _resolve_project_root_for_registration(
-        settings_path="/repo/myproj/.claude/settings.json",
+        settings_path=settings_path,
         registry_base=None,
     )
-    assert result == "/repo/myproj"
+    assert result == str(tmp_path)
 
 
-def test_resolve_project_root_worktree_mode_uses_registry_base():
+def test_resolve_project_root_worktree_mode_uses_registry_base(tmp_path):
     """In worktree mode, the parent project's .worca is the authoritative
     anchor — registering settings_path's dir would name the worktree as a
     project (pipeline-<runid>)."""
     from worca.orchestrator.runner import _resolve_project_root_for_registration
 
-    settings_path = (
-        "/repo/myproj/.worktrees/pipeline-20260501-000000-000-abcd"
-        "/.claude/settings.json"
+    settings_path = str(
+        tmp_path / ".worktrees" / "pipeline-20260501-000000-000-abcd"
+        / ".claude" / "settings.json"
     )
-    registry_base = "/repo/myproj/.worca"
+    registry_base = str(tmp_path / ".worca")
 
     result = _resolve_project_root_for_registration(
         settings_path=settings_path,
         registry_base=registry_base,
     )
-    assert result == "/repo/myproj"
-    # Specifically: not the worktree path
+    assert result == str(tmp_path)
     assert "pipeline-" not in result
     assert ".worktrees" not in result
 

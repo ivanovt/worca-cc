@@ -183,8 +183,8 @@ class TestMainCopyClaudeConfig:
             main()
 
         assert len(copy_calls) == 2
-        assert copy_calls[0] == (".claude", wt_paths[0] + "/.claude")
-        assert copy_calls[1] == (".claude", wt_paths[1] + "/.claude")
+        assert copy_calls[0] == (".claude", os.path.join(wt_paths[0], ".claude"))
+        assert copy_calls[1] == (".claude", os.path.join(wt_paths[1], ".claude"))
 
     def test_copy_dst_is_dot_claude_inside_worktree(self, monkeypatch, tmp_path):
         from concurrent.futures import ThreadPoolExecutor
@@ -214,7 +214,7 @@ class TestMainCopyClaudeConfig:
         assert len(copy_calls) == 1
         src, dst = copy_calls[0]
         assert src == ".claude"
-        assert dst == wt_path + "/.claude"
+        assert dst == os.path.join(wt_path, ".claude")
 
 
 # --- --guide flag ---

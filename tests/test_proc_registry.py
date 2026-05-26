@@ -121,6 +121,7 @@ class TestPosixCapabilityGuard:
             # Even our own live process reports not-ours: no group probe runs.
             assert is_alive_and_ours(pgid=pid, pid=pid, start_time=time.time()) is False
 
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX-only: os.killpg")
     def test_kill_group_noop_without_proc_groups(self):
         from worca.utils import proc_registry
         with mock.patch.object(proc_registry, "_HAS_PROC_GROUPS", False), \
