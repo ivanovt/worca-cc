@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  filePickerButton,
   guideUploadWidget,
   headTemplateInput,
   initProgressStrip,
@@ -24,6 +25,53 @@ function renderToString(template) {
   });
   return result;
 }
+
+// ── filePickerButton ────────────────────────────────────────────────────────
+
+describe('filePickerButton', () => {
+  it('renders an sl-button with the given label', () => {
+    const out = renderToString(filePickerButton({ label: 'Upload plan' }));
+    expect(out).toContain('sl-button');
+    expect(out).toContain('Upload plan');
+  });
+
+  it('applies custom className to the button', () => {
+    const out = renderToString(
+      filePickerButton({ label: 'Pick', className: 'btn-pick-plan' }),
+    );
+    expect(out).toContain('btn-pick-plan');
+  });
+
+  it('defaults className to btn-file-picker when not provided', () => {
+    const out = renderToString(filePickerButton({ label: 'Pick' }));
+    expect(out).toContain('btn-file-picker');
+  });
+
+  it('renders default label "Browse files" when label is omitted', () => {
+    const out = renderToString(filePickerButton({}));
+    expect(out).toContain('Browse files');
+  });
+
+  it('renders small default variant button', () => {
+    const out = renderToString(filePickerButton({ label: 'Go' }));
+    expect(out).toContain('size="small"');
+    expect(out).toContain('variant="default"');
+  });
+});
+
+// ── guideUploadWidget uses filePickerButton ─────────────────────────────────
+
+describe('guideUploadWidget still uses filePickerButton internally', () => {
+  it('still renders btn-guide-browse class on the browse button', () => {
+    const out = renderToString(guideUploadWidget({ guides: [] }));
+    expect(out).toContain('btn-guide-browse');
+  });
+
+  it('still renders Browse files label', () => {
+    const out = renderToString(guideUploadWidget({ guides: [] }));
+    expect(out).toContain('Browse files');
+  });
+});
 
 // ── guideUploadWidget ───────────────────────────────────────────────────────
 

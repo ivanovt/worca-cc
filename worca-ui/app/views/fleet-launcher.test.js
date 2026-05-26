@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   fleetLauncherView,
   getFleetLauncherSubmitState,
   resetLauncherState,
   submitFleetLauncher,
 } from './fleet-launcher.js';
+import { filePickerButton } from './launcher-shared.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -582,6 +583,165 @@ describe('fleetLauncherView — workspace submit state', () => {
   });
 });
 
+// ── workspace plan file pickers (existing + per-repo modes) ────────────────
+
+describe('fleetLauncherView — existing plan mode file picker', () => {
+  const wsBase = {
+    launcherMode: 'workspace',
+    selectedWorkspace: 'my-ws',
+    workspaceData: {
+      name: 'my-ws',
+      projects: [
+        { name: 'api', depends_on: [] },
+        { name: 'web', depends_on: ['api'] },
+      ],
+    },
+    workspacePlanMode: 'existing',
+  };
+
+  it('renders a file picker button for workspace plan upload', () => {
+    resetLauncherState(wsBase);
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('btn-workspace-plan-browse');
+  });
+
+  it('renders an advanced path toggle with sl-details', () => {
+    resetLauncherState(wsBase);
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('workspace-plan-advanced');
+    expect(out).toContain('sl-details');
+    expect(out).toContain('server-side path');
+  });
+
+  it('renders the path input inside the advanced toggle', () => {
+    resetLauncherState({ ...wsBase, workspacePlanPath: '/tmp/plan.json' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('input-workspace-plan-path');
+    expect(out).toContain('/tmp/plan.json');
+  });
+
+  it('does not render file picker in master mode', () => {
+    resetLauncherState({ ...wsBase, workspacePlanMode: 'master' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('btn-workspace-plan-browse');
+    expect(out).not.toContain('workspace-plan-advanced');
+  });
+
+  it('shows uploaded file tag when workspacePlanFile is set', () => {
+    resetLauncherState({
+      ...wsBase,
+      workspacePlanFile: { name: 'my-plan.json', size: 1024 },
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('my-plan.json');
+    expect(out).toContain('workspace-plan-upload');
+  });
+});
+
+describe('fleetLauncherView — per-repo plan mode', () => {
+  const wsBase = {
+    launcherMode: 'workspace',
+    selectedWorkspace: 'my-ws',
+    workspaceData: {
+      name: 'my-ws',
+      projects: [
+        { name: 'api', depends_on: [] },
+        { name: 'web', depends_on: ['api'] },
+      ],
+    },
+    workspacePlanMode: 'per-repo',
+  };
+
+  it('renders a file picker row for each project', () => {
+    resetLauncherState(wsBase);
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('per-project-plans');
+    expect(out).toContain('per-project-plan-row');
+    expect(out).toContain('api');
+    expect(out).toContain('web');
+  });
+
+  it('renders fallback alert about projects without plans', () => {
+    resetLauncherState(wsBase);
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('fallback');
+  });
+
+  it('does not render per-project rows in master mode', () => {
+    resetLauncherState({ ...wsBase, workspacePlanMode: 'master' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('per-project-plans');
+    expect(out).not.toContain('per-project-plan-row');
+  });
+
+  it('shows uploaded file name when a per-repo plan is set', () => {
+    resetLauncherState({
+      ...wsBase,
+      perRepoPlans: { api: { name: 'api-plan.md', size: 512 } },
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('api-plan.md');
+  });
+});
+
+describe('resetLauncherState — new plan fields', () => {
+  it('resets workspacePlanFile to null', () => {
+    resetLauncherState({ workspacePlanFile: { name: 'x.json', size: 1 } });
+    resetLauncherState();
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('x.json');
+  });
+
+  it('resets perRepoPlans to empty object', () => {
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'ws',
+      workspaceData: { name: 'ws', projects: [{ name: 'a', depends_on: [] }] },
+      workspacePlanMode: 'per-repo',
+      perRepoPlans: { a: { name: 'old.md', size: 10 } },
+    });
+    resetLauncherState({
+      launcherMode: 'workspace',
+      selectedWorkspace: 'ws',
+      workspaceData: { name: 'ws', projects: [{ name: 'a', depends_on: [] }] },
+      workspacePlanMode: 'per-repo',
+    });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).not.toContain('old.md');
+  });
+});
+
+// ── filePickerButton renders sl-button with label+class ───────────────────
+
+describe('filePickerButton — sl-button with label and class', () => {
+  it('renders an sl-button element', () => {
+    const out = renderToString(filePickerButton({ label: 'Upload' }));
+    expect(out).toContain('sl-button');
+  });
+
+  it('renders the provided label text', () => {
+    const out = renderToString(
+      filePickerButton({ label: 'Browse workspace plan' }),
+    );
+    expect(out).toContain('Browse workspace plan');
+  });
+
+  it('applies the provided className', () => {
+    const out = renderToString(
+      filePickerButton({
+        label: 'Browse',
+        className: 'btn-workspace-plan-browse',
+      }),
+    );
+    expect(out).toContain('btn-workspace-plan-browse');
+  });
+
+  it('uses default className btn-file-picker when omitted', () => {
+    const out = renderToString(filePickerButton({}));
+    expect(out).toContain('btn-file-picker');
+  });
+});
+
 // ── workspace submit endpoint ──────────────────────────────────────────────
 
 describe('fleetLauncherView — workspace submit', () => {
@@ -597,5 +757,122 @@ describe('fleetLauncherView — workspace submit', () => {
       },
     });
     expect(lastError).toBe('error');
+  });
+});
+
+// ── workspace submit FormData shapes ──────────────────────────────────────
+
+describe('fleetLauncherView — workspace submit FormData', () => {
+  let capturedFormData;
+
+  const wsBase = {
+    launcherMode: 'workspace',
+    selectedWorkspace: 'my-ws',
+    workspaceData: {
+      name: 'my-ws',
+      projects: [
+        { name: 'api', depends_on: [] },
+        { name: 'web', depends_on: ['api'] },
+      ],
+    },
+    prompt: 'add auth',
+  };
+
+  beforeEach(() => {
+    capturedFormData = null;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url, opts) => {
+        capturedFormData = opts?.body;
+        return { json: async () => ({ ok: true, workspace_id: 'ws-123' }) };
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('master submit sends plan_mode=master with no plan files', async () => {
+    resetLauncherState({ ...wsBase, workspacePlanMode: 'master' });
+    await submitFleetLauncher({ rerender: () => {} });
+    expect(capturedFormData).toBeInstanceOf(FormData);
+    expect(capturedFormData.get('plan_mode')).toBe('master');
+    expect(capturedFormData.get('workspace_name')).toBe('my-ws');
+    expect(capturedFormData.get('prompt')).toBe('add auth');
+    expect(capturedFormData.get('workspace_plan_file')).toBeNull();
+    expect(capturedFormData.get('workspace_plan')).toBeNull();
+    expect(capturedFormData.get('project_plan_api')).toBeNull();
+  });
+
+  it('existing submit with file sends workspace_plan_file', async () => {
+    const file = new File(['{}'], 'plan.json', { type: 'application/json' });
+    resetLauncherState({
+      ...wsBase,
+      workspacePlanMode: 'existing',
+      workspacePlanFile: { name: 'plan.json', size: 2, file },
+    });
+    await submitFleetLauncher({ rerender: () => {} });
+    expect(capturedFormData.get('plan_mode')).toBe('existing');
+    expect(capturedFormData.get('workspace_plan_file')).toBeTruthy();
+  });
+
+  it('existing submit prefers file over path string', async () => {
+    const file = new File(['{}'], 'uploaded.json', {
+      type: 'application/json',
+    });
+    resetLauncherState({
+      ...wsBase,
+      workspacePlanMode: 'existing',
+      workspacePlanFile: { name: 'uploaded.json', size: 2, file },
+      workspacePlanPath: '/server/path/plan.json',
+    });
+    await submitFleetLauncher({ rerender: () => {} });
+    expect(capturedFormData.get('workspace_plan_file')).toBeTruthy();
+    expect(capturedFormData.get('workspace_plan')).toBeNull();
+  });
+
+  it('existing submit falls back to path when no file uploaded', async () => {
+    resetLauncherState({
+      ...wsBase,
+      workspacePlanMode: 'existing',
+      workspacePlanPath: '/server/path/plan.json',
+    });
+    await submitFleetLauncher({ rerender: () => {} });
+    expect(capturedFormData.get('plan_mode')).toBe('existing');
+    expect(capturedFormData.get('workspace_plan')).toBe(
+      '/server/path/plan.json',
+    );
+    expect(capturedFormData.get('workspace_plan_file')).toBeNull();
+  });
+
+  it('per-repo submit sends project_plan_<name> for projects with plans', async () => {
+    const apiFile = new File(['# API plan'], 'api-plan.md', {
+      type: 'text/markdown',
+    });
+    resetLauncherState({
+      ...wsBase,
+      workspacePlanMode: 'per-repo',
+      perRepoPlans: {
+        api: { name: 'api-plan.md', size: 11, file: apiFile },
+      },
+    });
+    await submitFleetLauncher({ rerender: () => {} });
+    expect(capturedFormData.get('plan_mode')).toBe('per-repo');
+    const file = capturedFormData.get('project_plan_api');
+    expect(file).toBeTruthy();
+    expect(file.name).toBe('api-plan.md');
+  });
+
+  it('independent submits plan_mode=independent with no plan files', async () => {
+    resetLauncherState({
+      ...wsBase,
+      workspacePlanMode: 'independent',
+    });
+    await submitFleetLauncher({ rerender: () => {} });
+    expect(capturedFormData.get('plan_mode')).toBe('independent');
+    expect(capturedFormData.get('workspace_plan_file')).toBeNull();
+    expect(capturedFormData.get('workspace_plan')).toBeNull();
+    expect(capturedFormData.get('project_plan_api')).toBeNull();
   });
 });

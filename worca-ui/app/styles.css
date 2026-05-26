@@ -5651,6 +5651,36 @@ sl-tooltip.bead-tooltip::part(body) {
   gap: 4px;
 }
 
+/* Workspace plan upload (existing mode) */
+.workspace-plan-upload {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.workspace-plan-advanced {
+  font-size: 13px;
+}
+.workspace-plan-advanced sl-input {
+  margin-top: 4px;
+}
+
+/* Per-project plan rows (per-repo mode) */
+.per-project-plans {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.per-project-plan-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.per-project-plan-name {
+  min-width: 100px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
 /* Base-branch validation states */
 .base-branch-validating {
   display: flex;

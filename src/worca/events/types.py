@@ -1,7 +1,7 @@
 """
 worca.events.types — event type constants and payload builder helpers.
 
-All 52 event type strings are defined as module-level constants grouped by
+All event type strings are defined as module-level constants grouped by
 category. One typed payload builder function exists per event type, ensuring
 consistent dict structure at every call site.
 
@@ -155,7 +155,7 @@ FLEET_CIRCUIT_BREAKER_TRIPPED   = "fleet.circuit_breaker.tripped"
 
 
 # ---------------------------------------------------------------------------
-# Workspace (multi-project coordinated pipeline) lifecycle events (18 events)
+# Workspace (multi-project coordinated pipeline) lifecycle events (20 events)
 # ---------------------------------------------------------------------------
 # Workspace events complement the per-child pipeline.run.* stream with
 # coordinator-layer transitions (planning, tier execution, integration test,
@@ -176,6 +176,8 @@ WORKSPACE_RESUMED                = "workspace.resumed"
 WORKSPACE_PLAN_STARTED           = "workspace.plan.started"
 WORKSPACE_PLAN_COMPLETED         = "workspace.plan.completed"
 WORKSPACE_PLAN_FAILED            = "workspace.plan.failed"
+WORKSPACE_PLAN_LOADED            = "workspace.plan.loaded"
+WORKSPACE_PLAN_PARTIAL           = "workspace.plan.partial"
 WORKSPACE_TIER_STARTED           = "workspace.tier.started"
 WORKSPACE_TIER_COMPLETED         = "workspace.tier.completed"
 WORKSPACE_TIER_FAILED            = "workspace.tier.failed"
@@ -1181,6 +1183,38 @@ def workspace_plan_failed_payload(
     if duration_ms is not None:
         p["duration_ms"] = duration_ms
     return p
+
+
+def workspace_plan_loaded_payload(
+    workspace_name: str,
+    *,
+    mode: str,
+    project_count: int,
+    covered_projects: list,
+) -> dict:
+    return {
+        "workspace_name": workspace_name,
+        "mode": mode,
+        "project_count": project_count,
+        "covered_projects": covered_projects,
+    }
+
+
+def workspace_plan_partial_payload(
+    workspace_name: str,
+    *,
+    mode: str,
+    project_count: int,
+    covered_projects: list,
+    uncovered_projects: list,
+) -> dict:
+    return {
+        "workspace_name": workspace_name,
+        "mode": mode,
+        "project_count": project_count,
+        "covered_projects": covered_projects,
+        "uncovered_projects": uncovered_projects,
+    }
 
 
 def workspace_tier_started_payload(

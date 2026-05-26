@@ -77,6 +77,12 @@ class TestWorkspaceEventConstants:
             == "workspace.circuit_breaker.tripped"
         )
 
+    def test_workspace_plan_loaded(self):
+        assert types.WORKSPACE_PLAN_LOADED == "workspace.plan.loaded"
+
+    def test_workspace_plan_partial(self):
+        assert types.WORKSPACE_PLAN_PARTIAL == "workspace.plan.partial"
+
     def test_guide_conflict(self):
         assert types.GUIDE_CONFLICT == "workspace.guide_conflict"
 
@@ -400,3 +406,53 @@ class TestGuideConflictPayload:
         )
         assert p["fleet_id"] == "f-789"
         assert "workspace_id" not in p
+
+
+class TestWorkspacePlanLoadedPayload:
+    def test_all_fields(self):
+        p = types.workspace_plan_loaded_payload(
+            "my-ws",
+            mode="existing",
+            project_count=3,
+            covered_projects=["lib", "backend", "frontend"],
+        )
+        assert p["workspace_name"] == "my-ws"
+        assert p["mode"] == "existing"
+        assert p["project_count"] == 3
+        assert p["covered_projects"] == ["lib", "backend", "frontend"]
+
+    def test_per_repo_mode(self):
+        p = types.workspace_plan_loaded_payload(
+            "my-ws",
+            mode="per-repo",
+            project_count=2,
+            covered_projects=["api", "web"],
+        )
+        assert p["mode"] == "per-repo"
+        assert p["project_count"] == 2
+
+
+class TestWorkspacePlanPartialPayload:
+    def test_all_fields(self):
+        p = types.workspace_plan_partial_payload(
+            "my-ws",
+            mode="per-repo",
+            project_count=3,
+            covered_projects=["lib"],
+            uncovered_projects=["backend", "frontend"],
+        )
+        assert p["workspace_name"] == "my-ws"
+        assert p["mode"] == "per-repo"
+        assert p["project_count"] == 3
+        assert p["covered_projects"] == ["lib"]
+        assert p["uncovered_projects"] == ["backend", "frontend"]
+
+    def test_single_uncovered(self):
+        p = types.workspace_plan_partial_payload(
+            "my-ws",
+            mode="per-repo",
+            project_count=2,
+            covered_projects=["lib"],
+            uncovered_projects=["backend"],
+        )
+        assert len(p["uncovered_projects"]) == 1

@@ -29,6 +29,7 @@ import {
 } from './paths.js';
 
 const GUIDE_CAP_BYTES_DEFAULT = 64 * 1024;
+const PROJECT_PLAN_CAP_BYTES = 256 * 1024;
 
 const WS_ID_RE = /^ws_\d{12}_[0-9a-f]{1,32}$/;
 
@@ -557,6 +558,103 @@ function parseMultipart(body, contentType) {
   return parts;
 }
 
+// ─── plan strategy resolution ─────────────────────────────────────────────
+
+/**
+ * Map a plan_mode to the manifest fields it implies and validate
+ * mode-specific preconditions.
+ *
+ * @param {string} plan_mode - 'master' | 'existing' | 'per-repo' | 'independent'
+ * @param {string|null} workspace_plan_path
+ * @param {Object|null} project_plans - { projectName: filePath, ... }
+ * @param {Object} ws - parsed workspace.json (needs ws.projects)
+ * @returns {{ ok: true, fields: object } | { ok: false, status: number, error: string }}
+ */
+export function _resolvePlanStrategy(
+  plan_mode,
+  workspace_plan_path,
+  project_plans,
+  ws,
+) {
+  const mode = plan_mode || 'master';
+  const projectNames = new Set((ws.projects ?? []).map((p) => p.name));
+
+  if (mode === 'existing') {
+    if (!workspace_plan_path) {
+      return {
+        ok: false,
+        status: 400,
+        error:
+          'existing mode requires a workspace plan (upload or server-side path)',
+      };
+    }
+    return {
+      ok: true,
+      fields: {
+        plan_mode: 'existing',
+        workspace_plan_path,
+        project_plans: null,
+        skip_planning: false,
+      },
+    };
+  }
+
+  if (mode === 'per-repo') {
+    const plans = project_plans ?? {};
+    const planKeys = Object.keys(plans);
+    if (planKeys.length === 0) {
+      return {
+        ok: false,
+        status: 400,
+        error: 'per-repo mode requires at least one project plan',
+      };
+    }
+    const unknown = planKeys.filter((name) => !projectNames.has(name));
+    if (unknown.length > 0) {
+      return {
+        ok: false,
+        status: 422,
+        error: `Unknown project(s) in per-repo plans: ${unknown.join(', ')}`,
+      };
+    }
+    return {
+      ok: true,
+      fields: {
+        plan_mode: 'per-repo',
+        workspace_plan_path: null,
+        project_plans: plans,
+        skip_planning: false,
+      },
+    };
+  }
+
+  if (mode === 'independent') {
+    return {
+      ok: true,
+      fields: {
+        plan_mode: 'independent',
+        workspace_plan_path: null,
+        project_plans: null,
+        skip_planning: true,
+      },
+    };
+  }
+
+  // master (default)
+  return {
+    ok: true,
+    fields: {
+      plan_mode: 'master',
+      workspace_plan_path: workspace_plan_path ?? null,
+      project_plans:
+        project_plans && Object.keys(project_plans).length > 0
+          ? project_plans
+          : null,
+      skip_planning: false,
+    },
+  };
+}
+
 // ─── default injectables ──────────────────────────────────────────────────
 
 function defaultValidateBaseBranch(repoPath, branch) {
@@ -929,6 +1027,8 @@ export function createWorkspaceRouter({
 
       let fields = {};
       const guideFiles = [];
+      let workspacePlanFileData = null;
+      const projectPlanFiles = {};
 
       if (isMultipart) {
         const rawBody = await readRawBody(req);
@@ -939,7 +1039,21 @@ export function createWorkspaceRouter({
             .json({ ok: false, error: 'Failed to parse multipart body' });
         }
         for (const part of parts) {
-          if (part.filename != null) {
+          if (part.name === 'workspace_plan_file' && part.filename != null) {
+            workspacePlanFileData = {
+              filename: part.filename,
+              content: part.content,
+            };
+          } else if (
+            part.name?.startsWith('project_plan_') &&
+            part.filename != null
+          ) {
+            const projectName = part.name.slice('project_plan_'.length);
+            projectPlanFiles[projectName] = {
+              filename: part.filename,
+              content: part.content,
+            };
+          } else if (part.filename != null) {
             guideFiles.push({ filename: part.filename, content: part.content });
           } else if (part.name) {
             fields[part.name] = part.content.toString('utf8');
@@ -1035,6 +1149,51 @@ export function createWorkspaceRouter({
         guideEntry = { paths, bytes: totalBytes, filenames, uploaded: true };
       }
 
+      // ── workspace plan file upload / server-side path ──────────────
+      let workspacePlanPath = null;
+      if (workspacePlanFileData) {
+        workspacePlanPath = join(wsRunDir, 'workspace-plan.json');
+        writeFileSync(workspacePlanPath, workspacePlanFileData.content);
+      } else if (fields.workspace_plan) {
+        if (!existsSync(fields.workspace_plan)) {
+          return res.status(400).json({
+            ok: false,
+            error: `workspace_plan path not found: ${fields.workspace_plan}`,
+          });
+        }
+        workspacePlanPath = fields.workspace_plan;
+      }
+
+      // ── per-project plan file uploads ──────────────────────────────
+      const projectPlans = {};
+      for (const [name, file] of Object.entries(projectPlanFiles)) {
+        if (file.content.length > PROJECT_PLAN_CAP_BYTES) {
+          return res.status(400).json({
+            ok: false,
+            error: `Project plan for "${name}" exceeds 256 KB limit`,
+          });
+        }
+        const safeName = sanitizeFilename(name);
+        const plansDir = join(wsRunDir, 'plans');
+        mkdirSync(plansDir, { recursive: true });
+        const planPath = join(plansDir, `${safeName}.md`);
+        writeFileSync(planPath, file.content);
+        projectPlans[name] = planPath;
+      }
+
+      // ── resolve plan strategy + validate ──────────────────────────
+      const planResult = _resolvePlanStrategy(
+        plan_mode,
+        workspacePlanPath,
+        Object.keys(projectPlans).length > 0 ? projectPlans : null,
+        ws,
+      );
+      if (!planResult.ok) {
+        return res
+          .status(planResult.status)
+          .json({ ok: false, error: planResult.error });
+      }
+
       const tiers = computeTiers(ws.projects);
       const dagTiers = tiers.map((projects, i) => ({
         tier: i,
@@ -1054,10 +1213,10 @@ export function createWorkspaceRouter({
           source: source ?? null,
         },
         guide: guideEntry,
+        ...planResult.fields,
         branch_template: branch_template ?? 'workspace/{slug}/{project}',
         max_parallel: Number(max_parallel) || 5,
         skip_integration: false,
-        skip_planning: plan_mode === 'skip',
         status: 'planning',
         halt_reason: null,
         dag: { tiers: dagTiers },

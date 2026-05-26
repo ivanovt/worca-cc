@@ -453,6 +453,32 @@ function renderWorkspacePlanFailed(envelope) {
   return mdMsg(parts.join('\n'), 'error');
 }
 
+function renderWorkspacePlanLoaded(envelope) {
+  const p = envelope.payload ?? {};
+  const parts = [`📋 **Workspace plan loaded:** ${workspaceTitle(envelope)}`];
+  parts.push(
+    `   **Mode:** ${p.mode ?? '?'} (${p.project_count ?? '?'} project${p.project_count === 1 ? '' : 's'})`,
+  );
+  return mdMsg(parts.join('\n'), 'info');
+}
+
+function renderWorkspacePlanPartial(envelope) {
+  const p = envelope.payload ?? {};
+  const uncovered = Array.isArray(p.uncovered_projects)
+    ? p.uncovered_projects
+    : [];
+  const parts = [
+    `⚠ **Workspace plan partial coverage:** ${workspaceTitle(envelope)}`,
+  ];
+  parts.push(
+    `   **Mode:** ${p.mode ?? '?'} — ${uncovered.length} uncovered project${uncovered.length === 1 ? '' : 's'}`,
+  );
+  if (uncovered.length > 0) {
+    parts.push(`   **Uncovered:** ${uncovered.join(', ')}`);
+  }
+  return mdMsg(parts.join('\n'), 'warning');
+}
+
 function renderWorkspaceTierStarted(envelope) {
   const p = envelope.payload ?? {};
   const projects = Array.isArray(p.projects) ? p.projects : [];
@@ -570,6 +596,8 @@ export const OPT_IN_RENDERERS = {
   'workspace.plan.started': renderWorkspacePlanStarted,
   'workspace.plan.completed': renderWorkspacePlanCompleted,
   'workspace.plan.failed': renderWorkspacePlanFailed,
+  'workspace.plan.loaded': renderWorkspacePlanLoaded,
+  'workspace.plan.partial': renderWorkspacePlanPartial,
   'workspace.tier.started': renderWorkspaceTierStarted,
   'workspace.tier.completed': renderWorkspaceTierCompleted,
   'workspace.integration_test.started': renderWorkspaceIntegrationStarted,

@@ -1142,6 +1142,10 @@ export function runDetailView(run, settings = {}, options = {}) {
               title="Open workspace detail"
             >${run.workspace_id}</a>
           </div>
+          <div class="run-plan-mode">
+            <span class="meta-label">Planning:</span>
+            <sl-badge class="plan-mode-badge" variant="neutral" pill>${run.manifest?.plan_mode || 'master'}</sl-badge>
+          </div>
         `
             : nothing
         }

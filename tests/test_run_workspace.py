@@ -170,6 +170,50 @@ class TestArgParsing:
         with pytest.raises(SystemExit):
             parser.parse_args(["--prompt", "x"])
 
+    def test_workspace_plan_flag(self):
+        from worca.scripts.run_workspace import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "/some/path", "--prompt", "x",
+            "--workspace-plan", "/tmp/workspace-plan.json",
+        ])
+        assert args.workspace_plan == "/tmp/workspace-plan.json"
+
+    def test_project_plan_flag_repeatable(self):
+        from worca.scripts.run_workspace import create_parser
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "/some/path", "--prompt", "x",
+            "--project-plan", "api=/tmp/api-plan.md",
+            "--project-plan", "web=/tmp/web-plan.md",
+        ])
+        assert args.project_plan == ["api=/tmp/api-plan.md", "web=/tmp/web-plan.md"]
+
+    def test_workspace_plan_and_project_plan_mutually_exclusive(self):
+        from worca.scripts.run_workspace import create_parser
+
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args([
+                "/some/path", "--prompt", "x",
+                "--workspace-plan", "/tmp/ws.json",
+                "--project-plan", "api=/tmp/api.md",
+            ])
+
+    def test_skip_planning_help_text_updated(self):
+        from worca.scripts.run_workspace import create_parser
+
+        parser = create_parser()
+        for action in parser._actions:
+            if "--skip-planning" in action.option_strings:
+                assert "--plan" not in action.help
+                assert "every child runs its own Planner" in action.help
+                break
+        else:
+            pytest.fail("--skip-planning not found")
+
 
 # ---- workspace ID generation ------------------------------------------------
 
@@ -533,6 +577,539 @@ class TestDryRun:
 
         captured = capsys.readouterr()
         assert "skip" in captured.out.lower()
+
+
+# ---- error handling ---------------------------------------------------------
+
+# ---- _materialize_plan dispatcher -------------------------------------------
+
+def _valid_workspace_plan():
+    return {
+        "summary": "Add user profiles across the platform",
+        "projects": [
+            {
+                "name": "lib",
+                "description": "Add profile model",
+                "acceptance_criteria": ["Profile model exists"],
+                "depends_on": [],
+            },
+            {
+                "name": "backend",
+                "description": "Add profile API",
+                "acceptance_criteria": ["GET /profiles works"],
+                "depends_on": ["lib"],
+            },
+            {
+                "name": "frontend",
+                "description": "Add profile page",
+                "acceptance_criteria": ["Profile page renders"],
+                "depends_on": ["backend"],
+            },
+        ],
+        "integration_expectations": ["All profiles sync"],
+    }
+
+
+class TestMaterializePlanConflictGuard:
+    def test_skip_planning_with_workspace_plan_rejected(self):
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "/some/path", "--prompt", "x",
+            "--skip-planning", "--workspace-plan", "/tmp/plan.json",
+        ])
+        with pytest.raises(SystemExit):
+            _materialize_plan(args, None, "/tmp/run", {}, parser)
+
+    def test_skip_planning_with_project_plan_rejected(self):
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "/some/path", "--prompt", "x",
+            "--skip-planning", "--project-plan", "lib=/tmp/lib.md",
+        ])
+        with pytest.raises(SystemExit):
+            _materialize_plan(args, None, "/tmp/run", {}, parser)
+
+
+class TestMaterializePlanIndependent:
+    def test_independent_returns_independent(self):
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+
+        parser = create_parser()
+        args = parser.parse_args(["/some/path", "--prompt", "x", "--skip-planning"])
+        result = _materialize_plan(args, None, "/tmp/run", {}, parser)
+        assert result == "independent"
+
+    def test_independent_does_not_set_plan_key(self):
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+
+        parser = create_parser()
+        args = parser.parse_args(["/some/path", "--prompt", "x", "--skip-planning"])
+        manifest = {}
+        _materialize_plan(args, None, "/tmp/run", manifest, parser)
+        assert "plan" not in manifest
+
+
+class TestMaterializePlanExisting:
+    def test_existing_happy_path(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        plan = _valid_workspace_plan()
+        plan_file = tmp_path / "workspace-plan.json"
+        plan_file.write_text(json.dumps(plan))
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--workspace-plan", str(plan_file),
+        ])
+        manifest = {}
+        result = _materialize_plan(args, ws, run_dir, manifest, parser)
+
+        assert result == "existing"
+        assert "plan" in manifest
+        assert manifest["plan"]["source"] == "existing"
+        assert "lib" in manifest["plan"]["project_plans"]
+        assert "backend" in manifest["plan"]["project_plans"]
+        assert "frontend" in manifest["plan"]["project_plans"]
+
+    def test_existing_invalid_json(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan, WorkspacePlanError,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        plan_file = tmp_path / "bad.json"
+        plan_file.write_text("not json {{{")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--workspace-plan", str(plan_file),
+        ])
+        with pytest.raises(WorkspacePlanError):
+            _materialize_plan(args, ws, run_dir, {}, parser)
+
+    def test_existing_schema_validation_failure(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan, WorkspacePlanError,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        plan_file = tmp_path / "bad-schema.json"
+        plan_file.write_text(json.dumps({"summary": "x"}))
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--workspace-plan", str(plan_file),
+        ])
+        with pytest.raises(WorkspacePlanError):
+            _materialize_plan(args, ws, run_dir, {}, parser)
+
+    def test_existing_file_not_found(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan, WorkspacePlanError,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--workspace-plan", "/nonexistent/plan.json",
+        ])
+        with pytest.raises(WorkspacePlanError):
+            _materialize_plan(args, ws, "/tmp/run", {}, parser)
+
+
+class TestMaterializePlanPerRepo:
+    def test_per_repo_full_coverage(self, tmp_path):
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        for name in ("lib", "backend", "frontend"):
+            (tmp_path / f"{name}-plan.md").write_text(f"# Plan for {name}\nDo stuff.")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", f"lib={tmp_path / 'lib-plan.md'}",
+            "--project-plan", f"backend={tmp_path / 'backend-plan.md'}",
+            "--project-plan", f"frontend={tmp_path / 'frontend-plan.md'}",
+        ])
+        manifest = {}
+        result = _materialize_plan(args, ws, run_dir, manifest, parser)
+
+        assert result == "per-repo"
+        assert manifest["plan"]["source"] == "per-repo"
+        assert len(manifest["plan"]["project_plans"]) == 3
+
+    def test_per_repo_partial_coverage(self, tmp_path):
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        (tmp_path / "lib-plan.md").write_text("# Plan for lib")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", f"lib={tmp_path / 'lib-plan.md'}",
+        ])
+        manifest = {}
+        result = _materialize_plan(args, ws, run_dir, manifest, parser)
+
+        assert result == "per-repo"
+        assert "lib" in manifest["plan"]["project_plans"]
+        assert "backend" not in manifest["plan"]["project_plans"]
+        assert "frontend" not in manifest["plan"]["project_plans"]
+
+    def test_per_repo_unknown_project(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan, WorkspacePlanError,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        (tmp_path / "unknown.md").write_text("# Plan")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", f"unknown={tmp_path / 'unknown.md'}",
+        ])
+        with pytest.raises(WorkspacePlanError, match="unknown"):
+            _materialize_plan(args, ws, run_dir, {}, parser)
+
+    def test_per_repo_empty_plan_file(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan, WorkspacePlanError,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        (tmp_path / "lib-plan.md").write_text("   \n  \n  ")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", f"lib={tmp_path / 'lib-plan.md'}",
+        ])
+        with pytest.raises(WorkspacePlanError, match="empty"):
+            _materialize_plan(args, ws, run_dir, {}, parser)
+
+    def test_per_repo_file_not_found(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan, WorkspacePlanError,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", "lib=/nonexistent/plan.md",
+        ])
+        with pytest.raises(WorkspacePlanError, match="not found"):
+            _materialize_plan(args, ws, "/tmp/run", {}, parser)
+
+    def test_per_repo_bad_format(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan, WorkspacePlanError,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", "no-equals-sign",
+        ])
+        with pytest.raises(WorkspacePlanError, match="NAME=PATH"):
+            _materialize_plan(args, ws, "/tmp/run", {}, parser)
+
+    def test_per_repo_copies_files_to_run_dir(self, tmp_path):
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        (tmp_path / "lib-plan.md").write_text("# Lib plan content")
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", f"lib={tmp_path / 'lib-plan.md'}",
+        ])
+        manifest = {}
+        _materialize_plan(args, ws, run_dir, manifest, parser)
+
+        plan_path = manifest["plan"]["project_plans"]["lib"]
+        assert plan_path.startswith(run_dir)
+        assert os.path.isfile(plan_path)
+        with open(plan_path) as f:
+            assert "Lib plan content" in f.read()
+
+
+class TestMaterializePlanEvents:
+    """_materialize_plan emits WORKSPACE_PLAN_LOADED / WORKSPACE_PLAN_PARTIAL."""
+
+    def test_existing_emits_plan_loaded(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+        from worca.events import types as event_types
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        plan = _valid_workspace_plan()
+        plan_file = tmp_path / "workspace-plan.json"
+        plan_file.write_text(json.dumps(plan))
+
+        mock_emit = MagicMock()
+        monkeypatch.setattr(
+            "worca.scripts.run_workspace.emit_workspace_event", mock_emit,
+        )
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--workspace-plan", str(plan_file),
+        ])
+        manifest = {}
+        _materialize_plan(
+            args, ws, run_dir, manifest, parser,
+            workspace_id="ws_test", settings_path="/tmp/s.json",
+        )
+
+        assert mock_emit.call_count == 1
+        call_args = mock_emit.call_args
+        assert call_args[0][1] == event_types.WORKSPACE_PLAN_LOADED
+        payload = call_args[0][2]
+        assert payload["mode"] == "existing"
+        assert set(payload["covered_projects"]) == {"lib", "backend", "frontend"}
+
+    def test_per_repo_full_coverage_emits_plan_loaded(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+        from worca.events import types as event_types
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        for name in ("lib", "backend", "frontend"):
+            (tmp_path / f"{name}-plan.md").write_text(f"# Plan for {name}\nDo stuff.")
+
+        mock_emit = MagicMock()
+        monkeypatch.setattr(
+            "worca.scripts.run_workspace.emit_workspace_event", mock_emit,
+        )
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", f"lib={tmp_path / 'lib-plan.md'}",
+            "--project-plan", f"backend={tmp_path / 'backend-plan.md'}",
+            "--project-plan", f"frontend={tmp_path / 'frontend-plan.md'}",
+        ])
+        manifest = {}
+        _materialize_plan(
+            args, ws, run_dir, manifest, parser,
+            workspace_id="ws_test", settings_path="/tmp/s.json",
+        )
+
+        assert mock_emit.call_count == 1
+        call_args = mock_emit.call_args
+        assert call_args[0][1] == event_types.WORKSPACE_PLAN_LOADED
+        payload = call_args[0][2]
+        assert payload["mode"] == "per-repo"
+
+    def test_per_repo_partial_coverage_emits_plan_partial(self, tmp_path, monkeypatch):
+        from unittest.mock import MagicMock
+        from worca.events import types as event_types
+        from worca.scripts.run_workspace import (
+            create_parser, _materialize_plan,
+        )
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        (tmp_path / "lib-plan.md").write_text("# Plan for lib\nDo stuff.")
+
+        mock_emit = MagicMock()
+        monkeypatch.setattr(
+            "worca.scripts.run_workspace.emit_workspace_event", mock_emit,
+        )
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--project-plan", f"lib={tmp_path / 'lib-plan.md'}",
+        ])
+        manifest = {}
+        _materialize_plan(
+            args, ws, run_dir, manifest, parser,
+            workspace_id="ws_test", settings_path="/tmp/s.json",
+        )
+
+        assert mock_emit.call_count == 1
+        call_args = mock_emit.call_args
+        assert call_args[0][1] == event_types.WORKSPACE_PLAN_PARTIAL
+        payload = call_args[0][2]
+        assert payload["mode"] == "per-repo"
+        assert payload["covered_projects"] == ["lib"]
+        assert set(payload["uncovered_projects"]) == {"backend", "frontend"}
+
+    def test_independent_no_event(self, monkeypatch):
+        from unittest.mock import MagicMock
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+
+        mock_emit = MagicMock()
+        monkeypatch.setattr(
+            "worca.scripts.run_workspace.emit_workspace_event", mock_emit,
+        )
+
+        parser = create_parser()
+        args = parser.parse_args(["/some/path", "--prompt", "x", "--skip-planning"])
+        _materialize_plan(
+            args, None, "/tmp/run", {}, parser,
+            workspace_id="ws_test", settings_path="/tmp/s.json",
+        )
+        mock_emit.assert_not_called()
+
+    def test_master_no_event(self, monkeypatch):
+        from unittest.mock import MagicMock
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+
+        mock_emit = MagicMock()
+        monkeypatch.setattr(
+            "worca.scripts.run_workspace.emit_workspace_event", mock_emit,
+        )
+
+        parser = create_parser()
+        args = parser.parse_args(["/some/path", "--prompt", "x"])
+        _materialize_plan(
+            args, None, "/tmp/run", {}, parser,
+            workspace_id="ws_test", settings_path="/tmp/s.json",
+        )
+        mock_emit.assert_not_called()
+
+    def test_no_event_without_workspace_id(self, tmp_path, monkeypatch):
+        """Backwards compat: no emission when workspace_id is not provided."""
+        from unittest.mock import MagicMock
+        from worca.scripts.run_workspace import create_parser, _materialize_plan
+        from worca.workspace.manifest import Workspace
+
+        ws_root = _write_workspace_json(tmp_path)
+        ws = Workspace.load(ws_root)
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        plan = _valid_workspace_plan()
+        plan_file = tmp_path / "workspace-plan.json"
+        plan_file.write_text(json.dumps(plan))
+
+        mock_emit = MagicMock()
+        monkeypatch.setattr(
+            "worca.scripts.run_workspace.emit_workspace_event", mock_emit,
+        )
+
+        parser = create_parser()
+        args = parser.parse_args([
+            ws_root, "--prompt", "x",
+            "--workspace-plan", str(plan_file),
+        ])
+        _materialize_plan(args, ws, run_dir, {}, parser)
+        mock_emit.assert_not_called()
+
+
+class TestLoadWorkspacePlanFromFile:
+    def test_happy_path(self, tmp_path):
+        from worca.scripts.run_workspace import _load_workspace_plan_from_file
+
+        plan = _valid_workspace_plan()
+        plan_file = tmp_path / "plan.json"
+        plan_file.write_text(json.dumps(plan))
+
+        result = _load_workspace_plan_from_file(str(plan_file))
+        assert result["summary"] == plan["summary"]
+
+    def test_file_not_found(self):
+        from worca.scripts.run_workspace import (
+            _load_workspace_plan_from_file, WorkspacePlanError,
+        )
+        with pytest.raises(WorkspacePlanError, match="not found"):
+            _load_workspace_plan_from_file("/nonexistent/plan.json")
+
+    def test_invalid_json(self, tmp_path):
+        from worca.scripts.run_workspace import (
+            _load_workspace_plan_from_file, WorkspacePlanError,
+        )
+        bad = tmp_path / "bad.json"
+        bad.write_text("{bad json")
+        with pytest.raises(WorkspacePlanError, match="parse"):
+            _load_workspace_plan_from_file(str(bad))
 
 
 # ---- error handling ---------------------------------------------------------

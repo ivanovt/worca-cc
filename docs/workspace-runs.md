@@ -91,6 +91,32 @@ tier 1: backend, frontend  (both depend on shared-lib)
 tier 2: e2e-tests          (depends on backend, frontend)
 ```
 
+## Planning strategies
+
+Workspace runs support four planning modes, controlled by `--skip-planning`, `--workspace-plan`, and `--project-plan` flags (or the UI launcher's "Workspace planning strategy" radio).
+
+| Mode | CLI flag(s) | What happens | When to use |
+|------|-------------|--------------|-------------|
+| **Master planner** (default) | _(none)_ | A planner agent decomposes the prompt into per-project sub-plans. | Starting from scratch — you have a prompt but no pre-made plans. |
+| **Existing workspace plan** | `--workspace-plan PATH` | Loads a previously-generated `workspace-plan.json`, validates it against the schema and `workspace.json` projects, then materializes per-project plan files. Skips the master planner. | Re-running with a known-good plan, or sharing a plan across environments. |
+| **Per-repo plans** | `--project-plan NAME=PATH` (repeatable) | Seeds per-project plans from user-supplied markdown files. Projects without a supplied plan fall back to per-child Planner (with a warning). | You already have plans for some or all projects — e.g. hand-written specs or plans from a previous dry run. |
+| **Independent plans** | `--skip-planning` | Skips the master planner entirely. Each child project runs its own Planner stage independently. | Loosely-coupled projects where a unified plan adds no value. |
+
+### Validation rules
+
+- `--skip-planning` cannot be combined with `--workspace-plan` or `--project-plan`.
+- `--workspace-plan` and `--project-plan` are mutually exclusive.
+- `--workspace-plan` must point to a valid JSON file matching the `workspace_plan.json` schema. Project names in the plan are cross-checked against `workspace.json`.
+- Each `--project-plan NAME=PATH` entry must reference a known project name and a non-empty readable file. Unknown project names or empty files are rejected at launch.
+
+### Events
+
+| Event | Emitted when |
+|-------|-------------|
+| `workspace.plan.loaded` | `existing` or `per-repo` mode successfully loads all plans |
+| `workspace.plan.partial` | `per-repo` mode has uncovered projects that will fall back to per-child Planner |
+| `workspace.plan.failed` | Plan loading or validation fails (any mode) |
+
 ## Launching a workspace run
 
 ### CLI flags
@@ -103,7 +129,9 @@ tier 2: e2e-tests          (depends on backend, frontend)
 | `--guide PATH` | Normative reference guide (repeatable). Authority order: guide > plan > description |
 | `--branch TEMPLATE` | Branch name template with `{workspace}`, `{project}`, `{slug}` placeholders. Default: `workspace/{slug}/{project}` |
 | `--skip-integration` | Skip the cross-project integration test phase |
-| `--skip-planning` | Skip the master planner; each project plans independently |
+| `--skip-planning` | Skip the master planner; each project plans independently (see [Planning strategies](#planning-strategies)) |
+| `--workspace-plan PATH` | Reuse an existing `workspace-plan.json` instead of running the master planner |
+| `--project-plan NAME=PATH` | Per-project plan file (repeatable). Projects without a plan fall back to per-child Planner |
 | `--resume WORKSPACE_ID` | Resume a failed/halted workspace run |
 | `--max-parallel N` | Max concurrent children within a tier (default: 5) |
 | `--dry-run` | Print the DAG and exit without launching children |
