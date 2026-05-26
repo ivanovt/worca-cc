@@ -6288,6 +6288,9 @@ sl-dialog.markdown-dialog::part(body) {
   font-size: 12px;
   max-height: 200px;
   overflow-y: auto;
+  /* Inherit the tooltip's (light) text color instead of --fg, which is the
+     main-panel foreground and renders dark-on-dark inside the tooltip. */
+  color: inherit;
 }
 .bead-tooltip-excerpt.markdown-body p {
   margin: 0.3em 0;
@@ -6296,6 +6299,18 @@ sl-dialog.markdown-dialog::part(body) {
   font-size: 11px;
   max-height: 120px;
   overflow: auto;
+}
+/* The base markdown code/blockquote/link colors assume the light main panel;
+   re-tint them for the dark tooltip surface so they stay legible. */
+.bead-tooltip-excerpt.markdown-body code,
+.bead-tooltip-excerpt.markdown-body pre {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.15);
+}
+.bead-tooltip-excerpt.markdown-body blockquote {
+  color: inherit;
+  opacity: 0.8;
+  border-left-color: rgba(255, 255, 255, 0.3);
 }
 
 .workspace-run-card .workspace-card-root,
