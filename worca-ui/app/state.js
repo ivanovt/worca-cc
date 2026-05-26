@@ -178,12 +178,28 @@ export function createStore(initial = {}) {
     getRunById(id) {
       return state.runs[id] ?? state.archivedRuns[id];
     },
+    // Log lines feed the xterm terminals directly (writeLogLine /
+    // writeLiveLogLine in the WS handlers), not the lit-html tree — the only
+    // lit-html consumer is the Log History stage-dropdown fallback. So append
+    // is a pure buffer mutation and deliberately does NOT emit(): the WS
+    // handlers schedule a single coalesced rerender after a batch. Emitting per
+    // line turned a backfill of N lines into N full synchronous app re-renders.
     appendLog(entry) {
       const logLines = [...state.logLines, entry];
       if (logLines.length > LOG_CAP)
         logLines.splice(0, logLines.length - LOG_CAP);
       state = { ...state, logLines };
-      emit();
+    },
+
+    // Batch variant for the log-bulk backfill: append all entries with a single
+    // array build (avoids the O(n^2) per-line spread) and, like appendLog, does
+    // not emit — the handler triggers one coalesced rerender afterwards.
+    appendLogs(entries) {
+      if (!entries || entries.length === 0) return;
+      const logLines = state.logLines.concat(entries);
+      if (logLines.length > LOG_CAP)
+        logLines.splice(0, logLines.length - LOG_CAP);
+      state = { ...state, logLines };
     },
 
     clearLog() {

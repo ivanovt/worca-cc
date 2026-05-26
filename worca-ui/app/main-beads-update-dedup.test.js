@@ -71,8 +71,10 @@ describe('beads-update handler: client-side dedup', () => {
     // The handler must store the new serialized payload for the next comparison
     expect(handler).toMatch(/lastBeadsPayload\s*=/);
 
-    // rerender() must still be called (it was there before dedup was added)
-    expect(handler).toContain('rerender()');
+    // A render must still be triggered after a changed payload. The handler
+    // routes through scheduleRerender() so a burst of beads WAL ticks coalesces
+    // into one render instead of one synchronous full render per tick.
+    expect(handler).toMatch(/scheduleRerender\(\)|[^e]rerender\(\)/);
   });
 
   it('resets dedup state on project switch', () => {

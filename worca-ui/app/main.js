@@ -977,11 +977,15 @@ ws.on('log-line', (payload) => {
       writeLiveIterationSeparator(payload.iteration);
     }
     writeLiveLogLine(payload);
+    // appendLog no longer emits; coalesced rerender keeps the Log History
+    // stage-dropdown fallback current as new stages produce output.
+    scheduleRerender();
   }
 });
 
 ws.on('log-bulk', (payload) => {
   if (payload && Array.isArray(payload.lines)) {
+    const entries = [];
     for (const line of payload.lines) {
       // NB: timestamp is receive-time, not original write-time (log files lack per-line timestamps)
       const entry = {
@@ -990,11 +994,15 @@ ws.on('log-bulk', (payload) => {
         line,
         timestamp: new Date().toISOString(),
       };
-      store.appendLog(entry);
+      entries.push(entry);
       // Log History: only write to the history terminal when a specific stage is selected
       if (logFilter !== '*') writeLogLine(entry);
       writeLiveLogLine(entry);
     }
+    // Single buffered append + one coalesced rerender for the whole backfill,
+    // instead of one full app render per line.
+    store.appendLogs(entries);
+    scheduleRerender();
   }
 });
 
@@ -1047,7 +1055,7 @@ ws.on('beads-update', (payload, msg) => {
     if (route.runId && route.section !== 'beads') fetchRunBeads(route.runId);
     if (route.runId && route.section === 'beads')
       fetchBeadsRunIssues(route.runId);
-    rerender();
+    scheduleRerender();
   }
 });
 
@@ -3704,6 +3712,26 @@ function rerender() {
   }
 }
 
+// Coalesce re-renders: a burst of state changes (the log-bulk backfill on
+// opening a run, beads-update WAL ticks, rapid status events) collapses into a
+// single synchronous render on the next animation frame instead of one full
+// app render per change. Direct rerender() calls from user actions stay
+// synchronous for immediate feedback.
+let _rerenderScheduled = false;
+function scheduleRerender() {
+  if (_rerenderScheduled) return;
+  _rerenderScheduled = true;
+  const flush = () => {
+    _rerenderScheduled = false;
+    rerender();
+  };
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(flush);
+  } else {
+    setTimeout(flush, 0);
+  }
+}
+
 // --- Sticky header scroll shadow ---
 let scrollListenerAttached = false;
 
@@ -3730,7 +3758,7 @@ function attachStickyHeaderListener() {
 // --- Bootstrap ---
 
 notificationManager.setRerender(rerender);
-store.subscribe(() => rerender());
+store.subscribe(() => scheduleRerender());
 applyTheme(store.getState().preferences.theme);
 if (route.projectId) {
   store.setState({ currentProjectId: route.projectId });
