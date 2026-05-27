@@ -81,14 +81,20 @@ describe('POST /api/runs/:id/learn', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    // Windows can hold an fs-watcher/child handle on the temp dir after the
-    // server closes (EBUSY on rmdir); retry generously before giving up.
-    rmSync(tmpDir, {
-      recursive: true,
-      force: true,
-      maxRetries: 20,
-      retryDelay: 250,
-    });
+    // The /learn endpoint spawns a detached learn script that can keep a handle
+    // on the temp dir past afterEach on Windows → EBUSY on rmdir, a race that
+    // retries don't reliably win. Retry, then swallow EBUSY/ENOTEMPTY: a leaked
+    // OS temp dir is harmless; a failed cleanup must not fail the test.
+    try {
+      rmSync(tmpDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 20,
+        retryDelay: 250,
+      });
+    } catch (err) {
+      if (err.code !== 'EBUSY' && err.code !== 'ENOTEMPTY') throw err;
+    }
   });
 
   it('returns 501 when worcaDir not configured', async () => {
