@@ -9,5 +9,18 @@
 	"assets": {
 		"directory": "./dist",
 		"not_found_handling": "404-page"
+	},
+	// Option B staging environment: a second Worker (worca-docs-staging) tracks
+	// the `master` branch and serves staging.docs.worca.dev. Its Workers Builds
+	// deploy command is `npx wrangler deploy -e staging`. The `assets` block is
+	// repeated here because env blocks do not reliably inherit it.
+	"env": {
+		"staging": {
+			"name": "worca-docs-staging",
+			"assets": {
+				"directory": "./dist",
+				"not_found_handling": "404-page"
+			}
+		}
 	}
 }
