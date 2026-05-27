@@ -12,6 +12,7 @@ worca ships with these built-in templates:
 | Template | What it's for |
 |---|---|
 | **`feature`** | Substantial new work. Full pipeline with Plan Review and Learn enabled, higher retry limits, and all approval gates active. |
+| **`feature-minor`** | A well-scoped feature a planner can handle confidently. Full implement/test/review/PR, but **no Plan Review, no Learn, and no approval gates** — runs autonomously. Lower retry limits and effort capped at `high`. |
 | **`bugfix`** | A focused fix. The planner investigates the root cause, the coordinator creates tight tasks, the implementer fixes it. |
 | **`quick-fix`** | Trivial changes. Plan and implement only — no test, review, or PR; the change is left on the branch for you to commit. |
 | **`refactor`** | Behavior-preserving change. The reviewer enforces that behavior doesn't change, a PR is opened for human review, and Learn captures invariants surfaced along the way. |
@@ -22,18 +23,18 @@ worca ships with these built-in templates:
 
 A template's main effect is the set of stages it enables. This matrix shows what runs where (Preflight always runs and is omitted):
 
-| Stage | `feature` | `bugfix` | `quick-fix` | `refactor` | `investigate` | `test-only` |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|
-| Plan | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Plan Review | ✓ | — | — | ✓ | ✓ | ✓ |
-| Coordinate | ✓ | ✓ | ✓ | ✓ | — | ✓ |
-| Implement | ✓ | ✓ | ✓ | ✓ | — | ✓ |
-| Test | ✓ | ✓ | — | ✓ | — | ✓ |
-| Review | ✓ | ✓ | — | ✓ | — | ✓ |
-| PR | ✓ | ✓ | — | ✓ | ✓ | ✓ |
-| Learn | ✓ | — | — | ✓ | — | — |
+| Stage | `feature` | `feature-minor` | `bugfix` | `quick-fix` | `refactor` | `investigate` | `test-only` |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| Plan | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Plan Review | ✓ | — | — | — | ✓ | ✓ | ✓ |
+| Coordinate | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| Implement | ✓ | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| Test | ✓ | ✓ | ✓ | — | ✓ | — | ✓ |
+| Review | ✓ | ✓ | ✓ | — | ✓ | — | ✓ |
+| PR | ✓ | ✓ | ✓ | — | ✓ | ✓ | ✓ |
+| Learn | ✓ | — | — | — | ✓ | — | — |
 
-`feature` and `refactor` run the same stages — they differ in *tuning*, not stage set: `refactor` puts every agent on Opus and has the Reviewer enforce behavior preservation. `quick-fix` stops after Implement, leaving the change on the branch for you to commit. `investigate` skips coding entirely and uses the PR stage to publish its report.
+`feature` and `refactor` run the same stages — they differ in *tuning*, not stage set: `refactor` puts every agent on Opus and has the Reviewer enforce behavior preservation. `feature-minor` runs the same stages as `bugfix` (full implement→test→review→PR, no Plan Review or Learn) but is framed for well-scoped *features* rather than fixes, caps effort at `high`, uses lower retry limits, and disables the plan-approval gate so it runs unattended. `quick-fix` stops after Implement, leaving the change on the branch for you to commit. `investigate` skips coding entirely and uses the PR stage to publish its report.
 
 ## Authoring your own
 

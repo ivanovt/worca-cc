@@ -19,7 +19,7 @@ worca run --worktree --source gh:issue:42 --template feature
 | `--spec FILE` | Path to spec/requirements file |
 | `--source TEXT` | Source reference (`gh:issue:42`, `bd:bd-abc`, or issue URL) |
 | `--plan FILE` | Pre-made plan file (skips Plan stage) |
-| `--template ID` | Pipeline template to apply (`feature`, `bugfix`, `quick-fix`, `refactor`, `investigate`, `test-only`, or any project/user template — see `worca templates list`) |
+| `--template ID` | Pipeline template to apply (`feature`, `feature-minor`, `bugfix`, `quick-fix`, `refactor`, `investigate`, `test-only`, or any project/user template — see `worca templates list`) |
 | `--param KEY=VALUE` | Override a template parameter (repeatable) |
 | `--resume` | Resume a previous run from status.json |
 | `--worktree` | Launch in an isolated git worktree (parallel-safe). Falls back to in-place if `run_worktree.py` is missing in the project runtime |
