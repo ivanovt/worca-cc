@@ -153,7 +153,10 @@ _MIGRATION_FIXTURES = {
             },
         }
     },
-    # 3) Already-migrated input — must be a no-op for both implementations.
+    # 3) Nested-shape input with no version stamp: both implementations stamp
+    #    the current version and move general-purpose from always_disallowed to
+    #    default_denied (v2 normalization). The assertion is parity — Python and
+    #    JS must produce byte-identical governance output.
     "already_migrated": {
         "worca": {
             "governance": {

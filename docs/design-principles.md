@@ -38,7 +38,7 @@ See [`docs/state-action-matrix.md`](./state-action-matrix.md) for the full state
 - **Source writes blocked until the plan file exists** — plan-first is enforced, not suggested.
 - **Consecutive test failures halt the pipeline** — circuit breaker against runaway broken loops.
 - **All governance lives in Python hooks** — enforcement at every tool call, not in agent prompts.
-- **`general-purpose` subagent is on an unbypassable denylist** — hard safety guardrail.
+- **`general-purpose` subagent is denied by default** — it spawns an unconstrained full-tool session, so it sits in `default_denied` (off under the wildcard); a project opts an agent in explicitly. Hard safety guardrail without a dead-end.
 - **Subagent dispatch uses per-agent allowlists** — least-privilege per role over global controls.
 
 ## Modularity & Configuration

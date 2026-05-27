@@ -73,8 +73,13 @@ _DISPATCH_DEFAULTS = {
         },
     },
     "subagents": {
-        "always_disallowed": ["general-purpose"],
-        "default_denied": [],
+        "always_disallowed": [],
+        # general-purpose spawns an unconstrained full-tool Claude session, so
+        # it stays denied under the "*" wildcard — but as default_denied (not
+        # always_disallowed) a project can re-allow it per agent by naming it
+        # in per_agent_allow. The old always_disallowed placement made that
+        # impossible: the denylist short-circuits before per_agent_allow.
+        "default_denied": ["general-purpose"],
         "per_agent_allow": {"_defaults": ["*"]},
     },
 }
@@ -85,7 +90,10 @@ _DISPATCH_DEFAULTS = {
 # governance.dispatch_migration_version so the normalization runs exactly once
 # per config; re-runs (and fresh installs already at this version) are no-ops.
 # Bump when adding a new one-time normalization below.
-DISPATCH_MIGRATION_VERSION = 1
+#   v1: collapse stale Explore-only subagent default; narrow worca-* skills glob.
+#   v2: move general-purpose from subagents.always_disallowed to default_denied
+#       (still denied by default, but allowable per-agent).
+DISPATCH_MIGRATION_VERSION = 2
 
 # The pre-W-054 (W-038-era) shipped subagent dispatch default: every pipeline
 # agent capped to Explore-only. W-054 changed the default to `_defaults: ["*"]`,
@@ -174,15 +182,45 @@ def adopt_narrowed_skills_denylist(skills_cfg: dict) -> bool:
     return True
 
 
+def adopt_general_purpose_allowable(subagents_cfg: dict) -> bool:
+    """Move general-purpose from always_disallowed to default_denied.
+
+    W-054 hard-denied general-purpose via always_disallowed, which meant a
+    project could not re-allow it even by naming it explicitly in
+    per_agent_allow (the denylist short-circuits first). The current default
+    lists it in default_denied instead: still blocked under the "*" wildcard,
+    but allowable per-agent. We migrate an *untouched* denylist (exactly
+    ``["general-purpose"]``) to the new shape; a customized denylist (extra
+    entries) is a deliberate operator choice and is left alone.
+
+    Returns True if migrated, else False. Preserves any existing default_denied
+    entries (general-purpose is appended, de-duplicated).
+    """
+    if not isinstance(subagents_cfg, dict):
+        return False
+    if subagents_cfg.get("always_disallowed") != ["general-purpose"]:
+        return False
+    denied = subagents_cfg.get("default_denied")
+    if not isinstance(denied, list):
+        denied = []
+    subagents_cfg["always_disallowed"] = []
+    if "general-purpose" not in denied:
+        denied = [*denied, "general-purpose"]
+    subagents_cfg["default_denied"] = denied
+    return True
+
+
 def normalize_dispatch_defaults(governance_cfg: dict) -> list[str]:
     """Apply one-time dispatch-default normalizations, gated by a version stamp.
 
-    Brings an *untouched* config up to the current shipped defaults for the two
+    Brings an *untouched* config up to the current shipped defaults for the
     things that changed after W-054:
-      1. subagents.per_agent_allow pinned to the legacy Explore-only set, and
-      2. skills.always_disallowed carrying the broad ``worca-*`` glob.
+      1. subagents.per_agent_allow pinned to the legacy Explore-only set,
+      2. skills.always_disallowed carrying the broad ``worca-*`` glob, and
+      3. subagents.always_disallowed hard-denying general-purpose (moved to
+         default_denied so it is allowable per-agent).
 
-    Both are exact-match guarded so a customized config is never silently
+    Each is exact-match guarded so a customized config is never silently
     widened. Stamps ``dispatch_migration_version`` so it runs once. Mutates
     ``governance_cfg`` in place; returns a list of change descriptions.
     """
@@ -206,6 +244,11 @@ def normalize_dispatch_defaults(governance_cfg: dict) -> list[str]:
         changes.append(
             "  governance.dispatch.skills.always_disallowed: narrowed legacy "
             '"worca-*" glob to the current must-disallow set'
+        )
+    if adopt_general_purpose_allowable(dispatch.get("subagents")):
+        changes.append(
+            "  governance.dispatch.subagents: moved general-purpose from "
+            "always_disallowed to default_denied (now allowable per-agent)"
         )
     governance_cfg["dispatch_migration_version"] = DISPATCH_MIGRATION_VERSION
     return changes

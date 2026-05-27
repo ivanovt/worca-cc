@@ -690,6 +690,38 @@ W-053: Optional Graphify knowledge-graph integration (query-based agent consumpt
 
 **Full reference:** [`docs/plans/W-053-graphify-integration.md`](./docs/plans/W-053-graphify-integration.md).
 
+### 0.40.x → 0.41.0
+
+`general-purpose` subagent moves from `always_disallowed` to `default_denied` — still off by default, but now allowable per-agent.
+
+**Why:** the `general-purpose` subagent (which spawns an unconstrained, full-tool Claude session) was on `subagents.always_disallowed`. The resolver checks `always_disallowed` *before* `per_agent_allow`, so there was **no way to opt an agent in** — even naming `general-purpose` explicitly in a per-agent allow list (or the UI editor) was silently overruled. Moving it to `default_denied` keeps it blocked under the `"*"` wildcard (default behavior is unchanged — it stays denied) while making the per-agent opt-in path actually work.
+
+**Behavior change (no config edits required):** on upgrade, a config whose `governance.dispatch.subagents.always_disallowed` is *exactly* `["general-purpose"]` (the untouched default) is rewritten to `always_disallowed: []` + `default_denied: ["general-purpose"]` (any pre-existing `default_denied` entries are preserved). A **customized denylist** (extra entries) is left untouched. The UI Governance editor no longer hard-blocks typing `general-purpose` into an allow list.
+
+**One-time and version-stamped.** This is the **v2** dispatch normalization, gated by `governance.dispatch_migration_version` (bumped `1 → 2`). It runs exactly once per config — on `worca init --upgrade` (Python) or the next Governance-panel save (UI) — then the stamp prevents re-runs.
+
+**To re-allow `general-purpose` for an agent** after upgrading, name it in `per_agent_allow` (the mixed form keeps the wildcard for everything else):
+
+```jsonc
+"subagents": {
+  "default_denied": ["general-purpose"],
+  "per_agent_allow": {
+    "_defaults": ["*"],
+    "implementer": ["*", "general-purpose"]
+  }
+}
+```
+
+**To forbid it everywhere** (no per-agent opt-in possible), add it back to `always_disallowed`.
+
+**Automatic migration message via `worca init --upgrade`:**
+
+```
+governance.dispatch.subagents: moved general-purpose from always_disallowed to default_denied (now allowable per-agent)
+```
+
+**Full reference:** [`docs/governance.md`](./docs/governance.md) § Subagents.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

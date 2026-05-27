@@ -24,11 +24,22 @@ describe('dispatch-tag-state', () => {
       expect(result.rejected).toBe(false);
     });
 
-    it('rejects denied type', () => {
-      const result = addTag([], 'general-purpose', SUBAGENT_DENYLIST);
+    it('rejects a type on the supplied denylist', () => {
+      // The denylist mechanism still works; pass an explicit set since the
+      // default SUBAGENT_DENYLIST is now empty (nothing is hard-denied).
+      const result = addTag([], 'locked-agent', new Set(['locked-agent']));
       expect(result.tags).toEqual([]);
       expect(result.rejected).toBe(true);
       expect(result.reason).toBeTruthy();
+    });
+
+    it('allows general-purpose under the default denylist (now default_denied)', () => {
+      // general-purpose moved from always_disallowed to default_denied, so it
+      // is no longer on the UI hard-deny set and can be added per-agent.
+      expect(SUBAGENT_DENYLIST.has('general-purpose')).toBe(false);
+      const result = addTag([], 'general-purpose', SUBAGENT_DENYLIST);
+      expect(result.tags).toEqual(['general-purpose']);
+      expect(result.rejected).toBe(false);
     });
   });
 
@@ -76,16 +87,24 @@ describe('dispatch-tag-state', () => {
       expect(result.every((r) => r.name.startsWith('feature-dev:'))).toBe(true);
     });
 
-    it('marks denied types', () => {
+    it('marks types on the supplied denylist', () => {
+      const denylist = new Set(['general-purpose']);
+      const result = filterSuggestions('general', KNOWN_TYPES, [], denylist);
+      const denied = result.find((r) => r.name === 'general-purpose');
+      expect(denied).toBeDefined();
+      expect(denied.denied).toBe(true);
+    });
+
+    it('does not mark general-purpose denied under the default denylist', () => {
       const result = filterSuggestions(
         'general',
         KNOWN_TYPES,
         [],
         SUBAGENT_DENYLIST,
       );
-      const denied = result.find((r) => r.name === 'general-purpose');
-      expect(denied).toBeDefined();
-      expect(denied.denied).toBe(true);
+      const gp = result.find((r) => r.name === 'general-purpose');
+      expect(gp).toBeDefined();
+      expect(gp.denied).toBe(false);
     });
   });
 

@@ -141,11 +141,15 @@ def test_allows_learner_dispatching_explore():
     assert code == 0
 
 
-def test_denylist_blocks_general_purpose():
-    """general-purpose is blocked by denylist even when parent has no dispatch rules."""
+def test_check_dispatch_blocks_general_purpose_by_default():
+    """check_dispatch denies general-purpose for an agent with no explicit allow
+    entry: it resolves via the `*` wildcard, which excludes default_denied. The
+    returned message is the default_denied ("cannot dispatch") path, not the
+    always_disallowed ("denylist") one."""
     code, reason = check_dispatch("coordinator", "general-purpose")
     assert code == 2
-    assert "denylist" in reason.lower() or "Blocked" in reason
+    assert "cannot dispatch" in reason
+    assert "denylist" not in reason.lower()
 
 
 def test_always_disallowed_wins_over_per_agent_allow():
@@ -618,13 +622,33 @@ def test_subagents_wildcard_default_allows_any_non_denied(agent):
     assert via == "wildcard"
 
 
-def test_subagents_general_purpose_still_denied_under_wildcard():
-    """PR B: general-purpose stays in always_disallowed even with wildcard."""
+def test_subagents_general_purpose_denied_by_default_via_default_denied():
+    """general-purpose is denied by default — but via default_denied (not
+    always_disallowed), so the '*' wildcard excludes it while leaving it
+    allowable per-agent."""
     allowed, reason, _ = check_allowed(
         "subagents", "implementer", "general-purpose", settings_override={},
     )
     assert allowed is False
-    assert reason == "always_disallowed"
+    assert reason == "default_denied"
+
+
+def test_subagents_general_purpose_allowable_when_named_explicitly():
+    """Because general-purpose is default_denied (not always_disallowed), a
+    project can re-allow it for an agent by naming it in per_agent_allow."""
+    cfg = _settings_with_dispatch("subagents", {
+        "always_disallowed": [],
+        "default_denied": ["general-purpose"],
+        "per_agent_allow": {
+            "_defaults": ["*"],
+            "implementer": ["*", "general-purpose"],
+        },
+    })
+    allowed, reason, via = check_allowed(
+        "subagents", "implementer", "general-purpose", settings_override=cfg,
+    )
+    assert allowed is True
+    assert via == "explicit"
 
 
 def test_subagents_explore_now_via_wildcard():

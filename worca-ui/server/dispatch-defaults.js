@@ -64,8 +64,12 @@ export const DISPATCH_DEFAULTS = {
     },
   },
   subagents: {
-    always_disallowed: ['general-purpose'],
-    default_denied: [],
+    always_disallowed: [],
+    // general-purpose spawns an unconstrained full-tool Claude session, so it
+    // stays denied under the '*' wildcard — but as default_denied (not
+    // always_disallowed) a project can re-allow it per agent by naming it in
+    // per_agent_allow.
+    default_denied: ['general-purpose'],
     per_agent_allow: { _defaults: ['*'] },
   },
 };
