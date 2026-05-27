@@ -318,6 +318,7 @@ def main(argv=None) -> int:
             stdin=subprocess.DEVNULL,
             stdout=_log_fh,
             stderr=subprocess.STDOUT,
+            # Windows: silently ignored — detach not guaranteed (use WSL2).
             start_new_session=True,
         )
 

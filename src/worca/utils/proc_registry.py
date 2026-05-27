@@ -3,6 +3,12 @@
 Tracks spawned subprocess groups as JSON files under ``<run_dir>/procs/``,
 keyed by pgid. Provides helpers to list, verify (PID-reuse guard), and
 kill all tracked groups with SIGTERM→SIGKILL escalation.
+
+Windows: process-group APIs (``os.getpgid``, ``os.killpg``) do not exist.
+All group operations are gated behind ``_HAS_PROC_GROUPS``; on Windows the
+registry stays empty, ``is_alive_and_ours`` returns False, and
+``kill_all_tracked`` / ``_kill_group`` are no-ops — callers fall back to
+best-effort single-child ``proc.terminate()``.
 """
 
 import json

@@ -12,8 +12,8 @@ SRC_DIR = pathlib.Path(__file__).parent.parent / "src" / "worca"
 
 # Linux-only /proc reads — no encoding needed (not on Windows)
 _PROC_FS_EXCEPTIONS = {
-    ("proc_registry.py", 166),  # /proc/stat
-    ("proc_registry.py", 172),  # /proc/uptime
+    ("proc_registry.py", 172),  # /proc/stat
+    ("proc_registry.py", 178),  # /proc/uptime
 }
 
 

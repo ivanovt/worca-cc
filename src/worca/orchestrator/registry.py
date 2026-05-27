@@ -4,13 +4,13 @@ Each pipeline writes its own status file to .worca/multi/pipelines.d/{run_id}.js
 Atomic writes via temp+rename. No file locking needed.
 """
 
-import errno
 import json
 import os
 import tempfile
 from datetime import datetime, timezone
 
 from worca.state.status import PipelineStatus
+from worca.utils.proc import pid_is_alive
 
 
 _DEFAULT_BASE = ".worca"
@@ -201,15 +201,10 @@ def reconcile_stale(base=_DEFAULT_BASE):
         if pid is None:
             continue
         try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            pass  # Process does not exist — fall through to mark stale
-        except OSError as e:
-            if e.errno == errno.EPERM:
-                continue  # Process exists but owned by another user — skip
-            # Other OS errors — fall through to mark stale
-        else:
-            continue  # Process is alive — skip
+            if pid_is_alive(pid):
+                continue  # Process is alive — skip
+        except PermissionError:
+            continue  # Process exists but owned by another user — skip
 
         # Process is dead — mark as stale
         run_id = entry["run_id"]

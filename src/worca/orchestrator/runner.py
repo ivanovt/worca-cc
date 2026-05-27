@@ -41,6 +41,7 @@ from worca.state.status import (
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
+from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
@@ -645,14 +646,20 @@ def _install_signal_handlers():
             if _signal_project_status_path:
                 _remove_pid(_signal_project_status_path)
 
-    signal.signal(signal.SIGTERM, _handler)
-    signal.signal(signal.SIGINT, _handler)
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+        signal.signal(signal.SIGINT, _handler)
+    except (ValueError, OSError):
+        pass
 
 
 def _restore_signal_handlers():
     """Restore default signal handlers."""
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+    except (ValueError, OSError):
+        pass
 
 
 def _atexit_cleanup():
@@ -1476,6 +1483,7 @@ def _maybe_graphify_post_guardian(
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # Windows: silently ignored — detach not guaranteed (use WSL2).
             start_new_session=True,
         )
         _log("Graphify post-guardian cache-warm started (fire-and-forget)")
@@ -1687,15 +1695,15 @@ def _clear_stale_daemon_lock(beads_dir: str) -> None:
     except (FileNotFoundError, ValueError):
         return
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        alive = pid_is_alive(pid)
+    except PermissionError:
+        return
+    if not alive:
         for p in (pid_path, lock_path):
             try:
                 os.remove(p)
             except FileNotFoundError:
                 pass
-    except PermissionError:
-        pass
 
 
 def _ensure_beads_initialized() -> None:

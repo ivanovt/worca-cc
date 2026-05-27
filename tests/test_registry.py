@@ -335,9 +335,7 @@ def test_reconcile_stale_skips_alive_pids(tmp_path):
     alive_pid = os.getpid()  # current process is definitely alive
     register_pipeline("run-alive", "/tmp/wt", "Alive Process", alive_pid, base=base)
 
-    # Mock os.kill to avoid any permission issues — simulate alive process
-    with patch("worca.orchestrator.registry.os.kill") as mock_kill:
-        mock_kill.return_value = None  # no exception = process is alive
+    with patch("worca.orchestrator.registry.pid_is_alive", return_value=True):
         stale = reconcile_stale(base=base)
 
     assert stale == []
@@ -374,12 +372,10 @@ def test_reconcile_stale_returns_correct_stale_run_ids(tmp_path):
     register_pipeline("run-done", "/tmp/wt", "Done", 999999996, base=base)
     update_pipeline("run-done", status="completed", base=base)
 
-    def fake_kill(pid, sig):
-        if pid == 12345:
-            return None  # alive
-        raise ProcessLookupError(f"No such process: {pid}")
+    def fake_alive(pid):
+        return pid == 12345
 
-    with patch("worca.orchestrator.registry.os.kill", side_effect=fake_kill):
+    with patch("worca.orchestrator.registry.pid_is_alive", side_effect=fake_alive):
         stale = reconcile_stale(base=base)
 
     assert sorted(stale) == ["run-dead1", "run-dead2"]
@@ -418,21 +414,30 @@ def test_reconcile_stale_skips_entries_without_pid(tmp_path):
 
 def test_reconcile_stale_skips_eperm(tmp_path):
     """Processes owned by another user (EPERM) should NOT be marked stale."""
-    import errno
-
     base = str(tmp_path / ".worca")
     register_pipeline("run-eperm", "/tmp/wt", "Other User", 12345, base=base)
 
-    def fake_kill(pid, sig):
-        raise OSError(errno.EPERM, "Operation not permitted")
-
-    with patch("worca.orchestrator.registry.os.kill", side_effect=fake_kill):
+    with patch("worca.orchestrator.registry.pid_is_alive", side_effect=PermissionError("eperm")):
         stale = reconcile_stale(base=base)
 
     assert stale == []
     data = get_pipeline("run-eperm", base=base)
     assert data["status"] == "running"
     assert "note" not in data
+
+
+def test_reconcile_stale_uses_pid_is_alive(tmp_path):
+    """reconcile_stale must route through pid_is_alive, never os.kill directly."""
+    base = str(tmp_path / ".worca")
+    register_pipeline("run-probe", "/tmp/wt", "Probe", 12345, base=base)
+
+    with patch("worca.orchestrator.registry.pid_is_alive", return_value=True) as mock_alive, \
+         patch("worca.orchestrator.registry.os.kill", side_effect=AssertionError("os.kill must not be called")) as mock_kill:
+        stale = reconcile_stale(base=base)
+
+    mock_alive.assert_called_once_with(12345)
+    mock_kill.assert_not_called()
+    assert stale == []
 
 
 # --- register_pipeline grouping + target_branch fields ---

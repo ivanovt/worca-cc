@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Optional
 
 from worca.utils.env import get_env
+from worca.utils.proc import pid_is_alive
 
 logger = logging.getLogger(__name__)
 
@@ -37,15 +38,14 @@ def _resolve_workspace_dir(beads_dir: str) -> str:
 
 
 def _wait_for_pid_exit(pid: int) -> bool:
-    """Poll os.kill(pid, 0) until ProcessLookupError or budget exhausted.
+    """Poll ``pid_is_alive`` until the process exits or budget is exhausted.
 
     Returns True if the process exited within the budget, False otherwise.
     """
     for _ in range(_SIGTERM_WAIT_ITERATIONS):
         try:
-            os.kill(pid, 0)
-        except (ProcessLookupError, ValueError):
-            return True
+            if not pid_is_alive(pid):
+                return True
         except PermissionError:
             # PID was reused by another user — treat as gone.
             return True
@@ -245,16 +245,14 @@ def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
         logger.warning("No daemon pidfile at %s", pidfile)
         return False
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        logger.warning("bd daemon PID already dead (pidfile: %s)", pidfile)
-        return False
-    except OSError as exc:
-        # Includes PermissionError (PID owned by another user) and other
-        # platform-specific failures.  We cannot signal it; give up.
+        alive = pid_is_alive(pid)
+    except PermissionError as exc:
         logger.warning(
             "bd daemon PID %d not signallable (pidfile: %s, err: %s)", pid, pidfile, exc
         )
+        return False
+    if not alive:
+        logger.warning("bd daemon PID already dead (pidfile: %s)", pidfile)
         return False
     try:
         os.kill(pid, signal.SIGTERM)

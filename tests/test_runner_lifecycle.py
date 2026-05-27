@@ -319,6 +319,49 @@ def test_finally_block_clears_signal_refs():
     assert runner._signal_status_path is None
 
 
+# --- Signal handler installation: non-main-thread / embedded guard ---
+
+
+def test_install_signal_handlers_tolerates_value_error():
+    """_install_signal_handlers silently swallows ValueError (non-main thread)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.signal.side_effect = ValueError("not main thread")
+        # Must not raise
+        runner._install_signal_handlers()
+
+
+def test_restore_signal_handlers_tolerates_value_error():
+    """_restore_signal_handlers silently swallows ValueError (non-main thread)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.SIG_DFL = signal.SIG_DFL
+        mock_signal.signal.side_effect = ValueError("not main thread")
+        # Must not raise
+        runner._restore_signal_handlers()
+
+
+def test_install_signal_handlers_tolerates_os_error():
+    """_install_signal_handlers silently swallows OSError (embedded/restricted)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.signal.side_effect = OSError("signal not supported")
+        runner._install_signal_handlers()
+
+
+def test_restore_signal_handlers_tolerates_os_error():
+    """_restore_signal_handlers silently swallows OSError (embedded/restricted)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.SIG_DFL = signal.SIG_DFL
+        mock_signal.signal.side_effect = OSError("signal not supported")
+        runner._restore_signal_handlers()
+
+
 # --- Resume: stale control.json cleanup ---
 
 
@@ -590,7 +633,7 @@ def test_clear_stale_daemon_lock_removes_files_for_dead_pid(tmp_path):
     pid_file.write_text("999999\n")
     lock_file.write_text("")
 
-    with patch("os.kill", side_effect=ProcessLookupError):
+    with patch("worca.orchestrator.runner.pid_is_alive", return_value=False):
         runner._clear_stale_daemon_lock(str(beads_dir))
 
     assert not pid_file.exists()
@@ -606,7 +649,7 @@ def test_clear_stale_daemon_lock_leaves_files_for_live_pid(tmp_path):
     pid_file.write_text("12345\n")
     lock_file.write_text("")
 
-    with patch("os.kill", return_value=None):
+    with patch("worca.orchestrator.runner.pid_is_alive", return_value=True):
         runner._clear_stale_daemon_lock(str(beads_dir))
 
     assert pid_file.exists()
@@ -622,7 +665,7 @@ def test_clear_stale_daemon_lock_noop_when_pidfile_missing(tmp_path):
 
 
 def test_clear_stale_daemon_lock_leaves_files_on_permission_error(tmp_path):
-    """When os.kill raises PermissionError the PID is assumed live; files are left."""
+    """When pid_is_alive raises PermissionError the PID is assumed live; files are left."""
     beads_dir = tmp_path / ".beads"
     beads_dir.mkdir()
     pid_file = beads_dir / "daemon.pid"
@@ -630,7 +673,7 @@ def test_clear_stale_daemon_lock_leaves_files_on_permission_error(tmp_path):
     pid_file.write_text("42\n")
     lock_file.write_text("")
 
-    with patch("os.kill", side_effect=PermissionError):
+    with patch("worca.orchestrator.runner.pid_is_alive", side_effect=PermissionError):
         runner._clear_stale_daemon_lock(str(beads_dir))
 
     assert pid_file.exists()

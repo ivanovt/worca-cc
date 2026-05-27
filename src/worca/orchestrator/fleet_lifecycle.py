@@ -231,6 +231,7 @@ def resume_child(project_path: str, run_id: str) -> bool:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        # Windows: silently ignored — detach not guaranteed (use WSL2).
         start_new_session=True,
     )
     return True

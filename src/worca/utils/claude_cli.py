@@ -3,6 +3,13 @@
 Uses --output-format stream-json --verbose to get real-time NDJSON events
 from the claude CLI. Each event is written to a log file for UI streaming.
 The final 'result' event contains the structured output (same as --output-format json).
+
+Windows: process-group reaping (``os.killpg`` via ``_HAS_PROC_GROUPS``) is
+unavailable. ``terminate_current`` falls back to ``proc.terminate()``
+(``TerminateProcess`` — no graceful SIGTERM handler runs) and
+``_reap_returncode`` falls back to ``proc.kill()``.  Group tracking in
+``run_agent`` is skipped entirely.  This is best-effort single-child
+termination; orphaned grandchildren are not reaped.
 """
 
 import json
@@ -108,6 +115,7 @@ def terminate_current():
         except (ProcessLookupError, OSError):
             pass
     else:
+        # Windows fallback: proc.terminate() calls TerminateProcess — no graceful handler runs.
         try:
             proc.terminate()
         except (ProcessLookupError, OSError):
@@ -539,6 +547,7 @@ def run_agent(
 
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        # Windows: start_new_session silently ignored — detach not guaranteed (use WSL2).
         text=True, env=agent_env, start_new_session=True,
     )
 

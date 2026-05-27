@@ -143,6 +143,7 @@ def cmd_stop(run_id: str | None, base: str = _DEFAULT_BASE) -> str:
 
     if pid is not None:
         try:
+            # Windows: os.kill(SIGTERM) calls TerminateProcess — no graceful handler runs.
             os.kill(pid, signal.SIGTERM)
             print(f"Sent SIGTERM to PID {pid}")
         except (ProcessLookupError, ValueError, OSError):
