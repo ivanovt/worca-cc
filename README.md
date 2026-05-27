@@ -16,16 +16,18 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Circuit breakers** — error classification with halt thresholds; when a stage fails too many times, the circuit breaker trips and prevents runaway cost
 - **Preflight checks** — language-agnostic environment validation that always runs before spending tokens, catching git state issues, missing dependencies, and configuration problems
 - **Post-run retrospective (LEARN stage)** — optional stage that analyzes what went well, what failed, and why; produces ranked observations with actionable suggestions and copy-to-clipboard prompts for improving future runs
+- **Adaptive reasoning effort** — per-agent effort levels (`low` → `max`); in the default adaptive mode the coordinator labels each task's complexity and the implementer starts there and escalates on retries (capped by `auto_cap`); the resolved level shows as a per-iteration badge in the UI
 
 ### Work Sources & Integration
 
 - **Multiple input modes** — prompt, spec file, GitHub issue (`gh:issue:42`), beads task (`bd:bd-abc`), or issue URL
+- **Reference guides** (`--guide`) — inject a normative spec, RFC, or migration guide into every agent's context; the guide is the highest-authority source (**guide > plan > description**), repeatable, and supported on in-place, worktree, fleet, and workspace runs
 - **GitHub issue lifecycle** — start from issues with `--source gh:issue:N`, auto-post progress comments, link PRs, close issues on completion
 - **Guided issue triage** (`/worca-analyze`) — Claude Code skill that analyzes a GitHub issue, surfaces open design decisions with recommended options, optionally writes a `## Decisions` section back to the issue body, recommends the right pipeline template, and offers to launch a worktree-based pipeline — all in one pass
 - **Guided template authoring** (`/worca-template`) — Claude Code skill that interviews you about your pipeline needs, proposes reusing or extending an existing template, asks for project-vs-user scope, and writes a minimal-delta `template.json` via the CLI — no hand-editing required
 - **Multi-host PR metadata** (W-051) — provider detection across GitHub, GitLab, Bitbucket, Azure DevOps, and Gitea; PR stage records commit SHA, source/target branch flow, and draft/review status; UI surfaces a collapsible "PR details" panel on the PR stage card
 - **Smart title generation** — `--prompt` is optional; when omitted, the title is generated from the spec or plan file and sanitized for branch names
-- **Pipeline events & webhooks** — 52 structured event types emitted as a real-time JSONL stream; subscribe via configurable webhooks with HMAC-SHA256 signing, retry logic, and secret management; control webhooks can pause or abort the pipeline
+- **Pipeline events & webhooks** — 80+ structured event types emitted as a real-time JSONL stream; subscribe via configurable webhooks with HMAC-SHA256 signing, retry logic, and secret management; control webhooks can pause or abort the pipeline
 
 ### Governance & Safety
 
@@ -80,6 +82,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Cross-project integration test** — optional user-defined command runs after all tiers complete; on failure, no PRs are created
 - **Linked PR set** — per-project PRs are created with `Depends on:` / `Blocks:` comments + an umbrella issue listing all PRs in merge order
 - **Hard-cut schema** — `workspace.json` uses `projects[]`; a `worca workspace migrate <path>` helper converts legacy `repos[]` files in place
+- **Four planning strategies** — unified master plan (default), `--workspace-plan PATH` (reuse a saved `workspace-plan.json`), `--project-plan NAME=PATH` (per-project markdown plans), or `--skip-planning` (each project plans independently); selectable in the UI launcher
 
 ![Workspace detail — dependency graph with arrowheads and per-project run cards](docs/screenshots/workspace-detail-dag.png)
 
@@ -162,6 +165,9 @@ worca run --source gh:issue:42
 # Same, but isolated in a git worktree (parallel-safe; same path the UI uses)
 worca run --worktree --source gh:issue:42 --template feature
 
+# With a reference guide (normative — overrides the plan and description)
+worca run --prompt "Migrate to the v2 API" --guide migration-spec.md
+
 # Guided triage from a Claude session — analyze the issue, capture design
 # decisions back into the issue body, recommend a template, and offer to
 # start a new pipeline for it
@@ -217,6 +223,7 @@ See [Chat Integrations Setup Guide](docs/spec/integrations/README.md) for the fu
 All configuration lives in `.claude/settings.json` under the `worca` key:
 
 - **`worca.agents`** — model and max_turns per agent (planner, plan_reviewer, coordinator, implementer, tester, reviewer, guardian, learner)
+- **`worca.effort`** — adaptive reasoning-effort control: `auto_mode` (`adaptive` default / `reactive` / `disabled`), an `auto_cap` ceiling, and per-agent `effort` levels (`low | medium | high | xhigh | max`). See [docs/effort.md](docs/effort.md)
 - **`worca.stages`** — enable/disable pipeline stages (preflight, plan, coordinate, implement, test, review, pr, learn), assign agents
 - **`worca.loops`** — iteration limits (implement/test: 5, code review: 5, PR changes: 5, restart planning: 2)
 - **`worca.governance`** — guards (block rm -rf, force push, env writes), test gate strike limit, `subagent_dispatch` per-agent allowlists (user config replaces defaults per agent; `general-purpose` denylist enforced)
@@ -225,6 +232,7 @@ All configuration lives in `.claude/settings.json` under the `worca` key:
 - **`worca.circuit_breaker`** — max failures before halting, transient error retry logic
 - **`worca.events`** — event emission and webhook configuration (HMAC signing, retry, secret management)
 - **`worca.parallel`** — parallel pipeline settings (max_concurrent_pipelines: 3, default_base_branch, cleanup_policy: `on-success`|`always`|`never`, worktree_base_dir)
+- **`worca.graphify`** — optional code knowledge-graph integration (off by default); set `enabled: true` to have Preflight build a per-commit graph that agents query on demand for orientation; governance blocks mutating graphify subcommands
 
 ### Local overrides
 
