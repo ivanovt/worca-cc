@@ -494,6 +494,70 @@ describe('project-routes', () => {
       expect(body.templates.some((t) => t.tier === 'project')).toBe(true);
     });
 
+    it('orders templates by resolution priority: user → project → worca', async () => {
+      const oldHome = process.env.WORCA_HOME;
+      process.env.WORCA_HOME = prefsDir;
+      try {
+        mkdirSync(join(projectRoot, '.claude', 'worca', 'templates', 'w-tpl'), {
+          recursive: true,
+        });
+        writeFileSync(
+          join(
+            projectRoot,
+            '.claude',
+            'worca',
+            'templates',
+            'w-tpl',
+            'template.json',
+          ),
+          JSON.stringify({ id: 'w-tpl', name: 'Worca' }),
+        );
+
+        mkdirSync(join(projectRoot, '.claude', 'templates', 'p-tpl'), {
+          recursive: true,
+        });
+        writeFileSync(
+          join(projectRoot, '.claude', 'templates', 'p-tpl', 'template.json'),
+          JSON.stringify({ id: 'p-tpl', name: 'Project' }),
+        );
+
+        mkdirSync(join(prefsDir, 'templates', 'u-tpl'), { recursive: true });
+        writeFileSync(
+          join(prefsDir, 'templates', 'u-tpl', 'template.json'),
+          JSON.stringify({ id: 'u-tpl', name: 'User' }),
+        );
+
+        const app = await createTestApp(prefsDir, projectRoot);
+        const { body: projectsBody } = await request(
+          app,
+          'GET',
+          '/api/projects',
+        );
+        const projectName = projectsBody.projects[0].name;
+
+        const { status, body } = await request(
+          app,
+          'GET',
+          `/api/projects/${projectName}/templates`,
+        );
+        expect(status).toBe(200);
+        expect(body.templates.length).toBeGreaterThanOrEqual(3);
+
+        const tiers = body.templates.map((t) => t.tier);
+        const firstUser = tiers.indexOf('user');
+        const firstProject = tiers.indexOf('project');
+        const firstWorca = tiers.indexOf('worca');
+        expect(firstUser).not.toBe(-1);
+        expect(firstProject).not.toBe(-1);
+        expect(firstWorca).not.toBe(-1);
+        expect(firstUser).toBeLessThan(firstProject);
+        expect(firstProject).toBeLessThan(firstWorca);
+      } finally {
+        if (oldHome === undefined) delete process.env.WORCA_HOME;
+        else process.env.WORCA_HOME = oldHome;
+      }
+    });
+
     it('returns 404 for unknown project', async () => {
       const app = await createTestApp(prefsDir, projectRoot);
       const { status } = await request(

@@ -1587,9 +1587,9 @@ export function createProjectScopedRoutes({
   router.get('/templates', (req, res) => {
     const root = req.project.projectRoot;
     const tiers = [
-      { tier: 'worca', dir: join(root, '.claude', 'worca', 'templates') },
-      { tier: 'project', dir: join(root, '.claude', 'templates') },
       { tier: 'user', dir: templatesDir() },
+      { tier: 'project', dir: join(root, '.claude', 'templates') },
+      { tier: 'worca', dir: join(root, '.claude', 'worca', 'templates') },
     ];
 
     const templates = [];

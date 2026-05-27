@@ -550,11 +550,11 @@ export function newRunView(_state, { rerender }) {
               <sl-select value=${selectedTemplate} @sl-change=${handleTemplateChange}>
                 <sl-option value="default">Project Default (settings.json)</sl-option>
                 ${
-                  tiers.worca.length > 0
+                  tiers.user.length > 0
                     ? html`
                   <sl-divider></sl-divider>
-                  <small class="template-group-label">WORCA</small>
-                  ${tiers.worca.map(
+                  <small class="template-group-label">USER</small>
+                  ${tiers.user.map(
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
@@ -582,11 +582,11 @@ export function newRunView(_state, { rerender }) {
                     : nothing
                 }
                 ${
-                  tiers.user.length > 0
+                  tiers.worca.length > 0
                     ? html`
                   <sl-divider></sl-divider>
-                  <small class="template-group-label">USER</small>
-                  ${tiers.user.map(
+                  <small class="template-group-label">WORCA</small>
+                  ${tiers.worca.map(
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
@@ -598,7 +598,7 @@ export function newRunView(_state, { rerender }) {
                     : nothing
                 }
               </sl-select>
-              <span class="settings-field-hint">Customize stages and agent behavior. Groups: worca (built-in), project, user.</span>
+              <span class="settings-field-hint">Customize stages and agent behavior. Groups: user, project, worca (built-in).</span>
               ${(() => {
                 const sel = (templates || []).find(
                   (t) => t.id === selectedTemplate,
