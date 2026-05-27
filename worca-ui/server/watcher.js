@@ -6,6 +6,7 @@ import {
   assignEventsToIterations,
   readDispatchEventsFromJsonl,
 } from './dispatch-events-aggregator.js';
+import { readPipelineOverlay } from './run-dir-resolver.js';
 import { safeWatch } from './safe-watch.js';
 
 /**
@@ -46,7 +47,137 @@ function isTerminal(status) {
   );
 }
 
+const _discoverRunsCache = new Map(); // worcaDir → { ts, runs }
+// TTL defaults to 0 under vitest (NODE_ENV=test) so the cache is a no-op in
+// tests — they build fixture dirs from Date.now() and a shared path could
+// otherwise serve a stale cached scan across tests. Production uses 1500ms;
+// _setDiscoverRunsTtlForTest lets the dedicated cache test exercise real TTL.
+let _discoverRunsTtlMs = process.env.NODE_ENV === 'test' ? 0 : 1500;
+
+/** Test hook: override the discoverRuns cache TTL in ms. */
+export function _setDiscoverRunsTtlForTest(ms) {
+  _discoverRunsTtlMs = ms;
+}
+
+/**
+ * Cached wrapper around the run-discovery scan. The scan reads + JSON-parses
+ * every run's status.json across runs/, results/, and pipelines.d/ worktree
+ * overlays — hundreds of ms on a large project. Whole-list callers (list-runs,
+ * REST /runs) hit this; a short TTL collapses repeated calls in a burst into a
+ * single scan. Per-run handlers use findRun() instead. Live status changes
+ * still reach clients via the statusWatcher broadcast, so TTL-window staleness
+ * here is invisible in the UI.
+ */
 export function discoverRuns(worcaDir) {
+  const cached = _discoverRunsCache.get(worcaDir);
+  if (cached && Date.now() - cached.ts < _discoverRunsTtlMs) {
+    return cached.runs;
+  }
+  const runs = _discoverRunsUncached(worcaDir);
+  _discoverRunsCache.set(worcaDir, { ts: Date.now(), runs });
+  return runs;
+}
+
+/** Clear the discoverRuns TTL cache (tests, or explicit invalidation). */
+export function clearDiscoverRunsCache() {
+  _discoverRunsCache.clear();
+}
+
+/**
+ * Resolve a SINGLE run by id without scanning every run on disk — the O(1)
+ * counterpart to discoverRuns().find(r => r.id === runId), for hot WS handlers
+ * (subscribe-run, get-agent-prompt) that need exactly one run. Mirrors
+ * discoverRuns' per-source shaping: dispatch-event enrichment for runs/ and
+ * worktree sources (not results/), plus the worktree registry fields. The
+ * findRun-vs-discoverRuns parity test keeps the two aligned.
+ *
+ * Falls back to a (TTL-cached) discoverRuns scan for legacy layouts where the
+ * on-disk name doesn't equal the computed id (flat `.worca/status.json`, hashed
+ * legacy ids), so it never resolves fewer runs than discoverRuns().find().
+ *
+ * @returns {object|null} a run record shaped like a discoverRuns entry, or null
+ */
+export function findRun(worcaDir, runId) {
+  if (!worcaDir || !runId) return null;
+
+  // 1. Local active: runs/<id>/status.json (enriched)
+  const localRunDir = join(worcaDir, 'runs', runId);
+  if (existsSync(join(localRunDir, 'status.json'))) {
+    return _shapeRunFromFile(join(localRunDir, 'status.json'), {
+      enrich: true,
+      runDir: localRunDir,
+    });
+  }
+
+  // 2. Local archived dir: results/<id>/status.json (not enriched)
+  const resultsDirStatus = join(worcaDir, 'results', runId, 'status.json');
+  if (existsSync(resultsDirStatus)) {
+    return _shapeRunFromFile(resultsDirStatus, { enrich: false });
+  }
+
+  // 2b. Legacy archived file: results/<id>.json (not enriched)
+  const legacyFile = join(worcaDir, 'results', `${runId}.json`);
+  if (existsSync(legacyFile)) {
+    return _shapeRunFromFile(legacyFile, {
+      enrich: false,
+      requireStartedAt: true,
+    });
+  }
+
+  // 3. Worktree overlay: pipelines.d/<id>.json → <worktree>/.worca/runs/<id>
+  const reg = readPipelineOverlay(worcaDir, runId);
+  if (reg?.worktree_path) {
+    const wtRunDir = join(reg.worktree_path, '.worca', 'runs', runId);
+    if (existsSync(join(wtRunDir, 'status.json'))) {
+      return _shapeRunFromFile(join(wtRunDir, 'status.json'), {
+        enrich: true,
+        runDir: wtRunDir,
+        worktreeReg: reg,
+      });
+    }
+  }
+
+  // Fallback for legacy layouts where the on-disk name != the computed id
+  // (flat .worca/status.json, hashed legacy ids). Rare — pay one (TTL-cached)
+  // full scan rather than regress correctness vs discoverRuns().find().
+  return discoverRuns(worcaDir).find((r) => r.id === runId) || null;
+}
+
+function _shapeRunFromFile(
+  statusPath,
+  {
+    enrich = false,
+    runDir = null,
+    worktreeReg = null,
+    requireStartedAt = false,
+  } = {},
+) {
+  try {
+    let status = JSON.parse(readFileSync(statusPath, 'utf8'));
+    if (requireStartedAt && !status.started_at) return null;
+    if (enrich && runDir) status = enrichWithDispatchEvents(status, runDir);
+    const id = createRunId(status);
+    const active = !isTerminal(status) && status.pipeline_status === 'running';
+    const base = { id, active, ...status };
+    if (worktreeReg) {
+      return {
+        ...base,
+        worktree_worca_dir: join(worktreeReg.worktree_path, '.worca'),
+        is_worktree_run: true,
+        head_branch: worktreeReg.branch || null,
+        fleet_id: worktreeReg.fleet_id || null,
+        workspace_id: worktreeReg.workspace_id || null,
+        group_type: worktreeReg.group_type || null,
+        target_branch: worktreeReg.target_branch || null,
+      };
+    }
+    return base;
+  } catch {
+    return null;
+  }
+}
+
+function _discoverRunsUncached(worcaDir) {
   const runs = [];
   const seenIds = new Set();
 
