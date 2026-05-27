@@ -16,6 +16,15 @@ _PROC_FS_EXCEPTIONS = {
     ("proc_registry.py", 172),  # /proc/uptime
 }
 
+# Snapshot every src .py at import (collection) time — BEFORE any test runs.
+# This guard verifies the *authored* source specifies encoding=, so it must be
+# immune to another test transiently writing into the src tree during a
+# full-suite run (observed in CI: a polluting test briefly rewrites
+# cli/templates.py, tripping a live re-read). Reading from this snapshot keeps
+# the result deterministic and tied to the committed source.
+_SRC_FILES = sorted(SRC_DIR.rglob("*.py"))
+_SRC_SNAPSHOT = {p: p.read_text(encoding="utf-8") for p in _SRC_FILES}
+
 
 def _is_binary_mode(node: ast.Call) -> bool:
     """Check if an open() call uses binary mode ('rb', 'wb', etc.)."""
@@ -32,7 +41,7 @@ def _is_binary_mode(node: ast.Call) -> bool:
 
 def _open_calls_in_file(path: pathlib.Path):
     """Yield (lineno, has_encoding) for every text-mode open() call."""
-    source = path.read_text(encoding="utf-8")
+    source = _SRC_SNAPSHOT[path]
     tree = ast.parse(source, filename=str(path))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -47,7 +56,7 @@ def _open_calls_in_file(path: pathlib.Path):
 
 def _fdopen_calls_in_file(path: pathlib.Path):
     """Yield (lineno, has_encoding) for every text-mode os.fdopen() call."""
-    source = path.read_text(encoding="utf-8")
+    source = _SRC_SNAPSHOT[path]
     tree = ast.parse(source, filename=str(path))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -67,7 +76,7 @@ def _fdopen_calls_in_file(path: pathlib.Path):
 
 def _read_text_calls_in_file(path: pathlib.Path):
     """Yield (lineno, has_encoding) for every .read_text() call."""
-    source = path.read_text(encoding="utf-8")
+    source = _SRC_SNAPSHOT[path]
     tree = ast.parse(source, filename=str(path))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -80,7 +89,7 @@ def _read_text_calls_in_file(path: pathlib.Path):
 
 def _write_text_calls_in_file(path: pathlib.Path):
     """Yield (lineno, has_encoding) for every .write_text() call."""
-    source = path.read_text(encoding="utf-8")
+    source = _SRC_SNAPSHOT[path]
     tree = ast.parse(source, filename=str(path))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -153,7 +162,7 @@ class TestBroadUTF8Sweep:
 
     def test_no_bare_open_in_src_worca(self):
         violations = []
-        for py_file in sorted(SRC_DIR.rglob("*.py")):
+        for py_file in _SRC_FILES:
             fname = py_file.name
             for lineno, has_enc in _open_calls_in_file(py_file):
                 if (fname, lineno) in _PROC_FS_EXCEPTIONS:
@@ -168,7 +177,7 @@ class TestBroadUTF8Sweep:
 
     def test_no_bare_fdopen_in_src_worca(self):
         violations = []
-        for py_file in sorted(SRC_DIR.rglob("*.py")):
+        for py_file in _SRC_FILES:
             for lineno, has_enc in _fdopen_calls_in_file(py_file):
                 if not has_enc:
                     rel = py_file.relative_to(SRC_DIR)
@@ -180,7 +189,7 @@ class TestBroadUTF8Sweep:
 
     def test_no_bare_read_text_in_src_worca(self):
         violations = []
-        for py_file in sorted(SRC_DIR.rglob("*.py")):
+        for py_file in _SRC_FILES:
             for lineno, has_enc in _read_text_calls_in_file(py_file):
                 if not has_enc:
                     rel = py_file.relative_to(SRC_DIR)
@@ -192,7 +201,7 @@ class TestBroadUTF8Sweep:
 
     def test_no_bare_write_text_in_src_worca(self):
         violations = []
-        for py_file in sorted(SRC_DIR.rglob("*.py")):
+        for py_file in _SRC_FILES:
             for lineno, has_enc in _write_text_calls_in_file(py_file):
                 if not has_enc:
                     rel = py_file.relative_to(SRC_DIR)
