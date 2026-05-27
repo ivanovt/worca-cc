@@ -14,7 +14,11 @@ Each pipeline agent runs from a prompt that ships with worca. You can customize 
 | Agent override | `.claude/agents/<agent>.md` | `.claude/agents/implementer.md` |
 | Block override | `.claude/agents/<block>.block.md` | `.claude/agents/implement.block.md` |
 
-The runtime resolves the shipped base prompt, then applies your override on top. (Don't confuse `.claude/agents/` — your overrides — with `.claude/worca/agents/core/`, which is the runtime copy worca manages.)
+Overrides live **flat** in `.claude/agents/` — that's the default `agent_overrides_dir`. The runtime resolves the shipped base prompt, then applies your override on top. (Don't confuse `.claude/agents/` — your overrides — with `.claude/worca/agents/core/`, which is the runtime copy worca manages.)
+
+:::note[Coming from an older worca?]
+Earlier versions used a `.claude/agents/overrides/` subdirectory. That layout was flattened — `worca init --upgrade` moves any existing override files up into `.claude/agents/` and rewrites the `agent_overrides_dir` setting for you. Put new overrides directly in `.claude/agents/`.
+:::
 
 ## Replace vs. append
 
@@ -34,5 +38,5 @@ Sections marked `<!-- governance -->` in the base prompt **cannot be replaced** 
 A [template](/advanced/authoring-templates/) can ship agent-prompt overrides as part of its definition, so a workflow template can retune both *configuration* and *what the agents are told* in one package.
 
 :::tip
-This repo provides a `/worca-agent-override` skill that scaffolds an override file with the right markers. The resolution logic lives in `src/worca/orchestrator/overlay.py` if you want the details.
+An override is just a Markdown file you drop in `.claude/agents/` — no tooling required. Start with an **append** override targeting one section; it's the lowest-risk way to nudge an agent's behavior without taking ownership of the whole prompt.
 :::
