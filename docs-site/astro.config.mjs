@@ -53,13 +53,22 @@ export default defineConfig({
 			head: [...fontHead, ...analyticsHead],
 			social: [{ icon: 'github', label: 'GitHub', href: GITHUB_REPO }],
 			editLink: { baseUrl: `${GITHUB_REPO}/edit/master/docs-site/` },
-			// Content phase, Wave 1. Groups are added as their pages land.
 			sidebar: [
 				{ label: 'Introduction', items: [{ autogenerate: { directory: 'introduction' } }] },
 				{ label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
 				{ label: 'Core concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
-				// Upcoming: Running pipelines, Configuration,
-				// Notifications & integrations, Advanced, Reference, Upgrading.
+				{
+					label: 'Running pipelines',
+					items: [{ autogenerate: { directory: 'running-pipelines' } }],
+				},
+				{ label: 'Configuration', items: [{ autogenerate: { directory: 'configuration' } }] },
+				{
+					label: 'Notifications & integrations',
+					items: [{ autogenerate: { directory: 'integrations' } }],
+				},
+				{ label: 'Advanced', items: [{ autogenerate: { directory: 'advanced' } }] },
+				{ label: 'Reference', items: [{ autogenerate: { directory: 'reference' } }] },
+				{ label: 'Upgrading', items: [{ autogenerate: { directory: 'upgrading' } }] },
 			],
 		}),
 	],
