@@ -39,10 +39,13 @@ worca templates list                    # tabular output
 worca templates list --json             # machine-readable JSON (id, name, description, tier, tags, builtin, created_at)
 worca templates show <id>               # pretty-print template.json (resolved tier marked)
 worca templates save <id> [--global]    # snapshot current settings as a project (default) or user template
+worca templates create --from-file <path> [--global]  # create a template from a JSON file (project default, --global for user)
 worca templates delete <id> [--global]  # remove a project or user template (built-ins are protected)
 ```
 
-`worca templates list --json` is the canonical enumeration used by the `/worca-analyze` skill and any external tooling.
+`--from-file -` reads the JSON payload from stdin.
+
+`worca templates list --json` is the canonical enumeration used by the `/worca-analyze` and `/worca-template` skills and any external tooling.
 
 ## `worca cleanup`
 

@@ -207,7 +207,7 @@ def create_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="PATH",
         default=None,
-        help="Path to a reference guide injected into the plan prompt (--worktree only, repeatable)",
+        help="Path to a reference guide injected into the plan prompt (repeatable)",
     )
 
     # lifecycle commands: pause, stop, resume, status

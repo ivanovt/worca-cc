@@ -22,6 +22,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Multiple input modes** — prompt, spec file, GitHub issue (`gh:issue:42`), beads task (`bd:bd-abc`), or issue URL
 - **GitHub issue lifecycle** — start from issues with `--source gh:issue:N`, auto-post progress comments, link PRs, close issues on completion
 - **Guided issue triage** (`/worca-analyze`) — Claude Code skill that analyzes a GitHub issue, surfaces open design decisions with recommended options, optionally writes a `## Decisions` section back to the issue body, recommends the right pipeline template, and offers to launch a worktree-based pipeline — all in one pass
+- **Guided template authoring** (`/worca-template`) — Claude Code skill that interviews you about your pipeline needs, proposes reusing or extending an existing template, asks for project-vs-user scope, and writes a minimal-delta `template.json` via the CLI — no hand-editing required
 - **Multi-host PR metadata** (W-051) — provider detection across GitHub, GitLab, Bitbucket, Azure DevOps, and Gitea; PR stage records commit SHA, source/target branch flow, and draft/review status; UI surfaces a collapsible "PR details" panel on the PR stage card
 - **Smart title generation** — `--prompt` is optional; when omitted, the title is generated from the spec or plan file and sanitized for branch names
 - **Pipeline events & webhooks** — 52 structured event types emitted as a real-time JSONL stream; subscribe via configurable webhooks with HMAC-SHA256 signing, retry logic, and secret management; control webhooks can pause or abort the pipeline
@@ -38,6 +39,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 - **Built-in templates** — `feature`, `bugfix`, `quick-fix`, `refactor`, `investigate`, `test-only` — each with tailored stage flows, agent selection, and governance rules for different work types. `investigate` publishes its plan as a PR (W-046); `test-only` runs tests and coverage analysis without code changes
 - **Template selection UI** — styled dropdown on the new-run page with group headers, descriptions, and indentation; also selectable via CLI
 - **Agent prompt overrides** — templates wire their own agent prompt overrides through the overlay resolver, so each work type gets purpose-built instructions
+- **Guided authoring** — `/worca-template` walks you through creating a new template with a reuse-first interview, minimal config delta, and explicit scope selection; backed by `worca templates create --from-file` for validated writes
 
 ### Customization
 
