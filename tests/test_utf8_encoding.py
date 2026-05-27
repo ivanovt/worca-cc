@@ -9,6 +9,8 @@ import ast
 import pathlib
 import subprocess
 
+import pytest
+
 SRC_DIR = pathlib.Path(__file__).parent.parent / "src" / "worca"
 _REPO_ROOT = SRC_DIR.parent.parent
 
@@ -31,29 +33,34 @@ def _committed_src_snapshot():
     itself is tracked in issue #233. Falls back to the working tree outside a
     git checkout.
     """
+    # `-c safe.directory=*` defuses git's "dubious ownership" guard, which
+    # otherwise makes these subprocess calls fail on CI runners (the checkout
+    # dir is owned by a different uid) and silently degrade to the working tree.
+    base = ["git", "-c", "safe.directory=*", "-C", str(_REPO_ROOT)]
     try:
         listing = subprocess.run(
-            ["git", "-C", str(_REPO_ROOT), "ls-files", "src/worca"],
+            [*base, "ls-files", "src/worca"],
             capture_output=True, text=True, check=True,
         ).stdout
         rels = [ln for ln in listing.splitlines() if ln.endswith(".py")]
         if not rels:
-            raise RuntimeError("no tracked src files")
+            return None
         snap = {}
         for rel in rels:
             blob = subprocess.run(
-                ["git", "-C", str(_REPO_ROOT), "show", f"HEAD:{rel}"],
+                [*base, "show", f"HEAD:{rel}"],
                 capture_output=True, text=True, encoding="utf-8", check=True,
             ).stdout
             snap[_REPO_ROOT / rel] = blob
         return snap
     except Exception:
-        # Not a git checkout (or git unavailable): scan the working tree.
-        return {p: p.read_text(encoding="utf-8") for p in sorted(SRC_DIR.rglob("*.py"))}
+        # git unavailable — signal the guard to skip rather than scan the
+        # (potentially mid-run-polluted) working tree and false-positive.
+        return None
 
 
 _SRC_SNAPSHOT = _committed_src_snapshot()
-_SRC_FILES = sorted(_SRC_SNAPSHOT)
+_SRC_FILES = sorted(_SRC_SNAPSHOT) if _SRC_SNAPSHOT else []
 
 
 def _is_binary_mode(node: ast.Call) -> bool:
@@ -186,6 +193,10 @@ class TestTestHelperEncoding:
         assert 'encoding="utf-8"' in src or "encoding='utf-8'" in src
 
 
+@pytest.mark.skipif(
+    not _SRC_SNAPSHOT,
+    reason="committed-source scan needs git; skipped to avoid working-tree false-positives",
+)
 class TestBroadUTF8Sweep:
     """Every text-mode open/fdopen/read_text/write_text in src/worca/ must
     specify encoding='utf-8' to avoid cp1252 mojibake on Windows."""
