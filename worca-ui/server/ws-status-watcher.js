@@ -3,14 +3,9 @@
  * Owns refresh scheduling, lastPipelineStatus tracking, and the status/runsDirWatcher FSWatchers.
  */
 
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  watch,
-} from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { safeWatch } from './safe-watch.js';
 import { readSettings } from './settings-reader.js';
 import { discoverRunsAsync } from './watcher.js';
 
@@ -225,7 +220,7 @@ export function createStatusWatcher({
       const wtRunsDir = join(reg.worktree_path, '.worca', 'runs');
       if (!existsSync(wtRunsDir)) continue;
       try {
-        const w = watch(
+        const w = safeWatch(
           wtRunsDir,
           { recursive: true },
           (_eventType, filename) => {
@@ -322,7 +317,7 @@ export function createStatusWatcher({
           // rename-over) replace the inode.  After one 'rename' event the
           // watcher goes dead because it tracked the old inode.  We
           // re-establish the watcher on the new file after a short delay.
-          statusWatcher = watch(statusFile, (eventType) => {
+          statusWatcher = safeWatch(statusFile, (eventType) => {
             scheduleRefresh();
             if (eventType === 'rename') {
               // File replaced (atomic write) — re-watch the new inode
@@ -338,7 +333,7 @@ export function createStatusWatcher({
         } else if (existsSync(runDir)) {
           // status.json doesn't exist yet — watch the directory for its creation,
           // then switch to watching the file once it appears.
-          statusWatcher = watch(
+          statusWatcher = safeWatch(
             runDir,
             { recursive: false },
             (_eventType, filename) => {
@@ -373,7 +368,7 @@ export function createStatusWatcher({
   // Watch worcaDir for legacy status.json changes
   try {
     if (existsSync(worcaDir)) {
-      activeRunWatcher = watch(
+      activeRunWatcher = safeWatch(
         worcaDir,
         { recursive: false },
         (_eventType, filename) => {
@@ -395,7 +390,7 @@ export function createStatusWatcher({
   const runsDir = join(worcaDir, 'runs');
   try {
     if (existsSync(runsDir)) {
-      runsDirWatcher = watch(
+      runsDirWatcher = safeWatch(
         runsDir,
         { recursive: true },
         (_eventType, filename) => {
@@ -414,7 +409,7 @@ export function createStatusWatcher({
   const pipelinesDirPath = join(worcaDir, 'multi', 'pipelines.d');
   try {
     mkdirSync(pipelinesDirPath, { recursive: true });
-    pipelinesDirWatcher = watch(
+    pipelinesDirWatcher = safeWatch(
       pipelinesDirPath,
       { recursive: false },
       (_eventType, filename) => {

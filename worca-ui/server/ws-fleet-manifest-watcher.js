@@ -3,10 +3,11 @@
  * Emits fleet-update WS events when a fleet manifest is written (§13.5).
  */
 
-import { existsSync, readFileSync, watch } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { effectiveFleetStatus } from './fleet-routes.js';
 import { fleetRunsDir as resolveFleetRunsDir } from './paths.js';
+import { safeWatch } from './safe-watch.js';
 
 const FLEET_DEBOUNCE_MS = 200;
 
@@ -100,7 +101,7 @@ export function createFleetManifestWatcher({
 
   try {
     if (existsSync(fleetRunsDir)) {
-      fsWatcher = watch(
+      fsWatcher = safeWatch(
         fleetRunsDir,
         { persistent: false },
         (_event, filename) => {

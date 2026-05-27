@@ -25,6 +25,9 @@ describe('createFleetManifestWatcher', () => {
       watch: mockWatch,
       readFileSync: mockReadFileSync,
     }));
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: mockWatch,
+    }));
 
     const mod = await import('./ws-fleet-manifest-watcher.js');
     createFleetManifestWatcher = mod.createFleetManifestWatcher;

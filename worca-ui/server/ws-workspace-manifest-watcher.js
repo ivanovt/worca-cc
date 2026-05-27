@@ -6,9 +6,10 @@
  * Separate from fleet-update per W-040 §13.5 — never multiplexed.
  */
 
-import { existsSync, readFileSync, watch } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { workspaceRunsDir as resolveWorkspaceRunsDir } from './paths.js';
+import { safeWatch } from './safe-watch.js';
 
 const WS_DEBOUNCE_MS = 200;
 
@@ -102,7 +103,7 @@ export function createWorkspaceManifestWatcher({
 
   try {
     if (existsSync(workspaceRunsDir)) {
-      fsWatcher = watch(
+      fsWatcher = safeWatch(
         workspaceRunsDir,
         { persistent: false },
         (_event, filename) => {

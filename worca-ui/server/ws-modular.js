@@ -6,11 +6,12 @@
  * Supports dynamic project add/remove via fs.watch on projects.d/.
  */
 
-import { existsSync, watch } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { WebSocketServer } from 'ws';
 import { fleetRunsDir, workspaceRunsDir } from './paths.js';
 import { readProjects, synthesizeDefaultProject } from './project-registry.js';
+import { safeWatch } from './safe-watch.js';
 import { TIER_FULL, TIER_POLLING, WatcherSet } from './watcher-set.js';
 import { readProjectWorcaVersion } from './worca-setup.js';
 import { peekBeadsCounts } from './ws-beads-watcher.js';
@@ -119,7 +120,7 @@ export function attachWsServer(httpServer, config) {
     const projectsDir = join(prefsDir, 'projects.d');
     try {
       if (existsSync(projectsDir)) {
-        dirWatcher = watch(projectsDir, { persistent: false }, () => {
+        dirWatcher = safeWatch(projectsDir, { persistent: false }, () => {
           if (debounceTimer) clearTimeout(debounceTimer);
           debounceTimer = setTimeout(() => {
             debounceTimer = null;
