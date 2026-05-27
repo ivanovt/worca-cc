@@ -38,7 +38,8 @@ export default defineConfig({
 			sidebar: [
 				{ label: 'Introduction', items: [{ autogenerate: { directory: 'introduction' } }] },
 				{ label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
-				// Upcoming: Core concepts, Running pipelines, Configuration,
+				{ label: 'Core concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
+				// Upcoming: Running pipelines, Configuration,
 				// Notifications & integrations, Advanced, Reference, Upgrading.
 			],
 		}),
