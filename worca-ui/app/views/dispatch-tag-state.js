@@ -3,10 +3,13 @@
  * These are extracted for testability and reuse in settings.js.
  */
 
-// Keep in sync with _SUBAGENT_DENYLIST in src/worca/hooks/tracking.py —
-// the backend is the authoritative enforcer; this set mirrors it so the
-// UI can show the same types as blocked.
-export const SUBAGENT_DENYLIST = new Set(['general-purpose']);
+// Mirrors the subagents `always_disallowed` default in
+// _DISPATCH_DEFAULTS (src/worca/hooks/tracking.py) — the hard-deny tier whose
+// items cannot be added to any per_agent_allow list. The backend is the
+// authoritative enforcer; this set lets the editor show the same types as
+// blocked. Empty by default: general-purpose now lives in default_denied
+// (allowable per-agent), not always_disallowed, so nothing is hard-denied.
+export const SUBAGENT_DENYLIST = new Set([]);
 
 // Fallback used when `GET /api/subagents` is unavailable or hasn't returned
 // yet. The server endpoint does the real directory walk (builtins + user +

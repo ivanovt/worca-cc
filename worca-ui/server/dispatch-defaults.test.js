@@ -108,14 +108,14 @@ describe('DISPATCH_DEFAULTS', () => {
     );
   });
 
-  it('subagents always_disallowed is general-purpose', () => {
-    expect(DISPATCH_DEFAULTS.subagents.always_disallowed).toEqual([
-      'general-purpose',
-    ]);
+  it('subagents always_disallowed is empty (nothing hard-denied)', () => {
+    expect(DISPATCH_DEFAULTS.subagents.always_disallowed).toEqual([]);
   });
 
-  it('subagents default_denied is empty', () => {
-    expect(DISPATCH_DEFAULTS.subagents.default_denied).toEqual([]);
+  it('subagents default_denied is general-purpose (allowable per-agent)', () => {
+    expect(DISPATCH_DEFAULTS.subagents.default_denied).toEqual([
+      'general-purpose',
+    ]);
   });
 
   it('subagents _defaults is wildcard (PR B)', () => {

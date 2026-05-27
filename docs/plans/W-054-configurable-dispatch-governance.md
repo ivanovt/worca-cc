@@ -6,6 +6,8 @@
 **Date:** 2026-05-17
 **Depends on:** W-038 (configurable subagent dispatch — establishes today's settings-driven dispatch shape)
 
+> **Partially superseded (v2 dispatch normalization).** This plan places `general-purpose` on the subagents `always_disallowed` tier. That was later moved to `default_denied` (still off by default, but allowable per-agent) because `always_disallowed` is checked before `per_agent_allow`, leaving no opt-in path. The canonical reference is [`docs/governance.md`](../governance.md) § Subagents; the upgrade behavior is the v2 normalization in [`MIGRATION.md`](../../MIGRATION.md) (`0.40.x → 0.41.0`).
+
 ## Problem
 
 Worca's dispatch governance is split across two enforcement layers that are wired up

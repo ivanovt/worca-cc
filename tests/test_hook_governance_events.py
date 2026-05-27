@@ -356,8 +356,10 @@ class TestSubagentStartDispatchBlockedEvent:
         events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         e = events[0]
         # `candidate` carries the child name; `reason` is the rule path.
+        # general-purpose is denied by default via default_denied (it is
+        # excluded from the '*' wildcard), not the always_disallowed tier.
         assert e["payload"]["candidate"] == "general-purpose"
-        assert e["payload"]["reason"] == "always_disallowed"
+        assert e["payload"]["reason"] == "default_denied"
 
     def test_emit_noop_when_events_path_missing(self):
         """No crash when WORCA_EVENTS_PATH is not set — dispatch still blocked."""

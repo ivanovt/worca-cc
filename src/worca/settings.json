@@ -283,7 +283,7 @@
         "block_graphify_mutation": true
       },
       "test_gate_strikes": 2,
-      "dispatch_migration_version": 1,
+      "dispatch_migration_version": 2,
       "dispatch": {
         "tools": {
           "always_disallowed": ["EnterPlanMode", "EnterWorktree", "TodoWrite"],
@@ -320,8 +320,8 @@
           }
         },
         "subagents": {
-          "always_disallowed": ["general-purpose"],
-          "default_denied": [],
+          "always_disallowed": [],
+          "default_denied": ["general-purpose"],
           "per_agent_allow": {
             "_defaults": ["*"]
           }

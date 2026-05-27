@@ -32,7 +32,7 @@ worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, r
 ### Governance & Safety
 
 - **Governance hooks** — block dangerous operations (rm -rf, force push, env writes), enforce test gates, validate plans (each guard can be toggled independently)
-- **Configurable subagent dispatch** — per-agent allowlists control which Claude Code subagents each pipeline agent can spawn; `general-purpose` is on an unbypassable denylist; dispatch events render as green/red badges per iteration in the UI
+- **Configurable subagent dispatch** — per-agent allowlists control which Claude Code subagents each pipeline agent can spawn; `general-purpose` is denied by default (opt an agent in explicitly when needed); dispatch events render as green/red badges per iteration in the UI
 - **Human approval gates** — optional checkpoints after planning, before merge, and before deploy (configurable per gate)
 - **Token and cost tracking** — per-agent usage with model-specific pricing, web search/fetch cost tracking, cache tier breakdown, budget warnings at configurable thresholds
 
@@ -228,7 +228,7 @@ All configuration lives in `.claude/settings.json` under the `worca` key:
 - **`worca.effort`** — adaptive reasoning-effort control: `auto_mode` (`adaptive` default / `reactive` / `disabled`), an `auto_cap` ceiling, and per-agent `effort` levels (`low | medium | high | xhigh | max`). See [docs/effort.md](docs/effort.md)
 - **`worca.stages`** — enable/disable pipeline stages (preflight, plan, coordinate, implement, test, review, pr, learn), assign agents
 - **`worca.loops`** — iteration limits (implement/test: 5, code review: 5, PR changes: 5, restart planning: 2)
-- **`worca.governance`** — guards (block rm -rf, force push, env writes), test gate strike limit, `subagent_dispatch` per-agent allowlists (user config replaces defaults per agent; `general-purpose` denylist enforced)
+- **`worca.governance`** — guards (block rm -rf, force push, env writes), test gate strike limit, `subagent_dispatch` per-agent allowlists (user config replaces defaults per agent; `general-purpose` denied by default, allowable per-agent)
 - **`worca.milestones`** — human approval gates (plan, PR, deploy)
 - **`worca.pricing`** — per-model token pricing for cost tracking
 - **`worca.circuit_breaker`** — max failures before halting, transient error retry logic

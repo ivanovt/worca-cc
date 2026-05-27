@@ -13,6 +13,7 @@ from worca.cli.init import _migrate_dispatch_governance
 from worca.hooks.tracking import (
     DISPATCH_MIGRATION_VERSION,
     _DISPATCH_DEFAULTS,
+    adopt_general_purpose_allowable,
     adopt_narrowed_skills_denylist,
     adopt_stale_subagent_default,
     normalize_dispatch_defaults,
@@ -141,14 +142,47 @@ def test_adopt_preserves_customized_skills_denylist():
     assert "worca-*" in cfg["always_disallowed"]
 
 
+# --- adopt_general_purpose_allowable -----------------------------------------
+
+
+def test_adopt_moves_general_purpose_to_default_denied():
+    cfg = {"always_disallowed": ["general-purpose"], "default_denied": []}
+    assert adopt_general_purpose_allowable(cfg) is True
+    assert cfg["always_disallowed"] == []
+    assert cfg["default_denied"] == ["general-purpose"]
+
+
+def test_adopt_general_purpose_preserves_existing_default_denied():
+    cfg = {"always_disallowed": ["general-purpose"], "default_denied": ["foo"]}
+    assert adopt_general_purpose_allowable(cfg) is True
+    assert cfg["always_disallowed"] == []
+    assert cfg["default_denied"] == ["foo", "general-purpose"]
+
+
+def test_adopt_general_purpose_preserves_customized_denylist():
+    """A denylist with extra entries is a deliberate operator choice — leave it."""
+    cfg = {"always_disallowed": ["general-purpose", "custom-deny"], "default_denied": []}
+    assert adopt_general_purpose_allowable(cfg) is False
+    assert cfg["always_disallowed"] == ["general-purpose", "custom-deny"]
+
+
+def test_adopt_general_purpose_noop_when_already_migrated():
+    cfg = {"always_disallowed": [], "default_denied": ["general-purpose"]}
+    assert adopt_general_purpose_allowable(cfg) is False
+
+
 # --- normalize_dispatch_defaults (Pop 1) -------------------------------------
 
 
 def test_normalize_pop1_collapses_and_narrows_and_stamps():
     gov = _pop1_config()
     changes = normalize_dispatch_defaults(gov)
-    assert len(changes) == 2
+    # Three normalizations fire: subagent default collapse, skills-glob narrow,
+    # and general-purpose moved to default_denied.
+    assert len(changes) == 3
     assert gov["dispatch"]["subagents"]["per_agent_allow"] == {"_defaults": ["*"]}
+    assert gov["dispatch"]["subagents"]["always_disallowed"] == []
+    assert gov["dispatch"]["subagents"]["default_denied"] == ["general-purpose"]
     assert "worca-*" not in gov["dispatch"]["skills"]["always_disallowed"]
     assert "worca-release" in gov["dispatch"]["skills"]["always_disallowed"]
     assert gov["dispatch_migration_version"] == DISPATCH_MIGRATION_VERSION

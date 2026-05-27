@@ -212,8 +212,9 @@ def test_force_push_blocked(pipeline_env):
 
 
 def test_dispatch_blocks_denylisted_subagent(pipeline_env):
-    """`general-purpose` is unconditionally denylisted, even when settings
-    would allow it. The denylist is enforced before the per-agent allow-list."""
+    """`general-purpose` is denied by default: it sits in default_denied, so the
+    `*` wildcard excludes it and an agent without an explicit allow entry is
+    blocked. (It is allowable per-agent by naming it in per_agent_allow.)"""
     pipeline_env.set_governance_agent("implementer")
     proc = pipeline_env.run_hook(
         "subagent_start",

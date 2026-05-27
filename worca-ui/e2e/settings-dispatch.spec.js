@@ -205,9 +205,11 @@ test('remove a tag chip', async ({ page }) => {
   }
 });
 
-// ─── Test 5: denied type greyed out in suggestions ───────────────────────────
+// ─── Test 5: general-purpose is addable (default_denied, not always_disallowed) ─
 
-test('denied type shown greyed out and cannot be added', async ({ page }) => {
+test('general-purpose is suggested without denied styling and can be added', async ({
+  page,
+}) => {
   const ctx = await startServer();
   try {
     // Default settings: coordinator starts with []
@@ -217,21 +219,20 @@ test('denied type shown greyed out and cannot be added', async ({ page }) => {
     await input.click();
     await input.fill('general');
 
-    // Suggestions popup should show "general-purpose" with denied styling
+    // Suggestions popup shows "general-purpose" as a normal (non-denied) item.
     const suggestions = page.locator(
       '.settings-dispatch-row:has(#dispatch-subagents-coordinator) .dispatch-suggestions',
     );
     await expect(suggestions).toBeVisible();
-    const deniedItem = suggestions
-      .locator('.item.denied')
-      .filter({ hasText: 'general-purpose' });
-    await expect(deniedItem).toBeVisible();
+    const item = suggestions.locator('.item').filter({ hasText: 'general-purpose' });
+    await expect(item).toBeVisible();
+    await expect(item).not.toHaveClass(/denied/);
 
-    // Click the denied item — it should NOT be added
-    await deniedItem.click();
+    // Clicking it adds it to coordinator's allow list.
+    await item.click();
     await expect(
       page.locator('#dispatch-subagents-coordinator sl-tag[data-value="general-purpose"]'),
-    ).not.toBeAttached();
+    ).toBeAttached();
   } finally {
     await ctx.close();
   }

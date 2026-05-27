@@ -118,15 +118,17 @@ When `WORCA_AGENT` is empty (interactive mode), all dispatches are allowed — h
 
 ```jsonc
 {
-  "always_disallowed": ["general-purpose"],
-  "default_denied": [],
+  "always_disallowed": [],
+  "default_denied": ["general-purpose"],
   "per_agent_allow": { "_defaults": ["*"] }
 }
 ```
 
-**Default: wide open (`["*"]`).** All built-in subagents (`Explore`, `Plan`, `claude-code-guide`, `statusline-setup`) plus user/plugin subagents resolve via wildcard. The `general-purpose` subagent is in `always_disallowed` because it spawns an unconstrained Claude session with full tool access — the one footgun.
+**Default: wide open (`["*"]`).** All built-in subagents (`Explore`, `Plan`, `claude-code-guide`, `statusline-setup`) plus user/plugin subagents resolve via wildcard. The `general-purpose` subagent is in `default_denied` because it spawns an unconstrained Claude session with full tool access — so it stays **off by default** (the `"*"` wildcard excludes `default_denied`), but a project can re-allow it for a specific agent by naming it in `per_agent_allow` (e.g. `"implementer": ["*", "general-purpose"]`).
 
-Projects that need tighter control add specific subagents to `default_denied` and opt in per agent. The plain wildcard default reflects an operational reality: hand-curating allowlists for an evolving set of project/plugin subagents creates more drift than safety.
+> **Why `default_denied`, not `always_disallowed`?** It used to be on `always_disallowed`, which the resolver checks *before* `per_agent_allow` — so there was no way to opt in even by naming it explicitly. Moving it to `default_denied` keeps the footgun guarded by default while making the opt-in path actually work. Upgrading projects self-heal via the v2 dispatch normalization (stamped on `governance.dispatch_migration_version`); the UI editor no longer hard-blocks typing `general-purpose` into an allow list.
+
+Projects that need tighter control add specific subagents to `default_denied` and opt in per agent. The plain wildcard default reflects an operational reality: hand-curating allowlists for an evolving set of project/plugin subagents creates more drift than safety. To genuinely forbid a subagent everywhere (no per-agent opt-in possible), add it to `always_disallowed`.
 
 ## Asymmetric defaults
 
@@ -134,11 +136,11 @@ All three sections now default to `["*"]` (PR B for subagents). The deny tiers c
 
 | Section | `_defaults` | Tier-1 denials |
 |---------|-------------|----------------|
-| tools | `["*"]` | `EnterPlanMode`, `EnterWorktree`, `TodoWrite` |
-| skills | `["*"]` | `batch`, `fewer-permission-prompts`, `loop`, `schedule`, `worca-*`, `update-config`, `hookify:*`, `init` |
-| subagents | `["*"]` | `general-purpose` |
+| tools | `["*"]` | `EnterPlanMode`, `EnterWorktree`, `TodoWrite` (always_disallowed) |
+| skills | `["*"]` | `batch`, `fewer-permission-prompts`, `loop`, `schedule`, `worca-*`, `update-config`, `hookify:*`, `init` (always_disallowed) |
+| subagents | `["*"]` | `general-purpose` (default_denied — off by default, allowable per-agent) |
 
-The skills section additionally uses `default_denied` to gate per-agent opt-ins (`simplify`, `debug`, `claude-api`, `review`, etc.). Subagents and tools use `default_denied` rarely — projects can add entries to express "this is normally off; reviewer can opt in" without flipping per-agent allowlists.
+The skills section additionally uses `default_denied` to gate per-agent opt-ins (`simplify`, `debug`, `claude-api`, `review`, etc.). The subagents section uses `default_denied` for `general-purpose` (same pattern: normally off; an agent can opt in). `always_disallowed` is empty by default for subagents — projects add to it only to forbid a subagent with no opt-in path.
 
 ## Wildcard semantics
 
@@ -251,6 +253,20 @@ Add it to `default_denied`. The wildcard does not include `default_denied` entri
   "default_denied": ["claude-code-guide"],
   "per_agent_allow": {
     "_defaults": ["*"]
+  }
+}
+```
+
+### Re-allow `general-purpose` for one agent
+
+`general-purpose` ships in `default_denied`, so it is blocked under the wildcard. Name it explicitly in a per-agent entry to opt that agent in (the mixed form `["*", …]` keeps the wildcard for everything else):
+
+```jsonc
+"subagents": {
+  "default_denied": ["general-purpose"],
+  "per_agent_allow": {
+    "_defaults": ["*"],
+    "implementer": ["*", "general-purpose"]
   }
 }
 ```
