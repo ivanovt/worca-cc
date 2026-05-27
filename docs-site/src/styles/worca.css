@@ -23,3 +23,12 @@
 	letter-spacing: 0.08em;
 	color: var(--sl-color-white);
 }
+
+/* Slimmer, subtler Previous / Next pagination at the foot of each page. */
+.pagination-links a {
+	padding: 0.55rem 0.85rem;
+}
+.pagination-links a .link-title {
+	font-size: var(--sl-text-base);
+	font-weight: 600;
+}

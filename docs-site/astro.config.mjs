@@ -47,6 +47,9 @@ export default defineConfig({
 				'Documentation for worca — an autonomous software development pipeline combining orchestration with governance enforcement.',
 			favicon: '/favicon.svg',
 			customCss: ['./src/styles/worca.css'],
+			// Hide the right-hand "On this page" rail site-wide (re-enable per page
+			// with `tableOfContents: true` in frontmatter for long pages).
+			tableOfContents: false,
 			head: [...fontHead, ...analyticsHead],
 			social: [{ icon: 'github', label: 'GitHub', href: GITHUB_REPO }],
 			editLink: { baseUrl: `${GITHUB_REPO}/edit/master/docs-site/` },
