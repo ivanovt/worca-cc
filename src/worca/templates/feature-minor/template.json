@@ -1,0 +1,13 @@
+{
+  "id": "feature-minor",
+  "name": "Minor Feature",
+  "description": "Lean feature pipeline for well-scoped work a planner can handle confidently. Full implement/test/review/PR; no plan-review stage, no learn stage, no plan-approval gate — runs autonomously. Supplying a plan skips the PLAN stage.",
+  "builtin": true,
+  "created_at": "2026-05-27T00:00:00Z",
+  "tags": ["feature", "minor", "no-gate"],
+  "config": {
+    "effort": { "auto_cap": "high" },
+    "loops": { "implement_test": 8, "pr_changes": 4 },
+    "milestones": { "plan_approval": false, "deploy_approval": false }
+  }
+}

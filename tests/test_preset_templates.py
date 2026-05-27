@@ -1,4 +1,4 @@
-"""Tests for the 6 built-in preset template directories."""
+"""Tests for the 7 built-in preset template directories."""
 
 import json
 from pathlib import Path
@@ -7,16 +7,25 @@ import pytest
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "src" / "worca" / "templates"
 
-PRESETS = ["bugfix", "feature", "refactor", "quick-fix", "investigate", "test-only"]
+PRESETS = [
+    "bugfix",
+    "feature",
+    "feature-minor",
+    "refactor",
+    "quick-fix",
+    "investigate",
+    "test-only",
+]
 
 # Agent overlay files expected per preset
 EXPECTED_OVERLAYS = {
-    "bugfix":      {"planner.md", "coordinator.md"},
-    "feature":     set(),
-    "refactor":    {"planner.md", "reviewer.md"},
-    "quick-fix":   {"planner.md", "coordinator.md"},
-    "investigate": {"planner.md", "guardian.md", "pr.block.md"},
-    "test-only":   {"planner.md", "coordinator.md", "implementer.md"},
+    "bugfix":        {"planner.md", "coordinator.md"},
+    "feature":       set(),
+    "feature-minor": set(),
+    "refactor":      {"planner.md", "reviewer.md"},
+    "quick-fix":     {"planner.md", "coordinator.md"},
+    "investigate":   {"planner.md", "guardian.md", "pr.block.md"},
+    "test-only":     {"planner.md", "coordinator.md", "implementer.md"},
 }
 
 

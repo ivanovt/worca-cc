@@ -12,7 +12,7 @@ With your project added, you're ready to run the pipeline — all from the dashb
 1. Select your project in the sidebar.
 2. Click **Run Pipeline**.
 3. Describe the work: type a **prompt**, or point at a **GitHub issue** or a **spec file**.
-4. *(Optional)* Pick a **template** — `feature`, `bugfix`, `quick-fix`, `refactor`, `investigate`, or `test-only` — to tailor the stages and rules to the kind of work.
+4. *(Optional)* Pick a **template** — `feature`, `feature-minor`, `bugfix`, `quick-fix`, `refactor`, `investigate`, or `test-only` — to tailor the stages and rules to the kind of work.
 5. Click **Launch**.
 
 :::note[Screenshot — coming soon]

@@ -260,6 +260,7 @@ Templates override the project defaults via deep-merge (see [Precedence](#preced
 |---|---|---|
 | `quick-fix` | `effort.auto_mode: disabled`; planner `medium`, coordinator `low`, implementer `low` | Trivial work — deterministic and cheap; intentional disable prevents wasted escalation |
 | `bugfix` | `effort.auto_cap: high` | Clamp escalation cost on focused fixes; prevents auto-escalation to `max` |
+| `feature-minor` | `effort.auto_cap: high` | Well-scoped features — keep adaptive labels but bound cost like `bugfix` |
 | `feature` | none (baseline + adaptive) | Complex beads get `high`/`xhigh` naturally via the coordinator's classification |
 | `investigate` | none (baseline + adaptive) | Same as feature |
 | `refactor` | none (baseline + adaptive) | Same as feature |
