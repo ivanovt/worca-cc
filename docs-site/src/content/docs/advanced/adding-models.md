@@ -5,7 +5,9 @@ sidebar:
   order: 5
 ---
 
-Agents reference models by short alias — `opus`, `sonnet`, `haiku` — and those aliases resolve through `worca.models` in `settings.json`. Editing that map lets you retarget an alias, add a profile, or route a model through an alternate endpoint.
+Choosing *which* model each agent runs is a dropdown in **Settings → Agents** (see [Agents & models](/configuration/agents-and-models/)) — no JSON needed for day-to-day tuning. This page covers the layer beneath that: the **model profiles** the dropdowns select from.
+
+Agents reference models by short alias — `opus`, `sonnet`, `haiku` — and those aliases resolve through `worca.models` in `settings.json`. Editing that map lets you retarget an alias, add a profile, or route a model through an alternate endpoint — things the per-agent dropdown can't do.
 
 ## The two profile forms
 

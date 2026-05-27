@@ -5,9 +5,19 @@ sidebar:
   order: 2
 ---
 
-A **webhook** POSTs every matching event to a URL you control. Configure subscribers from the **Webhooks** settings panel, or directly under `worca.webhooks` in `settings.json`.
+A **webhook** POSTs every matching event to a URL you control. The simplest way to add one is the dashboard.
 
-## Subscriber config
+## The Webhooks panel
+
+Open **Settings → Webhooks**. The panel lets you toggle the event system, set budget limits, add subscriber URLs, choose which events each one receives, and turn on HMAC-SHA256 signing — all without touching JSON. Saves take effect on the next run.
+
+:::note[Screenshot — coming soon]
+The Webhooks settings panel: event-system toggle, budget limits, and a subscriber row with its event filter and signing secret.
+:::
+
+## What it writes
+
+Behind the panel, subscribers live under `worca.webhooks` in settings. The shape is worth knowing if you're scripting it or reviewing a diff:
 
 ```jsonc
 "worca": {
@@ -26,7 +36,7 @@ A **webhook** POSTs every matching event to a URL you control. Configure subscri
 The `events` array accepts fnmatch patterns — `pipeline.run.*`, `workspace.*`, or a bare `*`. Omit it (or set `null`) to receive everything.
 
 :::tip
-Put the `secret` in `settings.local.json`, not the committed `settings.json`. See [Secrets](/configuration/secrets/).
+The signing secret belongs in `settings.local.json`, not the committed `settings.json`. The panel's secret field routes there automatically — see [Secrets](/configuration/secrets/).
 :::
 
 ## Delivery headers
@@ -37,21 +47,21 @@ Each POST carries headers you can route and verify on:
 |---|---|
 | `X-Worca-Event` | the `event_type` string |
 | `X-Worca-Delivery` | the `event_id` (UUID) — use it to dedupe |
-| `X-Worca-Signature` | `sha256=<hex>` — present only when a `secret` is set |
+| `X-Worca-Signature` | `sha256=<hex>` — present only when a secret is set |
 
 ## Verifying the signature
 
-When a `secret` is configured, worca signs the body with HMAC-SHA256 and sends it in `X-Worca-Signature`. Verify it with a **timing-safe** comparison — recompute the HMAC over the raw request body with your shared secret and compare against the header. Never compare with a plain `==`.
+When a secret is configured, worca signs the body with HMAC-SHA256 and sends it in `X-Worca-Signature`. Verify it with a **timing-safe** comparison — recompute the HMAC over the raw request body with your shared secret and compare against the header. Never compare with a plain `==`.
 
 ## Control webhooks
 
 A webhook can also *steer* the run. Set both `"control": true` and a `"secret"` (required for control mode). The pipeline calls control webhooks **synchronously** at milestones and reads an action from the response body:
 
 ```jsonc
-{ "control": { "action": "pause" } }   // "pause" | "abort" | "continue"
+{ "control": { "action": "pause" } }
 ```
 
-This lets an external system gate the pipeline — for example, holding a run until a deploy window opens.
+The action is `pause`, `abort`, or `continue` — letting an external system gate the pipeline, for example holding a run until a deploy window opens.
 
 :::tip[Testing without a run]
 Use the `/worca-webhook-test` skill to sign and POST a synthetic event to your URL — it verifies HMAC, reachability, and (for control webhooks) the control-action response, without launching a pipeline.

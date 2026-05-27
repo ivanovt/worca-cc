@@ -7,9 +7,19 @@ sidebar:
 
 A **guide** is a reference document — a migration spec, an RFC, a compliance requirement — that you attach to a run as the highest-authority source. Agents must conform to it, even when the plan or the prompt says otherwise.
 
-## Attaching a guide
+## Attaching a guide from the dashboard
 
-Pass `--guide` (repeatable) on any run mode:
+Every launcher — single run, fleet, and workspace — has a **guide upload** field. Drop one or more files there and they're attached to the run; the run-detail view renders the attached guide so you can confirm what the agents are working against.
+
+:::note[Screenshot — coming soon]
+The Run Pipeline launcher's guide-upload field with a migration spec attached.
+:::
+
+Guide content is capped at 64 KB combined (`worca.guide.max_bytes`); exceeding the cap aborts the launch before any work starts.
+
+## Attaching a guide from the CLI
+
+For scripted runs, pass `--guide` (repeatable) on any run mode:
 
 ```bash
 worca run --worktree --prompt "Migrate to the v2 API" --guide ./migration-spec.md
@@ -23,7 +33,7 @@ python .claude/scripts/run_fleet.py \
   --guide ./breaking-changes.md
 ```
 
-From the dashboard, the launcher accepts guide file uploads. Guide paths are resolved to absolute before dispatch; combined guide content is capped at 64 KB (`worca.guide.max_bytes`), and exceeding the cap aborts the launch before any work starts.
+Guide paths are resolved to absolute before dispatch.
 
 ## The authority order
 

@@ -7,6 +7,16 @@ sidebar:
 
 A **workspace** carries one prompt across *interdependent* projects, in the right order. Where a [fleet](/advanced/fleet-runs/) sends the same prompt to independent repos, a workspace decomposes the prompt into per-project sub-plans, runs them tier-by-tier, runs cross-project integration tests, and opens linked PRs with dependency metadata.
 
+## Launch and control from the dashboard
+
+The simplest path is the dashboard. Register a workspace from the **+** add-project dialog (choose **Workspace**), manage its definition in **Configuration → Workspaces**, then launch from **Run Pipeline ▸ Run Workspace** — pick the workspace, enter the prompt, choose a planning strategy, and set concurrency. The detail page shows the dependency graph with propagation arrows and per-project run cards. That UI flow is covered in [Fleet & workspace runs](/running-pipelines/fleet-and-workspace-runs/).
+
+:::note[Screenshot — coming soon]
+The Run Workspace launcher (workspace picker + planning-strategy options) and the workspace detail page with its dependency graph.
+:::
+
+The rest of this page is the **CLI and automation** reference — the `workspace.json` schema, the full flag set, and the DAG/integration/PR mechanics.
+
 ## Define the workspace
 
 A workspace is a parent directory containing sibling project clones plus a `workspace.json`. Scaffold one by scanning the parent for git repos:

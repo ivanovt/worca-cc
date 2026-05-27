@@ -5,7 +5,19 @@ sidebar:
   order: 9
 ---
 
-Beyond the always-on safety hooks described in [Governance](/concepts/governance/), worca lets you control exactly which **tools**, **skills**, and **subagents** each pipeline agent may dispatch. All three share one three-tier model under `worca.governance.dispatch`.
+Beyond the always-on safety hooks described in [Governance](/concepts/governance/), worca lets you control exactly which **tools**, **skills**, and **subagents** each pipeline agent may dispatch.
+
+## Edit it from the dashboard
+
+Open **Settings → Governance**. The dispatch editor has three sections — **Tools**, **Skills**, **Subagents** — each with per-agent allow/deny chips. Adding or removing a chip updates the allow list for that agent; an agent set to deny-everything shows a **Lockdown** marker. This is the simplest way to grant or revoke a capability without editing JSON.
+
+The run-detail view then shows each iteration's actual dispatch decisions as allow (green) / deny (red) badges, so you can confirm a change took effect.
+
+:::note[Screenshot — coming soon]
+The Settings → Governance dispatch editor: the Tools / Skills / Subagents sections with per-agent allow chips.
+:::
+
+The rest of this page explains the model the editor writes to — useful when you want the precise semantics or are scripting `settings.json` directly. All three sections share one three-tier model under `worca.governance.dispatch`.
 
 ## The three tiers
 

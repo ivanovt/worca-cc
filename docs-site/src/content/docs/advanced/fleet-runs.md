@@ -7,7 +7,17 @@ sidebar:
 
 A **fleet** applies the *same* work request to *N independent* projects in parallel. Each target runs a full, standard pipeline in its own git worktree, on its own branch, opening its own PR — all grouped under a shared `fleet_id`.
 
-## Launching
+## Launch and control from the dashboard
+
+The simplest path is the dashboard's **Run Pipeline ▸ Run Fleet** launcher — multi-select the targets, enter the prompt, attach a guide, and set concurrency. The fleet detail page then carries the lifecycle buttons (**Pause / Halt / Stop / Resume / Cleanup**) and a circuit-breaker banner. That UI flow, and how fleets group in the sidebar, is covered in [Fleet & workspace runs](/running-pipelines/fleet-and-workspace-runs/).
+
+:::note[Screenshot — coming soon]
+The Run Fleet launcher (target multi-select + prompt) and the fleet detail page with its lifecycle controls.
+:::
+
+The rest of this page is the **CLI and automation** reference — the full flag set for scripting fleets in CI, plus the lifecycle and circuit-breaker semantics.
+
+## Launching from the CLI
 
 ```bash
 python .claude/scripts/run_fleet.py \

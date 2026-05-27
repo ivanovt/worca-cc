@@ -5,7 +5,7 @@ sidebar:
   order: 6
 ---
 
-A [template](/concepts/pipeline-templates/) bundles a pipeline configuration — which stages run, agent models and effort, loop limits, governance — behind a single name you pick at launch. Beyond the six built-ins, you can author your own.
+A [template](/concepts/pipeline-templates/) bundles a pipeline configuration — which stages run, agent models and effort, loop limits, governance — behind a single name you pick at launch. You *select* a template from the Run Pipeline launcher's dropdown; *authoring* a new one is a CLI/skill task, which is what this page covers.
 
 ## Snapshot the current settings
 
