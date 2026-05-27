@@ -92,6 +92,8 @@ def _run_with_mocks(wr, settings_path, status_path, plan, extra_patches=None):
         patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}),
         patch("worca.orchestrator.runner.bd_close", return_value=True),
         patch("worca.orchestrator.runner.bd_label_add", return_value=True),
+        patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None),
+        patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None),
         patch("worca.orchestrator.runner.create_branch"),
         patch("worca.orchestrator.runner._write_pid"),
         patch("worca.orchestrator.runner._remove_pid"),
@@ -193,16 +195,18 @@ class TestBackfillPromptContextOnResume:
                         with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                             with patch("worca.orchestrator.runner.bd_close", return_value=True):
                                 with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                                    with patch("worca.orchestrator.runner.create_branch"):
-                                        with patch("worca.orchestrator.runner._write_pid"):
-                                            with patch("worca.orchestrator.runner._remove_pid"):
-                                                run_pipeline(
-                                                    wr,
-                                                    resume=False,
-                                                    plan_file=str(plan),
-                                                    settings_path=settings_path,
-                                                    status_path=status_path,
-                                                )
+                                    with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                        with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                            with patch("worca.orchestrator.runner.create_branch"):
+                                                with patch("worca.orchestrator.runner._write_pid"):
+                                                    with patch("worca.orchestrator.runner._remove_pid"):
+                                                        run_pipeline(
+                                                            wr,
+                                                            resume=False,
+                                                            plan_file=str(plan),
+                                                            settings_path=settings_path,
+                                                            status_path=status_path,
+                                                        )
 
         assert len(backfill_calls) == 0, (
             f"backfill_prompt_context must NOT be called on fresh start; "

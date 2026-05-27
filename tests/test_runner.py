@@ -557,7 +557,7 @@ def test_run_pipeline_no_plan_resolves_from_template(tmp_path, monkeypatch):
     # plan_file should be sequenced inside the run directory
     assert result["plan_file"] is not None
     assert result["plan_file"].endswith("plan-001.md")
-    assert ".worca/runs/" in result["plan_file"]
+    assert os.path.join(".worca", "runs", "") in result["plan_file"]
 
 
 # --- bead limit from coordinator ---
@@ -617,15 +617,17 @@ def test_bead_limit_derived_from_coordinator(tmp_path):
                 with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                     with patch("worca.orchestrator.runner.bd_close", return_value=True):
                         with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                            with patch("worca.orchestrator.runner.create_branch"):
-                                with patch("worca.orchestrator.runner._write_pid"):
-                                    with patch("worca.orchestrator.runner._remove_pid"):
-                                        run_pipeline(
-                                            wr,
-                                            plan_file=str(plan),
-                                            settings_path=str(settings),
-                                            status_path=status_path,
-                                        )
+                            with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                    with patch("worca.orchestrator.runner.create_branch"):
+                                        with patch("worca.orchestrator.runner._write_pid"):
+                                            with patch("worca.orchestrator.runner._remove_pid"):
+                                                run_pipeline(
+                                                    wr,
+                                                    plan_file=str(plan),
+                                                    settings_path=str(settings),
+                                                    status_path=status_path,
+                                                )
 
     # Should have implemented exactly 3 beads (matching coordinator output, not config)
     assert implement_count[0] == 3
@@ -734,16 +736,18 @@ def test_resume_restores_max_beads_from_prompt_context(tmp_path):
                 with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                     with patch("worca.orchestrator.runner.bd_close", return_value=True):
                         with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                            with patch("worca.orchestrator.runner.create_branch"):
-                                with patch("worca.orchestrator.runner._write_pid"):
-                                    with patch("worca.orchestrator.runner._remove_pid"):
-                                        run_pipeline(
-                                            wr,
-                                            plan_file=str(plan),
-                                            resume=True,
-                                            settings_path=str(settings),
-                                            status_path=status_path,
-                                        )
+                            with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                    with patch("worca.orchestrator.runner.create_branch"):
+                                        with patch("worca.orchestrator.runner._write_pid"):
+                                            with patch("worca.orchestrator.runner._remove_pid"):
+                                                run_pipeline(
+                                                    wr,
+                                                    plan_file=str(plan),
+                                                    resume=True,
+                                                    settings_path=str(settings),
+                                                    status_path=status_path,
+                                                )
 
     # Must implement the 2 remaining beads (bbb and ccc), not stop after 1
     assert implement_count[0] == 2
@@ -1076,15 +1080,17 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
                 with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                     with patch("worca.orchestrator.runner.bd_close", return_value=True):
                         with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                            with patch("worca.orchestrator.runner.create_branch"):
-                                with patch("worca.orchestrator.runner._write_pid"):
-                                    with patch("worca.orchestrator.runner._remove_pid"):
-                                        run_pipeline(
-                                            wr,
-                                            plan_file=str(plan),
-                                            settings_path=str(settings),
-                                            status_path=status_path,
-                                        )
+                            with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                    with patch("worca.orchestrator.runner.create_branch"):
+                                        with patch("worca.orchestrator.runner._write_pid"):
+                                            with patch("worca.orchestrator.runner._remove_pid"):
+                                                run_pipeline(
+                                                    wr,
+                                                    plan_file=str(plan),
+                                                    settings_path=str(settings),
+                                                    status_path=status_path,
+                                                )
 
     # Check that the stale bead warning was printed to stderr
     captured = capsys.readouterr()
@@ -1705,15 +1711,17 @@ def _run_bead_pipeline(tmp_path, bead_ids, bd_close_return=True):
                 with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                     with patch("worca.orchestrator.runner.bd_close", return_value=bd_close_return):
                         with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                            with patch("worca.orchestrator.runner.create_branch"):
-                                with patch("worca.orchestrator.runner._write_pid"):
-                                    with patch("worca.orchestrator.runner._remove_pid"):
-                                        run_pipeline(
-                                            wr,
-                                            plan_file=str(plan),
-                                            settings_path=settings_path,
-                                            status_path=status_path,
-                                        )
+                            with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                    with patch("worca.orchestrator.runner.create_branch"):
+                                        with patch("worca.orchestrator.runner._write_pid"):
+                                            with patch("worca.orchestrator.runner._remove_pid"):
+                                                run_pipeline(
+                                                    wr,
+                                                    plan_file=str(plan),
+                                                    settings_path=settings_path,
+                                                    status_path=status_path,
+                                                )
     return worca_dir
 
 

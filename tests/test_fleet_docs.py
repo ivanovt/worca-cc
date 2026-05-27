@@ -10,7 +10,7 @@ class TestClaudeMdFleetSection:
     """CLAUDE.md must have a Fleet Runs section with CLI flags."""
 
     def _content(self):
-        return CLAUDE_MD.read_text()
+        return CLAUDE_MD.read_text(encoding="utf-8")
 
     def test_fleet_runs_section_exists(self):
         assert "## Fleet Runs" in self._content()
@@ -55,7 +55,7 @@ class TestFleetRunsDoc:
     """docs/fleet-runs.md must exist and cover the required walkthrough topics."""
 
     def _content(self):
-        return FLEET_DOCS.read_text()
+        return FLEET_DOCS.read_text(encoding="utf-8")
 
     def test_file_exists(self):
         assert FLEET_DOCS.exists(), "docs/fleet-runs.md must exist"

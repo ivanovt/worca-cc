@@ -222,20 +222,22 @@ def test_bd_dep_add_failure():
 # --- bd_daemon_stop ---
 
 
-def test_bd_daemon_stop_success_passes_cwd_for_workspace_resolution():
+def test_bd_daemon_stop_success_passes_cwd_for_workspace_resolution(tmp_path):
     """bd daemon stop succeeds within timeout and is invoked with cwd set to
     the workspace root so bd resolves the worktree's daemon (not the parent
     repo's).  Returns True without consulting the pidfile."""
+    beads_dir = str(tmp_path / "beads")
+    os.makedirs(beads_dir)
     mock_result = MagicMock()
     mock_result.returncode = 0
     with patch("worca.utils.beads.subprocess.run", return_value=mock_result) as mock_run:
-        result = bd_daemon_stop("/tmp/beads")
+        result = bd_daemon_stop(beads_dir)
     assert result is True
     kwargs = mock_run.call_args.kwargs
-    assert kwargs["cwd"] == "/tmp", (
+    assert kwargs["cwd"] == str(tmp_path), (
         "phase 1 must run with cwd=workspace root so bd resolves the right daemon"
     )
-    assert kwargs["env"]["BEADS_DIR"] == "/tmp/beads"
+    assert kwargs["env"]["BEADS_DIR"] == beads_dir
 
 
 def test_bd_daemon_stop_timeout_sigterm_fallback():
@@ -425,15 +427,17 @@ def test_bd_daemon_status_oserror():
         assert bd_daemon_status("/tmp/beads") is None
 
 
-def test_bd_daemon_status_uses_workspace_cwd():
+def test_bd_daemon_status_uses_workspace_cwd(tmp_path):
     """cwd must be the workspace root (parent of beads_dir) so bd resolves
     the correct daemon, matching bd_daemon_stop's pattern."""
+    beads_dir = str(tmp_path / "beads")
+    os.makedirs(beads_dir)
     mock_result = MagicMock(returncode=0)
     with patch("worca.utils.beads.subprocess.run", return_value=mock_result) as mock_run:
-        bd_daemon_status("/tmp/beads")
+        bd_daemon_status(beads_dir)
     kwargs = mock_run.call_args.kwargs
-    assert kwargs["cwd"] == "/tmp"
-    assert kwargs["env"]["BEADS_DIR"] == "/tmp/beads"
+    assert kwargs["cwd"] == str(tmp_path)
+    assert kwargs["env"]["BEADS_DIR"] == beads_dir
 
 
 # --- bd_daemon_start ---
@@ -484,13 +488,15 @@ def test_bd_daemon_start_oserror():
         assert bd_daemon_start("/tmp/beads") is False
 
 
-def test_bd_daemon_start_uses_workspace_cwd():
+def test_bd_daemon_start_uses_workspace_cwd(tmp_path):
+    beads_dir = str(tmp_path / "beads")
+    os.makedirs(beads_dir)
     mock_result = MagicMock(returncode=0)
     with patch("worca.utils.beads.subprocess.run", return_value=mock_result) as mock_run:
-        bd_daemon_start("/tmp/beads")
+        bd_daemon_start(beads_dir)
     kwargs = mock_run.call_args.kwargs
-    assert kwargs["cwd"] == "/tmp"
-    assert kwargs["env"]["BEADS_DIR"] == "/tmp/beads"
+    assert kwargs["cwd"] == str(tmp_path)
+    assert kwargs["env"]["BEADS_DIR"] == beads_dir
 
 
 # --- bd_daemon_ensure ---

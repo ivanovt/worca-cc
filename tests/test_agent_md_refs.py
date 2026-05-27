@@ -13,7 +13,7 @@ CORE_DIR = pathlib.Path(__file__).parent.parent / "src" / "worca" / "agents" / "
 
 
 def _read(filename):
-    return (CORE_DIR / filename).read_text()
+    return (CORE_DIR / filename).read_text(encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -469,7 +469,7 @@ def test_guide_header_not_in_python_source():
     work_request_py = (
         pathlib.Path(__file__).parent.parent
         / "src" / "worca" / "orchestrator" / "work_request.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     assert "## Reference Guide (normative)" not in work_request_py, (
         "## Reference Guide header must not appear in work_request.py — "
         "it belongs in the .block.md template wrappers."
