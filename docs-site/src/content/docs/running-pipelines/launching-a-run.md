@@ -21,13 +21,16 @@ The Run Pipeline launcher: the source selector (prompt / issue / spec) and the p
 
 ## Triage a GitHub issue (optional)
 
-If your work starts from a GitHub issue, the **`/worca-analyze`** skill turns it into a well-scoped run in one pass. In a Claude Code session in your project:
+If your work starts from a GitHub issue, the **`/worca-analyze`** skill turns it into a well-scoped run in one pass. In a Claude Code session in your project, call it by issue number, by full issue URL, or with a natural phrase:
 
 ```
 /worca-analyze 127
+/worca-analyze https://github.com/your-org/your-repo/issues/127
 ```
 
-It reads the issue, surfaces open design decisions with a recommended option for each, can append a `## Decisions` section back to the issue, **recommends the most appropriate template**, and can launch the run for you. Pass an issue number or a full issue URL.
+A bare number uses the current repo's `gh` default; a URL works against any repo. You can also just say *"analyze https://github.com/your-org/your-repo/issues/127"*.
+
+It reads the issue, surfaces open design decisions with a recommended option for each, can append a `## Decisions` section back to the issue, **recommends the most appropriate template**, and can launch the run for you.
 
 ## Pick a template
 

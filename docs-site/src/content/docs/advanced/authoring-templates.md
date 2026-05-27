@@ -9,13 +9,19 @@ A [template](/concepts/pipeline-templates/) bundles a pipeline configuration —
 
 ## Guided, with the `/worca-template` skill (recommended)
 
-worca ships a guided authoring skill into every project. In a Claude Code session in your project, run:
+worca ships a guided authoring skill into every project. In a Claude Code session in your project, start it by command or with a natural phrase:
 
 ```
 /worca-template
 ```
 
-It interviews you about the kind of work the template is for, **proposes reusing or extending an existing template** before building from scratch, composes a **minimal config delta** (only the keys that differ from your baseline — not a full settings dump), and writes it through the CLI with validation. Natural phrases like "create a new pipeline template" trigger it too.
+These all trigger it too:
+
+- *"create a new pipeline template"*
+- *"new pipeline template for backend bug fixes"*
+- *"customize my pipeline"*
+
+It interviews you about the kind of work the template is for, **proposes reusing or extending an existing template** before building from scratch, composes a **minimal config delta** (only the keys that differ from your baseline — not a full settings dump), and writes it through the CLI with validation.
 
 This is the simplest path, and the minimal-delta output keeps the template robust across upgrades.
 
