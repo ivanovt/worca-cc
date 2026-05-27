@@ -7,8 +7,10 @@ produces mojibake. These tests verify the fix is in place.
 
 import ast
 import pathlib
+import subprocess
 
 SRC_DIR = pathlib.Path(__file__).parent.parent / "src" / "worca"
+_REPO_ROOT = SRC_DIR.parent.parent
 
 # Linux-only /proc reads — no encoding needed (not on Windows)
 _PROC_FS_EXCEPTIONS = {
@@ -16,14 +18,42 @@ _PROC_FS_EXCEPTIONS = {
     ("proc_registry.py", 172),  # /proc/uptime
 }
 
-# Snapshot every src .py at import (collection) time — BEFORE any test runs.
-# This guard verifies the *authored* source specifies encoding=, so it must be
-# immune to another test transiently writing into the src tree during a
-# full-suite run (observed in CI: a polluting test briefly rewrites
-# cli/templates.py, tripping a live re-read). Reading from this snapshot keeps
-# the result deterministic and tied to the committed source.
-_SRC_FILES = sorted(SRC_DIR.rglob("*.py"))
-_SRC_SNAPSHOT = {p: p.read_text(encoding="utf-8") for p in _SRC_FILES}
+
+def _committed_src_snapshot():
+    """Map {abs Path -> source} for every tracked ``src/worca/**/*.py``, read
+    from the **committed HEAD blob** rather than the working tree.
+
+    This guard verifies the *authored* source specifies ``encoding=``. Reading
+    git blobs (immutable for the duration of the run) makes it immune to
+    anything that rewrites a src file mid-run — observed in CI as a transient
+    rewrite of ``cli/templates.py`` by another test that no in-process snapshot
+    could dodge (it happens before this module is even imported). The polluter
+    itself is tracked in issue #233. Falls back to the working tree outside a
+    git checkout.
+    """
+    try:
+        listing = subprocess.run(
+            ["git", "-C", str(_REPO_ROOT), "ls-files", "src/worca"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+        rels = [ln for ln in listing.splitlines() if ln.endswith(".py")]
+        if not rels:
+            raise RuntimeError("no tracked src files")
+        snap = {}
+        for rel in rels:
+            blob = subprocess.run(
+                ["git", "-C", str(_REPO_ROOT), "show", f"HEAD:{rel}"],
+                capture_output=True, text=True, encoding="utf-8", check=True,
+            ).stdout
+            snap[_REPO_ROOT / rel] = blob
+        return snap
+    except Exception:
+        # Not a git checkout (or git unavailable): scan the working tree.
+        return {p: p.read_text(encoding="utf-8") for p in sorted(SRC_DIR.rglob("*.py"))}
+
+
+_SRC_SNAPSHOT = _committed_src_snapshot()
+_SRC_FILES = sorted(_SRC_SNAPSHOT)
 
 
 def _is_binary_mode(node: ast.Call) -> bool:
