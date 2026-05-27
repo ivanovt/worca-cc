@@ -16,6 +16,8 @@ Stage pipeline with iteration counts, costs, duration, and a timing bar showing 
 
 Expand a stage to see individual iterations — each shows agent, turns, cost, duration, and outcome. The log viewer streams real-time agent output with per-stage filtering.
 
+Each iteration row also shows a **Zap effort badge** (the level the coordinator assigned — low / medium / high / max), and per-iteration dispatch renders as separate **Tools / Skills / Subagents** rows with allow (green) / deny (red) badges, plus a **Lockdown** chip when an agent's dispatch is set to `none`. Agent prompts, guides, context artifacts, and bead tooltips render as sanitized markdown, and the expanded **Agent Instructions** panel separates the resolved system prompt from your work-request message with an accented divider.
+
 ![Pipeline detail — IMPLEMENT expanded](screenshots/pipeline-detail-implement.png)
 
 The header shows lifecycle controls — pause, resume, and stop buttons with real-time state transitions and a status badge.
@@ -38,7 +40,7 @@ This works across all five supported hosts, so non-GitHub remotes get the same o
 
 ## Learnings
 
-After a run completes, the LEARN stage produces ranked observations and actionable suggestions. Copy-to-clipboard buttons let you feed insights directly into future runs or agent prompts.
+After a run completes, the LEARN stage produces ranked observations and actionable suggestions. Copy-to-clipboard buttons let you feed insights directly into future runs or agent prompts; copied prompts automatically include a `## Source` block (project, run ID, branch, artifacts path, start time, and fleet/workspace IDs) for full traceability.
 
 ![Learnings panel](screenshots/learn-stage.png)
 
@@ -97,6 +99,8 @@ W-049 added four subpanels for previously JSON-only knobs:
 
 When a project's `.claude/settings.json` still contains misplaced global keys or template-default milestone values, an inline banner offers one-click migration; saving any settings change triggers the same auto-migration on the server side.
 
+The **Graphify** tab (optional, off by default) enables the code knowledge-graph integration per project — pick the model profile, copy the recommended `uv tool install` command, and trigger async **Build** / **Clear** of the per-commit graph cache. When a graph is ready, each agent iteration in run detail shows a `Graphify: N` query-count badge.
+
 Preflight checks validate the environment before spending tokens — catching git state issues, missing dependencies, and configuration problems. Each check can be toggled independently.
 
 ![Preflight settings](screenshots/preflight-settings.png)
@@ -147,7 +151,7 @@ The detail page surfaces the dependency graph (arrowheads show propagation order
 
 ![Workspace detail — dependency graph with arrowheads and per-project run cards](screenshots/workspace-detail-dag.png)
 
-Launch new workspace runs from the **+ Run Workspace** entry in the sidebar split-button. The launcher picks a registered workspace definition, accepts a prompt or `--source` reference, supports normative guide attachment, and exposes per-tier concurrency / planning options.
+Launch new workspace runs from the **+ Run Workspace** entry in the sidebar split-button. The launcher picks a registered workspace definition, accepts a prompt or `--source` reference, supports normative guide attachment, and exposes per-tier concurrency plus four planning strategies — **master planner** (default), **independent** (each project runs its own Planner), **existing plan** (upload or reference a `workspace-plan.json`), and **per-project plans** (attach a markdown plan per repo).
 
 ![Workspace launcher — prompt + guide + plan-mode form for starting a workspace run](screenshots/workspace-launcher.png)
 

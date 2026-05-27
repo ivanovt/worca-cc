@@ -1,6 +1,7 @@
 """Tests for worca.orchestrator.control — control file protocol utilities."""
 
 import json
+import os
 from datetime import datetime
 
 import pytest
@@ -19,7 +20,7 @@ from worca.orchestrator.control import (
 
 def test_control_path_returns_correct_path():
     path = control_path("run-abc")
-    assert path == ".worca/runs/run-abc/control.json"
+    assert path == os.path.join(".worca", "runs", "run-abc", "control.json")
 
 
 def test_control_path_custom_base(tmp_path):

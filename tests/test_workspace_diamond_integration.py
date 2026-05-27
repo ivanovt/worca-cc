@@ -16,6 +16,7 @@ Tests cover:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from unittest.mock import patch
 
@@ -232,7 +233,7 @@ class TestDiamondFailurePropagation:
 
         def mock_run(cmd, **kwargs):
             cwd = kwargs.get("cwd", "")
-            repo = cwd.rsplit("/", 1)[-1]
+            repo = os.path.basename(cwd)
             dispatched.append(repo)
             if repo == "svc-a":
                 return _failed_proc()

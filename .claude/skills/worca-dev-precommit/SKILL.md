@@ -1,6 +1,6 @@
 ---
 name: worca-dev-precommit
-description: Run the worca-cc pre-commit gauntlet — ruff, biome, vitest, conditional playwright, and npm pack file-allowlist check. Picks the right subset based on what the current branch changed vs base. Triggers on "precommit", "pre-commit check", "before commit", "verify before commit", "worca-dev-precommit", or any request to validate changes before committing in this repo.
+description: Run the worca-cc pre-commit gauntlet — ruff, biome, vitest, conditional playwright, npm pack file-allowlist check, and a docs-site build. Picks the right subset based on what the current branch changed vs base. Triggers on "precommit", "pre-commit check", "before commit", "verify before commit", "worca-dev-precommit", or any request to validate changes before committing in this repo.
 ---
 
 # worca-cc Pre-Commit Gauntlet
@@ -23,6 +23,7 @@ Categorize:
 - `UI_TOUCHED` — any path under `worca-ui/`
 - `UI_RUNTIME_TOUCHED` — any path under `worca-ui/app/` or `worca-ui/server/`
 - `UI_NEW_FILES` — new files (untracked or added) under `worca-ui/server/` or `worca-ui/app/`
+- `DOCS_TOUCHED` — any path under `docs-site/`
 
 If nothing matches any category, print "no relevant changes — skipping precommit" and stop.
 
@@ -67,7 +68,15 @@ cd worca-ui && npm pack --dry-run | grep <new-path>
 
 If a new file does NOT appear in the output, the `files` glob in `worca-ui/package.json` is missing it. Extend the glob (e.g. `server/**/*.js` rather than `server/*.js`) and re-check. Missing files crash the published package silently — this check is non-negotiable.
 
-## Step 6: Summary
+## Step 6: Docs site build (if `DOCS_TOUCHED`)
+
+```bash
+cd docs-site && npm install && npm run build
+```
+
+Catches broken MDX, frontmatter, or `astro.config` errors before they reach the `docs-live` production deploy. If the build fails, STOP — do not commit.
+
+## Step 7: Summary
 
 Print a checklist showing which steps ran and the outcome:
 
@@ -76,6 +85,7 @@ Print a checklist showing which steps ran and the outcome:
 [x] UI lint + vitest              OK
 [ ] Playwright                    skipped (no app/server changes)
 [x] npm pack allowlist            OK (2 new files verified)
+[x] docs-site build               OK
 ```
 
 If any step failed, STOP and report — do not proceed to commit.

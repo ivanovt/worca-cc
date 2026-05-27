@@ -75,7 +75,7 @@ def load_status(path: str = ".worca/status.json") -> dict:
     """
     if not os.path.exists(path):
         return {}
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -93,7 +93,7 @@ def save_status(status: dict, path: str = ".worca/status.json") -> None:
 
     fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=".tmp_", suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(status, f, indent=2)
             f.write("\n")
         os.replace(tmp_path, path)
@@ -314,7 +314,7 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
 def write_status_field(path: str, field: str, value) -> None:
     """Load status.json (or create empty dict), set field, save atomically."""
     if os.path.exists(path):
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
     else:
         data = {}

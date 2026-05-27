@@ -1,4 +1,6 @@
 """Tests for worca.utils.runtime — validate_runtime helper."""
+import os
+
 import pytest
 
 
@@ -34,7 +36,7 @@ def test_validate_runtime_error_message_on_stderr(tmp_path, monkeypatch, capsys)
 
     err = capsys.readouterr().err
     assert "worca runtime not found" in err
-    assert ".claude/worca" in err
+    assert os.path.join(".claude", "worca") in err
     assert "worca init" in err
 
 

@@ -54,7 +54,7 @@ class Workspace:
     @classmethod
     def load(cls, workspace_root: str) -> Workspace:
         manifest_path = os.path.join(workspace_root, "workspace.json")
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             doc = json.load(f)
 
         if "repos" in doc and "projects" not in doc:
@@ -64,7 +64,7 @@ class Workspace:
                 f"the file to the current `projects` schema."
             )
 
-        with open(_SCHEMA_PATH) as f:
+        with open(_SCHEMA_PATH, encoding="utf-8") as f:
             schema = json.load(f)
         jsonschema.validate(doc, schema)
 

@@ -43,7 +43,7 @@ def propagate_runtime_local_keys(src_dir: str, dst_dir: str) -> None:
         return
 
     try:
-        with open(src_local) as f:
+        with open(src_local, encoding="utf-8") as f:
             local = json.load(f)
     except (OSError, json.JSONDecodeError):
         return
@@ -54,7 +54,7 @@ def propagate_runtime_local_keys(src_dir: str, dst_dir: str) -> None:
         return
 
     try:
-        with open(dst_settings) as f:
+        with open(dst_settings, encoding="utf-8") as f:
             base = json.load(f)
     except (OSError, json.JSONDecodeError):
         base = {}
@@ -73,7 +73,7 @@ def propagate_runtime_local_keys(src_dir: str, dst_dir: str) -> None:
 
     base["worca"] = base_worca
 
-    with open(dst_settings, "w") as f:
+    with open(dst_settings, "w", encoding="utf-8") as f:
         json.dump(base, f, indent=2)
         f.write("\n")
 

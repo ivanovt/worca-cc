@@ -485,8 +485,9 @@ describe('large prompt offloading', () => {
     expect(promptFilePath).toBeTruthy();
 
     const stat = statSync(promptFilePath);
-    // 0o600 = owner read/write only (octal 33152 on Linux = 0o100600, mode & 0o777 = 0o600)
-    expect(stat.mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') {
+      expect(stat.mode & 0o777).toBe(0o600);
+    }
 
     // Verify the file content matches the prompt
     const content = readFileSync(promptFilePath, 'utf8');

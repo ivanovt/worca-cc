@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 _schema = json.loads(
-    importlib.resources.files("worca.schemas").joinpath("keys.json").read_text()
+    importlib.resources.files("worca.schemas").joinpath("keys.json").read_text(encoding="utf-8")
 )
 _GLOBAL_ONLY_KEYS = [tuple(k) for k in _schema["global_only_keys"]]
 
@@ -48,7 +48,7 @@ def _get_worca_source(source_flag: str | None, git_root: Path) -> Path:
     local_settings = git_root / ".claude" / "settings.local.json"
     if local_settings.exists():
         try:
-            with open(local_settings) as f:
+            with open(local_settings, encoding="utf-8") as f:
                 settings = json.load(f)
             source_repo = settings.get("worca", {}).get("source_repo")
             if source_repo:
@@ -81,7 +81,7 @@ def _atomic_write_json(path: str, data: dict) -> None:
     os.makedirs(directory, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=directory)
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
         os.replace(tmp, path)
@@ -395,7 +395,7 @@ def _migrate_global_keys_to_preferences(
     Idempotent: returns {} on second run."""
     if not os.path.exists(project_settings_path):
         return {}
-    with open(project_settings_path) as f:
+    with open(project_settings_path, encoding="utf-8") as f:
         project = json.load(f)
 
     extracted: dict = {}
@@ -414,7 +414,7 @@ def _migrate_global_keys_to_preferences(
     if global_path is None:
         global_path = os.path.expanduser("~/.worca/settings.json")
     try:
-        with open(global_path) as f:
+        with open(global_path, encoding="utf-8") as f:
             global_blob = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         global_blob = {}
@@ -438,7 +438,7 @@ def _strip_inert_milestone_keys(project_settings_path: str) -> list[str]:
     Returns the list of removed keys. Idempotent: returns [] on second run."""
     if not os.path.exists(project_settings_path):
         return []
-    with open(project_settings_path) as f:
+    with open(project_settings_path, encoding="utf-8") as f:
         project = json.load(f)
 
     milestones = project.get("worca", {}).get("milestones", {})
@@ -608,7 +608,7 @@ def _load_graphify_hook_stanzas() -> list[dict]:
     """Load graphify PreToolUse hook stanzas from the shipped template."""
     return json.loads(
         (importlib.resources.files("worca") / "templates" / "graphify-hooks.json")
-        .read_text()
+        .read_text(encoding="utf-8")
     )
 
 
@@ -663,7 +663,7 @@ def _ensure_gitignore(git_root: Path) -> list[str]:
 
     existing = ""
     if gitignore.exists():
-        existing = gitignore.read_text()
+        existing = gitignore.read_text(encoding="utf-8")
 
     lines_to_add = []
     for entry in entries_needed:
@@ -672,7 +672,7 @@ def _ensure_gitignore(git_root: Path) -> list[str]:
             changes.append(f"  Added {entry} to .gitignore")
 
     if lines_to_add:
-        with open(gitignore, "a") as f:
+        with open(gitignore, "a", encoding="utf-8") as f:
             if existing and not existing.endswith("\n"):
                 f.write("\n")
             f.write("\n# worca runtime\n")
@@ -738,12 +738,12 @@ def _show_check(source: Path, git_root: Path) -> None:
 
     # Settings diff
     if settings_path.exists():
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             current = json.load(f)
 
         source_settings_path = source / "settings.json"
         if source_settings_path.exists():
-            with open(source_settings_path) as f:
+            with open(source_settings_path, encoding="utf-8") as f:
                 template = json.load(f)
 
             # Check what keys would be added
@@ -816,7 +816,7 @@ def read_version(worca_dir: Path) -> str | None:
     init_file = worca_dir / "__init__.py"
     if not init_file.exists():
         return None
-    content = init_file.read_text()
+    content = init_file.read_text(encoding="utf-8")
     for line in content.splitlines():
         if line.startswith("__version__"):
             # Extract version string
@@ -859,11 +859,11 @@ def run_init(
     # --- Path migrations (before merge, only on --upgrade) ---
     migration_changes = []
     if upgrade and settings_path.exists():
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             current_settings = json.load(f)
         migrated, migration_changes = _migrate_settings_paths(current_settings)
         if migration_changes:
-            with open(settings_path, "w") as f:
+            with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump(migrated, f, indent=2)
                 f.write("\n")
             print("Path migrations applied:")
@@ -915,13 +915,13 @@ def run_init(
         # Forward-incompatible changes must go through _migrate_settings_paths so they
         # apply deterministically and are visible under `worca init --check`. Use --force
         # to replace the file with the template wholesale.
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             current = json.load(f)
         if source_settings.exists():
-            with open(source_settings) as f:
+            with open(source_settings, encoding="utf-8") as f:
                 template = json.load(f)
             merged = _deep_merge(current, template)
-            with open(settings_path, "w") as f:
+            with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
                 f.write("\n")
             print("Settings: added new template keys (user values preserved)")
@@ -948,7 +948,7 @@ def run_init(
 
     # --- Graphify hook integration (after settings merge) ---
     if settings_path.exists():
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             final_settings = json.load(f)
         graphify_changes = _merge_graphify_hooks(final_settings)
         if graphify_changes:

@@ -4,13 +4,13 @@ Each pipeline writes its own status file to .worca/multi/pipelines.d/{run_id}.js
 Atomic writes via temp+rename. No file locking needed.
 """
 
-import errno
 import json
 import os
 import tempfile
 from datetime import datetime, timezone
 
 from worca.state.status import PipelineStatus
+from worca.utils.proc import pid_is_alive
 
 
 _DEFAULT_BASE = ".worca"
@@ -35,7 +35,7 @@ def _atomic_write(path, data):
 
     fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".tmp_", suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
         os.replace(tmp_path, path)
@@ -125,7 +125,7 @@ def update_pipeline(run_id, status=None, *, pid=None, base=_DEFAULT_BASE):
     if not os.path.exists(path):
         return False
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     if status is not None:
@@ -160,7 +160,7 @@ def list_pipelines(base=_DEFAULT_BASE):
             continue
         fpath = os.path.join(d, fname)
         try:
-            with open(fpath) as f:
+            with open(fpath, encoding="utf-8") as f:
                 data = json.load(f)
             results.append(data)
         except (json.JSONDecodeError, OSError):
@@ -174,7 +174,7 @@ def get_pipeline(run_id, base=_DEFAULT_BASE):
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
@@ -201,15 +201,10 @@ def reconcile_stale(base=_DEFAULT_BASE):
         if pid is None:
             continue
         try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            pass  # Process does not exist — fall through to mark stale
-        except OSError as e:
-            if e.errno == errno.EPERM:
-                continue  # Process exists but owned by another user — skip
-            # Other OS errors — fall through to mark stale
-        else:
-            continue  # Process is alive — skip
+            if pid_is_alive(pid):
+                continue  # Process is alive — skip
+        except PermissionError:
+            continue  # Process exists but owned by another user — skip
 
         # Process is dead — mark as stale
         run_id = entry["run_id"]

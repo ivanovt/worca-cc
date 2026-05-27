@@ -315,7 +315,7 @@ def cmd_graphify_gc(
 def _update_project_graphify(settings_path: str, updates: dict) -> None:
     """Read project settings, update graphify keys, and write back atomically."""
     try:
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             settings = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         settings = {}
@@ -324,7 +324,7 @@ def _update_project_graphify(settings_path: str, updates: dict) -> None:
     graphify_block = worca_block.setdefault("graphify", {})
     graphify_block.update(updates)
 
-    with open(settings_path, "w") as f:
+    with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f, indent=2)
         f.write("\n")
 

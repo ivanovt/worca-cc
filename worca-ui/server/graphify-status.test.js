@@ -25,6 +25,22 @@ function startServer(opts = {}) {
   });
 }
 
+function safeRmTmp(dir) {
+  try {
+    rmSync(dir, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 250,
+    });
+  } catch (err) {
+    // Windows: the /build endpoint spawns a detached graphify build that can
+    // keep a handle on the temp dir past afterEach → EBUSY on rmdir. The OS
+    // reclaims the temp dir later; a failed cleanup must not fail the test.
+    if (err.code !== 'EBUSY' && err.code !== 'ENOTEMPTY') throw err;
+  }
+}
+
 function stopServer(server) {
   return new Promise((resolve) => server.close(resolve));
 }
@@ -109,7 +125,7 @@ describe('_graphStats', () => {
   });
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
   });
 
   function _snap(dir) {
@@ -275,7 +291,7 @@ describe('createGraphifyStatus', () => {
 
     if (prevCache === undefined) delete process.env.WORCA_CACHE;
     else process.env.WORCA_CACHE = prevCache;
-    rmSync(tmpDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
   });
 
   it('resolves cache_path even when graphify is disabled', async () => {
@@ -313,7 +329,7 @@ describe('createGraphifyStatus', () => {
 
     if (prevCache === undefined) delete process.env.WORCA_CACHE;
     else process.env.WORCA_CACHE = prevCache;
-    rmSync(tmpDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
   });
 });
 
@@ -337,7 +353,7 @@ describe('GET /api/graphify/status', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
   });
 
   it('returns ok:true with effective config showing disabled', async () => {
@@ -375,7 +391,7 @@ describe('POST /api/graphify/recheck', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
   });
 
   it('invalidates cache and returns fresh status', async () => {
@@ -406,7 +422,7 @@ describe('POST /api/graphify/build + /clear', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
   });
 
   function _ready() {
@@ -500,7 +516,7 @@ describe('GET /api/graphify/graph.html', () => {
     if (server) await stopServer(server);
     if (cacheDirEnv === undefined) delete process.env.WORCA_CACHE;
     else process.env.WORCA_CACHE = cacheDirEnv;
-    rmSync(tmpDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
   });
 
   it('returns 404 when no snapshot graph.html exists', async () => {
@@ -550,8 +566,8 @@ describe('GET /api/graphify/status?project=<id> (global mode)', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
-    rmSync(projDir, { recursive: true, force: true });
+    safeRmTmp(tmpDir);
+    safeRmTmp(projDir);
   });
 
   it('honors the selected project’s project-level enablement', async () => {

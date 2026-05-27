@@ -51,19 +51,19 @@ describe('worca-ui server paths helper', () => {
     });
 
     it('fleetRunsDir()', () => {
-      expect(fleetRunsDir()).toBe('/tmp/wh/fleet-runs');
+      expect(fleetRunsDir()).toBe(join('/tmp/wh', 'fleet-runs'));
     });
 
     it('workspaceRunsDir()', () => {
-      expect(workspaceRunsDir()).toBe('/tmp/wh/workspace-runs');
+      expect(workspaceRunsDir()).toBe(join('/tmp/wh', 'workspace-runs'));
     });
 
     it('workspacesDir()', () => {
-      expect(workspacesDir()).toBe('/tmp/wh/workspaces.d');
+      expect(workspacesDir()).toBe(join('/tmp/wh', 'workspaces.d'));
     });
 
     it('templatesDir()', () => {
-      expect(templatesDir()).toBe('/tmp/wh/templates');
+      expect(templatesDir()).toBe(join('/tmp/wh', 'templates'));
     });
 
     it('prefsDir()', () => {
@@ -71,7 +71,7 @@ describe('worca-ui server paths helper', () => {
     });
 
     it('preferencesPath()', () => {
-      expect(preferencesPath()).toBe('/tmp/wh/preferences.json');
+      expect(preferencesPath()).toBe(join('/tmp/wh', 'preferences.json'));
     });
   });
 

@@ -113,13 +113,13 @@ def reconstruct_context(status: dict, logs_dir: str = None) -> dict:
             if os.path.isdir(stage_dir):
                 iter_files = sorted(glob.glob(os.path.join(stage_dir, "iter-*.json")))
                 if iter_files:
-                    with open(iter_files[-1]) as f:
+                    with open(iter_files[-1], encoding="utf-8") as f:
                         context[stage.value] = json.load(f)
                     continue
             # Fall back to legacy flat file
             log_path = os.path.join(logs_dir, f"{stage.value}.json")
             if os.path.exists(log_path):
-                with open(log_path) as f:
+                with open(log_path, encoding="utf-8") as f:
                     context[stage.value] = json.load(f)
         elif stage_status == "in_progress":  # legacy iteration status
             # Find last completed iteration and read its specific log file.
@@ -131,7 +131,7 @@ def reconstruct_context(status: dict, logs_dir: str = None) -> dict:
                     logs_dir, stage.value, f"iter-{last_completed}.json"
                 )
                 if os.path.exists(iter_path):
-                    with open(iter_path) as f:
+                    with open(iter_path, encoding="utf-8") as f:
                         context[stage.value] = json.load(f)
     return context
 

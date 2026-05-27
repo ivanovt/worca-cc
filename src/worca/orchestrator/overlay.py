@@ -177,7 +177,7 @@ class OverlayResolver:
         result = ""
         if os.path.exists(core_path):
             try:
-                with open(core_path) as f:
+                with open(core_path, encoding="utf-8") as f:
                     result = f.read().strip()
             except (OSError, PermissionError) as exc:
                 print(
@@ -206,7 +206,7 @@ class OverlayResolver:
             return base
 
         try:
-            with open(overlay_path) as f:
+            with open(overlay_path, encoding="utf-8") as f:
                 overlay_content = f.read()
         except (OSError, PermissionError) as exc:
             print(
@@ -236,7 +236,7 @@ class OverlayResolver:
             return base
 
         try:
-            with open(overlay_path) as f:
+            with open(overlay_path, encoding="utf-8") as f:
                 overlay_content = f.read()
         except (OSError, PermissionError) as exc:
             print(

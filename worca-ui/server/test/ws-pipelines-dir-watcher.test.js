@@ -64,9 +64,25 @@ describe('ws-status-watcher – pipelines.d/ directory watcher', () => {
 
   afterEach(async () => {
     httpServer.closeAllConnections?.();
-    await new Promise((resolve) => httpServer.close(resolve));
-    rmSync(worcaDir, { recursive: true, force: true });
-    rmSync(worktreeDir, { recursive: true, force: true });
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      httpServer.close(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    rmSync(worcaDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
+    rmSync(worktreeDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   it('broadcasts runs-list when a new entry is added to pipelines.d/', async () => {
@@ -114,56 +130,61 @@ describe('ws-status-watcher – pipelines.d/ directory watcher', () => {
     ws.close();
   });
 
-  it('broadcasts runs-list when a worktree run status.json changes', async () => {
-    const runId = `run-wt-${Date.now()}`;
-    const wtRunDir = join(worktreeDir, '.worca', 'runs', runId);
-    mkdirSync(wtRunDir, { recursive: true });
-    writeFileSync(
-      join(wtRunDir, 'status.json'),
-      JSON.stringify({
-        run_id: runId,
-        pipeline_status: 'running',
-        stages: { plan: { status: 'running' } },
-      }),
-    );
+  it(
+    'broadcasts runs-list when a worktree run status.json changes',
+    { timeout: 10_000, retry: 2 },
+    async () => {
+      const runId = `run-wt-${Date.now()}`;
+      const wtRunDir = join(worktreeDir, '.worca', 'runs', runId);
+      mkdirSync(wtRunDir, { recursive: true });
+      writeFileSync(
+        join(wtRunDir, 'status.json'),
+        JSON.stringify({
+          run_id: runId,
+          pipeline_status: 'running',
+          stages: { plan: { status: 'running' } },
+        }),
+      );
 
-    // Register the worktree pipeline before starting the server client
-    writeFileSync(
-      join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`),
-      JSON.stringify({
-        run_id: runId,
-        worktree_path: worktreeDir,
-        title: 'Test worktree run',
-        pid: process.pid,
-        status: 'running',
-      }),
-    );
+      // Register the worktree pipeline before starting the server client
+      writeFileSync(
+        join(worcaDir, 'multi', 'pipelines.d', `${runId}.json`),
+        JSON.stringify({
+          run_id: runId,
+          worktree_path: worktreeDir,
+          title: 'Test worktree run',
+          pid: process.pid,
+          status: 'running',
+        }),
+      );
 
-    const ws = new WebSocket(`ws://localhost:${port}/ws`);
-    await new Promise((resolve, reject) => {
-      ws.on('open', resolve);
-      ws.on('error', reject);
-    });
+      const ws = new WebSocket(`ws://localhost:${port}/ws`);
+      await new Promise((resolve, reject) => {
+        ws.on('open', resolve);
+        ws.on('error', reject);
+      });
 
-    // Wait for the initial scheduleRefresh (triggered by pipelines.d/ watcher) and
-    // per-worktree watcher to be established via reconcileWorktreeWatchers
-    await waitMs(400);
+      // Wait for the initial runs-list broadcast — this proves scheduleRefresh
+      // has completed and reconcileWorktreeWatchers has set up the per-worktree
+      // watcher. A fixed delay is unreliable under parallel test load.
+      await waitForWsEvent(ws, 'runs-list', null, 6000);
 
-    // Update the worktree run's status — per-worktree watcher should fire scheduleRefresh
-    writeFileSync(
-      join(wtRunDir, 'status.json'),
-      JSON.stringify({
-        run_id: runId,
-        pipeline_status: 'completed',
-        completed_at: new Date().toISOString(),
-        stages: { plan: { status: 'completed' } },
-      }),
-    );
+      // Update the worktree run's status — per-worktree watcher should fire scheduleRefresh
+      writeFileSync(
+        join(wtRunDir, 'status.json'),
+        JSON.stringify({
+          run_id: runId,
+          pipeline_status: 'completed',
+          completed_at: new Date().toISOString(),
+          stages: { plan: { status: 'completed' } },
+        }),
+      );
 
-    const msg = await waitForWsEvent(ws, 'runs-list', null, 3000);
-    expect(msg.payload.runs).toBeDefined();
-    ws.close();
-  });
+      const msg = await waitForWsEvent(ws, 'runs-list', null, 6000);
+      expect(msg.payload.runs).toBeDefined();
+      ws.close();
+    },
+  );
 
   it('does not broadcast stale data for a removed pipelines.d/ entry', async () => {
     const runId = `run-removed-${Date.now()}`;

@@ -3,7 +3,7 @@
  * Owns logWatchers map and logLineCounts tracking.
  */
 
-import { existsSync, readdirSync, statSync, watch } from 'node:fs';
+import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   fileByteLength,
@@ -13,6 +13,7 @@ import {
   readNewLines,
   resolveLogPath,
 } from './log-tailer.js';
+import { safeWatch } from './safe-watch.js';
 
 /**
  * @param {{
@@ -69,7 +70,7 @@ export function createLogWatcher({
       if (!existsSync(filePath)) return;
       logByteOffsets.set(key, fileByteLength(filePath));
       const watcherRunId = explicitRunId || currentActiveRunId();
-      const watcher = watch(filePath, (eventType) => {
+      const watcher = safeWatch(filePath, (eventType) => {
         if (eventType === 'change') {
           try {
             const prevOffset = logByteOffsets.get(key) || 0;
@@ -109,7 +110,7 @@ export function createLogWatcher({
     const dirKey = _watcherKey(explicitRunId, stage, null, '__dir');
     if (logWatchers.has(dirKey)) return;
     try {
-      const dirWatcher = watch(stageDir, (_eventType, filename) => {
+      const dirWatcher = safeWatch(stageDir, (_eventType, filename) => {
         if (filename && /^iter-\d+\.log$/.test(filename)) {
           const iterNum = parseInt(filename.match(/\d+/)[0], 10);
           const iterPath = join(stageDir, filename);
@@ -167,7 +168,7 @@ export function createLogWatcher({
     if (logWatchers.has(dirKey)) return;
     if (!existsSync(logsDir)) return;
     try {
-      const dirWatcher = watch(logsDir, (_eventType, filename) => {
+      const dirWatcher = safeWatch(logsDir, (_eventType, filename) => {
         if (!filename) return;
         if (filename.endsWith('.log')) {
           const stage = filename.replace('.log', '');

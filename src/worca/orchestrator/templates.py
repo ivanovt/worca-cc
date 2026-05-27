@@ -93,7 +93,7 @@ class TemplateResolver:
             if not manifest.is_file():
                 continue
             try:
-                data = json.loads(manifest.read_text())
+                data = json.loads(manifest.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 continue
             try:
@@ -116,7 +116,7 @@ class TemplateResolver:
         if not manifest.is_file():
             return None
         try:
-            data = json.loads(manifest.read_text())
+            data = json.loads(manifest.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             return None
         try:
@@ -217,7 +217,7 @@ class TemplateResolver:
             "params": params or {},
             "snapshot_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }
-        (dest / "resolved-params.json").write_text(json.dumps(resolved_params, indent=2))
+        (dest / "resolved-params.json").write_text(json.dumps(resolved_params, indent=2), encoding="utf-8")
 
     def save(self, template_data: dict, scope: str = "project") -> "Template":
         """Save a new template. scope is 'project' or 'user'.
@@ -285,7 +285,7 @@ class TemplateResolver:
             "params": template_data.get("params", {}),
             "config": config,
         }
-        (tmpl_dir / "template.json").write_text(json.dumps(data, indent=2))
+        (tmpl_dir / "template.json").write_text(json.dumps(data, indent=2), encoding="utf-8")
 
         agents_path = tmpl_dir / "agents"
         return Template(

@@ -5,6 +5,8 @@ Override resolution:
 - <!-- append -->: merge sections into base using section merge
 """
 
+import os
+
 import pytest
 
 from worca.orchestrator.overlay import (
@@ -207,6 +209,7 @@ def test_resolve_append_multiple_overrides(tmp_path):
     assert "Beta extra" in result
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX-only: file-modes")
 def test_resolve_unreadable_overlay(tmp_path, capsys):
     overlay = tmp_path / "implementer.md"
     overlay.write_text("Custom content.\n")

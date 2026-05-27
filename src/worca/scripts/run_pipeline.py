@@ -171,7 +171,7 @@ def main():
             print(f"error: --prompt-file must be inside {temp_dir}", file=sys.stderr)
             raise SystemExit(2)
         try:
-            with open(args.prompt_file) as f:
+            with open(args.prompt_file, encoding="utf-8") as f:
                 args.prompt = f.read()
         except FileNotFoundError:
             print(f"error: prompt file not found: {args.prompt_file}", file=sys.stderr)
@@ -321,7 +321,7 @@ def main():
             if _merged_settings:
                 try:
                     Path(run_dir, "settings.json").write_text(
-                        json.dumps(_merged_settings, indent=2)
+                        json.dumps(_merged_settings, indent=2), encoding="utf-8"
                     )
                 except OSError:
                     pass

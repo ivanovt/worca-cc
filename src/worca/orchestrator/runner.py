@@ -41,6 +41,7 @@ from worca.state.status import (
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
 from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
+from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
@@ -412,12 +413,12 @@ def _render_agent_templates(run_dir: str, template_vars: dict,
             continue
         if not filename.endswith(".md"):
             continue
-        with open(os.path.join(src_dir, filename)) as f:
+        with open(os.path.join(src_dir, filename), encoding="utf-8") as f:
             content = f.read()
         agent_name = filename[:-3]  # strip .md
         content = resolver.resolve(agent_name, content,
                                    template_agents_dir=template_agents_dir)
-        with open(os.path.join(dst_dir, filename), "w") as f:
+        with open(os.path.join(dst_dir, filename), "w", encoding="utf-8") as f:
             f.write(content)
 
 
@@ -466,7 +467,7 @@ def _is_already_terminal(status_path: str, in_memory_status: dict | None = None)
     "a different process wrote it" (skip).
     """
     try:
-        with open(status_path) as f:
+        with open(status_path, encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, json.JSONDecodeError, ValueError):
         return False
@@ -498,7 +499,7 @@ def _find_active_runs(worca_dir: str) -> list:
         if not os.path.isfile(status_path):
             continue
         try:
-            with open(status_path) as f:
+            with open(status_path, encoding="utf-8") as f:
                 data = json.load(f)
             if data.get("pipeline_status") not in _TERMINAL_STATUSES:
                 result.append((run_id, status_path))
@@ -516,7 +517,7 @@ def _write_pid(status_path: str) -> None:
     """Write our PID to the PID file."""
     path = _pid_path(status_path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(str(os.getpid()))
 
 
@@ -645,14 +646,20 @@ def _install_signal_handlers():
             if _signal_project_status_path:
                 _remove_pid(_signal_project_status_path)
 
-    signal.signal(signal.SIGTERM, _handler)
-    signal.signal(signal.SIGINT, _handler)
+    try:
+        signal.signal(signal.SIGTERM, _handler)
+        signal.signal(signal.SIGINT, _handler)
+    except (ValueError, OSError):
+        pass
 
 
 def _restore_signal_handlers():
     """Restore default signal handlers."""
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+    try:
+        signal.signal(signal.SIGTERM, signal.SIG_DFL)
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
+    except (ValueError, OSError):
+        pass
 
 
 def _atexit_cleanup():
@@ -855,7 +862,7 @@ def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs"
     stage_dir = os.path.join(logs_dir, stage.value)
     os.makedirs(stage_dir, exist_ok=True)
     path = os.path.join(stage_dir, f"iter-{iteration}.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2)
 
 
@@ -885,7 +892,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
         prompt_builder.update_context("termination_reason", termination_reason or "")
         plan_path = status.get("plan_file")
         if plan_path and os.path.exists(plan_path):
-            with open(plan_path) as f:
+            with open(plan_path, encoding="utf-8") as f:
                 prompt_builder.update_context("plan_file_content", f.read())
 
         # Initialize learn stage in status
@@ -913,7 +920,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
             and os.path.exists(_learn_template_path)
             and prompt_builder._resolver is not None
         ):
-            with open(_learn_template_path) as _f:
+            with open(_learn_template_path, encoding="utf-8") as _f:
                 _learn_content = _f.read()
             _learn_resolved = resolve_agent(
                 _learn_content, ctx_dict,
@@ -923,7 +930,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
             _learn_resolved_dir = os.path.join(run_dir, "agents", "resolved")
             os.makedirs(_learn_resolved_dir, exist_ok=True)
             _learn_resolved_path = os.path.join(_learn_resolved_dir, f"learn-{_learn_agent_name}-iter-1.md")
-            with open(_learn_resolved_path, "w") as _f:
+            with open(_learn_resolved_path, "w", encoding="utf-8") as _f:
                 _f.write(_learn_resolved)
             _learn_agent_override = _learn_resolved_path
         # Route learn.block.md into the -p user message (same pattern as
@@ -992,7 +999,7 @@ def _run_learn_stage(status, prompt_builder, settings_path, run_dir,
         learnings_path = None
         if run_dir:
             learnings_path = os.path.join(run_dir, "learnings.json")
-            with open(learnings_path, "w") as f:
+            with open(learnings_path, "w", encoding="utf-8") as f:
                 json.dump(result, f, indent=2)
         save_status(status, actual_status_path)
         _log("Learnings saved", "ok")
@@ -1476,6 +1483,7 @@ def _maybe_graphify_post_guardian(
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            # Windows: silently ignored — detach not guaranteed (use WSL2).
             start_new_session=True,
         )
         _log("Graphify post-guardian cache-warm started (fire-and-forget)")
@@ -1529,7 +1537,7 @@ def run_preflight(
     )
     stdout, stderr = proc.communicate()
 
-    with open(log_path, "w") as log_file:
+    with open(log_path, "w", encoding="utf-8") as log_file:
         log_file.write(stdout)
         if stderr:
             log_file.write("\n--- STDERR ---\n")
@@ -1681,21 +1689,21 @@ def _clear_stale_daemon_lock(beads_dir: str) -> None:
     pid_path = os.path.join(beads_dir, "daemon.pid")
     lock_path = os.path.join(beads_dir, "daemon.lock")
     try:
-        with open(pid_path) as fh:
+        with open(pid_path, encoding="utf-8") as fh:
             pid_text = fh.read().strip()
         pid = int(pid_text)
     except (FileNotFoundError, ValueError):
         return
     try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+        alive = pid_is_alive(pid)
+    except PermissionError:
+        return
+    if not alive:
         for p in (pid_path, lock_path):
             try:
                 os.remove(p)
             except FileNotFoundError:
                 pass
-    except PermissionError:
-        pass
 
 
 def _ensure_beads_initialized() -> None:
@@ -2376,7 +2384,7 @@ def run_pipeline(
                     and os.path.exists(_template_path)
                     and prompt_builder._resolver is not None
                 ):
-                    with open(_template_path) as _f:
+                    with open(_template_path, encoding="utf-8") as _f:
                         _agent_content = _f.read()
                     _resolved = resolve_agent(
                         _agent_content, ctx_dict,
@@ -2388,7 +2396,7 @@ def run_pipeline(
                     _resolved_path = os.path.join(
                         _resolved_dir, f"{current_stage.value}-{_stage_agent_name}-iter-{iter_num}.md"
                     )
-                    with open(_resolved_path, "w") as _f:
+                    with open(_resolved_path, "w", encoding="utf-8") as _f:
                         _f.write(_resolved)
                     _agent_override = _resolved_path
                 else:
@@ -2872,7 +2880,7 @@ def run_pipeline(
                 # (avoids race where plan_review starts before the file is flushed)
                 _plan_path = status.get("plan_file")
                 if _plan_path and os.path.exists(_plan_path):
-                    with open(_plan_path) as _pf:
+                    with open(_plan_path, encoding="utf-8") as _pf:
                         _plan_text = _pf.read().strip()
                     if _plan_text:
                         prompt_builder.update_context("plan_file_content", _plan_text)

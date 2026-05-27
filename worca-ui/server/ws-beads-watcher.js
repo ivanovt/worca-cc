@@ -4,13 +4,14 @@
  * because fs.watch on macOS misses SQLite WAL writes done via mmap.
  */
 
-import { existsSync, statSync, unwatchFile, watch, watchFile } from 'node:fs';
+import { existsSync, statSync, unwatchFile, watchFile } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
   countIssuesByRunLabel,
   enrichIssuesWithDeps,
   listIssuesShallow,
 } from './beads-reader.js';
+import { safeWatch } from './safe-watch.js';
 
 const BEADS_DEBOUNCE_MS = 500;
 const BEADS_POLL_MS = 2000;
@@ -132,7 +133,7 @@ export function createBeadsWatcher({ worcaDir, broadcaster, projectId }) {
   if (existsSync(beadsDir)) {
     // fs.watch for directory-level events (checkpoint writes to main db)
     try {
-      fsWatcher = watch(beadsDir, (_event, filename) => {
+      fsWatcher = safeWatch(beadsDir, (_event, filename) => {
         if (filename?.startsWith('beads.db')) scheduleBeadsRefresh();
       });
     } catch {

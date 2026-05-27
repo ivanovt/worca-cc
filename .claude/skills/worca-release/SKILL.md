@@ -1,6 +1,6 @@
 ---
 name: worca-release
-description: Create a stable release for worca-cc (Python), @worca/ui (npm), or both. Bumps the version (micro or minor), commits, tags, and pushes — CI handles publishing and GitHub Release creation. Triggers on "stable release", "cut a release", "release", "worca-release", or any request to create a non-RC release.
+description: Create a stable release for worca-cc (Python), @worca/ui (npm), or both. Bumps the version (micro or minor), commits, tags, and pushes — CI handles publishing and GitHub Release creation. Also promotes the docs site by fast-forwarding docs-live so docs.worca.dev matches the release. Triggers on "stable release", "cut a release", "release", "worca-release", or any request to create a non-RC release.
 ---
 
 # Create Stable Release
@@ -155,7 +155,17 @@ git push
 git push origin worca-ui-v<NPM_VERSION>
 ```
 
-### Step 7: Print summary
+### Step 7: Promote the docs site
+
+After the release is pushed, fast-forward the docs production branch so the published docs at `docs.worca.dev` match the released product:
+
+```bash
+git push origin master:docs-live
+```
+
+This triggers a production build of the `worca-docs` Worker from `docs-live`. The staging site `staging.docs.worca.dev` (which tracks `master`) is where docs are previewed beforehand; pages not ready to publish should already be marked `draft: true` in their frontmatter. Skip this step only if you explicitly do not want to publish the current docs state.
+
+### Step 8: Print summary
 
 Display the results and install/update commands:
 
@@ -168,6 +178,8 @@ Stable release complete!
   Tags pushed:
     worca-cc-v<PYTHON_VERSION>
     worca-ui-v<NPM_VERSION>
+
+  Docs promoted: docs-live → https://docs.worca.dev (rebuilding)
 
   Install / update:
     pip install --upgrade worca-cc==<PYTHON_VERSION>

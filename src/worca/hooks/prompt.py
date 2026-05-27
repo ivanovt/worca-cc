@@ -26,7 +26,7 @@ def load_status() -> dict | None:
         path = os.path.join(run_dir, "status.json")
         if os.path.exists(path):
             try:
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     return json.load(f)
             except (OSError, json.JSONDecodeError):
                 pass
@@ -34,7 +34,7 @@ def load_status() -> dict | None:
     override = os.environ.get("WORCA_STATUS_FILE")
     if override and os.path.exists(override):
         try:
-            with open(override) as f:
+            with open(override, encoding="utf-8") as f:
                 return json.load(f)
         except (OSError, json.JSONDecodeError):
             return None

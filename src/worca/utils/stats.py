@@ -25,7 +25,7 @@ _process_lock = threading.Lock()
 def _acquire_lock(lock_path: str) -> int:
     """Open and exclusively lock a sidecar .lock file. Returns the fd."""
     Path(lock_path).parent.mkdir(parents=True, exist_ok=True)
-    fd = open(lock_path, "w")
+    fd = open(lock_path, "w", encoding="utf-8")
     if sys.platform == "win32":
         msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
     else:
@@ -178,7 +178,7 @@ def _empty_cumulative() -> dict:
 def _load_cumulative(stats_path: str) -> dict:
     """Load existing cumulative stats or return empty structure."""
     try:
-        with open(stats_path) as f:
+        with open(stats_path, encoding="utf-8") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return _empty_cumulative()
@@ -191,7 +191,7 @@ def _save_cumulative(stats: dict, stats_path: str) -> None:
 
     fd, tmp_path = tempfile.mkstemp(dir=str(parent), suffix=".json.tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(stats, f, indent=2)
             f.write("\n")
         os.replace(tmp_path, stats_path)
@@ -229,7 +229,7 @@ def merge_run_stats(
         return False
 
     try:
-        with open(run_status_path) as f:
+        with open(run_status_path, encoding="utf-8") as f:
             run_status = json.load(f)
     except (json.JSONDecodeError, OSError):
         return False
@@ -317,14 +317,14 @@ def rebuild_from_results(
             status_file = os.path.join(entry_path, "status.json")
             if os.path.exists(status_file):
                 try:
-                    with open(status_file) as f:
+                    with open(status_file, encoding="utf-8") as f:
                         run_status = json.load(f)
                 except (json.JSONDecodeError, OSError):
                     continue
         elif entry.endswith(".json"):
             # Legacy format: results/{hash}.json
             try:
-                with open(entry_path) as f:
+                with open(entry_path, encoding="utf-8") as f:
                     run_status = json.load(f)
             except (json.JSONDecodeError, OSError):
                 continue

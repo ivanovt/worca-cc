@@ -97,30 +97,33 @@ describe('countRunningPipelinesAcrossProjects', () => {
     rmSync(projectPath, { recursive: true, force: true });
   });
 
-  it('counts EPERM as alive (process exists but we lack permission)', () => {
-    const projDir = join(prefsDir, 'projects.d');
-    mkdirSync(projDir);
+  it.skipIf(process.platform === 'win32')(
+    'counts EPERM as alive (process exists but we lack permission)',
+    () => {
+      const projDir = join(prefsDir, 'projects.d');
+      mkdirSync(projDir);
 
-    const projectPath = join(tmpdir(), `proj-eperm-${Date.now()}`);
-    const runDir = join(projectPath, '.worca', 'runs', 'run-003');
-    mkdirSync(runDir, { recursive: true });
-    writeFileSync(
-      join(runDir, 'status.json'),
-      JSON.stringify({
-        pipeline_status: 'running',
-        pid: 1,
-      }),
-    );
-    writeFileSync(
-      join(projDir, 'proj-c.json'),
-      JSON.stringify({ name: 'proj-c', path: projectPath }),
-    );
+      const projectPath = join(tmpdir(), `proj-eperm-${Date.now()}`);
+      const runDir = join(projectPath, '.worca', 'runs', 'run-003');
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(
+        join(runDir, 'status.json'),
+        JSON.stringify({
+          pipeline_status: 'running',
+          pid: 1,
+        }),
+      );
+      writeFileSync(
+        join(projDir, 'proj-c.json'),
+        JSON.stringify({ name: 'proj-c', path: projectPath }),
+      );
 
-    const result = countRunningPipelinesAcrossProjects(prefsDir);
-    expect(result).toBe(1);
+      const result = countRunningPipelinesAcrossProjects(prefsDir);
+      expect(result).toBe(1);
 
-    rmSync(projectPath, { recursive: true, force: true });
-  });
+      rmSync(projectPath, { recursive: true, force: true });
+    },
+  );
 
   it('prunes stale PID from status.json (clearStalePid)', () => {
     const projDir = join(prefsDir, 'projects.d');

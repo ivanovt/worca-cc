@@ -1,0 +1,138 @@
+---
+// Animated, interactive worca pipeline diagram.
+// Pure SVG + CSS (themed for light/dark via Starlight vars) with a small
+// vanilla-JS tooltip. Forward flow in blue, loopbacks in amber.
+const stages = [
+	{ name: 'Preflight', purpose: 'Validates the environment', tip: 'Language-agnostic environment checks — git state, dependencies, config — run before any tokens are spent, so broken setups fail fast.', y: 36 },
+	{ name: 'Planner', purpose: 'Explores code, writes the plan', tip: 'Explores the codebase and writes the implementation plan (MASTER_PLAN.md) the run follows.', y: 112 },
+	{ name: 'Plan Reviewer', purpose: 'Audits the plan (optional)', tip: 'Audits the plan for gaps, feasibility, and fit; loops back to the Planner on critical issues. Off by default.', y: 188, optional: true },
+	{ name: 'Coordinator', purpose: 'Splits the plan into tasks (aka beads)', tip: 'Decomposes the plan into tracked tasks — beads — with dependencies and parallel groups.', y: 264 },
+	{ name: 'Implementer', purpose: 'Builds each task, test-first', tip: 'Implements each task test-first, then commits and closes it. Independent tasks can run in parallel.', y: 340 },
+	{ name: 'Tester', purpose: 'Runs tests, collects proof', tip: 'Runs the test suite, verifies coverage, and collects proof. Loops back to the Implementer when tests fail.', y: 416 },
+	{ name: 'Reviewer', purpose: 'Reviews code and conventions', tip: 'Reviews changes for bugs, quality, and conventions; sends work back to the Implementer when changes are needed.', y: 492 },
+	{ name: 'Guardian', purpose: 'Commits, opens the PR', tip: 'The only agent allowed to commit. Verifies the test proof, commits, and opens the pull request.', y: 568 },
+	{ name: 'Learner', purpose: 'Retrospective (optional)', tip: 'Produces a post-run retrospective with ranked, copyable suggestions. Off by default.', y: 644, optional: true },
+];
+---
+
+<div class="pd-pipeline">
+	<svg viewBox="0 0 640 700" role="img" aria-label="worca pipeline. Forward: Preflight, Planner, Plan Reviewer (optional), Coordinator, Implementer, Tester, Reviewer, Guardian, Learner (optional). Loopbacks: Plan Reviewer back to Planner on critical issues; Tester back to Implementer when tests fail; Reviewer back to Implementer when changes are requested.">
+		<defs>
+			<marker id="pd-arrow" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto"><path class="pd-arrowhead-fwd" d="M0,0 L6,3 L0,6 Z" /></marker>
+			<marker id="pd-arrowL" markerWidth="8" markerHeight="8" refX="5.5" refY="3" orient="auto"><path class="pd-arrowhead-loop" d="M0,0 L6,3 L0,6 Z" /></marker>
+		</defs>
+
+		{stages.slice(0, -1).map((s, i) => (
+			<line class="pd-fwd" x1="260" y1={s.y + 20} x2="260" y2={stages[i + 1].y - 20} marker-end="url(#pd-arrow)" />
+		))}
+
+		<path class="pd-loop" d="M165,188 H128 V112 H165" marker-end="url(#pd-arrowL)" />
+		<path class="pd-loop" d="M165,416 H116 V346 H165" marker-end="url(#pd-arrowL)" />
+		<path class="pd-loop" d="M165,492 H92 V334 H165" marker-end="url(#pd-arrowL)" />
+
+		{stages.map((s) => (
+			<g class:list={['pd-node', { optional: s.optional }]} tabindex="0" data-name={s.name} data-tip={s.tip} aria-label={`${s.name}: ${s.tip}`}>
+				<rect class="pd-rect" x="165" y={s.y - 20} width="190" height="40" rx="10" />
+				<text class="pd-name" x="260" y={s.y} text-anchor="middle" dominant-baseline="central">{s.name}</text>
+				<text class="pd-purpose" x="370" y={s.y} dominant-baseline="central">{s.purpose}</text>
+			</g>
+		))}
+
+		<text class="pd-loop-label" x="128" y="150">critical issues</text>
+		<text class="pd-loop-label" x="116" y="372">tests fail</text>
+		<text class="pd-loop-label" x="92" y="452">changes requested</text>
+	</svg>
+	<div class="pd-tip" role="tooltip" aria-hidden="true"></div>
+</div>
+
+<style is:global>
+	.pd-pipeline {
+		--pd-flow: var(--sl-color-accent);
+		--pd-text: var(--sl-color-white);
+		--pd-muted: var(--sl-color-gray-3);
+		--pd-optional: var(--sl-color-gray-4);
+		--pd-loop: #d97706;
+		--pd-loop-label: #b45309;
+		position: relative;
+		border: 1px solid var(--sl-color-gray-5);
+		border-radius: 14px;
+		padding: 24px 20px;
+		margin: 1.5rem 0;
+		background: var(--sl-color-bg);
+	}
+	[data-theme='dark'] .pd-pipeline {
+		--pd-loop: #fbbf24;
+		--pd-loop-label: #fcd34d;
+	}
+	.pd-pipeline svg { width: 100%; height: auto; display: block; }
+
+	.pd-node { cursor: pointer; }
+	.pd-rect { fill: var(--sl-color-bg); stroke: var(--pd-flow); stroke-width: 1.3; transition: fill .15s ease, stroke-width .15s ease; }
+	.pd-node.optional .pd-rect { stroke: var(--pd-optional); stroke-dasharray: 4 3; }
+	.pd-name { fill: var(--pd-text); font-size: 13.5px; font-weight: 600; }
+	.pd-node.optional .pd-name { fill: var(--pd-muted); font-weight: 500; }
+	.pd-purpose { fill: var(--pd-muted); font-size: 11.5px; transition: fill .15s ease; }
+
+	.pd-node:hover, .pd-node:focus-visible { outline: none; filter: drop-shadow(0 3px 8px rgba(59, 130, 246, 0.22)); }
+	.pd-node:hover .pd-rect, .pd-node:focus-visible .pd-rect { fill: color-mix(in srgb, var(--pd-flow) 9%, var(--sl-color-bg)); stroke-width: 2.4; }
+	.pd-node:hover .pd-name, .pd-node:focus-visible .pd-name { fill: var(--pd-flow); }
+	.pd-node:hover .pd-purpose, .pd-node:focus-visible .pd-purpose { fill: var(--pd-text); }
+
+	.pd-fwd { fill: none; stroke: var(--pd-flow); stroke-width: 1.8; stroke-dasharray: 6 5; animation: pdFlowDown 1.3s linear infinite; }
+	.pd-loop { fill: none; stroke: var(--pd-loop); stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round; animation: pdFlowLoop 1.7s linear infinite; }
+	.pd-arrowhead-fwd { fill: var(--pd-flow); }
+	.pd-arrowhead-loop { fill: var(--pd-loop); }
+	.pd-loop-label { fill: var(--pd-loop-label); font-size: 10.5px; font-weight: 600; text-anchor: middle; paint-order: stroke; stroke: var(--sl-color-bg); stroke-width: 3.5px; stroke-linejoin: round; }
+
+	@keyframes pdFlowDown { to { stroke-dashoffset: -22; } }
+	@keyframes pdFlowLoop { to { stroke-dashoffset: -18; } }
+	@media (prefers-reduced-motion: reduce) { .pd-fwd, .pd-loop { animation: none; } }
+
+	.pd-tip { position: fixed; z-index: 60; max-width: 280px; background: #0f172a; color: #e2e8f0; border: 1px solid #1e293b; border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.5; box-shadow: 0 10px 28px rgba(2, 6, 23, 0.28); pointer-events: none; opacity: 0; transform: translateY(4px); transition: opacity .12s ease, transform .12s ease; }
+	[data-theme='dark'] .pd-tip { background: #334155; border-color: #475569; color: #f1f5f9; }
+	.pd-tip.show { opacity: 1; transform: translateY(0); }
+	.pd-tip .pd-tip-name { display: block; font-weight: 700; color: #fff; margin-bottom: 3px; font-size: 13px; }
+</style>
+
+<script>
+	for (const root of document.querySelectorAll('.pd-pipeline')) {
+		const tip = root.querySelector('.pd-tip');
+		if (!tip) continue;
+		const tipName = document.createElement('span');
+		tipName.className = 'pd-tip-name';
+		const tipDesc = document.createTextNode('');
+		tip.append(tipName, tipDesc);
+
+		const position = (x, y) => {
+			const r = tip.getBoundingClientRect();
+			let nx = x;
+			let ny = y;
+			if (nx + r.width > window.innerWidth - 8) nx = x - r.width - 28;
+			if (ny + r.height > window.innerHeight - 8) ny = window.innerHeight - r.height - 8;
+			if (ny < 8) ny = 8;
+			tip.style.left = `${nx}px`;
+			tip.style.top = `${ny}px`;
+		};
+		const show = (node) => {
+			tipName.textContent = node.dataset.name || '';
+			tipDesc.textContent = node.dataset.tip || '';
+			tip.classList.add('show');
+		};
+		const hide = () => tip.classList.remove('show');
+
+		for (const node of root.querySelectorAll('.pd-node')) {
+			node.addEventListener('mouseenter', () => show(node));
+			node.addEventListener('mousemove', (e) => position(e.clientX + 14, e.clientY + 14));
+			node.addEventListener('mouseleave', hide);
+			node.addEventListener('focus', () => {
+				show(node);
+				const b = node.getBoundingClientRect();
+				position(b.right + 12, b.top);
+			});
+			node.addEventListener('blur', hide);
+			node.addEventListener('keydown', (e) => {
+				if (e.key === 'Escape') node.blur();
+			});
+		}
+	}
+</script>

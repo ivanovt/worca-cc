@@ -132,7 +132,7 @@ def run_integration_test(
             text=True,
         )
 
-        with open(log_path, "w") as f:
+        with open(log_path, "w", encoding="utf-8") as f:
             if proc.stdout:
                 f.write(proc.stdout)
             if proc.stderr:

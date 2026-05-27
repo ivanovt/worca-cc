@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, watch } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   assignEventsToIterations,
   readDispatchEventsFromJsonl,
 } from './dispatch-events-aggregator.js';
+import { safeWatch } from './safe-watch.js';
 
 /**
  * Enrich a status object with dispatch events read from events.jsonl in the
@@ -366,7 +367,7 @@ export function watchEvents(runDir, callback) {
   function startFileWatcher() {
     if (closed || fileWatcher) return;
     try {
-      fileWatcher = watch(eventsPath, (eventType) => {
+      fileWatcher = safeWatch(eventsPath, (eventType) => {
         if (eventType === 'change') {
           processNewContent();
         } else if (eventType === 'rename') {
@@ -405,7 +406,7 @@ export function watchEvents(runDir, callback) {
   // Watch the run directory so we detect events.jsonl being created
   if (existsSync(runDir)) {
     try {
-      dirWatcher = watch(
+      dirWatcher = safeWatch(
         runDir,
         { recursive: false },
         (_eventType, filename) => {

@@ -3,6 +3,12 @@
 Tracks spawned subprocess groups as JSON files under ``<run_dir>/procs/``,
 keyed by pgid. Provides helpers to list, verify (PID-reuse guard), and
 kill all tracked groups with SIGTERM→SIGKILL escalation.
+
+Windows: process-group APIs (``os.getpgid``, ``os.killpg``) do not exist.
+All group operations are gated behind ``_HAS_PROC_GROUPS``; on Windows the
+registry stays empty, ``is_alive_and_ours`` returns False, and
+``kill_all_tracked`` / ``_kill_group`` are no-ops — callers fall back to
+best-effort single-child ``proc.terminate()``.
 """
 
 import json
@@ -37,7 +43,7 @@ def record_spawn(procs_dir: str, *, pgid: int, pid: int, stage: str, iteration: 
         "start_time": _get_process_create_time(pid) or time.time(),
     }
     path = os.path.join(procs_dir, f"{pgid}.json")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(entry, f)
 
 
@@ -57,7 +63,7 @@ def list_spawns(procs_dir: str) -> list[dict]:
         if not name.endswith(".json"):
             continue
         try:
-            with open(os.path.join(procs_dir, name)) as f:
+            with open(os.path.join(procs_dir, name), encoding="utf-8") as f:
                 result.append(json.load(f))
         except (OSError, json.JSONDecodeError, ValueError):
             continue
@@ -138,7 +144,7 @@ def _get_process_create_time(pid: int) -> float | None:
                 return dt.timestamp()
         else:
             stat_path = f"/proc/{pid}/stat"
-            with open(stat_path) as f:
+            with open(stat_path, encoding="utf-8") as f:
                 fields = f.read().split(")")[-1].split()
             # Field index 19 (0-based after the comm field closing paren)
             # is starttime in clock ticks since boot.

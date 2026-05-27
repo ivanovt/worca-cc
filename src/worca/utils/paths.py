@@ -32,7 +32,10 @@ def worca_home() -> str:
     override = os.environ.get("WORCA_HOME")
     if override:
         return os.path.expanduser(override)
-    return os.path.expanduser("~/.worca")
+    # os.path.join (not "~/.worca") so the separator is OS-native: on Windows
+    # expanduser("~/.worca") keeps the literal "/" → "C:\\Users\\x/.worca",
+    # which leaks mixed separators into every derived dir (fleet-runs, cache…).
+    return os.path.join(os.path.expanduser("~"), ".worca")
 
 
 def worca_cache_dir() -> str:

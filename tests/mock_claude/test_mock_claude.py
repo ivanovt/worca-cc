@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -14,7 +15,7 @@ MOCK_CLAUDE = Path(__file__).parent / "mock_claude.py"
 
 def _run(scenario: dict, agent: str = "planner", timeout: int = 10):
     """Run mock_claude with a given scenario and agent, return CompletedProcess."""
-    scenario_file = Path(os.environ.get("TMPDIR", "/tmp")) / "mock_scenario_test.json"
+    scenario_file = Path(tempfile.gettempdir()) / "mock_scenario_test.json"
     scenario_file.write_text(json.dumps(scenario))
     env = {**os.environ, "MOCK_CLAUDE_SCENARIO": str(scenario_file)}
     return subprocess.run(
@@ -121,7 +122,7 @@ def test_slow_emits_success_result():
 
 @pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM not available on Windows")
 def test_hang_blocks_until_signal():
-    scenario_file = Path(os.environ.get("TMPDIR", "/tmp")) / "mock_hang_test.json"
+    scenario_file = Path(tempfile.gettempdir()) / "mock_hang_test.json"
     scenario_file.write_text(json.dumps({"default": {"action": "hang"}}))
     env = {**os.environ, "MOCK_CLAUDE_SCENARIO": str(scenario_file)}
 
@@ -161,7 +162,7 @@ def test_unknown_agent_falls_back_to_default():
 
 def _resolved_path(stage: str, agent: str, iteration: int) -> str:
     """Build a resolved-template path stem matching runner.py's naming."""
-    return f"/tmp/runs/X/agents/resolved/{stage}-{agent}-iter-{iteration}.md"
+    return os.path.join(tempfile.gettempdir(), "runs", "X", "agents", "resolved", f"{stage}-{agent}-iter-{iteration}.md")
 
 
 def test_iter_specific_directive_selected_by_iteration():

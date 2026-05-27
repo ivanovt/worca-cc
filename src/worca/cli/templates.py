@@ -5,6 +5,7 @@ Subcommands:
   worca templates list --json       — machine-readable JSON for tooling
   worca templates show <id>         — pretty-print template.json for a given ID
   worca templates save <id>         — snapshot current settings as template
+  worca templates create --from-file <path>  — create template from JSON file
   worca templates delete <id>       — remove a project or user template
 """
 
@@ -97,7 +98,7 @@ def cmd_templates_show(args):
         )
         raise SystemExit(1)
 
-    data = json.loads(Path(template.source_dir, "template.json").read_text())
+    data = json.loads(Path(template.source_dir, "template.json").read_text(encoding="utf-8"))
     data["tier"] = template.tier
     print(json.dumps(data, indent=2))
 
@@ -135,6 +136,24 @@ def register_subcommand(sub):
         help="Save to user-global scope (~/.worca/templates/)",
     )
 
+    # create
+    create_parser = templates_sub.add_parser(
+        "create", help="Create a template from a JSON file"
+    )
+    create_parser.add_argument(
+        "--from-file",
+        dest="from_file",
+        required=True,
+        help="Path to JSON file with template data (use '-' for stdin)",
+    )
+    create_parser.add_argument(
+        "--global",
+        dest="global_",
+        action="store_true",
+        default=False,
+        help="Save to user-global scope (~/.worca/templates/)",
+    )
+
     # delete
     delete_parser = templates_sub.add_parser("delete", help="Delete a project or user template")
     delete_parser.add_argument("template_id", help="Template ID to delete")
@@ -157,7 +176,7 @@ def _load_current_worca_config() -> dict:
             settings_path = parent / ".claude" / "settings.json"
             if settings_path.exists():
                 try:
-                    data = json.loads(settings_path.read_text())
+                    data = json.loads(settings_path.read_text(encoding="utf-8"))
                     return data.get("worca", {})
                 except (json.JSONDecodeError, OSError):
                     pass
@@ -193,6 +212,39 @@ def cmd_templates_save(args):
     print(f"saved template '{template.id}' to {tier_label}")
 
 
+def cmd_templates_create(args):
+    """worca templates create --from-file <path> — create a template from JSON."""
+    from worca.orchestrator.templates import TemplateError
+
+    from_file = args.from_file
+    try:
+        if from_file == "-":
+            raw = sys.stdin.read()
+        else:
+            raw = Path(from_file).read_text(encoding="utf-8")
+        template_data = json.loads(raw)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"error: failed to read template JSON: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    resolver = _make_resolver()
+    scope = "user" if args.global_ else "project"
+
+    try:
+        template = resolver.save(template_data, scope=scope)
+    except TemplateError as e:
+        if e.code == "validation_error" and e.details:
+            print("error: template validation failed:", file=sys.stderr)
+            for detail in e.details:
+                print(f"  - {detail['field']}: {detail['message']}", file=sys.stderr)
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    tier_label = "user (~/.worca/templates/)" if scope == "user" else "project (.claude/templates/)"
+    print(f"created template '{template.id}' in {tier_label}")
+
+
 def cmd_templates_delete(args):
     """worca templates delete <id> — remove a project or user template."""
     resolver = _make_resolver()
@@ -213,7 +265,7 @@ def cmd_templates_delete(args):
 def cmd_templates(args):
     """Dispatch worca templates subcommand."""
     if not args.templates_command:
-        print("error: specify a templates subcommand: list, show, save, delete", file=sys.stderr)
+        print("error: specify a templates subcommand: list, show, save, create, delete", file=sys.stderr)
         raise SystemExit(1)
     if args.templates_command == "list":
         cmd_templates_list(args)
@@ -221,6 +273,8 @@ def cmd_templates(args):
         cmd_templates_show(args)
     elif args.templates_command == "save":
         cmd_templates_save(args)
+    elif args.templates_command == "create":
+        cmd_templates_create(args)
     elif args.templates_command == "delete":
         cmd_templates_delete(args)
     else:
