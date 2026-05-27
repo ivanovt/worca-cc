@@ -424,6 +424,12 @@ Supports `--guide`, `--skip-integration`, `--skip-planning` (each project plans 
 
 Full walkthrough (workspace.json schema, master-planner role, DAG executor + context injection between tiers, integration testing, PR linking with dependency comments, umbrella issue): [`docs/workspace-runs.md`](./docs/workspace-runs.md).
 
+## Platform Support
+
+Linux, macOS, and Windows are all supported targets. worca-ui, the governance hooks, and the Python library are first-class on all three (validated in CI: Windows, macOS, and Ubuntu jobs). The autonomous **pipeline control plane** (pause/stop/resume, orphan reaping, detached worktree/fleet/workspace runs) is POSIX-native; on native Windows it **degrades gracefully — never crashing, never destructive** — but lifecycle is best-effort. **Run the pipeline under WSL2 on Windows** for full fidelity.
+
+Key Windows degradations (all guarded): liveness probes route through `worca.utils.proc.pid_is_alive()` (never `os.kill(pid, 0)`, which would `TerminateProcess`); `SIGTERM` is a hard kill (no graceful handler); process-group reaping falls back to best-effort single-child `terminate()`; `start_new_session` detach is ignored. Full matrix and details: [`docs/platform-support.md`](./docs/platform-support.md).
+
 ## Migrating
 
 User-facing upgrade and cleanup steps live in [`MIGRATION.md`](./MIGRATION.md).
