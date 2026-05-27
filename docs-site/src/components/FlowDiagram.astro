@@ -47,7 +47,7 @@ const h = (n) => n?.h ?? DEFAULT_H;
 		})}
 
 		{edges.filter((e) => e.label).map((e) => (
-			<text class="fd-edge-label" x={e.labelX} y={e.labelY}>{e.label}</text>
+			<text class:list={['fd-edge-label', e.kind === 'return' ? 'fd-label-return' : 'fd-label-forward']} x={e.labelX} y={e.labelY}>{e.label}</text>
 		))}
 
 		{nodes.map((n) => (
@@ -100,7 +100,9 @@ const h = (n) => n?.h ?? DEFAULT_H;
 	.fd-return { fill: none; stroke: var(--fd-return); stroke-width: 1.5; stroke-dasharray: 5 4; stroke-linejoin: round; animation: fdFlowReturn 1.7s linear infinite; }
 	.fd-arrowhead-forward { fill: var(--fd-flow); }
 	.fd-arrowhead-return { fill: var(--fd-return); }
-	.fd-edge-label { fill: var(--fd-return-label); font-size: 10.5px; font-weight: 600; text-anchor: middle; paint-order: stroke; stroke: var(--sl-color-bg); stroke-width: 3.5px; stroke-linejoin: round; }
+	.fd-edge-label { font-size: 10.5px; font-weight: 600; text-anchor: middle; paint-order: stroke; stroke: var(--sl-color-bg); stroke-width: 3.5px; stroke-linejoin: round; }
+	.fd-label-forward { fill: var(--fd-flow); }
+	.fd-label-return { fill: var(--fd-return-label); }
 
 	@keyframes fdFlowForward { to { stroke-dashoffset: -22; } }
 	@keyframes fdFlowReturn { to { stroke-dashoffset: -18; } }
