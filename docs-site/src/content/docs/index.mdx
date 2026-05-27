@@ -8,12 +8,38 @@ hero:
     - text: Get started
       link: /getting-started/prerequisites/
       icon: right-arrow
+      variant: primary
+    - text: Introduction
+      link: /introduction/what-is-worca/
+      icon: open-book
+      variant: secondary
     - text: View on GitHub
       link: https://github.com/SinishaDjukic/worca-cc
       icon: external
       variant: minimal
 ---
 
-:::note[Documentation in progress]
-The docs site is live; we're actively writing the content. Check back soon, or follow along on [GitHub](https://github.com/SinishaDjukic/worca-cc).
-:::
+import { CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid>
+	<LinkCard
+		title="Introduction"
+		href="/introduction/what-is-worca/"
+		description="What worca is, how the pipeline works, and choosing a run mode."
+	/>
+	<LinkCard
+		title="Getting started"
+		href="/getting-started/prerequisites/"
+		description="Install the packages, launch the dashboard, and run your first pipeline."
+	/>
+	<LinkCard
+		title="Core concepts"
+		href="/concepts/the-pipeline-and-stages/"
+		description="Stages, agents and effort, governance, lifecycle, plans, and guides."
+	/>
+	<LinkCard
+		title="Choosing a run mode"
+		href="/introduction/choosing-a-run-mode/"
+		description="Single, fleet, or workspace — pick the right way to run worca."
+	/>
+</CardGrid>

@@ -14,3 +14,12 @@
 	--sl-color-accent: #3b82f6;
 	--sl-color-accent-high: #1e40af;
 }
+
+/* Header wordmark — match the worca-ui sidebar logo (.logo-text):
+   JetBrains Mono, bold, tracked, in the strong foreground color. */
+.site-title {
+	font-family: 'JetBrains Mono', 'SF Mono', 'Fira Code', monospace;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	color: var(--sl-color-white);
+}

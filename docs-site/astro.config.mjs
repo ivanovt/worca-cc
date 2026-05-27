@@ -21,6 +21,22 @@ const analyticsHead = cfBeaconToken
 		]
 	: [];
 
+// Load JetBrains Mono (700) to match the worca-ui wordmark used in the header.
+const fontHead = /** @type {const} */ ([
+	{ tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' } },
+	{
+		tag: 'link',
+		attrs: { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: true },
+	},
+	{
+		tag: 'link',
+		attrs: {
+			rel: 'stylesheet',
+			href: 'https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@700&display=swap',
+		},
+	},
+]);
+
 // https://astro.build/config
 export default defineConfig({
 	site: 'https://docs.worca.dev',
@@ -31,7 +47,7 @@ export default defineConfig({
 				'Documentation for worca — an autonomous software development pipeline combining orchestration with governance enforcement.',
 			favicon: '/favicon.svg',
 			customCss: ['./src/styles/worca.css'],
-			head: analyticsHead,
+			head: [...fontHead, ...analyticsHead],
 			social: [{ icon: 'github', label: 'GitHub', href: GITHUB_REPO }],
 			editLink: { baseUrl: `${GITHUB_REPO}/edit/master/docs-site/` },
 			// Content phase, Wave 1. Groups are added as their pages land.
