@@ -1,6 +1,6 @@
 # worca-cc
 
-Autonomous software development pipeline combining orchestration with governance enforcement.
+worca (**W**orkflow **ORC**hestration for **A**gents) — autonomous software development pipeline combining orchestration with governance enforcement.
 
 ## Quick Start
 

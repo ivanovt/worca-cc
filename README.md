@@ -2,7 +2,7 @@
 
 Autonomous software development pipeline with governance enforcement.
 
-worca-cc is a multi-agent pipeline that plans, coordinates, implements, tests, reviews, and learns from code changes autonomously. It runs as a `.claude/` folder you drop into any project — fully configurable, with safety hooks at every stage.
+worca — **W**orkflow **ORC**hestration for **A**gents — is a multi-agent pipeline that plans, coordinates, implements, tests, reviews, and learns from code changes autonomously. It runs as a `.claude/` folder you drop into any project — fully configurable, with safety hooks at every stage.
 
 ![Pipeline stages — Preflight through Learn with per-stage cost, turns, and duration](docs/screenshots/pipeline-stages.png)
 

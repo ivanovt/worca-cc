@@ -5,7 +5,7 @@ sidebar:
   order: 1
 ---
 
-worca is an **autonomous software-development pipeline**. You hand it a task — a prompt, a GitHub issue, or a spec — and a team of AI agents plans the work, implements it test-first, reviews the result, and opens a pull request. Every step runs under **governance**: safety hooks block dangerous operations, enforce test gates, and keep agents inside guardrails.
+worca is **W**orkflow **ORC**hestration for **A**gents — an **autonomous software-development pipeline**. You hand it a task — a prompt, a GitHub issue, or a spec — and a team of AI agents plans the work, implements it test-first, reviews the result, and opens a pull request. Every step runs under **governance**: safety hooks block dangerous operations, enforce test gates, and keep agents inside guardrails.
 
 You run and watch everything from the **worca dashboard** (`worca-ui`), a real-time web UI. Add a project, click **Run Pipeline**, and follow each stage live — costs, token usage, logs, and the resulting PR.
 
