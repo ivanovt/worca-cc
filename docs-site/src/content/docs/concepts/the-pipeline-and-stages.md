@@ -7,10 +7,6 @@ sidebar:
 
 A worca run is a fixed sequence of stages. Each stage is handled by a specialized agent with one responsibility, and stages hand off to each other until a pull request exists.
 
-```
-Preflight → Planner → Plan Reviewer → Coordinator → Implementer(s) → Tester → Reviewer → Guardian → Learner
-```
-
 ## The stages
 
 - **Preflight** — language-agnostic environment checks (git state, dependencies, config). Runs before any tokens are spent, so broken setups fail fast.

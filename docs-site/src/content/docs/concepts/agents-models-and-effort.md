@@ -9,12 +9,7 @@ Each stage is run by an agent, and each agent is assigned a Claude model and a r
 
 ## Models per stage
 
-worca splits work across two model tiers:
-
-- **Opus** handles the reasoning-heavy stages — Planner, Plan Reviewer, Coordinator, Reviewer, Guardian, and Learner.
-- **Sonnet** handles the high-throughput build stages — Implementer and Tester.
-
-You can override the model (and max turns) per agent in the Settings UI.
+worca doesn't impose fixed model tiers. The default model for each stage generally tracks the stage's complexity — the more reasoning-heavy stages (**Planner, Plan Reviewer, Coordinator, Reviewer, Guardian, and Learner**) are typically set to **Opus**, while the build-and-test stages run a faster model. This is configured per stage in the **template**, and you can override the model (and max turns) per agent in the Settings UI.
 
 ## Reasoning effort
 
