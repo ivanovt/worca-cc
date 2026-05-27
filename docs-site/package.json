@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "astro dev",
     "start": "astro dev",
+    "prebuild": "git rev-parse --is-shallow-repository 2>/dev/null | grep -q true && git fetch --unshallow --quiet 2>/dev/null || true",
     "build": "astro build",
     "preview": "astro preview",
     "deploy": "astro build && wrangler deploy",
