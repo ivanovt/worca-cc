@@ -1,4 +1,4 @@
-"""Tests for worca templates CLI subcommands (list, show)."""
+"""Tests for worca templates CLI subcommands (list, show, create)."""
 
 import json
 from pathlib import Path
@@ -503,3 +503,316 @@ class TestResolveDirs:
         monkeypatch.chdir(tmp_path)
         _, project_dir, _ = _resolve_dirs()
         assert project_dir is None
+
+
+# ---------------------------------------------------------------------------
+# worca templates create --from-file
+# ---------------------------------------------------------------------------
+
+
+class TestTemplatesCreate:
+    def _run_create(self, args, capsys, builtin_dir=None, project_dir=None, user_dir=None):
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ):
+            main(["templates", "create"] + args)
+        return capsys.readouterr()
+
+    def _valid_payload(self, **overrides):
+        data = {
+            "id": "my-pipeline",
+            "name": "My Pipeline",
+            "description": "A custom pipeline",
+            "tags": ["fast"],
+            "config": {"stages": {"test": {"enabled": False}}},
+        }
+        data.update(overrides)
+        return data
+
+    # --- parser ---
+
+    def test_create_subcommand_parsed(self):
+        parser = create_parser()
+        args = parser.parse_args(["templates", "create", "--from-file", "payload.json"])
+        assert args.command == "templates"
+        assert args.templates_command == "create"
+        assert args.from_file == "payload.json"
+
+    def test_create_global_flag_defaults_false(self):
+        parser = create_parser()
+        args = parser.parse_args(["templates", "create", "--from-file", "payload.json"])
+        assert args.global_ is False
+
+    def test_create_global_flag_set(self):
+        parser = create_parser()
+        args = parser.parse_args(["templates", "create", "--from-file", "payload.json", "--global"])
+        assert args.global_ is True
+
+    def test_create_from_file_is_required(self):
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["templates", "create"])
+
+    # --- happy path: project scope ---
+
+    def test_create_writes_project_template(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(self._valid_payload()))
+        self._run_create(
+            ["--from-file", str(payload_file)],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        assert (project_dir / "my-pipeline" / "template.json").exists()
+
+    def test_create_roundtrips_via_resolver_get(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(self._valid_payload()))
+        self._run_create(
+            ["--from-file", str(payload_file)],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        from worca.orchestrator.templates import TemplateResolver
+        resolver = TemplateResolver(builtin_dir, project_dir, user_dir)
+        tmpl = resolver.get("my-pipeline")
+        assert tmpl is not None
+        assert tmpl.name == "My Pipeline"
+        assert tmpl.config == {"stages": {"test": {"enabled": False}}}
+
+    def test_create_prints_success_message(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(self._valid_payload()))
+        out = self._run_create(
+            ["--from-file", str(payload_file)],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        assert "my-pipeline" in out.out
+
+    # --- happy path: user scope ---
+
+    def test_create_global_writes_user_template(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(self._valid_payload()))
+        self._run_create(
+            ["--from-file", str(payload_file), "--global"],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        assert (user_dir / "my-pipeline" / "template.json").exists()
+        assert not (project_dir / "my-pipeline").exists()
+
+    # --- validation errors ---
+
+    def test_create_rejects_invalid_id(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(self._valid_payload(id="INVALID ID!")))
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_create(
+                ["--from-file", str(payload_file)],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        assert exc_info.value.code != 0
+        err = capsys.readouterr().err
+        assert "validation_error" in err or "id" in err.lower()
+
+    def test_create_rejects_too_many_tags(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(
+            self._valid_payload(tags=["a", "b", "c", "d", "e", "f"])
+        ))
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_create(
+                ["--from-file", str(payload_file)],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        assert exc_info.value.code != 0
+
+    def test_create_rejects_bad_tag_chars(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(
+            self._valid_payload(tags=["BAD TAG!"])
+        ))
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_create(
+                ["--from-file", str(payload_file)],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        assert exc_info.value.code != 0
+
+    def test_create_rejects_nondict_config(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(
+            self._valid_payload(config="not-a-dict")
+        ))
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_create(
+                ["--from-file", str(payload_file)],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        assert exc_info.value.code != 0
+
+    def test_create_validation_error_prints_details(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(
+            self._valid_payload(id="INVALID!", config="bad")
+        ))
+        with pytest.raises(SystemExit):
+            self._run_create(
+                ["--from-file", str(payload_file)],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        err = capsys.readouterr().err
+        assert "id" in err.lower()
+        assert "config" in err.lower()
+
+    # --- builtin conflict ---
+
+    def test_create_rejects_builtin_id(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        _write_template(builtin_dir / "bugfix", _minimal("bugfix"))
+        project_dir = tmp_path / "project"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(
+            self._valid_payload(id="bugfix", name="Bugfix Override")
+        ))
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_create(
+                ["--from-file", str(payload_file)],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        assert exc_info.value.code != 0
+        err = capsys.readouterr().err
+        assert "bugfix" in err or "built-in" in err.lower()
+
+    # --- stdin support ---
+
+    def test_create_from_stdin(self, capsys, tmp_path, monkeypatch):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        payload_json = json.dumps(self._valid_payload())
+        import io
+        monkeypatch.setattr("sys.stdin", io.StringIO(payload_json))
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ):
+            main(["templates", "create", "--from-file", "-"])
+        assert (project_dir / "my-pipeline" / "template.json").exists()
+
+    # --- round-trip via list --json ---
+
+    def test_create_roundtrips_via_list_json(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text(json.dumps(self._valid_payload()))
+        self._run_create(
+            ["--from-file", str(payload_file)],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ):
+            main(["templates", "list", "--json"])
+        out = capsys.readouterr().out
+        payload = json.loads(out)
+        by_id = {e["id"]: e for e in payload}
+        assert "my-pipeline" in by_id
+        assert by_id["my-pipeline"]["name"] == "My Pipeline"
+        assert by_id["my-pipeline"]["tier"] == "project"
+        assert by_id["my-pipeline"]["tags"] == ["fast"]
+
+    # --- invalid JSON ---
+
+    def test_create_invalid_json_exits_nonzero(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        payload_file = tmp_path / "payload.json"
+        payload_file.write_text("not valid json {{{")
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_create(
+                ["--from-file", str(payload_file)],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        assert exc_info.value.code != 0
+
+    def test_create_file_not_found_exits_nonzero(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_create(
+                ["--from-file", str(tmp_path / "no-such-file.json")],
+                capsys, builtin_dir, project_dir, tmp_path / "user",
+            )
+        assert exc_info.value.code != 0
+        err = capsys.readouterr().err
+        assert "error" in err.lower()
+
+
+# ---------------------------------------------------------------------------
+# Skill-shipping regression: worca-template installs via _install_skills
+# ---------------------------------------------------------------------------
+
+
+class TestWorcaTemplateSkillShipping:
+    def test_install_skills_copies_worca_template(self, tmp_path):
+        """_install_skills must install worca-template/SKILL.md into .claude/skills/."""
+        from worca.cli.init import _install_skills
+
+        source = Path(__file__).resolve().parent.parent / "src" / "worca"
+        git_root = tmp_path / "project"
+        git_root.mkdir()
+        changes = _install_skills(source, git_root)
+        installed = git_root / ".claude" / "skills" / "worca-template" / "SKILL.md"
+        assert installed.exists(), "worca-template/SKILL.md was not installed"
+        assert any("worca-template" in c for c in changes)
+
+    def test_installed_skill_has_valid_frontmatter(self, tmp_path):
+        """Installed SKILL.md must have name: worca-template in its frontmatter."""
+        from worca.cli.init import _install_skills
+
+        source = Path(__file__).resolve().parent.parent / "src" / "worca"
+        git_root = tmp_path / "project"
+        git_root.mkdir()
+        _install_skills(source, git_root)
+        installed = git_root / ".claude" / "skills" / "worca-template" / "SKILL.md"
+        content = installed.read_text()
+        assert content.startswith("---")
+        assert "name: worca-template" in content
