@@ -59,7 +59,9 @@ builds also carry no analytics (the var is unset).
 
 Connecting a repo to Workers Builds is an OAuth step that can only be done in the
 dashboard. Both Workers import the same repo (`SinishaDjukic/worca-cc`) with root
-directory (Path) `docs-site` and build variable `NODE_VERSION = 22`.
+directory (Path) `docs-site`, build variable `NODE_VERSION = 22`, and **Build watch
+paths `docs-site/*`** (so only docs changes trigger builds — otherwise every
+unrelated repo PR fires a docs build).
 
 **Production Worker — `worca-docs`:**
 1. *Workers & Pages → Create → Workers → Import a repository* → `worca-cc`.
