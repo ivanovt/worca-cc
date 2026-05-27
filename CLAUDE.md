@@ -85,6 +85,7 @@ Project-level skills and subagents (under `.claude/skills/` and `.claude/agents/
 | `/worca-release` | Cutting a stable release (worca-cc, @worca/ui, or both). |
 | `/worca-rc` | Cutting a release candidate. |
 | `/worca-docs-publish` | Publishing the docs site (docs.worca.dev) between releases — fast-forwards `docs-live` to `master` after a local build check. |
+| `/worca-docs-diagram` | Authoring a docs-site diagram in the canonical animated-SVG style. Wraps the shared `docs-site/src/components/FlowDiagram.astro` (nodes + blue forward / amber return edges + tooltips, light+dark, reduced-motion) so every diagram stays consistent. |
 | `/state-action-matrix` | Loading the pipeline state-action spec before touching states/transitions/gating. |
 | `/worca-ui-add-page` | Scaffolding a new worca-ui section across all 4-5 routing wire-up points (view file, main dispatch, header title, sidebar entry, WS/fetch hooks). |
 | `/worca-ui-add-card` | Scaffolding a new card view following `worca-ui/docs/card-layout.md` — top/meta/(stages)/actions with central variant map. |
