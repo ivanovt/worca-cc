@@ -104,7 +104,7 @@ class TestRunChildUsesRepoPath:
             result = executor._run_child("lib")
 
         assert result["status"] == "completed"
-        assert captured_cwd[0] == "/workspace/shared-lib"
+        assert captured_cwd[0] == os.path.join("/workspace", "shared-lib")
 
     def test_run_child_falls_back_to_project_name(self):
         from worca.workspace.dag_executor import DagExecutor
@@ -127,7 +127,7 @@ class TestRunChildUsesRepoPath:
         ):
             executor._run_child("lib")
 
-        assert captured_cwd[0] == "/workspace/lib"
+        assert captured_cwd[0] == os.path.join("/workspace", "lib")
 
 
 # ---- #7: _detect_base_ref -------------------------------------------------
@@ -211,7 +211,7 @@ class TestProjectPathInChildren:
             executor.execute()
 
         child = manifest["children"][0]
-        assert child["project_path"] == "/workspace/shared-lib"
+        assert child["project_path"] == os.path.join("/workspace", "shared-lib")
 
     def test_blocked_children_have_project_path(self):
         from worca.workspace.dag_executor import DagExecutor
@@ -237,7 +237,7 @@ class TestProjectPathInChildren:
 
         blocked = [c for c in manifest["children"] if c.get("status") == "blocked"]
         assert len(blocked) == 1
-        assert blocked[0]["project_path"] == "/workspace/services/backend"
+        assert blocked[0]["project_path"] == os.path.join("/workspace", "services", "backend")
 
 
 # ---- #12: blocked repos counted in circuit breaker -------------------------

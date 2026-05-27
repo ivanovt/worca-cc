@@ -46,7 +46,7 @@ def resolve_run_id(run_id: str | None, base: str = _DEFAULT_BASE) -> str:
     candidates = []
     for status_path in glob.glob(str(runs_dir / "*" / "status.json")):
         try:
-            with open(status_path) as f:
+            with open(status_path, encoding="utf-8") as f:
                 data = json.load(f)
             if data.get("pipeline_status") not in PIPELINE_TERMINAL:
                 candidates.append(data.get("run_id", Path(status_path).parent.name))
@@ -139,14 +139,15 @@ def cmd_stop(run_id: str | None, base: str = _DEFAULT_BASE) -> str:
     else:
         pid_file = Path(_pid_path(run_id, effective_base))
         if pid_file.exists():
-            pid = int(pid_file.read_text().strip())
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
 
     if pid is not None:
         try:
+            # Windows: os.kill(SIGTERM) calls TerminateProcess — no graceful handler runs.
             os.kill(pid, signal.SIGTERM)
             print(f"Sent SIGTERM to PID {pid}")
-        except ProcessLookupError:
-            pass  # process already gone — that's fine
+        except (ProcessLookupError, ValueError, OSError):
+            pass  # process already gone, or signal unsupported on this platform
 
     print(f"Stop requested for run: {run_id}")
     return run_id

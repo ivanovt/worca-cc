@@ -59,7 +59,7 @@ class PromptBuilder:
         """Read CLAUDE.md content if it exists, return empty string otherwise."""
         try:
             if os.path.exists(path):
-                with open(path) as f:
+                with open(path, encoding="utf-8") as f:
                     return f.read().strip()
         except OSError:
             pass
@@ -98,7 +98,7 @@ class PromptBuilder:
                 continue
             try:
                 if os.path.exists(path):
-                    with open(path) as f:
+                    with open(path, encoding="utf-8") as f:
                         content = f.read().strip()
                     if content:
                         return content
@@ -130,7 +130,7 @@ class PromptBuilder:
 
         fd, tmp_path = tempfile.mkstemp(dir=p.parent, prefix=".tmp_", suffix=".json")
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(serialized)
                 f.write("\n")
             os.replace(tmp_path, path)
@@ -153,7 +153,7 @@ class PromptBuilder:
         if not os.path.exists(path):
             return
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             self._context.update(data)
         except (OSError, json.JSONDecodeError):
@@ -391,7 +391,7 @@ class PromptBuilder:
             return ""
         template_path = os.path.join(self._run_dir, "agents", f"{agent_name}.md")
         try:
-            with open(template_path) as f:
+            with open(template_path, encoding="utf-8") as f:
                 return f.read()
         except OSError:
             return ""

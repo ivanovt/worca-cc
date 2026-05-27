@@ -82,7 +82,10 @@ class TestDagExecutorTierOrdering:
             result = executor.execute()
 
         assert len(dispatch_order) == 2
-        assert set(dispatch_order) == {"/workspace/repo-a", "/workspace/repo-b"}
+        assert set(dispatch_order) == {
+            os.path.join("/workspace", "repo-a"),
+            os.path.join("/workspace", "repo-b"),
+        }
         assert result["status"] == "completed"
 
     def test_two_tiers_execute_sequentially(self):
@@ -572,7 +575,7 @@ class TestDagExecutorManifestUpdates:
         ):
             executor.execute()
 
-        assert captured_cwd == ["/projects/my-lib"]
+        assert captured_cwd == [os.path.join("/projects", "my-lib")]
 
 
 class TestDagExecutorPreRegisterRunning:
@@ -1006,8 +1009,8 @@ class TestFailurePropagationBlockedOnFailure:
         ):
             executor.execute()
 
-        assert "/workspace/lib" in dispatched_repos
-        assert "/workspace/app" not in dispatched_repos
+        assert os.path.join("/workspace", "lib") in dispatched_repos
+        assert os.path.join("/workspace", "app") not in dispatched_repos
 
         blocked = [c for c in manifest["children"] if c["status"] == "blocked"]
         assert len(blocked) == 1
@@ -1077,7 +1080,7 @@ class TestFailurePropagationBlockedOnFailure:
 
         def mock_run(cmd, **kwargs):
             cwd = kwargs.get("cwd", "")
-            if cwd.endswith("/lib"):
+            if os.path.basename(cwd) == "lib":
                 return _failed_proc()
             return _completed_proc()
 
@@ -1136,7 +1139,7 @@ class TestFailurePropagationNonDependentContinues:
         def mock_run(cmd, **kwargs):
             cwd = kwargs.get("cwd", "")
             dispatched.append(cwd)
-            if cwd.endswith("/lib"):
+            if os.path.basename(cwd) == "lib":
                 return _failed_proc()
             return _completed_proc()
 
@@ -1146,8 +1149,8 @@ class TestFailurePropagationNonDependentContinues:
         ):
             executor.execute()
 
-        assert "/workspace/svc" in dispatched
-        assert "/workspace/app" not in dispatched
+        assert os.path.join("/workspace", "svc") in dispatched
+        assert os.path.join("/workspace", "app") not in dispatched
 
         statuses = {c["project"]: c["status"] for c in manifest["children"]}
         assert statuses["app"] == "blocked"
@@ -1172,7 +1175,7 @@ class TestFailurePropagationNonDependentContinues:
         def mock_run(cmd, **kwargs):
             cwd = kwargs.get("cwd", "")
             dispatched.append(cwd)
-            if cwd.endswith("/lib"):
+            if os.path.basename(cwd) == "lib":
                 return _failed_proc()
             return _completed_proc()
 
@@ -1182,7 +1185,7 @@ class TestFailurePropagationNonDependentContinues:
         ):
             executor.execute()
 
-        dispatched_repos = [d.split("/")[-1] for d in dispatched]
+        dispatched_repos = [os.path.basename(d) for d in dispatched]
         assert "lib" in dispatched_repos
         assert "docs" in dispatched_repos
         assert "api" not in dispatched_repos
@@ -1207,7 +1210,7 @@ class TestFailurePropagationNonDependentContinues:
         def mock_run(cmd, **kwargs):
             cwd = kwargs.get("cwd", "")
             dispatched.append(cwd)
-            if cwd.endswith("/lib"):
+            if os.path.basename(cwd) == "lib":
                 return _failed_proc()
             return _completed_proc()
 
@@ -1217,7 +1220,7 @@ class TestFailurePropagationNonDependentContinues:
         ):
             executor.execute()
 
-        dispatched_repos = [d.split("/")[-1] for d in dispatched]
+        dispatched_repos = [os.path.basename(d) for d in dispatched]
         assert "app" in dispatched_repos
 
         statuses = {c["project"]: c["status"] for c in manifest["children"]}
@@ -1241,7 +1244,7 @@ class TestFailurePropagationNonDependentContinues:
 
         def mock_run(cmd, **kwargs):
             cwd = kwargs.get("cwd", "")
-            if cwd.endswith("/lib"):
+            if os.path.basename(cwd) == "lib":
                 return _failed_proc()
             return _completed_proc(worktree_path="/wt/child")
 
@@ -1381,7 +1384,7 @@ class TestDagCircuitBreaker:
         ):
             executor.execute()
 
-        dispatched_repos = [d.split("/")[-1] for d in dispatched]
+        dispatched_repos = [os.path.basename(d) for d in dispatched]
         assert "d" not in dispatched_repos
 
         halted = [c for c in manifest["children"] if c["status"] == "halted"]

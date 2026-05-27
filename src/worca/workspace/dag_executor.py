@@ -91,7 +91,7 @@ def _parse_run_id_from_stdout(stdout_str: str) -> str | None:
     if not stdout_str:
         return None
     first = stdout_str.strip().split("\n", 1)[0].strip()
-    if not first or "/" in first or " " in first:
+    if not first or "/" in first or "\\" in first or " " in first:
         return None
     return first
 
@@ -227,7 +227,7 @@ def _write_context_file(run_dir: str, project: str, content: str) -> str:
     context_dir = os.path.join(run_dir, "context")
     os.makedirs(context_dir, exist_ok=True)
     path = os.path.join(context_dir, f"{project}-diff.md")
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(f"## Dependency Context: {project}\n\n{content}")
     return path
 
@@ -281,6 +281,9 @@ class DagExecutor:
             if child.get("status") == "completed":
                 self._completed_projects[child["project"]] = child
 
+    def _project_abs_path(self, project_path: str) -> str:
+        return os.path.join(self._workspace_root, *project_path.replace("\\", "/").split("/"))
+
     def _emit_event(self, event_type: str, payload: dict) -> None:
         _emit(
             event_type,
@@ -330,7 +333,7 @@ class DagExecutor:
                     "project": project,
                     "run_id": None,
                     "worktree_path": None,
-                    "project_path": os.path.join(self._workspace_root, project_path),
+                    "project_path": self._project_abs_path(project_path),
                     "status": "blocked",
                     "tier": tier_idx,
                 })
@@ -355,7 +358,7 @@ class DagExecutor:
                         "project": project,
                         "run_id": None,
                         "worktree_path": None,
-                        "project_path": os.path.join(self._workspace_root, project_path),
+                        "project_path": self._project_abs_path(project_path),
                         "status": "running",
                         "tier": tier_idx,
                     }
@@ -528,7 +531,7 @@ class DagExecutor:
                     "project": project,
                     "run_id": None,
                     "worktree_path": None,
-                    "project_path": os.path.join(self._workspace_root, project_path),
+                    "project_path": self._project_abs_path(project_path),
                     "status": "halted",
                     "tier": tier_info["tier"],
                 })
@@ -610,7 +613,7 @@ class DagExecutor:
         )
 
         project_path = self._projects_by_name.get(project, project)
-        cwd = os.path.join(self._workspace_root, project_path)
+        cwd = self._project_abs_path(project_path)
 
         proc = subprocess.run(
             cmd,

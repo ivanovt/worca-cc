@@ -12,7 +12,7 @@ import os
 import sys
 
 _schema = json.loads(
-    importlib.resources.files("worca.schemas").joinpath("keys.json").read_text()
+    importlib.resources.files("worca.schemas").joinpath("keys.json").read_text(encoding="utf-8")
 )
 GLOBAL_ONLY_KEYS = [tuple(k) for k in _schema["global_only_keys"]]
 NORMALIZE_SKIP_KEYS = [tuple(k) for k in _schema["normalize_skip_keys"]]
@@ -50,7 +50,7 @@ def load_settings(settings_path: str) -> dict:
     - If .local.json has invalid JSON, logs a warning and returns the base.
     """
     try:
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             base = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
@@ -60,7 +60,7 @@ def load_settings(settings_path: str) -> dict:
         return base
 
     try:
-        with open(local_path) as f:
+        with open(local_path, encoding="utf-8") as f:
             local = json.load(f)
     except json.JSONDecodeError:
         print(
@@ -143,7 +143,7 @@ def load_settings_with_global_fallback(
         global_path = _default_global_path()
 
     try:
-        with open(global_path) as f:
+        with open(global_path, encoding="utf-8") as f:
             global_blob = json.load(f)
     except FileNotFoundError:
         global_blob = {}

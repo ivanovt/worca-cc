@@ -1,6 +1,8 @@
 import { defineConfig } from 'vitest/config';
+import { stripShebangPlugin } from './vitest-strip-shebang.js';
 
 export default defineConfig({
+  plugins: [stripShebangPlugin()],
   test: {
     // Exclude Playwright e2e tests from Vitest runs
     exclude: ['**/node_modules/**', '**/dist/**', 'e2e/**'],

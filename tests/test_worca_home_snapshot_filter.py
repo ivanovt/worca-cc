@@ -33,18 +33,19 @@ def test_snapshot_worca_home_ignores_ephemeral_files(monkeypatch):
         snap = _snapshot_worca_home()
 
     keys = set(snap.keys())
+    normalized = {k.replace(os.sep, "/") for k in keys}
 
     # Watched files must be present
-    assert "projects.d/myproject.json" in keys
-    assert "fleet-runs/abc/status.json" in keys
-    assert "settings.json" in keys
+    assert "projects.d/myproject.json" in normalized
+    assert "fleet-runs/abc/status.json" in normalized
+    assert "settings.json" in normalized
 
     # Ignored files must be absent
-    assert "worca-ui-global.log" not in keys
-    assert "worca-ui-global.pid" not in keys
-    assert ".DS_Store" not in keys
-    assert "cache/ast/foo/graph.json" not in keys
-    assert "cache/ast/bar/baz/data.json" not in keys
+    assert "worca-ui-global.log" not in normalized
+    assert "worca-ui-global.pid" not in normalized
+    assert ".DS_Store" not in normalized
+    assert "cache/ast/foo/graph.json" not in normalized
+    assert "cache/ast/bar/baz/data.json" not in normalized
 
 
 @pytest.mark.parametrize("test_file", [
@@ -57,7 +58,7 @@ def test_effort_files_have_no_allow_worca_writes_marker(test_file):
     _snapshot_worca_home filters ephemeral files."""
     import pathlib
     repo_root = pathlib.Path(__file__).resolve().parent.parent
-    content = (repo_root / test_file).read_text()
+    content = (repo_root / test_file).read_text(encoding="utf-8")
     assert "allow_worca_writes" not in content
 
 

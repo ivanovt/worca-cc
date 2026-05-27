@@ -47,7 +47,7 @@ def write_control(run_id: str, action: str, source: str = "cli", base: str = _DE
         "source": source,
     }
 
-    path.write_text(json.dumps(payload, indent=2) + "\n")
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return str(path)
 
 
@@ -64,7 +64,7 @@ def read_control(run_id: str, base: str = _DEFAULT_BASE) -> dict | None:
     if not os.path.exists(path):
         return None
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     _validate(data)

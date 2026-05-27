@@ -8,7 +8,7 @@ INVESTIGATE_DIR = TEMPLATES_DIR / "investigate"
 
 
 def _template():
-    return json.loads((INVESTIGATE_DIR / "template.json").read_text())
+    return json.loads((INVESTIGATE_DIR / "template.json").read_text(encoding="utf-8"))
 
 
 def _config():
@@ -76,7 +76,7 @@ class TestAgentOverlays:
         assert (INVESTIGATE_DIR / "agents" / "pr.block.md").is_file()
 
     def test_guardian_is_replace_mode(self):
-        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "Guardian Agent — Investigate Mode" in guardian
 
     def test_base_guardian_unaffected(self):
@@ -84,38 +84,38 @@ class TestAgentOverlays:
         # guardian.md. The Role line is a stable anchor from the canonical
         # base (the investigate guardian replaces it with its own Role).
         base = Path(__file__).parent.parent / "src" / "worca" / "agents" / "core" / "guardian.md"
-        content = base.read_text()
+        content = base.read_text(encoding="utf-8")
         # Anchor on the verb phrase that survives the #165 rewording —
         # "(when appropriate)" was added but "You ship the work" remains.
         assert "You ship the work" in content
         assert "Guardian Agent — Investigate Mode" not in content
 
     def test_investigate_guardian_no_proof_check(self):
-        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "proof_check" not in guardian.lower()
         assert "proof status" not in guardian.lower()
 
     def test_guardian_has_plan_copy_steps(self):
-        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "cp" in guardian
         assert "docs/plans/" in guardian
 
     def test_guardian_references_pr_json_schema(self):
-        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "pr.json" in guardian or "pr_number" in guardian
 
     def test_pr_block_has_work_request_placeholder(self):
-        pr_block = (INVESTIGATE_DIR / "agents" / "pr.block.md").read_text()
+        pr_block = (INVESTIGATE_DIR / "agents" / "pr.block.md").read_text(encoding="utf-8")
         assert "{{work_request}}" in pr_block
 
     def test_guardian_has_commit_step(self):
-        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "git commit" in guardian
 
     def test_guardian_has_push_step(self):
-        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "git push" in guardian
 
     def test_guardian_has_pr_create_step(self):
-        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text()
+        guardian = (INVESTIGATE_DIR / "agents" / "guardian.md").read_text(encoding="utf-8")
         assert "gh pr create" in guardian

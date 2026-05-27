@@ -61,12 +61,15 @@ describe('scheduleBeadsRefresh broadcast payload', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: vi.fn(() => true),
-      watch: vi.fn((_path, cb) => {
+      watchFile: vi.fn(),
+      unwatchFile: vi.fn(),
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn((_path, cb) => {
         watchCallback = cb;
         return { close: vi.fn() };
       }),
-      watchFile: vi.fn(),
-      unwatchFile: vi.fn(),
     }));
 
     const mod = await import('./ws-beads-watcher.js');
@@ -189,13 +192,16 @@ describe('payload dedup', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: vi.fn(() => true),
-      watch: vi.fn((_path, cb) => {
-        watchCallback = cb;
-        return { close: vi.fn() };
-      }),
       watchFile: vi.fn(),
       unwatchFile: vi.fn(),
       statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
     }));
 
     const mod = await import('./ws-beads-watcher.js');
@@ -322,13 +328,16 @@ describe('getLatestCounts', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: vi.fn(() => true),
-      watch: vi.fn((_path, cb) => {
-        watchCallback = cb;
-        return { close: vi.fn() };
-      }),
       watchFile: vi.fn(),
       unwatchFile: vi.fn(),
       statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
     }));
 
     const mod = await import('./ws-beads-watcher.js');
@@ -410,10 +419,13 @@ describe('resolveBeadsCounts', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: mockExistsSync,
-      watch: vi.fn(() => ({ close: vi.fn() })),
       watchFile: vi.fn(),
       unwatchFile: vi.fn(),
       statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn(() => ({ close: vi.fn() })),
     }));
 
     const mod = await import('./ws-beads-watcher.js');
@@ -546,13 +558,16 @@ describe('refresh in-flight guard', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: vi.fn(() => true),
-      watch: vi.fn((_path, cb) => {
-        watchCallback = cb;
-        return { close: vi.fn() };
-      }),
       watchFile: vi.fn(),
       unwatchFile: vi.fn(),
       statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
     }));
 
     const mod = await import('./ws-beads-watcher.js');
@@ -629,10 +644,13 @@ describe('peekBeadsCounts (non-blocking)', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: mockExistsSync,
-      watch: vi.fn(() => ({ close: vi.fn() })),
       watchFile: vi.fn(),
       unwatchFile: vi.fn(),
       statSync: vi.fn(() => ({ mtimeMs: 100, size: 4096 })),
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn(() => ({ close: vi.fn() })),
     }));
 
     const mod = await import('./ws-beads-watcher.js');
@@ -731,13 +749,16 @@ describe('list fingerprint bail', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: vi.fn(() => true),
-      watch: vi.fn((_path, cb) => {
-        watchCallback = cb;
-        return { close: vi.fn() };
-      }),
       watchFile: vi.fn(),
       unwatchFile: vi.fn(),
       statSync: mockStatSync,
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
     }));
 
     const mod = await import('./ws-beads-watcher.js');
@@ -868,15 +889,17 @@ describe('list fingerprint bail', () => {
     }));
     vi.doMock('node:fs', () => ({
       existsSync: vi.fn(() => true),
-      watch: vi.fn((_path, cb) => {
-        watchCallback = cb;
-        return { close: vi.fn() };
-      }),
       watchFile: vi.fn((_path, _opts, cb) => {
         watchFileCallback = cb;
       }),
       unwatchFile: vi.fn(),
       statSync: mockStatSync,
+    }));
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
     }));
     const mod = await import('./ws-beads-watcher.js');
 
@@ -949,15 +972,18 @@ describe('WAL self-read suppression', () => {
 
     vi.doMock('node:fs', () => ({
       existsSync: vi.fn(() => true),
-      watch: vi.fn((_path, cb) => {
-        watchCallback = cb;
-        return { close: vi.fn() };
-      }),
       watchFile: vi.fn((_path, _opts, cb) => {
         watchFileCallback = cb;
       }),
       unwatchFile: vi.fn(),
       statSync: mockStatSync,
+    }));
+
+    vi.doMock('./safe-watch.js', () => ({
+      safeWatch: vi.fn((_path, cb) => {
+        watchCallback = cb;
+        return { close: vi.fn() };
+      }),
     }));
 
     const mod = await import('./ws-beads-watcher.js');

@@ -126,8 +126,9 @@ class TestCreatePipelineWorktree:
         """A ~-prefixed base_dir is expanded to the user's home directory."""
         from worca.utils.git import create_pipeline_worktree
 
-        # Redirect $HOME so the test doesn't write into the real home dir
+        # Redirect $HOME / $USERPROFILE so tilde expands to tmp_path on all platforms
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
         wt_path = create_pipeline_worktree(
             "tilde1", "feat", base_dir="~/wt-home"
         )

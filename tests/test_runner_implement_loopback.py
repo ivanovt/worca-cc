@@ -118,15 +118,17 @@ class TestImplementNextBeadLoopbackPersistence:
                             with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                                 with patch("worca.orchestrator.runner.bd_close", return_value=True):
                                     with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                                        with patch("worca.orchestrator.runner.create_branch"):
-                                            with patch("worca.orchestrator.runner._write_pid"):
-                                                with patch("worca.orchestrator.runner._remove_pid"):
-                                                    run_pipeline(
-                                                        wr,
-                                                        plan_file=plan_file,
-                                                        settings_path=settings_path,
-                                                        status_path=status_path,
-                                                    )
+                                        with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                            with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                                with patch("worca.orchestrator.runner.create_branch"):
+                                                    with patch("worca.orchestrator.runner._write_pid"):
+                                                        with patch("worca.orchestrator.runner._remove_pid"):
+                                                            run_pipeline(
+                                                                wr,
+                                                                plan_file=plan_file,
+                                                                settings_path=settings_path,
+                                                                status_path=status_path,
+                                                            )
 
         assert implement_count["n"] == 2, (
             f"Expected 2 IMPLEMENT runs (one per bead), got {implement_count['n']}"
@@ -237,15 +239,17 @@ class TestTestToImplementLoopbackPersistence:
                             with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                                 with patch("worca.orchestrator.runner.bd_close", return_value=True):
                                     with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                                        with patch("worca.orchestrator.runner.create_branch"):
-                                            with patch("worca.orchestrator.runner._write_pid"):
-                                                with patch("worca.orchestrator.runner._remove_pid"):
-                                                    run_pipeline(
-                                                        wr,
-                                                        plan_file=str(plan),
-                                                        settings_path=settings_path,
-                                                        status_path=status_path,
-                                                    )
+                                        with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                            with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                                with patch("worca.orchestrator.runner.create_branch"):
+                                                    with patch("worca.orchestrator.runner._write_pid"):
+                                                        with patch("worca.orchestrator.runner._remove_pid"):
+                                                            run_pipeline(
+                                                                wr,
+                                                                plan_file=str(plan),
+                                                                settings_path=settings_path,
+                                                                status_path=status_path,
+                                                            )
 
         assert test_call_count["n"] == 2, (
             f"Expected TEST to run twice (fail then pass), got {test_call_count['n']}"
@@ -364,15 +368,17 @@ class TestReviewToImplementLoopbackPersistence:
                             with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                                 with patch("worca.orchestrator.runner.bd_close", return_value=True):
                                     with patch("worca.orchestrator.runner.bd_label_add", return_value=True):
-                                        with patch("worca.orchestrator.runner.create_branch"):
-                                            with patch("worca.orchestrator.runner._write_pid"):
-                                                with patch("worca.orchestrator.runner._remove_pid"):
-                                                    run_pipeline(
-                                                        wr,
-                                                        plan_file=str(plan),
-                                                        settings_path=settings_path,
-                                                        status_path=status_path,
-                                                    )
+                                        with patch("worca.orchestrator.runner.bd_get_effort_label", return_value=None):
+                                            with patch("worca.orchestrator.effort.bd_get_effort_label", return_value=None):
+                                                with patch("worca.orchestrator.runner.create_branch"):
+                                                    with patch("worca.orchestrator.runner._write_pid"):
+                                                        with patch("worca.orchestrator.runner._remove_pid"):
+                                                            run_pipeline(
+                                                                wr,
+                                                                plan_file=str(plan),
+                                                                settings_path=settings_path,
+                                                                status_path=status_path,
+                                                            )
 
         assert review_call_count["n"] == 2, (
             f"Expected REVIEW to run twice (changes then approve), got {review_call_count['n']}"

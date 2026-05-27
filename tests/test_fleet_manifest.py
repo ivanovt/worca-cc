@@ -7,6 +7,9 @@ and poll_and_update_fleet_manifest.
 import json
 import os
 import re
+import sys
+
+import pytest
 from datetime import datetime, timezone
 
 
@@ -89,7 +92,7 @@ class TestFleetManifestPath:
         monkeypatch.delenv("WORCA_HOME", raising=False)
         from worca.orchestrator.fleet_manifest import fleet_manifest_path
         path = fleet_manifest_path("f_202605120809_abc123")
-        expected = os.path.expanduser("~/.worca/fleet-runs")
+        expected = os.path.join(os.path.expanduser("~"), ".worca", "fleet-runs")
         assert path.startswith(expected)
 
     def test_default_base_dir_honors_worca_home(self, monkeypatch, tmp_path):
@@ -842,6 +845,7 @@ class TestConcurrentManifestWrites:
         )
         return fleet_id
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="os.replace() atomicity differs on Windows")
     def test_concurrent_register_distinct_children(self, tmp_path):
         """N threads each register a distinct child.
 
@@ -890,6 +894,7 @@ class TestConcurrentManifestWrites:
         # pin a number to keep the test stable across schedulers.
         assert len(run_ids) >= 1
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="os.replace() atomicity differs on Windows")
     def test_concurrent_update_status_and_register_child(self, tmp_path):
         """update_fleet_status running alongside register_fleet_child.
 
@@ -953,6 +958,7 @@ class TestConcurrentManifestWrites:
         expected = {f"r_{i:03d}" for i in range(16)}
         assert run_ids.issubset(expected)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="os.replace() atomicity differs on Windows")
     def test_concurrent_writes_never_produce_unreadable_file(self, tmp_path):
         """Atomic rename invariant: a concurrent reader never observes corruption.
 

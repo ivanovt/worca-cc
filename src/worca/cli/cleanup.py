@@ -96,7 +96,7 @@ def _read_worktree_status(worktree_path: str) -> str | None:
             status_path = os.path.join(runs_dir, entry, "status.json")
             if os.path.isfile(status_path):
                 try:
-                    with open(status_path) as f:
+                    with open(status_path, encoding="utf-8") as f:
                         data = json.load(f)
                     status = data.get("pipeline_status")
                     if status:
@@ -107,7 +107,7 @@ def _read_worktree_status(worktree_path: str) -> str | None:
     flat = os.path.join(worktree_path, ".worca", "status.json")
     if os.path.isfile(flat):
         try:
-            with open(flat) as f:
+            with open(flat, encoding="utf-8") as f:
                 data = json.load(f)
             return data.get("pipeline_status")
         except (json.JSONDecodeError, OSError):
@@ -246,7 +246,7 @@ class FleetSource:
 
             manifest_path = os.path.join(self.fleet_runs_dir, fname)
             try:
-                with open(manifest_path) as f:
+                with open(manifest_path, encoding="utf-8") as f:
                     manifest = json.load(f)
             except (json.JSONDecodeError, OSError):
                 continue
@@ -375,7 +375,7 @@ class WorkspaceSource:
 
             pointer_path = os.path.join(self.pointer_dir, fname)
             try:
-                with open(pointer_path) as f:
+                with open(pointer_path, encoding="utf-8") as f:
                     pointer = json.load(f)
             except (json.JSONDecodeError, OSError):
                 continue
@@ -389,7 +389,7 @@ class WorkspaceSource:
                 "workspace-manifest.json",
             )
             try:
-                with open(manifest_path) as f:
+                with open(manifest_path, encoding="utf-8") as f:
                     manifest = json.load(f)
             except (json.JSONDecodeError, OSError):
                 continue

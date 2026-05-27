@@ -74,7 +74,7 @@ def cmd_workspace_init(path: str, force: bool = False) -> None:
         )
         raise SystemExit(1)
 
-    with open(ws_path, "w") as f:
+    with open(ws_path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
 
@@ -106,7 +106,7 @@ def cmd_workspace_migrate(path: str) -> None:
         print(f"error: workspace.json not found at {ws_path}", file=sys.stderr)
         raise SystemExit(1)
 
-    with open(ws_path) as f:
+    with open(ws_path, encoding="utf-8") as f:
         doc = json.load(f)
 
     if "projects" in doc and "repos" not in doc:
@@ -122,13 +122,13 @@ def cmd_workspace_migrate(path: str) -> None:
         raise SystemExit(1)
 
     backup_path = ws_path + ".bak"
-    with open(backup_path, "w") as f:
+    with open(backup_path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
 
     doc["projects"] = doc.pop("repos")
 
-    with open(ws_path, "w") as f:
+    with open(ws_path, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=2)
         f.write("\n")
 

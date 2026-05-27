@@ -147,6 +147,8 @@ To update: `pip install --upgrade worca-cc && worca init --upgrade`
 
 Use `worca init --check` for a dry-run that shows what would change without modifying anything.
 
+**Platforms:** Linux, macOS, and Windows are all supported. worca-ui, the hooks, and the Python library are first-class everywhere; the autonomous pipeline's lifecycle control is POSIX-native and degrades gracefully on native Windows (use WSL2 for full fidelity). See [`docs/platform-support.md`](./docs/platform-support.md).
+
 ## Quick Start
 
 ```bash

@@ -266,7 +266,7 @@ def _load_settings() -> dict:
     if not path or not os.path.exists(path):
         return {}
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except json.JSONDecodeError as e:
         raise ConfigUnreadable(f"{path}: invalid JSON ({e})") from e

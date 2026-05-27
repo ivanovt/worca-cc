@@ -228,7 +228,7 @@ def write_pointer_file(
 
     fd, tmp_path = tempfile.mkstemp(dir=pointer_dir, prefix=".tmp_", suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
         os.replace(tmp_path, pointer_path)
@@ -306,7 +306,7 @@ def write_workspace_manifest(manifest: dict, run_dir: str) -> str:
 
     fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".tmp_", suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
             f.write("\n")
         os.replace(tmp_path, path)
@@ -394,7 +394,7 @@ def validate_workspace_plan(plan: dict, workspace: Workspace) -> list[str]:
     errors: list[str] = []
 
     schema_path = os.path.join(_SCHEMAS_DIR, "workspace_plan.json")
-    with open(schema_path) as f:
+    with open(schema_path, encoding="utf-8") as f:
         schema = json.load(f)
 
     try:
@@ -458,12 +458,12 @@ def write_workspace_plan_files(plan: dict, run_dir: str) -> dict[str, str]:
     Returns {project_name: absolute_path_to_plan_md} for non-skipped projects.
     """
     json_path = os.path.join(run_dir, "workspace-plan.json")
-    with open(json_path, "w") as f:
+    with open(json_path, "w", encoding="utf-8") as f:
         json.dump(plan, f, indent=2)
         f.write("\n")
 
     md_path = os.path.join(run_dir, "workspace-plan.md")
-    with open(md_path, "w") as f:
+    with open(md_path, "w", encoding="utf-8") as f:
         f.write(format_workspace_plan_md(plan))
 
     project_plan_paths: dict[str, str] = {}
@@ -471,7 +471,7 @@ def write_workspace_plan_files(plan: dict, run_dir: str) -> dict[str, str]:
         if project.get("skip"):
             continue
         plan_path = os.path.join(run_dir, f"{project['name']}-plan.md")
-        with open(plan_path, "w") as f:
+        with open(plan_path, "w", encoding="utf-8") as f:
             f.write(format_project_plan_md(project, plan["summary"]))
         project_plan_paths[project["name"]] = plan_path
 
@@ -663,7 +663,7 @@ def load_workspace_manifest(
 
     pointer_path = os.path.join(pointer_dir, f"{workspace_id}.json")
     try:
-        with open(pointer_path) as f:
+        with open(pointer_path, encoding="utf-8") as f:
             pointer = json.load(f)
     except (OSError, json.JSONDecodeError):
         return None
@@ -676,7 +676,7 @@ def load_workspace_manifest(
         workspace_root, ".worca", "workspace-runs", workspace_id, "workspace-manifest.json",
     )
     try:
-        with open(manifest_path) as f:
+        with open(manifest_path, encoding="utf-8") as f:
             return json.load(f)
     except (OSError, json.JSONDecodeError):
         return None

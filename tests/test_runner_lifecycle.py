@@ -39,7 +39,10 @@ def _make_ctx(tmp_path, run_id="test-run-1"):
 
 # --- Layer 1: signal handler saves interrupted status ---
 
+_posix_only = pytest.mark.skipif(os.name != "posix", reason="POSIX-only: signals")
 
+
+@_posix_only
 def test_signal_handler_saves_failed_status(tmp_path):
     """Calling the signal handler writes pipeline_status='interrupted' with stop_reason='signal'
     and emits a pipeline.run.interrupted event to events.jsonl."""
@@ -71,6 +74,7 @@ def test_signal_handler_saves_failed_status(tmp_path):
         runner._restore_signal_handlers()
 
 
+@_posix_only
 def test_signal_handler_noop_when_status_not_set(tmp_path):
     """Signal handler is safe when _signal_status is None — no crash, no file write."""
     runner._signal_status = None
@@ -86,6 +90,7 @@ def test_signal_handler_noop_when_status_not_set(tmp_path):
         runner._restore_signal_handlers()
 
 
+@_posix_only
 def test_signal_handler_preserves_existing_stop_reason(tmp_path):
     """Signal handler doesn't overwrite an existing stop_reason."""
     status_path = str(tmp_path / "status.json")
@@ -108,6 +113,7 @@ def test_signal_handler_preserves_existing_stop_reason(tmp_path):
         runner._restore_signal_handlers()
 
 
+@_posix_only
 def test_signal_handler_emits_interrupted_event(tmp_path):
     """_handler() writes pipeline.run.interrupted to events.jsonl when _signal_event_ctx is set."""
     status_path = str(tmp_path / "status.json")
@@ -137,6 +143,7 @@ def test_signal_handler_emits_interrupted_event(tmp_path):
         runner._restore_signal_handlers()
 
 
+@_posix_only
 def test_signal_handler_no_event_when_ctx_not_set(tmp_path):
     """_handler() is safe when _signal_event_ctx is None — no crash, no events file."""
     status_path = str(tmp_path / "status.json")
@@ -160,6 +167,7 @@ def test_signal_handler_no_event_when_ctx_not_set(tmp_path):
         runner._restore_signal_handlers()
 
 
+@_posix_only
 def test_signal_handler_sets_interrupted_status(tmp_path):
     """_handler() sets pipeline_status='interrupted', not 'failed'."""
     status_path = str(tmp_path / "status.json")
@@ -309,6 +317,49 @@ def test_finally_block_clears_signal_refs():
 
     assert runner._signal_status is None
     assert runner._signal_status_path is None
+
+
+# --- Signal handler installation: non-main-thread / embedded guard ---
+
+
+def test_install_signal_handlers_tolerates_value_error():
+    """_install_signal_handlers silently swallows ValueError (non-main thread)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.signal.side_effect = ValueError("not main thread")
+        # Must not raise
+        runner._install_signal_handlers()
+
+
+def test_restore_signal_handlers_tolerates_value_error():
+    """_restore_signal_handlers silently swallows ValueError (non-main thread)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.SIG_DFL = signal.SIG_DFL
+        mock_signal.signal.side_effect = ValueError("not main thread")
+        # Must not raise
+        runner._restore_signal_handlers()
+
+
+def test_install_signal_handlers_tolerates_os_error():
+    """_install_signal_handlers silently swallows OSError (embedded/restricted)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.signal.side_effect = OSError("signal not supported")
+        runner._install_signal_handlers()
+
+
+def test_restore_signal_handlers_tolerates_os_error():
+    """_restore_signal_handlers silently swallows OSError (embedded/restricted)."""
+    with patch("worca.orchestrator.runner.signal") as mock_signal:
+        mock_signal.SIGTERM = signal.SIGTERM
+        mock_signal.SIGINT = signal.SIGINT
+        mock_signal.SIG_DFL = signal.SIG_DFL
+        mock_signal.signal.side_effect = OSError("signal not supported")
+        runner._restore_signal_handlers()
 
 
 # --- Resume: stale control.json cleanup ---
@@ -582,7 +633,7 @@ def test_clear_stale_daemon_lock_removes_files_for_dead_pid(tmp_path):
     pid_file.write_text("999999\n")
     lock_file.write_text("")
 
-    with patch("os.kill", side_effect=ProcessLookupError):
+    with patch("worca.orchestrator.runner.pid_is_alive", return_value=False):
         runner._clear_stale_daemon_lock(str(beads_dir))
 
     assert not pid_file.exists()
@@ -598,7 +649,7 @@ def test_clear_stale_daemon_lock_leaves_files_for_live_pid(tmp_path):
     pid_file.write_text("12345\n")
     lock_file.write_text("")
 
-    with patch("os.kill", return_value=None):
+    with patch("worca.orchestrator.runner.pid_is_alive", return_value=True):
         runner._clear_stale_daemon_lock(str(beads_dir))
 
     assert pid_file.exists()
@@ -614,7 +665,7 @@ def test_clear_stale_daemon_lock_noop_when_pidfile_missing(tmp_path):
 
 
 def test_clear_stale_daemon_lock_leaves_files_on_permission_error(tmp_path):
-    """When os.kill raises PermissionError the PID is assumed live; files are left."""
+    """When pid_is_alive raises PermissionError the PID is assumed live; files are left."""
     beads_dir = tmp_path / ".beads"
     beads_dir.mkdir()
     pid_file = beads_dir / "daemon.pid"
@@ -622,7 +673,7 @@ def test_clear_stale_daemon_lock_leaves_files_on_permission_error(tmp_path):
     pid_file.write_text("42\n")
     lock_file.write_text("")
 
-    with patch("os.kill", side_effect=PermissionError):
+    with patch("worca.orchestrator.runner.pid_is_alive", side_effect=PermissionError):
         runner._clear_stale_daemon_lock(str(beads_dir))
 
     assert pid_file.exists()

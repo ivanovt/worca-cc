@@ -50,7 +50,7 @@ def _resolve_child_status(project_path: str, run_id: str) -> str:
         project_path, ".worca", "multi", "pipelines.d", f"{run_id}.json"
     )
     try:
-        with open(entry_path) as f:
+        with open(entry_path, encoding="utf-8") as f:
             return json.load(f).get("status", PipelineStatus.RUNNING)
     except (OSError, json.JSONDecodeError):
         return PipelineStatus.RUNNING
@@ -201,7 +201,7 @@ def resume_child(project_path: str, run_id: str) -> bool:
     status_path = os.path.join(worktree_worca, "runs", run_id, "status.json")
 
     try:
-        with open(status_path) as f:
+        with open(status_path, encoding="utf-8") as f:
             status = json.load(f)
     except (OSError, json.JSONDecodeError):
         return False
@@ -209,7 +209,7 @@ def resume_child(project_path: str, run_id: str) -> bool:
     if status.get("pipeline_status") in (PipelineStatus.INTERRUPTED, PipelineStatus.FAILED):
         status["pipeline_status"] = PipelineStatus.RESUMING
         status.pop("stop_reason", None)
-        with open(status_path, "w") as f:
+        with open(status_path, "w", encoding="utf-8") as f:
             json.dump(status, f, indent=2)
             f.write("\n")
 
@@ -231,6 +231,7 @@ def resume_child(project_path: str, run_id: str) -> bool:
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        # Windows: silently ignored — detach not guaranteed (use WSL2).
         start_new_session=True,
     )
     return True

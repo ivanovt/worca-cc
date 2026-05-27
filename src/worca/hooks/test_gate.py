@@ -30,7 +30,7 @@ def _read_strikes():
     if path is None:
         return _state["strikes"]
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         return data.get("strikes", 0)
     except (FileNotFoundError, json.JSONDecodeError, OSError):
@@ -48,7 +48,7 @@ def _write_strikes(count):
     os.makedirs(dir_name, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump({"strikes": count}, f)
         os.replace(tmp_path, path)
     except Exception:

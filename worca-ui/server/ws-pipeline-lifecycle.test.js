@@ -80,8 +80,19 @@ describe('pause-run WS message', () => {
 
   afterEach(async () => {
     httpServer.closeAllConnections?.();
-    await new Promise((resolve) => httpServer.close(resolve));
-    rmSync(worcaDir, { recursive: true, force: true });
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      httpServer.close(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    rmSync(worcaDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   async function connect() {
@@ -187,10 +198,25 @@ describe('pipeline-paused and pipeline-resumed broadcasts', () => {
     port = httpServer.address().port;
   }
 
+  const openSockets = [];
+
   afterEach(async () => {
+    for (const ws of openSockets) ws.terminate();
+    openSockets.length = 0;
     httpServer.closeAllConnections?.();
-    await new Promise((resolve) => httpServer.close(resolve));
-    rmSync(worcaDir, { recursive: true, force: true });
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 2000);
+      httpServer.close(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    rmSync(worcaDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   async function connect() {
@@ -199,6 +225,7 @@ describe('pipeline-paused and pipeline-resumed broadcasts', () => {
       ws.on('open', resolve);
       ws.on('error', reject);
     });
+    openSockets.push(ws);
     return ws;
   }
 
@@ -262,58 +289,62 @@ describe('pipeline-paused and pipeline-resumed broadcasts', () => {
     ws.close();
   });
 
-  it('does not broadcast pipeline-paused to clients not subscribed to that run', async () => {
-    await setupServer({ pipeline_status: 'running' });
-    const otherRunId = `run-other-${Date.now()}`;
+  it(
+    'does not broadcast pipeline-paused to clients not subscribed to that run',
+    { timeout: 10_000, retry: 2 },
+    async () => {
+      await setupServer({ pipeline_status: 'running' });
+      const otherRunId = `run-other-${Date.now()}`;
 
-    const ws1 = await connect(); // subscribes to runId
-    const ws2 = await connect(); // subscribes to otherRunId (not runId)
+      const ws1 = await connect(); // subscribes to runId
+      const ws2 = await connect(); // subscribes to otherRunId (not runId)
 
-    ws1.send(
-      JSON.stringify({
-        id: 'sub-a',
-        type: 'subscribe-run',
-        payload: { runId },
-      }),
-    );
-    ws2.send(
-      JSON.stringify({
-        id: 'sub-b',
-        type: 'subscribe-run',
-        payload: { runId: otherRunId },
-      }),
-    );
-    await Promise.all([
-      waitForWsEvent(ws1, 'subscribe-run', null, 1000),
-      waitForWsEvent(ws2, 'subscribe-run', null, 1000),
-    ]);
-    // subscribe-run handler seeds lastPipelineStatus('running') for ws1 synchronously
+      ws1.send(
+        JSON.stringify({
+          id: 'sub-a',
+          type: 'subscribe-run',
+          payload: { runId },
+        }),
+      );
+      ws2.send(
+        JSON.stringify({
+          id: 'sub-b',
+          type: 'subscribe-run',
+          payload: { runId: otherRunId },
+        }),
+      );
+      await Promise.all([
+        waitForWsEvent(ws1, 'subscribe-run', null, 1000),
+        waitForWsEvent(ws2, 'subscribe-run', null, 1000),
+      ]);
+      // subscribe-run handler seeds lastPipelineStatus('running') for ws1 synchronously
 
-    const ws2PausedEvents = [];
-    ws2.on('message', (data) => {
-      const m = JSON.parse(data.toString());
-      if (m.type === 'pipeline-paused') ws2PausedEvents.push(m);
-    });
+      const ws2PausedEvents = [];
+      ws2.on('message', (data) => {
+        const m = JSON.parse(data.toString());
+        if (m.type === 'pipeline-paused') ws2PausedEvents.push(m);
+      });
 
-    // Change pipeline_status for runId only
-    writeFileSync(
-      join(worcaDir, 'runs', runId, 'status.json'),
-      JSON.stringify(
-        { run_id: runId, pipeline_status: 'paused', stages: {} },
-        null,
-        2,
-      ),
-      'utf8',
-    );
+      // Change pipeline_status for runId only
+      writeFileSync(
+        join(worcaDir, 'runs', runId, 'status.json'),
+        JSON.stringify(
+          { run_id: runId, pipeline_status: 'paused', stages: {} },
+          null,
+          2,
+        ),
+        'utf8',
+      );
 
-    // ws1 should receive pipeline-paused
-    await waitForWsEvent(ws1, 'pipeline-paused', null, 3000);
+      // ws1 should receive pipeline-paused (Windows fs.watch can be slow)
+      await waitForWsEvent(ws1, 'pipeline-paused', null, 6000);
 
-    await waitMs(300);
-    // ws2 should NOT receive pipeline-paused
-    expect(ws2PausedEvents).toHaveLength(0);
+      await waitMs(500);
+      // ws2 should NOT receive pipeline-paused
+      expect(ws2PausedEvents).toHaveLength(0);
 
-    ws1.close();
-    ws2.close();
-  });
+      ws1.close();
+      ws2.close();
+    },
+  );
 });

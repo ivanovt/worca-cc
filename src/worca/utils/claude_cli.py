@@ -3,6 +3,13 @@
 Uses --output-format stream-json --verbose to get real-time NDJSON events
 from the claude CLI. Each event is written to a log file for UI streaming.
 The final 'result' event contains the structured output (same as --output-format json).
+
+Windows: process-group reaping (``os.killpg`` via ``_HAS_PROC_GROUPS``) is
+unavailable. ``terminate_current`` falls back to ``proc.terminate()``
+(``TerminateProcess`` — no graceful SIGTERM handler runs) and
+``_reap_returncode`` falls back to ``proc.kill()``.  Group tracking in
+``run_agent`` is skipped entirely.  This is best-effort single-child
+termination; orphaned grandchildren are not reaped.
 """
 
 import json
@@ -108,6 +115,7 @@ def terminate_current():
         except (ProcessLookupError, OSError):
             pass
     else:
+        # Windows fallback: proc.terminate() calls TerminateProcess — no graceful handler runs.
         try:
             proc.terminate()
         except (ProcessLookupError, OSError):
@@ -221,7 +229,7 @@ def build_command(
     prompt_file = None
     if len(prompt.encode("utf-8", errors="replace")) > _ARG_INLINE_LIMIT:
         fd, prompt_file = tempfile.mkstemp(prefix="worca_prompt_", suffix=".md")
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(prompt)
         cli_prompt = (
             f"Read the file at {prompt_file} and follow ALL instructions in it. "
@@ -259,7 +267,7 @@ def build_command(
         schema_str = json_schema
         if json_schema.endswith(".json"):
             try:
-                with open(json_schema) as f:
+                with open(json_schema, encoding="utf-8") as f:
                     schema_str = f.read().strip()
             except FileNotFoundError:
                 pass  # Use the raw string as-is
@@ -539,6 +547,7 @@ def run_agent(
 
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        # Windows: start_new_session silently ignored — detach not guaranteed (use WSL2).
         text=True, env=agent_env, start_new_session=True,
     )
 
@@ -564,7 +573,7 @@ def run_agent(
         agent_pid_path = os.path.join(_run_dir, "agent.pid")
         try:
             os.makedirs(_run_dir, exist_ok=True)
-            with open(agent_pid_path, "w") as f:
+            with open(agent_pid_path, "w", encoding="utf-8") as f:
                 f.write(str(proc.pid))
         except OSError:
             agent_pid_path = None
@@ -574,7 +583,7 @@ def run_agent(
     try:
         if log_path:
             os.makedirs(os.path.dirname(log_path), exist_ok=True)
-            log_file = open(log_path, "w")
+            log_file = open(log_path, "w", encoding="utf-8")
 
         # Tee stderr to console in background
         def _tee_stderr():

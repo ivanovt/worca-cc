@@ -48,7 +48,7 @@ def auto_register_project(project_root: str, prefs_dir: str | None = None) -> No
             if not fname.endswith(".json"):
                 continue
             try:
-                with open(os.path.join(projects_dir, fname)) as f:
+                with open(os.path.join(projects_dir, fname), encoding="utf-8") as f:
                     existing = json.load(f)
                 if existing.get("path") == project_root:
                     return
@@ -69,7 +69,7 @@ def auto_register_project(project_root: str, prefs_dir: str | None = None) -> No
         # Atomic write: write to temp file, then rename
         fd, tmp_path = tempfile.mkstemp(dir=projects_dir, suffix=".tmp")
         try:
-            with os.fdopen(fd, "w") as f:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(entry, f, indent=2)
                 f.write("\n")
             os.replace(tmp_path, entry_path)

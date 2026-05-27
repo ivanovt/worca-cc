@@ -116,25 +116,28 @@ describe('stopPipelineSync', () => {
     killSpy.mockRestore();
   });
 
-  it('sends SIGTERM on unix (non-win32)', async () => {
-    const pid = 999888775;
-    writePid(worcaDir, 'run-unix', pid);
+  it.skipIf(process.platform === 'win32')(
+    'sends SIGTERM on unix (non-win32)',
+    async () => {
+      const pid = 999888775;
+      writePid(worcaDir, 'run-unix', pid);
 
-    vi.spyOn(pm, 'getRunningPid').mockReturnValue({ pid });
-    const killCalls = [];
-    const killSpy = vi.spyOn(process, 'kill').mockImplementation((p, sig) => {
-      killCalls.push({ pid: p, signal: sig });
-      if (sig === 0) throw new Error('ESRCH');
-    });
+      vi.spyOn(pm, 'getRunningPid').mockReturnValue({ pid });
+      const killCalls = [];
+      const killSpy = vi.spyOn(process, 'kill').mockImplementation((p, sig) => {
+        killCalls.push({ pid: p, signal: sig });
+        if (sig === 0) throw new Error('ESRCH');
+      });
 
-    // On macOS/Linux (where tests run), platform !== 'win32'
-    await pm.stopPipelineSync('run-unix', { timeoutMs: 500 });
+      // On macOS/Linux (where tests run), platform !== 'win32'
+      await pm.stopPipelineSync('run-unix', { timeoutMs: 500 });
 
-    const sigterm = killCalls.find((c) => c.signal === 'SIGTERM');
-    expect(sigterm).toBeTruthy();
+      const sigterm = killCalls.find((c) => c.signal === 'SIGTERM');
+      expect(sigterm).toBeTruthy();
 
-    killSpy.mockRestore();
-  });
+      killSpy.mockRestore();
+    },
+  );
 });
 
 describe('_killAgentSubprocess', () => {
