@@ -24,10 +24,11 @@ from worca.cli.main import (
 def _validate_worktree_args(args: Namespace) -> None:
     """Reject mutually-exclusive flag combinations before spawning anything.
 
-    `--branch` / `--guide` are forwarded to run_worktree.py only and silently
-    no-op against run_pipeline.py — surface the misuse as a clear error rather
-    than letting the in-place runner ignore them. `--resume` must run inside
-    the original tree, so combining it with `--worktree` is also nonsensical.
+    `--branch` is forwarded to run_worktree.py only and silently no-ops
+    against run_pipeline.py — surface the misuse as a clear error rather than
+    letting the in-place runner ignore it. `--guide` is supported on both
+    paths, so it is not gated here. `--resume` must run inside the original
+    tree, so combining it with `--worktree` is also nonsensical.
     """
     if args.worktree and args.resume:
         print("error: --worktree cannot be combined with --resume "
@@ -36,9 +37,6 @@ def _validate_worktree_args(args: Namespace) -> None:
     if not args.worktree:
         if args.branch:
             print("error: --branch requires --worktree", file=sys.stderr)
-            raise SystemExit(2)
-        if args.guide:
-            print("error: --guide requires --worktree", file=sys.stderr)
             raise SystemExit(2)
 
 
@@ -85,11 +83,11 @@ def cmd_run(args: Namespace) -> None:
     for p in args.param or []:
         cmd.extend(["--param", p])
 
+    for g in args.guide or []:
+        cmd.extend(["--guide", g])
     if use_worktree:
         if args.branch:
             cmd.extend(["--branch", args.branch])
-        for g in args.guide or []:
-            cmd.extend(["--guide", g])
 
     result = subprocess.run(cmd, cwd=str(git_root))
     raise SystemExit(result.returncode)
