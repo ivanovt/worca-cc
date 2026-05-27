@@ -231,6 +231,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          mkdir -p test-results
           npx vitest run --reporter=default --reporter=junit \
             --outputFile.junit=test-results/vitest-results.xml \
             2>&1 | tee test-results/vitest-console.log
