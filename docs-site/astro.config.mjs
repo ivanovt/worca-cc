@@ -53,6 +53,10 @@ export default defineConfig({
 			head: [...fontHead, ...analyticsHead],
 			social: [{ icon: 'github', label: 'GitHub', href: GITHUB_REPO }],
 			editLink: { baseUrl: `${GITHUB_REPO}/edit/master/docs-site/` },
+			// Per-page "Last updated" date, derived from each file's git history.
+			// Requires the CI build to have git history (a depth-1 shallow clone
+			// makes every page show the deploy commit's date).
+			lastUpdated: true,
 			sidebar: [
 				{ label: 'Introduction', items: [{ autogenerate: { directory: 'introduction' } }] },
 				{ label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
