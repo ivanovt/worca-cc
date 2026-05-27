@@ -35,7 +35,7 @@ def _atomic_write(path, data):
 
     fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".tmp_", suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.write("\n")
         os.replace(tmp_path, path)
@@ -125,7 +125,7 @@ def update_pipeline(run_id, status=None, *, pid=None, base=_DEFAULT_BASE):
     if not os.path.exists(path):
         return False
 
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         data = json.load(f)
 
     if status is not None:
@@ -160,7 +160,7 @@ def list_pipelines(base=_DEFAULT_BASE):
             continue
         fpath = os.path.join(d, fname)
         try:
-            with open(fpath) as f:
+            with open(fpath, encoding="utf-8") as f:
                 data = json.load(f)
             results.append(data)
         except (json.JSONDecodeError, OSError):
@@ -174,7 +174,7 @@ def get_pipeline(run_id, base=_DEFAULT_BASE):
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None

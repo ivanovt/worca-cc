@@ -65,7 +65,7 @@ def write_fleet_manifest(manifest: dict, base_dir: str = None) -> str:
 
     fd, tmp_path = tempfile.mkstemp(dir=parent, prefix=".tmp_", suffix=".json")
     try:
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
             f.write("\n")
         os.replace(tmp_path, path)
@@ -84,7 +84,7 @@ def read_fleet_manifest(fleet_id: str, base_dir: str = None) -> dict:
     if not os.path.exists(path):
         return None
     try:
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
@@ -242,7 +242,7 @@ def poll_and_update_fleet_manifest(
             project_path, ".worca", "multi", "pipelines.d", f"{run_id}.json"
         )
         try:
-            with open(registry_entry) as f:
+            with open(registry_entry, encoding="utf-8") as f:
                 entry = json.load(f)
             child_statuses.append(entry.get("status", PipelineStatus.RUNNING))
         except (json.JSONDecodeError, OSError):

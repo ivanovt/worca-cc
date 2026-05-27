@@ -114,7 +114,7 @@ def normalize_plan_file(path: str, content: str = None) -> WorkRequest:
     generate_smart_title() → first # heading fallback → filename fallback.
     """
     if content is None:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
 
     # Title priority: smart title → heading → filename
@@ -156,7 +156,7 @@ def normalize_spec_file(path: str) -> WorkRequest:
 
     Title priority: generate_smart_title() → first # heading fallback → filename fallback.
     """
-    with open(path, "r") as f:
+    with open(path, "r", encoding="utf-8") as f:
         content = f.read()
 
     # Title priority: smart title → heading → filename
@@ -314,7 +314,7 @@ def attach_guide(
     sections = []
     total_bytes = 0
     for path in guide_paths:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             content = f.read()
         total_bytes += len(content.encode("utf-8"))
         filename = os.path.basename(path)

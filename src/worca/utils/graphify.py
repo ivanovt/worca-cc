@@ -353,7 +353,7 @@ def is_snapshot_complete(snapshot_dir: str) -> bool:
 def mark_snapshot_complete(snapshot_dir: str) -> None:
     """Publish a snapshot by writing its ``.complete`` marker."""
     os.makedirs(snapshot_dir, exist_ok=True)
-    with open(_complete_marker(snapshot_dir), "w") as f:
+    with open(_complete_marker(snapshot_dir), "w", encoding="utf-8") as f:
         f.write("ok\n")
 
 
@@ -366,7 +366,7 @@ def snapshot_lock(snapshot_dir: str):
     """
     os.makedirs(snapshot_dir, exist_ok=True)
     lock_path = os.path.join(snapshot_dir, ".lock")
-    f = open(lock_path, "w")
+    f = open(lock_path, "w", encoding="utf-8")
     try:
         try:
             import fcntl

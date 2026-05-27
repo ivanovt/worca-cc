@@ -86,7 +86,7 @@ def _throttle_ok(mode: str) -> bool:
         if os.path.exists(marker):
             return False
         os.makedirs(marker_dir, exist_ok=True)
-        with open(marker, "w") as fh:
+        with open(marker, "w", encoding="utf-8") as fh:
             fh.write("1")
     except OSError:
         return True  # can't track → don't suppress

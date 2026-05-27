@@ -124,7 +124,7 @@ def classify_error(
     prompt_file = None
     if len(prompt.encode("utf-8", errors="replace")) > _ARG_INLINE_LIMIT:
         fd, prompt_file = tempfile.mkstemp(prefix="worca_classify_", suffix=".md")
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(prompt)
         cli_prompt = (
             f"Read the file at {prompt_file} and follow ALL instructions in it. "

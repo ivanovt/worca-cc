@@ -74,7 +74,7 @@ def check_settings_json(settings_path=".claude/settings.json"):
     if not os.path.exists(settings_path):
         return "fail", f"{settings_path} not found"
     try:
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             data = json.load(f)
         if "worca" not in data:
             return "fail", f"{settings_path} missing 'worca' key"
@@ -167,7 +167,7 @@ WARN_CHECKS = [
 def read_required_checks(settings_path=".claude/settings.json"):
     """Return list of check names promoted from warn to fail via settings."""
     try:
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             data = json.load(f)
         return data.get("worca", {}).get("preflight", {}).get("require", [])
     except Exception:

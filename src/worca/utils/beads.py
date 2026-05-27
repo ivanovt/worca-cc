@@ -44,7 +44,7 @@ def _wait_for_pid_exit(pid: int) -> bool:
     for _ in range(_SIGTERM_WAIT_ITERATIONS):
         try:
             os.kill(pid, 0)
-        except ProcessLookupError:
+        except (ProcessLookupError, ValueError):
             return True
         except PermissionError:
             # PID was reused by another user — treat as gone.
@@ -239,7 +239,7 @@ def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
     # deliver SIGTERM to an unrelated process that has reused the PID.
     pidfile = os.path.join(beads_dir, "daemon.pid")
     try:
-        with open(pidfile) as fh:
+        with open(pidfile, encoding="utf-8") as fh:
             pid = int(fh.read().strip())
     except (FileNotFoundError, ValueError):
         logger.warning("No daemon pidfile at %s", pidfile)
@@ -258,8 +258,9 @@ def bd_daemon_stop(beads_dir: str, timeout: float = 2.0) -> bool:
         return False
     try:
         os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        # Race: process exited between liveness probe and SIGTERM.
+    except (ProcessLookupError, ValueError):
+        # Race: process exited between liveness probe and SIGTERM,
+        # or signal unsupported on this platform (Windows).
         _write_stop_sentinel(beads_dir)
         return True
     except OSError as exc:

@@ -66,7 +66,7 @@ def _run_pipeline_in_worktree(
 
     if len(prompt.encode("utf-8", errors="replace")) > _ARG_INLINE_LIMIT:
         fd, prompt_file = tempfile.mkstemp(prefix="worca_prompt_", suffix=".md")
-        with os.fdopen(fd, "w") as f:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(prompt)
         cmd.extend(["--prompt-file", prompt_file])
     else:
@@ -226,7 +226,7 @@ def main():
 
     # Save summary
     summary_path = os.path.join(args.worktree_dir, "parallel-results.json")
-    with open(summary_path, "w") as f:
+    with open(summary_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2)
     print(f"Results saved to {summary_path}")
 

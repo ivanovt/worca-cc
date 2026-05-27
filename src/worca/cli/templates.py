@@ -97,7 +97,7 @@ def cmd_templates_show(args):
         )
         raise SystemExit(1)
 
-    data = json.loads(Path(template.source_dir, "template.json").read_text())
+    data = json.loads(Path(template.source_dir, "template.json").read_text(encoding="utf-8"))
     data["tier"] = template.tier
     print(json.dumps(data, indent=2))
 
@@ -157,7 +157,7 @@ def _load_current_worca_config() -> dict:
             settings_path = parent / ".claude" / "settings.json"
             if settings_path.exists():
                 try:
-                    data = json.loads(settings_path.read_text())
+                    data = json.loads(settings_path.read_text(encoding="utf-8"))
                     return data.get("worca", {})
                 except (json.JSONDecodeError, OSError):
                     pass

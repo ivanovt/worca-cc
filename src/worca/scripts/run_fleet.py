@@ -322,7 +322,7 @@ def _parse_run_id_from_stdout(stdout_str: str) -> str | None:
     first = stdout_str.strip().split("\n", 1)[0].strip()
     # run_ids are timestamp-prefixed (`YYYYMMDD-HHMMSS-NNN-XXXX`). Reject empty
     # or path-looking strings without overspecifying the format.
-    if not first or "/" in first or " " in first:
+    if not first or "/" in first or "\\" in first or " " in first:
         return None
     return first
 
@@ -506,7 +506,7 @@ def resume_fleet(fleet_id: str) -> int:
                 child_base, "multi", "pipelines.d", f"{run_id}.json"
             )
             try:
-                with open(entry_path) as f:
+                with open(entry_path, encoding="utf-8") as f:
                     entry = json.load(f)
             except (OSError, json.JSONDecodeError):
                 entry = None
@@ -779,7 +779,7 @@ def main(argv=None) -> int:
     projects = list(args.projects or [])
     if args.projects_file:
         try:
-            with open(args.projects_file) as f:
+            with open(args.projects_file, encoding="utf-8") as f:
                 file_projects = [
                     line.strip()
                     for line in f
