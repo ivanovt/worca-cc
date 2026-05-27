@@ -34,17 +34,12 @@ export default defineConfig({
 			head: analyticsHead,
 			social: [{ icon: 'github', label: 'GitHub', href: GITHUB_REPO }],
 			editLink: { baseUrl: `${GITHUB_REPO}/edit/master/docs-site/` },
-			// Sidebar is intentionally minimal until the content phase. The planned
-			// information architecture is sketched below for reference.
+			// Content phase, Wave 1. Groups are added as their pages land.
 			sidebar: [
-				{ label: 'Getting started', slug: 'getting-started' },
-				// Planned (content phase):
-				// { label: 'Installation', autogenerate: { directory: 'installation' } },
-				// { label: 'Core concepts', autogenerate: { directory: 'concepts' } },
-				// { label: 'Configuration', autogenerate: { directory: 'configuration' } },
-				// { label: 'Guides', autogenerate: { directory: 'guides' } },
-				// { label: 'Advanced', autogenerate: { directory: 'advanced' } },
-				// { label: 'Reference', autogenerate: { directory: 'reference' } },
+				{ label: 'Introduction', items: [{ autogenerate: { directory: 'introduction' } }] },
+				{ label: 'Getting started', items: [{ autogenerate: { directory: 'getting-started' } }] },
+				// Upcoming: Core concepts, Running pipelines, Configuration,
+				// Notifications & integrations, Advanced, Reference, Upgrading.
 			],
 		}),
 	],
