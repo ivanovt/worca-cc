@@ -20,47 +20,67 @@ npm run preview    # serve ./dist locally before deploying
 ## Content
 
 Pages live in `src/content/docs/` as `.md`/`.mdx`. The sidebar and site config
-are in `astro.config.mjs`; brand theming is in `src/styles/worca.css`.
+are in `astro.config.mjs`; brand theming is in `src/styles/worca.css`. Pages not
+yet ready for the public site should set `draft: true` in their frontmatter —
+they render in `npm run dev` but are excluded from production builds.
 
 ## Deploy model
 
-- **Build & deploy** are driven by **Workers Builds** — Cloudflare watches this
-  repo, runs `npm run build`, then `npx wrangler deploy` (serving `./dist` as an
-  assets-only Worker per `wrangler.jsonc`).
-- **Production branch is `docs-live`**, not `master`. Pushing to `master` and
-  opening PRs produces **preview** deployments only; nothing reaches the public
-  domain until `docs-live` is updated.
-- **Promotion** = fast-forward `docs-live` to the commit you want live. This is
-  wired into the `/worca-release` ritual so the published docs always match the
-  released product.
+Two Cloudflare Workers, both built from this `docs-site/` directory via Workers
+Builds and both defined by `wrangler.jsonc`:
 
-`wrangler.jsonc` is intentionally **account-agnostic** — no `account_id`, no
-secrets. Workers Builds resolves the account from the connected repo.
+| Worker | Tracks branch | Domain | Deploy command |
+|---|---|---|---|
+| `worca-docs` | `docs-live` | https://docs.worca.dev | `npx wrangler deploy` |
+| `worca-docs-staging` | `master` | https://staging.docs.worca.dev | `npx wrangler deploy -e staging` |
+
+- **`docs.worca.dev` (production)** tracks `docs-live`. Nothing publishes there
+  until `docs-live` is updated.
+- **`staging.docs.worca.dev`** tracks `master` — every commit to `master`
+  redeploys it. This is where you preview docs before promoting.
+- **Promotion** = fast-forward `docs-live` to the commit you want live:
+  `git push origin master:docs-live`. Wired into `/worca-release` so the
+  published docs match each release.
+
+`wrangler.jsonc` is account-agnostic — no `account_id`, no secrets. The top-level
+config is the production Worker (`worca-docs`); `env.staging` is the staging
+Worker (`worca-docs-staging`). Workers Builds resolves the account from the
+connected repo.
 
 ## Analytics
 
-Cloudflare Web Analytics is injected only when `PUBLIC_CF_BEACON_TOKEN` is set at
-build time (configured as a Workers Builds environment variable). Absent the
-token the beacon is omitted, so local builds carry no analytics.
+Cloudflare Web Analytics, **production only**. The beacon is injected at build
+time only when `PUBLIC_CF_BEACON_TOKEN` is set — a build variable on the
+`worca-docs` Worker. Staging deliberately omits it, so `staging.docs.worca.dev`
+carries no beacon and self/staging traffic stays out of the docs metrics. Local
+builds also carry no analytics (the var is unset).
 
 ## One-time Cloudflare setup (dashboard)
 
 Connecting a repo to Workers Builds is an OAuth step that can only be done in the
-dashboard. Do this once:
+dashboard. Both Workers import the same repo (`SinishaDjukic/worca-cc`) with root
+directory (Path) `docs-site` and build variable `NODE_VERSION = 22`.
 
-1. **Create the Worker:** *Workers & Pages → Create → Workers → Import a
-   repository* → select `SinishaDjukic/worca-cc`.
-2. **Build settings:**
-   - Root directory: `docs-site`
-   - Build command: `npm run build`
-   - Deploy command: `npx wrangler deploy`
-   - Production branch: `docs-live`
-   - Environment variable: `NODE_VERSION = 22`
-3. **Analytics:** *Analytics & Logs → Web Analytics → Add a site* → copy the
-   beacon token → add it as a Workers Builds env var
-   `PUBLIC_CF_BEACON_TOKEN` (Production **and** Preview).
-4. **Custom domain:** on the Worker → *Settings → Domains & Routes → Add* →
-   `docs.worca.dev` (auto-creates the CNAME; DNS is already in this account).
+**Production Worker — `worca-docs`:**
+1. *Workers & Pages → Create → Workers → Import a repository* → `worca-cc`.
+2. Build command `npm run build`; deploy command `npx wrangler deploy`.
+3. *Settings → Build → Branch control* → production branch `docs-live`.
+4. *Analytics & Logs → Web Analytics → Add a site* for `docs.worca.dev` in
+   manual/JS-snippet mode → copy the token → add build variable
+   `PUBLIC_CF_BEACON_TOKEN = <token>`.
+5. *Settings → Domains & Routes → Add* → `docs.worca.dev`.
 
-After this, every push to `docs-live` publishes to `docs.worca.dev`; every PR /
-`master` push gets a preview URL.
+**Staging Worker — `worca-docs-staging`:**
+1. Same import; project name `worca-docs-staging`.
+2. Build command `npm run build`; deploy command `npx wrangler deploy -e staging`.
+3. Branch control → production branch `master`; **uncheck** "Builds for
+   non-production branches".
+4. No analytics variable.
+5. *Domains & Routes → Add* → `staging.docs.worca.dev`.
+
+On the production Worker, "Builds for non-production branches" can be left off —
+`master` is already covered by the staging Worker (enable it only if you want
+per-PR preview URLs).
+
+After this: pushes to `docs-live` publish to `docs.worca.dev`; pushes to `master`
+publish to `staging.docs.worca.dev`.
