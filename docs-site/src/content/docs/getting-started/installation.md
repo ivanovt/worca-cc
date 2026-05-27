@@ -9,24 +9,28 @@ worca ships as two packages: the Python pipeline (which provides the `worca` CLI
 
 ## Install the packages
 
+These are the Python pipeline (which gives you the `worca` CLI), the dashboard, and beads for task tracking:
+
 ```bash
-pip install worca-cc            # pipeline + the `worca` CLI
-npm install -g @worca/ui        # the dashboard
-npm install -g @beads/bd@0.49.0 # task tracking (pin 0.49.0)
+pip install worca-cc
+npm install -g @worca/ui
+npm install -g @beads/bd@0.49.0
 ```
 
 ## Launch the dashboard
 
+Start the dashboard. It runs in **global mode** by default — one browser tab monitors every project you add — and serves at **http://localhost:3400**:
+
 ```bash
-worca-ui                        # starts the dashboard on http://localhost:3400
+worca-ui
 ```
 
-`worca-ui` runs in **global mode** by default — one browser tab monitors every project you add. Manage the server with:
+Manage the running server with `worca-ui restart` (rebuild and restart), `worca-ui stop`, and `worca-ui status` (check whether it's running):
 
 ```bash
-worca-ui restart                # rebuild and restart
-worca-ui stop                   # stop it
-worca-ui status                 # check whether it's running
+worca-ui restart
+worca-ui stop
+worca-ui status
 ```
 
 Open **http://localhost:3400**. You'll see the dashboard with an empty project list — you'll add your first project next.
