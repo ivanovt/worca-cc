@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runDetailView } from './run-detail.js';
+import { _stageToJson, runDetailView } from './run-detail.js';
 
 function renderToString(template) {
   if (!template) return '';
@@ -123,5 +123,174 @@ describe('runDetailView graphify invocation badge', () => {
     const html = renderToString(runDetailView(run));
     expect(html).toContain('Graphify:');
     expect(html).toContain('graphify-invocations-badge');
+  });
+});
+
+// --- Preflight Graphify Badge ---
+
+function makePreflightRun({
+  graphifyEnabled,
+  graphifyStatus,
+  graphifyOutcome,
+  graphifyMode,
+  graphifyReason,
+} = {}) {
+  const stage = {
+    status: 'completed',
+    iterations: [
+      {
+        number: 1,
+        status: 'completed',
+        outcome: 'success',
+        output: { checks: [], summary: 'ok' },
+      },
+    ],
+  };
+  if (graphifyStatus !== undefined) stage.graphify_status = graphifyStatus;
+  if (graphifyOutcome !== undefined) stage.graphify_outcome = graphifyOutcome;
+  if (graphifyMode !== undefined) stage.graphify_mode = graphifyMode;
+  if (graphifyReason !== undefined) stage.graphify_reason = graphifyReason;
+  const run = { stages: { preflight: stage } };
+  if (graphifyEnabled !== undefined) run.graphify_enabled = graphifyEnabled;
+  return run;
+}
+
+describe('preflight graphify badge', () => {
+  it('shows "Graphify: cached · structural" with success variant for cache hit', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          graphifyEnabled: true,
+          graphifyStatus: 'ready',
+          graphifyOutcome: 'cached',
+          graphifyMode: 'structural',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-graphify-badge');
+    expect(html).toContain('cached · structural');
+    expect(html).toContain('variant="success"');
+  });
+
+  it('shows "Graphify: rebuilt · full" with success variant for fresh build', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          graphifyEnabled: true,
+          graphifyStatus: 'ready',
+          graphifyOutcome: 'built',
+          graphifyMode: 'full',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-graphify-badge');
+    expect(html).toContain('rebuilt · full');
+    expect(html).toContain('variant="success"');
+  });
+
+  it('shows "Graphify: built (uncommitted) · structural" with warning variant for throwaway', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          graphifyEnabled: true,
+          graphifyStatus: 'ready',
+          graphifyOutcome: 'throwaway',
+          graphifyMode: 'structural',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-graphify-badge');
+    expect(html).toContain('built (uncommitted) · structural');
+    expect(html).toContain('variant="warning"');
+  });
+
+  it('shows "Graphify: unavailable" with danger variant for degraded', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          graphifyEnabled: true,
+          graphifyStatus: 'degraded',
+          graphifyReason: 'CLI not found',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-graphify-badge');
+    expect(html).toContain('unavailable');
+    expect(html).toContain('variant="danger"');
+    expect(html).toContain('CLI not found');
+  });
+
+  it('shows "Graphify: off" with neutral variant when disabled', () => {
+    const html = renderToString(
+      runDetailView(makePreflightRun({ graphifyEnabled: false })),
+    );
+    expect(html).toContain('preflight-graphify-badge');
+    expect(html).toContain('off');
+    expect(html).toContain('variant="neutral"');
+  });
+
+  it('shows "Graphify: skipped" with neutral variant for skipped status', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          graphifyEnabled: true,
+          graphifyStatus: 'skipped',
+          graphifyMode: 'structural',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-graphify-badge');
+    expect(html).toContain('skipped');
+    expect(html).toContain('variant="neutral"');
+  });
+
+  it('renders nothing when graphify fields are entirely absent (old runs)', () => {
+    const html = renderToString(runDetailView(makePreflightRun({})));
+    expect(html).not.toContain('preflight-graphify-badge');
+  });
+
+  it('renders nothing on non-preflight stages', () => {
+    const run = {
+      stages: {
+        plan: {
+          status: 'completed',
+          graphify_status: 'ready',
+          graphify_outcome: 'cached',
+          graphify_mode: 'structural',
+          iterations: [{ number: 1, status: 'completed', outcome: 'success' }],
+        },
+      },
+      graphify_enabled: true,
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).not.toContain('preflight-graphify-badge');
+  });
+});
+
+describe('_stageToJson includes preflight graphify fields', () => {
+  it('includes graphify_outcome, graphify_mode, graphify_reason', () => {
+    const stage = {
+      status: 'completed',
+      graphify_status: 'ready',
+      graphify_outcome: 'built',
+      graphify_mode: 'full',
+      graphify_reason: 'test reason',
+      iterations: [{ number: 1, status: 'completed' }],
+    };
+    const json = _stageToJson('preflight', stage, null, null, null);
+    expect(json.graphify_outcome).toBe('built');
+    expect(json.graphify_mode).toBe('full');
+    expect(json.graphify_reason).toBe('test reason');
+  });
+
+  it('omits absent graphify fields', () => {
+    const stage = {
+      status: 'completed',
+      iterations: [{ number: 1, status: 'completed' }],
+    };
+    const json = _stageToJson('preflight', stage, null, null, null);
+    expect(json.graphify_outcome).toBeUndefined();
+    expect(json.graphify_mode).toBeUndefined();
+    expect(json.graphify_reason).toBeUndefined();
   });
 });

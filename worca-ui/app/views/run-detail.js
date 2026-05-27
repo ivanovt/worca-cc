@@ -725,6 +725,36 @@ function _preflightCheckBadgeVariant(status) {
   return 'neutral';
 }
 
+function _preflightGraphifyBadge(stage, run) {
+  const enabled = run.graphify_enabled;
+  const status = stage.graphify_status;
+  const outcome = stage.graphify_outcome;
+  const mode = stage.graphify_mode;
+  const reason = stage.graphify_reason;
+
+  if (enabled === false) {
+    return html`<sl-badge class="preflight-graphify-badge" variant="neutral" pill>off</sl-badge>`;
+  }
+  if (enabled == null && status == null) return nothing;
+
+  if (status === 'skipped') {
+    return html`<sl-badge class="preflight-graphify-badge" variant="neutral" pill>skipped</sl-badge>`;
+  }
+  if (status === 'degraded') {
+    return html`<sl-badge class="preflight-graphify-badge" variant="danger" pill title="${reason || ''}">unavailable</sl-badge>`;
+  }
+  if (outcome === 'cached') {
+    return html`<sl-badge class="preflight-graphify-badge" variant="success" pill>cached · ${mode}</sl-badge>`;
+  }
+  if (outcome === 'built') {
+    return html`<sl-badge class="preflight-graphify-badge" variant="success" pill>rebuilt · ${mode}</sl-badge>`;
+  }
+  if (outcome === 'throwaway') {
+    return html`<sl-badge class="preflight-graphify-badge" variant="warning" pill>built (uncommitted) · ${mode}</sl-badge>`;
+  }
+  return nothing;
+}
+
 function _preflightChecksView(stage, iter) {
   const isSkipped = stage.skipped || iter.outcome === 'skipped';
   if (isSkipped) {
@@ -796,6 +826,9 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     plan_file: stage.plan_file || undefined,
     graphify_status: stage.graphify_status || undefined,
     graphify_report_path: stage.graphify_report_path || undefined,
+    graphify_outcome: stage.graphify_outcome || undefined,
+    graphify_mode: stage.graphify_mode || undefined,
+    graphify_reason: stage.graphify_reason || undefined,
     iterations: iterations.map((it) => ({
       number: it.number,
       status: it.status,
@@ -1437,6 +1470,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'preflight' ? _preflightGraphifyBadge(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
                       ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
