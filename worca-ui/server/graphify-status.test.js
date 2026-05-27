@@ -112,8 +112,8 @@ describe('_graphStats', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 
@@ -283,8 +283,8 @@ describe('createGraphifyStatus', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 
@@ -326,8 +326,8 @@ describe('createGraphifyStatus', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 });
@@ -355,8 +355,8 @@ describe('GET /api/graphify/status', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 
@@ -398,8 +398,8 @@ describe('POST /api/graphify/recheck', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 
@@ -434,8 +434,8 @@ describe('POST /api/graphify/build + /clear', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 
@@ -533,8 +533,8 @@ describe('GET /api/graphify/graph.html', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 
@@ -588,14 +588,14 @@ describe('GET /api/graphify/status?project=<id> (global mode)', () => {
     rmSync(tmpDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
     rmSync(projDir, {
       recursive: true,
       force: true,
-      maxRetries: 3,
-      retryDelay: 200,
+      maxRetries: 20,
+      retryDelay: 250,
     });
   });
 

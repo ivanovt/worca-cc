@@ -81,7 +81,14 @@ describe('POST /api/runs/:id/learn', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
+    // Windows can hold an fs-watcher/child handle on the temp dir after the
+    // server closes (EBUSY on rmdir); retry generously before giving up.
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 20,
+      retryDelay: 250,
+    });
   });
 
   it('returns 501 when worcaDir not configured', async () => {
