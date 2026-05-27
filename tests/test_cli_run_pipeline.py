@@ -159,6 +159,18 @@ class TestCmdRunWorktree:
         assert exc_info.value.code == 2
         assert "resume" in capsys.readouterr().err.lower()
 
+    def test_guide_with_resume_warns(self, tmp_path, monkeypatch, capsys):
+        """--guide + --resume warns it is ignored (guide is restored from state)."""
+        self._scaffold(tmp_path, monkeypatch)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit):
+                main(["run", "--resume", "--guide", "spec.md"])
+        assert "--guide is ignored with --resume" in capsys.readouterr().err
+        argv = mock_run.call_args[0][0]
+        assert "run_pipeline.py" in argv[1]
+
     def test_no_worktree_flag_still_uses_run_pipeline(self, tmp_path, monkeypatch):
         """Default behaviour unchanged when --worktree is absent."""
         self._scaffold(tmp_path, monkeypatch)

@@ -22,13 +22,16 @@ from worca.cli.main import (
 
 
 def _validate_worktree_args(args: Namespace) -> None:
-    """Reject mutually-exclusive flag combinations before spawning anything.
+    """Validate flag combinations before spawning anything.
 
     `--branch` is forwarded to run_worktree.py only and silently no-ops
     against run_pipeline.py — surface the misuse as a clear error rather than
     letting the in-place runner ignore it. `--guide` is supported on both
     paths, so it is not gated here. `--resume` must run inside the original
     tree, so combining it with `--worktree` is also nonsensical.
+
+    On `--resume`, `--guide` is restored from the persisted work request and a
+    freshly-passed `--guide` is ignored — warn rather than silently dropping it.
     """
     if args.worktree and args.resume:
         print("error: --worktree cannot be combined with --resume "
@@ -38,6 +41,9 @@ def _validate_worktree_args(args: Namespace) -> None:
         if args.branch:
             print("error: --branch requires --worktree", file=sys.stderr)
             raise SystemExit(2)
+    if args.resume and args.guide:
+        print("warning: --guide is ignored with --resume "
+              "(the guide is restored from the original run)", file=sys.stderr)
 
 
 def cmd_run(args: Namespace) -> None:
