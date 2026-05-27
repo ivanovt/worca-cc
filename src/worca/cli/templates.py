@@ -221,7 +221,7 @@ def cmd_templates_create(args):
         if from_file == "-":
             raw = sys.stdin.read()
         else:
-            raw = Path(from_file).read_text()
+            raw = Path(from_file).read_text(encoding="utf-8")
         template_data = json.loads(raw)
     except (json.JSONDecodeError, OSError) as e:
         print(f"error: failed to read template JSON: {e}", file=sys.stderr)
