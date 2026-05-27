@@ -40,6 +40,10 @@ export function attachWsServer(httpServer, config) {
   } = config;
   const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
 
+  // WSS created with an external server does not auto-close when the server
+  // closes — explicitly bridge the lifecycle so watchers are torn down.
+  httpServer.on('close', () => wss.close());
+
   // 1. Client manager — owns subs WeakMap and heartbeat
   const clientManager = createClientManager({ wss });
 

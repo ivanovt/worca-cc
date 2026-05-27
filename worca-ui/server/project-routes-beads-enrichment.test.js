@@ -1,6 +1,6 @@
 import { mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -80,7 +80,7 @@ describe('GET /runs — beads count enrichment', () => {
       `worca-proj-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     );
     mkdirSync(join(projectRoot, '.worca', 'runs'), { recursive: true });
-    projectName = projectRoot.split('/').pop();
+    projectName = basename(projectRoot);
     mockDiscoverRuns.mockReset();
   });
 

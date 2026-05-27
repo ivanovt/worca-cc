@@ -1,4 +1,7 @@
 
+# Force LF for shebang scripts — CRLF breaks #!/usr/bin/env node on Windows
+worca-ui/bin/*.js eol=lf
+
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads
 

@@ -109,7 +109,12 @@ describe('_graphStats', () => {
   });
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   function _snap(dir) {
@@ -275,7 +280,12 @@ describe('createGraphifyStatus', () => {
 
     if (prevCache === undefined) delete process.env.WORCA_CACHE;
     else process.env.WORCA_CACHE = prevCache;
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   it('resolves cache_path even when graphify is disabled', async () => {
@@ -313,7 +323,12 @@ describe('createGraphifyStatus', () => {
 
     if (prevCache === undefined) delete process.env.WORCA_CACHE;
     else process.env.WORCA_CACHE = prevCache;
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 });
 
@@ -337,7 +352,12 @@ describe('GET /api/graphify/status', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   it('returns ok:true with effective config showing disabled', async () => {
@@ -375,7 +395,12 @@ describe('POST /api/graphify/recheck', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   it('invalidates cache and returns fresh status', async () => {
@@ -406,7 +431,12 @@ describe('POST /api/graphify/build + /clear', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   function _ready() {
@@ -500,7 +530,12 @@ describe('GET /api/graphify/graph.html', () => {
     if (server) await stopServer(server);
     if (cacheDirEnv === undefined) delete process.env.WORCA_CACHE;
     else process.env.WORCA_CACHE = cacheDirEnv;
-    rmSync(tmpDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   it('returns 404 when no snapshot graph.html exists', async () => {
@@ -550,8 +585,18 @@ describe('GET /api/graphify/status?project=<id> (global mode)', () => {
 
   afterEach(async () => {
     if (server) await stopServer(server);
-    rmSync(tmpDir, { recursive: true, force: true });
-    rmSync(projDir, { recursive: true, force: true });
+    rmSync(tmpDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
+    rmSync(projDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 200,
+    });
   });
 
   it('honors the selected project’s project-level enablement', async () => {

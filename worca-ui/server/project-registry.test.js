@@ -265,9 +265,9 @@ describe('project-registry', () => {
       const result = synthesizeDefaultProject(projectRoot);
       expect(result.name).toBe('my-project');
       expect(result.path).toBe('/home/user/my-project');
-      expect(result.worcaDir).toBe('/home/user/my-project/.worca');
+      expect(result.worcaDir).toBe(join('/home/user/my-project', '.worca'));
       expect(result.settingsPath).toBe(
-        '/home/user/my-project/.claude/settings.json',
+        join('/home/user/my-project', '.claude', 'settings.json'),
       );
     });
   });

@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('node:child_process', () => ({
@@ -112,16 +113,20 @@ describe('ensureBdDaemon', () => {
     mockBdSuccess();
     await ensureBdDaemon('/project/.worca');
     const opts = execFile.mock.calls[0][2];
-    expect(opts.cwd).toBe('/project');
-    expect(opts.env.BEADS_DIR).toBe('/project/.beads');
+    expect(opts.cwd).toBe(resolve(join('/project/.worca', '..')));
+    expect(opts.env.BEADS_DIR).toBe(
+      resolve(join('/project/.worca', '..', '.beads')),
+    );
   });
 
   it('resolves beads dir as sibling of worcaDir parent', async () => {
     mockBdSuccess();
     await ensureBdDaemon('/some/deep/project/.worca');
     const opts = execFile.mock.calls[0][2];
-    expect(opts.env.BEADS_DIR).toBe('/some/deep/project/.beads');
-    expect(opts.cwd).toBe('/some/deep/project');
+    expect(opts.env.BEADS_DIR).toBe(
+      resolve(join('/some/deep/project/.worca', '..', '.beads')),
+    );
+    expect(opts.cwd).toBe(resolve(join('/some/deep/project/.worca', '..')));
   });
 
   it('sets timeout on subprocess calls', async () => {
