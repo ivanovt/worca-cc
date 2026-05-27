@@ -94,5 +94,5 @@ A named tool list auto-includes `Skill` and `Agent` so worca's own skill/subagen
 The `tools` section maps to the agent subprocess's `--tools` / `--disallowedTools` flags, which restrict only the **built-in** tool set. **MCP tools (`mcp_*`) are not covered** — they flow through separate channels and a named tool allowlist won't block them.
 
 :::tip
-This repo provides a `worca-dispatch-governance-reviewer` subagent that audits changes to this config. The default config and full resolution algorithm are documented under `docs/governance.md` in the source repo.
+The full default configuration and the complete resolution algorithm are documented in [`docs/governance.md`](https://github.com/SinishaDjukic/worca-cc/blob/master/docs/governance.md) in the source repository.
 :::

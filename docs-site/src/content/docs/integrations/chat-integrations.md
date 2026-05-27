@@ -47,5 +47,5 @@ Secrets are **never** inlined. Every credential is referenced by the name of an 
 Adapters render a **curated subset** of events into chat messages — not the full firehose. The default set centers on the moments a human cares about: run completed / failed / interrupted, PR created / merged, circuit breaker tripped, and budget warnings. The per-adapter `events` filter narrows it further.
 
 :::tip
-Want a high-volume event (like every stage transition) in chat? It needs a renderer entry as well as an `events` match. Adding a new chat-notifiable event is what the `/worca-event-add` skill handles.
+Narrow what each adapter posts with its `events` filter — e.g. only `pipeline.run.*` plus `pipeline.git.pr_merged` for a channel that just wants outcomes, not every stage transition.
 :::

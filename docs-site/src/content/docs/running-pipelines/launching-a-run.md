@@ -19,6 +19,16 @@ A run needs a **work request**. The launcher accepts three sources:
 The Run Pipeline launcher: the source selector (prompt / issue / spec) and the prompt field.
 :::
 
+## Triage a GitHub issue (optional)
+
+If your work starts from a GitHub issue, the **`/worca-analyze`** skill turns it into a well-scoped run in one pass. In a Claude Code session in your project:
+
+```
+/worca-analyze 127
+```
+
+It reads the issue, surfaces open design decisions with a recommended option for each, can append a `## Decisions` section back to the issue, **recommends the most appropriate template**, and can launch the run for you. Pass an issue number or a full issue URL.
+
 ## Pick a template
 
 The **template** dropdown tailors the run to the kind of work — which stages run, how the agents are tuned, and the retry limits. `feature` is the default; the full set is described in [Pipeline templates](/concepts/pipeline-templates/).

@@ -63,6 +63,6 @@ A webhook can also *steer* the run. Set both `"control": true` and a `"secret"` 
 
 The action is `pause`, `abort`, or `continue` — letting an external system gate the pipeline, for example holding a run until a deploy window opens.
 
-:::tip[Testing without a run]
-Use the `/worca-webhook-test` skill to sign and POST a synthetic event to your URL — it verifies HMAC, reachability, and (for control webhooks) the control-action response, without launching a pipeline.
+:::tip[Verifying delivery]
+Point a new subscriber at an endpoint you control (or a request inspector) and launch a short run. Each POST carries `X-Worca-Delivery` (the event ID) so you can confirm receipt and dedupe, and `X-Worca-Signature` so you can validate your HMAC verification end-to-end.
 :::
