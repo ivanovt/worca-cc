@@ -18,4 +18,23 @@ worca ships with these built-in templates:
 | **`investigate`** | Analysis only. The planner explores and produces a report; the guardian publishes it to `docs/plans/` and opens a PR — no code changes. |
 | **`test-only`** | Add test coverage without touching production code. Analyze the gaps, create per-module test tasks, write tests only. |
 
-You can also author your own templates for project- or user-specific workflows — covered in the Advanced section (coming soon).
+## Which stages each template runs
+
+A template's main effect is the set of stages it enables. This matrix shows what runs where (Preflight always runs and is omitted):
+
+| Stage | `feature` | `bugfix` | `quick-fix` | `refactor` | `investigate` | `test-only` |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| Plan | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Plan Review | ✓ | — | — | ✓ | ✓ | ✓ |
+| Coordinate | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| Implement | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| Test | ✓ | ✓ | — | ✓ | — | ✓ |
+| Review | ✓ | ✓ | — | ✓ | — | ✓ |
+| PR | ✓ | ✓ | — | ✓ | ✓ | ✓ |
+| Learn | ✓ | — | — | ✓ | — | — |
+
+`feature` and `refactor` run the same stages — they differ in *tuning*, not stage set: `refactor` puts every agent on Opus and has the Reviewer enforce behavior preservation. `quick-fix` stops after Implement, leaving the change on the branch for you to commit. `investigate` skips coding entirely and uses the PR stage to publish its report.
+
+## Authoring your own
+
+You can also author templates for project- or user-specific workflows — see [Authoring templates](/advanced/authoring-templates/).
