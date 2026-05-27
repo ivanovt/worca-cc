@@ -224,14 +224,23 @@ jobs:
 
       - name: Run vitest
         working-directory: worca-ui
-        run: npx vitest run --reporter=junit --outputFile=test-results/vitest-results.xml
+        # Tee the default-reporter console (vitest exits non-zero on *unhandled*
+        # errors that the junit XML never records — e.g. async EBUSY from a
+        # detached child on Windows); upload it so the cause is visible despite
+        # GitHub's step-log truncation.
+        shell: bash
+        run: |
+          set -o pipefail
+          npx vitest run --reporter=default --reporter=junit \
+            --outputFile.junit=test-results/vitest-results.xml \
+            2>&1 | tee test-results/vitest-console.log
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vitest-results-windows
-          path: worca-ui/test-results/vitest-results.xml
+          path: worca-ui/test-results/
 
   ui-unit-tests-macos:
     runs-on: macos-latest
