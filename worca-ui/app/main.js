@@ -517,7 +517,9 @@ let beadsStatusFilter = 'all';
 let beadsPriorityFilter = 'all';
 let beadsStarting = null; // null | issueId
 let beadsStartError = null; // null | string
-const runBeads = new Map(); // runId → issues[]
+const runBeads = new Map(); // runId → issues[] | null (null = load failed)
+const beadsSpinner = new Set(); // runId → show the 150ms-gated loading spinner
+const beadsSpinnerTimers = new Map(); // runId → setTimeout handle
 let beadsCounts = {}; // { runId: count }
 let lastBeadsPayload = null;
 let beadsRunIssues = []; // issues for the currently viewed run
@@ -765,6 +767,9 @@ function resetProjectState() {
   beadsStarting = null;
   beadsStartError = null;
   runBeads.clear();
+  beadsSpinner.clear();
+  for (const t of beadsSpinnerTimers.values()) clearTimeout(t);
+  beadsSpinnerTimers.clear();
   beadsCounts = {};
   lastBeadsPayload = null;
   beadsRunIssues = [];
@@ -791,12 +796,41 @@ function handleStageTabChange(stageKey, iterationNumber) {
 
 function fetchRunBeads(runId) {
   if (!runId) return;
+  // 150ms-gated spinner: only surface a spinner if the fetch is still pending
+  // after 150ms, so a fast load (warm path) never flashes one. Arm the timer
+  // only when there's no loaded value yet (a refetch over existing data keeps
+  // showing that data, not a spinner).
+  if (!runBeads.has(runId) && !beadsSpinnerTimers.has(runId)) {
+    const timer = setTimeout(() => {
+      beadsSpinnerTimers.delete(runId);
+      if (!runBeads.has(runId)) {
+        beadsSpinner.add(runId);
+        rerender();
+      }
+    }, 150);
+    beadsSpinnerTimers.set(runId, timer);
+  }
+  const settle = () => {
+    const t = beadsSpinnerTimers.get(runId);
+    if (t) {
+      clearTimeout(t);
+      beadsSpinnerTimers.delete(runId);
+    }
+    beadsSpinner.delete(runId);
+  };
   ws.send('list-beads-by-run', { runId, projectId: _runProjectId(runId) })
     .then((payload) => {
+      settle();
       runBeads.set(runId, payload.issues || []);
       rerender();
     })
-    .catch(() => {});
+    .catch(() => {
+      settle();
+      // null = load failed — distinct from [] ("no linked beads") so the panel
+      // doesn't falsely claim the run has no beads when the query errored.
+      runBeads.set(runId, null);
+      rerender();
+    });
 }
 
 function fetchAgentPrompts(runId, stages) {
@@ -3242,7 +3276,10 @@ function mainContentView() {
             stageIterations,
             runStages: run?.stages,
           })}
-          ${runBeadsSectionView(runBeads.get(route.runId))}
+          ${runBeadsSectionView(runBeads.get(route.runId), {
+            loaded: runBeads.has(route.runId),
+            showSpinner: beadsSpinner.has(route.runId),
+          })}
           ${learningsSectionView(run?.stages?.learn, {
             onRunLearn: actionAllowed('learn', run?.pipeline_status)
               ? handleRunLearn

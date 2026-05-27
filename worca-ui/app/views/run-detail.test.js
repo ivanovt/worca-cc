@@ -91,6 +91,35 @@ describe('runBeadsSectionView - blocked state', () => {
   });
 });
 
+describe('runBeadsSectionView - loading and error states', () => {
+  it('renders the panel with no spinner before the 150ms gate', () => {
+    const out = renderToString(
+      runBeadsSectionView(undefined, { loaded: false, showSpinner: false }),
+    );
+    expect(out).toContain('run-beads-panel');
+    expect(out).toContain('Beads');
+    expect(out).not.toContain('run-beads-loading');
+  });
+
+  it('shows the loading spinner once the 150ms gate fires', () => {
+    const out = renderToString(
+      runBeadsSectionView(undefined, { loaded: false, showSpinner: true }),
+    );
+    expect(out).toContain('run-beads-loading');
+  });
+
+  it('shows an error state (not "no beads") when the query failed', () => {
+    const out = renderToString(runBeadsSectionView(null, { loaded: true }));
+    expect(out).toContain("Couldn't load Beads issues");
+    expect(out).not.toContain('No linked Beads issues');
+  });
+
+  it('shows "No linked Beads issues" when loaded with an empty array', () => {
+    const out = renderToString(runBeadsSectionView([], { loaded: true }));
+    expect(out).toContain('No linked Beads issues');
+  });
+});
+
 describe('runDetailView - endTime for active runs', () => {
   const startedAt = '2026-04-10T10:00:00Z';
   const stageEnd = '2026-04-10T10:05:43Z';
