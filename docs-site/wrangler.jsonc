@@ -1,0 +1,13 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "worca-docs",
+	"compatibility_date": "2026-05-27",
+	// Assets-only Worker: there is no `main` script — we just serve Starlight's
+	// static build from ./dist. `account_id` is intentionally omitted: Workers
+	// Builds resolves the account from the connected repo, and local deploys use
+	// the CLOUDFLARE_ACCOUNT_ID env var. Never commit account IDs or tokens here.
+	"assets": {
+		"directory": "./dist",
+		"not_found_handling": "404-page"
+	}
+}
