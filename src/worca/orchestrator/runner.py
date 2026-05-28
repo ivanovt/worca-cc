@@ -1732,10 +1732,12 @@ def run_preflight(
     if graphify_result.get("reason"):
         result["graphify_reason"] = graphify_result["reason"]
 
-    # run_dir="." seeds the run-scoped writable copy at <cwd>/code-review-graph
-    # (CRG opens the DB read-write); the base/throwaway snapshot is published to
-    # the per-commit cache regardless, mirroring graphify.
-    crg_result = run_crg_preflight(settings_path=settings_path, run_dir=".")
+    # Seed the run-scoped writable copy at <cwd>/code-review-graph using an
+    # ABSOLUTE run_dir (CRG opens the DB read-write; an absolute CRG_DATA_DIR
+    # resolves regardless of the agent subprocess cwd, matching graphify's
+    # absolute GRAPHIFY_OUT). The base/throwaway snapshot is published to the
+    # per-commit cache regardless.
+    crg_result = run_crg_preflight(settings_path=settings_path, run_dir=os.getcwd())
     result["crg_status"] = crg_result.get("status", "skipped")
     if crg_result.get("crg_data_dir"):
         result["crg_data_dir"] = crg_result["crg_data_dir"]
