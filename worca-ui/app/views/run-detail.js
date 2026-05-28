@@ -398,15 +398,12 @@ function _graphifyBadge(iter, graphifyEnabled) {
   return html`<span class="meta-label">Graphify:</span> <sl-badge class="graphify-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
 }
 
-// One "name ×N" per line (busiest tool first) for the CRG badge tooltip. The
-// list can be long, so newlines beat a single dot-separated line — rendered via
-// `white-space: pre-line` on the .crg-tool-tooltip body part.
+// Sorted "name ×N" lines (busiest tool first) for the CRG badge tooltip.
 function _crgToolBreakdown(counts) {
-  if (!counts || typeof counts !== 'object') return '';
+  if (!counts || typeof counts !== 'object') return [];
   return Object.entries(counts)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([name, n]) => `${name} ×${n}`)
-    .join('\n');
+    .map(([name, n]) => `${name} ×${n}`);
 }
 
 function _crgBadge(iter, crgEnabled) {
@@ -417,11 +414,13 @@ function _crgBadge(iter, crgEnabled) {
   const count = iter.crg_invocations;
   const variant = count > 0 ? 'primary' : 'neutral';
   const badge = html`<sl-badge class="crg-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
-  // When the agent actually queried CRG, hovering the badge shows a per-tool
-  // breakdown (which MCP functions, how many times) via the shared <sl-tooltip>.
-  const breakdown = count > 0 ? _crgToolBreakdown(iter.crg_tool_counts) : '';
-  const wrapped = breakdown
-    ? html`<sl-tooltip class="crg-tool-tooltip" content="${breakdown}">${badge}</sl-tooltip>`
+  // When the agent queried CRG, hovering the badge shows a per-tool breakdown.
+  // Render one <div> per tool into sl-tooltip's HTML content slot rather than
+  // \n + white-space:pre-line — Shoelace's body template has a leading newline
+  // that pre-line would render as an empty first line.
+  const lines = count > 0 ? _crgToolBreakdown(iter.crg_tool_counts) : [];
+  const wrapped = lines.length
+    ? html`<sl-tooltip class="crg-tool-tooltip"><div slot="content">${lines.map((l) => html`<div>${l}</div>`)}</div>${badge}</sl-tooltip>`
     : badge;
   return html`<span class="meta-label">Code Review Graph:</span> ${wrapped}`;
 }

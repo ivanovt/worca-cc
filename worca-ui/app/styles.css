@@ -2295,10 +2295,9 @@ sl-input.pricing-input::part(input) {
   font-size: 13px;
 }
 
-/* CRG invocation badge tooltip lists one tool per line — honor the newlines
-   in the breakdown string and left-align them. */
+/* CRG invocation badge tooltip lists one tool per line (one <div> each, via
+   the tooltip's HTML content slot) — just left-align them. */
 sl-tooltip.crg-tool-tooltip::part(body) {
-  white-space: pre-line;
   text-align: left;
 }
 

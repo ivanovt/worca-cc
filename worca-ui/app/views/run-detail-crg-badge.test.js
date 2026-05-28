@@ -79,9 +79,10 @@ describe('runDetailView CRG invocation badge', () => {
     );
     expect(html).toContain('crg-invocations-badge');
     expect(html).toContain('<sl-tooltip');
-    // one tool per line, busiest first
+    // HTML content slot, one <div> per tool, busiest first (no leading blank)
+    expect(html).toContain('slot="content"');
     expect(html).toContain(
-      'get_minimal_context_tool ×5\nget_architecture_overview_tool ×2',
+      '<div>get_minimal_context_tool ×5</div><div>get_architecture_overview_tool ×2</div>',
     );
   });
 
