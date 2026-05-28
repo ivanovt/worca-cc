@@ -46,7 +46,7 @@ test.describe('run-detail CRG invocation badge', () => {
       const panel = await openImplement(page, ctx.url, runId);
       const row = panel.locator('.iteration-tags-row', { hasText: 'Effort:' }).first();
       await expect(row).toBeVisible({ timeout: 8000 });
-      await expect(row).toContainText('CRG:');
+      await expect(row).toContainText('Code Review Graph:');
       const badge = row.locator('.crg-invocations-badge');
       await expect(badge).toBeVisible();
       await expect(badge).toHaveText('5');
@@ -69,7 +69,7 @@ test.describe('run-detail CRG invocation badge', () => {
       });
       const panel = await openImplement(page, ctx.url, runId);
       const row = panel.locator('.iteration-tags-row', { hasText: 'Effort:' }).first();
-      await expect(row).toContainText('CRG:');
+      await expect(row).toContainText('Code Review Graph:');
       await expect(row).toContainText('(disabled)');
       await expect(row.locator('.crg-invocations-badge')).toHaveCount(0);
     } finally {
@@ -91,7 +91,7 @@ test.describe('run-detail CRG invocation badge', () => {
       const panel = await openImplement(page, ctx.url, runId);
       const row = panel.locator('.iteration-tags-row', { hasText: 'Effort:' }).first();
       await expect(row).toBeVisible({ timeout: 8000 });
-      await expect(row).not.toContainText('CRG:');
+      await expect(row).not.toContainText('Code Review Graph:');
     } finally {
       await ctx.close();
     }
