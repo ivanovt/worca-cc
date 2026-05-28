@@ -83,17 +83,19 @@ def run_graphify_preflight(
     if not cfg.enabled:
         return {"status": "skipped", "reason": "disabled"}
 
+    mode = cfg.mode
+
     if timeout is None:
         timeout = cfg.preflight_timeout_seconds
 
     detect = detect_graphify(cfg.version_range)
     if not detect.installed or not detect.compatible:
-        return {"status": "degraded", "reason": detect.error or "not installed or incompatible"}
+        return {"status": "degraded", "mode": mode, "reason": detect.error or "not installed or incompatible"}
 
     rid = repo_id(project_root)
     sha = get_current_git_head()
     if not rid or not sha:
-        return {"status": "degraded", "reason": "not_a_git_repo"}
+        return {"status": "degraded", "mode": mode, "reason": "not_a_git_repo"}
 
     snapshot_dir = graphify_snapshot_dir(rid, sha)
     out_dir = graphify_out_path(snapshot_dir)
@@ -107,29 +109,29 @@ def run_graphify_preflight(
             cfg, settings, project_root=project_root, out_dir=throwaway_out, timeout=timeout
         )
         if not ok:
-            return {"status": "degraded", "reason": err or "build_failed"}
-        return {"status": "ready", "report_path": graphify_report_path(throwaway)}
+            return {"status": "degraded", "mode": mode, "reason": err or "build_failed"}
+        return {"status": "ready", "outcome": "throwaway", "mode": mode, "report_path": graphify_report_path(throwaway)}
 
     # Cache hit: a published snapshot for this sha already exists.
     if is_snapshot_complete(snapshot_dir):
-        return {"status": "ready", "report_path": graphify_report_path(snapshot_dir)}
+        return {"status": "ready", "outcome": "cached", "mode": mode, "report_path": graphify_report_path(snapshot_dir)}
 
     # When preflight builds are disabled, only read an existing snapshot.
     if not cfg.update_on_preflight:
-        return {"status": "skipped", "reason": "update_on_preflight disabled"}
+        return {"status": "skipped", "mode": mode, "reason": "update_on_preflight disabled"}
 
     # Build under an exclusive lock; re-check completion in case a parallel
     # worktree published while we waited.
     with snapshot_lock(snapshot_dir):
         if is_snapshot_complete(snapshot_dir):
-            return {"status": "ready", "report_path": graphify_report_path(snapshot_dir)}
+            return {"status": "ready", "outcome": "cached", "mode": mode, "report_path": graphify_report_path(snapshot_dir)}
         ok, err = _run_build(
             cfg, settings, project_root=project_root, out_dir=out_dir, timeout=timeout
         )
         if not ok:
-            return {"status": "degraded", "reason": err or "build_failed"}
+            return {"status": "degraded", "mode": mode, "reason": err or "build_failed"}
         if not os.path.isfile(graphify_report_path(snapshot_dir)):
-            return {"status": "degraded", "reason": "report_not_found"}
+            return {"status": "degraded", "mode": mode, "reason": "report_not_found"}
         mark_snapshot_complete(snapshot_dir)
 
-    return {"status": "ready", "report_path": graphify_report_path(snapshot_dir)}
+    return {"status": "ready", "outcome": "built", "mode": mode, "report_path": graphify_report_path(snapshot_dir)}

@@ -19,6 +19,7 @@ from worca.utils.graphify import (
     graphify_snapshot_dir,
     is_snapshot_complete,
     mark_snapshot_complete,
+    snapshot_lock,
 )
 
 
@@ -109,31 +110,36 @@ class TestPreflightGating:
             result = _call(tmp_path)
         assert result["status"] == "skipped"
         assert "disabled" in result["reason"]
+        assert "mode" not in result
+        assert "outcome" not in result
 
     def test_degraded_when_not_installed(self, tmp_path, cache):
-        with _patched(_make_config(), installed=False, compatible=False):
+        cfg = _make_config(mode="full")
+        with _patched(cfg, installed=False, compatible=False):
             result = _call(tmp_path)
         assert result["status"] == "degraded"
+        assert result["mode"] == "full"
+        assert "outcome" not in result
 
     def test_degraded_when_not_a_git_repo(self, tmp_path, cache):
-        with _patched(_make_config(), rid="", sha=""):
+        cfg = _make_config(mode="structural")
+        with _patched(cfg, rid="", sha=""):
             result = _call(tmp_path)
         assert result["status"] == "degraded"
         assert result["reason"] == "not_a_git_repo"
+        assert result["mode"] == "structural"
 
 
 class TestPreflightBuild:
     def test_clean_build_publishes_snapshot(self, tmp_path, cache):
-        with _patched(_make_config(), clean=True) as mr:
+        with _patched(_make_config(mode="structural"), clean=True) as mr:
             result = _call(tmp_path)
         assert result["status"] == "ready"
+        assert result["outcome"] == "built"
+        assert result["mode"] == "structural"
         snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
         assert result["report_path"] == graphify_report_path(snap)
         assert is_snapshot_complete(snap)
-        # built with `graphify update <abs project>`, run FROM the cache dir
-        # (cwd == snapshot dir, not the project) so graphify's graphify-out/
-        # manifest side-effect can't dirty the project working tree. Output
-        # still redirected via GRAPHIFY_OUT.
         cmd = mr.call_args[0][0]
         assert cmd == ["graphify", "update", os.path.abspath(str(tmp_path))]
         assert mr.call_args.kwargs["cwd"] == snap
@@ -159,42 +165,75 @@ class TestPreflightBuild:
         with open(graphify_report_path(snap), "w") as f:
             f.write("# cached")
         mark_snapshot_complete(snap)
-        with _patched(_make_config()) as mr:
+        with _patched(_make_config(mode="full")) as mr:
             result = _call(tmp_path)
         assert result["status"] == "ready"
+        assert result["outcome"] == "cached"
+        assert result["mode"] == "full"
         assert result["report_path"] == graphify_report_path(snap)
         mr.assert_not_called()
 
+    def test_cache_hit_after_lock_returns_cached(self, tmp_path, cache):
+        """A parallel worktree published while we waited for the lock."""
+        cfg = _make_config(mode="structural")
+
+        original_lock = snapshot_lock
+        @contextlib.contextmanager
+        def _lock_then_publish(sd):
+            os.makedirs(os.path.join(sd, "graphify"), exist_ok=True)
+            with open(graphify_report_path(sd), "w") as f:
+                f.write("# published by parallel worktree")
+            mark_snapshot_complete(sd)
+            with original_lock(sd):
+                yield
+
+        with _patched(cfg) as mr,              patch("worca.scripts.graphify_preflight.snapshot_lock", side_effect=_lock_then_publish):
+            result = _call(tmp_path)
+        assert result["status"] == "ready"
+        assert result["outcome"] == "cached"
+        assert result["mode"] == "structural"
+        mr.assert_not_called()
+
     def test_build_failure_degrades(self, tmp_path, cache):
-        with _patched(_make_config(), run=_fake_build(fail=True)):
+        cfg = _make_config(mode="structural")
+        with _patched(cfg, run=_fake_build(fail=True)):
             result = _call(tmp_path)
         assert result["status"] == "degraded"
+        assert result["mode"] == "structural"
 
 
 class TestPreflightFreshness:
     def test_dirty_clean_only_builds_throwaway(self, tmp_path, cache):
-        with _patched(_make_config(freshness="clean_only"), clean=False) as mr:
+        cfg = _make_config(freshness="clean_only", mode="structural")
+        with _patched(cfg, clean=False) as mr:
             result = _call(tmp_path)
         assert result["status"] == "ready"
+        assert result["outcome"] == "throwaway"
+        assert result["mode"] == "structural"
         snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
-        # The real snapshot is NOT published; a ".dirty" throwaway is used.
         assert not is_snapshot_complete(snap)
         assert result["report_path"] == graphify_report_path(snap + ".dirty")
         assert ".dirty" in mr.call_args.kwargs["env"]["GRAPHIFY_OUT"]
 
     def test_dirty_base_sha_builds_real_snapshot(self, tmp_path, cache):
-        with _patched(_make_config(freshness="base_sha"), clean=False):
+        cfg = _make_config(freshness="base_sha", mode="full")
+        with _patched(cfg, clean=False):
             result = _call(tmp_path)
         snap = graphify_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
         assert result["status"] == "ready"
+        assert result["outcome"] == "built"
+        assert result["mode"] == "full"
         assert is_snapshot_complete(snap)
 
 
 class TestPreflightUpdateFlag:
     def test_no_build_when_update_off_and_no_snapshot(self, tmp_path, cache):
-        with _patched(_make_config(update_on_preflight=False)) as mr:
+        cfg = _make_config(update_on_preflight=False, mode="structural")
+        with _patched(cfg) as mr:
             result = _call(tmp_path)
         assert result["status"] == "skipped"
+        assert result["mode"] == "structural"
+        assert "outcome" not in result
         mr.assert_not_called()
 
     def test_reads_existing_snapshot_when_update_off(self, tmp_path, cache):
@@ -203,9 +242,12 @@ class TestPreflightUpdateFlag:
         with open(graphify_report_path(snap), "w") as f:
             f.write("# cached")
         mark_snapshot_complete(snap)
-        with _patched(_make_config(update_on_preflight=False)) as mr:
+        cfg = _make_config(update_on_preflight=False, mode="full")
+        with _patched(cfg) as mr:
             result = _call(tmp_path)
         assert result["status"] == "ready"
+        assert result["outcome"] == "cached"
+        assert result["mode"] == "full"
         mr.assert_not_called()
 
 
@@ -221,10 +263,12 @@ class TestPreflightTimeout:
         def _raise(*a, **k):
             raise _sp.TimeoutExpired(cmd="graphify", timeout=1)
 
-        with _patched(_make_config(), run=_raise):
+        cfg = _make_config(mode="full")
+        with _patched(cfg, run=_raise):
             result = _call(tmp_path)
         assert result["status"] == "degraded"
         assert result["reason"] == "timeout"
+        assert result["mode"] == "full"
 
 
 class TestRunnerGraphifyIntegration:
