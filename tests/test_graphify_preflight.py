@@ -12,13 +12,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from worca.scripts.graphify_preflight import run_graphify_preflight
+from worca.utils.ast_cache import is_snapshot_complete, mark_snapshot_complete
 from worca.utils.graphify import (
     EffectiveGraphifyConfig,
     GraphifyDetect,
     graphify_report_path,
     graphify_snapshot_dir,
-    is_snapshot_complete,
-    mark_snapshot_complete,
 )
 
 

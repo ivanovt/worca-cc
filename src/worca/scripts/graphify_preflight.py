@@ -13,6 +13,11 @@ import os
 import subprocess
 from typing import Optional
 
+from worca.utils.ast_cache import (
+    is_snapshot_complete,
+    mark_snapshot_complete,
+    snapshot_lock,
+)
 from worca.utils.git import get_current_git_head, is_working_tree_clean, repo_id
 from worca.utils.graphify import (
     build_graph_cmd,
@@ -22,9 +27,6 @@ from worca.utils.graphify import (
     graphify_out_path,
     graphify_report_path,
     graphify_snapshot_dir,
-    is_snapshot_complete,
-    mark_snapshot_complete,
-    snapshot_lock,
 )
 from worca.utils.settings import load_global_settings, load_settings
 

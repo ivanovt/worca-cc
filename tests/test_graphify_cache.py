@@ -9,14 +9,16 @@ import subprocess
 
 import pytest
 
+from worca.utils.ast_cache import (
+    is_snapshot_complete,
+    mark_snapshot_complete,
+    snapshot_lock,
+)
 from worca.utils.git import repo_id
 from worca.utils.graphify import (
     graphify_out_path,
     graphify_report_path,
     graphify_snapshot_dir,
-    is_snapshot_complete,
-    mark_snapshot_complete,
-    snapshot_lock,
 )
 from worca.utils.paths import worca_cache_dir
 

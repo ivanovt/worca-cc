@@ -128,10 +128,10 @@ class TestGraphifyStatus:
         self, project_dir, global_settings, capsys, tmp_path, monkeypatch
     ):
         """When a complete cache snapshot exists for HEAD, status shows it."""
+        from worca.utils.ast_cache import mark_snapshot_complete
         from worca.utils.graphify import (
             graphify_report_path,
             graphify_snapshot_dir,
-            mark_snapshot_complete,
         )
 
         monkeypatch.setenv("WORCA_CACHE", str(tmp_path / "cache"))
