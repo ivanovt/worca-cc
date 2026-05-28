@@ -11,6 +11,10 @@ The `worca` command is installed by `pip install worca-cc`. Run `worca --help` o
 worca {init,run,pause,stop,resume,status,multi-status,integrations,templates,cleanup,workspace,graphify}
 ```
 
+:::tip
+Most of these actions have a dashboard equivalent and that's the recommended path — launching runs (the [Run Pipeline launcher](/running-pipelines/launching-a-run/)), pause/stop/resume ([run controls](/running-pipelines/controlling-a-run/)), templates (launcher dropdown), worktree cleanup, and Graphify all live in the UI. This page is the CLI surface, for scripting and headless use.
+:::
+
 ## init
 
 Initialize or upgrade worca in a project.

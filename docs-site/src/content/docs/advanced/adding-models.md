@@ -7,11 +7,13 @@ sidebar:
 
 Choosing *which* model each agent runs is a dropdown in **Settings → Agents** (see [Agents & models](/configuration/agents-and-models/)) — no JSON needed for day-to-day tuning. This page covers the layer beneath that: the **model profiles** the dropdowns select from.
 
-Agents reference models by short alias — `opus`, `sonnet`, `haiku` — and those aliases resolve through `worca.models` in `settings.json`. Editing that map lets you retarget an alias, add a profile, or route a model through an alternate endpoint — things the per-agent dropdown can't do.
+Agents reference models by short alias — `opus`, `sonnet`, `haiku` — and those aliases resolve through `worca.models` in `settings.json`. Mapping an alias lets you retarget it, add a profile, or route a model through an alternate endpoint — things the per-agent dropdown can't do.
+
+You don't hand-edit that map either: **Settings → Models** is the editor for it. Each alias is a card where you can change its model ID, add or remove a custom profile, and set per-model environment variables. The JSON below is simply the shape the Models editor writes — useful when you're scripting `settings.json` or reading a diff.
 
 ## The two profile forms
 
-A `worca.models` entry is either a plain model-ID string or an object with an `env` map:
+A `worca.models` entry — what each Models card saves — is either a plain model-ID string or an object with an `env` map:
 
 ```jsonc
 "worca": {
@@ -62,7 +64,7 @@ Use the `env` map to set whatever environment variables your gateway or proxy ex
 
 ## Two gotchas
 
-- **Secrets** (API keys for an alternate endpoint) belong in `settings.local.json`, never the committed `settings.json`. See [Secrets](/configuration/secrets/).
+- **Secrets** (API keys for an alternate endpoint) belong in `settings.local.json`, never the committed `settings.json`. Enter them through the dashboard's **Secrets** panel, which writes that gitignored file for you. See [Secrets](/configuration/secrets/).
 - **Reserved keys** are stripped from any `env` map — anything matching `WORCA_*`, `PATH`, or `CLAUDECODE` is dropped with a warning, so a profile can't clobber the variables the pipeline depends on.
 
 :::note

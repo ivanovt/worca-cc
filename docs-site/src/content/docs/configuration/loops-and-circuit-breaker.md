@@ -15,7 +15,7 @@ Three stages can send work back upstream:
 - **Review → Implement** — the Reviewer sends changes back when it finds issues.
 - **Plan Review → Plan** — the Plan Reviewer returns a plan to the Planner on critical gaps (only when Plan Review is enabled).
 
-Each loop has a configurable iteration limit, so a stuck run can't spin indefinitely. When a loop hits its limit, the run stops rather than burning tokens. The **size / loop multipliers** in the launcher scale these limits up for an unusually large task without changing the project defaults.
+Each loop has an iteration limit, set in **Settings → Loop Limits**, so a stuck run can't spin indefinitely. When a loop hits its limit, the run stops rather than burning tokens. The **size / loop multipliers** in the launcher scale these limits up for an unusually large task without changing the project defaults.
 
 ## Circuit breaker
 

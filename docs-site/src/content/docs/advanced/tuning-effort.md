@@ -7,7 +7,7 @@ sidebar:
 
 **Effort** is how much reasoning budget an agent spends per step — Claude Code's `low | medium | high | xhigh | max` scale, surfaced per agent and per iteration. It's orthogonal to the model and the turn budget.
 
-You set a per-agent effort level in **Settings → Agents**, right alongside its model and max-turns (see [Agents & models](/configuration/agents-and-models/)), and the level each iteration actually ran at appears as a badge in the run-detail view. This page explains the model underneath those controls — how a value resolves, escalates on retries, and collapses onto a model's ladder. The pipeline-wide knobs (`auto_mode`, `auto_cap`) live under `worca.effort` in settings.
+You set a per-agent effort level in **Settings → Agents**, right alongside its model and max-turns (see [Agents & models](/configuration/agents-and-models/)), and the pipeline-wide knobs (`auto_mode`, `auto_cap`) in **Settings → Effort**. The level each iteration actually ran at appears as a badge in the run-detail view. This page explains the model underneath those controls — how a value resolves, escalates on retries, and collapses onto a model's ladder. The `worca.effort` JSON shown below is what the Effort panel writes.
 
 ## Modes
 

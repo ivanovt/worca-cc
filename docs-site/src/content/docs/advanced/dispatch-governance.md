@@ -54,6 +54,8 @@ Interactive sessions (no `WORCA_AGENT` set) are never gated — this only applie
 
 ## Examples
 
+Each of these JSON edits maps to a chip operation in **Settings → Governance** — adding a name to a `per_agent_allow` list is adding a chip to that agent, and `["none"]` is the Lockdown marker. The JSON is shown for when you're scripting or reviewing a diff.
+
 Let the reviewer use the (normally denied) `review` skill:
 
 ```jsonc

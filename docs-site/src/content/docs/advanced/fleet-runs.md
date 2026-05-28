@@ -67,6 +67,8 @@ By default each child plans independently, producing N strategies. For fleet wor
 
 `--max-parallel N` caps concurrent children (default 5). The **fleet circuit breaker** halts unstarted children when failures pile up — once at least 3 children are terminal and the failure ratio crosses `--fleet-failure-threshold` (default 0.30), the fleet is marked `halted` and no new children start. In-flight children are never killed; they finish naturally. A deliberate stop never trips the breaker.
 
+Both defaults (max-parallel and the failure threshold) are set in **Settings → Fleet & guide**; the flags here override them for a single invocation.
+
 ```bash
 python .claude/scripts/run_fleet.py \
   --projects /repos/a /repos/b /repos/c /repos/d \

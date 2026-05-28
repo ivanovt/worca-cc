@@ -7,17 +7,23 @@ sidebar:
 
 Chat integrations turn the event stream into readable messages in your team's chat. worca ships adapters for **Telegram**, **Discord**, **Slack**, and a **generic webhook**.
 
-## The Integrations panel
+## Set them up in the Integrations panel
 
-The dashboard's **Integrations** tab is a card catalog — one card per adapter with a live connection-health badge (polled every 10s while the tab is open), an enable/disable toggle, and Edit/Remove buttons. Adding or updating a project also auto-configures its outbound webhook so events route correctly with no manual wiring.
+The dashboard's **Integrations** tab is where you add and manage adapters — no JSON to hand-edit. It's a card catalog: one card per adapter with a live connection-health badge (polled every 10s while the tab is open), an enable/disable toggle, and Edit/Remove buttons.
+
+To add one, open **Integrations → Add**, pick the adapter (Telegram / Discord / Slack / generic webhook), set its chat target, and choose the event filter. Credentials are entered through the [Secrets](/configuration/secrets/) panel rather than typed into the config — see below. Adding or updating a project also auto-configures its outbound webhook, so events route correctly with no manual wiring.
 
 :::note[Screenshot — coming soon]
 The Integrations card catalog: Telegram connected, Discord and Slack configured.
 :::
 
-## Config file
+## Secrets stay out of the config
 
-Chat adapters are configured at `~/.worca/integrations/config.json` (global, applies across projects):
+Adapter credentials are **never** inlined. Each is referenced by the name of an environment variable — the `*_env` keys (`bot_token_env`, `webhook_secret_env`) — and the validator rejects a config that inlines a token. Set the values through the dashboard's **Secrets** panel (it writes them to the gitignored `settings.local.json`); the adapter reads them at send time. See [Secrets](/configuration/secrets/).
+
+## Under the hood: the config file
+
+The Integrations panel writes a global config at `~/.worca/integrations/config.json` (applies across projects). You rarely touch it by hand, but the shape is worth knowing if you're scripting it or reviewing a diff:
 
 ```jsonc
 {
@@ -37,10 +43,6 @@ Chat adapters are configured at `~/.worca/integrations/config.json` (global, app
 ```
 
 `discord`, `slack`, and `webhook_out` follow the same shape. Each adapter takes its own `events` filter and a `rate_limit_per_min`.
-
-## Secrets go in env vars
-
-Secrets are **never** inlined. Every credential is referenced by the name of an environment variable — the `*_env` keys (`bot_token_env`, `webhook_secret_env`). The config validator rejects a config that inlines a token. Set the actual value in your environment, and the adapter reads it at send time.
 
 ## What gets sent
 

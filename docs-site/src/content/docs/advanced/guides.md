@@ -15,7 +15,7 @@ Every launcher — single run, fleet, and workspace — has a **guide upload** f
 The Run Pipeline launcher's guide-upload field with a migration spec attached.
 :::
 
-Guide content is capped at 64 KB combined (`worca.guide.max_bytes`); exceeding the cap aborts the launch before any work starts.
+Guide content is capped at 64 KB combined; exceeding the cap aborts the launch before any work starts. Adjust the cap in **Settings → Fleet & guide** (it writes `worca.guide.max_bytes`).
 
 ## Attaching a guide from the CLI
 

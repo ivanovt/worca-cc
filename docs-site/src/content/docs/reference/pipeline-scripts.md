@@ -7,6 +7,10 @@ sidebar:
 
 The run modes are backed by four scripts in `.claude/scripts/`. `worca run` wraps the single-run ones; fleet and workspace runs call their scripts directly. Run any with `--help` for the version-matched list.
 
+:::tip
+The [Run Pipeline launcher](/running-pipelines/launching-a-run/) is the recommended way to start single, worktree, fleet, and workspace runs — it sets the template, guide, parallelism, and tier order for you. These scripts are the low-level surface the launcher (and `worca run`) invokes; reach for them when scripting in CI or driving a run headlessly.
+:::
+
 ## run_pipeline.py
 
 Runs the pipeline **in place** against the current working tree. The lowest-level entry point — usually invoked via `worca run` or by `run_worktree.py`. Accepts `--prompt` / `--source`, `--plan`, `--template`, `--guide`, `--resume`, and the size/loop multipliers.

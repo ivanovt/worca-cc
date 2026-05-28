@@ -40,7 +40,7 @@ Every event is wrapped in a consistent envelope, so a subscriber can route on `e
 
 | Mechanism | Best for | Configured in |
 |---|---|---|
-| **[Webhooks](/integrations/webhooks/)** | Programmatic integrations — CI, dashboards, paging, custom automation. Optional HMAC signing; can even pause/abort a run from the response. | `worca.webhooks` in `settings.json` (or the Webhooks panel). |
-| **[Chat integrations](/integrations/chat-integrations/)** | Human notifications in Telegram, Discord, Slack, or a generic webhook. | `~/.worca/integrations/config.json` (or the Integrations panel). |
+| **[Webhooks](/integrations/webhooks/)** | Programmatic integrations — CI, dashboards, paging, custom automation. Optional HMAC signing; can even pause/abort a run from the response. | Settings → Webhooks panel (writes `worca.webhooks` in `settings.json`). |
+| **[Chat integrations](/integrations/chat-integrations/)** | Human notifications in Telegram, Discord, Slack, or a generic webhook. | Integrations panel (writes `~/.worca/integrations/config.json`). |
 
 Webhooks deliver the raw event to any URL. Chat integrations render a curated subset of events into readable chat messages.
