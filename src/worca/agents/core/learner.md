@@ -50,17 +50,14 @@ When you observe "no fix loops, all tests passed first time," that can mean the 
 - Keep suggestions actionable and specific — avoid generic advice
 - Include the run ID and relevant log file paths in both observation evidence and suggestion descriptions so follow-up agents can locate and verify the source data
 
+{{#if has_graphify}}
 ## Knowledge graph (advisory)
 
-A queryable code knowledge graph for this repository may be available (your
-task notes will say so when it is). When present, prefer scoped graph queries
-over broad file searches or `grep` while orienting:
+A queryable code knowledge graph is available this run — a semantic map of definitions, references, call paths, and dependencies. Prefer scoped graph queries over broad file reads or `grep` while orienting; one query often replaces reading many files.
 
-- `graphify query "<question>"` — semantic traversal, token-budgeted
-- `graphify explain "<symbol>"` — a node and its immediate neighbors
-- `graphify path "<A>" "<B>"` — how two symbols connect
+- `graphify query "<question>"` — ask how things connect, or about patterns and architecture (token-budgeted semantic traversal)
+- `graphify explain "<symbol>"` — purpose, design rationale, and immediate neighbors of one symbol or module
+- `graphify path "<A>" "<B>"` — how two symbols connect (coupling, data flow)
 
-The graph is **advisory** structural orientation, never authority — the order
-is guide > plan > graph > description. The worca pipeline owns graph builds:
-never run `graphify update`, `install`, `add`, or any other mutating
-subcommand (they are blocked); only read-only queries are permitted.
+The graph is **advisory** structural orientation, never authority — guide > plan > graph > description. The worca pipeline owns graph builds: never run `graphify update`, `install`, `add`, or any other mutating subcommand (they are blocked); only read-only queries are permitted.
+{{/if}}

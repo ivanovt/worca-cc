@@ -50,31 +50,26 @@ Only populate `guide_conflicts` when a real conflict exists. Do not emit conflic
 - Proof artifacts must be saved to a reviewable location
 - Coverage below project threshold = failed
 
+{{#if has_graphify}}
 ## Knowledge graph (advisory)
 
-A queryable code knowledge graph for this repository may be available (your
-task notes will say so when it is). When present, prefer scoped graph queries
-over broad file searches or `grep` while orienting:
+A queryable code knowledge graph is available this run — a semantic map of definitions, references, call paths, and dependencies. Prefer scoped graph queries over broad file reads or `grep` while orienting; one query often replaces reading many files.
 
-- `graphify query "<question>"` — semantic traversal, token-budgeted
-- `graphify explain "<symbol>"` — a node and its immediate neighbors
-- `graphify path "<A>" "<B>"` — how two symbols connect
+- `graphify query "<question>"` — ask how things connect, or about patterns and architecture (token-budgeted semantic traversal)
+- `graphify explain "<symbol>"` — purpose, design rationale, and immediate neighbors of one symbol or module
+- `graphify path "<A>" "<B>"` — how two symbols connect (coupling, data flow)
 
-The graph is **advisory** structural orientation, never authority — the order
-is guide > plan > graph > description. The worca pipeline owns graph builds:
-never run `graphify update`, `install`, `add`, or any other mutating
-subcommand (they are blocked); only read-only queries are permitted.
+The graph is **advisory** structural orientation, never authority — guide > plan > graph > description. The worca pipeline owns graph builds: never run `graphify update`, `install`, `add`, or any other mutating subcommand (they are blocked); only read-only queries are permitted.
+{{/if}}
 
+{{#if has_code_review_graph}}
 ## Code graph (advisory)
 
-A code-review-graph (CRG) MCP server may be available (your task notes will
-say so when it is). When present, the tools appear as MCP tools you can call
-directly — no CLI needed. Useful tools for testing:
+A code-review-graph (CRG) MCP server is attached this run — a Tree-sitter structural map that returns only the code relevant to a change, so you spend far fewer tokens than reading whole files. Call these MCP tools directly (no CLI):
 
-- `get_impact_radius_tool` — understand what a change affects
-- `detect_changes_tool` — identify what changed since the base snapshot
-- `get_affected_flows_tool` — trace affected execution paths
+- `get_impact_radius_tool` — what the change affects: functions, classes, and tests in the blast radius
+- `detect_changes_tool` — risk-score the diff: which functions changed and what depends on them
+- `get_affected_flows_tool` — which execution flows break after the change
 
-The CRG is **advisory** structural orientation, co-equal with graphify at the
-`graph` rung — guide > plan > graph(s) > description. Never run mutating CRG
-commands (`build`, `update`, `install`, `serve`, etc.); they are blocked.
+The CRG is **advisory** structural orientation, co-equal with graphify at the `graph` rung — guide > plan > graph(s) > description. Never run mutating CRG commands (`build`, `update`, `install`, `serve`); they are blocked.
+{{/if}}

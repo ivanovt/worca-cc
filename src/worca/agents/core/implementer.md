@@ -65,31 +65,26 @@ Your task prompt may include an **Accumulated design notes (advisory)** block co
 - Each Bash command runs from the project root; `cd` does NOT persist between commands. Combine directory changes with the command (`cd <subdir> && <cmd>`) or use absolute paths — do not assume a prior `cd` is still in effect.
 - If blocked, report the blocker in your structured output — do not guess, do not work around
 
+{{#if has_graphify}}
 ## Knowledge graph (advisory)
 
-A queryable code knowledge graph for this repository may be available (your
-task notes will say so when it is). When present, prefer scoped graph queries
-over broad file searches or `grep` while orienting:
+A queryable code knowledge graph is available this run — a semantic map of definitions, references, call paths, and dependencies. Prefer scoped graph queries over broad file reads or `grep` while orienting; one query often replaces reading many files.
 
-- `graphify query "<question>"` — semantic traversal, token-budgeted
-- `graphify explain "<symbol>"` — a node and its immediate neighbors
-- `graphify path "<A>" "<B>"` — how two symbols connect
+- `graphify query "<question>"` — ask how things connect, or about patterns and architecture (token-budgeted semantic traversal)
+- `graphify explain "<symbol>"` — purpose, design rationale, and immediate neighbors of one symbol or module
+- `graphify path "<A>" "<B>"` — how two symbols connect (coupling, data flow)
 
-The graph is **advisory** structural orientation, never authority — the order
-is guide > plan > graph > description. The worca pipeline owns graph builds:
-never run `graphify update`, `install`, `add`, or any other mutating
-subcommand (they are blocked); only read-only queries are permitted.
+The graph is **advisory** structural orientation, never authority — guide > plan > graph > description. The worca pipeline owns graph builds: never run `graphify update`, `install`, `add`, or any other mutating subcommand (they are blocked); only read-only queries are permitted.
+{{/if}}
 
+{{#if has_code_review_graph}}
 ## Code graph (advisory)
 
-A code-review-graph (CRG) MCP server may be available (your task notes will
-say so when it is). When present, the tools appear as MCP tools you can call
-directly — no CLI needed. Useful tools for implementation:
+A code-review-graph (CRG) MCP server is attached this run — a Tree-sitter structural map that returns only the code relevant to a change, so you spend far fewer tokens than reading whole files. Call these MCP tools directly (no CLI):
 
-- `get_minimal_context_tool` — focused context for a symbol or file
-- `get_impact_radius_tool` — call before editing a symbol to understand blast radius
-- `query_graph_tool` — general structural queries
+- `get_minimal_context_tool` — start here: ultra-compact (~100-token) context for the symbol or file you're changing
+- `get_impact_radius_tool` — call before editing a symbol to see every affected function, class, and test (the blast radius)
+- `query_graph_tool` — ad-hoc traversal: callers, callees, tests, imports, inheritance
 
-The CRG is **advisory** structural orientation, co-equal with graphify at the
-`graph` rung — guide > plan > graph(s) > description. Never run mutating CRG
-commands (`build`, `update`, `install`, `serve`, etc.); they are blocked.
+The CRG is **advisory** structural orientation, co-equal with graphify at the `graph` rung — guide > plan > graph(s) > description. Never run mutating CRG commands (`build`, `update`, `install`, `serve`); they are blocked.
+{{/if}}
