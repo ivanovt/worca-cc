@@ -490,7 +490,7 @@ def test_guide_header_not_in_python_source():
 
 
 GRAPHIFY_NOTE_TEXT = """{{#if has_graphify}}
-_A code knowledge graph is preloaded for this repo — explore it on demand with `graphify query "<question>"` (see the Knowledge graph section of your role)._
+_A code knowledge graph is preloaded — **orient with `graphify query "<question>"` before searching or reading files** (see the Knowledge graph section of your role)._
 
 {{/if}}"""
 
@@ -561,12 +561,13 @@ CORE_AGENT_FILES = [
     "tester.md", "reviewer.md", "guardian.md", "learner.md",
 ]
 
-KNOWLEDGE_GRAPH_HEADING = "## Knowledge graph (advisory)"
+KNOWLEDGE_GRAPH_HEADING = "## Knowledge graph (use for orientation)"
 
 
 def test_knowledge_graph_section_in_all_core_agents():
-    """Every pipeline agent's core .md defines the static how-to-use-the-graph
-    behavior. The per-run note in .block.md only flags availability."""
+    """Every pipeline agent's core .md defines the how-to-use-the-graph
+    behavior, wrapped in {{#if has_graphify}} so it only renders when a graph is
+    attached. The per-run note in .block.md reinforces it in the user message."""
     missing = []
     for fname in CORE_AGENT_FILES:
         if KNOWLEDGE_GRAPH_HEADING not in _read(fname):
