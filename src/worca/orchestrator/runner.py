@@ -46,10 +46,18 @@ from worca.utils.proc_registry import kill_all_tracked
 from worca.utils.git import create_branch, current_branch, get_current_git_head
 from worca.utils.pr_url import parse_pr_url
 from worca.utils.settings import load_global_settings, load_settings
+from worca.scripts.crg_preflight import run_crg_preflight
 from worca.scripts.graphify_preflight import run_graphify_preflight
 from worca.utils.graphify import (
     detect_graphify,
     effective_graphify_config,
+)
+from worca.utils.code_review_graph import (
+    EffectiveCrgConfig,
+    crg_mcp_config,
+    crg_tools_for_stage,
+    detect_code_review_graph,
+    effective_crg_config,
 )
 from worca.utils.token_usage import extract_token_usage, aggregate_token_usage, aggregate_by_model
 from worca.utils.stats import update_cumulative_stats
@@ -1088,6 +1096,14 @@ def _is_graphify_read_query(command: str) -> bool:
     return False
 
 
+_CRG_MCP_PREFIX = "mcp__code-review-graph__"
+
+
+def _is_crg_tool_use(tool_name: str) -> bool:
+    """True if a tool_use event name is a CRG MCP tool call."""
+    return bool(tool_name) and tool_name.startswith(_CRG_MCP_PREFIX)
+
+
 def _make_agent_event_handler(
     ctx: Optional[EventContext],
     stage: Stage,
@@ -1188,6 +1204,7 @@ def run_stage(
     ctx: Optional[EventContext] = None,
     env_overrides: Optional[dict] = None,
     graphify_out: Optional[str] = None,
+    crg_data_dir: Optional[str] = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -1207,6 +1224,9 @@ def run_stage(
         graphify_out: When set, exported as GRAPHIFY_OUT in the agent
             subprocess so on-demand `graphify query` reads the per-commit
             cache snapshot. Resolved at preflight when the graph is ready.
+        crg_data_dir: When set, builds a per-agent MCP config pointing at the
+            run-scoped CRG database so the agent gets code-review-graph MCP
+            tools filtered to the stage's allow-list.
 
     Returns (structured_output, raw_envelope) tuple. The structured_output
     is the schema-conforming result used by pipeline logic. The raw_envelope
@@ -1231,14 +1251,18 @@ def run_stage(
     # Count read-only graphify queries this iteration, independent of telemetry,
     # for the run-detail "Graphify" badge. Wraps (not replaces) the telemetry
     # handler so disabling agent_telemetry doesn't zero the count.
-    _gfx_metrics = {"graphify_invocations": 0}
+    _gfx_metrics = {"graphify_invocations": 0, "crg_invocations": 0}
 
     def _on_event(event):
         if event.get("type") == "assistant":
             for _block in event.get("message", {}).get("content", []) or []:
-                if _block.get("type") == "tool_use" and _block.get("name") == "Bash":
-                    if _is_graphify_read_query((_block.get("input") or {}).get("command", "")):
-                        _gfx_metrics["graphify_invocations"] += 1
+                if _block.get("type") == "tool_use":
+                    _tool = _block.get("name", "")
+                    if _tool == "Bash":
+                        if _is_graphify_read_query((_block.get("input") or {}).get("command", "")):
+                            _gfx_metrics["graphify_invocations"] += 1
+                    elif _is_crg_tool_use(_tool):
+                        _gfx_metrics["crg_invocations"] += 1
         if _telemetry_on_event is not None:
             _telemetry_on_event(event)
 
@@ -1252,6 +1276,21 @@ def run_stage(
     merged_env = dict(config.get("model_env") or {})
     if env_overrides:
         merged_env.update(env_overrides)
+
+    _mcp_config: Optional[str] = None
+    if crg_data_dir:
+        _agent_role = STAGE_AGENT_MAP.get(stage, "")
+        _crg_tools = crg_tools_for_stage(
+            _agent_role or "",
+            stage_tools=_resolve_crg_stage_tools(settings_path),
+        )
+        if _crg_tools:
+            _mcp_config = crg_mcp_config(
+                repo_root=os.getcwd(),
+                data_dir=crg_data_dir,
+                crg_tools=_crg_tools,
+            )
+
     raw = run_agent(
         prompt=prompt,
         agent=agent,
@@ -1263,16 +1302,19 @@ def run_stage(
         log_path=log_path,
         on_event=on_event,
         graphify_out=graphify_out,
+        mcp_config=_mcp_config,
         run_dir=run_dir,
         stage=stage.value,
         iteration=iteration,
     )
     _gfx = _gfx_metrics["graphify_invocations"]
-    # The per-iteration graphify count rides on the *envelope* (2nd return),
-    # never on the structured result, so it can't pollute the agent's output.
+    _crg = _gfx_metrics["crg_invocations"]
+    # Per-iteration counts ride on the *envelope* (2nd return), never on the
+    # structured result, so they can't pollute the agent's output.
     # claude CLI returns a JSON envelope; extract structured_output if present.
     if isinstance(raw, dict) and raw.get("structured_output"):
         raw["graphify_invocations"] = _gfx
+        raw["crg_invocations"] = _crg
         return raw["structured_output"], raw
     # Fallback for stages whose agent occasionally returns prose instead of
     # JSON. Currently only Guardian (PR stage) — its prompt was rewritten to
@@ -1283,11 +1325,12 @@ def run_stage(
         recovered = _extract_pr_fields_from_text(raw.get("result"))
         if recovered:
             raw["graphify_invocations"] = _gfx
+            raw["crg_invocations"] = _crg
             return recovered, raw
     # Generic fallback: result == envelope here, so attach the count to a copy
     # for the envelope and leave the returned result dict untouched.
     if isinstance(raw, dict):
-        return raw, {**raw, "graphify_invocations": _gfx}
+        return raw, {**raw, "graphify_invocations": _gfx, "crg_invocations": _crg}
     return raw, raw
 
 
@@ -1423,6 +1466,99 @@ def _verify_pr_stage(stage_output, baseline_head: str, gh_lookup=None) -> PRVeri
         return gh_result
 
     return PRVerification(ok=True, reason="")
+
+
+def _resolve_crg_stage_tools(settings_path: str) -> dict | None:
+    """Read worca.code_review_graph.stage_tools from settings."""
+    try:
+        settings = load_settings(settings_path)
+        return settings.get("worca", {}).get("code_review_graph", {}).get("stage_tools")
+    except Exception:
+        return None
+
+
+def _reattach_crg_on_resume(status, prompt_builder):
+    """Re-flag CRG availability when resuming past PREFLIGHT.
+
+    Returns the run-scoped crg_data_dir when it still exists on disk, else None.
+    """
+    crg_data_dir = status.get("crg_data_dir")
+    if crg_data_dir and os.path.isdir(crg_data_dir):
+        prompt_builder.set_crg_available(True)
+        _log("Resume: re-flagged CRG availability")
+        return crg_data_dir
+    return None
+
+
+def _crg_post_implement_refresh(
+    crg_data_dir: str,
+    project_root: str,
+    *,
+    timeout: int = 30,
+) -> bool:
+    """Run ``code-review-graph update`` on the run-scoped DB after IMPLEMENT.
+
+    Blocking (tester needs updated graph). On timeout/failure: returns False
+    so the caller can log a warning and proceed with a stale graph.
+    """
+    env = {**os.environ, "CRG_REPO_ROOT": os.path.abspath(project_root), "CRG_DATA_DIR": crg_data_dir}
+    try:
+        proc = subprocess.run(
+            ["code-review-graph", "update"],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return proc.returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
+
+
+def _maybe_crg_post_guardian(
+    *,
+    settings_path: str = ".claude/settings.json",
+    is_worktree: bool = False,
+) -> None:
+    """Fire-and-forget: warm the per-commit CRG base cache for the NEW HEAD
+    after a successful guardian commit.
+
+    Mirrors _maybe_graphify_post_guardian. Skipped in worktree runs.
+    Failures are logged, never raised.
+    """
+    if is_worktree:
+        return
+
+    try:
+        settings = load_settings(settings_path)
+        global_settings = load_global_settings()
+        cfg = effective_crg_config(global_settings, settings)
+
+        if not cfg.enabled:
+            return
+        if not cfg.update_on_guardian_post_commit:
+            return
+
+        detect = detect_code_review_graph(cfg.version_range, cfg.fastmcp_min)
+        if not detect.installed or not detect.compatible or not detect.fastmcp_ok:
+            return
+
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                "from worca.scripts.crg_preflight import "
+                "run_crg_preflight as r; r()",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        _log("CRG post-guardian cache-warm started (fire-and-forget)")
+    except Exception as exc:
+        _log(f"CRG post-guardian refresh failed: {exc}", "warn")
 
 
 def _reattach_graphify_on_resume(status, prompt_builder):
@@ -1568,6 +1704,13 @@ def run_preflight(
         result["graphify_report_path"] = graphify_result["report_path"]
     if graphify_result.get("reason"):
         result["graphify_reason"] = graphify_result["reason"]
+
+    crg_result = run_crg_preflight(settings_path=settings_path)
+    result["crg_status"] = crg_result.get("status", "skipped")
+    if crg_result.get("crg_data_dir"):
+        result["crg_data_dir"] = crg_result["crg_data_dir"]
+    if crg_result.get("reason"):
+        result["crg_reason"] = crg_result["reason"]
 
     return result
 
@@ -2049,6 +2192,11 @@ def run_pipeline(
         # post-preflight agent when the graph is ready. Set at PREFLIGHT (fresh
         # runs) or by _reattach_graphify_on_resume (resumed runs).
         _graphify_out: Optional[str] = None
+        # Run-scoped CRG data dir passed to run_stage() so each agent gets a
+        # CRG MCP server pointed at the writable copy. Set at PREFLIGHT or
+        # reattached on resume.
+        _crg_data_dir: Optional[str] = None
+        _crg_cfg: Optional[EffectiveCrgConfig] = None
         if resume_stage and prompt_context_path:
             prompt_builder.load_context(prompt_context_path)
             _backfilled = backfill_prompt_context(prompt_builder, status, logs_dir)
@@ -2062,6 +2210,14 @@ def run_pipeline(
             # Re-flag graphify availability on resume — the PREFLIGHT handler
             # that sets has_graphify + GRAPHIFY_OUT is skipped on resume.
             _graphify_out = _reattach_graphify_on_resume(status, prompt_builder)
+            _crg_data_dir = _reattach_crg_on_resume(status, prompt_builder)
+            if _crg_data_dir:
+                try:
+                    _crg_cfg = effective_crg_config(
+                        load_global_settings(), load_settings(settings_path)
+                    )
+                except Exception:
+                    pass
 
         # Transition pipeline to running state
         status["pipeline_status"] = PipelineStatus.RUNNING
@@ -2501,6 +2657,7 @@ def run_pipeline(
                         ctx=ctx,
                         env_overrides=_effort_env_overrides,
                         graphify_out=_graphify_out,
+                        crg_data_dir=_crg_data_dir,
                     )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
@@ -2724,14 +2881,12 @@ def run_pipeline(
                     iter_extras["turns"] = raw_envelope["num_turns"]
                 if raw_envelope.get("total_cost_usd"):
                     iter_extras["cost_usd"] = raw_envelope["total_cost_usd"]
-                # Per-iteration read-only graphify query count (drives the
-                # run-detail "Graphify" badge). Recorded for every agent stage,
-                # 0 when none. Preflight has no agent and shares this iter_extras
-                # block, so skip it there — the UI omits the badge when the field
-                # is absent.
                 if current_stage != Stage.PREFLIGHT:
                     iter_extras["graphify_invocations"] = raw_envelope.get(
                         "graphify_invocations", 0
+                    )
+                    iter_extras["crg_invocations"] = raw_envelope.get(
+                        "crg_invocations", 0
                     )
             if usage:
                 iter_extras["token_usage"] = usage
@@ -2792,6 +2947,24 @@ def run_pipeline(
                             "Graphify: ready — agents query the cached graph via "
                             f"GRAPHIFY_OUT={_graphify_out}"
                         )
+                if result.get("crg_status"):
+                    status["crg_status"] = result["crg_status"]
+                    _pf_stage_extras["crg_status"] = result["crg_status"]
+                if result.get("crg_data_dir"):
+                    _crg_dd = result["crg_data_dir"]
+                    if os.path.isdir(_crg_dd):
+                        _crg_data_dir = _crg_dd
+                        status["crg_data_dir"] = _crg_dd
+                        _pf_stage_extras["crg_data_dir"] = _crg_dd
+                        prompt_builder.set_crg_available(True)
+                        _log(f"CRG: ready — agents get MCP tools via crg_data_dir={_crg_data_dir}")
+                try:
+                    _crg_cfg = effective_crg_config(
+                        load_global_settings(), load_settings(settings_path)
+                    )
+                    status["crg_enabled"] = bool(_crg_cfg.enabled)
+                except Exception:
+                    status["crg_enabled"] = False
                 update_stage(status, current_stage.value, **_pf_stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
@@ -3155,6 +3328,13 @@ def run_pipeline(
 
                 # Mark IMPLEMENT completed only when all beads are done (or fix mode)
                 update_stage(status, current_stage.value, **stage_extras)
+
+                if _crg_data_dir and _crg_cfg and _crg_cfg.update_on_post_implement:
+                    _crg_ok = _crg_post_implement_refresh(_crg_data_dir, project_root, timeout=30)
+                    if not _crg_ok:
+                        iter_extras["crg_refresh_failed"] = True
+                        _log("CRG post-implement refresh failed or timed out — tester proceeds with stale graph", "warn")
+
                 save_status(status, actual_status_path)
                 if ctx:
                     _bead_kwargs = {}
@@ -3582,6 +3762,10 @@ def run_pipeline(
                             ))
 
                     _maybe_graphify_post_guardian(
+                        settings_path=settings_path,
+                        is_worktree=bool(status.get("worktree")),
+                    )
+                    _maybe_crg_post_guardian(
                         settings_path=settings_path,
                         is_worktree=bool(status.get("worktree")),
                     )

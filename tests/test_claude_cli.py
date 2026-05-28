@@ -1309,6 +1309,62 @@ def test_run_agent_large_prompt_cleanup_handles_oserror_silently():
 
 
 # ---------------------------------------------------------------------------
+# build_command / run_agent: mcp_config (W-057 §4 levels 1-2)
+# ---------------------------------------------------------------------------
+
+
+def test_build_command_with_mcp_config():
+    mcp_json = '{"mcpServers":{"crg":{"type":"stdio"}}}'
+    cmd, pf = build_command("prompt", agent="planner", mcp_config=mcp_json)
+    assert pf is None
+    assert "--mcp-config" in cmd
+    idx = cmd.index("--mcp-config")
+    assert cmd[idx + 1] == mcp_json
+    assert "--strict-mcp-config" in cmd
+
+
+def test_build_command_without_mcp_config():
+    cmd, pf = build_command("prompt", agent="planner")
+    assert pf is None
+    assert "--mcp-config" not in cmd
+    assert "--strict-mcp-config" not in cmd
+
+
+def test_build_command_mcp_config_none_omits_flags():
+    cmd, pf = build_command("prompt", agent="planner", mcp_config=None)
+    assert pf is None
+    assert "--mcp-config" not in cmd
+    assert "--strict-mcp-config" not in cmd
+
+
+def test_run_agent_passes_mcp_config_to_build_command():
+    mcp_json = '{"mcpServers":{"crg":{"type":"stdio"}}}'
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            prompt="hello", agent="planner.md",
+            mcp_config=mcp_json,
+            settings={},
+        )
+    cmd = mock_popen.call_args[0][0]
+    assert "--mcp-config" in cmd
+    idx = cmd.index("--mcp-config")
+    assert cmd[idx + 1] == mcp_json
+    assert "--strict-mcp-config" in cmd
+
+
+def test_run_agent_no_mcp_config_omits_flags():
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(prompt="hello", agent="planner.md", settings={})
+    cmd = mock_popen.call_args[0][0]
+    assert "--mcp-config" not in cmd
+    assert "--strict-mcp-config" not in cmd
+
+
+# ---------------------------------------------------------------------------
 # terminate_current: migrated from src/worca/utils/test_claude_cli.py
 # ---------------------------------------------------------------------------
 

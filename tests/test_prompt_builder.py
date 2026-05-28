@@ -621,3 +621,58 @@ def test_build_context_graphify_without_guide():
     ctx = pb.build_context("implement")
     assert ctx["has_graphify"] is True
     assert ctx["has_guide"] is False
+
+
+# --- has_code_review_graph (per-run CRG availability note) ---
+
+def test_build_context_has_crg_false_by_default():
+    pb = PromptBuilder("Add auth", "Desc")
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_code_review_graph") is False
+    assert "crg_context" not in ctx
+
+
+def test_build_context_has_crg_true_after_set():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.set_crg_available(True)
+    ctx = pb.build_context("review")
+    assert ctx.get("has_code_review_graph") is True
+    assert "crg_context" not in ctx
+
+
+def test_set_crg_available_coerces_to_bool():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.set_crg_available("ready")
+    assert pb.build_context("plan")["has_code_review_graph"] is True
+    pb.set_crg_available(0)
+    assert pb.build_context("plan")["has_code_review_graph"] is False
+
+
+def test_build_context_crg_and_graphify_independent():
+    """has_code_review_graph and has_graphify are independent flags."""
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.set_graphify_available(True)
+    pb.set_crg_available(True)
+    ctx = pb.build_context("implement")
+    assert ctx["has_graphify"] is True
+    assert ctx["has_code_review_graph"] is True
+
+
+def test_build_context_crg_without_graphify():
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.set_crg_available(True)
+    ctx = pb.build_context("review")
+    assert ctx["has_code_review_graph"] is True
+    assert ctx["has_graphify"] is False
+
+
+def test_build_context_crg_with_guide_independent():
+    pb = PromptBuilder(
+        "Add auth", "Desc",
+        work_request_guide_content="guide stuff",
+    )
+    pb.set_crg_available(True)
+    ctx = pb.build_context("plan")
+    assert ctx["has_guide"] is True
+    assert ctx["has_code_review_graph"] is True
+    assert ctx["guide_content"] == "guide stuff"

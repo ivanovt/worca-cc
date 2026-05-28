@@ -991,3 +991,72 @@ class TestGraphifyMutationGuard:
         )
         code, _ = check_guard("Bash", {"command": "graphify update ."})
         assert code == 0
+
+
+# --- CRG (code-review-graph) Bash mutation guard (W-057) ---
+# Defense-in-depth: blocks mutating CLI verbs even if an agent shells out
+# to the `code-review-graph` binary directly. Mirrors the graphify guard.
+
+
+class TestCrgMutationGuard:
+    @pytest.mark.parametrize("verb", [
+        "build", "update", "install", "serve",
+        "register", "unregister", "watch", "daemon",
+    ])
+    def test_blocks_mutating_verbs(self, verb):
+        os.environ.pop("WORCA_AGENT", None)
+        code, reason = check_guard("Bash", {"command": f"code-review-graph {verb} ."})
+        assert code == 2
+        assert "code-review-graph" in reason.lower()
+
+    @pytest.mark.parametrize("verb", [
+        "query", "get_minimal_context", "get_impact_radius",
+        "detect_changes", "get_review_context",
+    ])
+    def test_allows_read_verbs(self, verb):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard("Bash", {"command": f'code-review-graph {verb} "some arg"'})
+        assert code == 0
+
+    def test_blocks_mutation_even_for_implementer(self):
+        os.environ["WORCA_AGENT"] = "implement-implementer-iter-1"
+        try:
+            code, _ = check_guard("Bash", {"command": "code-review-graph build ."})
+            assert code == 2
+        finally:
+            del os.environ["WORCA_AGENT"]
+
+    def test_respects_cd_prefix(self):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard(
+            "Bash", {"command": "cd /project && code-review-graph build /project"}
+        )
+        assert code == 2
+
+    def test_query_mentioning_build_in_quotes_allowed(self):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard(
+            "Bash", {"command": 'code-review-graph query "how to build the graph"'}
+        )
+        assert code == 0
+
+    def test_env_prefixed_mutation_blocked(self):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard(
+            "Bash", {"command": "CRG_DATA_DIR=/tmp code-review-graph install"}
+        )
+        assert code == 2
+
+    def test_non_crg_command_unaffected(self):
+        os.environ.pop("WORCA_AGENT", None)
+        code, _ = check_guard("Bash", {"command": "npm install code-review-graph"})
+        assert code == 0
+
+    def test_disabled_via_governance_flag(self, monkeypatch):
+        """With block_crg_mutation disabled, mutations are allowed."""
+        os.environ.pop("WORCA_AGENT", None)
+        monkeypatch.setattr(
+            "worca.hooks.guard._crg_mutation_guard_enabled", lambda: False
+        )
+        code, _ = check_guard("Bash", {"command": "code-review-graph build ."})
+        assert code == 0

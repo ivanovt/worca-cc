@@ -96,6 +96,7 @@ def register_fleet_child(
     run_id: str,
     *,
     graph_status: str | None = None,
+    crg_status: str | None = None,
     base_dir: str = None,
 ) -> bool:
     """Append a dispatched child to the fleet manifest's children array.
@@ -122,6 +123,8 @@ def register_fleet_child(
     entry = {"project_path": project_path, "run_id": run_id, "status": PipelineStatus.RUNNING}
     if graph_status is not None:
         entry["graph_status"] = graph_status
+    if crg_status is not None:
+        entry["crg_status"] = crg_status
     children.append(entry)
     manifest["children"] = children
     manifest["updated_at"] = datetime.now(timezone.utc).isoformat()

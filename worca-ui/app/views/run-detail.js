@@ -398,15 +398,25 @@ function _graphifyBadge(iter, graphifyEnabled) {
   return html`<span class="meta-label">Graphify:</span> <sl-badge class="graphify-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
 }
 
-function _effortRowView(iter, graphifyEnabled) {
+function _crgBadge(iter, crgEnabled) {
+  if (iter.crg_invocations == null) return nothing;
+  if (crgEnabled !== true) {
+    return html`<span class="meta-label">CRG:</span> <span class="dispatch-events-empty">(disabled)</span>`;
+  }
+  const count = iter.crg_invocations;
+  const variant = count > 0 ? 'primary' : 'neutral';
+  return html`<span class="meta-label">CRG:</span> <sl-badge class="crg-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
+}
+
+function _effortRowView(iter, graphifyEnabled, crgEnabled) {
   const gfx = _graphifyBadge(iter, graphifyEnabled);
+  const crg = _crgBadge(iter, crgEnabled);
   const e = iter.effort;
   if (!e) {
-    // No effort recorded (e.g. effort disabled) — still surface the graphify
-    // badge on its own row so agent iterations consistently show it.
-    return gfx === nothing
-      ? nothing
-      : html`<div class="iteration-tags-row">${gfx}</div>`;
+    const hasBadge = gfx !== nothing || crg !== nothing;
+    return hasBadge
+      ? html`<div class="iteration-tags-row">${gfx}${crg}</div>`
+      : nothing;
   }
   const sourceLabel = _effortSourceLabel(e.source);
   const tooltip = _effortTooltip(e);
@@ -435,6 +445,7 @@ function _effortRowView(iter, graphifyEnabled) {
       ${escalationChips}
       ${cappedChip}
       ${gfx}
+      ${crg}
     </div>
     ${
       showBeadRow
@@ -813,6 +824,8 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
       effort: it.effort || undefined,
       graphify_invocations:
         it.graphify_invocations != null ? it.graphify_invocations : undefined,
+      crg_invocations:
+        it.crg_invocations != null ? it.crg_invocations : undefined,
       token_usage: it.token_usage || undefined,
       classification: it.classification || undefined,
       dispatch_events: it.dispatch_events?.length
@@ -863,6 +876,7 @@ function _iterationDetailView(
   stageAgent,
   promptData,
   graphifyEnabled,
+  crgEnabled,
 ) {
   const agentName = iter.agent || stageAgent || stageKey;
   const model = iter.model || '';
@@ -898,7 +912,7 @@ function _iterationDetailView(
       `
           : nothing
       }
-      ${_effortRowView(iter, graphifyEnabled)}
+      ${_effortRowView(iter, graphifyEnabled, crgEnabled)}
       ${_classificationRowView(iter)}
       ${_dispatchEventsRowsView(iter)}
       ${_agentPromptSection(stageKey, iterPromptData)}
@@ -1399,7 +1413,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                         ${iterations.map(
                           (iter) => html`
                           <sl-tab-panel name="iter-${key}-${iter.number}">
-                            ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled)}
+                            ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled, run.crg_enabled)}
                           </sl-tab-panel>
                         `,
                         )}
@@ -1432,7 +1446,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       }
                       ${stage.task_progress ? html`<div class="detail-row"><span class="detail-label">Progress:</span> ${stage.task_progress}</div>` : nothing}
                       ${stage.error ? html`<div class="detail-row detail-error"><span class="detail-label">Error:</span> ${stage.error}</div>` : nothing}
-                      ${iterations.length === 1 ? _effortRowView(iterations[0], run.graphify_enabled) : nothing}
+                      ${iterations.length === 1 ? _effortRowView(iterations[0], run.graphify_enabled, run.crg_enabled) : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}

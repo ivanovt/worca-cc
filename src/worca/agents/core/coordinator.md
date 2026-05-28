@@ -102,3 +102,17 @@ The graph is **advisory** structural orientation, never authority — the order
 is guide > plan > graph > description. The worca pipeline owns graph builds:
 never run `graphify update`, `install`, `add`, or any other mutating
 subcommand (they are blocked); only read-only queries are permitted.
+
+## Code graph (advisory)
+
+A code-review-graph (CRG) MCP server may be available (your task notes will
+say so when it is). When present, the tools appear as MCP tools you can call
+directly — no CLI needed. Useful tools for decomposition:
+
+- `get_architecture_overview_tool` — top-level module structure and communities
+- `get_minimal_context_tool` — focused context for a symbol or file
+- `query_graph_tool` — general structural queries
+
+The CRG is **advisory** structural orientation, co-equal with graphify at the
+`graph` rung — guide > plan > graph(s) > description. Never run mutating CRG
+commands (`build`, `update`, `install`, `serve`, etc.); they are blocked.
