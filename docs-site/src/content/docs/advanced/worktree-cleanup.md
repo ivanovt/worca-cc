@@ -2,7 +2,7 @@
 title: Worktree cleanup
 description: Remove the git worktrees that finished runs leave on disk.
 sidebar:
-  order: 11
+  order: 12
 ---
 
 Every run executes in its own git worktree under `<project>/.worktrees/pipeline-<run_id>/`. Worktrees **persist after a run finishes** — by design, so you can inspect the result — which means they accumulate. `worca cleanup` removes them.

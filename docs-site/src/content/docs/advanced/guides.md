@@ -2,7 +2,7 @@
 title: Guides & guide precedence
 description: Attach a normative reference document that overrides everything else in a run.
 sidebar:
-  order: 10
+  order: 11
 ---
 
 A **guide** is a reference document — a migration spec, an RFC, a compliance requirement — that you attach to a run as the highest-authority source. Agents must conform to it, even when the plan or the prompt says otherwise.
