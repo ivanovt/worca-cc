@@ -165,7 +165,31 @@ git push origin master:docs-live
 
 This triggers a production build of the `worca-docs` Worker from `docs-live`. The staging site `staging.docs.worca.dev` (which tracks `master`) is where docs are previewed beforehand; pages not ready to publish should already be marked `draft: true` in their frontmatter. Skip this step only if you explicitly do not want to publish the current docs state.
 
-### Step 8: Print summary
+### Step 8: Curate the GitHub Release notes
+
+The CI publish workflows ("Release to PyPI" / "Release to npm") **auto-create** a GitHub Release for each pushed tag, but only with a bare stub (`## What's Changed` + the merged PR list + a Full Changelog compare link). Enrich it with a human summary so the releases page reads as a real changelog.
+
+1. **Wait for the release to exist** — the publish job creates it a few minutes after the tag push. Poll until present:
+
+   ```bash
+   until gh release view worca-cc-v<PYTHON_VERSION> --json tagName >/dev/null 2>&1; do sleep 20; done
+   ```
+
+2. **Derive the summary from this release's MIGRATION.md entry.** If you added a `### <prev> → <new>` section to `MIGRATION.md` for this release (you should have, for any user-facing feature), condense it into a short release body: a one-line headline, 2–5 highlight bullets, and a `📖 [MIGRATION.md § …]` + relevant `docs/` link. Mark breaking releases with a `## ⚠️ Breaking — …` heading. Keep it derived from the curated MIGRATION.md text, not from memory.
+
+3. **Prepend the summary above the auto-stub** (preserves the PR list + Full Changelog link):
+
+   ```bash
+   stub=$(gh release view worca-cc-v<PYTHON_VERSION> --json body --jq '.body')
+   { cat /tmp/relnotes.md; printf '\n---\n\n'; printf '%s\n' "$stub"; } > /tmp/relbody.md
+   gh release edit worca-cc-v<PYTHON_VERSION> --notes-file /tmp/relbody.md
+   ```
+
+   For an `@worca/ui` release, scope its body to the UI-visible changes and link to the paired `worca-cc` release for the full story. (`gh release edit` uses the releases REST API — it does **not** hit the classic-Projects deprecation that breaks `gh pr edit`.)
+
+4. If there is no MIGRATION.md entry (a pure patch/chore release), leave the auto-stub as-is — don't invent prose.
+
+### Step 9: Print summary
 
 Display the results and install/update commands:
 
