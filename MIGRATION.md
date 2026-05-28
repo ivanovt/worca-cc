@@ -722,6 +722,49 @@ governance.dispatch.subagents: moved general-purpose from always_disallowed to d
 
 **Full reference:** [`docs/governance.md`](./docs/governance.md) § Subagents.
 
+### 0.42.x → 0.43.0
+
+W-057: Optional code-review-graph (CRG) MCP integration (Tree-sitter AST graph, tool-based agent consumption).
+
+**New feature — opt-in, off by default.** When `worca.code_review_graph.enabled` is `true` (project-level), the Preflight stage builds a per-commit code graph and exposes it to pipeline agents through a per-agent **MCP server** (`code-review-graph serve`). With CRG disabled, pipeline behavior is byte-identical to before. CRG and Graphify (W-053) are independent — either, both, or neither may be enabled.
+
+**How agents consume it:**
+
+- Agents query the graph through **MCP tools** (`mcp__code-review-graph__*` — e.g. `get_architecture_overview`, `get_minimal_context`, `query_graph`), not a Bash CLI and not an injected report. The runner starts a stdio MCP server per agent subprocess via `--mcp-config`; a per-stage `stage_tools` filter narrows which tools each role sees. Each stage prompt carries a one-line availability note; the how-to-use guidance lives in each agent's core `.md` (`## Code graph (use for orientation)`).
+- **Read-only guard:** the `pre_tool_use` hook blocks mutating `code-review-graph` CLI verbs (`build`, `update`, `install`, `serve`, …) — agents may only read via MCP tools. The pipeline owns all graph builds. Gated by `worca.governance.guards.block_crg_mutation` (default `true`).
+- The graph is content-addressed under `$WORCA_CACHE/ast/<repo-id>/<sha>/` (same cache model as Graphify: clean commit → `<sha>/`, dirty tree → throwaway `<sha>.dirty/`). Nothing is written into the repo tree.
+
+**Required tooling (only if you enable CRG):**
+
+- `pip install 'code-review-graph>=2,<3' 'fastmcp>=3.2.4'` — the `code-review-graph` CLI plus its `fastmcp` runtime dependency (a separate hard floor). The UI Code Review Graph settings tab surfaces this exact command and a re-check button.
+
+**New settings (additive):**
+
+```jsonc
+"worca": {
+  "code_review_graph": {
+    "enabled": false,            // project-level opt-in
+    "embeddings": false,         // semantic embeddings pass (extra cost)
+    "freshness": "clean_only",   // only build on a clean tree; dirty -> throwaway
+    "min_repo_files": 100,       // skip tiny repos
+    "version_range": ">=2,<3",
+    "fastmcp_min": "3.2.4",
+    "stage_tools": null          // per-stage MCP tool filter (null = role defaults)
+  },
+  "governance": {
+    "guards": {
+      "block_crg_mutation": true // block agent-issued code-review-graph build/serve/...
+    }
+  }
+}
+```
+
+**UI:** the run-detail Preflight stage shows a **Code Review Graph** status pill (cached / rebuilt / built (uncommitted) / skipped / unavailable / off), and each agent iteration shows a Code Review Graph invocation badge with a per-tool breakdown tooltip on hover.
+
+**No automatic migration required.** All changes are additive — `worca init --upgrade` merges the new defaults non-destructively. CRG stays off unless a project sets `worca.code_review_graph.enabled: true`.
+
+**Full reference:** [`docs/plans/W-057-code-review-graph-integration.md`](./docs/plans/W-057-code-review-graph-integration.md).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues
