@@ -412,7 +412,7 @@ function _crgToolBreakdown(counts) {
 function _crgBadge(iter, crgEnabled) {
   if (iter.crg_invocations == null) return nothing;
   if (crgEnabled !== true) {
-    return html`<span class="meta-label">CRG:</span> <span class="dispatch-events-empty">(disabled)</span>`;
+    return html`<span class="meta-label">Code Review Graph:</span> <span class="dispatch-events-empty">(disabled)</span>`;
   }
   const count = iter.crg_invocations;
   const variant = count > 0 ? 'primary' : 'neutral';
@@ -423,7 +423,7 @@ function _crgBadge(iter, crgEnabled) {
   const wrapped = breakdown
     ? html`<sl-tooltip class="crg-tool-tooltip" content="${breakdown}">${badge}</sl-tooltip>`
     : badge;
-  return html`<span class="meta-label">CRG:</span> ${wrapped}`;
+  return html`<span class="meta-label">Code Review Graph:</span> ${wrapped}`;
 }
 
 function _effortRowView(iter, graphifyEnabled, crgEnabled) {

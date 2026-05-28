@@ -47,7 +47,7 @@ describe('runDetailView CRG invocation badge', () => {
     const html = renderToString(
       runDetailView(makeRun({ crgEnabled: true, invocations: 5 })),
     );
-    expect(html).toContain('CRG:');
+    expect(html).toContain('Code Review Graph:');
     expect(html).toContain('crg-invocations-badge');
     expect(html).toContain('5');
     expect(html).toContain('variant="primary"');
@@ -58,7 +58,7 @@ describe('runDetailView CRG invocation badge', () => {
     const html = renderToString(
       runDetailView(makeRun({ crgEnabled: true, invocations: 0 })),
     );
-    expect(html).toContain('CRG:');
+    expect(html).toContain('Code Review Graph:');
     expect(html).toContain('crg-invocations-badge');
     expect(html).toContain('variant="neutral"');
     expect(html).not.toContain('(disabled)');
@@ -103,20 +103,20 @@ describe('runDetailView CRG invocation badge', () => {
     const html = renderToString(
       runDetailView(makeRun({ crgEnabled: false, invocations: 0 })),
     );
-    expect(html).toContain('CRG:');
+    expect(html).toContain('Code Review Graph:');
     expect(html).toContain('(disabled)');
     expect(html).not.toContain('crg-invocations-badge');
   });
 
   it('treats a missing crg_enabled flag as disabled', () => {
     const html = renderToString(runDetailView(makeRun({ invocations: 0 })));
-    expect(html).toContain('CRG:');
+    expect(html).toContain('Code Review Graph:');
     expect(html).toContain('(disabled)');
   });
 
   it('omits the CRG badge entirely on iterations without the field (pre-feature / non-agent)', () => {
     const html = renderToString(runDetailView(makeRun({ crgEnabled: true })));
-    expect(html).not.toContain('CRG:');
+    expect(html).not.toContain('Code Review Graph:');
   });
 
   it('still shows the badge when effort is absent (own row)', () => {
@@ -125,7 +125,7 @@ describe('runDetailView CRG invocation badge', () => {
         makeRun({ crgEnabled: true, invocations: 2, withEffort: false }),
       ),
     );
-    expect(html).toContain('CRG:');
+    expect(html).toContain('Code Review Graph:');
     expect(html).toContain('2');
   });
 
@@ -155,7 +155,7 @@ describe('runDetailView CRG invocation badge', () => {
       crg_enabled: true,
     };
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('CRG:');
+    expect(html).toContain('Code Review Graph:');
     expect(html).toContain('crg-invocations-badge');
   });
 });
