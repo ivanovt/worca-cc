@@ -194,6 +194,10 @@ test.describe('preflight graphify badge', () => {
       await expect(badge).toContainText('cached');
       await expect(badge).toContainText('structural');
       await expect(badge).toHaveAttribute('variant', 'success');
+      // explanatory tooltip via the shared <sl-tooltip> component
+      const tooltip = panel.locator('sl-tooltip:has(.preflight-graphify-badge)');
+      await expect(tooltip).toHaveAttribute('content', /Reused the knowledge graph/);
+      await expect(tooltip).toHaveAttribute('content', /structural mode/);
     } finally {
       await ctx.close();
     }
@@ -264,7 +268,16 @@ test.describe('preflight graphify badge', () => {
       await expect(badge).toBeVisible({ timeout: 5000 });
       await expect(badge).toHaveText('unavailable');
       await expect(badge).toHaveAttribute('variant', 'danger');
-      await expect(badge).toHaveAttribute('title', 'graphify CLI not found on PATH');
+      // Tooltip is an <sl-tooltip content="…"> wrapper (same component used
+      // elsewhere) — it shows the reason and points to settings, with no
+      // inline install command.
+      const tooltip = panel.locator('sl-tooltip:has(.preflight-graphify-badge)');
+      await expect(tooltip).toHaveAttribute(
+        'content',
+        /graphify CLI not found on PATH/,
+      );
+      await expect(tooltip).toHaveAttribute('content', /See Project Settings/);
+      await expect(tooltip).not.toHaveAttribute('content', /uv tool install/);
     } finally {
       await ctx.close();
     }

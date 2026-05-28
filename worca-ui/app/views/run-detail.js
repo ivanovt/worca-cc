@@ -725,6 +725,16 @@ function _preflightCheckBadgeVariant(status) {
   return 'neutral';
 }
 
+// One-line explanation of the graphify build mode, appended to the ready-state
+// tooltips. structural = fully local; full = docs/diagrams sent to the provider.
+function _graphifyModeHint(mode) {
+  if (mode === 'structural')
+    return 'structural mode: local AST + clustering, no LLM calls';
+  if (mode === 'full')
+    return 'full mode: docs/diagrams sent to the configured provider (source code never sent)';
+  return '';
+}
+
 function _preflightGraphifyBadge(stage, run) {
   const enabled = run.graphify_enabled;
   const status = stage.graphify_status;
@@ -732,25 +742,81 @@ function _preflightGraphifyBadge(stage, run) {
   const mode = stage.graphify_mode;
   const reason = stage.graphify_reason;
 
+  // Render as a labeled meta row so the badge aligns with the other stage
+  // rows (Effort, Iteration Trigger/Outcome, …) instead of floating. Reuses
+  // the "Graphify:" label already established by _graphifyBadge.
+  const row = (badge) => html`
+    <div class="iteration-tags-row">
+      <span class="meta-label">Graphify:</span> ${badge}
+    </div>`;
+  // Every state carries a tooltip explaining what it means. Use <sl-tooltip>
+  // (styled, ~150ms) for consistency with the dispatch badges, not native title.
+  const badge = (variant, text, tip) =>
+    html`<sl-tooltip content="${tip}"><sl-badge class="preflight-graphify-badge" variant="${variant}" pill>${text}</sl-badge></sl-tooltip>`;
+
   if (enabled === false) {
-    return html`<sl-badge class="preflight-graphify-badge" variant="neutral" pill>off</sl-badge>`;
+    return row(
+      badge(
+        'neutral',
+        'off',
+        'Graphify is disabled for this project — no code knowledge graph is built or queried.',
+      ),
+    );
   }
   if (enabled == null && status == null) return nothing;
 
   if (status === 'skipped') {
-    return html`<sl-badge class="preflight-graphify-badge" variant="neutral" pill>skipped</sl-badge>`;
+    return row(
+      badge(
+        'neutral',
+        'skipped',
+        'Graphify is enabled, but no graph was available this run (preflight build off and no cached graph for this commit).',
+      ),
+    );
   }
   if (status === 'degraded') {
-    return html`<sl-badge class="preflight-graphify-badge" variant="danger" pill title="${reason || ''}">unavailable</sl-badge>`;
+    // Show the underlying reason only — the install/fix command lives centrally
+    // in Project Settings → Graphify, not in this tooltip.
+    const tip = reason
+      ? `Graphify couldn't provide a graph: ${reason}. See Project Settings → Graphify.`
+      : "Graphify couldn't provide a graph. See Project Settings → Graphify.";
+    return row(badge('danger', 'unavailable', tip));
   }
+
+  const hint = _graphifyModeHint(mode);
+  const withHint = (base) => (hint ? `${base} · ${hint}.` : `${base}.`);
   if (outcome === 'cached') {
-    return html`<sl-badge class="preflight-graphify-badge" variant="success" pill>cached · ${mode}</sl-badge>`;
+    return row(
+      badge(
+        'success',
+        html`cached · ${mode}`,
+        withHint(
+          'Reused the knowledge graph already cached for this commit — no rebuild needed',
+        ),
+      ),
+    );
   }
   if (outcome === 'built') {
-    return html`<sl-badge class="preflight-graphify-badge" variant="success" pill>rebuilt · ${mode}</sl-badge>`;
+    return row(
+      badge(
+        'success',
+        html`rebuilt · ${mode}`,
+        withHint(
+          'No cached graph for this commit, so a fresh one was built during preflight and cached',
+        ),
+      ),
+    );
   }
   if (outcome === 'throwaway') {
-    return html`<sl-badge class="preflight-graphify-badge" variant="warning" pill>built (uncommitted) · ${mode}</sl-badge>`;
+    return row(
+      badge(
+        'warning',
+        html`built (uncommitted) · ${mode}`,
+        withHint(
+          'Working tree had uncommitted changes, so a throwaway graph was built for this run only (not cached)',
+        ),
+      ),
+    );
   }
   return nothing;
 }
@@ -1414,6 +1480,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'preflight' ? _preflightGraphifyBadge(stage, run) : nothing}
                       ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
                       ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {

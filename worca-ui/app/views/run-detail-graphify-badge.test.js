@@ -170,6 +170,12 @@ describe('preflight graphify badge', () => {
     expect(html).toContain('preflight-graphify-badge');
     expect(html).toContain('cached · structural');
     expect(html).toContain('variant="success"');
+    // labeled, aligned row (not a floating bare badge)
+    expect(html).toContain('Graphify:');
+    expect(html).toContain('iteration-tags-row');
+    // explanatory tooltip + mode hint
+    expect(html).toContain('Reused the knowledge graph');
+    expect(html).toContain('structural mode');
   });
 
   it('shows "Graphify: rebuilt · full" with success variant for fresh build', () => {
@@ -186,6 +192,9 @@ describe('preflight graphify badge', () => {
     expect(html).toContain('preflight-graphify-badge');
     expect(html).toContain('rebuilt · full');
     expect(html).toContain('variant="success"');
+    expect(html).toContain('Graphify:');
+    expect(html).toContain('No cached graph for this commit');
+    expect(html).toContain('full mode');
   });
 
   it('shows "Graphify: built (uncommitted) · structural" with warning variant for throwaway', () => {
@@ -202,6 +211,9 @@ describe('preflight graphify badge', () => {
     expect(html).toContain('preflight-graphify-badge');
     expect(html).toContain('built (uncommitted) · structural');
     expect(html).toContain('variant="warning"');
+    expect(html).toContain('Graphify:');
+    expect(html).toContain('Working tree had uncommitted changes');
+    expect(html).toContain('structural mode');
   });
 
   it('shows "Graphify: unavailable" with danger variant for degraded', () => {
@@ -217,7 +229,12 @@ describe('preflight graphify badge', () => {
     expect(html).toContain('preflight-graphify-badge');
     expect(html).toContain('unavailable');
     expect(html).toContain('variant="danger"');
+    expect(html).toContain('Graphify:');
+    // shows the underlying reason and points to settings — no inline command
     expect(html).toContain('CLI not found');
+    expect(html).toContain('See Project Settings');
+    expect(html).not.toContain('uv tool install');
+    expect(html).not.toContain('pip install');
   });
 
   it('shows "Graphify: off" with neutral variant when disabled', () => {
@@ -227,6 +244,8 @@ describe('preflight graphify badge', () => {
     expect(html).toContain('preflight-graphify-badge');
     expect(html).toContain('off');
     expect(html).toContain('variant="neutral"');
+    expect(html).toContain('Graphify:');
+    expect(html).toContain('disabled for this project');
   });
 
   it('shows "Graphify: skipped" with neutral variant for skipped status', () => {
@@ -242,6 +261,30 @@ describe('preflight graphify badge', () => {
     expect(html).toContain('preflight-graphify-badge');
     expect(html).toContain('skipped');
     expect(html).toContain('variant="neutral"');
+    expect(html).toContain('Graphify:');
+    expect(html).toContain('no graph was available');
+  });
+
+  it('renders the preflight badge in a multi-iteration preflight stage', () => {
+    const run = {
+      stages: {
+        preflight: {
+          status: 'completed',
+          graphify_status: 'ready',
+          graphify_outcome: 'cached',
+          graphify_mode: 'full',
+          iterations: [
+            { number: 1, status: 'completed', outcome: 'error' },
+            { number: 2, status: 'completed', outcome: 'success' },
+          ],
+        },
+      },
+      graphify_enabled: true,
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('preflight-graphify-badge');
+    expect(html).toContain('cached · full');
+    expect(html).toContain('Graphify:');
   });
 
   it('renders nothing when graphify fields are entirely absent (old runs)', () => {
