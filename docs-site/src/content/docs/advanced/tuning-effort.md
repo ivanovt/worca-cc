@@ -2,7 +2,7 @@
 title: Tuning effort
 description: How reasoning effort is allocated per agent, escalated on retries, and capped.
 sidebar:
-  order: 8
+  order: 9
 ---
 
 **Effort** is how much reasoning budget an agent spends per step — Claude Code's `low | medium | high | xhigh | max` scale, surfaced per agent and per iteration. It's orthogonal to the model and the turn budget.

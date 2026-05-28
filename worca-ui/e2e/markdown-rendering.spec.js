@@ -203,11 +203,14 @@ test.describe('markdown rendering — bead tooltip', () => {
       await openRunDetail(page, ctx.url, runId);
 
       const beadsPanel = page.locator('.run-beads-panel');
+      // The panel now renders immediately in a loading state; wait for the bead
+      // rows to load into the DOM (the bd query can be slow on a cold daemon)
+      // before expanding, so we don't race the loading→loaded re-render.
+      const beadRow = page.locator('.run-bead-row').first();
+      await expect(beadRow).toBeAttached({ timeout: 20000 });
       await beadsPanel.scrollIntoViewIfNeeded();
       await beadsPanel.locator('[slot="summary"]').click();
       await expect(beadsPanel).toHaveAttribute('open', '', { timeout: 5000 });
-
-      const beadRow = page.locator('.run-bead-row').first();
       await expect(beadRow).toBeVisible({ timeout: 8000 });
 
       await beadRow.hover();
@@ -245,6 +248,11 @@ test.describe('markdown rendering — bead row', () => {
       await openRunDetail(page, ctx.url, runId);
 
       const beadsPanel = page.locator('.run-beads-panel');
+      // Panel renders immediately (loading); wait for bead data in the DOM
+      // before expanding (cold-daemon bd query can be slow).
+      await expect(page.locator('.run-bead-row').first()).toBeAttached({
+        timeout: 20000,
+      });
       await beadsPanel.scrollIntoViewIfNeeded();
       await beadsPanel.locator('[slot="summary"]').click();
       await expect(beadsPanel).toHaveAttribute('open', '', { timeout: 5000 });

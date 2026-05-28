@@ -2,7 +2,14 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createRunId, discoverRuns, discoverRunsAsync } from './watcher.js';
+import {
+  _setDiscoverRunsTtlForTest,
+  clearDiscoverRunsCache,
+  createRunId,
+  discoverRuns,
+  discoverRunsAsync,
+  findRun,
+} from './watcher.js';
 
 describe('watcher', () => {
   let dir;
@@ -10,7 +17,160 @@ describe('watcher', () => {
     dir = join(tmpdir(), `worca-watch-${Date.now()}`);
     mkdirSync(join(dir, 'results'), { recursive: true });
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    // Reset discoverRuns cache state so the cache test's TTL override can't
+    // leak into other tests.
+    clearDiscoverRunsCache();
+    _setDiscoverRunsTtlForTest(0);
+  });
+
+  // ---- findRun: O(1) single-run lookup, parity with discoverRuns ----
+  it('findRun returns null when the run does not exist', () => {
+    expect(findRun(dir, 'does-not-exist')).toBeNull();
+    expect(findRun(dir, '')).toBeNull();
+    expect(findRun('', 'x')).toBeNull();
+  });
+
+  it('findRun matches discoverRuns for a runs/ (active) run', () => {
+    const runId = 'run-active-1';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-05-01T10:00:00Z',
+        pipeline_status: 'running',
+        work_request: { title: 'active' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const viaFind = findRun(dir, runId);
+    const viaScan = discoverRuns(dir).find((r) => r.id === runId);
+    expect(viaFind).toEqual(viaScan);
+    expect(viaFind.active).toBe(true);
+  });
+
+  it('findRun matches discoverRuns for a results/<id>/ (archived) run', () => {
+    const runId = 'run-archived-1';
+    const runDir = join(dir, 'results', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-05-01T11:00:00Z',
+        completed_at: '2026-05-01T11:30:00Z',
+        pipeline_status: 'completed',
+        work_request: { title: 'done' },
+        stages: { plan: { status: 'completed' } },
+      }),
+    );
+    const viaFind = findRun(dir, runId);
+    const viaScan = discoverRuns(dir).find((r) => r.id === runId);
+    expect(viaFind).toEqual(viaScan);
+    expect(viaFind.active).toBe(false);
+  });
+
+  it('findRun matches discoverRuns for a legacy results/<id>.json file', () => {
+    const runId = 'run-legacy-1';
+    writeFileSync(
+      join(dir, 'results', `${runId}.json`),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-05-01T12:00:00Z',
+        completed_at: '2026-05-01T12:30:00Z',
+        pipeline_status: 'completed',
+        work_request: { title: 'legacy' },
+        stages: { plan: { status: 'completed' } },
+      }),
+    );
+    const viaFind = findRun(dir, runId);
+    const viaScan = discoverRuns(dir).find((r) => r.id === runId);
+    expect(viaFind).toEqual(viaScan);
+  });
+
+  it('findRun matches discoverRuns for a worktree (pipelines.d) run incl. worktree fields', () => {
+    const runId = 'run-wt-1';
+    const wtDir = join(dir, 'worktrees', 'wt-1');
+    const wtRunDir = join(wtDir, '.worca', 'runs', runId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(
+      join(wtRunDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-05-01T13:00:00Z',
+        pipeline_status: 'running',
+        work_request: { title: 'wt task' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${runId}.json`),
+      JSON.stringify({
+        run_id: runId,
+        worktree_path: wtDir,
+        branch: 'feat/x',
+        target_branch: 'main',
+        fleet_id: 'fleet-9',
+        status: 'running',
+      }),
+    );
+    const viaFind = findRun(dir, runId);
+    const viaScan = discoverRuns(dir).find((r) => r.id === runId);
+    expect(viaFind).toEqual(viaScan);
+    expect(viaFind.is_worktree_run).toBe(true);
+    expect(viaFind.worktree_worca_dir).toBe(join(wtDir, '.worca'));
+    expect(viaFind.head_branch).toBe('feat/x');
+    expect(viaFind.target_branch).toBe('main');
+    expect(viaFind.fleet_id).toBe('fleet-9');
+  });
+
+  it('findRun falls back to a scan for the legacy flat status.json (name != id)', () => {
+    const status = {
+      started_at: '2026-05-01T14:00:00Z',
+      pipeline_status: 'running',
+      work_request: { title: 'flat legacy' },
+      stages: { plan: { status: 'in_progress' } },
+    };
+    writeFileSync(join(dir, 'status.json'), JSON.stringify(status));
+    const id = createRunId(status); // hashed id (no run_id) → no matching dir
+    const viaFind = findRun(dir, id);
+    const viaScan = discoverRuns(dir).find((r) => r.id === id);
+    expect(viaFind).not.toBeNull();
+    expect(viaFind).toEqual(viaScan);
+  });
+
+  // ---- discoverRuns TTL cache (#2) ----
+  it('discoverRuns caches within the TTL and refreshes after clear', () => {
+    _setDiscoverRunsTtlForTest(5000);
+    clearDiscoverRunsCache();
+    const mk = (id) => {
+      const rd = join(dir, 'runs', id);
+      mkdirSync(rd, { recursive: true });
+      writeFileSync(
+        join(rd, 'status.json'),
+        JSON.stringify({
+          run_id: id,
+          started_at: '2026-05-01T10:00:00Z',
+          pipeline_status: 'running',
+          work_request: { title: id },
+          stages: { plan: { status: 'in_progress' } },
+        }),
+      );
+    };
+    mk('cache-r1');
+    expect(discoverRuns(dir).length).toBe(1);
+    mk('cache-r2');
+    // Within the TTL window the cached scan is reused — the new run isn't seen.
+    expect(discoverRuns(dir).length).toBe(1);
+    clearDiscoverRunsCache();
+    // After invalidation the fresh scan picks up both runs.
+    expect(discoverRuns(dir).length).toBe(2);
+  });
 
   it('createRunId generates deterministic ID from status', () => {
     const status = {

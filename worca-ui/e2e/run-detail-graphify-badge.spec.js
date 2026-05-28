@@ -99,3 +99,202 @@ test.describe('run-detail graphify invocation badge', () => {
     }
   });
 });
+
+// --- Preflight Graphify Badge ---
+
+async function openPreflight(page, baseUrl, runId) {
+  await page.goto(`${baseUrl}/#/history?run=${runId}`, GOTO_OPTS);
+  await expect(page.locator('.run-detail .stage-panels')).toBeVisible({
+    timeout: 8000,
+  });
+  const panel = page
+    .locator('.stage-panel', {
+      has: page.locator('.stage-panel-label', { hasText: 'PREFLIGHT' }),
+    })
+    .first();
+  await panel.locator('.stage-panel-header').click();
+  await expect(panel).toHaveAttribute('open', '', { timeout: 5000 });
+  return panel;
+}
+
+function preflightStages({ graphifyStatus, graphifyOutcome, graphifyMode, graphifyReason } = {}) {
+  const stage = {
+    status: 'completed',
+    iterations: [{
+      number: 1,
+      status: 'completed',
+      outcome: 'success',
+      started_at: '2026-01-01T10:00:00.000Z',
+      completed_at: '2026-01-01T10:01:00.000Z',
+      output: { checks: [{ name: 'branch', status: 'pass', message: 'ok' }], summary: 'All checks passed' },
+    }],
+  };
+  if (graphifyStatus !== undefined) stage.graphify_status = graphifyStatus;
+  if (graphifyOutcome !== undefined) stage.graphify_outcome = graphifyOutcome;
+  if (graphifyMode !== undefined) stage.graphify_mode = graphifyMode;
+  if (graphifyReason !== undefined) stage.graphify_reason = graphifyReason;
+  return { preflight: stage };
+}
+
+test.describe('preflight graphify badge', () => {
+  test('shows "off" neutral badge when graphify is disabled', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-pf-gfx-off';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        graphify_enabled: false,
+        stages: preflightStages(),
+      });
+      const panel = await openPreflight(page, ctx.url, runId);
+      const badge = panel.locator('.preflight-graphify-badge');
+      await expect(badge).toBeVisible({ timeout: 5000 });
+      await expect(badge).toHaveText('off');
+      await expect(badge).toHaveAttribute('variant', 'neutral');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('shows "skipped" neutral badge when graphify was skipped', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-pf-gfx-skip';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        graphify_enabled: true,
+        stages: preflightStages({ graphifyStatus: 'skipped', graphifyMode: 'structural' }),
+      });
+      const panel = await openPreflight(page, ctx.url, runId);
+      const badge = panel.locator('.preflight-graphify-badge');
+      await expect(badge).toBeVisible({ timeout: 5000 });
+      await expect(badge).toHaveText('skipped');
+      await expect(badge).toHaveAttribute('variant', 'neutral');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('shows "cached · structural" success badge for cache hit', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-pf-gfx-cached';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        graphify_enabled: true,
+        stages: preflightStages({
+          graphifyStatus: 'ready',
+          graphifyOutcome: 'cached',
+          graphifyMode: 'structural',
+        }),
+      });
+      const panel = await openPreflight(page, ctx.url, runId);
+      const badge = panel.locator('.preflight-graphify-badge');
+      await expect(badge).toBeVisible({ timeout: 5000 });
+      await expect(badge).toContainText('cached');
+      await expect(badge).toContainText('structural');
+      await expect(badge).toHaveAttribute('variant', 'success');
+      // explanatory tooltip via the shared <sl-tooltip> component
+      const tooltip = panel.locator('sl-tooltip:has(.preflight-graphify-badge)');
+      await expect(tooltip).toHaveAttribute('content', /Reused the knowledge graph/);
+      await expect(tooltip).toHaveAttribute('content', /structural mode/);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('shows "rebuilt · full" success badge for fresh build', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-pf-gfx-rebuilt';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        graphify_enabled: true,
+        stages: preflightStages({
+          graphifyStatus: 'ready',
+          graphifyOutcome: 'built',
+          graphifyMode: 'full',
+        }),
+      });
+      const panel = await openPreflight(page, ctx.url, runId);
+      const badge = panel.locator('.preflight-graphify-badge');
+      await expect(badge).toBeVisible({ timeout: 5000 });
+      await expect(badge).toContainText('rebuilt');
+      await expect(badge).toContainText('full');
+      await expect(badge).toHaveAttribute('variant', 'success');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('shows "built (uncommitted) · structural" warning badge for throwaway', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-pf-gfx-throwaway';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        graphify_enabled: true,
+        stages: preflightStages({
+          graphifyStatus: 'ready',
+          graphifyOutcome: 'throwaway',
+          graphifyMode: 'structural',
+        }),
+      });
+      const panel = await openPreflight(page, ctx.url, runId);
+      const badge = panel.locator('.preflight-graphify-badge');
+      await expect(badge).toBeVisible({ timeout: 5000 });
+      await expect(badge).toContainText('built (uncommitted)');
+      await expect(badge).toContainText('structural');
+      await expect(badge).toHaveAttribute('variant', 'warning');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('shows "unavailable" danger badge with reason tooltip for degraded', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-pf-gfx-degraded';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        graphify_enabled: true,
+        stages: preflightStages({
+          graphifyStatus: 'degraded',
+          graphifyReason: 'graphify CLI not found on PATH',
+        }),
+      });
+      const panel = await openPreflight(page, ctx.url, runId);
+      const badge = panel.locator('.preflight-graphify-badge');
+      await expect(badge).toBeVisible({ timeout: 5000 });
+      await expect(badge).toHaveText('unavailable');
+      await expect(badge).toHaveAttribute('variant', 'danger');
+      // Tooltip is an <sl-tooltip content="…"> wrapper (same component used
+      // elsewhere) — it shows the reason and points to settings, with no
+      // inline install command.
+      const tooltip = panel.locator('sl-tooltip:has(.preflight-graphify-badge)');
+      await expect(tooltip).toHaveAttribute(
+        'content',
+        /graphify CLI not found on PATH/,
+      );
+      await expect(tooltip).toHaveAttribute('content', /See Project Settings/);
+      await expect(tooltip).not.toHaveAttribute('content', /uv tool install/);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('renders no badge for old runs with no graphify fields', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-pf-gfx-old';
+      seedRun(ctx.worcaDir, runId, {
+        pipeline_status: 'completed',
+        stages: preflightStages(),
+      });
+      const panel = await openPreflight(page, ctx.url, runId);
+      await expect(panel.locator('.preflight-graphify-badge')).toHaveCount(0);
+    } finally {
+      await ctx.close();
+    }
+  });
+});

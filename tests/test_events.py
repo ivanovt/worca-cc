@@ -147,7 +147,12 @@ def test_shell_hook_receives_event_json_on_stdin(tmp_path, hooked_ctx):
     emit_event(ctx, "pipeline.run.started", {"resume": False, "started_at": "2026-03-20T00:00:00Z"})
 
     deadline = time.time() + 3.0
-    while not out_file.exists() and time.time() < deadline:
+    while time.time() < deadline:
+        # Wait for content, not just existence: `cat > file` creates the file
+        # before writing, so reading on existence alone races to an empty file
+        # (flaky JSONDecodeError, esp. on slower Windows IO).
+        if out_file.exists() and out_file.stat().st_size > 0:
+            break
         time.sleep(0.05)
 
     assert out_file.exists(), "Shell hook was not invoked"
@@ -241,7 +246,10 @@ def test_wildcard_handler_fires_for_any_event_type(tmp_path, hooked_ctx):
     })
 
     deadline = time.time() + 3.0
-    while not out_file.exists() and time.time() < deadline:
+    while time.time() < deadline:
+        # Wait for content, not just existence (avoids the empty-file read race).
+        if out_file.exists() and out_file.stat().st_size > 0:
+            break
         time.sleep(0.05)
 
     assert out_file.exists(), "Wildcard handler was not invoked"

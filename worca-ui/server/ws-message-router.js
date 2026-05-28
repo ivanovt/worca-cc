@@ -33,7 +33,7 @@ import {
 } from './process-manager.js';
 import { resolveRunDir } from './run-dir-resolver.js';
 import { readSettings } from './settings-reader.js';
-import { discoverRuns } from './watcher.js';
+import { discoverRuns, findRun } from './watcher.js';
 import { resolveBeadsCounts } from './ws-beads-watcher.js';
 
 /**
@@ -165,8 +165,7 @@ export function createMessageRouter({
       }
       _adoptProjectFromPayload(ws, req.payload);
       const proj = resolveProject(ws, req.payload);
-      const runs = discoverRuns(proj.worcaDir);
-      const run = runs.find((r) => r.id === runId);
+      const run = findRun(proj.worcaDir, runId);
       if (!run) {
         ws.send(
           JSON.stringify(makeError(req, 'NOT_FOUND', `Run ${runId} not found`)),
@@ -321,8 +320,7 @@ export function createMessageRouter({
       }
       const s = clientManager.ensureSubs(ws);
       s.runId = runId;
-      const runs = discoverRuns(proj.worcaDir);
-      const run = runs.find((r) => r.id === runId);
+      const run = findRun(proj.worcaDir, runId);
       if (run) {
         if (
           run.pipeline_status !== undefined &&

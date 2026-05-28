@@ -350,6 +350,78 @@ class TestRunPreflightFailure:
 # LEARN stage skipped when preflight fails
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Graphify outcome/mode/reason propagation
+# ---------------------------------------------------------------------------
+
+class TestRunPreflightGraphifyFields:
+    """run_preflight() must propagate graphify_outcome, graphify_mode,
+    and graphify_reason from the enriched graphify_preflight return dict."""
+
+    def _run(self, tmp_path, graphify_return):
+        from worca.orchestrator.runner import run_preflight
+        result_data = {"status": "pass", "checks": [], "summary": "ok"}
+        script_path = _script(tmp_path, result_data)
+        settings_path = _settings_file(tmp_path, script_path=script_path)
+        context = {"_logs_dir": str(tmp_path / "logs")}
+        with patch("worca.orchestrator.runner.run_graphify_preflight",
+                   return_value=graphify_return):
+            return run_preflight(context, settings_path)
+
+    def test_outcome_built_propagated(self, tmp_path):
+        result = self._run(tmp_path, {
+            "status": "ready", "outcome": "built", "mode": "structural",
+            "report_path": "/tmp/r.md",
+        })
+        assert result["graphify_outcome"] == "built"
+        assert result["graphify_mode"] == "structural"
+
+    def test_outcome_cached_propagated(self, tmp_path):
+        result = self._run(tmp_path, {
+            "status": "ready", "outcome": "cached", "mode": "full",
+            "report_path": "/tmp/r.md",
+        })
+        assert result["graphify_outcome"] == "cached"
+        assert result["graphify_mode"] == "full"
+
+    def test_outcome_throwaway_propagated(self, tmp_path):
+        result = self._run(tmp_path, {
+            "status": "ready", "outcome": "throwaway", "mode": "structural",
+            "report_path": "/tmp/r.md",
+        })
+        assert result["graphify_outcome"] == "throwaway"
+
+    def test_degraded_carries_mode_and_reason(self, tmp_path):
+        result = self._run(tmp_path, {
+            "status": "degraded", "mode": "full", "reason": "not installed",
+        })
+        assert result["graphify_mode"] == "full"
+        assert result["graphify_reason"] == "not installed"
+        assert "graphify_outcome" not in result
+
+    def test_skipped_carries_mode_and_reason(self, tmp_path):
+        result = self._run(tmp_path, {
+            "status": "skipped", "mode": "structural",
+            "reason": "update_on_preflight disabled",
+        })
+        assert result["graphify_mode"] == "structural"
+        assert result["graphify_reason"] == "update_on_preflight disabled"
+
+    def test_disabled_no_outcome_no_mode(self, tmp_path):
+        result = self._run(tmp_path, {
+            "status": "skipped", "reason": "disabled (global-off)",
+        })
+        assert "graphify_outcome" not in result
+        assert "graphify_mode" not in result
+        assert result["graphify_reason"] == "disabled (global-off)"
+
+    def test_absent_fields_not_injected(self, tmp_path):
+        result = self._run(tmp_path, {"status": "skipped"})
+        assert "graphify_outcome" not in result
+        assert "graphify_mode" not in result
+        assert "graphify_reason" not in result
+
+
 class TestLearnSkippedOnPreflightFailure:
     """When PipelineError is raised during PREFLIGHT, _run_learn_stage is not called."""
 

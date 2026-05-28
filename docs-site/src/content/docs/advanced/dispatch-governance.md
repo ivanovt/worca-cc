@@ -2,7 +2,7 @@
 title: Customizing dispatch governance
 description: Control which tools, skills, and subagents each agent may invoke.
 sidebar:
-  order: 9
+  order: 10
 ---
 
 Beyond the always-on safety hooks described in [Governance](/concepts/governance/), worca lets you control exactly which **tools**, **skills**, and **subagents** each pipeline agent may dispatch.

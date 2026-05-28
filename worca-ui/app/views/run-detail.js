@@ -736,6 +736,102 @@ function _preflightCheckBadgeVariant(status) {
   return 'neutral';
 }
 
+// One-line explanation of the graphify build mode, appended to the ready-state
+// tooltips. structural = fully local; full = docs/diagrams sent to the provider.
+function _graphifyModeHint(mode) {
+  if (mode === 'structural')
+    return 'structural mode: local AST + clustering, no LLM calls';
+  if (mode === 'full')
+    return 'full mode: docs/diagrams sent to the configured provider (source code never sent)';
+  return '';
+}
+
+function _preflightGraphifyBadge(stage, run) {
+  const enabled = run.graphify_enabled;
+  const status = stage.graphify_status;
+  const outcome = stage.graphify_outcome;
+  const mode = stage.graphify_mode;
+  const reason = stage.graphify_reason;
+
+  // Render as a labeled meta row so the badge aligns with the other stage
+  // rows (Effort, Iteration Trigger/Outcome, …) instead of floating. Reuses
+  // the "Graphify:" label already established by _graphifyBadge.
+  const row = (badge) => html`
+    <div class="iteration-tags-row">
+      <span class="meta-label">Graphify:</span> ${badge}
+    </div>`;
+  // Every state carries a tooltip explaining what it means. Use <sl-tooltip>
+  // (styled, ~150ms) for consistency with the dispatch badges, not native title.
+  const badge = (variant, text, tip) =>
+    html`<sl-tooltip content="${tip}"><sl-badge class="preflight-graphify-badge" variant="${variant}" pill>${text}</sl-badge></sl-tooltip>`;
+
+  if (enabled === false) {
+    return row(
+      badge(
+        'neutral',
+        'off',
+        'Graphify is disabled for this project — no code knowledge graph is built or queried.',
+      ),
+    );
+  }
+  if (enabled == null && status == null) return nothing;
+
+  if (status === 'skipped') {
+    return row(
+      badge(
+        'neutral',
+        'skipped',
+        'Graphify is enabled, but no graph was available this run (preflight build off and no cached graph for this commit).',
+      ),
+    );
+  }
+  if (status === 'degraded') {
+    // Show the underlying reason only — the install/fix command lives centrally
+    // in Project Settings → Graphify, not in this tooltip.
+    const tip = reason
+      ? `Graphify couldn't provide a graph: ${reason}. See Project Settings → Graphify.`
+      : "Graphify couldn't provide a graph. See Project Settings → Graphify.";
+    return row(badge('danger', 'unavailable', tip));
+  }
+
+  const hint = _graphifyModeHint(mode);
+  const withHint = (base) => (hint ? `${base} · ${hint}.` : `${base}.`);
+  if (outcome === 'cached') {
+    return row(
+      badge(
+        'success',
+        html`cached · ${mode}`,
+        withHint(
+          'Reused the knowledge graph already cached for this commit — no rebuild needed',
+        ),
+      ),
+    );
+  }
+  if (outcome === 'built') {
+    return row(
+      badge(
+        'success',
+        html`rebuilt · ${mode}`,
+        withHint(
+          'No cached graph for this commit, so a fresh one was built during preflight and cached',
+        ),
+      ),
+    );
+  }
+  if (outcome === 'throwaway') {
+    return row(
+      badge(
+        'warning',
+        html`built (uncommitted) · ${mode}`,
+        withHint(
+          'Working tree had uncommitted changes, so a throwaway graph was built for this run only (not cached)',
+        ),
+      ),
+    );
+  }
+  return nothing;
+}
+
 function _preflightChecksView(stage, iter) {
   const isSkipped = stage.skipped || iter.outcome === 'skipped';
   if (isSkipped) {
@@ -807,6 +903,9 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     plan_file: stage.plan_file || undefined,
     graphify_status: stage.graphify_status || undefined,
     graphify_report_path: stage.graphify_report_path || undefined,
+    graphify_outcome: stage.graphify_outcome || undefined,
+    graphify_mode: stage.graphify_mode || undefined,
+    graphify_reason: stage.graphify_reason || undefined,
     iterations: iterations.map((it) => ({
       number: it.number,
       status: it.status,
@@ -1039,51 +1138,74 @@ export function prApprovalPanelView(run, options = {}) {
   `;
 }
 
-export function runBeadsSectionView(beads) {
-  if (!beads) return nothing;
-  const isEmpty = beads.length === 0;
-  const closed = beads.filter((b) => b.status === 'closed').length;
-  const total = beads.length;
-  const variant =
-    total === 0 ? 'neutral' : closed === total ? 'success' : 'primary';
+export function runBeadsSectionView(beads, options = {}) {
+  // `loaded` defaults to "a value was passed" so existing callers that pass just
+  // the issues array keep rendering data; main.js passes it explicitly to drive
+  // the not-loaded (spinner) state.
+  const { loaded = beads !== undefined, showSpinner = false } = options;
+
+  // Summary-right (badge / spinner / nothing) and body, resolved per state:
+  //   not loaded            → panel appears immediately; spinner only after the
+  //                           150ms gate (showSpinner), else an empty summary.
+  //   loaded, beads === null → load failed (don't claim "no beads").
+  //   loaded, []            → no linked beads.
+  //   loaded, [...]         → count badge + list (+ graph).
+  let summaryRight = nothing;
+  let body = nothing;
+
+  if (!loaded) {
+    summaryRight = showSpinner
+      ? html`<sl-spinner
+          class="run-beads-loading"
+          data-testid="run-beads-loading"
+        ></sl-spinner>`
+      : nothing;
+    body = showSpinner
+      ? html`<div class="run-beads-empty">Loading Beads…</div>`
+      : nothing;
+  } else if (beads === null) {
+    summaryRight = html`<sl-badge variant="warning" pill>—</sl-badge>`;
+    body = html`<div class="run-beads-empty">Couldn't load Beads issues</div>`;
+  } else if (beads.length === 0) {
+    body = html`<div class="run-beads-empty">No linked Beads issues</div>`;
+  } else {
+    const closed = beads.filter((b) => b.status === 'closed').length;
+    const total = beads.length;
+    const variant = closed === total ? 'success' : 'primary';
+    summaryRight = html`<sl-badge variant="${variant}" pill>${closed}/${total}</sl-badge>`;
+    body = html`
+      <div class="run-beads-list">
+        ${beads.map(
+          (issue) => html`
+          <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
+            <div slot="content">${beadTooltipContent(issue)}</div>
+            <div class="run-bead-row">
+              <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
+              ${
+                issue.blocked_by?.length
+                  ? html`<sl-badge variant="warning" pill>blocked</sl-badge>`
+                  : html`<sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>`
+              }
+              <span class="run-bead-id">#${issue.id}</span>
+              <span class="run-bead-title">${issue.title}</span>
+            </div>
+          </sl-tooltip>
+        `,
+        )}
+      </div>
+      ${beads.length > 1 ? _graphWithTooltips(beads) : nothing}
+    `;
+  }
+
   return html`
     <div class="run-beads-section">
       <sl-details class="run-beads-panel" @sl-after-show=${scrollOnExpand}>
         <div slot="summary" class="run-beads-header">
           <span class="run-beads-icon">${unsafeHTML(iconSvg(List, 16))}</span>
           <span class="run-beads-title">Beads</span>
-          ${
-            isEmpty
-              ? nothing
-              : html`<sl-badge variant="${variant}" pill>${closed}/${total}</sl-badge>`
-          }
+          ${summaryRight}
         </div>
-        ${
-          isEmpty
-            ? html`<div class="run-beads-empty">No linked Beads issues</div>`
-            : html`
-              <div class="run-beads-list">
-                ${beads.map(
-                  (issue) => html`
-                  <sl-tooltip class="bead-tooltip" hoist placement="bottom" distance="4">
-                    <div slot="content">${beadTooltipContent(issue)}</div>
-                    <div class="run-bead-row">
-                      <sl-badge variant="${priorityVariant(issue.priority)}" pill>P${issue.priority}</sl-badge>
-                      ${
-                        issue.blocked_by?.length
-                          ? html`<sl-badge variant="warning" pill>blocked</sl-badge>`
-                          : html`<sl-badge variant="${statusVariant(issue.status, issue)}" pill>${issue.status}</sl-badge>`
-                      }
-                      <span class="run-bead-id">#${issue.id}</span>
-                      <span class="run-bead-title">${issue.title}</span>
-                    </div>
-                  </sl-tooltip>
-                `,
-                )}
-              </div>
-              ${beads.length > 1 ? _graphWithTooltips(beads) : nothing}
-            `
-        }
+        ${body}
       </sl-details>
     </div>
   `;
@@ -1395,6 +1517,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'preflight' ? _preflightGraphifyBadge(stage, run) : nothing}
                       ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
                       ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
@@ -1451,6 +1574,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'preflight' ? _preflightGraphifyBadge(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
                       ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}

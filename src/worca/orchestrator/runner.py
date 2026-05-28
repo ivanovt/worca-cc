@@ -1702,6 +1702,10 @@ def run_preflight(
     result["graphify_status"] = graphify_result.get("status", "skipped")
     if graphify_result.get("report_path"):
         result["graphify_report_path"] = graphify_result["report_path"]
+    if graphify_result.get("outcome"):
+        result["graphify_outcome"] = graphify_result["outcome"]
+    if graphify_result.get("mode"):
+        result["graphify_mode"] = graphify_result["mode"]
     if graphify_result.get("reason"):
         result["graphify_reason"] = graphify_result["reason"]
 
@@ -2934,6 +2938,10 @@ def run_pipeline(
                 if result.get("graphify_status"):
                     status["graphify_status"] = result["graphify_status"]
                     _pf_stage_extras["graphify_status"] = result["graphify_status"]
+                for _gfx_key in ("graphify_outcome", "graphify_mode", "graphify_reason"):
+                    if result.get(_gfx_key):
+                        status[_gfx_key] = result[_gfx_key]
+                        _pf_stage_extras[_gfx_key] = result[_gfx_key]
                 if result.get("graphify_report_path"):
                     status["graphify_report_path"] = result["graphify_report_path"]
                     _pf_stage_extras["graphify_report_path"] = result["graphify_report_path"]
