@@ -280,7 +280,8 @@
         "block_env_write": true,
         "block_force_push": true,
         "restrict_git_commit": true,
-        "block_graphify_mutation": true
+        "block_graphify_mutation": true,
+        "block_crg_mutation": true
       },
       "test_gate_strikes": 2,
       "dispatch_migration_version": 2,
@@ -364,6 +365,21 @@
       "preflight_timeout_seconds": 300,
       "freshness": "clean_only",
       "nudge": "every"
+    },
+    "code_review_graph": {
+      "enabled": false,
+      "embeddings": false,
+      "update_on": {
+        "preflight": true,
+        "post_implement": true,
+        "guardian_post_commit": true
+      },
+      "freshness": "clean_only",
+      "min_repo_files": 100,
+      "version_range": ">=2,<3",
+      "fastmcp_min": "3.2.4",
+      "preflight_timeout_seconds": 300,
+      "stage_tools": null
     }
   }
 }

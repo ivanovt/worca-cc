@@ -2295,6 +2295,12 @@ sl-input.pricing-input::part(input) {
   font-size: 13px;
 }
 
+/* CRG invocation badge tooltip lists one tool per line (one <div> each, via
+   the tooltip's HTML content slot) — just left-align them. */
+sl-tooltip.crg-tool-tooltip::part(body) {
+  text-align: left;
+}
+
 .iteration-tags-sep {
   color: var(--fg);
   opacity: 0.7;
@@ -6615,4 +6621,75 @@ sl-dialog.markdown-dialog::part(body) {
    install-command code box, which keeps normal monospace styling. */
 .graphify-not-installed .settings-tab-description {
   color: var(--status-paused);
+}
+
+/* Code Review Graph (CRG) — mirrors graphify-* classes above */
+.crg-codebox {
+  display: block;
+  margin: 0.25rem 0 0.75rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  color: var(--fg);
+  word-break: break-all;
+  user-select: all;
+}
+
+.crg-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.crg-copy-row .crg-codebox {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.crg-not-installed {
+  margin: 0 0 0.75rem;
+}
+
+.crg-not-installed .settings-tab-description {
+  color: var(--status-paused);
+}
+
+.crg-coming-soon {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.crg-stage-tools {
+  margin: 1rem 0;
+}
+
+.crg-stage-tools-grid {
+  display: grid;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.crg-stage-tools-entry {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  font-size: 0.85rem;
+}
+
+.crg-stage-role {
+  font-weight: 600;
+  min-width: 6rem;
+  color: var(--fg);
+}
+
+.crg-stage-tool-list {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
 }

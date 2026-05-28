@@ -5,13 +5,14 @@ effective_graphify_config() to resolve the two-tier (global + project)
 settings into a single EffectiveGraphifyConfig.
 """
 
-import contextlib
 import os
-import re
-import shutil
-import subprocess
 from dataclasses import dataclass
 from typing import Optional
+
+from worca.utils.ast_cache import (
+    ast_snapshot_dir,
+)
+from worca.utils.tool_detect import probe_cli
 
 _VALID_MODES = frozenset({"structural", "full"})
 
@@ -21,48 +22,6 @@ _BACKEND_ENV_KEYS = (
     "OLLAMA_BASE_URL",
     "GEMINI_API_KEY",
 )
-
-_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)")
-_SPEC_RE = re.compile(r"(>=|<=|>|<|==|!=)\s*(\d+(?:\.\d+)*)")
-
-
-def _version_tuple(v: str) -> tuple[int, ...]:
-    return tuple(int(x) for x in v.split("."))
-
-
-def _check_version_range(version: str, spec_str: str) -> bool:
-    """Check whether version satisfies a comma-separated specifier string.
-
-    Supports: >=, <=, >, <, ==, != with dotted version numbers.
-    Example: _check_version_range("0.8.0", ">=0.8.16,<1") -> True
-    """
-    ver = _version_tuple(version)
-    for clause in spec_str.split(","):
-        clause = clause.strip()
-        if not clause:
-            continue
-        m = _SPEC_RE.fullmatch(clause)
-        if not m:
-            return False
-        op, bound_str = m.group(1), m.group(2)
-        bound = _version_tuple(bound_str)
-        # pad to equal length for comparison
-        maxlen = max(len(ver), len(bound))
-        vp = ver + (0,) * (maxlen - len(ver))
-        bp = bound + (0,) * (maxlen - len(bound))
-        if op == ">=" and not (vp >= bp):
-            return False
-        elif op == "<=" and not (vp <= bp):
-            return False
-        elif op == ">" and not (vp > bp):
-            return False
-        elif op == "<" and not (vp < bp):
-            return False
-        elif op == "==" and not (vp == bp):
-            return False
-        elif op == "!=" and not (vp != bp):
-            return False
-    return True
 
 _GRAPHIFY_DEFAULTS = {
     "enabled": False,
@@ -98,60 +57,14 @@ class GraphifyDetect:
 def detect_graphify(version_range: str = ">=0.8.16,<1") -> GraphifyDetect:
     """Probe for the graphify CLI. Cached at call sites — never call per-tool-use."""
     backend_env = [k for k in _BACKEND_ENV_KEYS if os.environ.get(k)]
-
-    if shutil.which("graphify") is None:
-        return GraphifyDetect(
-            installed=False,
-            version=None,
-            compatible=False,
-            backend_env_present=backend_env,
-            error="graphify CLI not found on PATH",
-        )
-
-    try:
-        proc = subprocess.run(
-            ["graphify", "--version"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-    except Exception as exc:
-        return GraphifyDetect(
-            installed=True,
-            version=None,
-            compatible=False,
-            backend_env_present=backend_env,
-            error=str(exc),
-        )
-
-    if proc.returncode != 0:
-        return GraphifyDetect(
-            installed=True,
-            version=None,
-            compatible=False,
-            backend_env_present=backend_env,
-            error=f"graphify --version exited {proc.returncode}: {proc.stderr.strip()}",
-        )
-
-    match = _VERSION_RE.search(proc.stdout)
-    if not match:
-        return GraphifyDetect(
-            installed=True,
-            version=None,
-            compatible=False,
-            backend_env_present=backend_env,
-            error=f"could not parse version from: {proc.stdout.strip()!r}",
-        )
-
-    version = match.group(1)
-    compatible = _check_version_range(version, version_range)
+    probe = probe_cli("graphify", version_range=version_range)
 
     return GraphifyDetect(
-        installed=True,
-        version=version,
-        compatible=compatible,
+        installed=probe.installed,
+        version=probe.version,
+        compatible=probe.compatible,
         backend_env_present=backend_env,
-        error=None if compatible else f"version {version} not in {version_range}",
+        error=probe.error,
     )
 
 
@@ -319,16 +232,17 @@ def build_subprocess_env(
 #     graphify/            <- GRAPHIFY_OUT (GRAPH_REPORT.md, graph.json, graph.html)
 #     .complete            <- written only after a successful, full build
 #     .lock                <- flock for single-writer coordination
+#
+# Core primitives (ast_snapshot_dir, snapshot_lock, is_snapshot_complete,
+# mark_snapshot_complete) live in ast_cache.py. Re-exported here for
+# backwards compatibility.
 
 
 def graphify_snapshot_dir(
     repo_id_value: str, commit_sha: str, cache_dir: Optional[str] = None
 ) -> str:
     """Absolute path to the per-commit snapshot dir for a repo+sha."""
-    from worca.utils.paths import worca_cache_dir
-
-    root = cache_dir if cache_dir is not None else worca_cache_dir()
-    return os.path.join(root, "ast", repo_id_value, commit_sha)
+    return ast_snapshot_dir(repo_id_value, commit_sha, cache_dir=cache_dir)
 
 
 def graphify_out_path(snapshot_dir: str) -> str:
@@ -339,47 +253,3 @@ def graphify_out_path(snapshot_dir: str) -> str:
 def graphify_report_path(snapshot_dir: str) -> str:
     """Absolute path to GRAPH_REPORT.md inside a snapshot dir."""
     return os.path.join(graphify_out_path(snapshot_dir), "GRAPH_REPORT.md")
-
-
-def _complete_marker(snapshot_dir: str) -> str:
-    return os.path.join(snapshot_dir, ".complete")
-
-
-def is_snapshot_complete(snapshot_dir: str) -> bool:
-    """A snapshot is usable only once its ``.complete`` marker exists."""
-    return os.path.isfile(_complete_marker(snapshot_dir))
-
-
-def mark_snapshot_complete(snapshot_dir: str) -> None:
-    """Publish a snapshot by writing its ``.complete`` marker."""
-    os.makedirs(snapshot_dir, exist_ok=True)
-    with open(_complete_marker(snapshot_dir), "w", encoding="utf-8") as f:
-        f.write("ok\n")
-
-
-@contextlib.contextmanager
-def snapshot_lock(snapshot_dir: str):
-    """Exclusive flock over a snapshot's ``.lock`` (single-writer build).
-
-    No-op fallback on platforms without ``fcntl`` (e.g. Windows): the lock file
-    is still created so the dir exists, but no advisory lock is held.
-    """
-    os.makedirs(snapshot_dir, exist_ok=True)
-    lock_path = os.path.join(snapshot_dir, ".lock")
-    f = open(lock_path, "w", encoding="utf-8")
-    try:
-        try:
-            import fcntl
-
-            fcntl.flock(f, fcntl.LOCK_EX)
-        except (ImportError, OSError):
-            pass
-        yield
-    finally:
-        try:
-            import fcntl
-
-            fcntl.flock(f, fcntl.LOCK_UN)
-        except (ImportError, OSError):
-            pass
-        f.close()

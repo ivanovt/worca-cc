@@ -45,6 +45,7 @@ class PromptBuilder:
         self._description = work_request_description or work_request_title
         self._guide_content = work_request_guide_content
         self._graphify_available = False
+        self._crg_available = False
         self._context: dict = {}
         self._context_path = context_path
         self._claude_md_content = self._read_claude_md(claude_md_path)
@@ -75,6 +76,15 @@ class PromptBuilder:
         note exposed as ``has_graphify``.
         """
         self._graphify_available = bool(available)
+
+    def set_crg_available(self, available: bool) -> None:
+        """Flag whether a CRG MCP code graph is available this run.
+
+        Set True after PREFLIGHT seeds the run-scoped CRG database, and again
+        on resume. Agents receive MCP tools via ``--mcp-config``; this only
+        toggles the ``has_code_review_graph`` availability note in block.md.
+        """
+        self._crg_available = bool(available)
 
     def update_context(self, key: str, value) -> None:
         """Store inter-stage output for use in downstream prompts."""
@@ -180,6 +190,7 @@ class PromptBuilder:
         ctx["guide_content"] = self._guide_content
         ctx["has_guide"] = bool(self._guide_content)
         ctx["has_graphify"] = self._graphify_available
+        ctx["has_code_review_graph"] = self._crg_available
 
         all_notes = ctx.get("all_design_notes") or []
         assigned = ctx.get("assigned_bead_id") or ""

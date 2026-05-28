@@ -241,6 +241,7 @@ def pipeline_env(tmp_path):
         env.pop("WORCA_PROJECT_ROOT", None)
         env.pop("WORCA_RUN_ID", None)
         env.pop("WORCA_RUN_DIR", None)
+        env.pop("GRAPHIFY_OUT", None)
         if _coverage_enabled():
             # Coverage subprocesses write .coverage.<host>.<pid>.<rand> next to
             # CWD by default. Force them into REPO_ROOT so `coverage combine`

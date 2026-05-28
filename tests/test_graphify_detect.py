@@ -17,7 +17,7 @@ class TestGraphifyDetect:
             version=None,
             compatible=False,
             backend_env_present=[],
-            error="graphify CLI not found on PATH",
+            error="graphify not found on PATH",
         )
 
     def test_cli_present_compatible_version(self):

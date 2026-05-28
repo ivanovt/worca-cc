@@ -30,7 +30,7 @@ Structural-only for v1 (no embeddings / `semantic_search` / `embed_graph`). worc
 
 Locked via `/worca-analyze` triage (2026-05-24):
 
-1. **Blocking validation gates** (read tools emit no DML; `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for reads) — clear them with a **standalone spike *before* the Phase 3 build**, not inline. The read-only governance model (§5) and the copied-base-DB design (§3) both rest on these gates, so a short spike beats discovering a violation mid-build and reworking Phases 3-5. *(Resolves Known-unknowns 1-2.)*
+1. **Blocking validation gates** (read tools emit no DML; `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for reads) — clear them with a **standalone spike *before* the Phase 3 build**, not inline. The read-only governance model (§5) and the copied-base-DB design (§3) both rest on these gates, so a short spike beats discovering a violation mid-build and reworking Phases 3-5. **Fallback strategies are documented in §5** ("Fallback strategies if validation gates fail") so a spike failure does not stall the feature: `CRG_TOOLS` falls back to `--disallowedTools` with MCP tool names; `CRG_DATA_DIR` falls back to CRG's default project-relative path; worst case, a thin MCP proxy filters tools. *(Resolves Known-unknowns 1-2.)*
 2. **CRG MCP `serve` lifecycle** — **per-invocation stdio child**: one `code-review-graph serve` per `claude` process, torn down on exit (§4 as written). Zero port/concurrency management, safe for parallel agents and worktrees. Defer server warming; revisit only if the startup-latency measurement (Known-unknown 3) proves prohibitive. *(Resolves Known-unknown 3.)*
 3. **WAL checkpoint before base-DB copy** — run `PRAGMA wal_checkpoint(TRUNCATE)` after the base build, before copying `graph.db` into the run-scoped dir (§3). Yields a clean single-file copy with no `-wal` side-file and avoids "copied DB missing recent writes" bugs. *(Resolves Known-unknown 4.)*
 
@@ -129,6 +129,13 @@ if mcp_config:                       # only when CRG ready for this stage
 
 `--strict-mcp-config` ensures only worca's injected server loads (ignores user/project/plugin MCP). `--dangerously-skip-permissions` (already set) auto-approves the MCP tools — no `--permission-mode` work. stdio server is a child of each `claude` process, torn down on exit; no ports, so concurrent agents are safe (each spawns its own). Note `MCP_TIMEOUT` for startup latency (validation item).
 
+**Signature cascade.** Threading `--mcp-config` through the call stack requires changes at four levels, mirroring the existing `graphify_out` pattern:
+
+1. **`build_command()`** (`claude_cli.py:200`) gains `mcp_config: Optional[str] = None`. When set, appends `--mcp-config <value> --strict-mcp-config` to the cmd list (after the existing `--model` / `--json-schema` block, before the return at `:275`).
+2. **`run_agent()`** (`claude_cli.py:484`) gains `mcp_config: Optional[str] = None` — passed through to `build_command(mcp_config=mcp_config)` at `:520-527`. Unlike `graphify_out` (which becomes an env var at `:542-546`), `mcp_config` is a CLI flag, not an env injection.
+3. **`run_stage()`** (`runner.py:1180`) gains `crg_data_dir: Optional[str] = None`. When set, it resolves the per-stage `CRG_TOOLS` list via `crg_tools_for_stage(stage)` (new helper in `code_review_graph.py`), calls `crg_mcp_config(repo_root, crg_data_dir, tools)` to build the inline JSON, and passes `mcp_config=<json>` to `run_agent()` at `:1255-1269`. The `repo_root` comes from `context["_project_root"]` (already available in context).
+4. **Pipeline main loop** (`runner.py:2496-2504`) threads `_crg_data_dir` alongside `_graphify_out`: `run_stage(..., graphify_out=_graphify_out, crg_data_dir=_crg_data_dir)`. `_crg_data_dir` is set by CRG preflight (§7) at the same point `_graphify_out` is set (`:2789`), and reattached on resume (`:2064` pattern).
+
 ### 5. Tool governance — server-side `CRG_TOOLS` + Bash guard
 
 **Exposure is controlled server-side**, not through worca's `--tools` channel (which only governs built-ins). Per-stage `CRG_TOOLS` allow-lists are injected into the mcp-config `env` (`code-review-graph serve --tools` / `CRG_TOOLS` filters at startup; "unlisted tools are removed").
@@ -156,6 +163,12 @@ if mcp_config:                       # only when CRG ready for this stage
 
 **Bash guard generalization.** Generalize `_is_graphify_mutation` (`src/worca/hooks/guard.py:198-283`) into `_is_tool_mutation(verbs, command)` and add a CRG instance blocking mutating CLI verbs (`build`, `update`, `install`, `serve`, `register`, `unregister`, `watch`, `daemon`) — defense-in-depth in case an agent shells out to the CLI. Gated by `worca.governance.guards.block_crg_mutation` (default `true`).
 
+**Fallback strategies if validation gates fail.** The primary plan assumes `CRG_TOOLS` filters tools server-side and `CRG_DATA_DIR`/`CRG_REPO_ROOT` redirect reads. If the Phase 2 spike (Decisions §1) reveals these are not honored:
+
+- **If `CRG_TOOLS` is not honored by `serve`:** switch to Claude CLI `--disallowedTools` for MCP tool names. The Claude CLI names MCP tools as `mcp__<server>__<tool>` (e.g. `mcp__code-review-graph__apply_refactor_tool`). `run_stage()` would build the disallow list from the hard-excluded set (§5 table) and append it to the existing `disallowed_tools` list returned by `_resolve_tool_args()`. The `crg_mcp_config()` function drops the `CRG_TOOLS` env key. This is less precise (the agent sees the tool in its tool list but calls are rejected) but functionally equivalent for governance.
+- **If `CRG_DATA_DIR` is not honored for reads:** place the run-scoped copy at CRG's default project-relative path (`<project-root>/.code-review-graph/graph.db`) instead of `<run-dir>/code-review-graph/`. The mcp-config `env` sets `CRG_REPO_ROOT` to the project root; CRG's `find_project_root()` walk-up resolves the `.code-review-graph/` directory naturally. This constrains the run-scoped DB to one-per-project-root (acceptable — parallel agents within a single run already share the run-scoped copy; cross-run isolation is handled by the flock on the `.lock` file). Worktrees are unaffected (each has its own project root).
+- **If both fail:** CRG is still viable but with a thinner MCP proxy wrapper (a small Python stdio script that imports CRG's tools, filters by allow-list, and delegates). This is the most invasive fallback and would add ~50 lines to `src/worca/utils/crg_proxy.py`. Only pursued if both primary mechanisms fail.
+
 ### 6. Agent prompts — advisory `## Code graph (advisory)` + `has_code_review_graph`
 
 **Current state:** each `src/worca/agents/core/*.md` has a static `## Knowledge graph (advisory)` section teaching `graphify query`; `.block.md` files carry a one-line note gated on `{{#if has_graphify}}`; `PromptBuilder.set_graphify_available(bool)` sets the flag (`src/worca/orchestrator/prompt_builder.py:55-64,169`).
@@ -170,8 +183,34 @@ if mcp_config:                       # only when CRG ready for this stage
 
 ### 8. Post-implement refresh + post-guardian warm
 
-- **Post-implement:** after each implementer iteration completes (before tester), runner runs `code-review-graph update` against the run-scoped DB (fire-and-forget, logged, never fails the pipeline). New hook in the implement→test transition.
-- **Post-guardian:** reuse the W-053 detached-warm pattern (`runner.py:1399-1442`) to refresh the **base** cache for the new HEAD after guardian commits (`update_on.guardian_post_commit`), skipped in worktrees.
+**Post-implement — injection point and semantics.** The IMPLEMENT→TEST transition in `runner.py` has two code paths:
+
+- **Bead iteration loop** (`:3094-3144`): when more beads remain, `stage_idx` resets to IMPLEMENT via `continue` at `:3144`. **CRG refresh does NOT run between bead iterations** — the tester hasn't started, and the next implementer iteration will make further edits. Running `update` here would be wasted work.
+- **All beads done** (`:3150-3153`): after the last bead (or in fix mode at `:3154`), flow falls through to `update_stage()` at `:3157` which marks IMPLEMENT completed.
+
+The CRG refresh runs **after `update_stage()` at `:3157` and before `save_status()` at `:3158`**:
+
+```python
+# runner.py, inside the IMPLEMENT handler, after line 3157
+update_stage(status, current_stage.value, **stage_extras)
+
+# --- CRG post-implement refresh (new) ---
+if _crg_data_dir and crg_cfg and crg_cfg.get("update_on", {}).get("post_implement"):
+    _crg_ok = _crg_post_implement_refresh(_crg_data_dir, project_root, timeout=30)
+    if not _crg_ok:
+        _log("CRG post-implement refresh failed or timed out — tester proceeds with stale graph", "warn")
+# --- end CRG ---
+
+save_status(status, actual_status_path)
+```
+
+**Blocking with timeout.** The refresh is **blocking** (subprocess with 30s timeout), not fire-and-forget, because the tester needs the updated graph to provide accurate `detect_changes`/`get_impact_radius` results. On timeout or failure: log a warning, set a `crg_refresh_failed` flag in the iteration extras (surfaced in UI), and proceed — the tester runs with a stale graph rather than failing the pipeline.
+
+**Test-failure loopback interaction.** When tester fails and the loop at `:3254` resets `stage_idx` to IMPLEMENT, the implementer runs again with a `test_failure` trigger. When *that* IMPLEMENT iteration completes, the CRG refresh fires again at the same injection point — correct behavior, as the tester should always see the latest edits from the most recent implementer pass. Each implement→test cycle gets its own refresh.
+
+**Helper function** (`_crg_post_implement_refresh`): lives in `runner.py` near the graphify warm helpers (`:1399-1442`). Runs `CRG_REPO_ROOT=<worktree> CRG_DATA_DIR=<run-dir>/... code-review-graph update` as a subprocess, returns `True` on success. The `update` command uses git-diff change detection, so it picks up uncommitted in-flight edits.
+
+**Post-guardian — base cache warm.** Reuse the W-053 detached-warm pattern (`runner.py:1399-1442`) to refresh the **base** cache for the new HEAD after guardian commits (`update_on.guardian_post_commit`). Fire-and-forget (detached subprocess), logged, never fails the pipeline. Skipped in worktrees (base cache is per-SHA in the shared `$WORCA_CACHE`, not per-worktree).
 
 ### 9. Worktree implication
 
@@ -231,8 +270,9 @@ worca crg rebuild       # force clean base build
 **Done:** preflight builds a base snapshot (mock), seeds a run-scoped copy; `enabled=false` is byte-identical to today.
 
 ### Phase 3: MCP wiring + governance + prompts
-**Files:** `src/worca/utils/claude_cli.py` (`--mcp-config`/`--strict-mcp-config` + per-stage `CRG_TOOLS`), `src/worca/utils/code_review_graph.py` (`crg_mcp_config`), `src/worca/hooks/guard.py` (generalize mutation guard + CRG verbs), `src/worca/orchestrator/prompt_builder.py` (`set_crg_available`/`has_code_review_graph`), `src/worca/agents/core/*.md` + `*.block.md` (advisory section + note), `tests/test_guard.py` (CRG verbs), `tests/test_crg_mcp_config.py`, `tests/test_prompt_builder_crg.py`.
-**Gated on** validation items 1–2 (read tools emit no DML; `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for reads) — confirm before wiring.
+**Files:** `src/worca/utils/claude_cli.py` (`build_command` gains `mcp_config` param; `--mcp-config`/`--strict-mcp-config`), `src/worca/utils/code_review_graph.py` (`crg_mcp_config`, `crg_tools_for_stage`), `src/worca/hooks/guard.py` (generalize mutation guard + CRG verbs), `src/worca/orchestrator/runner.py` (`run_stage` gains `crg_data_dir` param; pipeline loop threads `_crg_data_dir`), `src/worca/orchestrator/prompt_builder.py` (`set_crg_available`/`has_code_review_graph`), `src/worca/agents/core/*.md` + `*.block.md` (advisory section + note), `tests/test_guard.py` (CRG verbs), `tests/test_crg_mcp_config.py`, `tests/test_prompt_builder_crg.py`.
+**Signature cascade** (see §4): `build_command()` + `run_agent()` + `run_stage()` + pipeline loop — four functions gain new parameters, mirroring the `graphify_out` threading pattern.
+**Gated on** validation items 1–2 (read tools emit no DML; `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for reads) — confirm before wiring. If the spike fails, apply the fallback strategy from §5 (switch to `--disallowedTools` for MCP names / default project-relative path).
 **Done:** a `ready` CRG run injects the MCP server with the right per-stage `CRG_TOOLS`; mutating verbs blocked; prompts carry the availability note.
 
 ### Phase 4: Post-implement refresh + post-guardian + fleet + workspace
@@ -252,9 +292,9 @@ worca crg rebuild       # force clean base build
 | `src/worca/utils/tool_detect.py` | NEW — shared CLI probe (extracted from graphify) |
 | `src/worca/utils/ast_cache.py` | NEW — shared snapshot/lock/repo-id helpers (extracted) |
 | `src/worca/scripts/crg_preflight.py` | NEW — base build + run-scoped seed |
-| `src/worca/utils/claude_cli.py` | + `--mcp-config`/`--strict-mcp-config` + per-stage `CRG_TOOLS` |
+| `src/worca/utils/claude_cli.py` | `build_command()` + `mcp_config` param; `run_agent()` + `mcp_config` param; `--mcp-config`/`--strict-mcp-config` flags |
 | `src/worca/hooks/guard.py` | generalize mutation guard; + CRG verbs |
-| `src/worca/orchestrator/runner.py` | chain CRG preflight; post-implement refresh; post-guardian warm |
+| `src/worca/orchestrator/runner.py` | `run_stage()` + `crg_data_dir` param; pipeline loop threads `_crg_data_dir`; chain CRG preflight; `_crg_post_implement_refresh` helper; post-guardian warm |
 | `src/worca/orchestrator/prompt_builder.py` | + `set_crg_available`/`has_code_review_graph` |
 | `src/worca/agents/core/*.md` + `*.block.md` | + `## Code graph (advisory)` + availability note |
 | `src/worca/cli/crg_cmd.py` | NEW — `worca crg {status,recommend,enable,disable,rebuild}` |
@@ -286,8 +326,8 @@ worca crg rebuild       # force clean base build
 
 **Items 1–2 are BLOCKING GATES for Phase 3** — the entire MCP-read-only governance model rests on them, so they are done-criteria, not optional spikes. **Decided** (Decisions §1): clear them via a standalone spike *before* the Phase 3 build. Items 3–5 are tuning.
 
-1. Confirm allow-listed read tools emit **no DML** under a real `serve` (CRG's `tests/test_tools.py` asserts this via `set_trace_callback` — verify for our subset). *[blocking]*
-2. Confirm `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for **reads** (CHANGELOG: "supported by CLI, MCP tools, and registry"). *[blocking]*
+1. Confirm allow-listed read tools emit **no DML** under a real `serve` (CRG's `tests/test_tools.py` asserts this via `set_trace_callback` — verify for our subset). *[blocking]* **Fallback if violated:** the Bash guard (§5) already blocks CLI mutation verbs as defense-in-depth; if read MCP tools also emit DML, the run-scoped copy isolates damage to the current run (shared base is never opened by `serve`), but the graph becomes unreliable — downgrade CRG to `degraded` and emit a warning.
+2. Confirm `serve` honors `CRG_DATA_DIR`/`CRG_REPO_ROOT` for **reads** (CHANGELOG: "supported by CLI, MCP tools, and registry"). *[blocking]* **Fallback if not honored:** see §5 "Fallback strategies" — place the run-scoped copy at CRG's default project-relative path (`<project-root>/.code-review-graph/`) instead of `<run-dir>/...`; CRG's `find_project_root()` resolves it naturally. If `CRG_TOOLS` is also not honored, fall back to `--disallowedTools` with `mcp__code-review-graph__<tool>` names, or (worst case) a thin MCP proxy wrapper. These fallbacks are sketched in §5 so a spike failure does not stall the feature.
 3. Measure per-agent `serve` **startup latency** (`MCP_TIMEOUT`). **Decided** (Decisions §2): per-invocation stdio child; server warming deferred, revisit only if latency is prohibitive.
 4. **Decided** (Decisions §3): `PRAGMA wal_checkpoint(TRUNCATE)` after build, before copying the base DB (clean single-file copy, no `-wal` side-file).
 5. Confirm CRG `visualize` HTML output path for the `/api/crg/graph.html` endpoint. *(still open)*

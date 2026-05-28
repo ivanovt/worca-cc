@@ -200,20 +200,14 @@ def _is_file_write_via_bash(command: str) -> bool:
 # runs `graphify update` itself at preflight as a detached subprocess that
 # never passes through this hook. Agents get the cached graph via the
 # GRAPHIFY_OUT env var and are restricted to read-only queries.
-_GRAPHIFY_MUTATION_VERBS = frozenset({
-    "update", "install", "uninstall", "add", "hook",
-    "merge-driver", "watch", "clone",
-})
+def _is_tool_mutation(executable: str, verbs: frozenset, command: str) -> bool:
+    """Detect a mutating `<executable> <verb>` invocation.
 
-
-def _is_graphify_mutation(command: str) -> bool:
-    """Detect a mutating `graphify <verb>` invocation.
-
-    Read subcommands (query/explain/path/affected/diagnose) are allowed; only
-    the mutating verbs above are matched. Inspects the cd-stripped command so
-    the hook's ``cd <root> &&`` prefix doesn't hide the real invocation, and
-    matches on the first token after a ``graphify`` executable so a query whose
-    text mentions "update" (a later, quoted token) is not falsely flagged.
+    Only the verbs in *verbs* are matched; any other subcommand is allowed.
+    Inspects the cd-stripped command so the hook's ``cd <root> &&`` prefix
+    doesn't hide the real invocation, and matches on the first token after
+    the *executable* basename so a query whose text mentions a mutation verb
+    (a later, quoted token) is not falsely flagged.
     """
     if _is_safe_command(command):
         return False
@@ -223,17 +217,53 @@ def _is_graphify_mutation(command: str) -> bool:
     except ValueError:
         return False
     for i, tok in enumerate(tokens):
-        if os.path.basename(tok) == "graphify" and i + 1 < len(tokens):
-            return tokens[i + 1] in _GRAPHIFY_MUTATION_VERBS
+        if os.path.basename(tok) == executable and i + 1 < len(tokens):
+            return tokens[i + 1] in verbs
     return False
 
 
-def _graphify_mutation_guard_enabled() -> bool:
-    """Whether the read-only graphify guard is active (default True).
+# graphify subcommands that mutate state (build the graph, install hooks,
+# rewrite the consumer's config). The worca pipeline owns graph builds — it
+# runs `graphify update` itself at preflight as a detached subprocess that
+# never passes through this hook. Agents get the cached graph via the
+# GRAPHIFY_OUT env var and are restricted to read-only queries.
+_GRAPHIFY_MUTATION_VERBS = frozenset({
+    "update", "install", "uninstall", "add", "hook",
+    "merge-driver", "watch", "clone",
+})
 
-    Reads ``worca.governance.guards.block_graphify_mutation`` from the project
-    settings (resolved relative to the hook's cwd, which the pre_tool_use hook
-    pins to the project root). Defaults to True — and stays True on any read
+
+def _is_graphify_mutation(command: str) -> bool:
+    return _is_tool_mutation("graphify", _GRAPHIFY_MUTATION_VERBS, command)
+
+
+def _graphify_mutation_guard_enabled() -> bool:
+    return _guard_flag_enabled("block_graphify_mutation")
+
+
+# CRG (code-review-graph) mutating CLI verbs. The pipeline owns graph builds
+# at preflight; agents interact via MCP tools only. This is defense-in-depth
+# in case an agent shells out to the CLI binary directly.
+_CRG_MUTATION_VERBS = frozenset({
+    "build", "update", "install", "serve",
+    "register", "unregister", "watch", "daemon",
+})
+
+
+def _is_crg_mutation(command: str) -> bool:
+    return _is_tool_mutation("code-review-graph", _CRG_MUTATION_VERBS, command)
+
+
+def _crg_mutation_guard_enabled() -> bool:
+    return _guard_flag_enabled("block_crg_mutation")
+
+
+def _guard_flag_enabled(key: str) -> bool:
+    """Whether a governance guard flag is active (default True).
+
+    Reads ``worca.governance.guards.<key>`` from the project settings
+    (resolved relative to the hook's cwd, which the pre_tool_use hook pins
+    to the project root). Defaults to True — and stays True on any read
     error — so the guard is on unless a project explicitly opts out.
     """
     try:
@@ -244,7 +274,7 @@ def _graphify_mutation_guard_enabled() -> bool:
             .get("governance", {})
             .get("guards", {})
         )
-        return guards.get("block_graphify_mutation", True)
+        return guards.get(key, True)
     except Exception:
         return True
 
@@ -281,6 +311,13 @@ def check_guard(tool_name: str, tool_input: dict) -> tuple:
                    "(query/explain/path/affected/diagnose). graphify "
                    "update/install/add and other mutations are reserved for "
                    "the worca pipeline.")
+
+    if (tool_name == "Bash"
+            and _is_crg_mutation(command)
+            and _crg_mutation_guard_enabled()):
+        return (2, "Blocked: agents may only use code-review-graph via MCP "
+                   "tools. code-review-graph build/update/install/serve and "
+                   "other mutations are reserved for the worca pipeline.")
 
     # Block WORCA_AGENT evasion attempts (unset / env -u / override).
     # Runs BEFORE role checks so the agent cannot first erase its identity

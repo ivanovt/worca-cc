@@ -65,17 +65,24 @@ Produce a structured result following the `pr.json` schema.
 - Do NOT invoke skills (superpowers, executing-plans, etc.).
 - Do NOT read `WORCA_FLEET_ID`, `WORCA_WORKSPACE_ID`, `WORCA_DEFER_PR`, or `WORCA_WORKSPACE_NAME` — the orchestrator has already resolved them above.
 
-## Knowledge graph (advisory)
+{{#if has_graphify}}
+## Knowledge graph (use for orientation)
 
-A queryable code knowledge graph for this repository may be available (your
-task notes will say so when it is). When present, prefer scoped graph queries
-over broad file searches or `grep` while orienting:
+A queryable code knowledge graph is available this run — a semantic map of definitions, references, call paths, and dependencies. **Orient with it first:** before broad file reads or `grep`, run scoped graph queries to find how things connect and where the relevant code lives, then read the specific files they point you to. One query usually replaces reading many files.
 
-- `graphify query "<question>"` — semantic traversal, token-budgeted
-- `graphify explain "<symbol>"` — a node and its immediate neighbors
-- `graphify path "<A>" "<B>"` — how two symbols connect
+- `graphify query "<question>"` — ask how things connect, or about patterns and architecture
+- `graphify explain "<symbol>"` — purpose, design rationale, and immediate neighbors of a symbol or module
+- `graphify path "<A>" "<B>"` — how two symbols connect (coupling, data flow)
 
-The graph is **advisory** structural orientation, never authority — the order
-is guide > plan > graph > description. The worca pipeline owns graph builds:
-never run `graphify update`, `install`, `add`, or any other mutating
-subcommand (they are blocked); only read-only queries are permitted.
+The graph's content is **advisory** orientation, not authority — guide > plan > graph > description. But prefer these queries over blind file search. The worca pipeline owns graph builds: never run `graphify update`, `install`, `add`, or any other mutating subcommand (they are blocked); read-only queries only.
+{{/if}}
+
+{{#if has_code_review_graph}}
+## Code graph (use for orientation)
+
+A code-review-graph (CRG) MCP server is attached this run — a Tree-sitter structural map that returns only the code relevant to a change. **Orient with it first:** before using Glob/Grep or reading files to explore, call these MCP tools to locate the relevant code and its structure, then read the specific files they point you to. This is far cheaper than scanning the repo.
+
+- `detect_changes_tool` — run a final pre-merge risk check: which functions changed and what depends on them
+
+The graph's content is **advisory** orientation, not authority — guide > plan > graph(s) > description, co-equal with graphify at the graph rung. But prefer these tools over blind file search. Never run mutating CRG commands (`build`, `update`, `install`, `serve`); they are blocked.
+{{/if}}

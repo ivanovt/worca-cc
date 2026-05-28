@@ -204,6 +204,7 @@ def build_command(
     json_schema: Optional[str] = None,
     model: Optional[str] = None,
     settings: Optional[dict] = None,
+    mcp_config: Optional[str] = None,
     **kwargs,
 ) -> tuple[list[str], Optional[str]]:
     """Build the claude CLI command list without executing.
@@ -272,6 +273,8 @@ def build_command(
             except FileNotFoundError:
                 pass  # Use the raw string as-is
         cmd.extend(["--json-schema", schema_str])
+    if mcp_config:
+        cmd.extend(["--mcp-config", mcp_config, "--strict-mcp-config"])
     return cmd, prompt_file
 
 
@@ -493,6 +496,7 @@ def run_agent(
     on_event: Optional[Callable[[dict], None]] = None,
     settings: Optional[dict] = None,
     graphify_out: Optional[str] = None,
+    mcp_config: Optional[str] = None,
     run_dir: Optional[str] = None,
     stage: Optional[str] = None,
     iteration: Optional[int] = None,
@@ -524,6 +528,7 @@ def run_agent(
         json_schema=json_schema,
         model=model,
         settings=settings,
+        mcp_config=mcp_config,
     )
 
     global _current_proc

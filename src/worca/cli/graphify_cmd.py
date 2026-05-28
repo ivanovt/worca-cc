@@ -16,6 +16,7 @@ import shutil
 import sys
 from pathlib import Path
 
+from worca.utils.ast_cache import is_snapshot_complete
 from worca.utils.git import get_current_git_head, repo_id
 from worca.utils.graphify import (
     _VALID_MODES,
@@ -23,7 +24,6 @@ from worca.utils.graphify import (
     effective_graphify_config,
     graphify_report_path,
     graphify_snapshot_dir,
-    is_snapshot_complete,
 )
 from worca.utils.paths import worca_cache_dir
 from worca.utils.settings import load_settings

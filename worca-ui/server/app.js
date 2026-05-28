@@ -15,6 +15,10 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 
 import { dbExists, getIssue, listIssues } from './beads-reader.js';
+import {
+  _effectiveCrgConfig,
+  createCrgStatus,
+} from './code-review-graph-status.js';
 import { createFleetRouter } from './fleet-routes.js';
 import {
   _effectiveConfig,
@@ -1159,6 +1163,150 @@ export function createApp(options = {}) {
     const { root } = readGraphifySettings(req.query.project);
     const snap = snapshotDir(root);
     const htmlPath = snap ? join(snap, 'graphify', 'graph.html') : null;
+    if (!htmlPath || !existsSync(htmlPath)) {
+      return res.status(404).json({ ok: false, error: 'graph.html not found' });
+    }
+    res.sendFile(htmlPath);
+  });
+
+  // ─── CRG (code-review-graph) endpoints ─────────────────────────────────
+  if (!app.locals.crgStatus) {
+    app.locals.crgStatus = createCrgStatus({});
+  }
+
+  function readCrgSettings(projectId) {
+    const readJson = (p) => {
+      if (!p) return {};
+      try {
+        return JSON.parse(readFileSync(p, 'utf-8'));
+      } catch {
+        return {};
+      }
+    };
+    const globalSettingsPath = prefsDir
+      ? join(prefsDir, 'settings.json')
+      : settingsPath;
+
+    let projectSettingsPath = settingsPath;
+    let root = projectRoot || process.cwd();
+    if (projectId && prefsDir) {
+      const proj = readProjects(prefsDir).find((p) => p.name === projectId);
+      if (proj) {
+        projectSettingsPath =
+          proj.settingsPath || join(proj.path, '.claude', 'settings.json');
+        root = proj.path;
+      }
+    } else if (!projectSettingsPath && projectRoot) {
+      projectSettingsPath = join(projectRoot, '.claude', 'settings.json');
+    }
+
+    return {
+      globalSettings: readJson(globalSettingsPath),
+      projectSettings: readJson(projectSettingsPath),
+      root,
+    };
+  }
+
+  async function crgStatusPayload(projectId) {
+    const { globalSettings, projectSettings, root } =
+      readCrgSettings(projectId);
+    const result = await app.locals.crgStatus.getStatus({
+      globalSettings,
+      projectSettings,
+      projectRoot: root,
+    });
+    return { ...result, building: Boolean(app.locals.crgBuilding) };
+  }
+
+  app.get('/api/crg/status', async (req, res) => {
+    try {
+      res.json(await crgStatusPayload(req.query.project));
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/crg/recheck', async (req, res) => {
+    try {
+      app.locals.crgStatus.invalidate();
+      res.json(await crgStatusPayload(req.query.project));
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/crg/build', async (req, res) => {
+    try {
+      const { globalSettings, projectSettings, root } = readCrgSettings(
+        req.query.project,
+      );
+      const effective = _effectiveCrgConfig(globalSettings, projectSettings);
+      if (!effective.enabled) {
+        return res
+          .status(400)
+          .json({ ok: false, error: 'Code-review-graph is not enabled' });
+      }
+      const detection = await app.locals.crgStatus.detect();
+      if (
+        !detection.installed ||
+        !detection.compatible ||
+        !detection.fastmcp_ok
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            detection.error ||
+            'Code-review-graph is not installed or not compatible',
+        });
+      }
+      if (app.locals.crgBuilding) {
+        return res.json({ ok: true, status: 'building' });
+      }
+      const snap = snapshotDir(root);
+      if (snap) {
+        try {
+          rmSync(snap, { recursive: true, force: true });
+        } catch {}
+      }
+      app.locals.crgBuilding = true;
+      const child = spawn(
+        'python3',
+        [
+          '-c',
+          'from worca.scripts.crg_preflight import run_crg_preflight as r; r()',
+        ],
+        { cwd: root, stdio: 'ignore' },
+      );
+      const done = () => {
+        app.locals.crgBuilding = false;
+        app.locals.crgStatus.invalidate();
+      };
+      child.on('exit', done);
+      child.on('error', done);
+      res.json({ ok: true, status: 'building' });
+    } catch (err) {
+      app.locals.crgBuilding = false;
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/crg/clear', async (req, res) => {
+    try {
+      const { root } = readCrgSettings(req.query.project);
+      const cleared = clearRepoCache(root);
+      app.locals.crgStatus.invalidate();
+      res.json({ ok: true, cleared });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.get('/api/crg/graph.html', (req, res) => {
+    const { root } = readCrgSettings(req.query.project);
+    const snap = snapshotDir(root);
+    const htmlPath = snap
+      ? join(snap, 'code-review-graph', 'graph.html')
+      : null;
     if (!htmlPath || !existsSync(htmlPath)) {
       return res.status(404).json({ ok: false, error: 'graph.html not found' });
     }

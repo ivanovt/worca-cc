@@ -240,6 +240,10 @@ def create_parser() -> argparse.ArgumentParser:
     from worca.cli.graphify_cmd import register_subcommand as register_graphify
     register_graphify(sub)
 
+    # crg (code-review-graph)
+    from worca.cli.crg_cmd import register_subcommand as register_crg
+    register_crg(sub)
+
     return parser
 
 
@@ -293,6 +297,9 @@ def main(argv=None):
     elif args.command == "graphify":
         from worca.cli.graphify_cmd import cmd_graphify
         cmd_graphify(args)
+    elif args.command == "crg":
+        from worca.cli.crg_cmd import cmd_crg
+        cmd_crg(args)
     else:
         print(f"error: unknown command {args.command!r}", file=sys.stderr)
         raise SystemExit(1)

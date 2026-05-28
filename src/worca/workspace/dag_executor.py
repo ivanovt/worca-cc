@@ -22,10 +22,46 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
+from worca.orchestrator.fleet_manifest import GRAPH_STATUS_DISABLED
 from worca.state.status import WorkspaceStatus
 
 
 CONTEXT_CAP_BYTES = 8192
+
+
+def detect_child_crg_status(project_dir: str) -> str:
+    """Return per-child CRG readiness: ready|degraded|disabled.
+
+    Mirrors the fleet-level detection in run_fleet.py. Returns
+    GRAPH_STATUS_DISABLED on any error (never crashes).
+    """
+    try:
+        from worca.utils.code_review_graph import (
+            detect_code_review_graph,
+            effective_crg_config,
+        )
+        from worca.utils.settings import load_global_settings, load_settings
+
+        settings_path = os.path.join(project_dir, ".claude", "settings.json")
+        settings = load_settings(settings_path)
+        global_settings = load_global_settings()
+        cfg = effective_crg_config(global_settings, settings)
+    except Exception:
+        return GRAPH_STATUS_DISABLED
+
+    if not cfg.enabled:
+        return GRAPH_STATUS_DISABLED
+
+    detection = detect_code_review_graph(
+        version_range=cfg.version_range,
+        fastmcp_min=cfg.fastmcp_min,
+    )
+    if not detection.installed or not detection.compatible or not detection.fastmcp_ok:
+        from worca.orchestrator.fleet_manifest import GRAPH_STATUS_DEGRADED
+        return GRAPH_STATUS_DEGRADED
+
+    from worca.orchestrator.fleet_manifest import GRAPH_STATUS_READY
+    return GRAPH_STATUS_READY
 
 _API_SURFACE_DIRS = frozenset({"types", "api", "schemas"})
 
@@ -281,6 +317,14 @@ class DagExecutor:
             if child.get("status") == "completed":
                 self._completed_projects[child["project"]] = child
 
+        self._crg_statuses: dict[str, str] = {}
+        for project_name, project_path in self._projects_by_name.items():
+            abs_path = self._project_abs_path(project_path)
+            try:
+                self._crg_statuses[project_name] = detect_child_crg_status(abs_path)
+            except Exception:
+                self._crg_statuses[project_name] = GRAPH_STATUS_DISABLED
+
     def _project_abs_path(self, project_path: str) -> str:
         return os.path.join(self._workspace_root, *project_path.replace("\\", "/").split("/"))
 
@@ -336,6 +380,7 @@ class DagExecutor:
                     "project_path": self._project_abs_path(project_path),
                     "status": "blocked",
                     "tier": tier_idx,
+                    "crg_status": self._crg_statuses.get(project, GRAPH_STATUS_DISABLED),
                 })
                 self._failed_projects.add(project)
                 self._terminal_count += 1
@@ -361,6 +406,7 @@ class DagExecutor:
                         "project_path": self._project_abs_path(project_path),
                         "status": "running",
                         "tier": tier_idx,
+                        "crg_status": self._crg_statuses.get(project, GRAPH_STATUS_DISABLED),
                     }
                     self._manifest["children"].append(entry)
                     running_entries[project] = entry
@@ -534,6 +580,7 @@ class DagExecutor:
                     "project_path": self._project_abs_path(project_path),
                     "status": "halted",
                     "tier": tier_info["tier"],
+                    "crg_status": self._crg_statuses.get(project, GRAPH_STATUS_DISABLED),
                 })
         self._manifest["status"] = WorkspaceStatus.HALTED
         self._manifest["halt_reason"] = "circuit_breaker"

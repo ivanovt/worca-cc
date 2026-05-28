@@ -24,6 +24,7 @@ from worca.orchestrator.fleet_manifest import (
     update_fleet_status,
 )
 from worca.state.status import PipelineStatus, FleetStatus
+from worca.utils.code_review_graph import detect_code_review_graph, effective_crg_config
 from worca.utils.graphify import detect_graphify, effective_graphify_config
 from worca.utils.paths import fleet_runs_dir as resolve_fleet_runs_dir
 from worca.utils.settings import load_global_settings, load_settings
@@ -135,6 +136,29 @@ def detect_child_graphify_status(project_dir: str) -> str:
 
     detection = detect_graphify(cfg.version_range)
     if not detection.installed or not detection.compatible:
+        return GRAPH_STATUS_DEGRADED
+
+    return GRAPH_STATUS_READY
+
+
+def detect_child_crg_status(project_dir: str) -> str:
+    """Return per-child CRG readiness: ready|degraded|disabled."""
+    try:
+        settings_path = os.path.join(project_dir, ".claude", "settings.json")
+        settings = load_settings(settings_path)
+        global_settings = load_global_settings()
+        cfg = effective_crg_config(global_settings, settings)
+    except Exception:
+        return GRAPH_STATUS_DISABLED
+
+    if not cfg.enabled:
+        return GRAPH_STATUS_DISABLED
+
+    detection = detect_code_review_graph(
+        version_range=cfg.version_range,
+        fastmcp_min=cfg.fastmcp_min,
+    )
+    if not detection.installed or not detection.compatible or not detection.fastmcp_ok:
         return GRAPH_STATUS_DEGRADED
 
     return GRAPH_STATUS_READY
@@ -356,6 +380,7 @@ def dispatch_fleet(
         return results
 
     graph_status_by_project = {t["project_dir"]: t.get("graph_status") for t in targets}
+    crg_status_by_project = {t["project_dir"]: t.get("crg_status") for t in targets}
     pending = [t["project_dir"] for t in targets]
     in_flight = {}  # project_dir -> Popen
     failed_count = 0
@@ -431,6 +456,7 @@ def dispatch_fleet(
                         register_fleet_child(
                             fleet_id, project_dir, run_id,
                             graph_status=graph_status_by_project.get(project_dir),
+                            crg_status=crg_status_by_project.get(project_dir),
                         )
                     except Exception as exc:
                         print(
@@ -935,18 +961,19 @@ def main(argv=None) -> int:
         guide_abs = [os.path.abspath(g) for g in (args.guide or [])]
 
         graphify_statuses = {p: detect_child_graphify_status(p) for p in provisioned}
+        crg_statuses = {p: detect_child_crg_status(p) for p in provisioned}
 
         if _plan_first_ref is not None:
             # Reference already ran — dispatch remaining N-1 children with shared plan
             remaining = [p for p in provisioned if p != _plan_first_ref]
             dispatch_targets = [
-                {"project_dir": p, "status": PipelineStatus.PENDING, "graph_status": graphify_statuses.get(p)}
+                {"project_dir": p, "status": PipelineStatus.PENDING, "graph_status": graphify_statuses.get(p), "crg_status": crg_statuses.get(p)}
                 for p in remaining
             ]
             dispatch_plan = shared_plan
         else:
             dispatch_targets = [
-                {"project_dir": p, "status": PipelineStatus.PENDING, "graph_status": graphify_statuses.get(p)}
+                {"project_dir": p, "status": PipelineStatus.PENDING, "graph_status": graphify_statuses.get(p), "crg_status": crg_statuses.get(p)}
                 for p in provisioned
             ]
             dispatch_plan = os.path.abspath(args.plan) if args.plan else None
