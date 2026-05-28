@@ -1732,10 +1732,15 @@ def run_preflight(
     if graphify_result.get("reason"):
         result["graphify_reason"] = graphify_result["reason"]
 
-    crg_result = run_crg_preflight(settings_path=settings_path)
+    # run_dir="." seeds the run-scoped writable copy at <cwd>/code-review-graph
+    # (CRG opens the DB read-write); the base/throwaway snapshot is published to
+    # the per-commit cache regardless, mirroring graphify.
+    crg_result = run_crg_preflight(settings_path=settings_path, run_dir=".")
     result["crg_status"] = crg_result.get("status", "skipped")
     if crg_result.get("crg_data_dir"):
         result["crg_data_dir"] = crg_result["crg_data_dir"]
+    if crg_result.get("outcome"):
+        result["crg_outcome"] = crg_result["outcome"]
     if crg_result.get("reason"):
         result["crg_reason"] = crg_result["reason"]
 
@@ -2984,6 +2989,9 @@ def run_pipeline(
                 if result.get("crg_status"):
                     status["crg_status"] = result["crg_status"]
                     _pf_stage_extras["crg_status"] = result["crg_status"]
+                if result.get("crg_outcome"):
+                    status["crg_outcome"] = result["crg_outcome"]
+                    _pf_stage_extras["crg_outcome"] = result["crg_outcome"]
                 if result.get("crg_reason"):
                     status["crg_reason"] = result["crg_reason"]
                     _pf_stage_extras["crg_reason"] = result["crg_reason"]

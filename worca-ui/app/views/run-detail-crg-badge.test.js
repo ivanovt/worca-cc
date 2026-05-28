@@ -162,7 +162,12 @@ describe('runDetailView CRG invocation badge', () => {
 
 // --- Preflight Code Review Graph badge ---
 
-function makePreflightRun({ crgEnabled, crgStatus, crgReason } = {}) {
+function makePreflightRun({
+  crgEnabled,
+  crgStatus,
+  crgOutcome,
+  crgReason,
+} = {}) {
   const stage = {
     status: 'completed',
     iterations: [
@@ -175,6 +180,7 @@ function makePreflightRun({ crgEnabled, crgStatus, crgReason } = {}) {
     ],
   };
   if (crgStatus !== undefined) stage.crg_status = crgStatus;
+  if (crgOutcome !== undefined) stage.crg_outcome = crgOutcome;
   if (crgReason !== undefined) stage.crg_reason = crgReason;
   const run = { stages: { preflight: stage } };
   if (crgEnabled !== undefined) run.crg_enabled = crgEnabled;
@@ -182,7 +188,51 @@ function makePreflightRun({ crgEnabled, crgStatus, crgReason } = {}) {
 }
 
 describe('preflight Code Review Graph badge', () => {
-  it('shows "ready" success badge when the graph is built', () => {
+  it('shows "cached" success badge for a cache hit', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          crgEnabled: true,
+          crgStatus: 'ready',
+          crgOutcome: 'cached',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-crg-badge');
+    expect(html).toContain('Code Review Graph:');
+    expect(html).toContain('cached');
+    expect(html).toContain('variant="success"');
+  });
+
+  it('shows "rebuilt" success badge for a fresh build', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          crgEnabled: true,
+          crgStatus: 'ready',
+          crgOutcome: 'built',
+        }),
+      ),
+    );
+    expect(html).toContain('rebuilt');
+    expect(html).toContain('variant="success"');
+  });
+
+  it('shows "built (uncommitted)" warning badge for a throwaway', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          crgEnabled: true,
+          crgStatus: 'ready',
+          crgOutcome: 'throwaway',
+        }),
+      ),
+    );
+    expect(html).toContain('built (uncommitted)');
+    expect(html).toContain('variant="warning"');
+  });
+
+  it('falls back to "ready" when status is ready but no outcome (old runs)', () => {
     const html = renderToString(
       runDetailView(makePreflightRun({ crgEnabled: true, crgStatus: 'ready' })),
     );

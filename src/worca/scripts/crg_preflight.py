@@ -83,16 +83,26 @@ def run_crg_preflight(
     *,
     settings_path: str = ".claude/settings.json",
     project_root: str = ".",
-    run_dir: str = ".",
+    run_dir: Optional[str] = None,
     timeout: Optional[int] = None,
     global_settings: Optional[dict] = None,
 ) -> dict:
-    """Detect CRG, build/reuse base snapshot, seed run-scoped copy.
+    """Detect CRG, build/reuse the per-commit cache snapshot, and (when a
+    ``run_dir`` is given) seed a run-scoped writable copy.
+
+    Mirrors ``graphify_preflight``'s cache model: clean builds publish to the
+    per-commit cache (``<sha>/``); a dirty tree under ``clean_only`` builds a
+    throwaway cache sibling (``<sha>.dirty/``) that is never published, so an
+    in-progress working tree can't poison the per-commit entry. Nothing is ever
+    written into the project tree unless a ``run_dir`` is passed.
 
     Returns a status dict with keys:
         status: "skipped" | "degraded" | "ready"
         reason: (when skipped/degraded) explanation string
-        crg_data_dir: (when ready) absolute path to run-scoped CRG dir
+        outcome: (when ready) "cached" | "built" | "throwaway"
+        crg_data_dir: (when ready) the CRG data dir agents point CRG_DATA_DIR at
+            — the run-scoped writable copy when ``run_dir`` is given, else the
+            cache snapshot itself.
 
     Never raises — all errors are caught and returned as degraded status.
     """
@@ -118,31 +128,42 @@ def run_crg_preflight(
 
     snapshot_base = ast_snapshot_dir(rid, sha)
     base_data = _crg_data_dir(snapshot_base)
-    run_data = _crg_data_dir(run_dir)
+    run_data = _crg_data_dir(run_dir) if run_dir else None
 
+    def _ready(src_data: str, outcome: str) -> dict:
+        # Seed the run-scoped writable copy for the pipeline (CRG opens the DB
+        # read-write); the Build endpoint / cache-warm path (no run_dir) reads
+        # the cache snapshot in place.
+        data_dir = src_data
+        if run_data is not None:
+            _copy_db(src_data, run_data)
+            data_dir = run_data
+        return {"status": "ready", "outcome": outcome, "crg_data_dir": data_dir}
+
+    # Dirty + clean_only: build a throwaway cache sibling (<sha>.dirty), never
+    # published — mirrors graphify so an in-progress tree can't poison the cache.
     if cfg.freshness == "clean_only" and not is_working_tree_clean(project_root):
-        ok, err = _run_build(project_root=project_root, data_dir=run_data, timeout=timeout)
+        dirty_data = _crg_data_dir(snapshot_base + ".dirty")
+        ok, err = _run_build(project_root=project_root, data_dir=dirty_data, timeout=timeout)
         if not ok:
             return {"status": "degraded", "reason": err or "build_failed"}
-        if not os.path.isfile(_graph_db_path(run_data)):
+        if not os.path.isfile(_graph_db_path(dirty_data)):
             return {"status": "degraded", "reason": "graph.db not produced"}
-        return {"status": "ready", "crg_data_dir": run_data}
+        return _ready(dirty_data, "throwaway")
 
-    # The shared .complete marker may be set by graphify before CRG builds.
-    # Check for CRG's own graph.db rather than the shared marker alone.
-    _crg_base_ready = os.path.isfile(_graph_db_path(base_data))
-
-    if _crg_base_ready:
-        _copy_db(base_data, run_data)
-        return {"status": "ready", "crg_data_dir": run_data}
+    # Cache hit: a published snapshot for this sha already exists. (The shared
+    # .complete marker may be set by graphify first, so check CRG's own graph.db.)
+    if os.path.isfile(_graph_db_path(base_data)):
+        return _ready(base_data, "cached")
 
     if not cfg.update_on_preflight:
         return {"status": "skipped", "reason": "update_on_preflight disabled"}
 
+    # Build under an exclusive lock; re-check in case a parallel worktree
+    # published while we waited.
     with snapshot_lock(snapshot_base):
         if os.path.isfile(_graph_db_path(base_data)):
-            _copy_db(base_data, run_data)
-            return {"status": "ready", "crg_data_dir": run_data}
+            return _ready(base_data, "cached")
         ok, err = _run_build(project_root=project_root, data_dir=base_data, timeout=timeout)
         if not ok:
             return {"status": "degraded", "reason": err or "build_failed"}
@@ -151,5 +172,4 @@ def run_crg_preflight(
         _wal_checkpoint(_graph_db_path(base_data))
         mark_snapshot_complete(snapshot_base)
 
-    _copy_db(base_data, run_data)
-    return {"status": "ready", "crg_data_dir": run_data}
+    return _ready(base_data, "built")

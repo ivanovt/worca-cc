@@ -851,11 +851,12 @@ function _preflightGraphifyBadge(stage, run) {
 function _preflightCrgBadge(stage, run) {
   const enabled = run.crg_enabled;
   const status = stage.crg_status;
+  const outcome = stage.crg_outcome;
   const reason = stage.crg_reason;
 
   // Returns the labeled "Code Review Graph:" fragment; _preflightGraphBadgesRow
   // places it on the same row right after Graphify. Mirrors
-  // _preflightGraphifyBadge (CRG has just skipped/degraded/ready). Same tooltip.
+  // _preflightGraphifyBadge (CRG is structural-only, so no mode suffix).
   const row = (badge) =>
     html`<span class="meta-label">Code Review Graph:</span> ${badge}`;
   const badge = (variant, text, tip) =>
@@ -889,7 +890,37 @@ function _preflightCrgBadge(stage, run) {
       : "Code Review Graph couldn't provide a graph. See Project Settings → Code Review Graph.";
     return row(badge('danger', 'unavailable', tip));
   }
+
+  // Ready: distinguish cache outcomes like graphify (no mode — CRG is structural).
+  if (outcome === 'cached') {
+    return row(
+      badge(
+        'success',
+        'cached',
+        'Reused the CRG graph already cached for this commit — agents query it via per-stage MCP tools.',
+      ),
+    );
+  }
+  if (outcome === 'built') {
+    return row(
+      badge(
+        'success',
+        'rebuilt',
+        'No cached CRG graph for this commit, so a fresh one was built during preflight and cached.',
+      ),
+    );
+  }
+  if (outcome === 'throwaway') {
+    return row(
+      badge(
+        'warning',
+        'built (uncommitted)',
+        'Working tree had uncommitted changes, so a throwaway CRG graph was built for this run only (not cached).',
+      ),
+    );
+  }
   if (status === 'ready') {
+    // Older runs recorded `ready` without an outcome.
     return row(
       badge(
         'success',
@@ -986,6 +1017,7 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     graphify_mode: stage.graphify_mode || undefined,
     graphify_reason: stage.graphify_reason || undefined,
     crg_status: stage.crg_status || undefined,
+    crg_outcome: stage.crg_outcome || undefined,
     crg_reason: stage.crg_reason || undefined,
     iterations: iterations.map((it) => ({
       number: it.number,

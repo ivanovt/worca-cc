@@ -136,6 +136,7 @@ class TestCrgPreflightBaseBuild:
         with _patched(_make_config(), clean=True) as mr:
             result = _call(tmp_path, run_dir=run_dir)
         assert result["status"] == "ready"
+        assert result["outcome"] == "built"
         snap = ast_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
         assert is_snapshot_complete(snap)
         # Build command uses code-review-graph build
@@ -166,6 +167,7 @@ class TestCrgPreflightBaseBuild:
         with _patched(_make_config()) as mr:
             result = _call(tmp_path, run_dir=run_dir)
         assert result["status"] == "ready"
+        assert result["outcome"] == "cached"
         mr.assert_not_called()
         # Run-scoped copy still created
         assert os.path.isfile(os.path.join(run_dir, "code-review-graph", "graph.db"))
@@ -196,17 +198,44 @@ class TestCrgPreflightBaseBuild:
 
 
 class TestCrgPreflightFreshness:
-    def test_dirty_clean_only_builds_run_scoped_directly(self, tmp_path, cache):
+    def test_dirty_clean_only_builds_throwaway_in_cache(self, tmp_path, cache):
+        """Dirty + clean_only builds a throwaway cache sibling (<sha>.dirty),
+        never publishing the per-commit base — mirrors graphify. The run-scoped
+        writable copy is still seeded for the pipeline."""
         run_dir = str(tmp_path / "run")
         with _patched(_make_config(freshness="clean_only"), clean=False) as mr:
             result = _call(tmp_path, run_dir=run_dir)
         assert result["status"] == "ready"
+        assert result["outcome"] == "throwaway"
         snap = ast_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
+        # Per-commit base is never published…
         assert not is_snapshot_complete(snap)
-        # Built directly into run-scoped dir
+        # …the build targets the <sha>.dirty cache sibling, not the project tree
+        dirty_crg = os.path.join(snap + ".dirty", "code-review-graph")
         env = mr.call_args_list[0].kwargs["env"]
-        assert env["CRG_DATA_DIR"] == os.path.join(run_dir, "code-review-graph")
+        assert env["CRG_DATA_DIR"] == dirty_crg
+        assert os.path.isfile(os.path.join(dirty_crg, "graph.db"))
+        # …and the run-scoped writable copy is seeded for agents
         assert result["crg_data_dir"] == os.path.join(run_dir, "code-review-graph")
+        assert os.path.isfile(os.path.join(run_dir, "code-review-graph", "graph.db"))
+
+    def test_no_run_dir_warms_cache_without_project_copy(self, tmp_path, cache):
+        """The Build endpoint / cache-warm path passes no run_dir: it publishes
+        the base snapshot to the cache and returns the cache path — no copy is
+        written into the project tree."""
+        from worca.scripts.crg_preflight import run_crg_preflight
+
+        with _patched(_make_config(), clean=True):
+            result = run_crg_preflight(
+                settings_path=str(tmp_path / "s.json"),
+                project_root=str(tmp_path),
+            )
+        assert result["status"] == "ready"
+        assert result["outcome"] == "built"
+        snap = ast_snapshot_dir("repo1", "deadbeef", cache_dir=cache)
+        assert is_snapshot_complete(snap)
+        # crg_data_dir points at the cache snapshot, not a project-local copy
+        assert result["crg_data_dir"] == os.path.join(snap, "code-review-graph")
 
     def test_dirty_base_sha_builds_and_publishes(self, tmp_path, cache):
         run_dir = str(tmp_path / "run")
