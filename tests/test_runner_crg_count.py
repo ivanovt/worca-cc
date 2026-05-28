@@ -6,7 +6,7 @@ iteration to drive the run-detail "CRG" badge.  The matching logic lives in
 """
 import pytest
 
-from worca.orchestrator.runner import _is_crg_tool_use
+from worca.orchestrator.runner import _crg_tool_basename, _is_crg_tool_use
 
 
 @pytest.mark.parametrize(
@@ -39,3 +39,22 @@ def test_matches_crg_mcp_tools(tool_name):
 )
 def test_excludes_non_crg_tools(tool_name):
     assert _is_crg_tool_use(tool_name) is False
+
+
+@pytest.mark.parametrize(
+    "tool_name,expected",
+    [
+        (
+            "mcp__code-review-graph__get_minimal_context_tool",
+            "get_minimal_context_tool",
+        ),
+        (
+            "mcp__code-review-graph__get_architecture_overview_tool",
+            "get_architecture_overview_tool",
+        ),
+        ("mcp__code-review-graph__detect_changes_tool", "detect_changes_tool"),
+    ],
+)
+def test_crg_tool_basename_strips_prefix(tool_name, expected):
+    """The per-tool breakdown keys on the bare tool name (prefix stripped)."""
+    assert _crg_tool_basename(tool_name) == expected

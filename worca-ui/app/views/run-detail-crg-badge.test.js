@@ -21,7 +21,12 @@ function renderToString(template) {
   return result;
 }
 
-function makeRun({ crgEnabled, invocations, withEffort = true } = {}) {
+function makeRun({
+  crgEnabled,
+  invocations,
+  toolCounts,
+  withEffort = true,
+} = {}) {
   const iter = {
     number: 1,
     status: 'completed',
@@ -29,6 +34,7 @@ function makeRun({ crgEnabled, invocations, withEffort = true } = {}) {
   };
   if (withEffort) iter.effort = { level: 'high', source: 'explicit' };
   if (invocations !== undefined) iter.crg_invocations = invocations;
+  if (toolCounts !== undefined) iter.crg_tool_counts = toolCounts;
   const run = {
     stages: { plan: { status: 'completed', iterations: [iter] } },
   };
@@ -56,6 +62,41 @@ describe('runDetailView CRG invocation badge', () => {
     expect(html).toContain('crg-invocations-badge');
     expect(html).toContain('variant="neutral"');
     expect(html).not.toContain('(disabled)');
+  });
+
+  it('shows a per-tool breakdown tooltip (busiest first) when count > 0', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          crgEnabled: true,
+          invocations: 7,
+          toolCounts: {
+            get_architecture_overview_tool: 2,
+            get_minimal_context_tool: 5,
+          },
+        }),
+      ),
+    );
+    expect(html).toContain('crg-invocations-badge');
+    expect(html).toContain('<sl-tooltip');
+    // one tool per line, busiest first
+    expect(html).toContain(
+      'get_minimal_context_tool ×5\nget_architecture_overview_tool ×2',
+    );
+  });
+
+  it('omits the breakdown tooltip when count is 0', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          crgEnabled: true,
+          invocations: 0,
+          toolCounts: {},
+        }),
+      ),
+    );
+    expect(html).toContain('crg-invocations-badge');
+    expect(html).not.toContain('×');
   });
 
   it('shows a plain "(disabled)" value (no badge) when CRG is off', () => {
@@ -116,5 +157,100 @@ describe('runDetailView CRG invocation badge', () => {
     const html = renderToString(runDetailView(run));
     expect(html).toContain('CRG:');
     expect(html).toContain('crg-invocations-badge');
+  });
+});
+
+// --- Preflight Code Review Graph badge ---
+
+function makePreflightRun({ crgEnabled, crgStatus, crgReason } = {}) {
+  const stage = {
+    status: 'completed',
+    iterations: [
+      {
+        number: 1,
+        status: 'completed',
+        outcome: 'success',
+        output: { checks: [], summary: 'ok' },
+      },
+    ],
+  };
+  if (crgStatus !== undefined) stage.crg_status = crgStatus;
+  if (crgReason !== undefined) stage.crg_reason = crgReason;
+  const run = { stages: { preflight: stage } };
+  if (crgEnabled !== undefined) run.crg_enabled = crgEnabled;
+  return run;
+}
+
+describe('preflight Code Review Graph badge', () => {
+  it('shows "ready" success badge when the graph is built', () => {
+    const html = renderToString(
+      runDetailView(makePreflightRun({ crgEnabled: true, crgStatus: 'ready' })),
+    );
+    expect(html).toContain('preflight-crg-badge');
+    expect(html).toContain('Code Review Graph:');
+    expect(html).toContain('ready');
+    expect(html).toContain('variant="success"');
+  });
+
+  it('shows "unavailable" danger badge with reason for degraded', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({
+          crgEnabled: true,
+          crgStatus: 'degraded',
+          crgReason: 'code-review-graph not found on PATH',
+        }),
+      ),
+    );
+    expect(html).toContain('preflight-crg-badge');
+    expect(html).toContain('Code Review Graph:');
+    expect(html).toContain('unavailable');
+    expect(html).toContain('variant="danger"');
+    expect(html).toContain('code-review-graph not found on PATH');
+    expect(html).toContain('See Project Settings');
+    // no inline install command in the tooltip
+    expect(html).not.toContain('pip install');
+  });
+
+  it('shows "skipped" neutral badge when enabled but no graph this run', () => {
+    const html = renderToString(
+      runDetailView(
+        makePreflightRun({ crgEnabled: true, crgStatus: 'skipped' }),
+      ),
+    );
+    expect(html).toContain('preflight-crg-badge');
+    expect(html).toContain('Code Review Graph:');
+    expect(html).toContain('skipped');
+    expect(html).toContain('variant="neutral"');
+  });
+
+  it('shows "off" neutral badge when CRG is disabled', () => {
+    const html = renderToString(
+      runDetailView(makePreflightRun({ crgEnabled: false })),
+    );
+    expect(html).toContain('preflight-crg-badge');
+    expect(html).toContain('Code Review Graph:');
+    expect(html).toContain('off');
+    expect(html).toContain('variant="neutral"');
+  });
+
+  it('renders nothing when CRG fields are entirely absent (old runs)', () => {
+    const html = renderToString(runDetailView(makePreflightRun({})));
+    expect(html).not.toContain('preflight-crg-badge');
+  });
+
+  it('renders nothing on non-preflight stages', () => {
+    const run = {
+      stages: {
+        plan: {
+          status: 'completed',
+          crg_status: 'ready',
+          iterations: [{ number: 1, status: 'completed', outcome: 'success' }],
+        },
+      },
+      crg_enabled: true,
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).not.toContain('preflight-crg-badge');
   });
 });

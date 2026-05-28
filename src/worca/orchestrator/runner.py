@@ -1104,6 +1104,15 @@ def _is_crg_tool_use(tool_name: str) -> bool:
     return bool(tool_name) and tool_name.startswith(_CRG_MCP_PREFIX)
 
 
+def _crg_tool_basename(tool_name: str) -> str:
+    """Bare CRG tool name with the ``mcp__code-review-graph__`` prefix stripped.
+
+    Used to build the per-tool breakdown ({"get_minimal_context_tool": 3}) shown
+    in the CRG invocation badge tooltip.
+    """
+    return tool_name[len(_CRG_MCP_PREFIX):]
+
+
 def _make_agent_event_handler(
     ctx: Optional[EventContext],
     stage: Stage,
@@ -1252,6 +1261,10 @@ def run_stage(
     # for the run-detail "Graphify" badge. Wraps (not replaces) the telemetry
     # handler so disabling agent_telemetry doesn't zero the count.
     _gfx_metrics = {"graphify_invocations": 0, "crg_invocations": 0}
+    # Per-tool CRG breakdown (e.g. {"get_minimal_context_tool": 3}), surfaced in
+    # the invocation badge's hover tooltip. Keyed by the bare tool name (the
+    # mcp__code-review-graph__ prefix stripped).
+    _crg_tool_counts: dict[str, int] = {}
 
     def _on_event(event):
         if event.get("type") == "assistant":
@@ -1263,6 +1276,8 @@ def run_stage(
                             _gfx_metrics["graphify_invocations"] += 1
                     elif _is_crg_tool_use(_tool):
                         _gfx_metrics["crg_invocations"] += 1
+                        _bare = _crg_tool_basename(_tool)
+                        _crg_tool_counts[_bare] = _crg_tool_counts.get(_bare, 0) + 1
         if _telemetry_on_event is not None:
             _telemetry_on_event(event)
 
@@ -1309,12 +1324,14 @@ def run_stage(
     )
     _gfx = _gfx_metrics["graphify_invocations"]
     _crg = _gfx_metrics["crg_invocations"]
+    _crg_tc = dict(_crg_tool_counts)
     # Per-iteration counts ride on the *envelope* (2nd return), never on the
     # structured result, so they can't pollute the agent's output.
     # claude CLI returns a JSON envelope; extract structured_output if present.
     if isinstance(raw, dict) and raw.get("structured_output"):
         raw["graphify_invocations"] = _gfx
         raw["crg_invocations"] = _crg
+        raw["crg_tool_counts"] = _crg_tc
         return raw["structured_output"], raw
     # Fallback for stages whose agent occasionally returns prose instead of
     # JSON. Currently only Guardian (PR stage) — its prompt was rewritten to
@@ -1326,11 +1343,17 @@ def run_stage(
         if recovered:
             raw["graphify_invocations"] = _gfx
             raw["crg_invocations"] = _crg
+            raw["crg_tool_counts"] = _crg_tc
             return recovered, raw
     # Generic fallback: result == envelope here, so attach the count to a copy
     # for the envelope and leave the returned result dict untouched.
     if isinstance(raw, dict):
-        return raw, {**raw, "graphify_invocations": _gfx, "crg_invocations": _crg}
+        return raw, {
+            **raw,
+            "graphify_invocations": _gfx,
+            "crg_invocations": _crg,
+            "crg_tool_counts": _crg_tc,
+        }
     return raw, raw
 
 
@@ -2892,6 +2915,9 @@ def run_pipeline(
                     iter_extras["crg_invocations"] = raw_envelope.get(
                         "crg_invocations", 0
                     )
+                    _crg_tc = raw_envelope.get("crg_tool_counts") or {}
+                    if _crg_tc:
+                        iter_extras["crg_tool_counts"] = _crg_tc
             if usage:
                 iter_extras["token_usage"] = usage
             iter_extras["prompt"] = rendered_prompt
@@ -2958,6 +2984,9 @@ def run_pipeline(
                 if result.get("crg_status"):
                     status["crg_status"] = result["crg_status"]
                     _pf_stage_extras["crg_status"] = result["crg_status"]
+                if result.get("crg_reason"):
+                    status["crg_reason"] = result["crg_reason"]
+                    _pf_stage_extras["crg_reason"] = result["crg_reason"]
                 if result.get("crg_data_dir"):
                     _crg_dd = result["crg_data_dir"]
                     if os.path.isdir(_crg_dd):

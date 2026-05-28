@@ -47,7 +47,10 @@ export function crgStateValue(crg = {}) {
 
 export function crgInstallCommand(versionRange) {
   const range = versionRange || CRG_VERSION_RANGE_DEFAULT;
-  return `pip install '${CRG_PYPI_PACKAGE}${range}'`;
+  // Both deps in one command: worca requires fastmcp>=CRG_FASTMCP_MIN
+  // independently of the CLI, so suggesting code-review-graph alone can leave
+  // CRG degraded (fastmcp missing/too old) and force a second install round.
+  return `pip install '${CRG_PYPI_PACKAGE}${range}' 'fastmcp>=${CRG_FASTMCP_MIN}'`;
 }
 
 export function isCrgUnavailable(detection) {

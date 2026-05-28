@@ -398,6 +398,17 @@ function _graphifyBadge(iter, graphifyEnabled) {
   return html`<span class="meta-label">Graphify:</span> <sl-badge class="graphify-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
 }
 
+// One "name ×N" per line (busiest tool first) for the CRG badge tooltip. The
+// list can be long, so newlines beat a single dot-separated line — rendered via
+// `white-space: pre-line` on the .crg-tool-tooltip body part.
+function _crgToolBreakdown(counts) {
+  if (!counts || typeof counts !== 'object') return '';
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, n]) => `${name} ×${n}`)
+    .join('\n');
+}
+
 function _crgBadge(iter, crgEnabled) {
   if (iter.crg_invocations == null) return nothing;
   if (crgEnabled !== true) {
@@ -405,7 +416,14 @@ function _crgBadge(iter, crgEnabled) {
   }
   const count = iter.crg_invocations;
   const variant = count > 0 ? 'primary' : 'neutral';
-  return html`<span class="meta-label">CRG:</span> <sl-badge class="crg-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
+  const badge = html`<sl-badge class="crg-invocations-badge" variant="${variant}" pill>${count}</sl-badge>`;
+  // When the agent actually queried CRG, hovering the badge shows a per-tool
+  // breakdown (which MCP functions, how many times) via the shared <sl-tooltip>.
+  const breakdown = count > 0 ? _crgToolBreakdown(iter.crg_tool_counts) : '';
+  const wrapped = breakdown
+    ? html`<sl-tooltip class="crg-tool-tooltip" content="${breakdown}">${badge}</sl-tooltip>`
+    : badge;
+  return html`<span class="meta-label">CRG:</span> ${wrapped}`;
 }
 
 function _effortRowView(iter, graphifyEnabled, crgEnabled) {
@@ -753,13 +771,11 @@ function _preflightGraphifyBadge(stage, run) {
   const mode = stage.graphify_mode;
   const reason = stage.graphify_reason;
 
-  // Render as a labeled meta row so the badge aligns with the other stage
-  // rows (Effort, Iteration Trigger/Outcome, …) instead of floating. Reuses
-  // the "Graphify:" label already established by _graphifyBadge.
-  const row = (badge) => html`
-    <div class="iteration-tags-row">
-      <span class="meta-label">Graphify:</span> ${badge}
-    </div>`;
+  // Returns the labeled "Graphify:" fragment (label + pill). The shared row
+  // wrapper is added by _preflightGraphBadgesRow so Graphify and CRG sit on one
+  // line. Reuses the "Graphify:" label established by _graphifyBadge.
+  const row = (badge) =>
+    html`<span class="meta-label">Graphify:</span> ${badge}`;
   // Every state carries a tooltip explaining what it means. Use <sl-tooltip>
   // (styled, ~150ms) for consistency with the dispatch badges, not native title.
   const badge = (variant, text, tip) =>
@@ -830,6 +846,69 @@ function _preflightGraphifyBadge(stage, run) {
     );
   }
   return nothing;
+}
+
+function _preflightCrgBadge(stage, run) {
+  const enabled = run.crg_enabled;
+  const status = stage.crg_status;
+  const reason = stage.crg_reason;
+
+  // Returns the labeled "Code Review Graph:" fragment; _preflightGraphBadgesRow
+  // places it on the same row right after Graphify. Mirrors
+  // _preflightGraphifyBadge (CRG has just skipped/degraded/ready). Same tooltip.
+  const row = (badge) =>
+    html`<span class="meta-label">Code Review Graph:</span> ${badge}`;
+  const badge = (variant, text, tip) =>
+    html`<sl-tooltip content="${tip}"><sl-badge class="preflight-crg-badge" variant="${variant}" pill>${text}</sl-badge></sl-tooltip>`;
+
+  if (enabled === false) {
+    return row(
+      badge(
+        'neutral',
+        'off',
+        'Code Review Graph is disabled for this project — no CRG graph is built and agents get no CRG tools.',
+      ),
+    );
+  }
+  if (enabled == null && status == null) return nothing;
+
+  if (status === 'skipped') {
+    return row(
+      badge(
+        'neutral',
+        'skipped',
+        'Code Review Graph is enabled, but no graph was available this run.',
+      ),
+    );
+  }
+  if (status === 'degraded') {
+    // Show the underlying reason only — install/fix lives centrally in
+    // Project Settings → Code Review Graph, not in this tooltip.
+    const tip = reason
+      ? `Code Review Graph couldn't provide a graph: ${reason}. See Project Settings → Code Review Graph.`
+      : "Code Review Graph couldn't provide a graph. See Project Settings → Code Review Graph.";
+    return row(badge('danger', 'unavailable', tip));
+  }
+  if (status === 'ready') {
+    return row(
+      badge(
+        'success',
+        'ready',
+        'Code Review Graph built for this commit — agents query it via per-stage MCP tools.',
+      ),
+    );
+  }
+  return nothing;
+}
+
+// Graphify + Code Review Graph preflight pills share one line — Graphify first,
+// CRG immediately after — mirroring how the per-iteration invocation badges sit
+// together on the Effort row.
+function _preflightGraphBadgesRow(stage, run) {
+  const gfx = _preflightGraphifyBadge(stage, run);
+  const crg = _preflightCrgBadge(stage, run);
+  if (gfx === nothing && crg === nothing) return nothing;
+  return html`<div class="iteration-tags-row">${gfx}${crg}</div>`;
 }
 
 function _preflightChecksView(stage, iter) {
@@ -906,6 +985,8 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     graphify_outcome: stage.graphify_outcome || undefined,
     graphify_mode: stage.graphify_mode || undefined,
     graphify_reason: stage.graphify_reason || undefined,
+    crg_status: stage.crg_status || undefined,
+    crg_reason: stage.crg_reason || undefined,
     iterations: iterations.map((it) => ({
       number: it.number,
       status: it.status,
@@ -925,6 +1006,7 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
         it.graphify_invocations != null ? it.graphify_invocations : undefined,
       crg_invocations:
         it.crg_invocations != null ? it.crg_invocations : undefined,
+      crg_tool_counts: it.crg_tool_counts || undefined,
       token_usage: it.token_usage || undefined,
       classification: it.classification || undefined,
       dispatch_events: it.dispatch_events?.length
@@ -1517,7 +1599,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
-                      ${key === 'preflight' ? _preflightGraphifyBadge(stage, run) : nothing}
+                      ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
                       ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
@@ -1574,7 +1656,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
-                      ${key === 'preflight' ? _preflightGraphifyBadge(stage, run) : nothing}
+                      ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
                       ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}

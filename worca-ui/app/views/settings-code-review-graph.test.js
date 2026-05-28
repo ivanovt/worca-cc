@@ -98,21 +98,20 @@ describe('isCrgUnavailable', () => {
 });
 
 describe('crgInstallCommand', () => {
-  it('suggests pip install code-review-graph with version range', async () => {
-    const { crgInstallCommand, CRG_VERSION_RANGE_DEFAULT } = await import(
-      './settings-code-review-graph.js'
-    );
+  it('suggests pip install for both code-review-graph and fastmcp', async () => {
+    const { crgInstallCommand, CRG_VERSION_RANGE_DEFAULT, CRG_FASTMCP_MIN } =
+      await import('./settings-code-review-graph.js');
     expect(crgInstallCommand()).toBe(
-      `pip install 'code-review-graph${CRG_VERSION_RANGE_DEFAULT}'`,
+      `pip install 'code-review-graph${CRG_VERSION_RANGE_DEFAULT}' 'fastmcp>=${CRG_FASTMCP_MIN}'`,
     );
   });
 
-  it('accepts a custom version range', async () => {
+  it('accepts a custom version range and still includes fastmcp', async () => {
     const { crgInstallCommand } = await import(
       './settings-code-review-graph.js'
     );
     expect(crgInstallCommand('>=3,<4')).toBe(
-      "pip install 'code-review-graph>=3,<4'",
+      "pip install 'code-review-graph>=3,<4' 'fastmcp>=3.2.4'",
     );
   });
 
@@ -120,9 +119,11 @@ describe('crgInstallCommand', () => {
     const { crgInstallCommand } = await import(
       './settings-code-review-graph.js'
     );
-    expect(crgInstallCommand('')).toBe("pip install 'code-review-graph>=2,<3'");
+    expect(crgInstallCommand('')).toBe(
+      "pip install 'code-review-graph>=2,<3' 'fastmcp>=3.2.4'",
+    );
     expect(crgInstallCommand(null)).toBe(
-      "pip install 'code-review-graph>=2,<3'",
+      "pip install 'code-review-graph>=2,<3' 'fastmcp>=3.2.4'",
     );
   });
 });
