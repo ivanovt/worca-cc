@@ -203,7 +203,6 @@ let autoScroll = true;
 
 // -- Settings & pipeline control --
 let settings = {};
-let pipelineAction = null; // null | 'stopping' | 'resuming' | 'pausing'
 let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
 let restartStageKey = null;
@@ -750,7 +749,6 @@ let historyTextFilter = ''; // free-text filter on the History list
 function resetProjectState() {
   // Settings & pipeline control
   settings = {};
-  pipelineAction = null;
   _controlPending = null;
   actionError = null;
   restartStageKey = null;
@@ -971,10 +969,6 @@ ws.on('run-snapshot', (payload) => {
       autoResetLogFilterOnStageChange(prevRun, payload);
       updateActiveStage(payload);
     }
-    if (pipelineAction) {
-      pipelineAction = null;
-      rerender();
-    }
   }
 });
 
@@ -992,10 +986,6 @@ ws.on('run-update', (payload) => {
       autoResetLogFilterOnStageChange(prevRun, payload);
       updateActiveStage(payload);
       fetchRunBeads(payload.id);
-    }
-    if (pipelineAction) {
-      pipelineAction = null;
-      rerender();
     }
   }
 });
@@ -1102,9 +1092,6 @@ function fetchAndUpdateRuns() {
 }
 
 ws.on('run-started', () => {
-  pipelineAction = null;
-  // Pull the new run into the store so sidebar counters and run lists
-  // (Worktrees, Beads, Active Runs) reflect it without manual navigation.
   fetchAndUpdateRuns().catch(() => {});
   rerender();
 });
@@ -1141,7 +1128,6 @@ ws.on('run-unarchived', (payload) => {
 });
 
 ws.on('run-stopped', () => {
-  pipelineAction = null;
   rerender();
 });
 
@@ -1700,82 +1686,6 @@ function showActionError(msg) {
 function dismissActionError() {
   actionError = null;
   rerender();
-}
-
-function handleStopPipeline() {
-  showConfirm(
-    {
-      label: 'Stop Pipeline?',
-      message:
-        'Are you sure? The current stage will be interrupted and marked as error.',
-      confirmLabel: 'Stop',
-      confirmVariant: 'danger',
-      onConfirm: handleConfirmStop,
-    },
-    rerender,
-  );
-}
-
-async function handleConfirmStop() {
-  pipelineAction = 'stopping';
-  actionError = null;
-  rerender();
-
-  try {
-    const activeRun = Object.values(store.getState().runs).find(
-      (r) => r.active,
-    );
-    const runId = activeRun?.id || 'current';
-    const res = await fetch(runUrl(runId, `/runs/${runId}/stop`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) {
-      pipelineAction = null;
-      showActionError(data.error || 'Failed to stop pipeline');
-    }
-    // Status update via file watcher / WS broadcast will clear pipelineAction
-  } catch (err) {
-    pipelineAction = null;
-    showActionError(err?.message || 'Failed to stop pipeline');
-  }
-}
-
-function handleResumePipeline() {
-  pipelineAction = 'resuming';
-  actionError = null;
-  rerender();
-  ws.send('resume-run', { runId: route.runId })
-    .then(() => {
-      pipelineAction = null;
-      rerender();
-    })
-    .catch((err) => {
-      pipelineAction = null;
-      showActionError(err?.message || 'Failed to resume pipeline');
-    });
-}
-
-async function handlePausePipeline() {
-  const activeRun = Object.values(store.getState().runs).find((r) => r.active);
-  const runId = activeRun?.id || 'current';
-  pipelineAction = 'pausing';
-  actionError = null;
-  rerender();
-  try {
-    const res = await fetch(runUrl(runId, `/runs/${runId}/pause`), {
-      method: 'POST',
-    });
-    const data = await res.json();
-    if (!data.ok) {
-      pipelineAction = null;
-      showActionError(data.error || 'Failed to pause pipeline');
-    }
-    // Status update via file watcher / WS broadcast will clear pipelineAction
-  } catch (err) {
-    pipelineAction = null;
-    showActionError(err?.message || 'Failed to pause pipeline');
-  }
 }
 
 async function handlePauseRun(runId) {
@@ -2439,10 +2349,7 @@ async function handleConfirmRestartStage() {
   rerender();
 
   try {
-    const activeRun = Object.values(store.getState().runs).find(
-      (r) => !r.active,
-    );
-    const runId = activeRun?.id || 'current';
+    const runId = route.runId;
     const res = await fetch(
       runUrl(runId, `/runs/${runId}/stages/${stage}/restart`),
       {
@@ -2948,19 +2855,21 @@ function contentHeaderView() {
         ${label}
       </sl-badge>`;
 
-      if (pipelineAction === 'stopping') {
+      const pending =
+        _controlPending?.runId === route.runId ? _controlPending.action : null;
+      if (pending === 'stop') {
         actionButton = html`
           <button class="action-btn action-btn--danger" disabled>
             ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
             Stopping\u2026
           </button>`;
-      } else if (pipelineAction === 'pausing') {
+      } else if (pending === 'pause') {
         actionButton = html`
           <button class="action-btn action-btn--amber" disabled>
             ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
             Pausing\u2026
           </button>`;
-      } else if (pipelineAction === 'resuming') {
+      } else if (pending === 'resume') {
         actionButton = html`
           <button class="action-btn action-btn--primary" disabled>
             ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
@@ -2968,17 +2877,17 @@ function contentHeaderView() {
           </button>`;
       } else {
         const pauseBtn = actionAllowed('pause', ps)
-          ? html`<button class="action-btn action-btn--amber" @click=${handlePausePipeline}>
+          ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseRun(route.runId)}>
               ${unsafeHTML(iconSvg(Pause, 14))} Pause
             </button>`
           : nothing;
         const stopBtn = actionAllowed('stop', ps)
-          ? html`<button class="action-btn action-btn--danger" @click=${handleStopPipeline}>
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
               ${unsafeHTML(iconSvg(Square, 14))} Stop
             </button>`
           : nothing;
         const resumeBtn = actionAllowed('resume', ps)
-          ? html`<button class="action-btn action-btn--primary" @click=${handleResumePipeline}>
+          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
               ${unsafeHTML(iconSvg(Play, 14))} Resume
             </button>`
           : nothing;
