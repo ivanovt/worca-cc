@@ -31,7 +31,7 @@ from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
-    is_learn_enabled,
+    is_learn_enabled, resolve_plan_review_mode,
 )
 from worca.orchestrator.work_request import WorkRequest
 from worca.state.status import (
@@ -93,6 +93,7 @@ from worca.events.types import (
     preflight_completed_payload, preflight_skipped_payload,
     LEARN_COMPLETED, LEARN_FAILED,
     learn_completed_payload, learn_failed_payload,
+    PLAN_EDITED, plan_edited_payload,
     GUIDE_CONFLICT, guide_conflict_payload,
 )
 
@@ -396,6 +397,24 @@ def _next_plan_path(run_dir: str) -> str:
     if next_num > 999:
         next_num = 999  # Cap at plan-999.md to stay within 3-digit format
     return os.path.join(run_dir, f"plan-{next_num:03d}.md")
+
+
+def _preserve_original_plan(
+    run_dir: Optional[str],
+    plan_file: str,
+    restart_count: int = 0,
+) -> None:
+    """Copy the current plan to plan-original[-N].md before it is edited.
+
+    restart_count=0 → plan-original.md (first edit-mode entry).
+    restart_count≥1 → plan-original-{N}.md (restart_planning re-entries).
+    """
+    if not run_dir or not os.path.isfile(plan_file):
+        return
+    suffix = f"-{restart_count}" if restart_count else ""
+    dest = os.path.join(run_dir, f"plan-original{suffix}.md")
+    import shutil
+    shutil.copy2(plan_file, dest)
 
 
 def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
@@ -2577,6 +2596,20 @@ def run_pipeline(
 
                 ctx_dict = prompt_builder.build_context(current_stage.value, pb_iteration)
                 _stage_agent_name = stage_config["agent"]
+                if current_stage == Stage.PLAN_REVIEW:
+                    _pr_mode, _pr_mode_reason = resolve_plan_review_mode(
+                        load_settings(settings_path)
+                    )
+                    update_stage(status, current_stage.value, mode=_pr_mode, mode_reason=_pr_mode_reason)
+                    save_status(status, actual_status_path)
+                    if _pr_mode == "review_and_edit":
+                        _stage_agent_name = "plan_editor"
+                        _effort_env_overrides["WORCA_PLAN_REVIEWER_CAN_EDIT"] = "1"
+                        _preserve_original_plan(
+                            run_dir,
+                            status.get("plan_file", ""),
+                            restart_count=loop_counters.get("restart_planning", 0),
+                        )
                 _template_path = (
                     os.path.join(run_dir, "agents", f"{_stage_agent_name}.md")
                     if run_dir else None
@@ -2618,6 +2651,8 @@ def run_pipeline(
                 # per-iteration content travels as a user message. Keeps W-037's
                 # three-tier overlay + placeholder flexibility intact.
                 _block_name = _STAGE_BLOCK_MAP.get(current_stage)
+                if current_stage == Stage.PLAN_REVIEW and _pr_mode == "review_and_edit":
+                    _block_name = "plan-edit"
                 if (
                     _block_name
                     and prompt_builder._resolver is not None
@@ -3149,7 +3184,38 @@ def run_pipeline(
                 # Empty issues list with revise outcome is fail-closed — still revise.
                 should_revise = (outcome == "revise") and bool(critical_issues or not issues)
 
-                if should_revise:
+                if _pr_mode == "review_and_edit":
+                    # Edit mode: the plan editor made in-place edits, so no
+                    # loopback is needed. Mark plan as approved and proceed.
+                    if outcome not in ("approve", "approve_with_edits"):
+                        iter_extras["outcome"] = "approve_with_edits"
+                    set_milestone(status, "plan_approved", True)
+                    prompt_builder.pop_context("plan_review_issues")
+                    prompt_builder.pop_context("plan_revision_mode")
+                    prompt_builder.pop_context("plan_review_history")
+                    if prompt_context_path:
+                        prompt_builder.save_context(prompt_context_path)
+                    save_status(status, actual_status_path)
+                    _log("Plan approved by editor" if outcome == "approve"
+                         else "Plan approved with edits", "ok")
+                    if ctx:
+                        _severity_counts = {"critical": 0, "major": 0, "minor": 0, "suggestion": 0}
+                        for _iss in issues:
+                            _sev = _iss.get("severity", "")
+                            if _sev in _severity_counts:
+                                _severity_counts[_sev] += 1
+                        _restart_n = loop_counters.get("restart_planning", 0)
+                        _orig_suffix = f"-{_restart_n}" if _restart_n else ""
+                        _orig_path = os.path.join(run_dir, f"plan-original{_orig_suffix}.md") if run_dir else None
+                        emit_event(ctx, PLAN_EDITED, plan_edited_payload(
+                            stage=current_stage.value,
+                            mode=_pr_mode,
+                            mode_reason=_pr_mode_reason,
+                            issue_counts=_severity_counts,
+                            original_plan_path=_orig_path,
+                        ))
+
+                elif should_revise:
                     # Thread review feedback — only critical/major issues to limit context growth
                     prev_history = list(prompt_builder.get_context("plan_review_history") or [])
                     prev_history.append({"attempt": len(prev_history) + 1, "issues": list(critical_issues)})

@@ -117,6 +117,12 @@ PREFLIGHT_COMPLETED = "pipeline.preflight.completed"
 PREFLIGHT_SKIPPED   = "pipeline.preflight.skipped"
 
 # ---------------------------------------------------------------------------
+# Plan review detail (1 event)
+# ---------------------------------------------------------------------------
+
+PLAN_EDITED = "pipeline.plan_review.edited"
+
+# ---------------------------------------------------------------------------
 # Learn stage events (2 events)
 # ---------------------------------------------------------------------------
 
@@ -846,6 +852,28 @@ def preflight_completed_payload(checks: list, all_passed: bool) -> dict:
 
 def preflight_skipped_payload(reason: str) -> dict:
     return {"reason": reason}
+
+
+# ---------------------------------------------------------------------------
+# Plan review detail payload builders
+# ---------------------------------------------------------------------------
+
+def plan_edited_payload(
+    stage: str,
+    mode: str,
+    mode_reason: str,
+    issue_counts: dict,
+    original_plan_path: str = None,
+) -> dict:
+    p: dict = {
+        "stage": stage,
+        "mode": mode,
+        "mode_reason": mode_reason,
+        "issue_counts": issue_counts,
+    }
+    if original_plan_path is not None:
+        p["original_plan_path"] = original_plan_path
+    return p
 
 
 # ---------------------------------------------------------------------------

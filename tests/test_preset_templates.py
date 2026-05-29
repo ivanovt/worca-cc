@@ -10,6 +10,7 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "src" / "worca" / "templates"
 PRESETS = [
     "bugfix",
     "feature",
+    "feature-fast",
     "feature-minor",
     "refactor",
     "quick-fix",
@@ -21,6 +22,7 @@ PRESETS = [
 EXPECTED_OVERLAYS = {
     "bugfix":        {"planner.md", "coordinator.md"},
     "feature":       set(),
+    "feature-fast":  set(),
     "feature-minor": set(),
     "refactor":      {"planner.md", "reviewer.md"},
     "quick-fix":     {"planner.md", "coordinator.md"},
@@ -119,6 +121,35 @@ class TestFeatureConfig:
 
     def test_learn_enabled(self):
         assert self._config()["stages"]["learn"]["enabled"] is True
+
+    def test_no_effort_override(self):
+        assert "effort" not in self._config()
+
+
+class TestFeatureFastConfig:
+    def _config(self):
+        return json.loads((TEMPLATES_DIR / "feature-fast" / "template.json").read_text())["config"]
+
+    def test_plan_review_enabled(self):
+        assert self._config()["stages"]["plan_review"]["enabled"] is True
+
+    def test_plan_review_mode(self):
+        assert self._config()["stages"]["plan_review"]["mode"] == "review_and_edit"
+
+    def test_learn_enabled(self):
+        assert self._config()["stages"]["learn"]["enabled"] is True
+
+    def test_loop_implement_test(self):
+        assert self._config()["loops"]["implement_test"] == 10
+
+    def test_loop_pr_changes(self):
+        assert self._config()["loops"]["pr_changes"] == 5
+
+    def test_loop_restart_planning(self):
+        assert self._config()["loops"]["restart_planning"] == 3
+
+    def test_loop_plan_review(self):
+        assert self._config()["loops"]["plan_review"] == 3
 
     def test_no_effort_override(self):
         assert "effort" not in self._config()

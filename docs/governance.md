@@ -284,6 +284,40 @@ Add it to `default_denied`. The wildcard does not include `default_denied` entri
 
 The learner subprocess is invoked with `--tools ""` — no built-in tool is available. The `Skill` and `Agent` PreToolUse hooks still fire, but they can't ultimately succeed because the underlying tools they invoke are themselves locked down.
 
+## Plan review write carve-out
+
+The `plan_reviewer` agent is read-only by default — it may not write files. When the plan review stage runs in `review_and_edit` mode (W-059), the runner sets `WORCA_PLAN_REVIEWER_CAN_EDIT=1` in the agent subprocess, and the `pre_tool_use` hook grants a narrow write exception:
+
+- **Allowed:** `Write` and `Edit` targeting the plan file only (the path in `WORCA_PLAN_FILE`).
+- **Blocked:** writes to any other file, and all Bash file-writes (unconditionally).
+
+This is a **runtime carve-out**, not a dispatch change — it does not affect the three-tier dispatch model above.
+
+### Mode resolution
+
+The resolved mode determines whether the carve-out activates:
+
+```
+resolve_plan_review_mode(settings) -> (mode, reason):
+    enforce = governance.plan_review_enforce   # default "auto"
+    if enforce in ("review", "review_and_edit"):
+        return (enforce, "forced by project (governance.plan_review_enforce)")
+    # enforce == "auto" -> defer to pipeline/template
+    mode = stages.plan_review.mode             # default "review"
+    return (mode, "from template/pipeline" or "default")
+```
+
+Precedence: **governance enforce (if ≠ auto) → run/template mode → built-in `review`**.
+
+### Configuration
+
+| Key | Values | Default | Scope |
+|-----|--------|---------|-------|
+| `worca.stages.plan_review.mode` | `review`, `review_and_edit` | `review` | Pipeline/template — which mode this run uses |
+| `worca.governance.plan_review_enforce` | `auto`, `review`, `review_and_edit` | `auto` | Project policy — forces a mode across all pipelines |
+
+When `plan_review_enforce` is not `auto`, it overrides the pipeline/template mode. This lets a project mandate `review` (no edits ever) or `review_and_edit` (always edit) regardless of template choice.
+
 ### Restrict an agent to a named tool subset
 
 ```jsonc

@@ -7,7 +7,7 @@
   "properties": {
     "outcome": {
       "type": "string",
-      "enum": ["approve", "revise"]
+      "enum": ["approve", "revise", "approve_with_edits"]
     },
     "issues": {
       "type": "array",

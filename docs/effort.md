@@ -124,6 +124,8 @@ Escalation fires when an agent re-runs on a loopback trigger. Deltas are **index
 
 Deltas stack across iterations: iter 1 = base, iter 2 = base + delta, iter 3 = base + 2*delta, etc. Only the agent re-running on the loopback escalates — the tester does not escalate when re-run after an implementer fix.
 
+**Plan review `review_and_edit` mode (W-059):** in edit mode the plan reviewer rewrites the plan in place and self-approves — there is no loopback to the Planner, so `auto_mode` escalation does not engage. Editing is arguably harder than reviewing (in-place rewrite vs. read-only verdict), but cost is bounded to a single iteration. The shipped `plan_reviewer: high` effort applies as a fixed starting point with no escalation path.
+
 Here "iter" counts **escalation loopbacks only**, not total stage iterations. The implementer runs once per bead during Phase-1 implementation (trigger `next_bead`, zero delta); those per-bead iterations do **not** count toward escalation depth. So the first `test_failure` after implementing N beads is escalation loop 1 (+1 rung), not loop N. `escalation_iter_num()` in `effort.py` computes this depth by counting only escalation-relevant prior triggers; the runner passes it to `resolve_effort()`.
 
 ### Aggressive escalation on 4-rung ladders

@@ -15,6 +15,7 @@ export const NOTIFICATION_EVENTS = [
   'approval_needed',
   'test_failures',
   'loop_limit_warning',
+  'plan_edited',
 ];
 
 const EVENT_CONFIG = {
@@ -41,6 +42,11 @@ const EVENT_CONFIG = {
   loop_limit_warning: {
     severity: 'warning',
     title: 'Loop Limit Warning',
+    requireInteraction: false,
+  },
+  plan_edited: {
+    severity: 'info',
+    title: 'Plan Edited',
     requireInteraction: false,
   },
 };
@@ -206,6 +212,32 @@ export function detectLoopLimitWarning(
   return null;
 }
 
+export function detectPlanEdited(runId, newRun, prevRun, projectName) {
+  if (!newRun) return null;
+  const prStage = newRun.stages?.plan_review;
+  if (!prStage) return null;
+
+  const newIters = prStage.iterations || [];
+  const prevIters = prevRun?.stages?.plan_review?.iterations || [];
+  if (newIters.length <= prevIters.length) return null;
+
+  const latest = newIters[newIters.length - 1];
+  if (!latest || latest.outcome !== 'approve_with_edits') return null;
+
+  const runTitle = getRunTitle(newRun);
+  const body = projectName
+    ? `[${projectName}] "${runTitle}" plan was edited during review`
+    : `"${runTitle}" plan was edited during review`;
+  return {
+    event: 'plan_edited',
+    title: EVENT_CONFIG.plan_edited.title,
+    body,
+    tag: `worca-plan-edited-${runId}`,
+    requireInteraction: false,
+    runId,
+  };
+}
+
 function getRunTitle(run) {
   const raw = run?.work_request?.title || run?.id || 'Pipeline';
   const firstLine = raw.split('\n')[0];
@@ -244,6 +276,7 @@ const DEFAULT_NOTIFICATION_PREFS = {
     approval_needed: true,
     test_failures: true,
     loop_limit_warning: true,
+    plan_edited: true,
   },
 };
 
@@ -327,6 +360,7 @@ export function createNotificationManager({ store, ws: _ws, getSettings }) {
       detectRunFailed,
       detectApprovalNeeded,
       detectTestFailures,
+      detectPlanEdited,
     ];
 
     for (const detect of detectors) {

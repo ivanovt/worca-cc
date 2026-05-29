@@ -69,6 +69,11 @@ class TestOutcomeProperty:
         doc["outcome"] = "revise"
         jsonschema.validate(doc, schema)
 
+    def test_outcome_approve_with_edits_valid(self, schema):
+        doc = _valid_plan_review()
+        doc["outcome"] = "approve_with_edits"
+        jsonschema.validate(doc, schema)
+
     def test_outcome_invalid_value(self, schema):
         doc = _valid_plan_review()
         doc["outcome"] = "reject"

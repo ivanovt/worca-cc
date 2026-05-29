@@ -93,6 +93,8 @@ PIPELINE_CONSTANTS = [
     ("PREFLIGHT_COMPLETED", "pipeline.preflight.completed"),
     ("PREFLIGHT_SKIPPED",   "pipeline.preflight.skipped"),
     # Learn stage uses generic STAGE_STARTED/COMPLETED/FAILED with stage="learn"
+    # Plan review detail (1)
+    ("PLAN_EDITED", "pipeline.plan_review.edited"),
 ]
 
 CONTROL_CONSTANTS = [
@@ -132,18 +134,18 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 52 pipeline.* outbound constants.
+    """There must be exactly 53 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
-    + 1 dispatch_allowed hook event + 1 RUN_CANCELLED = 52.
+    + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED = 53.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 52, (
-        f"Expected 52 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 53, (
+        f"Expected 53 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -225,6 +227,8 @@ EXPECTED_BUILDERS = [
     "preflight_completed_payload",
     "preflight_skipped_payload",
     # pipeline.learn.* — removed; learn uses generic stage events
+    # pipeline.plan_review.*
+    "plan_edited_payload",
     # control.*
     "control_milestone_approve_payload",
     "control_pipeline_pause_payload",
@@ -1059,3 +1063,45 @@ def test_bead_created_payload_optional_run_label():
         bead_id="b", title="t", run_label="run:20260309-143200",
     )
     assert p["run_label"] == "run:20260309-143200"
+
+
+# ---------------------------------------------------------------------------
+# plan_edited_payload tests
+# ---------------------------------------------------------------------------
+
+def test_plan_edited_payload_required_fields():
+    from worca.events.types import plan_edited_payload
+    p = plan_edited_payload(
+        stage="plan_review",
+        mode="review_and_edit",
+        mode_reason="from template/pipeline",
+        issue_counts={"critical": 1, "major": 2, "minor": 0, "suggestion": 1},
+    )
+    assert p["stage"] == "plan_review"
+    assert p["mode"] == "review_and_edit"
+    assert p["mode_reason"] == "from template/pipeline"
+    assert p["issue_counts"] == {"critical": 1, "major": 2, "minor": 0, "suggestion": 1}
+    assert isinstance(p, dict)
+
+
+def test_plan_edited_payload_with_original_plan_path():
+    from worca.events.types import plan_edited_payload
+    p = plan_edited_payload(
+        stage="plan_review",
+        mode="review_and_edit",
+        mode_reason="default",
+        issue_counts={"critical": 0, "major": 0, "minor": 1, "suggestion": 0},
+        original_plan_path="/tmp/run/plan-original.md",
+    )
+    assert p["original_plan_path"] == "/tmp/run/plan-original.md"
+
+
+def test_plan_edited_payload_original_plan_path_omitted_when_none():
+    from worca.events.types import plan_edited_payload
+    p = plan_edited_payload(
+        stage="plan_review",
+        mode="review_and_edit",
+        mode_reason="forced by project (governance.plan_review_enforce)",
+        issue_counts={"critical": 0, "major": 0, "minor": 0, "suggestion": 0},
+    )
+    assert "original_plan_path" not in p

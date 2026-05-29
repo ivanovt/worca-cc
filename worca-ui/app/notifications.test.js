@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   detectApprovalNeeded,
   detectLoopLimitWarning,
+  detectPlanEdited,
   detectRunCompleted,
   detectRunFailed,
   detectTestFailures,
@@ -305,5 +306,75 @@ describe('detectLoopLimitWarning', () => {
     expect(
       detectLoopLimitWarning('run-1', next, prev, settings, warnedLoops),
     ).toBeNull();
+  });
+});
+
+describe('detectPlanEdited', () => {
+  it('detects plan edited when new approve_with_edits iteration appears', () => {
+    const prev = makeRun({
+      stages: { plan_review: { status: 'in_progress', iterations: [] } },
+    });
+    const next = makeRun({
+      stages: {
+        plan_review: {
+          status: 'completed',
+          iterations: [{ outcome: 'approve_with_edits' }],
+        },
+      },
+    });
+    const result = detectPlanEdited('run-1', next, prev);
+    expect(result).not.toBeNull();
+    expect(result.event).toBe('plan_edited');
+    expect(result.body).toContain('plan was edited during review');
+    expect(result.tag).toBe('worca-plan-edited-run-1');
+  });
+
+  it('returns null when outcome is approve (no edits)', () => {
+    const prev = makeRun({
+      stages: { plan_review: { status: 'in_progress', iterations: [] } },
+    });
+    const next = makeRun({
+      stages: {
+        plan_review: {
+          status: 'completed',
+          iterations: [{ outcome: 'approve' }],
+        },
+      },
+    });
+    expect(detectPlanEdited('run-1', next, prev)).toBeNull();
+  });
+
+  it('returns null when no new iteration', () => {
+    const iters = [{ outcome: 'approve_with_edits' }];
+    const prev = makeRun({
+      stages: { plan_review: { status: 'completed', iterations: iters } },
+    });
+    const next = makeRun({
+      stages: { plan_review: { status: 'completed', iterations: iters } },
+    });
+    expect(detectPlanEdited('run-1', next, prev)).toBeNull();
+  });
+
+  it('returns null when no plan_review stage', () => {
+    const prev = makeRun();
+    const next = makeRun();
+    expect(detectPlanEdited('run-1', next, prev)).toBeNull();
+  });
+
+  it('includes project name in body when provided', () => {
+    const prev = makeRun({
+      stages: { plan_review: { status: 'in_progress', iterations: [] } },
+    });
+    const next = makeRun({
+      stages: {
+        plan_review: {
+          status: 'completed',
+          iterations: [{ outcome: 'approve_with_edits' }],
+        },
+      },
+    });
+    const result = detectPlanEdited('run-1', next, prev, 'my-project');
+    expect(result).not.toBeNull();
+    expect(result.body).toContain('[my-project]');
   });
 });

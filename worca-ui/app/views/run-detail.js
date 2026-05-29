@@ -420,7 +420,12 @@ function _triggerBadge(trigger) {
 }
 
 function _outcomeVariant(outcome) {
-  if (outcome === 'success' || outcome === 'approve') return 'success';
+  if (
+    outcome === 'success' ||
+    outcome === 'approve' ||
+    outcome === 'approve_with_edits'
+  )
+    return 'success';
   if (outcome === 'revise' || outcome === 'request_changes') return 'warning';
   if (outcome === 'rejected' || outcome === 'restart_planning') return 'danger';
   return 'neutral';
@@ -428,7 +433,11 @@ function _outcomeVariant(outcome) {
 
 function _outcomeBadge(outcome) {
   if (!outcome) return nothing;
-  return html`<sl-badge variant="${_outcomeVariant(outcome)}" pill>${outcome.replace(/_/g, ' ')}</sl-badge>`;
+  const badge = html`<sl-badge variant="${_outcomeVariant(outcome)}" pill>${outcome.replace(/_/g, ' ')}</sl-badge>`;
+  if (outcome === 'approve_with_edits') {
+    return html`${badge} <sl-badge class="plan-review-edited-chip" variant="neutral" pill>edited</sl-badge>`;
+  }
+  return badge;
 }
 
 function _effortSourceLabel(source) {
@@ -505,6 +514,46 @@ function _crgBadge(iter, crgEnabled) {
     ? html`<sl-tooltip class="crg-tool-tooltip"><div slot="content">${lines.map((l) => html`<div>${l}</div>`)}</div>${badge}</sl-tooltip>`
     : badge;
   return html`<span class="meta-label">Code Review Graph:</span> ${wrapped}`;
+}
+
+function _planReviewModeBadge(stage) {
+  if (!stage?.mode) return nothing;
+  const label = stage.mode === 'review_and_edit' ? 'review & edit' : stage.mode;
+  const reason = stage.mode_reason || '';
+  const badge = html`<sl-badge class="plan-review-mode-badge" variant="neutral" pill>${label}</sl-badge>`;
+  if (reason) {
+    return html`<span class="meta-label">Mode:</span> <sl-tooltip content="${reason}">${badge}</sl-tooltip>`;
+  }
+  return html`<span class="meta-label">Mode:</span> ${badge}`;
+}
+
+function _planReviewSeverityVariant(severity) {
+  if (severity === 'critical') return 'danger';
+  if (severity === 'major') return 'warning';
+  return 'neutral';
+}
+
+function _planReviewIssuesView(iter, stageMode) {
+  const issues = iter.output?.issues;
+  if (!issues?.length) return nothing;
+  const heading =
+    stageMode === 'review_and_edit'
+      ? 'Issues resolved by reviewer'
+      : 'Feedback to planner';
+  return html`
+    <div class="plan-review-issues">
+      <div class="plan-review-issues-heading">${heading}</div>
+      ${issues.map(
+        (issue) => html`
+        <div class="plan-review-issue-row">
+          <sl-badge variant="${_planReviewSeverityVariant(issue.severity)}" pill>${issue.severity}</sl-badge>
+          <span class="plan-review-issue-category">${issue.category}</span>
+          <span class="plan-review-issue-desc">${issue.description}</span>
+        </div>
+      `,
+      )}
+    </div>
+  `;
 }
 
 function _effortRowView(iter, graphifyEnabled, crgEnabled) {
@@ -1092,6 +1141,8 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     task_progress: stage.task_progress || undefined,
     error: stage.error || undefined,
     plan_file: stage.plan_file || undefined,
+    mode: stage.mode || undefined,
+    mode_reason: stage.mode_reason || undefined,
     graphify_status: stage.graphify_status || undefined,
     graphify_report_path: stage.graphify_report_path || undefined,
     graphify_outcome: stage.graphify_outcome || undefined,
@@ -1657,6 +1708,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                   }
                 </span>
                 ${key === 'pr' ? _prTitleBadge(run) : nothing}
+                ${key === 'plan_review' ? _planReviewModeBadge(stage) : nothing}
                 <sl-badge variant="${_badgeVariant(stageStatus)}" pill>
                   ${stageStatus.replace(/_/g, ' ')}
                 </sl-badge>
@@ -1731,6 +1783,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                           <sl-tab-panel name="iter-${key}-${iter.number}">
                             ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled, run.crg_enabled)}
                             ${_planIterationButton(key, iter, run, options.rerender)}
+                            ${key === 'plan_review' ? _planReviewIssuesView(iter, stage.mode) : nothing}
                           </sl-tab-panel>
                         `,
                         )}
@@ -1766,6 +1819,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _effortRowView(iterations[0], run.graphify_enabled, run.crg_enabled) : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
+                      ${key === 'plan_review' && iterations.length === 1 ? _planReviewIssuesView(iterations[0], stage.mode) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}

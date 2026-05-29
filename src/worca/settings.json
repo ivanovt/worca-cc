@@ -159,7 +159,8 @@
       },
       "plan_review": {
         "agent": "plan_reviewer",
-        "enabled": false
+        "enabled": false,
+        "mode": "review"
       }
     },
     "effort": {
@@ -275,6 +276,7 @@
       "max_cost_usd": null
     },
     "governance": {
+      "plan_review_enforce": "auto",
       "guards": {
         "block_rm_rf": true,
         "block_env_write": true,

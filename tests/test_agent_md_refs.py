@@ -48,6 +48,16 @@ def test_plan_reviewer_does_not_embed_block_plan_review():
 
 
 # ---------------------------------------------------------------------------
+# plan_editor.md
+# ---------------------------------------------------------------------------
+
+
+def test_plan_editor_does_not_embed_block_plan_edit():
+    content = _read("plan_editor.md")
+    assert "{{block:plan-edit}}" not in content
+
+
+# ---------------------------------------------------------------------------
 # coordinator.md
 # ---------------------------------------------------------------------------
 
@@ -434,6 +444,7 @@ ALL_BLOCK_FILES = [
     "implement.block.md",
     "learn.block.md",
     "plan.block.md",
+    "plan-edit.block.md",
     "plan-review.block.md",
     "pr.block.md",
     "review.block.md",
@@ -443,6 +454,7 @@ ALL_BLOCK_FILES = [
 BLOCK_FILES_WITH_WORK_REQUEST = [
     "learn.block.md",
     "plan.block.md",
+    "plan-edit.block.md",
     "plan-review.block.md",
     "pr.block.md",
 ]
@@ -603,8 +615,8 @@ def test_graphify_note_appears_after_guide_block():
 
 
 CORE_AGENT_FILES = [
-    "planner.md", "plan_reviewer.md", "coordinator.md", "implementer.md",
-    "tester.md", "reviewer.md", "guardian.md", "learner.md",
+    "planner.md", "plan_reviewer.md", "plan_editor.md", "coordinator.md",
+    "implementer.md", "tester.md", "reviewer.md", "guardian.md", "learner.md",
 ]
 
 KNOWLEDGE_GRAPH_HEADING = "## Knowledge graph (use for orientation)"

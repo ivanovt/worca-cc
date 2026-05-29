@@ -12,6 +12,7 @@ CORE_DIR = pathlib.Path(__file__).parent.parent / "src" / "worca" / "agents" / "
 BLOCK_FILES = [
     "plan.block.md",
     "plan-review.block.md",
+    "plan-edit.block.md",
     "coordinate.block.md",
     "implement.block.md",
     "test.block.md",
@@ -99,6 +100,41 @@ def test_plan_review_block_convergence_inside_history_conditional():
     end = content.index(endif_tag, start)
     history_block = content[start:end]
     assert "verify convergence" in history_block
+
+
+# ---------------------------------------------------------------------------
+# plan-edit.block.md
+# ---------------------------------------------------------------------------
+
+
+def test_plan_edit_block_has_work_request():
+    content = _read("plan-edit.block.md")
+    assert "{{work_request}}" in content
+
+
+def test_plan_edit_block_has_plan_content_conditional():
+    content = _read("plan-edit.block.md")
+    assert "{{#if plan_content}}" in content
+
+
+def test_plan_edit_block_not_read_only():
+    content = _read("plan-edit.block.md")
+    assert "read-only" not in content.lower()
+
+
+def test_plan_edit_block_no_history_section():
+    content = _read("plan-edit.block.md")
+    assert "{{#if plan_review_history_formatted}}" not in content
+
+
+def test_plan_edit_block_no_convergence_directive():
+    content = _read("plan-edit.block.md")
+    assert "verify convergence" not in content
+
+
+def test_plan_edit_block_mentions_rewrite():
+    content = _read("plan-edit.block.md")
+    assert "rewrite" in content.lower() or "edit" in content.lower()
 
 
 # ---------------------------------------------------------------------------

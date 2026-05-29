@@ -68,6 +68,13 @@ const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 export const AUTO_MODES = ['disabled', 'reactive', 'adaptive'];
 
+export const PLAN_REVIEW_MODES = ['review', 'review_and_edit'];
+export const PLAN_REVIEW_ENFORCE_OPTIONS = [
+  'auto',
+  'review',
+  'review_and_edit',
+];
+
 export function getModelKeys(worca) {
   const models = worca?.models || {};
   const keys = Object.keys(models);
@@ -720,7 +727,7 @@ export function readPipelineFromDom() {
   };
 }
 
-function readStagesFromDom() {
+export function readStagesFromDom() {
   const stages = {};
   for (const stage of CONFIGURABLE_STAGES) {
     const enabledEl = document.getElementById(`stage-${stage}-enabled`);
@@ -729,6 +736,10 @@ function readStagesFromDom() {
       agent: agentEl?.value || DEFAULT_STAGES[stage].agent,
       enabled: enabledEl?.checked ?? true,
     };
+    if (stage === 'plan_review') {
+      const modeEl = document.getElementById('stage-plan_review-mode');
+      stages[stage].mode = modeEl?.value || 'review';
+    }
   }
   return stages;
 }
@@ -751,7 +762,7 @@ function readPreflightFromDom() {
   };
 }
 
-function readGovernanceFromDom() {
+export function readGovernanceFromDom() {
   const guards = {};
   for (const rule of GUARD_RULES) {
     const el = document.getElementById(`guard-${rule.key}`);
@@ -760,10 +771,13 @@ function readGovernanceFromDom() {
   const strikeEl = document.getElementById('test-gate-strikes');
   const test_gate_strikes = parseInt(strikeEl?.value, 10) || 2;
 
+  const enforceEl = document.getElementById('governance-plan-review-enforce');
+  const plan_review_enforce = enforceEl?.value || 'auto';
+
   const dispatch =
     settingsData?.worca?.governance?.dispatch || DEFAULT_GOVERNANCE.dispatch;
 
-  return { guards, test_gate_strikes, dispatch };
+  return { guards, test_gate_strikes, plan_review_enforce, dispatch };
 }
 
 export function formatDiskThreshold(bytes) {
@@ -949,7 +963,7 @@ function agentsTab(worca, rerender) {
   `;
 }
 
-function pipelineTab(worca, rerender) {
+export function pipelineTab(worca, rerender) {
   const loops = worca.loops || {};
   const stages = worca.stages || DEFAULT_STAGES;
   const milestones = worca.milestones || {};
@@ -1019,6 +1033,19 @@ function pipelineTab(worca, rerender) {
                     ${AGENT_NAMES.map((a) => html`<sl-option value="${a}">${a}</sl-option>`)}
                   </sl-select>
                 </div>
+                ${
+                  stage === 'plan_review'
+                    ? html`
+                <div class="settings-field">
+                  <label class="settings-label">Mode</label>
+                  <sl-select id="stage-plan_review-mode" .value="${stageConfig.mode || 'review'}" size="small" hoist>
+                    ${PLAN_REVIEW_MODES.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+                  </sl-select>
+                  <span class="settings-field-hint">review_and_edit allows the reviewer to directly edit the plan, trading independent verification for faster convergence.</span>
+                </div>
+                `
+                    : nothing
+                }
               </div>
             </div>
           `;
@@ -1215,6 +1242,17 @@ export function governanceTab(worca, permissions, rerender) {
           <label class="settings-label">Strike Threshold</label>
           <sl-input id="test-gate-strikes" type="number" value="${governance.test_gate_strikes || 2}" size="small" min="1" max="10"></sl-input>
           <span class="settings-field-hint">Consecutive test failures before blocking</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Plan Review Enforcement</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Enforce Mode</label>
+          <sl-select id="governance-plan-review-enforce" .value="${governance.plan_review_enforce || 'auto'}" size="small" hoist>
+            ${PLAN_REVIEW_ENFORCE_OPTIONS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+          </sl-select>
+          <span class="settings-field-hint">Controls the minimum plan review mode. "auto" lets the pipeline decide; "review_and_edit" forces edit capability but loses independent verification of the plan.</span>
         </div>
       </div>
 

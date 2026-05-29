@@ -25,6 +25,8 @@ const VALID_EFFORT_RUNGS = ['low', 'medium', 'high', 'xhigh', 'max'];
 const VALID_AUTO_MODES = ['disabled', 'reactive', 'adaptive'];
 const VALID_EFFORT_KEYS = ['auto_mode', 'auto_cap'];
 const VALID_MILESTONES = ['plan_approval', 'pr_approval', 'deploy_approval'];
+const VALID_PLAN_REVIEW_MODES = ['review', 'review_and_edit'];
+const VALID_PLAN_REVIEW_ENFORCE = ['auto', 'review', 'review_and_edit'];
 const VALID_GUARDS = [
   'block_rm_rf',
   'block_env_write',
@@ -175,6 +177,16 @@ export function validateSettingsPayload(body, options = {}) {
           } else {
             if (cfg.agent !== undefined && !VALID_AGENTS.includes(cfg.agent)) {
               details.push(`Invalid agent "${cfg.agent}" for stage "${name}"`);
+            }
+            if (name === 'plan_review' && cfg.mode !== undefined) {
+              if (
+                typeof cfg.mode !== 'string' ||
+                !VALID_PLAN_REVIEW_MODES.includes(cfg.mode)
+              ) {
+                details.push(
+                  `stages.plan_review.mode must be one of: ${VALID_PLAN_REVIEW_MODES.join(', ')}`,
+                );
+              }
             }
           }
         }
@@ -407,6 +419,16 @@ export function validateSettingsPayload(body, options = {}) {
         details.push('worca.governance must be an object');
       } else {
         const g = w.governance;
+        if (g.plan_review_enforce !== undefined) {
+          if (
+            typeof g.plan_review_enforce !== 'string' ||
+            !VALID_PLAN_REVIEW_ENFORCE.includes(g.plan_review_enforce)
+          ) {
+            details.push(
+              `governance.plan_review_enforce must be one of: ${VALID_PLAN_REVIEW_ENFORCE.join(', ')}`,
+            );
+          }
+        }
         if (g.guards !== undefined) {
           if (
             typeof g.guards !== 'object' ||

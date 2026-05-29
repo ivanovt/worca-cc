@@ -1,0 +1,791 @@
+"""Tests for W-059-5: plan-review mode-aware template routing in runner.py.
+
+Verifies two routing seams driven by resolve_plan_review_mode():
+1. Agent .md selection: plan_editor.md in review_and_edit mode
+2. Block selection: plan-edit block in review_and_edit mode
+"""
+import json
+import os
+from unittest.mock import patch
+
+import pytest
+
+from worca.orchestrator.runner import _STAGE_BLOCK_MAP, run_pipeline
+from worca.orchestrator.stages import Stage
+from worca.orchestrator.work_request import WorkRequest
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _settings(tmp_path, mode=None, enforce=None, plan_review_enabled=True):
+    """Write settings.json with optional plan_review mode/enforce."""
+    stages = {
+        "plan": {"agent": "planner", "enabled": True},
+        "plan_review": {"agent": "plan_reviewer", "enabled": plan_review_enabled},
+        "coordinate": {"agent": "coordinator", "enabled": True},
+        "implement": {"agent": "implementer", "enabled": False},
+        "test": {"agent": "tester", "enabled": False},
+        "review": {"agent": "guardian", "enabled": False},
+        "pr": {"agent": "guardian", "enabled": False},
+    }
+    if mode is not None:
+        stages["plan_review"]["mode"] = mode
+    data = {
+        "worca": {
+            "stages": stages,
+            "agents": {
+                "planner": {"model": "opus", "max_turns": 10},
+                "plan_reviewer": {"model": "opus", "max_turns": 20},
+                "coordinator": {"model": "opus", "max_turns": 10},
+            },
+            "loops": {"plan_review": 2},
+        }
+    }
+    if enforce is not None:
+        data["worca"]["governance"] = {"plan_review_enforce": enforce}
+    f = tmp_path / "settings.json"
+    f.write_text(json.dumps(data))
+    return str(f)
+
+
+def _worca(tmp_path):
+    d = tmp_path / ".worca"
+    d.mkdir()
+    return str(d), str(d / "status.json")
+
+
+def _wr(title="Test task"):
+    return WorkRequest(source_type="prompt", title=title)
+
+
+def _mock_stage(stage, result):
+    return result, {"type": "result"}
+
+
+@pytest.fixture(autouse=True)
+def _mock_beads():
+    with patch("worca.orchestrator.runner._ensure_beads_initialized"):
+        yield
+
+
+# ---------------------------------------------------------------------------
+# Static map sanity
+# ---------------------------------------------------------------------------
+
+class TestStageBlockMapDefaults:
+
+    def test_plan_review_default_block_name(self):
+        assert _STAGE_BLOCK_MAP[Stage.PLAN_REVIEW] == "plan-review"
+
+    def test_plan_review_in_map(self):
+        assert Stage.PLAN_REVIEW in _STAGE_BLOCK_MAP
+
+
+# ---------------------------------------------------------------------------
+# Agent .md routing (seam 1)
+# ---------------------------------------------------------------------------
+
+class TestAgentTemplateRouting:
+
+    def test_review_mode_uses_plan_reviewer_md(self, tmp_path):
+        """Default review mode loads plan_reviewer.md (via stage_config agent)."""
+        settings_path = _settings(tmp_path, mode="review")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN_REVIEW:
+                captured["agent_override"] = agent_override
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        override = captured.get("agent_override")
+        if override is not None:
+            assert "plan_reviewer" in override
+            assert "plan_editor" not in override
+
+    def test_edit_mode_uses_plan_editor_md(self, tmp_path):
+        """review_and_edit mode loads plan_editor.md instead of plan_reviewer.md."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN_REVIEW:
+                captured["agent_override"] = agent_override
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        override = captured.get("agent_override")
+        assert override is not None, "agent_override must be set for PLAN_REVIEW"
+        assert "plan_editor" in override, (
+            f"review_and_edit mode must load plan_editor.md, got: {override}"
+        )
+
+    def test_governance_enforce_overrides_template_mode(self, tmp_path):
+        """governance.plan_review_enforce=review_and_edit overrides stages.mode=review."""
+        settings_path = _settings(tmp_path, mode="review", enforce="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN_REVIEW:
+                captured["agent_override"] = agent_override
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        override = captured.get("agent_override")
+        assert override is not None
+        assert "plan_editor" in override
+
+
+# ---------------------------------------------------------------------------
+# Block selection (seam 2)
+# ---------------------------------------------------------------------------
+
+class TestBlockRouting:
+
+    def test_review_mode_uses_plan_review_block(self, tmp_path):
+        """Default review mode resolves the plan-review block."""
+        settings_path = _settings(tmp_path, mode="review")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN_REVIEW:
+                captured["prompt_override"] = prompt_override
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        block_calls = []
+        original_resolve_block = None
+
+        def tracking_resolve_block(self, block_name, *args, **kwargs):
+            block_calls.append(block_name)
+            return original_resolve_block(self, block_name, *args, **kwargs)
+
+        from worca.orchestrator.overlay import OverlayResolver
+        original_resolve_block = OverlayResolver.resolve_block
+
+        with patch.object(OverlayResolver, "resolve_block", tracking_resolve_block):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert "plan-review" in block_calls, (
+            f"review mode must resolve plan-review block, got: {block_calls}"
+        )
+        assert "plan-edit" not in block_calls
+
+    def test_edit_mode_uses_plan_edit_block(self, tmp_path):
+        """review_and_edit mode resolves the plan-edit block instead of plan-review."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+
+        block_calls = []
+        original_resolve_block = None
+
+        def tracking_resolve_block(self, block_name, *args, **kwargs):
+            block_calls.append(block_name)
+            return original_resolve_block(self, block_name, *args, **kwargs)
+
+        from worca.orchestrator.overlay import OverlayResolver
+        original_resolve_block = OverlayResolver.resolve_block
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch.object(OverlayResolver, "resolve_block", tracking_resolve_block):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert "plan-edit" in block_calls, (
+            f"review_and_edit mode must resolve plan-edit block, got: {block_calls}"
+        )
+        assert "plan-review" not in block_calls
+
+
+# ---------------------------------------------------------------------------
+# Env flag: WORCA_PLAN_REVIEWER_CAN_EDIT (seam 3)
+# ---------------------------------------------------------------------------
+
+class TestPlanReviewerCanEditEnv:
+
+    def test_edit_mode_sets_env_flag(self, tmp_path):
+        """review_and_edit mode passes WORCA_PLAN_REVIEWER_CAN_EDIT=1 in env_overrides."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN_REVIEW:
+                captured["env_overrides"] = kwargs.get("env_overrides", {})
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        env = captured.get("env_overrides", {})
+        assert env.get("WORCA_PLAN_REVIEWER_CAN_EDIT") == "1", (
+            f"review_and_edit must set WORCA_PLAN_REVIEWER_CAN_EDIT=1, got: {env}"
+        )
+
+    def test_review_mode_does_not_set_env_flag(self, tmp_path):
+        """Default review mode must NOT set WORCA_PLAN_REVIEWER_CAN_EDIT."""
+        settings_path = _settings(tmp_path, mode="review")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN_REVIEW:
+                captured["env_overrides"] = kwargs.get("env_overrides", {})
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        env = captured.get("env_overrides", {})
+        assert "WORCA_PLAN_REVIEWER_CAN_EDIT" not in env, (
+            f"review mode must NOT set WORCA_PLAN_REVIEWER_CAN_EDIT, got: {env}"
+        )
+
+    def test_governance_enforce_sets_env_flag(self, tmp_path):
+        """governance.plan_review_enforce=review_and_edit sets the env flag."""
+        settings_path = _settings(tmp_path, mode="review", enforce="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN_REVIEW:
+                captured["env_overrides"] = kwargs.get("env_overrides", {})
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        env = captured.get("env_overrides", {})
+        assert env.get("WORCA_PLAN_REVIEWER_CAN_EDIT") == "1"
+
+
+# ---------------------------------------------------------------------------
+# Original-plan retention (§6 audit triad)
+# ---------------------------------------------------------------------------
+
+class TestOriginalPlanRetention:
+
+    def _run_dir_with_plan(self, tmp_path, plan_content="# Original Plan\n"):
+        """Set up a .worca/runs/<id>/ dir with a plan file, return (run_dir, plan_path)."""
+        run_dir = tmp_path / ".worca" / "runs" / "test-run"
+        run_dir.mkdir(parents=True)
+        plan_path = run_dir / "plan-001.md"
+        plan_path.write_text(plan_content)
+        return str(run_dir), str(plan_path)
+
+    def test_edit_mode_copies_plan_original(self, tmp_path):
+        """review_and_edit mode copies plan to plan-original.md before editor runs."""
+        from worca.orchestrator.runner import _preserve_original_plan
+        run_dir, plan_path = self._run_dir_with_plan(tmp_path)
+
+        _preserve_original_plan(run_dir, plan_path, restart_count=0)
+
+        original = os.path.join(run_dir, "plan-original.md")
+        assert os.path.exists(original)
+        assert open(original).read() == "# Original Plan\n"
+
+    def test_restart_planning_suffixes_with_counter(self, tmp_path):
+        """On restart_planning re-entry, plan-original is suffixed with counter."""
+        from worca.orchestrator.runner import _preserve_original_plan
+        run_dir, plan_path = self._run_dir_with_plan(tmp_path, "# Plan v2\n")
+
+        _preserve_original_plan(run_dir, plan_path, restart_count=2)
+
+        suffixed = os.path.join(run_dir, "plan-original-2.md")
+        assert os.path.exists(suffixed)
+        assert open(suffixed).read() == "# Plan v2\n"
+
+    def test_no_copy_when_plan_file_missing(self, tmp_path):
+        """No crash or copy when plan file doesn't exist."""
+        from worca.orchestrator.runner import _preserve_original_plan
+        run_dir = str(tmp_path / "run")
+        os.makedirs(run_dir)
+
+        _preserve_original_plan(run_dir, os.path.join(run_dir, "nonexistent.md"), restart_count=0)
+
+        assert not os.path.exists(os.path.join(run_dir, "plan-original.md"))
+
+    def test_no_copy_when_run_dir_is_none(self):
+        """No crash when run_dir is None (legacy/test mode)."""
+        from worca.orchestrator.runner import _preserve_original_plan
+        _preserve_original_plan(None, "/some/plan.md", restart_count=0)
+
+    def test_first_restart_uses_suffix_1_not_bare(self, tmp_path):
+        """restart_count=1 produces plan-original-1.md (not bare plan-original.md)."""
+        from worca.orchestrator.runner import _preserve_original_plan
+        run_dir, plan_path = self._run_dir_with_plan(tmp_path)
+
+        _preserve_original_plan(run_dir, plan_path, restart_count=1)
+
+        assert os.path.exists(os.path.join(run_dir, "plan-original-1.md"))
+        assert not os.path.exists(os.path.join(run_dir, "plan-original.md"))
+
+
+# ---------------------------------------------------------------------------
+# Edit-mode branch behavior (W-059-8)
+# ---------------------------------------------------------------------------
+
+class TestEditModeBranch:
+    """Verify that review_and_edit mode skips loopback, marks plan_approved,
+    and sets outcome correctly in the PLAN_REVIEW handler."""
+
+    def test_edit_mode_revise_does_not_loopback(self, tmp_path):
+        """Edit mode with outcome=revise should NOT loop back to PLAN —
+        it should still proceed forward (no loopback in edit mode)."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        stages_visited = []
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            stages_visited.append(stage)
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "revise",
+                    "issues": [{"severity": "critical", "description": "missing auth"}],
+                    "summary": "Needs revision",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        plan_count = stages_visited.count(Stage.PLAN)
+        assert plan_count == 1, (
+            f"Edit mode must NOT loop back to PLAN, but PLAN ran {plan_count} times"
+        )
+
+    def test_edit_mode_proceeds_to_coordinate(self, tmp_path):
+        """Edit mode reaches COORDINATE after PLAN_REVIEW (no stuck state)."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        stages_visited = []
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            stages_visited.append(stage)
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert Stage.COORDINATE in stages_visited, "Edit mode must proceed to COORDINATE"
+
+    def test_edit_mode_approve_with_edits_outcome_captured(self, tmp_path):
+        """Edit mode with outcome=approve_with_edits preserves that outcome."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "approve_with_edits",
+                    "issues": [{"severity": "minor", "description": "adjusted naming"}],
+                    "summary": "Approved with edits",
+                })
+            if stage == Stage.COORDINATE:
+                captured["reached_coordinate"] = True
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        orig_complete = None
+        from worca.state.status import complete_iteration as _orig_ci
+        orig_complete = _orig_ci
+
+        def tracking_complete(*args, **kwargs):
+            stage_name = args[1] if len(args) > 1 else kwargs.get("stage_name")
+            outcome = kwargs.get("outcome")
+            if stage_name == "plan_review":
+                captured["outcome"] = outcome
+            return orig_complete(*args, **kwargs)
+
+        with patch("worca.orchestrator.runner.complete_iteration", side_effect=tracking_complete):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert captured.get("outcome") == "approve_with_edits"
+        assert captured.get("reached_coordinate"), "Must proceed to COORDINATE"
+
+    def test_edit_mode_approve_maps_to_approve_outcome(self, tmp_path):
+        """Edit mode with outcome=approve keeps outcome as 'approve'."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured = {}
+
+        from worca.state.status import complete_iteration as _orig_ci
+        orig_complete = _orig_ci
+
+        def tracking_complete(*args, **kwargs):
+            stage_name = args[1] if len(args) > 1 else kwargs.get("stage_name")
+            outcome = kwargs.get("outcome")
+            if stage_name == "plan_review":
+                captured["outcome"] = outcome
+            return orig_complete(*args, **kwargs)
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.complete_iteration", side_effect=tracking_complete):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert captured.get("outcome") == "approve"
+
+    def test_edit_mode_sets_plan_approved_milestone(self, tmp_path):
+        """Edit mode sets plan_approved milestone via set_milestone."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        milestone_calls = []
+
+        from worca.state.status import set_milestone as _orig_sm
+        orig_set_milestone = _orig_sm
+
+        def tracking_set_milestone(*args, **kwargs):
+            key = args[1] if len(args) > 1 else kwargs.get("key")
+            value = args[2] if len(args) > 2 else kwargs.get("value")
+            milestone_calls.append((key, value))
+            return orig_set_milestone(*args, **kwargs)
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.set_milestone", side_effect=tracking_set_milestone):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        pr_milestones = [(k, v) for k, v in milestone_calls if k == "plan_approved"]
+        assert any(v is True for _, v in pr_milestones), (
+            f"Edit mode must call set_milestone('plan_approved', True), got: {pr_milestones}"
+        )
+
+    def test_edit_mode_emits_plan_edited_event(self, tmp_path):
+        """Edit mode emits PLAN_EDITED event with correct payload fields."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured_events = []
+
+        from worca.events.types import PLAN_EDITED
+
+        original_emit = None
+
+        def tracking_emit(ctx, event_type, payload, **kwargs):
+            captured_events.append((event_type, payload))
+            return original_emit(ctx, event_type, payload, **kwargs) if original_emit else None
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "approve_with_edits",
+                    "issues": [
+                        {"severity": "critical", "category": "completeness", "description": "a"},
+                        {"severity": "major", "category": "feasibility", "description": "b"},
+                        {"severity": "minor", "category": "risk", "description": "c"},
+                    ],
+                    "summary": "Approved with edits",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.emit_event", side_effect=tracking_emit):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        plan_edited = [(et, p) for et, p in captured_events if et == PLAN_EDITED]
+        assert len(plan_edited) == 1, f"Expected exactly 1 PLAN_EDITED event, got {len(plan_edited)}"
+        payload = plan_edited[0][1]
+        assert payload["stage"] == "plan_review"
+        assert payload["mode"] == "review_and_edit"
+        assert payload["mode_reason"] == "from template/pipeline"
+        assert payload["issue_counts"] == {"critical": 1, "major": 1, "minor": 1, "suggestion": 0}
+        assert "original_plan_path" in payload
+
+    def test_review_mode_does_not_emit_plan_edited(self, tmp_path):
+        """Standard review mode must NOT emit PLAN_EDITED."""
+        settings_path = _settings(tmp_path, mode="review")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        captured_events = []
+
+        from worca.events.types import PLAN_EDITED
+
+        def tracking_emit(ctx, event_type, payload, **kwargs):
+            captured_events.append(event_type)
+            return None
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.emit_event", side_effect=tracking_emit):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        assert PLAN_EDITED not in captured_events, "Review mode must NOT emit PLAN_EDITED"
+
+    def test_review_mode_revise_loops_back_to_plan(self, tmp_path):
+        """Regression guard: review mode with revise + critical issues loops back."""
+        settings_path = _settings(tmp_path, mode="review")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+        stages_visited = []
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            stages_visited.append(stage)
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                if stages_visited.count(Stage.PLAN_REVIEW) == 1:
+                    return _mock_stage(stage, {
+                        "outcome": "revise",
+                        "issues": [{"severity": "critical", "description": "missing auth"}],
+                        "summary": "Needs revision",
+                    })
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        plan_count = stages_visited.count(Stage.PLAN)
+        assert plan_count == 2, (
+            f"Review mode must loop back to PLAN on revise, but PLAN ran {plan_count} times"
+        )
+
+    def test_mode_and_reason_persisted_in_status(self, tmp_path):
+        """Resolved mode/mode_reason are written to the plan_review stage in status.json."""
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        worca_dir, status_path = _worca(tmp_path)
+        wr = _wr()
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "approve_with_edits",
+                    "issues": [{"severity": "minor", "description": "tweaked"}],
+                    "summary": "Approved",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        import glob
+        status_files = glob.glob(os.path.join(worca_dir, "runs", "*", "status.json"))
+        assert status_files, "No status.json found in any run directory"
+        with open(status_files[0]) as f:
+            final_status = json.load(f)
+        pr_stage = final_status["stages"]["plan_review"]
+        assert pr_stage["mode"] == "review_and_edit"
+        assert pr_stage["mode_reason"] == "from template/pipeline"
+
+    def test_mode_persisted_for_default_review(self, tmp_path):
+        """Default review mode also persists mode/mode_reason."""
+        settings_path = _settings(tmp_path)
+        worca_dir, status_path = _worca(tmp_path)
+        wr = _wr()
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "Good"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+
+        import glob
+        status_files = glob.glob(os.path.join(worca_dir, "runs", "*", "status.json"))
+        assert status_files, "No status.json found in any run directory"
+        with open(status_files[0]) as f:
+            final_status = json.load(f)
+        pr_stage = final_status["stages"]["plan_review"]
+        assert pr_stage["mode"] == "review"
+        assert pr_stage["mode_reason"] == "default"
