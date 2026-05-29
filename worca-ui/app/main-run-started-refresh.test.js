@@ -39,8 +39,8 @@ describe('run-started handler', () => {
     expect(handler).toContain('fetchAndUpdateRuns()');
   });
 
-  it('still resets pipelineAction', () => {
-    expect(handler).toMatch(/pipelineAction\s*=\s*null/);
+  it('does not reference removed pipelineAction', () => {
+    expect(handler).not.toContain('pipelineAction');
   });
 
   it('still rerenders', () => {
