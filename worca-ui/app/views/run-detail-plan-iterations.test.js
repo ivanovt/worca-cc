@@ -38,22 +38,29 @@ describe('runDetailView plan revision viewer (W-061)', () => {
           plan_file: '/tmp/wt/.worca/runs/run-w061/plan-002.md',
           iterations: [{ number: 1, status: 'completed' }],
         },
+        // A looped plan_review: iter-1 reviewed v1 (revise), iter-2 reviewed v2.
         plan_review: {
           status: 'completed',
-          iterations: [{ number: 1, status: 'completed', outcome: 'approve' }],
+          iterations: [
+            { number: 1, status: 'completed', outcome: 'revise' },
+            { number: 2, status: 'completed', outcome: 'approve' },
+          ],
         },
       },
     };
   }
 
-  it('renders a "View plan" button on both the planner and plan_review stages', () => {
+  it('renders per-iteration "View plan · vK" buttons on plan_review, mapped to the reviewed revision', () => {
     const out = renderToString(runDetailView(_run()));
+    // plan_review iter-1 → v1, iter-2 → v2 (both tab panels are rendered).
+    expect(out).toContain('View plan · v1');
+    expect(out).toContain('View plan · v2');
+    // plan stage button + the two plan_review per-iteration buttons.
     const buttons = out.match(/btn-view-run-plan/g) || [];
-    // One on the plan stage, one on the plan_review stage.
-    expect(buttons.length).toBeGreaterThanOrEqual(2);
+    expect(buttons.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('renders the plan dialog exactly once (shared, on the plan stage only)', () => {
+  it('renders the plan dialog exactly once (shared, top-level)', () => {
     const out = renderToString(runDetailView(_run()));
     const dialogs = out.match(/run-plan-dialog/g) || [];
     expect(dialogs.length).toBe(1);

@@ -127,43 +127,36 @@ function _copyToClipboardSimple(text) {
   navigator.clipboard?.writeText(text).catch(() => {});
 }
 
-// Plan-stage extension: small chip strip + View plan button that opens the
-// shared markdown dialog. Wired into the plan AND plan_review stage panels.
-// W-061: plan revisions are run-scoped (plan-NNN.md in the run dir), so the
-// button is offered whenever planning happened — independent of a worktree or
-// a stage-level plan_file path. The dialog reports "no plan file found" if a
-// run genuinely produced none.
-function _planArtifactView(stage, run, rerender) {
-  if (!run?.id) return nothing;
-  const planFile = stage?.plan_file || null;
-  const skipped = stage?.skipped === true;
+// W-061 Part A: per-iteration "View plan" button, rendered inside each plan /
+// plan_review iteration's content (a tab panel when the stage looped, inline
+// otherwise) so the button matches the iteration it sits under.
+//
+// Revision mapping: a plan_review iteration K reviewed revision K (reviews run
+// in ascending order, one per loopback cycle), so its button opens revision K.
+// The plan stage produces the plan, so its button opens the current (latest)
+// revision (null). Either way it opens the shared top-level dialog, which
+// carries the full revision selector for free navigation.
+function _planIterationButton(key, iter, run, rerender) {
+  if ((key !== 'plan' && key !== 'plan_review') || !run?.id) return nothing;
+  const rev = key === 'plan_review' && iter?.number ? iter.number : null;
+  const label = rev ? `View plan · v${rev}` : 'View plan';
   return html`
     <div class="plan-artifact-strip">
-      ${
-        skipped
-          ? html`<sl-tag size="small" pill variant="neutral" class="plan-skipped-tag">Skipped — plan supplied by workspace</sl-tag>`
-          : nothing
-      }
-      ${
-        planFile
-          ? html`<code class="plan-file-chip" title="${planFile}">${planFile.split('/').pop()}</code>`
-          : nothing
-      }
       <sl-button
         size="small"
-        class="btn-view-run-plan"
+        class="btn-view-run-plan btn-view-plan-iter"
         @click=${
           rerender
             ? () => {
                 _planDialogRunId = run.id;
-                _planDialogIter = null; // default to the current (latest) revision
+                _planDialogIter = rev; // null = current/latest
                 _ensurePlanItersFetched(run, rerender);
-                _ensureRunPlanFetched(run, null, rerender);
+                _ensureRunPlanFetched(run, rev, rerender);
                 rerender();
               }
             : null
         }
-      >View plan</sl-button>
+      >${label}</sl-button>
     </div>
   `;
 }
@@ -1720,7 +1713,6 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
-                      ${key === 'plan' || key === 'plan_review' ? _planArtifactView(stage, run, options.rerender) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -1738,6 +1730,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                           (iter) => html`
                           <sl-tab-panel name="iter-${key}-${iter.number}">
                             ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled, run.crg_enabled)}
+                            ${_planIterationButton(key, iter, run, options.rerender)}
                           </sl-tab-panel>
                         `,
                         )}
@@ -1777,7 +1770,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
-                      ${key === 'plan' || key === 'plan_review' ? _planArtifactView(stage, run, options.rerender) : nothing}
+                      ${_planIterationButton(key, iterations[0], run, options.rerender)}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
                   </div>

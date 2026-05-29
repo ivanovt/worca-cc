@@ -84,7 +84,7 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
     }
   });
 
-  test('opens the plan dialog from the plan_review panel (plan panel collapsed)', async ({
+  test('per-iteration button on plan_review opens its reviewed revision (plan panel collapsed)', async ({
     page,
   }) => {
     const ctx = await startServer();
@@ -99,8 +99,9 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
 
       // Expand ONLY the plan_review panel; leave the plan panel collapsed.
       // Regression guard: the dialog is rendered once at the top level (not
-      // nested in the plan panel), so it must surface even when triggered from
-      // plan_review with the plan panel collapsed.
+      // nested in the plan panel), so it surfaces even when triggered from
+      // plan_review with the plan panel collapsed. And W-061 Part A: the
+      // plan_review iter-1 button maps to revision v1 (the plan it reviewed).
       const reviewPanel = page
         .locator('.stage-panel', {
           has: page.locator('.stage-panel-label', { hasText: 'PLAN REVIEW' }),
@@ -109,12 +110,15 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
       await reviewPanel.locator('.stage-panel-header').click();
       await expect(reviewPanel).toHaveAttribute('open', '', { timeout: 5000 });
 
-      await expect(reviewPanel.locator('.btn-view-run-plan')).toHaveCount(1);
-      await reviewPanel.locator('.btn-view-run-plan').click();
+      const btn = reviewPanel.locator('.btn-view-run-plan');
+      await expect(btn).toHaveCount(1);
+      await expect(btn).toContainText('v1');
+      await btn.click();
 
       const dialog = page.locator('sl-dialog.run-plan-dialog');
       await expect(dialog).toBeVisible({ timeout: 5000 });
-      await expect(dialog).toContainText('REVISEDMARKER', { timeout: 5000 });
+      // iter-1 reviewed revision 1 (the original), not the current revision.
+      await expect(dialog).toContainText('ORIGINALMARKER', { timeout: 5000 });
     } finally {
       await ctx.close();
     }
