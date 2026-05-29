@@ -125,7 +125,7 @@ These three replace the transparency the loopback provided and must ship togethe
 
 1. **Always-on mode badge** on the plan-review stage (§9) — states the resolved mode + the `reason`.
 2. **`PLAN_EDITED` notification** (§5).
-3. **Original-plan retention** — before the reviewer-editor rewrites the plan, the runner copies the Planner's original plan to a separate per-run record file (e.g. `<run_dir>/plan-original-<n>.md`). No phase-1 diff UI; the artifact is retained so a diff view can be wired later.
+3. **Original-plan retention** — before the reviewer-editor rewrites the plan, the runner copies the Planner's original plan to a per-run record file `<run_dir>/plan-original.md`, suffixing with the restart counter (`plan-original-2.md`, …) only on `restart_planning` re-entry. No phase-1 diff UI; the artifact is retained so a diff view can be wired later.
 
 ### 7. Settings & validation
 
@@ -138,7 +138,7 @@ These three replace the transparency the loopback provided and must ship togethe
 ### 8. Pipeline templates
 
 - Default `review`; `plan_review` stays disabled by default — fully additive. `feature` and `refactor` templates are unchanged.
-- New built-in template **`feature-minor-fast`** = `feature-minor` config **plus** `stages.plan_review: { enabled: true, mode: "review_and_edit" }`. (`feature-minor` ships with plan-review *off*; the "fast" variant adds a cheap single-pass editor review without the loopback cost.) Minimal config — only enable + mode beyond the inherited `feature-minor` settings.
+- New built-in template **`feature-fast`** = the full `feature` config **plus** `stages.plan_review.mode: "review_and_edit"`. (`feature` already ships with plan-review *on* in `review` mode with a 3-round loopback; the "fast" variant swaps that loopback for the cheaper single-pass terminal editor.) `loops.plan_review` becomes a silent no-op in edit mode. Minimal config — only the `mode` override beyond the inherited `feature` settings.
 
 ### 9. UI
 
@@ -169,7 +169,6 @@ Pure inheritance, per-child resolution: each child run resolves mode independent
 2. Author `plan-edit.block.md` (no revision-round/history section).
 3. Make core `.md` selection mode-aware (load `plan_editor.md` in edit mode).
 4. Make block selection mode-aware (`plan-edit`).
-5. Add a test asserting the shared review sections stay in sync between `plan_reviewer.md` and `plan_editor.md`.
 
 ### Phase 3: Governance write carve-out
 **Files:** `src/worca/hooks/guard.py`, `src/worca/orchestrator/runner.py`
@@ -193,9 +192,9 @@ Pure inheritance, per-child resolution: each child run resolves mode independent
 2. Wire the UI notification + webhook payload. No chat renderer.
 
 ### Phase 6: Template
-**Files:** `src/worca/templates/feature-minor-fast/template.json` (new)
+**Files:** `src/worca/templates/feature-fast/template.json` (new)
 **Tasks:**
-1. Create `feature-minor-fast` mirroring `feature-minor` + `stages.plan_review: { enabled: true, mode: "review_and_edit" }`.
+1. Create `feature-fast` mirroring the full `feature` template + `stages.plan_review.mode: "review_and_edit"` (plan_review is already enabled in `feature`).
 
 ### Phase 7: UI
 **Files:** `worca-ui/app/views/settings.js`, `worca-ui/app/views/run-detail.js`
@@ -231,7 +230,7 @@ Pure inheritance, per-child resolution: each child run resolves mode independent
 | `src/worca/agents/core/plan-edit.block.md` | New edit-mode dynamic block |
 | `src/worca/schemas/plan_review.json` | Add `approve_with_edits` outcome |
 | `src/worca/events/` | New `PLAN_EDITED` event |
-| `src/worca/templates/feature-minor-fast/template.json` | New template |
+| `src/worca/templates/feature-fast/template.json` | New template |
 | `worca-ui/app/views/settings.js` | Mode + enforce controls |
 | `worca-ui/app/views/run-detail.js` | Mode badge, `approve_with_edits` rendering, issues panel reframe |
 | `worca-ui/app/notifications.js` | `PLAN_EDITED` notification |
@@ -248,7 +247,7 @@ Collapsing reviewer + editor removes the second pair of eyes *on the fix* — th
 In `review` mode a struggling loop fails visibly and bounded (`LOOP_EXHAUSTED`, unresolved issues carried to COORDINATE). In edit mode (best-effort, no halt) the failure mode shifts to a **silent best-effort approval**. The audit triad is what keeps that visible.
 
 ### Prompt duplication / drift risk
-The overlay is whole-file (no partial includes), so `plan_editor.md` literally duplicates the shared review logic from `plan_reviewer.md`. Mitigation: a test asserting the shared sections stay in sync (Phase 2).
+The overlay is whole-file (no partial includes), so `plan_editor.md` literally duplicates the shared review logic from `plan_reviewer.md`. This duplication is accepted as-is — no sync test is added (deliberately not over-engineered); the two files are maintained by hand.
 
 ### Governance security
 The write carve-out is the most sensitive change. It must open exactly one path (the resolved `WORCA_PLAN_FILE`), only under the explicit flag, only for `plan_reviewer`, and must leave source/test writes, Bash file-writes, and test-runs blocked.
@@ -280,7 +279,6 @@ Additive opt-in. `MIGRATION.md` gets a "new feature" note describing how to enab
 | Python | `test_guard_plan_reviewer_readonly_without_flag` | No flag ⇒ plan_reviewer remains read-only |
 | Python | `test_plan_review_schema_outcome_enum` | `approve_with_edits` accepted |
 | Python | `test_plan_editor_template_routing` | Edit mode loads `plan_editor.md` + `plan-edit.block.md` |
-| Python | `test_plan_editor_shared_sections_in_sync` | Shared review sections identical between the two role files |
 | Python | `test_event_plan_edited_payload` | `PLAN_EDITED` payload shape |
 | JS | settings-validator enum tests | Both keys reject invalid values |
 
