@@ -106,9 +106,9 @@ def test_plan_review_block_convergence_inside_history_conditional():
 # ---------------------------------------------------------------------------
 
 
-def test_coordinate_block_has_work_request():
+def test_coordinate_block_has_no_work_request():
     content = _read("coordinate.block.md")
-    assert "{{work_request}}" in content
+    assert "{{work_request}}" not in content
 
 
 def test_coordinate_block_has_plan_summary_conditional():
@@ -126,9 +126,9 @@ def test_coordinate_block_has_unresolved_plan_issues_conditional():
 # ---------------------------------------------------------------------------
 
 
-def test_implement_block_has_work_request():
+def test_implement_block_has_no_work_request():
     content = _read("implement.block.md")
-    assert "{{work_request}}" in content
+    assert "{{work_request}}" not in content
 
 
 def test_implement_block_has_retry_conditional():
@@ -167,9 +167,15 @@ def test_implement_block_has_assigned_task_conditional():
 # ---------------------------------------------------------------------------
 
 
-def test_test_block_has_work_request():
+def test_test_block_has_no_work_request():
     content = _read("test.block.md")
-    assert "{{work_request}}" in content
+    assert "{{work_request}}" not in content
+
+
+def test_test_block_has_standalone_guide_section():
+    content = _read("test.block.md")
+    assert "it outranks the" in content
+    assert "lower-authority source" in content
 
 
 def test_test_block_has_implementation_summary_conditional():
@@ -182,9 +188,15 @@ def test_test_block_has_implementation_summary_conditional():
 # ---------------------------------------------------------------------------
 
 
-def test_review_block_has_work_request():
+def test_review_block_has_no_work_request():
     content = _read("review.block.md")
-    assert "{{work_request}}" in content
+    assert "{{work_request}}" not in content
+
+
+def test_review_block_has_standalone_guide_section():
+    content = _read("review.block.md")
+    assert "it outranks the" in content
+    assert "lower-authority source" in content
 
 
 def test_review_block_has_test_results_conditional():

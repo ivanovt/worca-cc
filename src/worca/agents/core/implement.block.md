@@ -30,18 +30,13 @@
 {{#if has_guide}}
 ## Reference Guide (normative)
 
-The following guidance is authoritative for this work-request. Treat any
-conflict between the guide and the task description as a bug in the task
-description, and surface it rather than silently resolving it.
+The following guidance is authoritative for this work-request — it outranks the
+plan, your assigned task, and the original description. Treat any conflict
+between the guide and those lower-authority sources as a defect in the
+lower-authority source, and surface it rather than silently resolving it.
 
 {{guide_content}}
-
----
-
-## Task
-
 {{/if}}
-{{work_request}}
 
 {{#if has_design_notes}}
 ## Accumulated design notes (advisory)
@@ -69,23 +64,16 @@ Implement the code changes for the assigned task. Follow TDD: write a failing te
 {{assigned_task}}
 {{/if}}
 
-## Work Request
-
 {{#if has_guide}}
 ## Reference Guide (normative)
 
-The following guidance is authoritative for this work-request. Treat any
-conflict between the guide and the task description as a bug in the task
-description, and surface it rather than silently resolving it.
+The following guidance is authoritative for this work-request — it outranks the
+plan, your assigned task, and the original description. Treat any conflict
+between the guide and those lower-authority sources as a defect in the
+lower-authority source, and surface it rather than silently resolving it.
 
 {{guide_content}}
-
----
-
-## Task
-
 {{/if}}
-{{work_request}}
 
 {{#if has_design_notes}}
 ## Accumulated design notes (advisory)

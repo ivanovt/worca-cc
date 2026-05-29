@@ -429,7 +429,7 @@ description, and surface it rather than silently resolving it.
 {{work_request}}"""
 
 
-BLOCK_FILES_WITH_WORK_REQUEST = [
+ALL_BLOCK_FILES = [
     "coordinate.block.md",
     "implement.block.md",
     "learn.block.md",
@@ -439,6 +439,32 @@ BLOCK_FILES_WITH_WORK_REQUEST = [
     "review.block.md",
     "test.block.md",
 ]
+
+BLOCK_FILES_WITH_WORK_REQUEST = [
+    "learn.block.md",
+    "plan.block.md",
+    "plan-review.block.md",
+    "pr.block.md",
+]
+
+BLOCK_FILES_WITHOUT_WORK_REQUEST = [
+    "coordinate.block.md",
+    "implement.block.md",
+    "review.block.md",
+    "test.block.md",
+]
+
+
+GUIDE_SECTION_STANDALONE = """{{#if has_guide}}
+## Reference Guide (normative)
+
+The following guidance is authoritative for this work-request — it outranks the
+plan, your assigned task, and the original description. Treat any conflict
+between the guide and those lower-authority sources as a defect in the
+lower-authority source, and surface it rather than silently resolving it.
+
+{{guide_content}}
+{{/if}}"""
 
 
 def test_guide_wrapper_text_byte_identical_across_block_files():
@@ -458,6 +484,26 @@ def test_guide_wrapper_text_byte_identical_across_block_files():
         "If you intentionally changed the precedence wording, update "
         "GUIDE_WRAPPER_TEXT in this test and apply the same change to every "
         "file in BLOCK_FILES_WITH_WORK_REQUEST."
+    )
+
+
+def test_standalone_guide_section_byte_identical_across_block_files():
+    """Execution-stage .block.md files (no {{work_request}}) must use the
+    standalone guide section with authority-ladder wording. The section must
+    be byte-identical everywhere so the precedence wording cannot drift.
+    """
+    drift = []
+    for fname in BLOCK_FILES_WITHOUT_WORK_REQUEST:
+        content = _read(fname)
+        if GUIDE_SECTION_STANDALONE not in content:
+            drift.append(fname)
+    assert not drift, (
+        "standalone guide section drift detected in: "
+        + ", ".join(drift)
+        + " — section must be byte-identical across all execution-stage "
+        ".block.md files. If you intentionally changed the precedence "
+        "wording, update GUIDE_SECTION_STANDALONE in this test and apply "
+        "the same change to every file in BLOCK_FILES_WITHOUT_WORK_REQUEST."
     )
 
 
@@ -496,10 +542,10 @@ _A code knowledge graph is preloaded — **orient with `graphify query "<questio
 
 
 def test_graphify_note_present_in_all_block_files():
-    """Every .block.md that interpolates {{work_request}} must include the
-    canonical per-run graphify availability note."""
+    """Every .block.md must include the canonical per-run graphify
+    availability note."""
     drift = []
-    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+    for fname in ALL_BLOCK_FILES:
         content = _read(fname)
         if GRAPHIFY_NOTE_TEXT not in content:
             drift.append(fname)
@@ -509,7 +555,7 @@ def test_graphify_note_present_in_all_block_files():
         + " — note must be byte-identical across all .block.md files. "
         "If you intentionally changed the wording, update GRAPHIFY_NOTE_TEXT "
         "in this test and apply the same change to every file in "
-        "BLOCK_FILES_WITH_WORK_REQUEST."
+        "ALL_BLOCK_FILES."
     )
 
 
@@ -518,7 +564,7 @@ def test_no_static_graph_report_injection_in_block_files():
     {{#if has_graph}}) must not reappear — agents query the graph on demand,
     they are not fed the human-facing report."""
     offenders = []
-    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+    for fname in ALL_BLOCK_FILES:
         content = _read(fname)
         if (
             "## Codebase Structure" in content
@@ -535,7 +581,7 @@ def test_graphify_note_appears_after_guide_block():
     """In every .block.md, the graphify note must appear after the guide block
     to respect authority order: guide > graph > description."""
     wrong_order = []
-    for fname in BLOCK_FILES_WITH_WORK_REQUEST:
+    for fname in ALL_BLOCK_FILES:
         content = _read(fname)
         guide_pos = content.find("{{#if has_guide}}")
         graph_pos = content.find("{{#if has_graphify}}")
