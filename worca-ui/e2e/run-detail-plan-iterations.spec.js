@@ -84,7 +84,7 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
     }
   });
 
-  test('shows a "View plan" button on the plan_review stage too', async ({
+  test('opens the plan dialog from the plan_review panel (plan panel collapsed)', async ({
     page,
   }) => {
     const ctx = await startServer();
@@ -97,6 +97,10 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
         timeout: 8000,
       });
 
+      // Expand ONLY the plan_review panel; leave the plan panel collapsed.
+      // Regression guard: the dialog is rendered once at the top level (not
+      // nested in the plan panel), so it must surface even when triggered from
+      // plan_review with the plan panel collapsed.
       const reviewPanel = page
         .locator('.stage-panel', {
           has: page.locator('.stage-panel-label', { hasText: 'PLAN REVIEW' }),
@@ -104,9 +108,13 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
         .first();
       await reviewPanel.locator('.stage-panel-header').click();
       await expect(reviewPanel).toHaveAttribute('open', '', { timeout: 5000 });
-      await expect(
-        reviewPanel.locator('.btn-view-run-plan'),
-      ).toHaveCount(1);
+
+      await expect(reviewPanel.locator('.btn-view-run-plan')).toHaveCount(1);
+      await reviewPanel.locator('.btn-view-run-plan').click();
+
+      const dialog = page.locator('sl-dialog.run-plan-dialog');
+      await expect(dialog).toBeVisible({ timeout: 5000 });
+      await expect(dialog).toContainText('REVISEDMARKER', { timeout: 5000 });
     } finally {
       await ctx.close();
     }

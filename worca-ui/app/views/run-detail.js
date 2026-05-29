@@ -1721,7 +1721,6 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'plan' || key === 'plan_review' ? _planArtifactView(stage, run, options.rerender) : nothing}
-                      ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -1779,7 +1778,6 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${key === 'plan' || key === 'plan_review' ? _planArtifactView(stage, run, options.rerender) : nothing}
-                      ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
                   </div>
@@ -1801,6 +1799,7 @@ export function runDetailView(run, settings = {}, options = {}) {
           `;
         })}
       </div>
+      ${_planArtifactDialog(run, options.rerender)}
   `;
 
   return { overview, stages: stagePanels };
