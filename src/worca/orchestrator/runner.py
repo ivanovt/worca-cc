@@ -399,22 +399,23 @@ def _next_plan_path(run_dir: str) -> str:
     return os.path.join(run_dir, f"plan-{next_num:03d}.md")
 
 
-def _preserve_original_plan(
-    run_dir: Optional[str],
-    plan_file: str,
-    restart_count: int = 0,
-) -> None:
-    """Copy the current plan to plan-original[-N].md before it is edited.
+def _mint_plan_edit_target(run_dir: Optional[str], current_plan: str) -> Optional[str]:
+    """Copy the current plan forward to the next numbered revision for editing.
 
-    restart_count=0 → plan-original.md (first edit-mode entry).
-    restart_count≥1 → plan-original-{N}.md (restart_planning re-entries).
+    The Plan Editor (review_and_edit mode) rewrites the plan *in place*; to keep
+    the Planner's original intact we copy ``plan-N.md`` to ``plan-(N+1).md`` and
+    point the editor at the copy. The pre-edit ``plan-N.md`` is then the retained
+    original — this reuses W-061's append-only numbering instead of a bespoke
+    ``plan-original.md`` artifact.
+
+    Returns the new ``plan-(N+1).md`` path, or ``None`` when there is nothing to
+    copy (no run_dir, or the current plan file does not exist).
     """
-    if not run_dir or not os.path.isfile(plan_file):
-        return
-    suffix = f"-{restart_count}" if restart_count else ""
-    dest = os.path.join(run_dir, f"plan-original{suffix}.md")
-    import shutil
-    shutil.copy2(plan_file, dest)
+    if not run_dir or not current_plan or not os.path.isfile(current_plan):
+        return None
+    target = _next_plan_path(run_dir)
+    shutil.copy2(current_plan, target)
+    return target
 
 
 def _resolve_plan_path(template: str, timestamp: str, title: str) -> str:
@@ -2605,11 +2606,45 @@ def run_pipeline(
                     if _pr_mode == "review_and_edit":
                         _stage_agent_name = "plan_editor"
                         _effort_env_overrides["WORCA_PLAN_REVIEWER_CAN_EDIT"] = "1"
-                        _preserve_original_plan(
-                            run_dir,
-                            status.get("plan_file", ""),
-                            restart_count=loop_counters.get("restart_planning", 0),
+                        # W-061 reconciliation: the editor rewrites the *next*
+                        # numbered revision in place (plan-(N+1).md); the pre-edit
+                        # plan-N.md is the retained original (append-only history).
+                        # Copy forward, then re-point every consumer (status,
+                        # WORCA_PLAN_FILE, {{plan_file}}) and re-render so the
+                        # editor's writable-path matches the guard carve-out.
+                        # Idempotent across crash/resume via the plan_edit_target
+                        # marker (cleared in the PLAN_REVIEW handler).
+                        _pre_edit_plan = status.get("plan_file", "")
+                        _already_minted = (
+                            bool(_pre_edit_plan)
+                            and status.get("plan_edit_target") == _pre_edit_plan
+                            and os.path.isfile(_pre_edit_plan)
                         )
+                        if not _already_minted:
+                            _edit_target = _mint_plan_edit_target(run_dir, _pre_edit_plan)
+                            if _edit_target:
+                                status["plan_file"] = _edit_target
+                                status["plan_edit_target"] = _edit_target
+                                status["plan_pre_edit_file"] = _pre_edit_plan
+                                os.environ["WORCA_PLAN_FILE"] = _edit_target
+                                prompt_builder.update_context("plan_file", _edit_target)
+                                if prompt_context_path:
+                                    prompt_builder.save_context(prompt_context_path)
+                                save_status(status, actual_status_path)
+                                _em_worca = load_settings(settings_path).get("worca", {})
+                                _render_agent_templates(run_dir, {
+                                    "plan_file": status["plan_file"],
+                                    "run_id": status.get("run_id", ""),
+                                    "branch": branch_name,
+                                    "title": work_request.title,
+                                }, overrides_dir=_em_worca.get(
+                                       "agent_overrides_dir", ".claude/agents"),
+                                   template_agents_dir=_em_worca.get("_template_agents_dir"))
+                                # Rebuild ctx so {{plan_content}} reflects the copy.
+                                ctx_dict = prompt_builder.build_context(
+                                    current_stage.value, pb_iteration)
+                                _log(f"Plan edit -> {_edit_target} "
+                                     f"(original retained: {_pre_edit_plan})", "ok")
                 _template_path = (
                     os.path.join(run_dir, "agents", f"{_stage_agent_name}.md")
                     if run_dir else None
@@ -3185,11 +3220,18 @@ def run_pipeline(
                 should_revise = (outcome == "revise") and bool(critical_issues or not issues)
 
                 if _pr_mode == "review_and_edit":
-                    # Edit mode: the plan editor made in-place edits, so no
-                    # loopback is needed. Mark plan as approved and proceed.
+                    # Edit mode: the plan editor rewrote the next numbered
+                    # revision (plan-(N+1).md) in place, so no loopback is
+                    # needed. Mark plan as approved and proceed.
                     if outcome not in ("approve", "approve_with_edits"):
                         iter_extras["outcome"] = "approve_with_edits"
                     set_milestone(status, "plan_approved", True)
+                    # The pre-edit plan-N.md is the retained original (W-061).
+                    _orig_path = status.get("plan_pre_edit_file") or None
+                    # Clear edit markers so a later restart_planning re-entry
+                    # mints a fresh revision instead of reusing this one.
+                    status.pop("plan_edit_target", None)
+                    status.pop("plan_pre_edit_file", None)
                     prompt_builder.pop_context("plan_review_issues")
                     prompt_builder.pop_context("plan_revision_mode")
                     prompt_builder.pop_context("plan_review_history")
@@ -3204,9 +3246,6 @@ def run_pipeline(
                             _sev = _iss.get("severity", "")
                             if _sev in _severity_counts:
                                 _severity_counts[_sev] += 1
-                        _restart_n = loop_counters.get("restart_planning", 0)
-                        _orig_suffix = f"-{_restart_n}" if _restart_n else ""
-                        _orig_path = os.path.join(run_dir, f"plan-original{_orig_suffix}.md") if run_dir else None
                         emit_event(ctx, PLAN_EDITED, plan_edited_payload(
                             stage=current_stage.value,
                             mode=_pr_mode,

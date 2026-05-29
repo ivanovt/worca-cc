@@ -1091,9 +1091,9 @@ def test_plan_edited_payload_with_original_plan_path():
         mode="review_and_edit",
         mode_reason="default",
         issue_counts={"critical": 0, "major": 0, "minor": 1, "suggestion": 0},
-        original_plan_path="/tmp/run/plan-original.md",
+        original_plan_path="/tmp/run/plan-001.md",
     )
-    assert p["original_plan_path"] == "/tmp/run/plan-original.md"
+    assert p["original_plan_path"] == "/tmp/run/plan-001.md"
 
 
 def test_plan_edited_payload_original_plan_path_omitted_when_none():

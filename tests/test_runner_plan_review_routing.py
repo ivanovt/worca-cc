@@ -64,6 +64,22 @@ def _mock_stage(stage, result):
     return result, {"type": "result"}
 
 
+def _scaffold_runtime_agents(tmp_path, monkeypatch):
+    """Create a minimal ``.claude/worca/agents/core`` and chdir into it.
+
+    The runner renders agent templates from this CWD-relative dir into
+    ``run_dir/agents/`` (the source of the resolved ``agent_override`` path).
+    CI runs ``pytest`` without ``worca init``, so the dir is otherwise absent —
+    scaffolding it keeps the agent-template routing assertions hermetic instead
+    of depending on a dogfooding runtime copy that only exists locally.
+    """
+    core = tmp_path / ".claude" / "worca" / "agents" / "core"
+    core.mkdir(parents=True)
+    for name in ("planner", "plan_reviewer", "plan_editor", "coordinator"):
+        (core / f"{name}.md").write_text(f"# {name}\n\n{{{{work_request}}}}\n")
+    monkeypatch.chdir(tmp_path)
+
+
 @pytest.fixture(autouse=True)
 def _mock_beads():
     with patch("worca.orchestrator.runner._ensure_beads_initialized"):
@@ -89,10 +105,11 @@ class TestStageBlockMapDefaults:
 
 class TestAgentTemplateRouting:
 
-    def test_review_mode_uses_plan_reviewer_md(self, tmp_path):
+    def test_review_mode_uses_plan_reviewer_md(self, tmp_path, monkeypatch):
         """Default review mode loads plan_reviewer.md (via stage_config agent)."""
         settings_path = _settings(tmp_path, mode="review")
         _, status_path = _worca(tmp_path)
+        _scaffold_runtime_agents(tmp_path, monkeypatch)
         wr = _wr()
         captured = {}
 
@@ -115,14 +132,15 @@ class TestAgentTemplateRouting:
                         run_pipeline(wr, settings_path=settings_path, status_path=status_path)
 
         override = captured.get("agent_override")
-        if override is not None:
-            assert "plan_reviewer" in override
-            assert "plan_editor" not in override
+        assert override is not None, "agent_override must be set for PLAN_REVIEW"
+        assert "plan_reviewer" in override
+        assert "plan_editor" not in override
 
-    def test_edit_mode_uses_plan_editor_md(self, tmp_path):
+    def test_edit_mode_uses_plan_editor_md(self, tmp_path, monkeypatch):
         """review_and_edit mode loads plan_editor.md instead of plan_reviewer.md."""
         settings_path = _settings(tmp_path, mode="review_and_edit")
         _, status_path = _worca(tmp_path)
+        _scaffold_runtime_agents(tmp_path, monkeypatch)
         wr = _wr()
         captured = {}
 
@@ -150,10 +168,11 @@ class TestAgentTemplateRouting:
             f"review_and_edit mode must load plan_editor.md, got: {override}"
         )
 
-    def test_governance_enforce_overrides_template_mode(self, tmp_path):
+    def test_governance_enforce_overrides_template_mode(self, tmp_path, monkeypatch):
         """governance.plan_review_enforce=review_and_edit overrides stages.mode=review."""
         settings_path = _settings(tmp_path, mode="review", enforce="review_and_edit")
         _, status_path = _worca(tmp_path)
+        _scaffold_runtime_agents(tmp_path, monkeypatch)
         wr = _wr()
         captured = {}
 
@@ -365,62 +384,69 @@ class TestPlanReviewerCanEditEnv:
 # Original-plan retention (§6 audit triad)
 # ---------------------------------------------------------------------------
 
-class TestOriginalPlanRetention:
+class TestPlanEditRevision:
+    """W-061 reconciliation: the editor rewrites the next numbered revision in
+    place; the pre-edit plan-N.md is the retained original (no plan-original.md)."""
 
-    def _run_dir_with_plan(self, tmp_path, plan_content="# Original Plan\n"):
+    def _run_dir_with_plan(self, tmp_path, name="plan-001.md", plan_content="# Original Plan\n"):
         """Set up a .worca/runs/<id>/ dir with a plan file, return (run_dir, plan_path)."""
         run_dir = tmp_path / ".worca" / "runs" / "test-run"
         run_dir.mkdir(parents=True)
-        plan_path = run_dir / "plan-001.md"
+        plan_path = run_dir / name
         plan_path.write_text(plan_content)
         return str(run_dir), str(plan_path)
 
-    def test_edit_mode_copies_plan_original(self, tmp_path):
-        """review_and_edit mode copies plan to plan-original.md before editor runs."""
-        from worca.orchestrator.runner import _preserve_original_plan
+    def test_mints_next_numbered_revision(self, tmp_path):
+        """Copies plan-001.md forward to plan-002.md for in-place editing."""
+        from worca.orchestrator.runner import _mint_plan_edit_target
         run_dir, plan_path = self._run_dir_with_plan(tmp_path)
 
-        _preserve_original_plan(run_dir, plan_path, restart_count=0)
+        target = _mint_plan_edit_target(run_dir, plan_path)
 
-        original = os.path.join(run_dir, "plan-original.md")
-        assert os.path.exists(original)
-        assert open(original).read() == "# Original Plan\n"
+        assert target == os.path.join(run_dir, "plan-002.md")
+        assert os.path.exists(target)
+        assert open(target).read() == "# Original Plan\n"
 
-    def test_restart_planning_suffixes_with_counter(self, tmp_path):
-        """On restart_planning re-entry, plan-original is suffixed with counter."""
-        from worca.orchestrator.runner import _preserve_original_plan
-        run_dir, plan_path = self._run_dir_with_plan(tmp_path, "# Plan v2\n")
+    def test_original_is_retained_untouched(self, tmp_path):
+        """The pre-edit plan-N.md survives as the retained original."""
+        from worca.orchestrator.runner import _mint_plan_edit_target
+        run_dir, plan_path = self._run_dir_with_plan(tmp_path)
 
-        _preserve_original_plan(run_dir, plan_path, restart_count=2)
+        _mint_plan_edit_target(run_dir, plan_path)
 
-        suffixed = os.path.join(run_dir, "plan-original-2.md")
-        assert os.path.exists(suffixed)
-        assert open(suffixed).read() == "# Plan v2\n"
+        assert os.path.exists(plan_path)
+        assert open(plan_path).read() == "# Original Plan\n"
+        # No bespoke plan-original.md artifact is produced.
+        assert not os.path.exists(os.path.join(run_dir, "plan-original.md"))
 
-    def test_no_copy_when_plan_file_missing(self, tmp_path):
-        """No crash or copy when plan file doesn't exist."""
-        from worca.orchestrator.runner import _preserve_original_plan
+    def test_mint_increments_from_highest_existing(self, tmp_path):
+        """With plan-001 and plan-002 present, mints plan-003.md."""
+        from worca.orchestrator.runner import _mint_plan_edit_target
+        run_dir, _ = self._run_dir_with_plan(tmp_path, name="plan-001.md")
+        plan2 = os.path.join(run_dir, "plan-002.md")
+        with open(plan2, "w") as f:
+            f.write("# Plan v2\n")
+
+        target = _mint_plan_edit_target(run_dir, plan2)
+
+        assert target == os.path.join(run_dir, "plan-003.md")
+        assert open(target).read() == "# Plan v2\n"
+
+    def test_no_mint_when_plan_file_missing(self, tmp_path):
+        """Returns None and copies nothing when the source plan doesn't exist."""
+        from worca.orchestrator.runner import _mint_plan_edit_target
         run_dir = str(tmp_path / "run")
         os.makedirs(run_dir)
 
-        _preserve_original_plan(run_dir, os.path.join(run_dir, "nonexistent.md"), restart_count=0)
+        target = _mint_plan_edit_target(run_dir, os.path.join(run_dir, "nonexistent.md"))
 
-        assert not os.path.exists(os.path.join(run_dir, "plan-original.md"))
+        assert target is None
+        assert not os.path.exists(os.path.join(run_dir, "plan-001.md"))
 
-    def test_no_copy_when_run_dir_is_none(self):
-        """No crash when run_dir is None (legacy/test mode)."""
-        from worca.orchestrator.runner import _preserve_original_plan
-        _preserve_original_plan(None, "/some/plan.md", restart_count=0)
-
-    def test_first_restart_uses_suffix_1_not_bare(self, tmp_path):
-        """restart_count=1 produces plan-original-1.md (not bare plan-original.md)."""
-        from worca.orchestrator.runner import _preserve_original_plan
-        run_dir, plan_path = self._run_dir_with_plan(tmp_path)
-
-        _preserve_original_plan(run_dir, plan_path, restart_count=1)
-
-        assert os.path.exists(os.path.join(run_dir, "plan-original-1.md"))
-        assert not os.path.exists(os.path.join(run_dir, "plan-original.md"))
+    def test_no_mint_when_run_dir_is_none(self):
+        """Returns None without crashing when run_dir is None (legacy/test mode)."""
+        from worca.orchestrator.runner import _mint_plan_edit_target
+        assert _mint_plan_edit_target(None, "/some/plan.md") is None
 
 
 # ---------------------------------------------------------------------------
@@ -609,9 +635,16 @@ class TestEditModeBranch:
         )
 
     def test_edit_mode_emits_plan_edited_event(self, tmp_path):
-        """Edit mode emits PLAN_EDITED event with correct payload fields."""
+        """Edit mode emits PLAN_EDITED event with correct payload fields.
+
+        A provided plan is ingested to plan-001.md, so the editor mints
+        plan-002.md and the retained original (plan-001.md) populates
+        ``original_plan_path``.
+        """
         settings_path = _settings(tmp_path, mode="review_and_edit")
         _, status_path = _worca(tmp_path)
+        plan_md = tmp_path / "provided-plan.md"
+        plan_md.write_text("# Provided Plan\n\nDo the thing.\n")
         wr = _wr()
         captured_events = []
 
@@ -646,7 +679,8 @@ class TestEditModeBranch:
                 with patch("worca.orchestrator.runner.create_branch"):
                     with patch("worca.orchestrator.runner._write_pid"):
                         with patch("worca.orchestrator.runner._remove_pid"):
-                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+                            run_pipeline(wr, settings_path=settings_path,
+                                         status_path=status_path, plan_file=str(plan_md))
 
         plan_edited = [(et, p) for et, p in captured_events if et == PLAN_EDITED]
         assert len(plan_edited) == 1, f"Expected exactly 1 PLAN_EDITED event, got {len(plan_edited)}"
@@ -655,7 +689,9 @@ class TestEditModeBranch:
         assert payload["mode"] == "review_and_edit"
         assert payload["mode_reason"] == "from template/pipeline"
         assert payload["issue_counts"] == {"critical": 1, "major": 1, "minor": 1, "suggestion": 0}
-        assert "original_plan_path" in payload
+        # The retained original is the pre-edit numbered plan (plan-001.md), not
+        # a bespoke plan-original.md (W-061 reconciliation).
+        assert payload["original_plan_path"].endswith("plan-001.md")
 
     def test_review_mode_does_not_emit_plan_edited(self, tmp_path):
         """Standard review mode must NOT emit PLAN_EDITED."""
