@@ -285,10 +285,13 @@ def attach_guide(
     """Return a new WorkRequest with guide content collected into guide_content.
 
     Each guide file is read and concatenated under its filename as a subsection.
-    The result is stored in ``guide_content`` — the normative header and the
-    ``## Task`` divider live in the per-stage ``.block.md`` templates (which
-    conditionally wrap ``{{work_request}}`` with ``{{#if has_guide}}…{{/if}}``).
-    The original ``description`` is left untouched.
+    The result is stored in ``guide_content`` — the normative header lives in the
+    per-stage ``.block.md`` templates, never here. The work-request-bearing blocks
+    (``plan``, ``plan-review``, ``pr``, ``learn``) wrap ``{{work_request}}`` in a
+    ``{{#if has_guide}}…{{/if}}`` envelope with a ``## Task`` divider; the
+    execution-stage blocks (``coordinate``, ``implement``, ``test``, ``review``)
+    dropped ``{{work_request}}`` in W-060 and render a standalone guide section
+    instead. The original ``description`` is left untouched.
 
     Args:
         wr: source work request
