@@ -135,6 +135,19 @@ def test_implement_block_has_no_work_request():
     assert "{{work_request}}" not in content
 
 
+def test_implement_block_has_plan_file_reference():
+    # W-061: advisory path reference to the approved plan, in BOTH branches
+    # (retry + first-attempt), gated on plan_file and scope-guarded to the bead.
+    content = _read("implement.block.md")
+    assert content.count("{{#if plan_file}}") == 2
+    assert content.count("The approved plan for this run is at `{{plan_file}}`") == 2
+    # Scope guard must be present so the implementer doesn't widen scope.
+    assert "only your bead" in content
+    # It is a path reference, never the raw plan content.
+    assert "{{plan_content}}" not in content
+    assert "{{current_plan}}" not in content
+
+
 def test_implement_block_has_retry_conditional():
     content = _read("implement.block.md")
     assert "{{#if is_retry}}" in content

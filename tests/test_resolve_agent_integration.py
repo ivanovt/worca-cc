@@ -235,6 +235,25 @@ def test_implement_block_initial_contains_task_not_work_request():
     assert "worca-abc123" in result and "Create JWT middleware" in result
 
 
+def test_implement_block_surfaces_plan_file_path_when_present():
+    # W-061: advisory PATH reference (not raw plan content) to the approved plan.
+    result = _resolve_block("implement", {
+        "is_retry": False,
+        "assigned_task": "**worca-abc123**: Create JWT middleware",
+        "plan_file": ".worca/runs/run-x/plan-002.md",
+    })
+    assert ".worca/runs/run-x/plan-002.md" in result
+    assert "only your bead" in result
+
+
+def test_implement_block_omits_plan_reference_when_no_plan_file():
+    result = _resolve_block("implement", {
+        "is_retry": False,
+        "assigned_task": "**worca-abc123**: Create JWT middleware",
+    })
+    assert "The approved plan for this run is at" not in result
+
+
 def test_implement_block_retry_contains_priority_and_failures():
     result = _resolve_block("implement", {
         "is_retry": True,
