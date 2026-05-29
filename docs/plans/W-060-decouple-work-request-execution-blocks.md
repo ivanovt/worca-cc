@@ -6,6 +6,10 @@
 **Date:** 2026-05-29
 **Depends on:** None (touches the W-040 §5 guide-wrapper contract — see Considerations)
 
+## Decisions
+
+- **Scope boundary (which blocks lose `{{work_request}}`)** — confirmed: remove from the 4 execution blocks only (`implement`, `test`, `review`, `coordinate`). Retain in `plan` (sole input), `plan-review` (coverage yardstick), `pr` (PR body), `learn` (goal assessment). Those 4 execution stages are the ones that loop work back on "doesn't match the original request" false positives; the other 4 consume the request as low-conflict reference without looping — this enforces the documented `guide > plan > graph > description` ladder without over-removing. (Ratified via `/worca-analyze` on issue #243.)
+
 ## Problem
 
 The user's raw work-request (entered in the UI launcher) is injected into **every** stage's `.block.md` user message via the `{{work_request}}` placeholder — `implement.block.md:44,88`, `test.block.md:19`, `review.block.md:19`, `coordinate.block.md:26`, plus `plan`/`plan-review`/`pr`/`learn`. For the post-plan **execution** stages this is harmful: by the time the implementer/tester/reviewer run, the Planner has already analyzed and *refined* the request into a plan, and the Coordinator has decomposed it into beads. The raw request then sits alongside the refined plan/bead as a co-equal-looking top-level `## Work Request` section with **no precedence statement**, so the agents treat two sources as authoritative. The visible symptom is reviewer/tester false positives ("implementation doesn't match the original request") that loop work back even when the plan *deliberately* diverged from the literal request.
