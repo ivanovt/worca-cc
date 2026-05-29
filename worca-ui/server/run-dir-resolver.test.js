@@ -2,7 +2,11 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { findRunStatusPath, resolveRunDir } from './run-dir-resolver.js';
+import {
+  findRunStatusPath,
+  listPlanIterations,
+  resolveRunDir,
+} from './run-dir-resolver.js';
 
 describe('resolveRunDir', () => {
   let worcaDir;
@@ -153,5 +157,54 @@ describe('findRunStatusPath', () => {
     writeFileSync(statusPath, '{}');
 
     expect(findRunStatusPath(worcaDir, runId)).toBe(statusPath);
+  });
+});
+
+describe('listPlanIterations', () => {
+  let runDir;
+
+  beforeEach(() => {
+    const stamp = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    runDir = join(tmpdir(), `worca-plan-iter-${stamp}`);
+    mkdirSync(runDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(runDir, { recursive: true, force: true });
+  });
+
+  it('returns [] for a missing dir', () => {
+    expect(listPlanIterations(join(runDir, 'nope'))).toEqual([]);
+  });
+
+  it('returns [] when no plan files exist', () => {
+    writeFileSync(join(runDir, 'status.json'), '{}');
+    expect(listPlanIterations(runDir)).toEqual([]);
+  });
+
+  it('lists numbered plan files ascending and ignores non-matching files', () => {
+    // Intentionally out of order on disk; only plan-NNN.md (3-digit) match.
+    writeFileSync(join(runDir, 'plan-002.md'), 'rev 2');
+    writeFileSync(join(runDir, 'plan-001.md'), 'original');
+    writeFileSync(join(runDir, 'plan-010.md'), 'rev 10');
+    writeFileSync(join(runDir, 'plan.md'), 'not numbered');
+    writeFileSync(join(runDir, 'plan-1.md'), 'wrong digits');
+    writeFileSync(join(runDir, 'status.json'), '{}');
+
+    const iters = listPlanIterations(runDir);
+    expect(iters.map((it) => it.n)).toEqual([1, 2, 10]);
+    expect(iters.map((it) => it.file)).toEqual([
+      'plan-001.md',
+      'plan-002.md',
+      'plan-010.md',
+    ]);
+    expect(iters[0].path).toBe(join(runDir, 'plan-001.md'));
+    // latest = last element
+    expect(iters[iters.length - 1].n).toBe(10);
+  });
+
+  it('returns [] for null/empty input', () => {
+    expect(listPlanIterations(null)).toEqual([]);
+    expect(listPlanIterations('')).toEqual([]);
   });
 });

@@ -444,8 +444,13 @@ def test_run_pipeline_with_plan_file_skips_plan_stage(tmp_path):
     # PLAN should not have been run; COORDINATE should be the only stage
     assert "plan" not in stages_run
     assert "coordinate" in stages_run
-    # Plan file path stored in status
-    assert result["plan_file"] == str(plan)
+    # W-061: the provided plan is ingested as a numbered copy in the run dir,
+    # not referenced in place. Original path recorded under plan_source.
+    assert result["plan_file"].endswith("plan-001.md")
+    assert result["plan_file"] != str(plan)
+    assert result.get("plan_source") == str(plan)
+    with open(result["plan_file"], encoding="utf-8") as f:
+        assert f.read().startswith("# My Plan")
 
 
 def test_plan_file_stores_path_in_status(tmp_path, monkeypatch):
@@ -499,13 +504,20 @@ def test_plan_file_stores_path_in_status(tmp_path, monkeypatch):
     master_plan = tmp_path / "MASTER_PLAN.md"
     assert not master_plan.exists()
 
-    # Plan file path stored in status
-    assert result["plan_file"] == str(plan)
-
     # Per-run directory created
     assert result["run_id"] is not None
     run_dir = worca_dir / "runs" / result["run_id"]
     assert run_dir.is_dir()
+
+    # W-061: provided plan ingested as plan-001.md (immutable snapshot); the
+    # original source path is recorded and left untouched.
+    assert result["plan_file"].endswith("plan-001.md")
+    assert result.get("plan_source") == str(plan)
+    ingested = run_dir / "plan-001.md"
+    assert ingested.exists()
+    assert str(ingested) == result["plan_file"]
+    assert ingested.read_text() == plan_content
+    assert plan.read_text() == plan_content  # source unchanged
     assert (run_dir / "status.json").exists()
     assert (run_dir / "agents").is_dir()
     assert (run_dir / "logs").is_dir()

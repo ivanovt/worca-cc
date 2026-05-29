@@ -217,7 +217,12 @@ class PromptBuilder:
         if stage == "plan":
             ctx["claude_md"] = self._claude_md_content
             if ctx.get("plan_revision_mode"):
-                ctx["plan_content"] = self._read_master_plan()
+                # Prefer the plan content threaded by the runner at the revise
+                # loopback (the current plan being revised). Under W-061's
+                # append-only scheme plan_file already points at the *next*
+                # (not-yet-written) numbered file, so reading it from disk would
+                # be empty — the threaded content is the authoritative source.
+                ctx["plan_content"] = ctx.get("plan_file_content") or self._read_master_plan()
                 ctx["plan_review_issues_formatted"] = self._format_plan_review_issues(
                     ctx.get("plan_review_issues") or []
                 )
@@ -237,21 +242,13 @@ class PromptBuilder:
                 ctx["plan_review_history_formatted"] = ""
 
         elif stage == "coordinate":
-            approach = ctx.get("plan_approach")
-            tasks_outline = ctx.get("plan_tasks_outline")
-            if approach or tasks_outline:
-                parts = []
-                if approach:
-                    parts.append(f"**Approach:** {approach}")
-                if tasks_outline:
-                    outline_text = "\n".join(
-                        f"- {t.get('title', 'Untitled')}: {t.get('description', '')}"
-                        for t in tasks_outline
-                    )
-                    parts.append(f"**Task Outline:**\n{outline_text}")
-                ctx["plan_summary"] = "\n\n".join(parts)
-            else:
-                ctx["plan_summary"] = ""
+            # W-061: the coordinator decomposes the FULL current plan file, not a
+            # derived summary. After a plan_review revision the Planner's
+            # structured tasks_outline is delta-scoped (only what changed), so
+            # summarizing it would hand the coordinator just the revision
+            # changelog. Prefer the plan content threaded from the last PLAN
+            # completion; otherwise read the current (latest) plan file.
+            ctx["current_plan"] = ctx.get("plan_file_content") or self._read_master_plan()
 
             unresolved = ctx.get("unresolved_plan_issues")
             if unresolved:

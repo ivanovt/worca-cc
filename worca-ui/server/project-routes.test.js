@@ -288,6 +288,56 @@ describe('project-routes', () => {
       expect(body.ok).toBe(true);
       expect(body.pipeline_status).toBe('completed');
     });
+
+    it('GET /api/projects/:id/runs/:runId/plan-iterations lists numbered plans (W-061)', async () => {
+      const runId = 'test-run-plan-iters';
+      const runDir = join(projectRoot, '.worca', 'runs', runId);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(
+        join(runDir, 'status.json'),
+        JSON.stringify({ pipeline_status: 'running' }),
+      );
+      writeFileSync(join(runDir, 'plan-001.md'), '# Original plan');
+      writeFileSync(join(runDir, 'plan-002.md'), '# Revised plan');
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/runs/${runId}/plan-iterations`,
+      );
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.latest).toBe(2);
+      expect(body.iterations).toEqual([
+        { n: 1, file: 'plan-001.md' },
+        { n: 2, file: 'plan-002.md' },
+      ]);
+    });
+
+    it('GET .../plan-iterations returns empty list for a run with no numbered plans', async () => {
+      const runId = 'test-run-no-plans';
+      const runDir = join(projectRoot, '.worca', 'runs', runId);
+      mkdirSync(runDir, { recursive: true });
+      writeFileSync(join(runDir, 'status.json'), JSON.stringify({}));
+
+      const app = await createTestApp(prefsDir, projectRoot);
+      const { body: projectsBody } = await request(app, 'GET', '/api/projects');
+      const projectName = projectsBody.projects[0].name;
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        `/api/projects/${projectName}/runs/${runId}/plan-iterations`,
+      );
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.iterations).toEqual([]);
+      expect(body.latest).toBeNull();
+    });
   });
 
   describe('project-scoped branches route', () => {

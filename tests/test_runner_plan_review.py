@@ -229,6 +229,51 @@ class TestPlanReviewRevisePath:
         # COORDINATE ran once (after final approval)
         assert stages_run.count("coordinate") == 1
 
+    def test_revise_appends_numbered_plan_and_repoints(self, tmp_path):
+        """W-061: a revise mints the next numbered plan file, re-points plan_file
+        to it, and retains the prior revision on disk (append-only history)."""
+        # Provide a plan so PLAN is skipped initially and ingest creates plan-001.md.
+        plan = tmp_path / "provided_plan.md"
+        plan_text = "# Provided Plan\n\n## Phase 1\nDo the thing\n"
+        plan.write_text(plan_text)
+        settings_path = _settings(tmp_path, plan_review_loops=2)
+        _, status_path = _worca(tmp_path)
+        call_count = {"plan_review": 0}
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                call_count["plan_review"] += 1
+                if call_count["plan_review"] == 1:
+                    return _mock_stage(stage, {
+                        "outcome": "revise",
+                        "issues": [{"category": "risk", "severity": "critical",
+                                    "description": "No rollback"}],
+                        "summary": "x",
+                    })
+                return _mock_stage(stage, {"outcome": "approve", "issues": [], "summary": "OK"})
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+            with patch("worca.orchestrator.runner.create_branch"):
+                with patch("worca.orchestrator.runner._write_pid"):
+                    with patch("worca.orchestrator.runner._remove_pid"):
+                        result = run_pipeline(_wr(), plan_file=str(plan),
+                                              settings_path=settings_path, status_path=status_path)
+
+        run_dir = tmp_path / ".worca" / "runs" / result["run_id"]
+        # plan-001 is the immutable ingest snapshot, retained as history
+        assert (run_dir / "plan-001.md").exists()
+        # the revise re-pointed plan_file forward to the next number
+        assert result["plan_file"].endswith("plan-002.md")
+        # original source untouched + recorded
+        assert result.get("plan_source") == str(plan)
+        assert plan.read_text() == plan_text
+
     def test_revise_increments_loop_counter(self, tmp_path):
         """Loop counter increments on each revise iteration."""
         from worca.state.status import load_status
