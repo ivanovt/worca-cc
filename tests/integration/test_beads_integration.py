@@ -263,17 +263,23 @@ def test_pipeline_with_source_gh_issue_uses_extracted_plan_link(
     assert wr.get("source_type") == "github_issue"
     assert wr.get("source_ref") == "gh:42"
 
-    # The runner persists the auto-detected plan_path in work_request (nested)
-    # and promotes it to status.plan_file (top-level). PLAN is auto-completed
-    # (skipped) when plan_file is set at pipeline start.
+    # The runner persists the auto-detected plan_path in work_request (nested).
+    # W-061: the detected plan is ingested as a run-scoped copy (plan-001.md),
+    # so status.plan_file points at the copy while status.plan_source records
+    # the original auto-detected link. PLAN is auto-completed (skipped) when a
+    # plan is provided at pipeline start.
     assert wr.get("plan_path", "").endswith("W-050-phase5.md"), (
         f"work_request.plan_path should be persisted in status; "
         f"got plan_path={wr.get('plan_path')!r}\nwork_request: {wr}"
     )
-    assert result.status.get("plan_file", "").endswith("W-050-phase5.md"), (
-        f"status.plan_file should reflect the auto-detected plan link; "
+    assert result.status.get("plan_file", "").endswith("plan-001.md"), (
+        f"status.plan_file should be the ingested run-scoped copy (W-061); "
         f"got plan_file={result.status.get('plan_file')!r}\n"
         f"work_request: {wr}"
+    )
+    assert result.status.get("plan_source", "").endswith("W-050-phase5.md"), (
+        f"status.plan_source should record the auto-detected plan link (W-061); "
+        f"got plan_source={result.status.get('plan_source')!r}"
     )
     plan_stage = result.status.get("stages", {}).get("plan", {})
     assert plan_stage.get("status") == "completed", (

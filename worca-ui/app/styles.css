@@ -6217,6 +6217,17 @@ sl-tooltip.bead-tooltip::part(body) {
   color: var(--fg-muted);
 }
 
+/* W-061: plan revision selector inside the plan dialog */
+.plan-iter-selector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border, var(--bg-secondary));
+}
+
 /* --- sl-dialog: wider markdown-body dialogs (plan, guide) --- */
 
 sl-dialog.markdown-dialog::part(panel) {

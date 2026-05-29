@@ -182,30 +182,34 @@ def test_plan_block_revision_contains_current_plan_and_issues():
 def test_coordinate_block_excludes_work_request():
     result = _resolve_block("coordinate", {
         "work_request": "Add user authentication",
-        "plan_summary": "",
+        "current_plan": "",
     })
     assert "Add user authentication" not in result
 
 
-def test_coordinate_block_includes_plan_summary_when_present():
+def test_coordinate_block_includes_current_plan_when_present():
+    # W-061: the full current plan is surfaced via {{current_plan}}.
     result = _resolve_block("coordinate", {
-        "plan_summary": "Use JWT tokens. Tasks: auth module, middleware.",
+        "current_plan": "## Phase 1\nUse JWT tokens.\n## Phase 2\nAdd middleware.",
     })
     assert "Use JWT tokens" in result
+    assert "Phase 2" in result
 
 
 def test_coordinate_block_carries_decompose_framing():
-    result = _resolve_block("coordinate", {"plan_summary": ""})
+    result = _resolve_block("coordinate", {"current_plan": ""})
     assert "decompose" in result.lower()
     assert "approved plan" in result.lower()
     assert "do not implement" in result.lower() or "NOT implement" in result
+    # W-061: must steer the coordinator away from git-diff scope inference.
+    assert "git diff" in result.lower() and "source of truth" in result.lower()
 
 
 def test_coordinate_block_renders_guide_section():
     result = _resolve_block("coordinate", {
         "has_guide": True,
         "guide_content": "Follow RFC-999 strictly.",
-        "plan_summary": "The plan.",
+        "current_plan": "The plan.",
     })
     assert "## Reference Guide (normative)" in result
     assert "Follow RFC-999 strictly." in result
@@ -215,7 +219,7 @@ def test_coordinate_block_renders_guide_section():
 def test_coordinate_block_graphify_at_top_level():
     result = _resolve_block("coordinate", {
         "has_graphify": True,
-        "plan_summary": "",
+        "current_plan": "",
     })
     assert "graphify query" in result
     assert "<work_request>" not in result
@@ -229,6 +233,25 @@ def test_implement_block_initial_contains_task_not_work_request():
     })
     assert "Add user authentication" not in result
     assert "worca-abc123" in result and "Create JWT middleware" in result
+
+
+def test_implement_block_surfaces_plan_file_path_when_present():
+    # W-061: advisory PATH reference (not raw plan content) to the approved plan.
+    result = _resolve_block("implement", {
+        "is_retry": False,
+        "assigned_task": "**worca-abc123**: Create JWT middleware",
+        "plan_file": ".worca/runs/run-x/plan-002.md",
+    })
+    assert ".worca/runs/run-x/plan-002.md" in result
+    assert "only your bead" in result
+
+
+def test_implement_block_omits_plan_reference_when_no_plan_file():
+    result = _resolve_block("implement", {
+        "is_retry": False,
+        "assigned_task": "**worca-abc123**: Create JWT middleware",
+    })
+    assert "The approved plan for this run is at" not in result
 
 
 def test_implement_block_retry_contains_priority_and_failures():

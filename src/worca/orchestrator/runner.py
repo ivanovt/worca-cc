@@ -10,6 +10,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -2276,12 +2277,24 @@ def run_pipeline(
         # Handle plan file
         if not resume_stage:
             if plan_file:
-                # Pre-made plan: reference directly (no copy to MASTER_PLAN.md)
-                status["plan_file"] = plan_file
-                # Store path in prompt context so _read_master_plan() can find
-                # the plan even though MASTER_PLAN.md was not created.
-                prompt_builder.update_context("plan_file_path", plan_file)
-                _log(f"Pre-made plan: {plan_file}", "ok")
+                # Pre-made plan: ingest a COPY into the run dir as the first
+                # numbered plan (plan-001.md) so the run owns an immutable
+                # snapshot of its input. The original source file is never
+                # mutated mid-run (no source dirtying, no PR pollution, no
+                # misleading working-tree diff). Revisions append plan-002.md,
+                # plan-003.md, … (latest = highest number). See W-061.
+                if run_dir:
+                    _ingest_dest = _next_plan_path(run_dir)  # plan-001.md
+                    shutil.copy2(plan_file, _ingest_dest)
+                    status["plan_file"] = _ingest_dest
+                    status["plan_source"] = plan_file  # audit: original location
+                    prompt_builder.update_context("plan_file_path", _ingest_dest)
+                    _log(f"Ingested provided plan -> {_ingest_dest} (source: {plan_file})", "ok")
+                else:
+                    # Legacy / no run_dir: reference directly (cannot snapshot).
+                    status["plan_file"] = plan_file
+                    prompt_builder.update_context("plan_file_path", plan_file)
+                    _log(f"Pre-made plan: {plan_file}", "ok")
             else:
                 # Generated plan: write to {run_dir}/plan-NNN.md
                 if run_dir:
@@ -3175,6 +3188,26 @@ def run_pipeline(
                         # 1. Reset PLAN stage status and clear plan_approved milestone
                         update_stage(status, Stage.PLAN.value, status="pending", skipped=False)
                         status.get("milestones", {}).pop("plan_approved", None)
+                        # 1a. Append-only plan revision (W-061): preserve the current
+                        # plan as the revision *source* (threaded into plan_file_content
+                        # so the revision Planner reads it regardless of the re-pointed
+                        # path), then mint the next numbered plan file as the *target*
+                        # and re-point every consumer. The prior plan-00N.md is left
+                        # intact as audit history; the Planner is restricted to
+                        # WORCA_PLAN_FILE, so older revisions are immutable.
+                        if run_dir:
+                            _cur_plan_path = status.get("plan_file")
+                            _cur_plan_text = ""
+                            if _cur_plan_path and os.path.exists(_cur_plan_path):
+                                with open(_cur_plan_path, encoding="utf-8") as _cpf:
+                                    _cur_plan_text = _cpf.read().strip()
+                            if _cur_plan_text:
+                                prompt_builder.update_context("plan_file_content", _cur_plan_text)
+                            _rev_plan_path = _next_plan_path(run_dir)
+                            status["plan_file"] = _rev_plan_path
+                            os.environ["WORCA_PLAN_FILE"] = _rev_plan_path
+                            prompt_builder.update_context("plan_file", _rev_plan_path)
+                            _log(f"Plan revision -> {_rev_plan_path} (revising {_cur_plan_path})", "ok")
                         # 2. Persist context + status before any in-memory transitions
                         if prompt_context_path:
                             prompt_builder.save_context(prompt_context_path)

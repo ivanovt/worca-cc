@@ -49,7 +49,9 @@ _A code-review-graph MCP server is attached — **use its tools to orient (struc
 {{/if}}
 
 Address each issue above. Preserve all parts of the plan that were not flagged.
-Write the updated plan.
+Write the **complete** updated plan to `{{plan_file|MASTER_PLAN.md}}` — this is a
+fresh file, so include every section (both changed and unchanged), not just the
+edits. The previous revision is retained separately as audit history.
 {{else}}
 Create a detailed implementation plan for the following work request.
 Start by reading CLAUDE.md for project context (tech stack, build/test commands, conventions).

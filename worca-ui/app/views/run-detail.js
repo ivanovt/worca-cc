@@ -42,38 +42,82 @@ import { stageTimelineView } from './stage-timeline.js';
 // cached per-run. Same UX shape as the workspace-detail plan dialog: marked
 // renders the markdown, .markdown-dialog widens the panel, Copy footer
 // hands the raw source back to the user.
-const _runPlanCache = new Map(); // run_id -> markdown text | null (404)
-const _runPlanFetching = new Set();
+// W-061: plans are append-only numbered revisions (plan-001.md, …). The dialog
+// lists them and lets the user view any revision; the latest is the current
+// plan. Content is cached per (run, revision); the iteration list per run.
+const _runPlanText = new Map(); // `${runId}#${n|'latest'}` -> markdown | null (404)
+const _runPlanTextFetching = new Set();
+const _runPlanIters = new Map(); // run_id -> [{n, file}]  (empty for legacy runs)
+const _runPlanItersFetching = new Set();
 let _planDialogRunId = null; // null when closed; run_id when open
+let _planDialogIter = null; // selected revision number, or null = latest/current
 
-function _ensureRunPlanFetched(run, rerender) {
+// The run's project name is needed because the endpoint is mounted under
+// /api/projects/:projectId. Run objects carry it as `project` or `_project`;
+// fall back to the legacy /api/runs base for single-project mode.
+function _runApiBase(run) {
+  const runId = encodeURIComponent(run.id);
+  const project = run.project || run._project || null;
+  return project
+    ? `/api/projects/${encodeURIComponent(project)}/runs/${runId}`
+    : `/api/runs/${runId}`;
+}
+
+function _planTextKey(runId, n) {
+  return `${runId}#${n == null ? 'latest' : n}`;
+}
+
+function _ensurePlanItersFetched(run, rerender) {
   const runId = run?.id;
   if (!runId) return;
-  if (_runPlanCache.has(runId)) return;
-  if (_runPlanFetching.has(runId)) return;
-  // The run's project name is needed because the endpoint is mounted under
-  // /api/projects/:projectId. Run objects carry it as `project` or
-  // `_project`; fall back to the legacy /api/runs path for single-project
-  // mode where projectId isn't set.
-  const project = run.project || run._project || null;
-  const url = project
-    ? `/api/projects/${encodeURIComponent(project)}/runs/${encodeURIComponent(runId)}/plan`
-    : `/api/runs/${encodeURIComponent(runId)}/plan`;
-  _runPlanFetching.add(runId);
-  fetch(url, { headers: { Accept: 'text/markdown' } })
+  if (_runPlanIters.has(runId) || _runPlanItersFetching.has(runId)) return;
+  _runPlanItersFetching.add(runId);
+  fetch(`${_runApiBase(run)}/plan-iterations`, {
+    headers: { Accept: 'application/json' },
+  })
     .then(async (r) => {
-      _runPlanFetching.delete(runId);
-      if (!r.ok) {
-        _runPlanCache.set(runId, null);
-        rerender?.();
-        return;
+      _runPlanItersFetching.delete(runId);
+      let list = [];
+      if (r.ok) {
+        try {
+          const j = await r.json();
+          if (Array.isArray(j?.iterations)) list = j.iterations;
+        } catch {
+          list = [];
+        }
       }
-      _runPlanCache.set(runId, await r.text());
+      _runPlanIters.set(runId, list);
       rerender?.();
     })
     .catch(() => {
-      _runPlanFetching.delete(runId);
-      _runPlanCache.set(runId, null);
+      _runPlanItersFetching.delete(runId);
+      _runPlanIters.set(runId, []);
+      rerender?.();
+    });
+}
+
+// n === null fetches the current (latest) plan via /plan; a number fetches a
+// specific revision via /plan?iteration=N.
+function _ensureRunPlanFetched(run, n, rerender) {
+  const runId = run?.id;
+  if (!runId) return;
+  const key = _planTextKey(runId, n);
+  if (_runPlanText.has(key) || _runPlanTextFetching.has(key)) return;
+  const base = _runApiBase(run);
+  const url =
+    n == null
+      ? `${base}/plan`
+      : `${base}/plan?iteration=${encodeURIComponent(n)}`;
+  _runPlanTextFetching.add(key);
+  fetch(url, { headers: { Accept: 'text/markdown' } })
+    .then(async (r) => {
+      _runPlanTextFetching.delete(key);
+      _runPlanText.set(key, r.ok ? await r.text() : null);
+      rerender?.();
+    })
+    .catch(() => {
+      _runPlanTextFetching.delete(key);
+      _runPlanText.set(key, null);
       rerender?.();
     });
 }
@@ -83,42 +127,36 @@ function _copyToClipboardSimple(text) {
   navigator.clipboard?.writeText(text).catch(() => {});
 }
 
-// Plan-stage extension: small chip strip + View plan button that opens
-// the shared markdown dialog. Wired into the stage panel for key==='plan'.
-function _planArtifactView(stage, run, rerender) {
-  if (!run?.id) return nothing;
-  const planFile = stage?.plan_file || null;
-  const skipped = stage?.skipped === true;
-  // Show the strip whenever the stage has a plan file path OR a worktree
-  // (which lets the server fall back to MASTER_PLAN.md). Hiding it
-  // entirely on a stage with no path at all matches the "nothing to
-  // show" intent for stages where planning never ran.
-  if (!planFile && !run.worktree_path) return nothing;
+// W-061 Part A: per-iteration "View plan" button, rendered inside each plan /
+// plan_review iteration's content (a tab panel when the stage looped, inline
+// otherwise) so the button matches the iteration it sits under.
+//
+// Revision mapping: a plan_review iteration K reviewed revision K (reviews run
+// in ascending order, one per loopback cycle), so its button opens revision K.
+// The plan stage produces the plan, so its button opens the current (latest)
+// revision (null). Either way it opens the shared top-level dialog, which
+// carries the full revision selector for free navigation.
+function _planIterationButton(key, iter, run, rerender) {
+  if ((key !== 'plan' && key !== 'plan_review') || !run?.id) return nothing;
+  const rev = key === 'plan_review' && iter?.number ? iter.number : null;
+  const label = rev ? `View plan · v${rev}` : 'View plan';
   return html`
     <div class="plan-artifact-strip">
-      ${
-        skipped
-          ? html`<sl-tag size="small" pill variant="neutral" class="plan-skipped-tag">Skipped — plan supplied by workspace</sl-tag>`
-          : nothing
-      }
-      ${
-        planFile
-          ? html`<code class="plan-file-chip" title="${planFile}">${planFile.split('/').pop()}</code>`
-          : nothing
-      }
       <sl-button
         size="small"
-        class="btn-view-run-plan"
+        class="btn-view-run-plan btn-view-plan-iter"
         @click=${
           rerender
             ? () => {
                 _planDialogRunId = run.id;
-                _ensureRunPlanFetched(run, rerender);
+                _planDialogIter = rev; // null = current/latest
+                _ensurePlanItersFetched(run, rerender);
+                _ensureRunPlanFetched(run, rev, rerender);
                 rerender();
               }
             : null
         }
-      >View plan</sl-button>
+      >${label}</sl-button>
     </div>
   `;
 }
@@ -126,10 +164,51 @@ function _planArtifactView(stage, run, rerender) {
 function _planArtifactDialog(run, rerender) {
   if (!run?.id) return nothing;
   const isOpen = _planDialogRunId === run.id;
-  const planText = _runPlanCache.get(run.id) ?? null;
-  const fetching = _runPlanFetching.has(run.id);
+  const iters = _runPlanIters.get(run.id) || [];
+  const latestN = iters.length ? iters[iters.length - 1].n : null;
+  const selectedN = _planDialogIter; // null = latest/current
+  const textKey = _planTextKey(run.id, selectedN);
+  const planText = _runPlanText.get(textKey); // undefined=loading, null=404, str=content
+
+  // Revision selector — only when there is more than one plan revision.
+  // v1 is the original input; the highest number is the current plan.
+  const iterSelector =
+    iters.length > 1
+      ? html`
+        <div class="plan-iter-selector" role="group" aria-label="Plan revisions">
+          ${iters.map((it) => {
+            const isLatest = it.n === latestN;
+            const active =
+              (selectedN == null && isLatest) || selectedN === it.n;
+            const label =
+              it.n === 1
+                ? 'v1 · original'
+                : isLatest
+                  ? `v${it.n} · current`
+                  : `v${it.n}`;
+            return html`<sl-button
+              size="small"
+              pill
+              class="plan-iter-btn${active ? ' plan-iter-btn--active' : ''}"
+              variant=${active ? 'primary' : 'default'}
+              aria-pressed=${active ? 'true' : 'false'}
+              @click=${
+                rerender
+                  ? () => {
+                      _planDialogIter = isLatest ? null : it.n;
+                      _ensureRunPlanFetched(run, _planDialogIter, rerender);
+                      rerender();
+                    }
+                  : null
+              }
+            >${label}</sl-button>`;
+          })}
+        </div>
+      `
+      : nothing;
+
   const body = (() => {
-    if (fetching || (isOpen && planText === undefined)) {
+    if (planText === undefined) {
       return html`<div class="plan-loading"><sl-spinner></sl-spinner> Loading plan…</div>`;
     }
     if (planText === null) {
@@ -146,11 +225,13 @@ function _planArtifactDialog(run, rerender) {
         rerender
           ? () => {
               _planDialogRunId = null;
+              _planDialogIter = null;
               rerender();
             }
           : null
       }
     >
+      ${iterSelector}
       ${body}
       <div slot="footer">
         ${
@@ -173,6 +254,7 @@ function _planArtifactDialog(run, rerender) {
             rerender
               ? () => {
                   _planDialogRunId = null;
+                  _planDialogIter = null;
                   rerender();
                 }
               : null
@@ -1631,8 +1713,6 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
-                      ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
-                      ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
                         const num = parseInt(panel.split('-').pop(), 10);
@@ -1650,6 +1730,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                           (iter) => html`
                           <sl-tab-panel name="iter-${key}-${iter.number}">
                             ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled, run.crg_enabled)}
+                            ${_planIterationButton(key, iter, run, options.rerender)}
                           </sl-tab-panel>
                         `,
                         )}
@@ -1689,8 +1770,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
-                      ${key === 'plan' ? _planArtifactView(stage, run, options.rerender) : nothing}
-                      ${key === 'plan' ? _planArtifactDialog(run, options.rerender) : nothing}
+                      ${_planIterationButton(key, iterations[0], run, options.rerender)}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>
                   </div>
@@ -1712,6 +1792,7 @@ export function runDetailView(run, settings = {}, options = {}) {
           `;
         })}
       </div>
+      ${_planArtifactDialog(run, options.rerender)}
   `;
 
   return { overview, stages: stagePanels };

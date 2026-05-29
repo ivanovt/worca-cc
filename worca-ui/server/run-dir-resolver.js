@@ -13,8 +13,44 @@
  *   3. `<worcaDir>/multi/pipelines.d/<runId>.json` → `<worktree_path>/.worca/runs/<runId>/`
  */
 
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
+
+// W-061: plans are stored in the run dir as append-only numbered files
+// (plan-001.md, plan-002.md, …). plan-001 is the original input — the ingested
+// copy for a provided plan, or the Planner's first draft. Each plan_review
+// revision appends the next number; the highest number is the current plan.
+const PLAN_ITERATION_RE = /^plan-(\d{3})\.md$/;
+
+/**
+ * List the numbered plan iterations in a run dir, ascending by number.
+ * @param {string|null} runDir - absolute path to the run dir
+ * @returns {Array<{n:number,file:string,path:string}>} ascending by n; [] if none
+ */
+export function listPlanIterations(runDir) {
+  if (!runDir || !existsSync(runDir)) return [];
+  let files;
+  try {
+    files = readdirSync(runDir);
+  } catch {
+    return [];
+  }
+  return files
+    .map((f) => {
+      const m = f.match(PLAN_ITERATION_RE);
+      return m
+        ? { n: Number.parseInt(m[1], 10), file: f, path: join(runDir, f) }
+        : null;
+    })
+    .filter((it) => it !== null)
+    .sort((a, b) => a.n - b.n);
+}
 
 /**
  * Resolve a runId to its on-disk run directory.

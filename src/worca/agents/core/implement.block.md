@@ -38,6 +38,10 @@ lower-authority source, and surface it rather than silently resolving it.
 {{guide_content}}
 {{/if}}
 
+{{#if plan_file}}
+_The approved plan for this run is at `{{plan_file}}` — consult it for design context, file references, and rationale relevant to your assigned bead. Implement **only your bead**; the plan is orientation, not license to widen scope._
+
+{{/if}}
 {{#if has_design_notes}}
 ## Accumulated design notes (advisory)
 
@@ -75,6 +79,10 @@ lower-authority source, and surface it rather than silently resolving it.
 {{guide_content}}
 {{/if}}
 
+{{#if plan_file}}
+_The approved plan for this run is at `{{plan_file}}` — consult it for design context, file references, and rationale relevant to your assigned bead. Implement **only your bead**; the plan is orientation, not license to widen scope._
+
+{{/if}}
 {{#if has_design_notes}}
 ## Accumulated design notes (advisory)
 

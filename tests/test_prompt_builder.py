@@ -348,21 +348,37 @@ def test_build_context_plan_review_history_set_on_iteration_1():
     assert "No rollback" in ctx.get("plan_review_history_formatted", "")
 
 
-def test_build_context_coordinate_plan_summary_from_approach_and_outline():
+def test_build_context_coordinate_current_plan_from_plan_file_content():
+    # W-061: coordinate consumes the FULL current plan, not a delta summary built
+    # from approach + tasks_outline (which collapses to the revision changelog
+    # after a plan_review revise).
     pb = PromptBuilder("Add auth", "Desc")
-    pb.update_context("plan_approach", "Use JWT tokens")
-    pb.update_context("plan_tasks_outline", [
-        {"title": "Create middleware", "description": "JWT validation"},
-    ])
+    pb.update_context("plan_file_content", "# Plan\n\n## Phase 1\nDo X\n\n## Phase 2\nDo Y")
+    # A delta-scoped outline must NOT leak into the coordinator input.
+    pb.update_context("plan_approach", "Targeted revision: fixed one typo")
+    pb.update_context("plan_tasks_outline", [{"title": "Fix typo", "description": ""}])
     ctx = pb.build_context("coordinate")
-    assert "Use JWT tokens" in ctx.get("plan_summary", "")
-    assert "Create middleware" in ctx.get("plan_summary", "")
+    assert "Phase 1" in ctx.get("current_plan", "")
+    assert "Phase 2" in ctx.get("current_plan", "")
+    assert "Fix typo" not in ctx.get("current_plan", "")
 
 
-def test_build_context_coordinate_no_plan_summary_without_approach():
+def test_build_context_coordinate_empty_current_plan_without_plan_content():
     pb = PromptBuilder("Add auth", "Desc")
     ctx = pb.build_context("coordinate")
-    assert not ctx.get("plan_summary")
+    assert not ctx.get("current_plan")
+
+
+def test_build_context_plan_revision_prefers_threaded_plan_content():
+    # W-061: under append-only numbering, plan_file points at the next (empty)
+    # numbered file at revision time, so the runner threads the current plan into
+    # plan_file_content; the revision Planner must read THAT, not the empty file.
+    pb = PromptBuilder("Add auth", "Desc")
+    pb.update_context("plan_revision_mode", True)
+    pb.update_context("plan_file", "/nonexistent/plan-002.md")
+    pb.update_context("plan_file_content", "# Current plan\n\n## Phase 1\nExisting work")
+    ctx = pb.build_context("plan", iteration=1)
+    assert "Existing work" in ctx.get("plan_content", "")
 
 
 def test_build_context_coordinate_formats_unresolved_plan_issues():
