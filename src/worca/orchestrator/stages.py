@@ -81,6 +81,13 @@ STAGE_ORDER = [Stage.PREFLIGHT, Stage.PLAN, Stage.PLAN_REVIEW, Stage.COORDINATE,
 # Stages that default to disabled when not configured in settings.json
 _STAGES_DEFAULT_DISABLED = {Stage.PLAN_REVIEW, Stage.LEARN}
 
+# Env-var names that, when set on a model alias's `env` block in worca.models,
+# reroute Claude CLI to a non-Anthropic endpoint. Their presence is the signal
+# that Claude CLI's total_cost_usd was computed against the wrong pricing table
+# and worca should override it from worca.pricing.models.<alias>. Conservative
+# and explicit by design — new entries are added deliberately, never inferred.
+_ALT_ENDPOINT_ENV_KEYS = frozenset({"ANTHROPIC_BASE_URL"})
+
 
 def _read_settings(settings_path: str) -> dict:
     """Read and parse settings, with .local.json merge support."""
@@ -118,11 +125,16 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     model_map = worca.get("models", {})
     raw_model = agent_config.get("model", "sonnet")
     model_id, model_env = _resolve_model(raw_model, model_map)
-    # model_alias preserves what the user typed (e.g. "glm-ds"), so the UI can
-    # show "Model: glm-ds  ID: opus" — the alias is otherwise lost at this seam
-    # because the runner only persists the resolved id downstream. None means
-    # "no distinct alias" (the user's configured value is already a model id).
-    model_alias = raw_model if raw_model != model_id else None
+    # model_alias is set only when this alias rewires Claude CLI to a non-
+    # Anthropic endpoint (via ANTHROPIC_BASE_URL in the alias's env block).
+    # That's the one case where Claude CLI's total_cost_usd is computed against
+    # the wrong pricing table and worca needs to override it from
+    # worca.pricing.models.<alias>. For every other alias (built-in shorthands
+    # like "opus"/"sonnet"/"haiku", or user renames that don't reroute the
+    # API), Claude CLI's cost number remains authoritative and model_alias
+    # stays None — no override path is taken downstream.
+    _reroutes_api = bool(_ALT_ENDPOINT_ENV_KEYS & set(model_env or {}))
+    model_alias = raw_model if _reroutes_api else None
     return {
         "agent": agent_name,
         "model": model_id,

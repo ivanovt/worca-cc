@@ -702,9 +702,10 @@ class TestStageConfigModelEnv:
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "full-id"
 
-    def test_stage_config_records_model_alias_when_distinct_from_id(self, tmp_path):
-        """The user-typed alias survives next to the resolved id, so the UI can
-        render ``Model: glm-ds  ID: opus`` without re-resolving."""
+    def test_stage_config_records_model_alias_for_alt_endpoint(self, tmp_path):
+        """Aliases that rewire Claude CLI via ANTHROPIC_BASE_URL get a
+        model_alias so the cost-override path fires — that's the one case
+        Claude CLI's total_cost_usd is computed against the wrong table."""
         settings = {
             "worca": {
                 "models": {
@@ -719,9 +720,10 @@ class TestStageConfigModelEnv:
         assert config["model"] == "opus"
         assert config["model_alias"] == "glm-ds"
 
-    def test_stage_config_model_alias_is_none_when_alias_equals_id(self, tmp_path):
-        """Plain-model configs (no alias->id mapping) record model_alias=None so
-        the UI falls back to the single 'Model:' line — backward-compatible."""
+    def test_stage_config_model_alias_none_for_shorthand_without_env(self, tmp_path):
+        """Built-in-style shorthand (``"opus"`` → ``"claude-opus-4-6"``) without
+        an env block must NOT set model_alias — otherwise vanilla installs
+        silently switch from Claude CLI's cost to the local pricing table."""
         settings = {
             "worca": {
                 "models": {"opus": "claude-opus-4-6"},
@@ -731,14 +733,44 @@ class TestStageConfigModelEnv:
         settings_file = tmp_path / "settings.json"
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
-        # The user typed "opus", resolve_model returns "claude-opus-4-6",
-        # so they differ — alias preserved.
         assert config["model"] == "claude-opus-4-6"
-        assert config["model_alias"] == "opus"
+        assert config["model_alias"] is None
+
+    def test_stage_config_model_alias_none_for_rename_without_endpoint_env(self, tmp_path):
+        """A user rename that ships env vars unrelated to API routing (e.g. a
+        ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` tuning knob) stays on Claude CLI's
+        cost — the override is opt-in via ANTHROPIC_BASE_URL, nothing else."""
+        settings = {
+            "worca": {
+                "models": {
+                    "tuned-opus": {
+                        "id": "claude-opus-4-6",
+                        "env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8000"}
+                    }
+                },
+                "agents": {"planner": {"model": "tuned-opus"}}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model"] == "claude-opus-4-6"
+        assert config["model_alias"] is None
+
+    def test_stage_config_model_alias_none_on_vanilla_install(self, tmp_path):
+        """No ``worca.models`` at all, agent uses the default ``"sonnet"`` →
+        alias must be None so Claude CLI's authoritative cost is preserved.
+        This is the regression-prevention test for the broad-trigger bug."""
+        settings = {"worca": {"agents": {"planner": {"model": "sonnet"}}}}
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model"] == "claude-sonnet-4-6"
+        assert config["model_alias"] is None
 
     def test_stage_config_model_alias_is_none_for_passthrough_id(self, tmp_path):
-        """When the user types an id with no model-map entry (passthrough), the
-        alias equals the id, so model_alias stays None — no UI churn."""
+        """When the user types an id with no model-map entry (passthrough), no
+        env is attached either — model_alias stays None."""
         settings = {
             "worca": {
                 "agents": {"planner": {"model": "claude-opus-4-6"}}

@@ -136,6 +136,7 @@ Key gotchas:
 - **Reserved keys** matching `WORCA_*`, `PATH`, or `CLAUDECODE` are silently stripped with a stderr warning. Denylist shared between Python (`src/worca/utils/env.py`) and JS (`worca-ui/server/reserved-env-keys.json`).
 - **Worktree materialization:** parent's `settings.local.json` secrets are materialized into the worktree's `settings.json` (gitignored). Same on-disk plaintext exposure model as `~/.aws/credentials`.
 - **`work_request.py` haiku coupling:** `extract_work_request` resolves its hardcoded `--model haiku` through `resolve_model()`, so customizing the `haiku` entry also retargets work-request title generation. Intentional.
+- **Cost source per alias:** if an alias's `env` block sets `ANTHROPIC_BASE_URL` (alt-endpoint routing), worca overrides Claude CLI's `total_cost_usd` using `worca.pricing.models.<alias>`. Otherwise Claude CLI's number is authoritative and the Pricing tab is informational/fallback. The trigger set lives in `_ALT_ENDPOINT_ENV_KEYS` in `src/worca/orchestrator/stages.py`.
 
 ### Effort Levels (`worca.effort`)
 
