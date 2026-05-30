@@ -102,6 +102,23 @@ export function buildWorkspaceArgs(workspace_root, workspace_id, manifest) {
   return args;
 }
 
+/**
+ * Returns true when `host` resolves to a loopback bind — undefined/null are
+ * treated as loopback because the production default in
+ * `worca-ui/server/index.js` is `127.0.0.1`. Used by the outbound-send route
+ * to refuse exposing user-addressable chat from a non-loopback bind.
+ *
+ * @param {string|undefined|null} host
+ * @returns {boolean}
+ */
+export function isLoopbackHost(host) {
+  if (host === undefined || host === null || host === '') return true;
+  if (host === 'localhost' || host === '::1') return true;
+  if (host === '::ffff:127.0.0.1') return true;
+  if (host.startsWith('127.')) return true;
+  return false;
+}
+
 export function createApp(options = {}) {
   const app = express();
   const appDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'app');
@@ -863,6 +880,68 @@ export function createApp(options = {}) {
     const integrations = app.locals.integrations;
     if (!integrations) return res.json({ enabled: false });
     res.json(integrations.status());
+  });
+
+  // POST /api/integrations/send — fan out a NormalizedMessage to one or
+  // more chat platforms through the same allowlist + rate-limiter pipeline
+  // the worca event fan-out uses. Drives the worca-notify skill.
+  //
+  // Body shape:
+  //   {
+  //     platforms?: string[],         // omit → all enabled chat adapters
+  //     message: NormalizedMessage,   // { title, body: MessageSegment[], severity }
+  //     chat_id?: string              // override the configured chat_id
+  //   }
+  //
+  // Returns 200 with `{ results: [{ platform, ok, error? }] }` for both
+  // total-success and partial-success cases; 4xx only for malformed input.
+  //
+  // Auth model: the endpoint is INTENTIONALLY restricted to loopback binds
+  // (127.0.0.0/8, ::1, localhost). The CSRF middleware above lets through
+  // requests with no Origin header (so webhooks work); without this guard,
+  // a UI server started with HOST=0.0.0.0 or --host <public-ip> would expose
+  // unauthenticated send-to-user's-chat to anything that can reach the port.
+  // 503 (subsystem disabled) and 403 (non-loopback bind) are terminal —
+  // retrying won't help.
+  app.post('/api/integrations/send', async (req, res) => {
+    if (!isLoopbackHost(serverHost)) {
+      return res.status(403).json({
+        error:
+          'send endpoint is restricted to loopback binds; ' +
+          'restart the UI server on 127.0.0.1 / ::1 / localhost ' +
+          'to send notifications',
+      });
+    }
+    const integrations = app.locals.integrations;
+    if (!integrations) {
+      return res
+        .status(503)
+        .json({ error: 'integrations subsystem not initialized' });
+    }
+    if (integrations.status?.().enabled === false) {
+      return res
+        .status(503)
+        .json({ error: 'integrations subsystem disabled in config' });
+    }
+    const { platforms, message, chat_id: chatIdOverride } = req.body ?? {};
+    if (!message || typeof message !== 'object') {
+      return res
+        .status(400)
+        .json({ error: 'message is required and must be an object' });
+    }
+    if (platforms !== undefined && !Array.isArray(platforms)) {
+      return res.status(400).json({ error: 'platforms must be an array' });
+    }
+    try {
+      const out = await integrations.sendOutbound({
+        platforms,
+        message,
+        chatIdOverride,
+      });
+      res.json(out);
+    } catch (err) {
+      res.status(400).json({ error: String(err?.message ?? err) });
+    }
   });
 
   // GET /api/integrations/config — return saved config (secrets redacted)

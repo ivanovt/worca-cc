@@ -562,10 +562,11 @@ def _copy_worca_source(source: Path, target: Path) -> None:
 def _install_skills(source: Path, git_root: Path) -> list[str]:
     """Install worca-owned skills into <project>/.claude/skills/.
 
-    Each subdirectory of source/skills/ contains a SKILL.md. We mirror that
-    layout into git_root/.claude/skills/<name>/SKILL.md, overwriting any
-    existing copy (the package version is the source of truth). Unrelated
-    user-authored skills under .claude/skills/ are left untouched.
+    Each subdirectory of source/skills/ contains at minimum a SKILL.md. We
+    mirror the full skill directory (including any sibling assets like
+    ``send.mjs``) into git_root/.claude/skills/<name>/, overwriting existing
+    copies — the package version is the source of truth. Unrelated user-
+    authored skills under .claude/skills/ are left untouched.
 
     Returns a list of human-readable change descriptions.
     """
@@ -585,9 +586,21 @@ def _install_skills(source: Path, git_root: Path) -> list[str]:
             continue
         dst_dir = skills_dst / skill_dir.name
         dst_dir.mkdir(parents=True, exist_ok=True)
-        dst_md = dst_dir / "SKILL.md"
-        shutil.copy2(str(skill_md), str(dst_md))
-        changes.append(f"  Installed .claude/skills/{skill_dir.name}/SKILL.md")
+        # Copy every regular file at the top level of the skill dir — this
+        # carries SKILL.md plus any sibling assets (e.g. worca-notify's
+        # send.mjs). Subdirectories are walked too via shutil.copytree
+        # semantics, manually rolled to keep the per-file change log.
+        for item in sorted(skill_dir.iterdir()):
+            if item.name == "__pycache__":
+                continue
+            dst_item = dst_dir / item.name
+            if item.is_file():
+                shutil.copy2(str(item), str(dst_item))
+            elif item.is_dir():
+                if dst_item.exists():
+                    shutil.rmtree(str(dst_item))
+                shutil.copytree(str(item), str(dst_item))
+        changes.append(f"  Installed .claude/skills/{skill_dir.name}/")
 
     return changes
 

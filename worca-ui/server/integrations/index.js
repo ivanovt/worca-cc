@@ -31,9 +31,60 @@ const NO_OP_STUB = {
   status() {
     return { enabled: false };
   },
+  enabledPlatforms() {
+    return [];
+  },
+  async sendOutbound() {
+    return {
+      results: [
+        {
+          platform: '(none)',
+          ok: false,
+          error: 'integrations subsystem disabled',
+        },
+      ],
+    };
+  },
   strictInboxVerification: false,
   secrets: [],
 };
+
+// Chat-capable adapter names. `webhook_out` is excluded — it's an
+// event-fan-out destination, not a chat platform users can address by name.
+const CHAT_PLATFORMS = ['telegram', 'discord', 'slack'];
+
+/**
+ * Strip credentials from adapter error messages before surfacing them
+ * through sendOutbound results. Adapters' underlying `fetch` failures
+ * frequently embed the full request URL (including bot tokens for
+ * Telegram and webhook secrets for Slack/Discord) in the error text;
+ * one redaction pattern per known shape.
+ *
+ * Patterns covered:
+ *   - Telegram bot URL token:          `bot<digits>:<token>`
+ *   - Slack incoming-webhook URL:      `hooks.slack.com/services/T…/B…/<24>`
+ *   - Discord webhook URL:             `discord(app)?.com/api/webhooks/<id>/<token>`
+ *   - Slack OAuth tokens:              `xox[abprs]-<token>`
+ *
+ * Exported for tests; the per-platform error path in sendOutbound is the
+ * sole production caller today.
+ *
+ * @param {unknown} input
+ * @returns {string}
+ */
+export function redactSecrets(input) {
+  return String(input)
+    .replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot<redacted>')
+    .replace(
+      /hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/g,
+      'hooks.slack.com/services/<redacted>',
+    )
+    .replace(
+      /discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+/g,
+      'discord.com/api/webhooks/<redacted>',
+    )
+    .replace(/xox[abprs]-[A-Za-z0-9-]+/g, 'xox<redacted>');
+}
 
 /**
  * @param {{
@@ -195,6 +246,116 @@ export function createIntegrations({
     }
   }
 
+  /**
+   * Names of chat-capable adapters currently booted (enabled in config and
+   * successfully constructed). Drives the worca-notify skill's default
+   * fan-out target list. Excludes webhook_out (not a chat platform).
+   * @returns {string[]}
+   */
+  function enabledPlatforms() {
+    return [...adapterMap.keys()].filter((n) => CHAT_PLATFORMS.includes(n));
+  }
+
+  /**
+   * Send a NormalizedMessage to one or more chat platforms through the same
+   * allowlist + rate-limiter pipeline as pipeline-event fan-out. Used by the
+   * POST /api/integrations/send route (which the worca-notify skill calls).
+   *
+   * Per-platform failures are returned as individual result entries, never
+   * thrown — the caller decides whether a partial success is acceptable. The
+   * overall promise rejects only for caller-error inputs (invalid message).
+   *
+   * @param {{
+   *   platforms?: string[],
+   *   message: import('./adapter.js').NormalizedMessage,
+   *   chatIdOverride?: string,
+   * }} opts
+   * @returns {Promise<{results: Array<{platform: string, ok: boolean, error?: string}>}>}
+   */
+  async function sendOutbound({ platforms, message, chatIdOverride }) {
+    if (!message || typeof message !== 'object') {
+      throw new Error('message must be an object');
+    }
+    if (!Array.isArray(message.body)) {
+      throw new Error('message.body must be an array of segments');
+    }
+    if (
+      chatIdOverride !== undefined &&
+      chatIdOverride !== null &&
+      typeof chatIdOverride !== 'string' &&
+      typeof chatIdOverride !== 'number'
+    ) {
+      throw new Error('chat_id must be a string or number');
+    }
+
+    const targets =
+      Array.isArray(platforms) && platforms.length > 0
+        ? platforms
+        : enabledPlatforms();
+
+    const results = [];
+    for (const name of targets) {
+      const entry = adapterMap.get(name);
+      if (!entry) {
+        results.push({
+          platform: name,
+          ok: false,
+          error: CHAT_PLATFORMS.includes(name)
+            ? 'platform not enabled or not configured'
+            : 'unknown platform',
+        });
+        continue;
+      }
+
+      const chatId =
+        chatIdOverride !== undefined && chatIdOverride !== null
+          ? String(chatIdOverride)
+          : String(
+              entry.adapterCfg.chat_id ?? entry.adapterCfg.channel_id ?? '',
+            );
+
+      if (!chatId) {
+        results.push({
+          platform: name,
+          ok: false,
+          error: 'no chat_id configured for this platform',
+        });
+        continue;
+      }
+
+      if (!allowlist.isAllowed({ platform: name, chatId })) {
+        results.push({
+          platform: name,
+          ok: false,
+          error: 'chat_id not in allowlist',
+        });
+        continue;
+      }
+
+      try {
+        const rl = rateLimiters.get(name);
+        const sendFn = (m) => entry.adapter.send(chatId, m);
+        if (rl) {
+          await rl.send(message, sendFn);
+        } else {
+          await sendFn(message);
+        }
+        results.push({ platform: name, ok: true });
+      } catch (err) {
+        // Strip credentials from the error before surfacing — adapters'
+        // fetch failures can echo full request URLs that embed bot tokens
+        // (Telegram), webhook secrets (Slack/Discord), or OAuth tokens.
+        results.push({
+          platform: name,
+          ok: false,
+          error: redactSecrets(err?.message ?? err),
+        });
+      }
+    }
+
+    return { results };
+  }
+
   function onEvent(stored) {
     const rawBody = stored[RAW_BODY];
     const sigHeader = stored.headers?.['x-worca-signature'];
@@ -276,6 +437,8 @@ export function createIntegrations({
     status,
     reloadAdapter,
     removeAdapter,
+    enabledPlatforms,
+    sendOutbound,
     /** @internal — used by detect endpoint to pause/resume adapter */
     _getAdapter: (name) => adapterMap.get(name) ?? null,
     strictInboxVerification: cfg.strict_inbox_verification ?? false,
