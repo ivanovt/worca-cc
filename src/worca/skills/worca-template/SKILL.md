@@ -1,15 +1,17 @@
 ---
 name: worca-template
-description: Guided pipeline-template authoring — interviews the user for intent, proposes reusing or extending existing templates, composes a minimal config delta, and writes it via CLI. Triggers on "new template", "create pipeline template", "create template", "customize my pipeline", "worca-template".
+description: Guided pipeline-template authoring, export, and import — interviews the user for intent, proposes reusing or extending existing templates, composes a minimal config delta, and writes it via CLI. Also exports template bundles (with secret redaction) and imports bundles from files, URLs, or gists. Triggers on "new template", "create pipeline template", "create template", "customize my pipeline", "export template", "import template", "share template", "bundle", "worca-template".
 ---
 
 # Worca Template
 
-Guided creation of pipeline templates. Interviews the user, proposes reusing or extending existing templates before building from scratch, composes a *minimal config delta* (not a settings snapshot), and writes it via the CLI with full validation.
+Guided creation, export, and import of pipeline templates. Interviews the user, proposes reusing or extending existing templates before building from scratch, composes a *minimal config delta* (not a settings snapshot), and writes it via the CLI with full validation. Also supports exporting template bundles for sharing and importing bundles from files, URLs, or GitHub gists.
 
 **Usage:**
 - `/worca-template` — start the guided interview
 - "create a new template" / "new pipeline template" / "customize my pipeline" — natural phrases
+- "export template" / "share template" / "bundle templates" — export flow
+- "import template" / "load bundle" — import flow
 
 ## Procedure
 
@@ -149,15 +151,83 @@ After the template is created (or if an existing template was selected in Phase 
 2. **Launch a pipeline** — "Ready to use it? `worca run --worktree --template <id> --source gh:issue:N`"
 3. **UI launcher** — "Or select it from the template dropdown in the worca-ui launcher"
 
+### Phase 7: Export (when user says "export", "share", "bundle")
+
+Guides the user through exporting one or more templates as a portable bundle JSON file, with automatic secret redaction.
+
+1. **Template selection** — Run `worca templates list --json` to enumerate available templates. Present a multi-select picker via `AskUserQuestion` showing only project and user-tier templates (builtins are excluded by default). Let the user pick which templates to include.
+
+2. **Models and pricing opt-in** — Ask via `AskUserQuestion` whether to include:
+   - `worca.models` from `settings.json` (model aliases and IDs — env blocks are always stripped)
+   - `worca.pricing` from `settings.json` (cost tracking config)
+
+   Default both to No. Explain that env blocks containing secrets are automatically redacted, and that only `settings.json` is read (never `settings.local.json`).
+
+3. **Destination** — Ask via `AskUserQuestion`:
+   - **Local file** — write to a file path (e.g. `./my-templates.json`)
+   - **GitHub gist (secret)** — unlisted gist, shareable via URL
+   - **GitHub gist (public)** — search-indexed, visible to everyone
+
+4. **Run the export:**
+
+   ```bash
+   worca templates export --to <dest> [--include-models] [--include-pricing] --templates <id1>,<id2>,...
+   ```
+
+   For gist destinations, use `--to gist` (secret) or `--to gist:public`.
+
+5. **Report results** — Show the user:
+   - The list of redacted paths (if any secrets or env blocks were stripped)
+   - The output location (file path or gist URL)
+   - A reminder that the bundle never includes `settings.local.json` secrets
+
+### Phase 8: Import (when user says "import", "load bundle")
+
+Guides the user through importing templates (and optionally models/pricing) from a bundle file, URL, or GitHub gist.
+
+1. **Source selection** — Ask via `AskUserQuestion`:
+   - **Local file** — path to a `.json` bundle file
+   - **URL** — HTTPS URL to a hosted bundle (1 MiB size cap)
+   - **GitHub gist** — gist URL or bare gist ID
+
+2. **Target scope** — Ask via `AskUserQuestion`:
+   - **Project** (default) — writes templates to `.claude/templates/`, merges models/pricing into `settings.json`
+   - **User** — writes templates to `~/.worca/templates/` (models and pricing are skipped with a warning since there is no user-level `settings.json`)
+
+3. **Run the import:**
+
+   ```bash
+   worca templates import --from <source> --scope <scope>
+   ```
+
+4. **Collision handling** — If the CLI detects collisions (template IDs, model keys, or pricing keys that already exist in the target scope), relay the collision list to the user via `AskUserQuestion` with per-item choices:
+   - **Replace** — overwrite the existing entry
+   - **Skip** — keep the existing entry
+   - **Abort** — cancel the entire import
+
+   If all items are skipped or replaced, re-run with the appropriate flags. If the user aborts, stop.
+
+5. **Confirmation** — After a successful import, verify with:
+
+   ```bash
+   worca templates list --json
+   ```
+
+   Show the user the updated template list, highlighting the newly imported entries.
+
 ## Out of Scope (v1)
 
 These are explicitly deferred to follow-up work:
 
 - **Agent-prompt overrides** — `agents/<agent>.md` / `.block.md` overlays exist in the template system (`src/worca/orchestrator/overlay.py`) but authoring them via this skill is deferred.
 - **UI-based template creation** — the UI stays list/select only.
+- **UI-based import/export** — import/export is CLI + skill only; no UI integration.
 - **Editing or cloning existing templates** — this skill creates new templates only. Use `worca templates delete` + re-create to replace.
 - **Approval gate configuration** — `milestones.plan_approval`, `pr_approval`, `deploy_approval` are configurable in the config delta but not surfaced as a separate interview question in v1. Users who need them can specify via the "other" path or edit the composed JSON.
 - **Loop limit tuning** — `loops.implement_test`, `loops.pr_changes`, etc. are settable in the config delta but not individually interviewed. The rigor level sets sensible defaults.
+- **Encrypted bundles / signing** — the redaction approach prevents accidental secret leakage; intentional secret sharing requires a different mechanism.
+- **Auth headers for private URLs** — fetching bundles from authenticated HTTPS endpoints is not supported in v1.
+- **Bidirectional sync** — tracking an upstream gist for updates is deferred.
 
 ## Failure Modes
 

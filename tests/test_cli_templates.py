@@ -816,3 +816,499 @@ class TestWorcaTemplateSkillShipping:
         content = installed.read_text()
         assert content.startswith("---")
         assert "name: worca-template" in content
+
+
+# ---------------------------------------------------------------------------
+# worca templates export
+# ---------------------------------------------------------------------------
+
+
+class TestTemplatesExportParser:
+    def test_export_subcommand_parsed(self):
+        parser = create_parser()
+        args = parser.parse_args(["templates", "export", "--to", "bundle.json"])
+        assert args.command == "templates"
+        assert args.templates_command == "export"
+        assert args.to == "bundle.json"
+
+    def test_export_to_is_required(self):
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["templates", "export"])
+
+    def test_export_optional_flags_parsed(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "templates", "export",
+            "--to", "out.json",
+            "--include-models",
+            "--include-pricing",
+            "--templates", "a,b,c",
+        ])
+        assert args.include_models is True
+        assert args.include_pricing is True
+        assert args.templates_filter == "a,b,c"
+
+    def test_export_optional_flags_default_false(self):
+        parser = create_parser()
+        args = parser.parse_args(["templates", "export", "--to", "out.json"])
+        assert args.include_models is False
+        assert args.include_pricing is False
+        assert args.templates_filter is None
+
+
+class TestTemplatesExport:
+    def _setup_templates(self, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(builtin_dir / "builtin-tmpl", _minimal("builtin-tmpl", tier="builtin"))
+        _write_template(project_dir / "proj-tmpl", _minimal("proj-tmpl", tier="project"))
+        _write_template(user_dir / "user-tmpl", _minimal("user-tmpl", tier="user"))
+        return builtin_dir, project_dir, user_dir
+
+    def _run_export(self, args, capsys, builtin_dir=None, project_dir=None, user_dir=None, settings=None):
+        patches = {
+            "worca.cli.templates._resolve_dirs": lambda: (builtin_dir, project_dir, user_dir),
+        }
+        if settings is not None:
+            patches["worca.cli.templates._load_current_worca_config"] = lambda: settings
+        with patch.dict("os.environ", {}, clear=False):
+            with patch(
+                "worca.cli.templates._resolve_dirs",
+                return_value=(builtin_dir, project_dir, user_dir),
+            ):
+                extra = patch("worca.cli.templates._load_current_worca_config", return_value=settings) if settings is not None else patch("worca.cli.templates._load_current_worca_config", return_value={})
+                with extra:
+                    main(["templates", "export"] + args)
+        return capsys.readouterr()
+
+    def test_export_writes_file_with_templates(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        out_file = tmp_path / "bundle.json"
+        self._run_export(
+            ["--to", str(out_file)],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        assert out_file.exists()
+        bundle = json.loads(out_file.read_text())
+        assert bundle["worca_bundle_version"] == 1
+        assert "exported_at" in bundle
+        ids = {t["id"] for t in bundle["templates"]}
+        assert "proj-tmpl" in ids
+        assert "user-tmpl" in ids
+
+    def test_export_excludes_builtins_by_default(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        out_file = tmp_path / "bundle.json"
+        self._run_export(
+            ["--to", str(out_file)],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        bundle = json.loads(out_file.read_text())
+        ids = {t["id"] for t in bundle["templates"]}
+        assert "builtin-tmpl" not in ids
+
+    def test_export_templates_filter(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        out_file = tmp_path / "bundle.json"
+        self._run_export(
+            ["--to", str(out_file), "--templates", "proj-tmpl"],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        bundle = json.loads(out_file.read_text())
+        assert len(bundle["templates"]) == 1
+        assert bundle["templates"][0]["id"] == "proj-tmpl"
+
+    def test_export_include_models(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        out_file = tmp_path / "bundle.json"
+        settings = {"models": {"opus": "claude-opus-4-6"}}
+        self._run_export(
+            ["--to", str(out_file), "--include-models"],
+            capsys, builtin_dir, project_dir, user_dir, settings=settings,
+        )
+        bundle = json.loads(out_file.read_text())
+        assert bundle["models"] == {"opus": "claude-opus-4-6"}
+
+    def test_export_include_pricing(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        out_file = tmp_path / "bundle.json"
+        settings = {"pricing": {"currency": "USD"}}
+        self._run_export(
+            ["--to", str(out_file), "--include-pricing"],
+            capsys, builtin_dir, project_dir, user_dir, settings=settings,
+        )
+        bundle = json.loads(out_file.read_text())
+        assert bundle["pricing"] == {"currency": "USD"}
+
+    def test_export_redacts_secrets(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "sec-tmpl", {
+            **_minimal("sec-tmpl", tier="project"),
+            "config": {"agents": {"planner": {"env": {"KEY": "sk-abcdefghijklmnopqrstuvwxyz"}}}},
+        })
+        out_file = tmp_path / "bundle.json"
+        self._run_export(
+            ["--to", str(out_file)],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        bundle = json.loads(out_file.read_text())
+        assert "_redacted" in bundle
+        tmpl = bundle["templates"][0]
+        assert "env" not in tmpl.get("config", {}).get("agents", {}).get("planner", {})
+
+    def test_export_gist_calls_gh(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "https://gist.github.com/user/abc123\n", "stderr": ""})()
+            self._run_export(
+                ["--to", "gist"],
+                capsys, builtin_dir, project_dir, user_dir,
+            )
+        mock_run.assert_called_once()
+        call_args = mock_run.call_args
+        assert "gh" in call_args[0][0]
+        assert "gist" in call_args[0][0]
+        assert "--public" not in call_args[0][0]
+
+    def test_export_gist_public(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = type("R", (), {"returncode": 0, "stdout": "https://gist.github.com/user/abc123\n", "stderr": ""})()
+            self._run_export(
+                ["--to", "gist:public"],
+                capsys, builtin_dir, project_dir, user_dir,
+            )
+        call_args = mock_run.call_args
+        assert "--public" in call_args[0][0]
+
+
+# ---------------------------------------------------------------------------
+# worca templates import
+# ---------------------------------------------------------------------------
+
+
+def _make_bundle(templates=None, models=None, pricing=None, version=1):
+    """Build a minimal valid bundle dict for testing."""
+    bundle = {
+        "worca_bundle_version": version,
+        "exported_at": "2026-05-30T07:31:07Z",
+        "templates": templates or [
+            {
+                "id": "imported-tmpl",
+                "name": "Imported Template",
+                "description": "A template from a bundle",
+                "tags": ["fast"],
+                "config": {},
+            }
+        ],
+    }
+    if models is not None:
+        bundle["models"] = models
+    if pricing is not None:
+        bundle["pricing"] = pricing
+    return bundle
+
+
+class TestTemplatesImportParser:
+    def test_import_subcommand_parsed(self):
+        parser = create_parser()
+        args = parser.parse_args([
+            "templates", "import",
+            "--from", "bundle.json",
+            "--scope", "user",
+            "--non-interactive",
+        ])
+        assert args.command == "templates"
+        assert args.templates_command == "import"
+        assert args.from_source == "bundle.json"
+        assert args.scope == "user"
+        assert args.non_interactive is True
+
+    def test_import_from_is_required(self):
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["templates", "import"])
+
+    def test_import_defaults(self):
+        parser = create_parser()
+        args = parser.parse_args(["templates", "import", "--from", "b.json"])
+        assert args.scope == "project"
+        assert args.non_interactive is False
+
+
+class TestTemplatesImport:
+    def _run_import(
+        self, args, capsys, builtin_dir=None, project_dir=None, user_dir=None,
+        settings_path=None, stdin_lines=None,
+    ):
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ):
+            extra_patches = {}
+            if settings_path is not None:
+                extra_patches["worca.cli.templates._find_settings_path"] = lambda: settings_path
+            if stdin_lines is not None:
+                extra_patches["builtins.input"] = lambda prompt="": stdin_lines.pop(0)
+            with patch.dict("os.environ", {}, clear=False):
+                active_patches = []
+                for target, replacement in extra_patches.items():
+                    p = patch(target, replacement)
+                    p.__enter__()
+                    active_patches.append(p)
+                try:
+                    main(["templates", "import"] + args)
+                finally:
+                    for p in reversed(active_patches):
+                        p.__exit__(None, None, None)
+        return capsys.readouterr()
+
+    def test_import_from_file(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(_make_bundle()))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        out = capsys.readouterr()
+        assert (project_dir / "imported-tmpl" / "template.json").exists()
+        data = json.loads((project_dir / "imported-tmpl" / "template.json").read_text())
+        assert data["id"] == "imported-tmpl"
+        assert "imported" in out.out.lower() or "1 template" in out.out.lower()
+
+    def test_import_collision_skip_non_interactive(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "imported-tmpl", _minimal("imported-tmpl", tier="project"))
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(_make_bundle()))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        out = capsys.readouterr()
+        assert "skip" in out.out.lower() or "skipped" in out.err.lower() or "0 template" in out.out.lower()
+
+    def test_import_collision_replace_interactive(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "imported-tmpl", _minimal("imported-tmpl", tier="project", name="Old"))
+        bundle = _make_bundle()
+        bundle["templates"][0]["name"] = "New Name"
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ), patch("builtins.input", return_value="r"):
+            main(["templates", "import", "--from", str(bundle_file)])
+
+        data = json.loads((project_dir / "imported-tmpl" / "template.json").read_text())
+        assert data["name"] == "New Name"
+
+    def test_import_scope_user_skips_models_pricing(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        bundle = _make_bundle(
+            models={"opus": "claude-opus-4-6"},
+            pricing={"currency": "USD"},
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--scope", "user", "--non-interactive"])
+
+        out = capsys.readouterr()
+        assert "skipped" in out.err.lower() or "skip" in out.err.lower()
+        assert (user_dir / "imported-tmpl" / "template.json").exists()
+
+    def test_import_reserved_env_key_stripping(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir(parents=True)
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        bundle = _make_bundle(
+            models={
+                "proxy": {
+                    "id": "claude-opus-4-6",
+                    "env": {
+                        "ANTHROPIC_BASE_URL": "https://proxy.example.com",
+                        "WORCA_AGENT": "guardian",
+                        "PATH": "/sneaky",
+                    },
+                }
+            },
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        capsys.readouterr()
+        written = json.loads(settings_path.read_text())
+        proxy_env = written.get("worca", {}).get("models", {}).get("proxy", {}).get("env", {})
+        assert "ANTHROPIC_BASE_URL" in proxy_env
+        assert "WORCA_AGENT" not in proxy_env
+        assert "PATH" not in proxy_env
+
+    def test_import_rollback_on_error(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        bundle = _make_bundle(templates=[
+            {"id": "tmpl-a", "name": "A", "description": "a", "tags": [], "config": {}},
+            {"id": "tmpl-b", "name": "B", "description": "b", "tags": [], "config": {}},
+        ])
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        original_copytree = __import__("shutil").copytree
+        call_count = [0]
+
+        def failing_copytree(*args, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                raise OSError("disk full")
+            return original_copytree(*args, **kwargs)
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ), patch("shutil.copytree", side_effect=failing_copytree):
+            with pytest.raises(SystemExit):
+                main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        assert not (project_dir / "tmpl-a").exists()
+        assert not (project_dir / "tmpl-b").exists()
+
+    def test_import_invalid_version_rejected(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(_make_bundle(version=99)))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            with pytest.raises(SystemExit) as exc_info:
+                main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+            assert exc_info.value.code != 0
+
+        err = capsys.readouterr().err
+        assert "version" in err.lower()
+
+    def test_import_url_source_via_fetch(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+
+        bundle = _make_bundle()
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ), patch(
+            "worca.cli.templates.fetch_bundle",
+            return_value=bundle,
+        ) as mock_fetch:
+            main([
+                "templates", "import",
+                "--from", "https://example.com/bundle.json",
+                "--non-interactive",
+            ])
+            mock_fetch.assert_called_once_with("https://example.com/bundle.json")
+
+        assert (project_dir / "imported-tmpl" / "template.json").exists()
+
+    def test_import_with_models_and_pricing(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir(parents=True)
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {"models": {"sonnet": "claude-sonnet-4-6"}}}))
+
+        bundle = _make_bundle(
+            models={"opus": "claude-opus-4-6"},
+            pricing={"currency": "USD"},
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        written = json.loads(settings_path.read_text())
+        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
+        assert written["worca"]["models"]["sonnet"] == "claude-sonnet-4-6"
+        assert written["worca"]["pricing"]["currency"] == "USD"
