@@ -958,7 +958,12 @@ class TestTemplatesExport:
         bundle = json.loads(out_file.read_text())
         assert "_redacted" in bundle
         tmpl = bundle["templates"][0]
-        assert "env" not in tmpl.get("config", {}).get("agents", {}).get("planner", {})
+        # Env scaffolding is preserved (keys still there) — only the secret
+        # VALUE is replaced with the placeholder.
+        env = tmpl["config"]["agents"]["planner"]["env"]
+        assert "KEY" in env
+        assert env["KEY"] == "<YOUR-SECRET-HERE>"
+        assert "templates[0].config.agents.planner.env.KEY" in bundle["_redacted"]
 
     def test_export_gist_calls_gh(self, capsys, tmp_path):
         builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
@@ -1312,3 +1317,328 @@ class TestTemplatesImport:
         assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
         assert written["worca"]["models"]["sonnet"] == "claude-sonnet-4-6"
         assert written["worca"]["pricing"]["currency"] == "USD"
+
+
+# ---------------------------------------------------------------------------
+# End-to-end roundtrip + rollback + collision UX
+# ---------------------------------------------------------------------------
+
+
+class TestExportImportRoundtrip:
+    """Export a template, fetch the bundle, import into a fresh target,
+    confirm the imported template matches the redacted source."""
+
+    def test_roundtrip_via_file(self, capsys, tmp_path):
+        # ---- Source side: project has one template ----
+        src_builtin = tmp_path / "src" / "builtin"
+        src_project = tmp_path / "src" / "project"
+        src_user = tmp_path / "src" / "user"
+        src_builtin.mkdir(parents=True)
+        _write_template(src_project / "shared-tmpl", {
+            **_minimal("shared-tmpl", tier="project", name="Shared"),
+            "config": {
+                "stages": {"planner": {"enabled": True}},
+                "agents": {"planner": {"model": "opus", "max_turns": 30}},
+                # This subtree must be stripped by the allowlist.
+                "webhooks": [{"url": "https://hook/", "secret": "supersecret"}],
+            },
+        })
+        bundle_file = tmp_path / "bundle.json"
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(src_builtin, src_project, src_user),
+        ), patch(
+            "worca.cli.templates._load_current_worca_config",
+            return_value={},
+        ):
+            main(["templates", "export", "--to", str(bundle_file)])
+
+        bundle = json.loads(bundle_file.read_text())
+        # webhooks must be gone, allowlisted fields must survive.
+        cfg = bundle["templates"][0]["config"]
+        assert "webhooks" not in cfg
+        assert cfg["stages"] == {"planner": {"enabled": True}}
+        assert cfg["agents"]["planner"]["model"] == "opus"
+        assert "_stripped" in bundle
+
+        # ---- Target side: fresh directories ----
+        dst_builtin = tmp_path / "dst" / "builtin"
+        dst_project = tmp_path / "dst" / "project"
+        dst_user = tmp_path / "dst" / "user"
+        dst_builtin.mkdir(parents=True)
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(dst_builtin, dst_project, dst_user),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        landed = json.loads((dst_project / "shared-tmpl" / "template.json").read_text())
+        assert landed["id"] == "shared-tmpl"
+        assert landed["name"] == "Shared"
+        # Imported config matches the redacted bundle — no webhooks leaked through.
+        assert "webhooks" not in landed["config"]
+        assert landed["config"]["agents"]["planner"]["model"] == "opus"
+
+
+class TestImportRollbackOnSettingsFailure:
+    """If os.replace(settings.json) fails, both the newly-copied templates
+    AND the original settings.json must be restored to their pre-import state."""
+
+    def test_rollback_restores_settings_and_templates(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        # Existing settings.json with content we want to preserve on failure.
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        original_settings = {
+            "worca": {
+                "models": {"sonnet": "claude-sonnet-4-6"},
+                "pricing": {"currency": "EUR"},
+            },
+        }
+        settings_path.write_text(json.dumps(original_settings))
+        # Existing template at same id — replacing this is part of what we want
+        # to be reversible.
+        _write_template(project_dir / "imported-tmpl", _minimal(
+            "imported-tmpl", tier="project", name="Original",
+        ))
+
+        bundle = _make_bundle(models={"opus": "claude-opus-4-6"})
+        bundle["templates"][0]["name"] = "New"
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        original_replace = __import__("os").replace
+        def failing_replace(src, dst):
+            if str(dst) == str(settings_path):
+                raise OSError("simulated cross-device move")
+            return original_replace(src, dst)
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ), patch("os.replace", side_effect=failing_replace):
+            with pytest.raises(SystemExit):
+                main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        # settings.json restored to original content
+        restored = json.loads(settings_path.read_text())
+        assert restored == original_settings, "settings.json must be reverted on failure"
+
+        # Original template content restored (name="Original", not "New")
+        landed = json.loads((project_dir / "imported-tmpl" / "template.json").read_text())
+        assert landed["name"] == "Original"
+
+        # No leftover .bak-* siblings
+        leftovers = [
+            p for p in project_dir.iterdir() if ".bak-" in p.name
+        ] + [
+            p for p in settings_dir.iterdir() if ".bak-" in p.name
+        ]
+        assert leftovers == [], f"leftover backups after rollback: {leftovers}"
+
+
+class TestImportMixedCollision:
+    """Bundle contains one colliding and one non-colliding template;
+    non-interactive skip should land the non-colliding one and skip the other."""
+
+    def test_mixed_collision_non_interactive(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "collides", _minimal("collides", tier="project", name="Original"))
+
+        bundle = _make_bundle(templates=[
+            {"id": "collides", "name": "FromBundle", "description": "d", "tags": [], "config": {}},
+            {"id": "new-tmpl", "name": "Fresh", "description": "d", "tags": [], "config": {}},
+        ])
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        # Colliding one: still original
+        collides_data = json.loads((project_dir / "collides" / "template.json").read_text())
+        assert collides_data["name"] == "Original"
+        # Non-colliding one: landed
+        assert (project_dir / "new-tmpl" / "template.json").exists()
+        new_data = json.loads((project_dir / "new-tmpl" / "template.json").read_text())
+        assert new_data["name"] == "Fresh"
+
+
+class TestImportCollisionReprompt:
+    """Unknown collision input must re-prompt, not silently skip."""
+
+    def test_reprompt_on_unknown_then_replace(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "imported-tmpl", _minimal("imported-tmpl", tier="project", name="Old"))
+
+        bundle = _make_bundle()
+        bundle["templates"][0]["name"] = "New"
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        answers = iter(["maybe?", "", "y", "r"])  # garbage, garbage, garbage, replace
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ), patch("builtins.input", side_effect=lambda *_: next(answers)):
+            main(["templates", "import", "--from", str(bundle_file)])
+
+        landed = json.loads((project_dir / "imported-tmpl" / "template.json").read_text())
+        assert landed["name"] == "New"
+        # Some "unrecognized choice" feedback should have been emitted
+        err = capsys.readouterr().err
+        assert "unrecognized" in err.lower()
+
+
+class TestImportBuiltinShadowInfo:
+    """Importing a same-id template over a builtin should surface an info line."""
+
+    def test_info_line_when_shadowing_builtin(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        # Builtin template with id "imported-tmpl"
+        _write_template(builtin_dir / "imported-tmpl", _minimal("imported-tmpl", tier="builtin"))
+
+        bundle = _make_bundle()
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        err = capsys.readouterr().err.lower()
+        assert "shadowing" in err
+        assert "imported-tmpl" in err
+        # Template did land (no collision because builtin tier ≠ project tier)
+        assert (project_dir / "imported-tmpl" / "template.json").exists()
+
+
+class TestImportDeepMerge:
+    """Importing models into a settings.json that already has different models
+    must preserve both — deep-merge, not replace."""
+
+    def test_deep_merge_preserves_existing_models(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        # Existing has 'haiku' AND custom unrelated config that must survive.
+        settings_path.write_text(json.dumps({
+            "worca": {
+                "models": {"haiku": "claude-haiku-4-5"},
+                "loops": {"plan_review": {"max": 5}},
+            },
+            "other_top_level": {"keep_me": True},
+        }))
+
+        bundle = _make_bundle(
+            models={"opus": "claude-opus-4-6", "sonnet": "claude-sonnet-4-6"},
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        merged = json.loads(settings_path.read_text())
+        models = merged["worca"]["models"]
+        assert models["haiku"] == "claude-haiku-4-5"
+        assert models["opus"] == "claude-opus-4-6"
+        assert models["sonnet"] == "claude-sonnet-4-6"
+        # Unrelated config preserved.
+        assert merged["worca"]["loops"]["plan_review"]["max"] == 5
+        assert merged["other_top_level"]["keep_me"] is True
+
+
+class TestImportPlaceholderWarning:
+    """Bundles carrying <YOUR-SECRET-HERE> placeholder values should produce an
+    info line listing every placeholder path the user needs to fill in."""
+
+    def test_placeholder_paths_surfaced(self, capsys, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        bundle = _make_bundle(
+            templates=[{
+                "id": "with-secrets",
+                "name": "With Secrets",
+                "description": "",
+                "tags": [],
+                "config": {
+                    "agents": {
+                        "planner": {
+                            "env": {"ANTHROPIC_API_KEY": "<YOUR-SECRET-HERE>"},
+                        },
+                    },
+                },
+            }],
+            models={
+                "opus": {"id": "claude-opus-4-6", "env": {"FOO_TOKEN": "<YOUR-SECRET-HERE>"}},
+            },
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        err = capsys.readouterr().err
+        assert "placeholder" in err.lower()
+        assert "ANTHROPIC_API_KEY" in err
+        assert "FOO_TOKEN" in err

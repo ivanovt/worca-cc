@@ -17,9 +17,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 from worca.orchestrator.bundle import (
+    ID_RE,
+    SECRET_PLACEHOLDER,
     build_export_manifest,
     fetch_bundle,
     redact_bundle,
@@ -322,21 +325,40 @@ def _find_settings_path() -> str | None:
     return None
 
 
-_SAFE_ID_RE = __import__("re").compile(r"^[a-z0-9\-]{1,64}$")
-
-
 def _atomic_import(templates, settings_patch, target_dir, settings_path):
-    """Two-phase import: stage to tmpdir, then commit atomically with rollback."""
+    """Two-phase import: stage to tmpdir, then commit with full rollback.
+
+    Rollback model:
+      1. Stage everything to a tmpdir (no target mutation yet).
+      2. For each template that would replace an existing dst, rename the
+         existing dst aside to `<dst>.bak-<rand>`. Same for settings.json.
+      3. Copy staged templates into place. Then os.replace settings.json.
+      4. On any failure during step 3: remove anything newly committed,
+         restore every `.bak-*` to its original location, raise.
+      5. On success: delete all `.bak-*` backups.
+
+    The backup-aside step uses `shutil.move` (rename within the same parent
+    directory — single FS, atomic on POSIX) before any destructive mutation,
+    so a write failure in step 3 always has something to roll back to.
+    """
     target_real = target_dir.resolve()
     for tmpl_id in templates:
-        if not _SAFE_ID_RE.fullmatch(tmpl_id):
+        if not ID_RE.fullmatch(tmpl_id):
             raise ValueError(f"unsafe template id: {tmpl_id!r}")
         dst = (target_dir / tmpl_id).resolve()
         if not str(dst).startswith(str(target_real) + os.sep):
             raise ValueError(f"template id {tmpl_id!r} escapes target directory")
 
     staging = Path(tempfile.mkdtemp(prefix="worca-import-"))
+    # (original_path, backup_path, kind) — kind is "dir" or "file"
+    backups: list[tuple[Path, Path, str]] = []
+    committed_templates: list[Path] = []
+
+    def _bak_name(p: Path) -> Path:
+        return p.with_name(p.name + f".bak-{uuid.uuid4().hex[:8]}")
+
     try:
+        # ---- Stage (no target mutation) ----
         for tmpl_id, tmpl_data in templates.items():
             staged_dir = staging / "templates" / tmpl_id
             staged_dir.mkdir(parents=True)
@@ -344,6 +366,7 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
                 json.dumps(tmpl_data, indent=2), encoding="utf-8"
             )
 
+        staged_settings = None
         if settings_patch and settings_path:
             sp = Path(settings_path)
             if sp.exists():
@@ -351,26 +374,55 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
             else:
                 current = {}
             patched = deep_merge(current, {"worca": settings_patch})
-            (staging / "settings.json").write_text(
+            staged_settings = staging / "settings.json"
+            staged_settings.write_text(
                 json.dumps(patched, indent=2), encoding="utf-8"
             )
 
-        committed: list[Path] = []
+        # ---- Commit with backup-first ----
         try:
             for tmpl_id in templates:
                 src = staging / "templates" / tmpl_id
                 dst = target_dir / tmpl_id
                 if dst.exists():
-                    shutil.rmtree(dst)
+                    bak = _bak_name(dst)
+                    shutil.move(str(dst), str(bak))
+                    backups.append((dst, bak, "dir"))
                 shutil.copytree(str(src), str(dst))
-                committed.append(dst)
+                committed_templates.append(dst)
 
-            if (staging / "settings.json").exists() and settings_path:
-                os.replace(str(staging / "settings.json"), settings_path)
+            if staged_settings is not None and settings_path:
+                sp = Path(settings_path)
+                if sp.exists():
+                    bak = _bak_name(sp)
+                    shutil.copy2(str(sp), str(bak))
+                    backups.append((sp, bak, "file"))
+                os.replace(str(staged_settings), settings_path)
         except Exception:
-            for d in committed:
+            # Rollback: tear down what we committed, then restore backups.
+            for d in committed_templates:
                 shutil.rmtree(d, ignore_errors=True)
+            for orig, bak, kind in backups:
+                try:
+                    if orig.exists():
+                        if kind == "dir":
+                            shutil.rmtree(orig, ignore_errors=True)
+                        else:
+                            orig.unlink()
+                    shutil.move(str(bak), str(orig))
+                except Exception:  # noqa: BLE001 — best-effort restoration
+                    pass
             raise
+        else:
+            # Success — clean up the backups.
+            for _, bak, kind in backups:
+                if kind == "dir":
+                    shutil.rmtree(bak, ignore_errors=True)
+                else:
+                    try:
+                        bak.unlink()
+                    except OSError:
+                        pass
     finally:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -488,25 +540,46 @@ def cmd_templates_import(args):
             (scope == "project" and existing.tier == "project")
             or (scope == "user" and existing.tier == "user")
         )
+        # A same-id builtin gets shadowed silently by today's resolver — surface
+        # it so the user is aware the imported template will mask the builtin.
+        if existing is not None and existing.tier == "builtin" and not has_collision:
+            print(
+                f"info: shadowing builtin template '{tid}' with {scope}-scope import",
+                file=sys.stderr,
+            )
         if has_collision:
             if non_interactive:
                 skipped_ids.append(tid)
                 continue
-            try:
-                answer = input(
-                    f"template '{tid}' already exists in {scope} scope. "
-                    f"[r]eplace / [s]kip / [a]bort? "
-                )
-            except EOFError:
-                answer = "s"
-            choice = answer.strip().lower()
-            if choice.startswith("a"):
-                print("aborted", file=sys.stderr)
-                raise SystemExit(1)
-            elif choice.startswith("r"):
-                to_import[tid] = tmpl
-            else:
-                skipped_ids.append(tid)
+            # Re-prompt on unrecognized input — the operation isn't reversible,
+            # don't silently fall through to "skip".
+            decided = False
+            while not decided:
+                try:
+                    answer = input(
+                        f"template '{tid}' already exists in {scope} scope. "
+                        f"[r]eplace / [s]kip / [a]bort? "
+                    )
+                except EOFError:
+                    # No stdin available (CI, piped run) — treat as skip and stop.
+                    skipped_ids.append(tid)
+                    decided = True
+                    break
+                choice = answer.strip().lower()
+                if choice.startswith("a"):
+                    print("aborted", file=sys.stderr)
+                    raise SystemExit(1)
+                if choice.startswith("r"):
+                    to_import[tid] = tmpl
+                    decided = True
+                elif choice.startswith("s"):
+                    skipped_ids.append(tid)
+                    decided = True
+                else:
+                    print(
+                        f"  unrecognized choice {answer!r} — enter r, s, or a",
+                        file=sys.stderr,
+                    )
         else:
             to_import[tid] = tmpl
 
@@ -545,6 +618,23 @@ def cmd_templates_import(args):
         print(f"error: import failed: {e}", file=sys.stderr)
         raise SystemExit(1)
 
+    # Surface any placeholder values that landed — the importer needs to fill
+    # them in locally before the pipeline can use them.
+    placeholder_paths: list[str] = []
+    _collect_placeholder_paths(to_import, "templates", placeholder_paths)
+    if settings_patch.get("models"):
+        _collect_placeholder_paths(
+            settings_patch["models"], "settings.worca.models", placeholder_paths
+        )
+    if placeholder_paths:
+        print(
+            f"info: {len(placeholder_paths)} secret placeholder(s) landed — "
+            f"replace {SECRET_PLACEHOLDER!r} before running the pipeline:",
+            file=sys.stderr,
+        )
+        for p in placeholder_paths:
+            print(f"  - {p}", file=sys.stderr)
+
     parts = [f"imported {len(to_import)} template(s)"]
     if bundle_models:
         parts.append(f"{len(bundle_models)} model(s)")
@@ -554,6 +644,21 @@ def cmd_templates_import(args):
     if skipped_ids:
         summary += f" (skipped: {', '.join(skipped_ids)})"
     print(summary)
+
+
+def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:
+    """Walk obj; append every JSON path whose string value equals SECRET_PLACEHOLDER."""
+    if isinstance(obj, str):
+        if obj == SECRET_PLACEHOLDER:
+            out.append(path)
+        return
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            _collect_placeholder_paths(v, f"{path}.{k}" if path else k, out)
+        return
+    if isinstance(obj, list):
+        for i, item in enumerate(obj):
+            _collect_placeholder_paths(item, f"{path}[{i}]", out)
 
 
 def cmd_templates_delete(args):

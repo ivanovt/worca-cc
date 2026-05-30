@@ -158,10 +158,13 @@ Guides the user through exporting one or more templates as a portable bundle JSO
 1. **Template selection** — Run `worca templates list --json` to enumerate available templates. Present a multi-select picker via `AskUserQuestion` showing only project and user-tier templates (builtins are excluded by default). Let the user pick which templates to include.
 
 2. **Models and pricing opt-in** — Ask via `AskUserQuestion` whether to include:
-   - `worca.models` from `settings.json` (model aliases and IDs — env blocks are always stripped)
+   - `worca.models` from `settings.json` (model aliases and IDs — env-block keys are preserved as a scaffold, secret values are replaced with `<YOUR-SECRET-HERE>`)
    - `worca.pricing` from `settings.json` (cost tracking config)
 
-   Default both to No. Explain that env blocks containing secrets are automatically redacted, and that only `settings.json` is read (never `settings.local.json`).
+   Default both to No. Explain that:
+   - Env keys are **preserved** so the importer sees which vars to fill in; only values matching known secret patterns (Anthropic `sk-…`, GitHub `ghp_…` / `github_pat_…`, Slack `xoxb-…`/`xoxp-…`, AWS `AKIA…`) are replaced with `<YOUR-SECRET-HERE>`.
+   - Inside each `templates[*].config`, only the safe-to-share subtrees (`stages`, `agents`, `effort`, `loops`, `circuit_breaker`, `models`) pass through. `webhooks`, `integrations`, `governance`, `graphify`, `crg` are stripped wholesale and listed under `_stripped`.
+   - Only `settings.json` is read; `settings.local.json` is never opened.
 
 3. **Destination** — Ask via `AskUserQuestion`:
    - **Local file** — write to a file path (e.g. `./my-templates.json`)
@@ -177,9 +180,11 @@ Guides the user through exporting one or more templates as a portable bundle JSO
    For gist destinations, use `--to gist` (secret) or `--to gist:public`.
 
 5. **Report results** — Show the user:
-   - The list of redacted paths (if any secrets or env blocks were stripped)
+   - The `_redacted` list (per-value secret matches, replaced with `<YOUR-SECRET-HERE>`)
+   - The `_stripped` list (config subtrees removed wholesale by the allowlist — e.g. `templates[0].config.webhooks`)
    - The output location (file path or gist URL)
    - A reminder that the bundle never includes `settings.local.json` secrets
+   - For each `<YOUR-SECRET-HERE>` value, the importer will need to fill in the real secret locally — the env scaffold tells them which keys are expected
 
 ### Phase 8: Import (when user says "import", "load bundle")
 
@@ -187,8 +192,10 @@ Guides the user through importing templates (and optionally models/pricing) from
 
 1. **Source selection** — Ask via `AskUserQuestion`:
    - **Local file** — path to a `.json` bundle file
-   - **URL** — HTTPS URL to a hosted bundle (1 MiB size cap)
+   - **URL** — HTTPS URL to a hosted bundle (1 MiB size cap; redirects blocked; private/loopback/link-local hosts refused)
    - **GitHub gist** — gist URL or bare gist ID
+
+   ⚠️ Imported bundles are config-as-data: they get merged into `settings.json` and drive subsequent pipeline runs. **Only import bundles from sources you trust** — the HTTPS hardening covers obvious SSRF cases but cannot defend against a malicious upstream.
 
 2. **Target scope** — Ask via `AskUserQuestion`:
    - **Project** (default) — writes templates to `.claude/templates/`, merges models/pricing into `settings.json`
@@ -200,14 +207,22 @@ Guides the user through importing templates (and optionally models/pricing) from
    worca templates import --from <source> --scope <scope>
    ```
 
-4. **Collision handling** — If the CLI detects collisions (template IDs, model keys, or pricing keys that already exist in the target scope), relay the collision list to the user via `AskUserQuestion` with per-item choices:
+4. **Collision handling** — If the CLI detects collisions (template IDs that already exist in the target scope), relay the collision list to the user via `AskUserQuestion` with per-item choices:
    - **Replace** — overwrite the existing entry
    - **Skip** — keep the existing entry
    - **Abort** — cancel the entire import
 
    If all items are skipped or replaced, re-run with the appropriate flags. If the user aborts, stop.
 
-5. **Confirmation** — After a successful import, verify with:
+   Same-id builtin templates do not collide (project-tier shadows builtin by design) but the CLI surfaces an `info: shadowing builtin template '<id>'` line so the user knows it's happening.
+
+5. **Import is rolled back on failure** — the CLI snapshots every existing template directory and `settings.json` to `.bak-<rand>` siblings before mutating, then deletes them on success. If any step fails (disk full, permission, cross-device `os.replace`), all changes are reverted in place. No partial-write state is left behind.
+
+6. **Forward-compat schema versioning** — `worca_bundle_version: 1` and any future `1.N` are accepted; minor mismatches log a warning but proceed. Major-version mismatches (e.g. `2`) are rejected.
+
+7. **Placeholder follow-up** — if the bundle landed any `<YOUR-SECRET-HERE>` values into `settings.worca.models[*].env.*` or `templates[*].config.agents.*.env.*`, the CLI emits an `info:` list of the paths needing real secrets. Surface that list to the user verbatim and remind them to replace each placeholder before running the pipeline.
+
+8. **Confirmation** — After a successful import, verify with:
 
    ```bash
    worca templates list --json
