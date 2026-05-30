@@ -813,7 +813,9 @@ class TestWorcaTemplateSkillShipping:
         git_root.mkdir()
         _install_skills(source, git_root)
         installed = git_root / ".claude" / "skills" / "worca-template" / "SKILL.md"
-        content = installed.read_text()
+        # encoding='utf-8' is required — SKILL.md carries non-ASCII (em-dashes,
+        # ⚠️) and Windows defaults to cp1252 in `read_text()` without it.
+        content = installed.read_text(encoding="utf-8")
         assert content.startswith("---")
         assert "name: worca-template" in content
 
