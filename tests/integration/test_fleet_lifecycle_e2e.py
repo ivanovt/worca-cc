@@ -625,6 +625,19 @@ def test_fleet_stop_then_resume(tmp_path):
         for child, (_, wt) in zip(children, cleanup_pairs):
             _wait_for_pipeline_terminal(wt, child["run_id"], timeout=120)
 
+        # status.json -> registry mirror lags by tens to hundreds of ms,
+        # and poll_and_update_fleet_manifest reads the registry. Wait for
+        # the mirror so the final derivation isn't racing the atexit write
+        # (the macOS flake — children terminal in status.json, registry
+        # still "resuming"/"running" -> fleet derives RUNNING).
+        for child, (repo_path, _) in zip(children, cleanup_pairs):
+            _wait_for_registry_status(
+                repo_path,
+                child["run_id"],
+                {"completed", "failed", "interrupted"},
+                timeout=30,
+            )
+
         final = poll_and_update_fleet_manifest(fleet_id)
         # Resume may produce "completed" (all resumed and finished) or
         # "failed" (some resumes didn't replay cleanly). The contract under
