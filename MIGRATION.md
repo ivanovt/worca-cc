@@ -765,6 +765,36 @@ W-057: Optional code-review-graph (CRG) MCP integration (Tree-sitter AST graph, 
 
 **Full reference:** [`docs/plans/W-057-code-review-graph-integration.md`](./docs/plans/W-057-code-review-graph-integration.md).
 
+### 0.43.x → 0.44.0
+
+W-059: Plan review `review_and_edit` mode — optional in-place plan editing by the reviewer.
+
+**New feature — opt-in, off by default.** When `worca.stages.plan_review.mode` is set to `"review_and_edit"`, the Plan Reviewer rewrites the plan in place to resolve critical/major issues and self-approves, skipping the loopback to the Planner. Default behavior (`mode: "review"`) is unchanged. Plan review itself remains disabled by default (`worca.stages.plan_review.enabled: false`).
+
+**New settings (additive):**
+
+```jsonc
+"worca": {
+  "stages": {
+    "plan_review": {
+      "mode": "review"           // "review" (default) | "review_and_edit"
+    }
+  },
+  "governance": {
+    "plan_review_enforce": "auto"  // "auto" | "review" | "review_and_edit"
+  }
+}
+```
+
+- `mode` selects the review behavior per pipeline/template.
+- `plan_review_enforce` is a project-level governance override — when not `auto`, it forces the specified mode across all pipelines regardless of template.
+
+**New event:** `pipeline.plan_review.edited` (`PLAN_EDITED`) — emitted when the reviewer edits the plan in `review_and_edit` mode. Payload includes issue severity counts and the path to the preserved original plan file.
+
+**New template:** `feature-fast` — mirrors `feature` but enables `review_and_edit` mode for faster plan review cycles.
+
+**No automatic migration required.** All changes are additive. Run `worca init --upgrade` once to pull the new defaults into your project's `settings.json`.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

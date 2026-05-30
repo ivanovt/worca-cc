@@ -64,9 +64,15 @@ STAGE_SCHEMA_MAP = {
 }
 
 
-def can_transition(from_stage: Stage, to_stage: Stage) -> bool:
-    """Return True if transition from from_stage to to_stage is valid."""
-    return to_stage in TRANSITIONS.get(from_stage, set())
+def can_transition(from_stage: Stage, to_stage: Stage, *, mode: str | None = None) -> bool:
+    """Return True if transition from from_stage to to_stage is valid.
+
+    In review_and_edit mode, PLAN_REVIEW cannot loop back to PLAN.
+    """
+    allowed = TRANSITIONS.get(from_stage, set())
+    if mode == "review_and_edit" and from_stage == Stage.PLAN_REVIEW:
+        allowed = allowed - {Stage.PLAN}
+    return to_stage in allowed
 
 
 # Canonical stage order (not configurable — use enabled flag to skip)
@@ -139,6 +145,53 @@ def get_enabled_stages(settings_path: str = ".claude/settings.json") -> list:
         if stage_entry.get("enabled", default_enabled):
             enabled.append(stage)
     return enabled
+
+
+VALID_PLAN_REVIEW_MODES = ("review", "review_and_edit")
+VALID_PLAN_REVIEW_ENFORCE = ("auto", "review", "review_and_edit")
+
+
+def resolve_plan_review_mode(settings: dict) -> tuple[str, str]:
+    """Resolve the effective plan-review mode from settings.
+
+    Precedence: governance enforce (if != auto) -> pipeline/template mode -> built-in 'review'.
+    Returns (mode, reason) tuple.
+    """
+    worca = settings.get("worca", {})
+    enforce = worca.get("governance", {}).get("plan_review_enforce", "auto")
+    if enforce in ("review", "review_and_edit"):
+        return (enforce, "forced by project (governance.plan_review_enforce)")
+
+    template_mode = worca.get("stages", {}).get("plan_review", {}).get("mode")
+    if template_mode in VALID_PLAN_REVIEW_MODES:
+        return (template_mode, "from template/pipeline")
+
+    return ("review", "default")
+
+
+def validate_plan_review_settings(settings: dict) -> list[str]:
+    """Validate plan-review enum fields in a parsed settings dict.
+
+    Returns a list of error strings (empty if valid).
+    """
+    errors: list[str] = []
+    worca = settings.get("worca", {})
+
+    mode = worca.get("stages", {}).get("plan_review", {}).get("mode")
+    if mode is not None:
+        if not isinstance(mode, str) or mode not in VALID_PLAN_REVIEW_MODES:
+            errors.append(
+                f"stages.plan_review.mode must be one of: {', '.join(VALID_PLAN_REVIEW_MODES)}"
+            )
+
+    enforce = worca.get("governance", {}).get("plan_review_enforce")
+    if enforce is not None:
+        if not isinstance(enforce, str) or enforce not in VALID_PLAN_REVIEW_ENFORCE:
+            errors.append(
+                f"governance.plan_review_enforce must be one of: {', '.join(VALID_PLAN_REVIEW_ENFORCE)}"
+            )
+
+    return errors
 
 
 def is_learn_enabled(settings_path: str = ".claude/settings.json") -> bool:

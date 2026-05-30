@@ -136,6 +136,29 @@ pending ──► cancelled         (cancel endpoint)
 running ──► failed            (reconciler: stale process detected)
 ```
 
+### Mode-Dependent Stage Transitions (PLAN_REVIEW)
+
+The `PLAN_REVIEW` stage has two modes — `review` and `review_and_edit` — configured via `worca.stages.plan_review.mode` (or forced by `worca.governance.plan_review_enforce`). The mode determines which outbound transitions are legal:
+
+| Mode | Legal transitions from PLAN_REVIEW | Loopback to PLAN? |
+|---|---|---|
+| `review` (default) | COORDINATE (approve), PLAN (revise) | Yes — bounded by `loops.plan_review` |
+| `review_and_edit` | COORDINATE only | No |
+
+```
+review mode (default):
+  PLAN ──► PLAN_REVIEW ──approve──► COORDINATE
+                       └─revise──► PLAN  (bounded by loops.plan_review)
+
+review_and_edit mode:
+  PLAN ──► PLAN_REVIEW(edit + self-approve) ──► COORDINATE
+  (no PLAN_REVIEW ──► PLAN edge)
+```
+
+In `review_and_edit` mode the reviewer edits the plan in-place and self-approves; there is no loopback to the planner. A plan the reviewer cannot fully fix is edited best-effort and the run proceeds.
+
+The `can_transition(from_stage, to_stage, *, mode=None)` function in `src/worca/orchestrator/stages.py` enforces this: when `mode="review_and_edit"`, the `PLAN_REVIEW → PLAN` edge is removed from the allowed set.
+
 ### Cancel endpoint race safety
 
 The cancel endpoint re-reads `status.json` after `stopPipelineSync` returns, because Python's signal/atexit handler may have updated the file during the 5-second stop window. The re-read ensures the final `cancelled` write includes any stage progress Python persisted.

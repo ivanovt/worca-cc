@@ -1381,3 +1381,89 @@ describe('validateSettingsPayload — per-agent effort', () => {
     expect(result.valid).toBe(true);
   });
 });
+
+describe('validateSettingsPayload — stages.plan_review.mode', () => {
+  it('accepts "review"', () => {
+    const result = validateSettingsPayload({
+      worca: { stages: { plan_review: { mode: 'review' } } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('accepts "review_and_edit"', () => {
+    const result = validateSettingsPayload({
+      worca: { stages: { plan_review: { mode: 'review_and_edit' } } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects invalid mode value', () => {
+    const result = validateSettingsPayload({
+      worca: { stages: { plan_review: { mode: 'turbo' } } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('stages.plan_review.mode'),
+    );
+  });
+
+  it('rejects non-string mode', () => {
+    const result = validateSettingsPayload({
+      worca: { stages: { plan_review: { mode: 42 } } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('stages.plan_review.mode'),
+    );
+  });
+
+  it('accepts plan_review without mode (optional)', () => {
+    const result = validateSettingsPayload({
+      worca: { stages: { plan_review: { enabled: true } } },
+    });
+    expect(result.valid).toBe(true);
+  });
+});
+
+describe('validateSettingsPayload — governance.plan_review_enforce', () => {
+  it('accepts "auto"', () => {
+    const result = validateSettingsPayload({
+      worca: { governance: { plan_review_enforce: 'auto' } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('accepts "review"', () => {
+    const result = validateSettingsPayload({
+      worca: { governance: { plan_review_enforce: 'review' } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('accepts "review_and_edit"', () => {
+    const result = validateSettingsPayload({
+      worca: { governance: { plan_review_enforce: 'review_and_edit' } },
+    });
+    expect(result.valid).toBe(true);
+  });
+
+  it('rejects invalid enforce value', () => {
+    const result = validateSettingsPayload({
+      worca: { governance: { plan_review_enforce: 'always' } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('governance.plan_review_enforce'),
+    );
+  });
+
+  it('rejects non-string enforce', () => {
+    const result = validateSettingsPayload({
+      worca: { governance: { plan_review_enforce: true } },
+    });
+    expect(result.valid).toBe(false);
+    expect(result.details).toContainEqual(
+      expect.stringContaining('governance.plan_review_enforce'),
+    );
+  });
+});

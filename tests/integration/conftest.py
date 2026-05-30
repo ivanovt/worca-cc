@@ -633,7 +633,13 @@ def _start_webhook_server(received: list, port: int = 0) -> HTTPServer:
         def log_message(self, *args):
             pass  # suppress default request logging
 
-    server = HTTPServer(("localhost", port), _Handler)
+    # Bind to the literal IP (no getaddrinfo call) to avoid a 30s+ cold-resolver
+    # hang on the GitHub macOS CI runner — reliably reproduced as a fixture-setup
+    # timeout on `HTTPServer(("localhost", 0), _Handler)`. The advertised URL
+    # below still uses "localhost" so the webhook allowlist's "http://localhost/"
+    # prefix check continues to apply (it also accepts "http://127.0.0.1/", but
+    # keeping the URL as "localhost" preserves the test's documented intent).
+    server = HTTPServer(("127.0.0.1", port), _Handler)
     server.port = server.server_address[1]  # type: ignore[attr-defined]
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()

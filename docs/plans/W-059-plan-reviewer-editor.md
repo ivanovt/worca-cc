@@ -125,7 +125,7 @@ These three replace the transparency the loopback provided and must ship togethe
 
 1. **Always-on mode badge** on the plan-review stage (§9) — states the resolved mode + the `reason`.
 2. **`PLAN_EDITED` notification** (§5).
-3. **Original-plan retention** — before the reviewer-editor rewrites the plan, the runner copies the Planner's original plan to a per-run record file `<run_dir>/plan-original.md`, suffixing with the restart counter (`plan-original-2.md`, …) only on `restart_planning` re-entry. No phase-1 diff UI; the artifact is retained so a diff view can be wired later.
+3. **Original-plan retention (reuses W-061 append-only numbering)** — the editor rewrites the *next* numbered revision in place, not the file it was handed. Before the reviewer-editor runs, the runner copies the current `plan-N.md` forward to `plan-(N+1).md` (`_mint_plan_edit_target`), re-points every consumer (`status["plan_file"]`, `WORCA_PLAN_FILE`, `{{plan_file}}`) to the copy, and the editor edits `plan-(N+1).md`. The pre-edit `plan-N.md` **is** the retained original — no bespoke `plan-original.md` artifact. `restart_planning` re-entries get fresh numbers automatically (no restart-counter suffix). The mint is idempotent across crash/resume via a `plan_edit_target` status marker, cleared once the editor's outcome is recorded. The `PLAN_EDITED` payload's `original_plan_path` points at the pre-edit `plan-N.md`. No phase-1 diff UI; the numbered revisions feed the existing W-061 plan-iteration viewer, so a diff view can be wired later.
 
 ### 7. Settings & validation
 
@@ -181,7 +181,7 @@ Pure inheritance, per-child resolution: each child run resolves mode independent
 **Files:** `src/worca/orchestrator/runner.py` (PLAN_REVIEW handler ~3109-3229), `src/worca/orchestrator/stages.py`, `src/worca/schemas/plan_review.json`
 **Tasks:**
 1. Branch on resolved mode in the PLAN_REVIEW handler: in edit mode, skip the loopback path entirely, mark `plan_approved`, set outcome `approve`/`approve_with_edits`, proceed to COORDINATE.
-2. Before the reviewer runs, copy the original plan to the per-run record file (§6).
+2. Before the reviewer runs, copy the current plan forward to the next numbered revision (`plan-(N+1).md`) and re-point every consumer; the editor edits the copy, leaving `plan-N.md` as the retained original (§6).
 3. Add `approve_with_edits` to the schema enum.
 4. Update `stages.py` transitions to reflect the mode-dependent set.
 

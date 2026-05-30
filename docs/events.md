@@ -150,6 +150,24 @@ High-volume — subscribers should filter these unless you need deep observabili
 | `pipeline.hook.dispatch_blocked` | `HOOK_DISPATCH_BLOCKED` |
 | `pipeline.hook.dispatch_allowed` | `HOOK_DISPATCH_ALLOWED` |
 
+### `pipeline.plan_review.*` — plan review detail
+
+| Type | Constant | Payload builder |
+|---|---|---|
+| `pipeline.plan_review.edited` | `PLAN_EDITED` | `plan_edited_payload(stage, mode, mode_reason, issue_counts, original_plan_path?)` |
+
+Emitted when the plan reviewer edits the plan in `review_and_edit` mode (W-059). Not chat-rendered (Tier 2 — webhook/notification only, no renderer entry).
+
+**Payload fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `stage` | string | Stage key (`"plan_review"`) |
+| `mode` | string | Resolved mode (`"review_and_edit"`) |
+| `mode_reason` | string | Why this mode was selected (e.g. `"from template/pipeline"`, `"forced by project"`) |
+| `issue_counts` | object | Issue counts by severity: `{ "critical": N, "major": N, "minor": N, "suggestion": N }` |
+| `original_plan_path` | string? | Path to the preserved original plan file (for future diff UI) |
+
 ### `pipeline.preflight.*`, `pipeline.learn.*`
 
 | Type | Constant |

@@ -51,6 +51,8 @@ const _runPlanIters = new Map(); // run_id -> [{n, file}]  (empty for legacy run
 const _runPlanItersFetching = new Set();
 let _planDialogRunId = null; // null when closed; run_id when open
 let _planDialogIter = null; // selected revision number, or null = latest/current
+let _issuesDialogRunId = null; // null when closed; run_id when open
+let _issuesDialogIter = null; // iteration whose issues are shown
 
 // The run's project name is needed because the endpoint is mounted under
 // /api/projects/:projectId. Run objects carry it as `project` or `_project`;
@@ -138,8 +140,19 @@ function _copyToClipboardSimple(text) {
 // carries the full revision selector for free navigation.
 function _planIterationButton(key, iter, run, rerender) {
   if ((key !== 'plan' && key !== 'plan_review') || !run?.id) return nothing;
-  const rev = key === 'plan_review' && iter?.number ? iter.number : null;
-  const label = rev ? `View plan · v${rev}` : 'View plan';
+  // Label each button with the exact plan filename it opens — no version
+  // shorthand. PLAN stage iter K wrote plan-K.md (review-mode loopback
+  // produces successive numbers). plan_review iter N reviewed plan-N.md and,
+  // in edit mode, produced plan-(N+1).md when the editor actually rewrote
+  // it; in that case surface the editor's output here. Review-mode revisions
+  // are produced by the NEXT planner iter, so plan_review iter N still ends
+  // at plan-N.
+  const iterNum = iter?.number || 1;
+  const isEditOutput =
+    key === 'plan_review' && iter?.outcome === 'approve_with_edits';
+  const rev = isEditOutput ? iterNum + 1 : iterNum;
+  const filename = `plan-${String(rev).padStart(3, '0')}.md`;
+  const label = `View plan · ${filename}`;
   return html`
     <div class="plan-artifact-strip">
       <sl-button
@@ -149,7 +162,7 @@ function _planIterationButton(key, iter, run, rerender) {
           rerender
             ? () => {
                 _planDialogRunId = run.id;
-                _planDialogIter = rev; // null = current/latest
+                _planDialogIter = rev;
                 _ensurePlanItersFetched(run, rerender);
                 _ensureRunPlanFetched(run, rev, rerender);
                 rerender();
@@ -157,7 +170,32 @@ function _planIterationButton(key, iter, run, rerender) {
             : null
         }
       >${label}</sl-button>
+      ${key === 'plan_review' ? _planReviewIssuesButton(iter, run, rerender) : nothing}
     </div>
+  `;
+}
+
+function _planReviewIssuesButton(iter, run, rerender) {
+  // The issues list used to render inline under the stage section and grew
+  // unreadably tall for runs with many findings. Surface it as a button next
+  // to "View plan" instead — the dialog mounted near the run-detail root
+  // shows the full list. Identical UX for review and review_and_edit modes.
+  const count = iter?.output?.issues?.length || 0;
+  if (!run?.id || !iter || count === 0) return nothing;
+  return html`
+    <sl-button
+      size="small"
+      class="btn-view-plan-issues"
+      @click=${
+        rerender
+          ? () => {
+              _issuesDialogRunId = run.id;
+              _issuesDialogIter = iter.number || null;
+              rerender();
+            }
+          : null
+      }
+    >View issues · ${count}</sl-button>
   `;
 }
 
@@ -420,7 +458,12 @@ function _triggerBadge(trigger) {
 }
 
 function _outcomeVariant(outcome) {
-  if (outcome === 'success' || outcome === 'approve') return 'success';
+  if (
+    outcome === 'success' ||
+    outcome === 'approve' ||
+    outcome === 'approve_with_edits'
+  )
+    return 'success';
   if (outcome === 'revise' || outcome === 'request_changes') return 'warning';
   if (outcome === 'rejected' || outcome === 'restart_planning') return 'danger';
   return 'neutral';
@@ -428,7 +471,11 @@ function _outcomeVariant(outcome) {
 
 function _outcomeBadge(outcome) {
   if (!outcome) return nothing;
-  return html`<sl-badge variant="${_outcomeVariant(outcome)}" pill>${outcome.replace(/_/g, ' ')}</sl-badge>`;
+  const badge = html`<sl-badge variant="${_outcomeVariant(outcome)}" pill>${outcome.replace(/_/g, ' ')}</sl-badge>`;
+  if (outcome === 'approve_with_edits') {
+    return html`${badge} <sl-badge class="plan-review-edited-chip" variant="neutral" pill>edited</sl-badge>`;
+  }
+  return badge;
 }
 
 function _effortSourceLabel(source) {
@@ -505,6 +552,163 @@ function _crgBadge(iter, crgEnabled) {
     ? html`<sl-tooltip class="crg-tool-tooltip"><div slot="content">${lines.map((l) => html`<div>${l}</div>`)}</div>${badge}</sl-tooltip>`
     : badge;
   return html`<span class="meta-label">Code Review Graph:</span> ${wrapped}`;
+}
+
+function _planReviewSeverityVariant(severity) {
+  if (severity === 'critical') return 'danger';
+  if (severity === 'major') return 'warning';
+  return 'neutral';
+}
+
+function _planReviewIssuesDialog(run, rerender) {
+  // Per-run modal that surfaces the issues list for a chosen plan_review
+  // iteration. Mirrors the plan-artifact dialog's chrome (scroll/copy/close)
+  // for visual + behavioural parity. No-op'd to empty when no iteration has
+  // issues so the parent template stays lean. Unlike the plan-artifact dialog
+  // this one needs no network round trip — the issues live in
+  // stage.iterations[].output — so it tolerates a missing run.id (matters
+  // for unit tests).
+  const stage = run?.stages?.plan_review;
+  const iterations = stage?.iterations || [];
+  const anyIssues = iterations.some(
+    (it) => (it.output?.issues?.length || 0) > 0,
+  );
+  if (!anyIssues) return nothing;
+
+  const isOpen = run?.id != null && _issuesDialogRunId === run.id;
+  const iter =
+    iterations.find((it) => it.number === _issuesDialogIter) ||
+    iterations.find((it) => (it.output?.issues?.length || 0) > 0);
+  const issues = iter?.output?.issues || [];
+  const stageMode = stage?.mode;
+  const baseHeading =
+    stageMode === 'review_and_edit'
+      ? 'Plan review findings'
+      : 'Feedback to planner';
+  const label = iter?.number ? `${baseHeading} · v${iter.number}` : baseHeading;
+  const groups = _groupIssuesByResolution(issues, stageMode);
+  const markdown = _issuesToMarkdown(
+    issues,
+    stageMode,
+    baseHeading,
+    iter?.number,
+  );
+
+  return html`
+    <sl-dialog
+      label=${label}
+      class="plan-review-issues-dialog markdown-dialog"
+      ?open=${isOpen}
+      @sl-after-hide=${
+        rerender
+          ? () => {
+              _issuesDialogRunId = null;
+              _issuesDialogIter = null;
+              rerender();
+            }
+          : null
+      }
+    >
+      <div class="plan-review-issues">
+        ${
+          stageMode === 'review_and_edit'
+            ? html`
+              ${_planReviewIssuesSection('Resolved (edited in plan)', groups.edited)}
+              ${_planReviewIssuesSection('Noted for implementer', groups.deferred)}
+              ${_planReviewIssuesSection('Dismissed', groups.dismissed)}
+            `
+            : _planReviewIssuesRows(issues)
+        }
+      </div>
+      <div slot="footer">
+        ${
+          issues.length
+            ? html`
+              <sl-button
+                class="btn-copy-plan-review-issues"
+                @click=${() => _copyToClipboardSimple(markdown)}
+              >
+                <span slot="prefix">${unsafeHTML(iconSvg(ClipboardCopy, 14))}</span>
+                Copy
+              </sl-button>
+            `
+            : nothing
+        }
+        <sl-button
+          variant="primary"
+          class="btn-close-plan-review-issues"
+          @click=${
+            rerender
+              ? () => {
+                  _issuesDialogRunId = null;
+                  _issuesDialogIter = null;
+                  rerender();
+                }
+              : null
+          }
+        >Close</sl-button>
+      </div>
+    </sl-dialog>
+  `;
+}
+
+function _planReviewIssuesRows(rows) {
+  return rows.map(
+    (issue) => html`
+      <div class="plan-review-issue-row">
+        <sl-badge variant=${_planReviewSeverityVariant(issue.severity)} pill>${issue.severity}</sl-badge>
+        <sl-badge class="plan-review-issue-category-badge" variant="neutral" pill>${issue.category}</sl-badge>
+        <span class="plan-review-issue-desc">${issue.description}</span>
+      </div>
+    `,
+  );
+}
+
+function _planReviewIssuesSection(heading, rows) {
+  if (!rows.length) return nothing;
+  return html`
+    <div class="plan-review-issues-section">
+      <h4 class="plan-review-issues-section-heading">${heading} (${rows.length})</h4>
+      ${_planReviewIssuesRows(rows)}
+    </div>
+  `;
+}
+
+function _groupIssuesByResolution(issues, stageMode) {
+  // Review mode has no per-issue resolution (the reviewer doesn't edit), so
+  // surface a single ungrouped section by parking everything in deferred.
+  if (stageMode !== 'review_and_edit') {
+    return { edited: [], deferred: [...issues], dismissed: [] };
+  }
+  const out = { edited: [], deferred: [], dismissed: [] };
+  for (const i of issues) {
+    if (i.resolution === 'edited') out.edited.push(i);
+    else if (i.resolution === 'dismissed') out.dismissed.push(i);
+    else out.deferred.push(i); // explicit 'deferred' OR missing (old runs)
+  }
+  return out;
+}
+
+function _issuesToMarkdown(issues, stageMode, baseHeading, iterNum) {
+  const head = iterNum
+    ? `# ${baseHeading} · v${iterNum}\n\n`
+    : `# ${baseHeading}\n\n`;
+  const row = (i) =>
+    `- **[${i.severity}][${i.category}]** ${i.description}${
+      i.suggestion ? `\n  - _Suggestion:_ ${i.suggestion}` : ''
+    }`;
+  if (stageMode !== 'review_and_edit') {
+    return head + issues.map(row).join('\n') + '\n';
+  }
+  const groups = _groupIssuesByResolution(issues, stageMode);
+  const fmt = (h, rows) =>
+    rows.length ? `## ${h}\n${rows.map(row).join('\n')}\n\n` : '';
+  return (
+    head +
+    fmt('Resolved (edited in plan)', groups.edited) +
+    fmt('Noted for implementer', groups.deferred) +
+    fmt('Dismissed', groups.dismissed)
+  );
 }
 
 function _effortRowView(iter, graphifyEnabled, crgEnabled) {
@@ -1092,6 +1296,8 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     task_progress: stage.task_progress || undefined,
     error: stage.error || undefined,
     plan_file: stage.plan_file || undefined,
+    mode: stage.mode || undefined,
+    mode_reason: stage.mode_reason || undefined,
     graphify_status: stage.graphify_status || undefined,
     graphify_report_path: stage.graphify_report_path || undefined,
     graphify_outcome: stage.graphify_outcome || undefined,
@@ -1793,6 +1999,7 @@ export function runDetailView(run, settings = {}, options = {}) {
         })}
       </div>
       ${_planArtifactDialog(run, options.rerender)}
+      ${_planReviewIssuesDialog(run, options.rerender)}
   `;
 
   return { overview, stages: stagePanels };

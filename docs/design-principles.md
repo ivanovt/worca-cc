@@ -40,6 +40,7 @@ See [`docs/state-action-matrix.md`](./state-action-matrix.md) for the full state
 - **All governance lives in Python hooks** — enforcement at every tool call, not in agent prompts.
 - **`general-purpose` subagent is denied by default** — it spawns an unconstrained full-tool session, so it sits in `default_denied` (off under the wildcard); a project opts an agent in explicitly. Hard safety guardrail without a dead-end.
 - **Subagent dispatch uses per-agent allowlists** — least-privilege per role over global controls.
+- **Plan review `review_and_edit` mode trades independent re-verification for warm-context editing** — the reviewer rewrites the plan in place instead of looping back to a cold Planner restart. Off by default; a governance override (`plan_review_enforce`) can force either mode project-wide. The tradeoff is explicit: one fewer Opus cold-start per revision, at the cost of losing the Planner's independent fresh-eyes check.
 
 ## Modularity & Configuration
 - **Tiered template resolution: user > project > built-in** — override without forking.

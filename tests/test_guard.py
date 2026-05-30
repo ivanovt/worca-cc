@@ -639,6 +639,137 @@ class TestPlanReviewerMcpToolsPermitted:
             del os.environ["WORCA_AGENT"]
 
 
+# --- PlanReviewer edit-mode carve-out ---
+
+class TestPlanReviewerEditMode:
+    """When WORCA_PLAN_REVIEWER_CAN_EDIT=1, plan_reviewer may write the plan file only."""
+
+    def _set_env(self, plan_file="/project/MASTER_PLAN.md", can_edit="1"):
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        os.environ["WORCA_PLAN_REVIEWER_CAN_EDIT"] = can_edit
+        if plan_file is not None:
+            os.environ["WORCA_PLAN_FILE"] = plan_file
+
+    def _clear_env(self):
+        for key in ("WORCA_AGENT", "WORCA_PLAN_REVIEWER_CAN_EDIT", "WORCA_PLAN_FILE"):
+            os.environ.pop(key, None)
+
+    def test_allows_write_to_plan_file(self):
+        self._set_env()
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 0
+        finally:
+            self._clear_env()
+
+    def test_allows_edit_to_plan_file(self):
+        self._set_env()
+        try:
+            code, reason = check_guard("Edit", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 0
+        finally:
+            self._clear_env()
+
+    def test_blocks_write_to_other_file(self):
+        self._set_env()
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/app.py"})
+            assert code == 2
+            assert "plan_reviewer" in reason.lower()
+            assert "edit mode" in reason.lower()
+        finally:
+            self._clear_env()
+
+    def test_blocks_edit_to_other_file(self):
+        self._set_env()
+        try:
+            code, reason = check_guard("Edit", {"file_path": "/project/src/main.py"})
+            assert code == 2
+        finally:
+            self._clear_env()
+
+    def test_blocks_bash_file_write_even_in_edit_mode(self):
+        self._set_env()
+        try:
+            code, reason = check_guard("Bash", {"command": "cat > /project/MASTER_PLAN.md << 'EOF'\ndata\nEOF"})
+            assert code == 2
+            assert "plan_reviewer" in reason.lower()
+        finally:
+            self._clear_env()
+
+    def test_blocks_test_execution_even_in_edit_mode(self):
+        self._set_env()
+        try:
+            code, reason = check_guard("Bash", {"command": "pytest tests/ -v"})
+            assert code == 2
+            assert "plan_reviewer" in reason.lower()
+        finally:
+            self._clear_env()
+
+    def test_read_only_when_flag_not_set(self):
+        """Without WORCA_PLAN_REVIEWER_CAN_EDIT, plan_reviewer stays read-only."""
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        os.environ["WORCA_PLAN_FILE"] = "/project/MASTER_PLAN.md"
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 2
+            assert "read-only" in reason.lower()
+        finally:
+            os.environ.pop("WORCA_AGENT", None)
+            os.environ.pop("WORCA_PLAN_FILE", None)
+
+    def test_read_only_when_flag_is_zero(self):
+        """WORCA_PLAN_REVIEWER_CAN_EDIT=0 means read-only."""
+        self._set_env(can_edit="0")
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 2
+            assert "read-only" in reason.lower()
+        finally:
+            self._clear_env()
+
+    def test_path_normalization(self):
+        """Paths with trailing slashes or symlink-like differences are normalized."""
+        self._set_env(plan_file="/project/./plans/../MASTER_PLAN.md")
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 0
+        finally:
+            self._clear_env()
+
+    def test_iterated_agent_name(self):
+        """Works with the full WORCA_AGENT format: plan_review-plan_reviewer-iter-1."""
+        os.environ["WORCA_AGENT"] = "plan_review-plan_reviewer-iter-1"
+        os.environ["WORCA_PLAN_REVIEWER_CAN_EDIT"] = "1"
+        os.environ["WORCA_PLAN_FILE"] = "/project/MASTER_PLAN.md"
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 0
+        finally:
+            self._clear_env()
+
+    def test_iterated_agent_blocks_other_file(self):
+        os.environ["WORCA_AGENT"] = "plan_review-plan_reviewer-iter-1"
+        os.environ["WORCA_PLAN_REVIEWER_CAN_EDIT"] = "1"
+        os.environ["WORCA_PLAN_FILE"] = "/project/MASTER_PLAN.md"
+        try:
+            code, reason = check_guard("Edit", {"file_path": "/project/config.json"})
+            assert code == 2
+        finally:
+            self._clear_env()
+
+    def test_no_plan_file_env_blocks_write(self):
+        """If WORCA_PLAN_FILE is not set, edit-mode blocks all writes."""
+        os.environ["WORCA_AGENT"] = "plan_reviewer"
+        os.environ["WORCA_PLAN_REVIEWER_CAN_EDIT"] = "1"
+        try:
+            code, reason = check_guard("Write", {"file_path": "/project/MASTER_PLAN.md"})
+            assert code == 2
+        finally:
+            os.environ.pop("WORCA_AGENT", None)
+            os.environ.pop("WORCA_PLAN_REVIEWER_CAN_EDIT", None)
+
+
 # --- Block Reviewer writes ---
 
 class TestBlockReviewerWrites:

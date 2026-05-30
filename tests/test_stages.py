@@ -13,6 +13,8 @@ from worca.orchestrator.stages import (
     get_stage_config,
     get_enabled_stages,
     is_learn_enabled,
+    resolve_plan_review_mode,
+    validate_plan_review_settings,
 )
 
 
@@ -699,3 +701,200 @@ class TestStageConfigModelEnv:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "full-id"
+
+
+class TestResolvePlanReviewMode:
+    """Tests for resolve_plan_review_mode() precedence logic."""
+
+    def test_default_returns_review(self):
+        mode, reason = resolve_plan_review_mode({})
+        assert mode == "review"
+        assert "default" in reason
+
+    def test_default_with_empty_worca(self):
+        mode, reason = resolve_plan_review_mode({"worca": {}})
+        assert mode == "review"
+        assert "default" in reason
+
+    def test_template_mode_review_and_edit(self):
+        settings = {
+            "worca": {
+                "stages": {
+                    "plan_review": {"mode": "review_and_edit"}
+                }
+            }
+        }
+        mode, reason = resolve_plan_review_mode(settings)
+        assert mode == "review_and_edit"
+        assert "template" in reason or "pipeline" in reason
+
+    def test_template_mode_review_explicit(self):
+        settings = {
+            "worca": {
+                "stages": {
+                    "plan_review": {"mode": "review"}
+                }
+            }
+        }
+        mode, reason = resolve_plan_review_mode(settings)
+        assert mode == "review"
+        assert "template" in reason or "pipeline" in reason
+
+    def test_enforce_review_overrides_template_edit(self):
+        settings = {
+            "worca": {
+                "stages": {
+                    "plan_review": {"mode": "review_and_edit"}
+                },
+                "governance": {
+                    "plan_review_enforce": "review"
+                }
+            }
+        }
+        mode, reason = resolve_plan_review_mode(settings)
+        assert mode == "review"
+        assert "governance" in reason
+
+    def test_enforce_review_and_edit_overrides_template_review(self):
+        settings = {
+            "worca": {
+                "stages": {
+                    "plan_review": {"mode": "review"}
+                },
+                "governance": {
+                    "plan_review_enforce": "review_and_edit"
+                }
+            }
+        }
+        mode, reason = resolve_plan_review_mode(settings)
+        assert mode == "review_and_edit"
+        assert "governance" in reason
+
+    def test_enforce_auto_defers_to_template(self):
+        settings = {
+            "worca": {
+                "stages": {
+                    "plan_review": {"mode": "review_and_edit"}
+                },
+                "governance": {
+                    "plan_review_enforce": "auto"
+                }
+            }
+        }
+        mode, reason = resolve_plan_review_mode(settings)
+        assert mode == "review_and_edit"
+        assert "template" in reason or "pipeline" in reason
+
+    def test_enforce_auto_with_no_template_mode_defaults_review(self):
+        settings = {
+            "worca": {
+                "governance": {
+                    "plan_review_enforce": "auto"
+                }
+            }
+        }
+        mode, reason = resolve_plan_review_mode(settings)
+        assert mode == "review"
+        assert "default" in reason
+
+    def test_returns_tuple(self):
+        result = resolve_plan_review_mode({})
+        assert isinstance(result, tuple)
+        assert len(result) == 2
+
+
+class TestModeAwareTransitions:
+    """Tests for mode-dependent PLAN_REVIEW transitions."""
+
+    def test_review_mode_plan_review_can_loop_to_plan(self):
+        assert can_transition(Stage.PLAN_REVIEW, Stage.PLAN, mode="review") is True
+
+    def test_review_mode_plan_review_can_go_to_coordinate(self):
+        assert can_transition(Stage.PLAN_REVIEW, Stage.COORDINATE, mode="review") is True
+
+    def test_review_and_edit_mode_plan_review_cannot_loop_to_plan(self):
+        assert can_transition(Stage.PLAN_REVIEW, Stage.PLAN, mode="review_and_edit") is False
+
+    def test_review_and_edit_mode_plan_review_can_go_to_coordinate(self):
+        assert can_transition(Stage.PLAN_REVIEW, Stage.COORDINATE, mode="review_and_edit") is True
+
+    def test_no_mode_defaults_to_full_transitions(self):
+        assert can_transition(Stage.PLAN_REVIEW, Stage.PLAN) is True
+        assert can_transition(Stage.PLAN_REVIEW, Stage.COORDINATE) is True
+
+    def test_mode_does_not_affect_other_stages(self):
+        assert can_transition(Stage.TEST, Stage.IMPLEMENT, mode="review_and_edit") is True
+        assert can_transition(Stage.REVIEW, Stage.PLAN, mode="review_and_edit") is True
+        assert can_transition(Stage.PLAN, Stage.COORDINATE, mode="review_and_edit") is True
+
+
+class TestValidatePlanReviewSettings:
+    """Tests for validate_plan_review_settings() enum validation."""
+
+    def test_empty_settings_returns_no_errors(self):
+        assert validate_plan_review_settings({}) == []
+
+    def test_valid_mode_review(self):
+        settings = {"worca": {"stages": {"plan_review": {"mode": "review"}}}}
+        assert validate_plan_review_settings(settings) == []
+
+    def test_valid_mode_review_and_edit(self):
+        settings = {"worca": {"stages": {"plan_review": {"mode": "review_and_edit"}}}}
+        assert validate_plan_review_settings(settings) == []
+
+    def test_invalid_mode_rejected(self):
+        settings = {"worca": {"stages": {"plan_review": {"mode": "turbo"}}}}
+        errors = validate_plan_review_settings(settings)
+        assert len(errors) == 1
+        assert "stages.plan_review.mode" in errors[0]
+        assert "review" in errors[0]
+        assert "review_and_edit" in errors[0]
+
+    def test_non_string_mode_rejected(self):
+        settings = {"worca": {"stages": {"plan_review": {"mode": 42}}}}
+        errors = validate_plan_review_settings(settings)
+        assert len(errors) == 1
+        assert "stages.plan_review.mode" in errors[0]
+
+    def test_valid_enforce_auto(self):
+        settings = {"worca": {"governance": {"plan_review_enforce": "auto"}}}
+        assert validate_plan_review_settings(settings) == []
+
+    def test_valid_enforce_review(self):
+        settings = {"worca": {"governance": {"plan_review_enforce": "review"}}}
+        assert validate_plan_review_settings(settings) == []
+
+    def test_valid_enforce_review_and_edit(self):
+        settings = {"worca": {"governance": {"plan_review_enforce": "review_and_edit"}}}
+        assert validate_plan_review_settings(settings) == []
+
+    def test_invalid_enforce_rejected(self):
+        settings = {"worca": {"governance": {"plan_review_enforce": "always"}}}
+        errors = validate_plan_review_settings(settings)
+        assert len(errors) == 1
+        assert "governance.plan_review_enforce" in errors[0]
+        assert "auto" in errors[0]
+
+    def test_non_string_enforce_rejected(self):
+        settings = {"worca": {"governance": {"plan_review_enforce": True}}}
+        errors = validate_plan_review_settings(settings)
+        assert len(errors) == 1
+        assert "governance.plan_review_enforce" in errors[0]
+
+    def test_both_invalid_collects_two_errors(self):
+        settings = {
+            "worca": {
+                "stages": {"plan_review": {"mode": "bad"}},
+                "governance": {"plan_review_enforce": "bad"},
+            }
+        }
+        errors = validate_plan_review_settings(settings)
+        assert len(errors) == 2
+
+    def test_mode_absent_no_error(self):
+        settings = {"worca": {"stages": {"plan_review": {"enabled": True}}}}
+        assert validate_plan_review_settings(settings) == []
+
+    def test_enforce_absent_no_error(self):
+        settings = {"worca": {"governance": {}}}
+        assert validate_plan_review_settings(settings) == []

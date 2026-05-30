@@ -348,14 +348,31 @@ def check_guard(tool_name: str, tool_input: dict) -> tuple:
                 if basename != "MASTER_PLAN.md" and not re.match(r'^plan-\d{3}\.md$', basename):
                     return (2, "Blocked: planner agent may only write MASTER_PLAN.md or plan-NNN.md, not {}.".format(basename))
 
-        # Read-only agents: coordinator, tester, plan_reviewer, and reviewer
-        # may not write files
-        read_only_agents = ("coordinator", "tester", "plan_reviewer", "reviewer")
+        # plan_reviewer edit-mode carve-out: when the runner signals
+        # review_and_edit mode, plan_reviewer may Write/Edit the plan file.
+        if role == "plan_reviewer" and tool_name in ("Write", "Edit"):
+            if os.environ.get("WORCA_PLAN_REVIEWER_CAN_EDIT") == "1":
+                plan_file = os.environ.get("WORCA_PLAN_FILE")
+                if plan_file and os.path.abspath(file_path) == os.path.abspath(plan_file):
+                    pass  # allowed: edit-mode plan rewrite
+                else:
+                    return (2, "Blocked: plan_reviewer (edit mode) may only write {}, not {}.".format(
+                        plan_file or "<unset>", file_path))
+            else:
+                return (2, "Blocked: plan_reviewer agent is read-only — may not write files.")
+
+        # Read-only agents: coordinator, tester, and reviewer may not write files.
+        # plan_reviewer is handled above (edit-mode carve-out).
+        read_only_agents = ("coordinator", "tester", "reviewer")
         if role in read_only_agents:
             if tool_name in ("Write", "Edit"):
                 return (2, "Blocked: {} agent is read-only — may not write files.".format(role))
             if tool_name == "Bash" and _is_file_write_via_bash(command):
                 return (2, "Blocked: {} agent is read-only — file writes via Bash are not allowed.".format(role))
+
+        # plan_reviewer: Bash file-writes remain blocked unconditionally
+        if role == "plan_reviewer" and tool_name == "Bash" and _is_file_write_via_bash(command):
+            return (2, "Blocked: plan_reviewer agent is read-only — file writes via Bash are not allowed.")
 
         # Planner, Coordinator, PlanReviewer, and Reviewer may not run tests.
         # Reviewer was observed running pytest/vitest to verify claims

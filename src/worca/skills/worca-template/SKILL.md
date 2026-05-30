@@ -53,7 +53,16 @@ Ask these questions (adapt phrasing to what you already know from the conversati
 
    Pre-select based on the rigor answer. Let the user override.
 
-4. **Model tier** — "Which model tier for key agents?" Options:
+4. **Plan review mode** — only ask this if Plan review is ON from question 3. "Which plan review mode?" Options:
+   - Review (default) — reviewer sends feedback, planner revises in a loop. Preserves independent verification (two agents, two perspectives) but costs extra iterations (`stages.plan_review.mode = "review"`)
+   - Review & Edit — reviewer can directly edit the plan, shortcutting the loop. Faster (often single-pass) but the reviewer is both critic and author, losing the independent-verification trade-off (`stages.plan_review.mode = "review_and_edit"`)
+
+5. **Governance override** — "Should the project enforce a specific plan review mode?" Options:
+   - Auto (default) — mode comes from the template or pipeline config, no enforcement (`governance.plan_review_enforce = "auto"`)
+   - Enforce review — always use review mode regardless of template (`governance.plan_review_enforce = "review"`)
+   - Enforce review & edit — always use review-and-edit regardless of template (`governance.plan_review_enforce = "review_and_edit"`)
+
+6. **Model tier** — "Which model tier for key agents?" Options:
    - All Opus (thorough, slower)
    - Opus planning + Sonnet implementation (balanced — the default)
    - All Sonnet (fastest, lower quality on complex tasks)

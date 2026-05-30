@@ -21,6 +21,7 @@ WORCA_SRC = pathlib.Path(__file__).parent.parent / "src" / "worca"
 BLOCK_FILES = [
     "plan.block.md",
     "plan-review.block.md",
+    "plan-edit.block.md",
     "coordinate.block.md",
     "implement.block.md",
     "test.block.md",
@@ -32,6 +33,7 @@ BLOCK_FILES = [
 AGENT_FILES = [
     "planner.md",
     "plan_reviewer.md",
+    "plan_editor.md",
     "coordinator.md",
     "implementer.md",
     "tester.md",

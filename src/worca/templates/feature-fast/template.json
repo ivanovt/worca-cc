@@ -1,0 +1,20 @@
+{
+  "id": "feature-fast",
+  "name": "Feature Development (Fast)",
+  "description": "Full pipeline with plan review in review-and-edit mode and learn stage enabled. Higher retry limits for complex features. The plan reviewer can directly edit the plan, shortcutting the review-revise loop.",
+  "builtin": true,
+  "created_at": "2026-05-29T00:00:00Z",
+  "tags": ["full-pipeline", "plan-review", "plan-edit", "learn"],
+  "config": {
+    "stages": {
+      "plan_review": { "enabled": true, "mode": "review_and_edit" },
+      "learn": { "enabled": true }
+    },
+    "loops": {
+      "implement_test": 10,
+      "pr_changes": 5,
+      "restart_planning": 3,
+      "plan_review": 3
+    }
+  }
+}
