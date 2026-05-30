@@ -36,7 +36,8 @@ describe('Pricing source-of-truth explainer', () => {
     // pricing tab is restructured (e.g. moved into a sub-tab).
     const fs = await import('node:fs');
     const path = await import('node:path');
-    const here = path.dirname(new URL(import.meta.url).pathname);
+    const { fileURLToPath } = await import('node:url');
+    const here = path.dirname(fileURLToPath(import.meta.url));
     const src = fs.readFileSync(path.join(here, 'settings.js'), 'utf8');
     expect(src).toMatch(/pricing-source-note/);
     expect(src).toMatch(/ANTHROPIC_BASE_URL/);
