@@ -55,6 +55,14 @@ EOF
 
 \* At least one of `--text` or stdin must provide a body. Empty bodies are rejected (cheap guard against unsubstituted-variable bugs in `/loop`-driven sends).
 
+## Requirements
+
+The worca-ui server must be running with the integrations subsystem booted. Two modes fail the send and surface a terminal HTTP status, not a retryable one:
+
+- **Single-project mode** (`pnpm worca:ui -- --project <path>`) — does not initialize the integrations subsystem. The send returns `HTTP 503 "integrations subsystem not initialized"`. Restart in **global mode** (`pnpm worca:ui`, no `--project` flag) to use this skill.
+- **Non-loopback bind** (`HOST=0.0.0.0 pnpm worca:ui`, `--host <public-ip>`, etc.) — the send endpoint is intentionally restricted to loopback binds (`127.0.0.0/8`, `::1`, `localhost`) because the worca-ui has no per-request auth, and exposing user-addressable chat to the LAN/internet would let any reachable host ping the configured Telegram/Discord/Slack channel. The send returns `HTTP 403 "send endpoint is restricted to loopback binds"`. Restart on a loopback bind (the default).
+- **Integrations subsystem disabled in config** (`enabled: false` in `~/.worca/integrations/config.json`) — `HTTP 503 "integrations subsystem disabled in config"`. Enable via the UI Integrations panel and configure at least one chat adapter.
+
 ## Output
 
 Prints one line per platform:

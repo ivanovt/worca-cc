@@ -54,6 +54,39 @@ const NO_OP_STUB = {
 const CHAT_PLATFORMS = ['telegram', 'discord', 'slack'];
 
 /**
+ * Strip credentials from adapter error messages before surfacing them
+ * through sendOutbound results. Adapters' underlying `fetch` failures
+ * frequently embed the full request URL (including bot tokens for
+ * Telegram and webhook secrets for Slack/Discord) in the error text;
+ * one redaction pattern per known shape.
+ *
+ * Patterns covered:
+ *   - Telegram bot URL token:          `bot<digits>:<token>`
+ *   - Slack incoming-webhook URL:      `hooks.slack.com/services/T…/B…/<24>`
+ *   - Discord webhook URL:             `discord(app)?.com/api/webhooks/<id>/<token>`
+ *   - Slack OAuth tokens:              `xox[abprs]-<token>`
+ *
+ * Exported for tests; the per-platform error path in sendOutbound is the
+ * sole production caller today.
+ *
+ * @param {unknown} input
+ * @returns {string}
+ */
+export function redactSecrets(input) {
+  return String(input)
+    .replace(/bot\d+:[A-Za-z0-9_-]+/g, 'bot<redacted>')
+    .replace(
+      /hooks\.slack\.com\/services\/T[A-Z0-9]+\/B[A-Z0-9]+\/[A-Za-z0-9]+/g,
+      'hooks.slack.com/services/<redacted>',
+    )
+    .replace(
+      /discord(?:app)?\.com\/api\/webhooks\/\d+\/[A-Za-z0-9_-]+/g,
+      'discord.com/api/webhooks/<redacted>',
+    )
+    .replace(/xox[abprs]-[A-Za-z0-9-]+/g, 'xox<redacted>');
+}
+
+/**
  * @param {{
  *   port: number,
  *   host?: string,
@@ -246,6 +279,14 @@ export function createIntegrations({
     if (!Array.isArray(message.body)) {
       throw new Error('message.body must be an array of segments');
     }
+    if (
+      chatIdOverride !== undefined &&
+      chatIdOverride !== null &&
+      typeof chatIdOverride !== 'string' &&
+      typeof chatIdOverride !== 'number'
+    ) {
+      throw new Error('chat_id must be a string or number');
+    }
 
     const targets =
       Array.isArray(platforms) && platforms.length > 0
@@ -301,14 +342,14 @@ export function createIntegrations({
         }
         results.push({ platform: name, ok: true });
       } catch (err) {
-        // Strip anything that looks like a token from the error message —
-        // adapters can include URLs in errors and Telegram URLs embed the
-        // bot token in the path.
-        const safe = String(err?.message ?? err).replace(
-          /bot\d+:[A-Za-z0-9_-]+/g,
-          'bot<redacted>',
-        );
-        results.push({ platform: name, ok: false, error: safe });
+        // Strip credentials from the error before surfacing — adapters'
+        // fetch failures can echo full request URLs that embed bot tokens
+        // (Telegram), webhook secrets (Slack/Discord), or OAuth tokens.
+        results.push({
+          platform: name,
+          ok: false,
+          error: redactSecrets(err?.message ?? err),
+        });
       }
     }
 

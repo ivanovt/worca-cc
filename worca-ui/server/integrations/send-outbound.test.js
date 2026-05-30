@@ -12,7 +12,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createIntegrations } from './index.js';
+import { createIntegrations, redactSecrets } from './index.js';
 
 // Capture per-platform sends across tests
 let telegramSends = [];
@@ -139,15 +139,27 @@ describe('sendOutbound — happy path', () => {
     expect(discordSends).toHaveLength(0);
   });
 
-  it('chat_id override is forwarded to the adapter', async () => {
+  it('chat_id override on the allowlist is forwarded to adapter.send', async () => {
+    // Configured chat_id ('111') is implicitly on the allowlist via
+    // _collectAllowedIds, so an override equal to it reaches the adapter.
+    const out = await integrations.sendOutbound({
+      platforms: ['telegram'],
+      message: STUB_MESSAGE,
+      chatIdOverride: '111',
+    });
+    expect(out.results).toEqual([{ platform: 'telegram', ok: true }]);
+    expect(telegramSends).toHaveLength(1);
+    expect(telegramSends[0].chatId).toBe('111');
+  });
+
+  it('numeric chat_id override is coerced to string and forwarded', async () => {
     await integrations.sendOutbound({
       platforms: ['telegram'],
       message: STUB_MESSAGE,
-      chatIdOverride: '999',
+      chatIdOverride: 111,
     });
-    // Override only succeeds if 999 is on the allowlist — it isn't, so we
-    // expect rejection. Re-test: allowlist gating verified separately.
-    expect(telegramSends).toHaveLength(0);
+    expect(telegramSends).toHaveLength(1);
+    expect(telegramSends[0].chatId).toBe('111');
   });
 });
 
@@ -230,6 +242,21 @@ describe('sendOutbound — failure modes', () => {
     ).rejects.toThrow(/message\.body must be an array/);
   });
 
+  it('throws when chat_id override is not a string or number', async () => {
+    // `false`, plain objects, and arrays would otherwise be silently
+    // String()-coerced into '[object Object]' / 'false' / 'a,b' and die at
+    // the allowlist. Reject them upfront so the caller sees a clean error.
+    for (const bad of [true, false, {}, [], { id: '111' }]) {
+      await expect(
+        integrations.sendOutbound({
+          platforms: ['telegram'],
+          message: STUB_MESSAGE,
+          chatIdOverride: bad,
+        }),
+      ).rejects.toThrow(/chat_id must be a string or number/);
+    }
+  });
+
   it('redacts telegram bot tokens that leak into adapter error messages', async () => {
     const out = await integrations.sendOutbound({
       platforms: ['slack'],
@@ -238,6 +265,64 @@ describe('sendOutbound — failure modes', () => {
     expect(out.results[0].ok).toBe(false);
     expect(out.results[0].error).not.toMatch(/1234567:ABCDEFG/);
     expect(out.results[0].error).toMatch(/bot<redacted>/);
+  });
+});
+
+describe('redactSecrets', () => {
+  it('redacts Telegram bot tokens in URL path', () => {
+    const input =
+      'fetch failed at https://api.telegram.org/bot1234567:AAFakeTokenABCxyz_-/sendMessage';
+    const out = redactSecrets(input);
+    expect(out).not.toMatch(/1234567:AAFakeTokenABCxyz_-/);
+    expect(out).toContain('bot<redacted>');
+  });
+
+  it('redacts Slack incoming-webhook URLs', () => {
+    // Use deliberately low-entropy synthetic IDs so GitHub's secret
+    // scanner doesn't flag the fixture as a real Slack webhook.
+    const tokenSegment = 'EXAMPLE'.repeat(4); // 28 chars, [A-Za-z]+, matches regex
+    const input = `request to https://hooks.slack.com/services/TEXAMPLE/BEXAMPLE/${tokenSegment} failed`;
+    const out = redactSecrets(input);
+    expect(out).not.toContain(tokenSegment);
+    expect(out).toContain('hooks.slack.com/services/<redacted>');
+  });
+
+  it('redacts Discord webhook URLs (both domains)', () => {
+    const tokenSegment = 'EXAMPLE_DiscordSynthetic_token';
+    const inputA = `POST https://discord.com/api/webhooks/123456789012345678/${tokenSegment} failed`;
+    expect(redactSecrets(inputA)).toContain(
+      'discord.com/api/webhooks/<redacted>',
+    );
+    expect(redactSecrets(inputA)).not.toContain(tokenSegment);
+    const inputB =
+      'POST https://discordapp.com/api/webhooks/987/EXAMPLE-discord-token failed';
+    expect(redactSecrets(inputB)).toContain(
+      'discord.com/api/webhooks/<redacted>',
+    );
+    expect(redactSecrets(inputB)).not.toContain('EXAMPLE-discord-token');
+  });
+
+  it('redacts Slack xoxb / xoxp / xoxa / xoxs tokens', () => {
+    const tokens = [
+      'xoxb-EXAMPLE-synthetic-bot',
+      'xoxp-EXAMPLE-synthetic-user',
+      'xoxa-EXAMPLE-synthetic-app',
+      'xoxs-EXAMPLE-synthetic-srv',
+    ];
+    const out = redactSecrets(`Bearer ${tokens.join(' and ')}`);
+    for (const t of tokens) expect(out).not.toContain(t);
+    expect(out.match(/xox<redacted>/g)).toHaveLength(tokens.length);
+  });
+
+  it('passes through plain text untouched', () => {
+    expect(redactSecrets('plain error: connection refused')).toBe(
+      'plain error: connection refused',
+    );
+  });
+
+  it('coerces non-string input', () => {
+    expect(redactSecrets(new Error('boom'))).toContain('boom');
+    expect(redactSecrets(null)).toBe('null');
   });
 });
 
