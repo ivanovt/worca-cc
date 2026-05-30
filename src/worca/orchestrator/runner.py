@@ -3210,15 +3210,24 @@ def run_pipeline(
                 issues = result.get("issues", [])
                 critical_issues = [i for i in issues if i.get("severity") in ("critical", "major")]
 
-                # W-061 reconciliation: in edit mode the editor was given a fresh
-                # plan-(N+1).md copy. Determine the *honest* outcome from what was
-                # actually written, not the editor's self-reported verdict — the
-                # model has been observed to return "revise" without editing. If
-                # the file is byte-identical to the pre-edit original, treat as a
-                # clean approve and collapse the speculative copy back so the
-                # numbered sequence stays meaningful (no no-op revision visible
-                # in the W-061 plan-iteration viewer). Normalize BEFORE recording
-                # so the iteration and STAGE_COMPLETED carry the terminal outcome.
+                # Audit-trail integrity: normalize the agent's self-reported
+                # outcome and per-issue resolution to match what was physically
+                # possible, BEFORE recording the iteration / emitting events.
+                #
+                # - Edit mode (`review_and_edit`): the editor was given a fresh
+                #   plan-(N+1).md copy and may write to it. We determine the
+                #   honest outcome from the actual file content (W-061
+                #   reconciliation), not the editor's verdict — the model has
+                #   been observed to return "revise" without editing or to
+                #   claim resolution=edited without writing. When unchanged,
+                #   downgrade outcome → approve and resolution=edited →
+                #   deferred, and collapse the speculative copy so the
+                #   numbered sequence stays meaningful in the W-061 viewer.
+                # - Review mode (or any non-edit mode): plan_reviewer is in
+                #   read_only_agents and the guard blocks Write/Edit, so the
+                #   reviewer can NEVER edit the plan. Any "approve_with_edits"
+                #   or per-issue resolution value is a contract violation by
+                #   the agent. Strip them so the audit trail is honest.
                 _plan_actually_edited = False
                 if _pr_mode == "review_and_edit":
                     _pre = status.get("plan_pre_edit_file")
@@ -3233,13 +3242,6 @@ def run_pipeline(
                         outcome = "approve_with_edits"
                     else:
                         outcome = "approve"
-                        # Per-issue resolution backstop: the editor's
-                        # self-reported resolution='edited' is only credible
-                        # when the plan actually changed. With no real edit,
-                        # downgrade every "edited" claim to "deferred" so the
-                        # audit trail (status.json + PLAN_EDITED + UI dialog)
-                        # truthfully reflects what was written, not what was
-                        # claimed.
                         if isinstance(result, dict):
                             for _iss in result.get("issues") or []:
                                 if isinstance(_iss, dict) and _iss.get("resolution") == "edited":
@@ -3253,6 +3255,20 @@ def run_pipeline(
                             status["plan_file"] = _pre
                             os.environ["WORCA_PLAN_FILE"] = _pre
                             prompt_builder.update_context("plan_file", _pre)
+                else:
+                    # Review mode: read-only reviewer cannot edit, so any
+                    # "approve_with_edits" or per-issue resolution claim is
+                    # categorically impossible. Downgrade outcome and strip
+                    # the resolution field — the schema permits these values
+                    # because it is shared with edit mode, but in review mode
+                    # they are fabrications. "revise" / "approve" outcomes
+                    # flow through unchanged.
+                    if outcome == "approve_with_edits":
+                        outcome = "approve"
+                    if isinstance(result, dict):
+                        for _iss in result.get("issues") or []:
+                            if isinstance(_iss, dict):
+                                _iss.pop("resolution", None)
 
                 iter_extras["outcome"] = outcome
                 complete_iteration(status, current_stage.value, **iter_extras)

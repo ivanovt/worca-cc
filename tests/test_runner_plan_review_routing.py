@@ -812,6 +812,154 @@ class TestEditModeBranch:
             f"got {captured_outcomes.get('issue_resolutions')!r}"
         )
 
+    def test_review_mode_normalizes_bogus_approve_with_edits_claim(self, tmp_path):
+        """The read-only plan_reviewer cannot edit the plan, so any
+        ``approve_with_edits`` outcome or per-issue ``resolution`` value is a
+        contract violation. The runner downgrades the outcome to ``approve``
+        and strips the resolution field from every issue, so the audit trail
+        records what was physically possible rather than what was claimed.
+        """
+        settings_path = _settings(tmp_path, mode="review")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+
+        from worca.events.types import PLAN_EDITED
+
+        captured_events = []
+
+        def tracking_emit(ctx, event_type, payload, **kwargs):
+            captured_events.append(event_type)
+            return None
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                # Read-only reviewer fabricates an edit-mode-shaped output:
+                # approve_with_edits + per-issue resolution: edited.
+                return _mock_stage(stage, {
+                    "outcome": "approve_with_edits",
+                    "issues": [
+                        {
+                            "severity": "major",
+                            "category": "architecture",
+                            "description": "a",
+                            "resolution": "edited",
+                        },
+                        {
+                            "severity": "minor",
+                            "category": "feasibility",
+                            "description": "b",
+                            "resolution": "deferred",
+                        },
+                        {
+                            "severity": "suggestion",
+                            "category": "test_strategy",
+                            "description": "c",
+                        },
+                    ],
+                    "summary": "Reviewer falsely claimed edits",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        captured_outcomes = {}
+        from worca.state.status import complete_iteration as _orig_ci
+
+        def tracking_complete(*args, **kwargs):
+            stage_name = args[1] if len(args) > 1 else kwargs.get("stage_name")
+            if stage_name == "plan_review":
+                captured_outcomes["plan_review"] = kwargs.get("outcome")
+                output = kwargs.get("output")
+                if isinstance(output, dict):
+                    captured_outcomes["issue_resolutions_present"] = [
+                        ("resolution" in i) for i in (output.get("issues") or [])
+                    ]
+                    captured_outcomes["issue_resolutions"] = [
+                        i.get("resolution") for i in (output.get("issues") or [])
+                    ]
+            return _orig_ci(*args, **kwargs)
+
+        with patch("worca.orchestrator.runner.complete_iteration", side_effect=tracking_complete):
+            with patch("worca.orchestrator.runner.emit_event", side_effect=tracking_emit):
+                with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                    with patch("worca.orchestrator.runner.create_branch"):
+                        with patch("worca.orchestrator.runner._write_pid"):
+                            with patch("worca.orchestrator.runner._remove_pid"):
+                                run_pipeline(wr, settings_path=settings_path,
+                                             status_path=status_path)
+
+        # PLAN_EDITED is review-mode-illegal — never fires in review mode
+        # because the emission lives inside the edit-mode branch.
+        assert PLAN_EDITED not in captured_events, (
+            "PLAN_EDITED must NOT fire in review mode under any circumstances"
+        )
+        # The bogus approve_with_edits is downgraded to approve.
+        assert captured_outcomes.get("plan_review") == "approve", (
+            f"Expected outcome 'approve' (downgraded from approve_with_edits), "
+            f"got {captured_outcomes.get('plan_review')!r}"
+        )
+        # Every issue has its resolution field stripped — review mode has no
+        # business carrying that field at all.
+        assert captured_outcomes.get("issue_resolutions_present") == [False, False, False], (
+            f"Expected every issue's resolution to be stripped in review mode, "
+            f"got presence flags {captured_outcomes.get('issue_resolutions_present')!r} "
+            f"with values {captured_outcomes.get('issue_resolutions')!r}"
+        )
+
+    def test_review_mode_clean_approve_passes_through_unchanged(self, tmp_path):
+        """No false positives: when the reviewer returns a clean ``approve``
+        with no resolution fields, normalization is a no-op."""
+        settings_path = _settings(tmp_path, mode="review")
+        _, status_path = _worca(tmp_path)
+        wr = _wr()
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                return _mock_stage(stage, {
+                    "outcome": "approve",
+                    "issues": [
+                        {"severity": "minor", "category": "completeness", "description": "a"},
+                    ],
+                    "summary": "Approved",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        captured_outcomes = {}
+        from worca.state.status import complete_iteration as _orig_ci
+
+        def tracking_complete(*args, **kwargs):
+            stage_name = args[1] if len(args) > 1 else kwargs.get("stage_name")
+            if stage_name == "plan_review":
+                captured_outcomes["plan_review"] = kwargs.get("outcome")
+                output = kwargs.get("output")
+                if isinstance(output, dict):
+                    captured_outcomes["issues"] = output.get("issues")
+            return _orig_ci(*args, **kwargs)
+
+        with patch("worca.orchestrator.runner.complete_iteration", side_effect=tracking_complete):
+            with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                with patch("worca.orchestrator.runner.create_branch"):
+                    with patch("worca.orchestrator.runner._write_pid"):
+                        with patch("worca.orchestrator.runner._remove_pid"):
+                            run_pipeline(wr, settings_path=settings_path,
+                                         status_path=status_path)
+
+        # outcome flows through unchanged.
+        assert captured_outcomes.get("plan_review") == "approve"
+        # Issues without resolution stay without resolution — normalization
+        # doesn't add bogus keys.
+        issues = captured_outcomes.get("issues") or []
+        assert len(issues) == 1
+        assert "resolution" not in issues[0]
+
     def test_review_mode_does_not_emit_plan_edited(self, tmp_path):
         """Standard review mode must NOT emit PLAN_EDITED."""
         settings_path = _settings(tmp_path, mode="review")
