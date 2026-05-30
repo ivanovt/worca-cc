@@ -4524,3 +4524,45 @@ def test_wr_dict_includes_plan_path(tmp_path, monkeypatch):
         )
 
     assert result["work_request"]["plan_path"] == plan_path
+
+
+class TestExtractTokenUsageSettingsPath:
+    """extract_token_usage receives settings_path from the runner."""
+
+    def test_learn_stage_passes_settings_path(self, tmp_path):
+        """_run_learn_stage passes settings_path to extract_token_usage."""
+        from worca.orchestrator.runner import _run_learn_stage
+
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"worca": {"stages": {"learn": {"enabled": True}}}}))
+
+        raw_envelope = {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 50}
+
+        with patch("worca.orchestrator.runner.is_learn_enabled", return_value=True), \
+             patch("worca.orchestrator.runner.run_stage", return_value=("learned", raw_envelope)), \
+             patch("worca.orchestrator.runner.extract_token_usage") as mock_extract, \
+             patch("worca.orchestrator.runner.complete_iteration"), \
+             patch("worca.orchestrator.runner.update_cumulative_stats"), \
+             patch("worca.orchestrator.runner.emit_event"), \
+             patch("worca.orchestrator.runner.save_status"):
+            mock_extract.return_value = {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 50}
+            status = MagicMock()
+            status.get.return_value = {}
+
+            _run_learn_stage(
+                status=status,
+                prompt_builder=MagicMock(),
+                settings_path=str(settings),
+                run_dir=str(tmp_path),
+                termination_type="completed",
+                termination_reason="done",
+                msize="100k",
+                logs_dir=str(tmp_path),
+            )
+
+            mock_extract.assert_called_once()
+            call_kwargs = mock_extract.call_args
+            assert call_kwargs[1].get("settings_path") == str(settings) or \
+                (len(call_kwargs[0]) > 1 and call_kwargs[0][1] == str(settings)), \
+                f"extract_token_usage not called with settings_path, got: {call_kwargs}"

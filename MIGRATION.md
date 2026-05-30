@@ -795,6 +795,10 @@ W-059: Plan review `review_and_edit` mode — optional in-place plan editing by 
 
 **No automatic migration required.** All changes are additive. Run `worca init --upgrade` once to pull the new defaults into your project's `settings.json`.
 
+### 0.44.x → 0.45.0
+
+- Cost tracking now uses the model alias (from `worca.models`) as the pricing lookup key, so custom endpoint models match their configured pricing entry without needing a separate override. If no pricing entry matches the alias, cost is reported as $0 with a one-time stderr warning.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

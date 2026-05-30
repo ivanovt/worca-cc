@@ -2202,7 +2202,6 @@ sl-details.dispatch-section-details::part(content) {
 
 .pricing-model-name {
   font-weight: 500;
-  text-transform: uppercase;
 }
 
 .pricing-table sl-input {
@@ -5306,6 +5305,10 @@ sl-tooltip.bead-tooltip::part(body) {
   display: flex;
   flex-direction: column;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.model-card .settings-card-title {
+  text-transform: none;
 }
 
 .model-card.is-dirty {
