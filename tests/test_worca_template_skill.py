@@ -15,7 +15,9 @@ def skill_content(request):
     path = Path(__file__).parent.parent / request.param
     if not path.exists():
         pytest.skip(f"{request.param} not found")
-    return path.read_text()
+    # encoding='utf-8' required — SKILL.md carries non-ASCII (em-dashes, ⚠️)
+    # and Windows defaults to cp1252 without it.
+    return path.read_text(encoding="utf-8")
 
 
 def test_interview_includes_plan_review_mode_question(skill_content):

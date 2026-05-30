@@ -26,3 +26,7 @@ Each run executes in an isolated git worktree. The parent project's `settings.lo
 :::caution
 Treat `settings.local.json` like any credentials file: it sits in your working tree in plaintext. It's gitignored, but back it up and protect it accordingly.
 :::
+
+## Sharing config without sharing secrets
+
+When you export a template bundle (`worca templates export`), `settings.local.json` is **never read**. Only `settings.json` is touched, and that file gets two passes of redaction before anything is written: a structural allowlist on what config subtrees can leave the machine, and a per-value scan that replaces known-secret-format values (Anthropic, GitHub, Slack, AWS prefixes) with the placeholder `<YOUR-SECRET-HERE>` while keeping the env-var keys intact. The importer sees the scaffold and knows which secret to fill in locally — never yours. See [Share via export/import bundles](/advanced/authoring-templates/#share-via-exportimport-bundles) for the full mechanics, including the trust-boundary caveats around HTTPS sources.
