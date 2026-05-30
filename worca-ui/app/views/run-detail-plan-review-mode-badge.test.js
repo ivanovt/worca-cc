@@ -44,18 +44,13 @@ function makeRun({
   };
 }
 
-describe('plan_review stage mode badge', () => {
-  it('shows mode badge with review mode and default reason', () => {
-    const html = renderToString(
-      runDetailView(makeRun({ mode: 'review', modeReason: 'default' })),
-    );
-    expect(html).toContain('plan-review-mode-badge');
-    expect(html).toContain('Mode:');
-    expect(html).toContain('review');
-    expect(html).toContain('variant="neutral"');
-  });
-
-  it('shows review_and_edit mode label', () => {
+describe('plan_review stage mode data', () => {
+  // The header used to carry an always-on "review & edit" mode badge per the
+  // original W-059 §6 audit triad. We dropped it: the mode is already implied
+  // by the dialog heading ("Issues resolved by reviewer" vs "Feedback to
+  // planner") and the approve_with_edits chip, so the header badge was
+  // redundant noise on top of an already-busy stage card.
+  it('does not render a mode badge in the stage header', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -64,52 +59,8 @@ describe('plan_review stage mode badge', () => {
         }),
       ),
     );
-    expect(html).toContain('plan-review-mode-badge');
-    expect(html).toContain('review & edit');
-  });
-
-  it('shows reason as tooltip content', () => {
-    const html = renderToString(
-      runDetailView(
-        makeRun({
-          mode: 'review',
-          modeReason: 'forced by project (governance.plan_review_enforce)',
-        }),
-      ),
-    );
-    expect(html).toContain('plan-review-mode-badge');
-    expect(html).toContain(
-      'forced by project (governance.plan_review_enforce)',
-    );
-  });
-
-  it('does not show badge when mode is absent', () => {
-    const html = renderToString(runDetailView(makeRun({})));
     expect(html).not.toContain('plan-review-mode-badge');
-  });
-
-  it('does not show badge on non-plan_review stages', () => {
-    const run = {
-      stages: {
-        implement: {
-          status: 'completed',
-          mode: 'review',
-          mode_reason: 'default',
-          iterations: [{ number: 1, status: 'completed' }],
-        },
-      },
-    };
-    const html = renderToString(runDetailView(run));
-    expect(html).not.toContain('plan-review-mode-badge');
-  });
-
-  it('shows badge on pending plan_review stage', () => {
-    const html = renderToString(
-      runDetailView(
-        makeRun({ mode: 'review', modeReason: 'default', status: 'pending' }),
-      ),
-    );
-    expect(html).toContain('plan-review-mode-badge');
+    expect(html).not.toContain('review & edit');
   });
 
   it('includes mode and mode_reason in stageToJson output', () => {
@@ -269,6 +220,69 @@ describe('plan_review issues panel labeling', () => {
         }),
       ),
     );
+    expect(html).toContain('Feedback to planner');
+  });
+});
+
+describe('plan_review issues dialog UX', () => {
+  const sampleIssues = [
+    {
+      category: 'completeness',
+      severity: 'major',
+      description: 'Missing error handling',
+    },
+    {
+      category: 'test_strategy',
+      severity: 'minor',
+      description: 'Add edge case tests',
+    },
+  ];
+
+  function makeRunWithId(opts = {}) {
+    const run = makeRun(opts);
+    run.id = 'test-run-001';
+    return run;
+  }
+
+  it('renders the "View issues" button next to "View plan" with the issue count', () => {
+    const html = renderToString(
+      runDetailView(makeRunWithId({ mode: 'review', issues: sampleIssues })),
+    );
+    expect(html).toContain('btn-view-plan-issues');
+    expect(html).toContain('View issues');
+    // Count badge matches sampleIssues length
+    expect(html).toContain('View issues · 2');
+  });
+
+  it('does not render the "View issues" button when there are no issues', () => {
+    const html = renderToString(
+      runDetailView(makeRunWithId({ mode: 'review', issues: [] })),
+    );
+    expect(html).not.toContain('btn-view-plan-issues');
+    expect(html).not.toContain('View issues');
+  });
+
+  it('renders the issue type/category as a badge (consistency with severity)', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRunWithId({ mode: 'review_and_edit', issues: sampleIssues }),
+      ),
+    );
+    // The new category badge is rendered alongside the severity badge, not
+    // as a plain inline span. The dedicated class lets us style + scope it.
+    expect(html).toContain('plan-review-issue-category-badge');
+    // Category text still surfaces in the rendered HTML (inside the badge).
+    expect(html).toContain('completeness');
+    expect(html).toContain('test_strategy');
+  });
+
+  it('renders the same dialog mechanism in review mode (consistency)', () => {
+    const html = renderToString(
+      runDetailView(makeRunWithId({ mode: 'review', issues: sampleIssues })),
+    );
+    // Same dialog class in both modes — the only mode-dependent piece is the
+    // heading text inside the dialog label.
+    expect(html).toContain('plan-review-issues-dialog');
     expect(html).toContain('Feedback to planner');
   });
 });

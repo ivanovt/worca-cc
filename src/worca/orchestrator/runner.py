@@ -3194,6 +3194,39 @@ def run_pipeline(
                 issues = result.get("issues", [])
                 critical_issues = [i for i in issues if i.get("severity") in ("critical", "major")]
 
+                # W-061 reconciliation: in edit mode the editor was given a fresh
+                # plan-(N+1).md copy. Determine the *honest* outcome from what was
+                # actually written, not the editor's self-reported verdict — the
+                # model has been observed to return "revise" without editing. If
+                # the file is byte-identical to the pre-edit original, treat as a
+                # clean approve and collapse the speculative copy back so the
+                # numbered sequence stays meaningful (no no-op revision visible
+                # in the W-061 plan-iteration viewer). Normalize BEFORE recording
+                # so the iteration and STAGE_COMPLETED carry the terminal outcome.
+                _plan_actually_edited = False
+                if _pr_mode == "review_and_edit":
+                    _pre = status.get("plan_pre_edit_file")
+                    _post = status.get("plan_file")
+                    if _pre and _post and os.path.isfile(_pre) and os.path.isfile(_post):
+                        try:
+                            with open(_pre, "rb") as _a, open(_post, "rb") as _b:
+                                _plan_actually_edited = _a.read() != _b.read()
+                        except OSError:
+                            _plan_actually_edited = False
+                    if _plan_actually_edited:
+                        outcome = "approve_with_edits"
+                    else:
+                        outcome = "approve"
+                        if (run_dir and _pre and _post and _post != _pre
+                                and os.path.isfile(_post)):
+                            try:
+                                os.remove(_post)
+                            except OSError:
+                                pass
+                            status["plan_file"] = _pre
+                            os.environ["WORCA_PLAN_FILE"] = _pre
+                            prompt_builder.update_context("plan_file", _pre)
+
                 iter_extras["outcome"] = outcome
                 complete_iteration(status, current_stage.value, **iter_extras)
                 update_stage(status, current_stage.value, **stage_extras)
@@ -3221,10 +3254,9 @@ def run_pipeline(
 
                 if _pr_mode == "review_and_edit":
                     # Edit mode: the plan editor rewrote the next numbered
-                    # revision (plan-(N+1).md) in place, so no loopback is
-                    # needed. Mark plan as approved and proceed.
-                    if outcome not in ("approve", "approve_with_edits"):
-                        iter_extras["outcome"] = "approve_with_edits"
+                    # revision (plan-(N+1).md) in place — or produced a clean
+                    # approve with no edits (the speculative copy was collapsed
+                    # above). Either way, no loopback is needed.
                     set_milestone(status, "plan_approved", True)
                     # The pre-edit plan-N.md is the retained original (W-061).
                     _orig_path = status.get("plan_pre_edit_file") or None
@@ -3238,9 +3270,12 @@ def run_pipeline(
                     if prompt_context_path:
                         prompt_builder.save_context(prompt_context_path)
                     save_status(status, actual_status_path)
-                    _log("Plan approved by editor" if outcome == "approve"
+                    _log("Plan approved by editor (no edits needed)"
+                         if outcome == "approve"
                          else "Plan approved with edits", "ok")
-                    if ctx:
+                    # PLAN_EDITED only fires when the plan was actually rewritten —
+                    # claiming edits we didn't make would inflate the audit trail.
+                    if ctx and _plan_actually_edited:
                         _severity_counts = {"critical": 0, "major": 0, "minor": 0, "suggestion": 0}
                         for _iss in issues:
                             _sev = _iss.get("severity", "")

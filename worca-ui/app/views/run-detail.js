@@ -51,6 +51,8 @@ const _runPlanIters = new Map(); // run_id -> [{n, file}]  (empty for legacy run
 const _runPlanItersFetching = new Set();
 let _planDialogRunId = null; // null when closed; run_id when open
 let _planDialogIter = null; // selected revision number, or null = latest/current
+let _issuesDialogRunId = null; // null when closed; run_id when open
+let _issuesDialogIter = null; // iteration whose issues are shown
 
 // The run's project name is needed because the endpoint is mounted under
 // /api/projects/:projectId. Run objects carry it as `project` or `_project`;
@@ -138,8 +140,14 @@ function _copyToClipboardSimple(text) {
 // carries the full revision selector for free navigation.
 function _planIterationButton(key, iter, run, rerender) {
   if ((key !== 'plan' && key !== 'plan_review') || !run?.id) return nothing;
-  const rev = key === 'plan_review' && iter?.number ? iter.number : null;
-  const label = rev ? `View plan · v${rev}` : 'View plan';
+  // Label each button with the exact plan filename it opens — no version
+  // shorthand. PLAN produced plan-001.md; plan_review iter N reviewed
+  // plan-NNN.md (review-mode loopback bumps the number each round; edit
+  // mode runs a single iter on plan-001). To navigate to other revisions
+  // (e.g. an editor's plan-002 output), use the in-dialog revision selector.
+  const rev = key === 'plan_review' && iter?.number ? iter.number : 1;
+  const filename = `plan-${String(rev).padStart(3, '0')}.md`;
+  const label = `View plan · ${filename}`;
   return html`
     <div class="plan-artifact-strip">
       <sl-button
@@ -149,7 +157,7 @@ function _planIterationButton(key, iter, run, rerender) {
           rerender
             ? () => {
                 _planDialogRunId = run.id;
-                _planDialogIter = rev; // null = current/latest
+                _planDialogIter = rev;
                 _ensurePlanItersFetched(run, rerender);
                 _ensureRunPlanFetched(run, rev, rerender);
                 rerender();
@@ -157,7 +165,32 @@ function _planIterationButton(key, iter, run, rerender) {
             : null
         }
       >${label}</sl-button>
+      ${key === 'plan_review' ? _planReviewIssuesButton(iter, run, rerender) : nothing}
     </div>
+  `;
+}
+
+function _planReviewIssuesButton(iter, run, rerender) {
+  // The issues list used to render inline under the stage section and grew
+  // unreadably tall for runs with many findings. Surface it as a button next
+  // to "View plan" instead — the dialog mounted near the run-detail root
+  // shows the full list. Identical UX for review and review_and_edit modes.
+  const count = iter?.output?.issues?.length || 0;
+  if (!run?.id || !iter || count === 0) return nothing;
+  return html`
+    <sl-button
+      size="small"
+      class="btn-view-plan-issues"
+      @click=${
+        rerender
+          ? () => {
+              _issuesDialogRunId = run.id;
+              _issuesDialogIter = iter.number || null;
+              rerender();
+            }
+          : null
+      }
+    >View issues · ${count}</sl-button>
   `;
 }
 
@@ -516,43 +549,63 @@ function _crgBadge(iter, crgEnabled) {
   return html`<span class="meta-label">Code Review Graph:</span> ${wrapped}`;
 }
 
-function _planReviewModeBadge(stage) {
-  if (!stage?.mode) return nothing;
-  const label = stage.mode === 'review_and_edit' ? 'review & edit' : stage.mode;
-  const reason = stage.mode_reason || '';
-  const badge = html`<sl-badge class="plan-review-mode-badge" variant="neutral" pill>${label}</sl-badge>`;
-  if (reason) {
-    return html`<span class="meta-label">Mode:</span> <sl-tooltip content="${reason}">${badge}</sl-tooltip>`;
-  }
-  return html`<span class="meta-label">Mode:</span> ${badge}`;
-}
-
 function _planReviewSeverityVariant(severity) {
   if (severity === 'critical') return 'danger';
   if (severity === 'major') return 'warning';
   return 'neutral';
 }
 
-function _planReviewIssuesView(iter, stageMode) {
-  const issues = iter.output?.issues;
-  if (!issues?.length) return nothing;
+function _planReviewIssuesDialog(run, rerender) {
+  // Per-run modal that surfaces the issues list for a chosen plan_review
+  // iteration. No-op'd to empty when no iteration has issues so the parent
+  // template stays lean. Unlike the plan-artifact dialog this one needs no
+  // network round trip — the issues live in stage.iterations[].output —
+  // so it tolerates a missing run.id (matters for unit tests).
+  const stage = run?.stages?.plan_review;
+  const iterations = stage?.iterations || [];
+  const anyIssues = iterations.some(
+    (it) => (it.output?.issues?.length || 0) > 0,
+  );
+  if (!anyIssues) return nothing;
+
+  const isOpen = run?.id != null && _issuesDialogRunId === run.id;
+  const iter =
+    iterations.find((it) => it.number === _issuesDialogIter) ||
+    iterations.find((it) => (it.output?.issues?.length || 0) > 0);
+  const issues = iter?.output?.issues || [];
+  const stageMode = stage?.mode;
   const heading =
     stageMode === 'review_and_edit'
       ? 'Issues resolved by reviewer'
       : 'Feedback to planner';
+  const label = iter?.number ? `${heading} · v${iter.number}` : heading;
   return html`
-    <div class="plan-review-issues">
-      <div class="plan-review-issues-heading">${heading}</div>
-      ${issues.map(
-        (issue) => html`
-        <div class="plan-review-issue-row">
-          <sl-badge variant="${_planReviewSeverityVariant(issue.severity)}" pill>${issue.severity}</sl-badge>
-          <span class="plan-review-issue-category">${issue.category}</span>
-          <span class="plan-review-issue-desc">${issue.description}</span>
-        </div>
-      `,
-      )}
-    </div>
+    <sl-dialog
+      label=${label}
+      class="plan-review-issues-dialog"
+      ?open=${isOpen}
+      @sl-after-hide=${
+        rerender
+          ? () => {
+              _issuesDialogRunId = null;
+              _issuesDialogIter = null;
+              rerender();
+            }
+          : null
+      }
+    >
+      <div class="plan-review-issues">
+        ${issues.map(
+          (issue) => html`
+          <div class="plan-review-issue-row">
+            <sl-badge variant=${_planReviewSeverityVariant(issue.severity)} pill>${issue.severity}</sl-badge>
+            <sl-badge class="plan-review-issue-category-badge" variant="neutral" pill>${issue.category}</sl-badge>
+            <span class="plan-review-issue-desc">${issue.description}</span>
+          </div>
+        `,
+        )}
+      </div>
+    </sl-dialog>
   `;
 }
 
@@ -1708,7 +1761,6 @@ export function runDetailView(run, settings = {}, options = {}) {
                   }
                 </span>
                 ${key === 'pr' ? _prTitleBadge(run) : nothing}
-                ${key === 'plan_review' ? _planReviewModeBadge(stage) : nothing}
                 <sl-badge variant="${_badgeVariant(stageStatus)}" pill>
                   ${stageStatus.replace(/_/g, ' ')}
                 </sl-badge>
@@ -1783,7 +1835,6 @@ export function runDetailView(run, settings = {}, options = {}) {
                           <sl-tab-panel name="iter-${key}-${iter.number}">
                             ${_iterationDetailView(iter, key, stageAgent, promptData, run.graphify_enabled, run.crg_enabled)}
                             ${_planIterationButton(key, iter, run, options.rerender)}
-                            ${key === 'plan_review' ? _planReviewIssuesView(iter, stage.mode) : nothing}
                           </sl-tab-panel>
                         `,
                         )}
@@ -1819,7 +1870,6 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _effortRowView(iterations[0], run.graphify_enabled, run.crg_enabled) : nothing}
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
-                      ${key === 'plan_review' && iterations.length === 1 ? _planReviewIssuesView(iterations[0], stage.mode) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
@@ -1847,6 +1897,7 @@ export function runDetailView(run, settings = {}, options = {}) {
         })}
       </div>
       ${_planArtifactDialog(run, options.rerender)}
+      ${_planReviewIssuesDialog(run, options.rerender)}
   `;
 
   return { overview, stages: stagePanels };

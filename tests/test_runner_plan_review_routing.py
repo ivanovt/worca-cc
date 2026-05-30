@@ -518,9 +518,18 @@ class TestEditModeBranch:
         assert Stage.COORDINATE in stages_visited, "Edit mode must proceed to COORDINATE"
 
     def test_edit_mode_approve_with_edits_outcome_captured(self, tmp_path):
-        """Edit mode with outcome=approve_with_edits preserves that outcome."""
+        """Edit mode preserves approve_with_edits when the editor actually edits.
+
+        Honest outcome (W-061 reconciliation): the recorded outcome is derived
+        from the file's content change, not the editor's self-report. We
+        provide a plan so plan-001.md exists, then simulate the editor writing
+        to the re-pointed plan-002.md — only then does the verdict survive as
+        ``approve_with_edits`` through ``complete_iteration``.
+        """
         settings_path = _settings(tmp_path, mode="review_and_edit")
         _, status_path = _worca(tmp_path)
+        plan_md = tmp_path / "provided-plan.md"
+        plan_md.write_text("# Provided Plan\n\nDo the thing.\n")
         wr = _wr()
         captured = {}
 
@@ -529,6 +538,11 @@ class TestEditModeBranch:
             if stage == Stage.PLAN:
                 return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
             if stage == Stage.PLAN_REVIEW:
+                # Simulate the editor rewriting the re-pointed plan file in place.
+                _target = os.environ.get("WORCA_PLAN_FILE")
+                if _target and os.path.isfile(_target):
+                    with open(_target, "a", encoding="utf-8") as _f:
+                        _f.write("\n\n## Editor's revision\n- adjusted naming\n")
                 return _mock_stage(stage, {
                     "outcome": "approve_with_edits",
                     "issues": [{"severity": "minor", "description": "adjusted naming"}],
@@ -555,7 +569,8 @@ class TestEditModeBranch:
                 with patch("worca.orchestrator.runner.create_branch"):
                     with patch("worca.orchestrator.runner._write_pid"):
                         with patch("worca.orchestrator.runner._remove_pid"):
-                            run_pipeline(wr, settings_path=settings_path, status_path=status_path)
+                            run_pipeline(wr, settings_path=settings_path,
+                                         status_path=status_path, plan_file=str(plan_md))
 
         assert captured.get("outcome") == "approve_with_edits"
         assert captured.get("reached_coordinate"), "Must proceed to COORDINATE"
@@ -635,11 +650,14 @@ class TestEditModeBranch:
         )
 
     def test_edit_mode_emits_plan_edited_event(self, tmp_path):
-        """Edit mode emits PLAN_EDITED event with correct payload fields.
+        """Edit mode emits PLAN_EDITED when the editor actually rewrites the plan.
 
-        A provided plan is ingested to plan-001.md, so the editor mints
-        plan-002.md and the retained original (plan-001.md) populates
-        ``original_plan_path``.
+        The provided plan is ingested to plan-001.md and the runner re-points
+        WORCA_PLAN_FILE to plan-002.md before the editor runs. The mock
+        simulates the editor writing edits there — only then does the runner's
+        content-based check treat the verdict as ``approve_with_edits`` and
+        fire ``PLAN_EDITED`` with ``original_plan_path`` pointing at the
+        retained plan-001.md (W-061 reconciliation).
         """
         settings_path = _settings(tmp_path, mode="review_and_edit")
         _, status_path = _worca(tmp_path)
@@ -661,6 +679,11 @@ class TestEditModeBranch:
             if stage == Stage.PLAN:
                 return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
             if stage == Stage.PLAN_REVIEW:
+                # Simulate the editor rewriting the re-pointed plan file in place.
+                _target = os.environ.get("WORCA_PLAN_FILE")
+                if _target and os.path.isfile(_target):
+                    with open(_target, "a", encoding="utf-8") as _f:
+                        _f.write("\n\n## Editor's revision\n- fix wrong API\n")
                 return _mock_stage(stage, {
                     "outcome": "approve_with_edits",
                     "issues": [
@@ -692,6 +715,82 @@ class TestEditModeBranch:
         # The retained original is the pre-edit numbered plan (plan-001.md), not
         # a bespoke plan-original.md (W-061 reconciliation).
         assert payload["original_plan_path"].endswith("plan-001.md")
+
+    def test_edit_mode_no_edit_does_not_emit_plan_edited(self, tmp_path):
+        """When the editor returns approve_with_edits but does NOT modify the
+        plan file, the content-based check downgrades the outcome to
+        ``approve`` and PLAN_EDITED is NOT emitted — claiming edits we did not
+        make would inflate the audit trail. The speculative plan-(N+1) copy is
+        also collapsed so the numbered sequence stays meaningful.
+        """
+        settings_path = _settings(tmp_path, mode="review_and_edit")
+        _, status_path = _worca(tmp_path)
+        plan_md = tmp_path / "provided-plan.md"
+        plan_md.write_text("# Provided Plan\n\nDo the thing.\n")
+        wr = _wr()
+        captured_events = []
+
+        from worca.events.types import PLAN_EDITED
+
+        def tracking_emit(ctx, event_type, payload, **kwargs):
+            captured_events.append(event_type)
+            return None
+
+        def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                           prompt_override=None, agent_override=None, **kwargs):
+            if stage == Stage.PLAN:
+                return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
+            if stage == Stage.PLAN_REVIEW:
+                # Editor self-reports edits but writes nothing — observed in
+                # practice when the model defaults to reviewer behavior.
+                return _mock_stage(stage, {
+                    "outcome": "approve_with_edits",
+                    "issues": [
+                        {"severity": "major", "category": "feasibility", "description": "b"},
+                    ],
+                    "summary": "Claimed edits but didn't write",
+                })
+            if stage == Stage.COORDINATE:
+                return _mock_stage(stage, {"beads_ids": [], "dependency_graph": {}})
+            return _mock_stage(stage, {})
+
+        captured_outcomes = {}
+        from worca.state.status import complete_iteration as _orig_ci
+
+        def tracking_complete(*args, **kwargs):
+            stage_name = args[1] if len(args) > 1 else kwargs.get("stage_name")
+            if stage_name == "plan_review":
+                captured_outcomes["plan_review"] = kwargs.get("outcome")
+            # Snapshot WORCA_PLAN_FILE at the moment plan_review's iteration
+            # is recorded — by then the runner has already collapsed any no-op
+            # plan-(N+1).md and re-pointed back to the pre-edit original.
+            if stage_name == "plan_review":
+                captured_outcomes["plan_file_env"] = os.environ.get("WORCA_PLAN_FILE", "")
+            return _orig_ci(*args, **kwargs)
+
+        with patch("worca.orchestrator.runner.complete_iteration", side_effect=tracking_complete):
+            with patch("worca.orchestrator.runner.emit_event", side_effect=tracking_emit):
+                with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
+                    with patch("worca.orchestrator.runner.create_branch"):
+                        with patch("worca.orchestrator.runner._write_pid"):
+                            with patch("worca.orchestrator.runner._remove_pid"):
+                                run_pipeline(wr, settings_path=settings_path,
+                                             status_path=status_path, plan_file=str(plan_md))
+
+        assert PLAN_EDITED not in captured_events, (
+            "PLAN_EDITED must NOT fire when the editor did not modify the plan"
+        )
+        # Content-based downgrade: editor's self-reported approve_with_edits
+        # over a byte-identical file is corrected to 'approve'.
+        assert captured_outcomes.get("plan_review") == "approve", (
+            f"Expected 'approve', got {captured_outcomes.get('plan_review')!r}"
+        )
+        # The speculative plan-002.md is collapsed back; WORCA_PLAN_FILE
+        # re-points to the pre-edit plan-001.md before complete_iteration runs.
+        assert captured_outcomes.get("plan_file_env", "").endswith("plan-001.md"), (
+            f"Expected plan_file_env to end with plan-001.md, got "
+            f"{captured_outcomes.get('plan_file_env')!r}"
+        )
 
     def test_review_mode_does_not_emit_plan_edited(self, tmp_path):
         """Standard review mode must NOT emit PLAN_EDITED."""

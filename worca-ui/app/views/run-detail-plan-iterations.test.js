@@ -50,11 +50,13 @@ describe('runDetailView plan revision viewer (W-061)', () => {
     };
   }
 
-  it('renders per-iteration "View plan · vK" buttons on plan_review, mapped to the reviewed revision', () => {
+  it('renders per-iteration "View plan · plan-NNN.md" buttons on plan_review, mapped to the reviewed revision', () => {
     const out = renderToString(runDetailView(_run()));
-    // plan_review iter-1 → v1, iter-2 → v2 (both tab panels are rendered).
-    expect(out).toContain('View plan · v1');
-    expect(out).toContain('View plan · v2');
+    // Labels are the exact filenames the button opens (no version shorthand):
+    // plan_review iter-1 → plan-001.md, iter-2 → plan-002.md. PLAN stage's
+    // button opens plan-001.md (the planner's own output).
+    expect(out).toContain('View plan · plan-001.md');
+    expect(out).toContain('View plan · plan-002.md');
     // plan stage button + the two plan_review per-iteration buttons.
     const buttons = out.match(/btn-view-run-plan/g) || [];
     expect(buttons.length).toBeGreaterThanOrEqual(3);

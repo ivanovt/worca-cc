@@ -1,5 +1,6 @@
 Review the implementation plan below for completeness, feasibility, and quality.
-If you find critical or major issues, rewrite the plan file to resolve them in place.
+
+**Sequence (required):** if you find ANY critical or major issues, your FIRST action MUST be to Edit `{{plan_file}}` to fix them in place. Only after the file is updated may you produce your structured `plan_review.json` output. There is no loopback to fall back on — returning a verdict without editing leaves the issues unresolved. The pipeline compares the file's content to the pre-edit original after you finish: if it is byte-identical, a self-reported `approve_with_edits` is automatically downgraded to `approve` and your verdict is discarded, so claiming edits without making them gains nothing.
 
 ## Work Request
 
