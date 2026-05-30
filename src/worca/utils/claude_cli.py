@@ -496,6 +496,7 @@ def run_agent(
     on_event: Optional[Callable[[dict], None]] = None,
     settings: Optional[dict] = None,
     graphify_out: Optional[str] = None,
+    model_alias: Optional[str] = None,
     mcp_config: Optional[str] = None,
     run_dir: Optional[str] = None,
     stage: Optional[str] = None,
@@ -659,5 +660,8 @@ def run_agent(
             + (f": {error_msg[:500]}" if error_msg else ""),
             returncode=proc.returncode,
         )
+
+    if model_alias and result_event:
+        result_event["_model_alias"] = model_alias
 
     return result_event

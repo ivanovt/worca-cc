@@ -795,6 +795,12 @@ W-059: Plan review `review_and_edit` mode — optional in-place plan editing by 
 
 **No automatic migration required.** All changes are additive. Run `worca init --upgrade` once to pull the new defaults into your project's `settings.json`.
 
+### 0.44.x → 0.45.0
+
+- **Cost override for alt-endpoint aliases.** Model aliases that route Claude CLI through a non-Anthropic endpoint (i.e., the alias's `env` block in `worca.models` sets `ANTHROPIC_BASE_URL`) now have their run cost computed from your `worca.pricing.models.<alias>` entry instead of from Claude CLI's built-in Anthropic pricing — Claude CLI's number is wrong against a non-Anthropic endpoint. If no matching pricing entry exists, cost is recorded as $0 with a one-time stderr warning prompting you to add one.
+- **Vanilla installs are unchanged.** The built-in `opus` / `sonnet` / `haiku` shorthands (and any user rename that doesn't set `ANTHROPIC_BASE_URL`) continue to use Claude CLI's authoritative `total_cost_usd`. The Pricing tab numbers for these rows remain a fallback for interrupted runs and a reference for forecasting — they do not override live cost.
+- **`status.json` schema (additive).** Runs that use an alt-endpoint alias now carry `token_usage.model_alias` and `token_usage.cost_source: "alias"`. Absence of these fields means Claude CLI was authoritative — backward-compatible with existing consumers.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

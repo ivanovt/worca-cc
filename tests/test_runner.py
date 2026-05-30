@@ -4524,3 +4524,106 @@ def test_wr_dict_includes_plan_path(tmp_path, monkeypatch):
         )
 
     assert result["work_request"]["plan_path"] == plan_path
+
+
+class TestExtractTokenUsageSettingsPath:
+    """extract_token_usage receives settings_path from the runner."""
+
+    def test_learn_stage_passes_settings_path(self, tmp_path):
+        """_run_learn_stage passes settings_path to extract_token_usage."""
+        from worca.orchestrator.runner import _run_learn_stage
+
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({"worca": {"stages": {"learn": {"enabled": True}}}}))
+
+        raw_envelope = {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 50}
+
+        with patch("worca.orchestrator.runner.is_learn_enabled", return_value=True), \
+             patch("worca.orchestrator.runner.run_stage", return_value=("learned", raw_envelope)), \
+             patch("worca.orchestrator.runner.extract_token_usage") as mock_extract, \
+             patch("worca.orchestrator.runner.complete_iteration"), \
+             patch("worca.orchestrator.runner.update_cumulative_stats"), \
+             patch("worca.orchestrator.runner.emit_event"), \
+             patch("worca.orchestrator.runner.save_status"):
+            mock_extract.return_value = {"model": "claude-sonnet-4-6", "input_tokens": 100, "output_tokens": 50}
+            status = MagicMock()
+            status.get.return_value = {}
+
+            _run_learn_stage(
+                status=status,
+                prompt_builder=MagicMock(),
+                settings_path=str(settings),
+                run_dir=str(tmp_path),
+                termination_type="completed",
+                termination_reason="done",
+                msize="100k",
+                logs_dir=str(tmp_path),
+            )
+
+            mock_extract.assert_called_once()
+            call_kwargs = mock_extract.call_args
+            assert call_kwargs[1].get("settings_path") == str(settings) or \
+                (len(call_kwargs[0]) > 1 and call_kwargs[0][1] == str(settings)), \
+                f"extract_token_usage not called with settings_path, got: {call_kwargs}"
+
+
+class TestLogStageMetricsCostOverride:
+    """_log_stage_metrics prefers the override-aware cost over the raw envelope.
+
+    Regression test for the spawn-log vs status.json cost-mismatch wart in
+    PR #255 — confirmed on a real GLM-DS run: 16 iterations each logging
+    Claude CLI's raw Anthropic-priced number (~$42 cumulative) while
+    status.json correctly carried the overridden $0 from the alt-endpoint
+    pricing path. With the override plumbed through, both surfaces agree.
+    """
+
+    def test_log_stage_metrics_uses_cost_override_when_provided(self, capsys):
+        from worca.orchestrator.runner import _log_stage_metrics
+
+        raw_envelope = {
+            "total_cost_usd": 4.09,  # Claude CLI's raw number (alt-endpoint)
+            "num_turns": 30,
+            "duration_ms": 156_000,
+            "usage": {"output_tokens": 6841},
+        }
+        _log_stage_metrics("PLAN", {}, raw_envelope, cost_override=0)
+
+        out = capsys.readouterr().err
+        # The override (0) suppresses the cost line entirely — matching the
+        # `if cost:` guard. The raw $4.09 must NOT appear in the log.
+        assert "$4.09" not in out, f"raw envelope cost leaked into log: {out}"
+
+    def test_log_stage_metrics_falls_back_to_raw_when_no_override(self, capsys):
+        from worca.orchestrator.runner import _log_stage_metrics
+
+        raw_envelope = {
+            "total_cost_usd": 4.09,
+            "num_turns": 30,
+            "duration_ms": 156_000,
+            "usage": {"output_tokens": 6841},
+        }
+        _log_stage_metrics("PLAN", {}, raw_envelope)
+
+        out = capsys.readouterr().err
+        # No override → preserve the historical behavior of printing the
+        # envelope's number, so vanilla Anthropic-endpoint runs are unchanged.
+        assert "cost=$4.09" in out, f"raw envelope cost missing from log: {out}"
+
+    def test_log_stage_metrics_uses_nonzero_override(self, capsys):
+        """When the alias has a configured pricing entry, the override is a
+        positive number computed locally — that's what should land in the
+        log, not the (different) Claude CLI figure."""
+        from worca.orchestrator.runner import _log_stage_metrics
+
+        raw_envelope = {
+            "total_cost_usd": 4.09,
+            "num_turns": 30,
+            "duration_ms": 156_000,
+            "usage": {"output_tokens": 6841},
+        }
+        _log_stage_metrics("PLAN", {}, raw_envelope, cost_override=2.50)
+
+        out = capsys.readouterr().err
+        assert "cost=$2.50" in out, f"override cost not in log: {out}"
+        assert "$4.09" not in out, f"raw envelope cost leaked into log: {out}"

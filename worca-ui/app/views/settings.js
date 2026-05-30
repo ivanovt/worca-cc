@@ -2805,6 +2805,17 @@ function pricingTab(worca, rerender) {
         </table>
       </div>
 
+      <sl-alert variant="neutral" open class="pricing-source-note">
+        <strong>When are these rates applied?</strong>
+        Only for model aliases whose <code>env</code> block in
+        <code>worca.models</code> sets <code>ANTHROPIC_BASE_URL</code>
+        (i.e. routes Claude CLI to a non-Anthropic endpoint). For runs against
+        the default Anthropic endpoint — including the built-in
+        <code>opus</code>, <code>sonnet</code>, and <code>haiku</code>
+        shorthands — Claude CLI's own cost is the source of truth; the rates
+        above are kept as a fallback for runs that end without a reported cost.
+      </sl-alert>
+
       <div class="pricing-info">
         <span class="settings-muted">Currency: ${pricing.currency || 'USD'}</span>
         <span class="settings-muted">Last updated: ${pricing.last_updated || 'N/A'}</span>

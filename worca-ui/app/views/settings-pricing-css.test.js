@@ -28,9 +28,15 @@ describe('Pricing table CSS', () => {
     expect(css).toMatch(/\.pricing-table\s+th\s*\{[^}]*letter-spacing/);
   });
 
-  it('has .pricing-model-name with uppercase (matches column header style)', () => {
-    expect(css).toMatch(
+  it('has .pricing-model-name without text-transform uppercase', () => {
+    expect(css).not.toMatch(
       /\.pricing-model-name\s*\{[^}]*text-transform:\s*uppercase/,
+    );
+  });
+
+  it('has .model-card .settings-card-title with text-transform none', () => {
+    expect(css).toMatch(
+      /\.model-card\s+\.settings-card-title\s*\{[^}]*text-transform:\s*none/,
     );
   });
 

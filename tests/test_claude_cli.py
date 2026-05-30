@@ -1380,6 +1380,27 @@ def test_run_agent_no_mcp_config_omits_flags():
 
 
 # ---------------------------------------------------------------------------
+# model_alias stamping
+# ---------------------------------------------------------------------------
+
+
+def test_run_agent_stamps_model_alias_on_result():
+    result_event = {"result": "ok"}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent("prompt", agent="planner", model_alias="glm-ds", settings={})
+    assert result["_model_alias"] == "glm-ds"
+
+
+def test_run_agent_omits_model_alias_when_none():
+    result_event = {"result": "ok"}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc):
+        result = run_agent("prompt", agent="planner", settings={})
+    assert "_model_alias" not in result
+
+
+# ---------------------------------------------------------------------------
 # terminate_current: migrated from src/worca/utils/test_claude_cli.py
 # ---------------------------------------------------------------------------
 
