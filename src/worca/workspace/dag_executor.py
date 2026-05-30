@@ -359,6 +359,15 @@ class DagExecutor:
             already_done = [p for p in projects if p in self._completed_projects]
             need_dispatch = [p for p in projects if p not in self._completed_projects]
 
+            # In master/existing plan modes, skip projects the planner
+            # marked as skip (they have no generated plan file).
+            if self._manifest.get("plan_mode") in ("master", "existing") and self._project_plans:
+                skipped = [p for p in need_dispatch if p not in self._project_plans]
+                for p in skipped:
+                    self._completed_projects[p] = {"status": "completed", "skipped": True}
+                    self._terminal_count += 1
+                need_dispatch = [p for p in need_dispatch if p not in skipped]
+
             blocked, runnable = self._partition_projects(need_dispatch)
 
             tier_started_at = datetime.now(timezone.utc)
