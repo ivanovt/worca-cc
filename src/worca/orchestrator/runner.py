@@ -836,8 +836,21 @@ def format_effort_log_line(
     return " ".join(parts)
 
 
-def _log_stage_metrics(stage_label: str, result: dict, raw_envelope: dict) -> None:
-    """Log detailed metrics from a completed stage."""
+def _log_stage_metrics(
+    stage_label: str,
+    result: dict,
+    raw_envelope: dict,
+    *,
+    cost_override: Optional[float] = None,
+) -> None:
+    """Log detailed metrics from a completed stage.
+
+    When `cost_override` is provided, it is used as the cost figure instead of
+    raw_envelope["total_cost_usd"]. The caller passes the override-aware value
+    from `extract_token_usage(..., settings_path=...)` so the human-readable
+    spawn-log line agrees with the persisted status.json record for
+    alt-endpoint aliases (where Claude CLI's raw cost is not authoritative).
+    """
     parts = []
 
     # Duration from envelope (more accurate than wall clock for agent time)
@@ -850,8 +863,9 @@ def _log_stage_metrics(stage_label: str, result: dict, raw_envelope: dict) -> No
     if turns:
         parts.append(f"turns={turns}")
 
-    # Cost
-    cost = raw_envelope.get("total_cost_usd")
+    # Cost — prefer the override-aware value from extract_token_usage when
+    # supplied, fall back to the raw envelope number otherwise.
+    cost = cost_override if cost_override is not None else raw_envelope.get("total_cost_usd")
     if cost:
         parts.append(f"cost=${cost:.2f}")
 
@@ -2936,15 +2950,24 @@ def run_pipeline(
             elapsed = time.time() - t0
             _log(f"{stage_label}{iter_label} completed ({_format_duration(elapsed)})", "ok")
 
+            # Extract token usage from the raw envelope first so the metrics
+            # log line below uses the same override-aware cost as the values
+            # persisted into status.json (otherwise an alt-endpoint alias
+            # silently shows Claude CLI's raw Anthropic-priced number in the
+            # spawn log while the run record carries the overridden $0/local).
+            usage = extract_token_usage(raw_envelope, settings_path=settings_path) if isinstance(raw_envelope, dict) else {}
+
             # Log detailed metrics
             if isinstance(raw_envelope, dict):
-                _log_stage_metrics(stage_label, result, raw_envelope)
+                _log_stage_metrics(
+                    stage_label,
+                    result,
+                    raw_envelope,
+                    cost_override=usage.get("total_cost_usd"),
+                )
 
             # Save full envelope for resume/debugging (per-iteration)
             _save_stage_output(current_stage, raw_envelope, logs_dir, iteration=iter_num)
-
-            # Extract token usage from the raw envelope
-            usage = extract_token_usage(raw_envelope, settings_path=settings_path) if isinstance(raw_envelope, dict) else {}
 
             # Emit cost events after token extraction
             if ctx and isinstance(raw_envelope, dict):
