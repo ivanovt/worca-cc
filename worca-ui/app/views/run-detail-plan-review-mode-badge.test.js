@@ -285,4 +285,37 @@ describe('plan_review issues dialog UX', () => {
     expect(html).toContain('plan-review-issues-dialog');
     expect(html).toContain('Feedback to planner');
   });
+
+  it('plan_review button shows the editor output (plan-002.md) when outcome is approve_with_edits', () => {
+    // In edit mode an actual edit produces plan-(N+1) — surface it here so
+    // the user sees the moves-forward plan, not just the input the editor
+    // reviewed. With outcome='approve_with_edits' on iter 1, the button
+    // should label plan-002.md (not plan-001.md).
+    const html = renderToString(
+      runDetailView(
+        makeRunWithId({
+          mode: 'review_and_edit',
+          outcome: 'approve_with_edits',
+          issues: sampleIssues,
+        }),
+      ),
+    );
+    expect(html).toContain('View plan · plan-002.md');
+  });
+
+  it('plan_review button stays on plan-001.md when the editor did not actually edit (approve)', () => {
+    // Honest-outcome no-edit case: outcome downgraded to 'approve' and
+    // plan-002 collapsed back, so the iter ends at plan-001.md.
+    const html = renderToString(
+      runDetailView(
+        makeRunWithId({
+          mode: 'review_and_edit',
+          outcome: 'approve',
+          issues: sampleIssues,
+        }),
+      ),
+    );
+    expect(html).toContain('View plan · plan-001.md');
+    expect(html).not.toContain('View plan · plan-002.md');
+  });
 });

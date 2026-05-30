@@ -141,11 +141,16 @@ function _copyToClipboardSimple(text) {
 function _planIterationButton(key, iter, run, rerender) {
   if ((key !== 'plan' && key !== 'plan_review') || !run?.id) return nothing;
   // Label each button with the exact plan filename it opens — no version
-  // shorthand. PLAN produced plan-001.md; plan_review iter N reviewed
-  // plan-NNN.md (review-mode loopback bumps the number each round; edit
-  // mode runs a single iter on plan-001). To navigate to other revisions
-  // (e.g. an editor's plan-002 output), use the in-dialog revision selector.
-  const rev = key === 'plan_review' && iter?.number ? iter.number : 1;
+  // shorthand. PLAN stage iter K wrote plan-K.md (review-mode loopback
+  // produces successive numbers). plan_review iter N reviewed plan-N.md and,
+  // in edit mode, produced plan-(N+1).md when the editor actually rewrote
+  // it; in that case surface the editor's output here. Review-mode revisions
+  // are produced by the NEXT planner iter, so plan_review iter N still ends
+  // at plan-N.
+  const iterNum = iter?.number || 1;
+  const isEditOutput =
+    key === 'plan_review' && iter?.outcome === 'approve_with_edits';
+  const rev = isEditOutput ? iterNum + 1 : iterNum;
   const filename = `plan-${String(rev).padStart(3, '0')}.md`;
   const label = `View plan · ${filename}`;
   return html`
