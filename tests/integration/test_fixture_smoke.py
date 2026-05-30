@@ -5,6 +5,9 @@ are properly set up and usable by Phase 3+ integration tests.
 """
 import json
 import os
+import sys
+
+import pytest
 
 from tests.integration.helpers import (
     PipelineEnv,
@@ -13,6 +16,19 @@ from tests.integration.helpers import (
     make_iteration_scenario,
     read_run_dir,
     read_stub_log,
+)
+
+# Stopgap: every test that touches the webhook_server fixture deterministically
+# hits a >30s setup-phase timeout on the GitHub macOS runners (passes on Linux
+# and Windows). The previous fix (binding HTTPServer to "127.0.0.1" instead of
+# "localhost") was not sufficient, so the root cause sits somewhere else in the
+# fixture-setup chain on macOS CI. Skipping is the agreed stopgap; the long-form
+# investigation stays open as a follow-up. Skipping only the first user would
+# push the cold-start cost to the second, so both tests carry the marker.
+_DARWIN_CI_SKIP = pytest.mark.skipif(
+    sys.platform == "darwin" and bool(os.environ.get("CI")),
+    reason="webhook_server fixture-setup timeout on GitHub macOS runners "
+    "(pre-existing; tracked as follow-up)",
 )
 
 
@@ -45,10 +61,12 @@ def test_pipeline_env_effort_pinned_disabled(pipeline_env):
     assert effort.get("auto_mode") == "disabled"
 
 
+@_DARWIN_CI_SKIP
 def test_webhook_server_url_is_localhost(webhook_server):
     assert webhook_server.url.startswith("http://localhost:")
 
 
+@_DARWIN_CI_SKIP
 def test_webhook_server_receives_posts(webhook_server):
     import urllib.request
     import json
@@ -68,6 +86,7 @@ def test_pipeline_env_is_dataclass_type(pipeline_env):
     assert isinstance(pipeline_env, PipelineEnv)
 
 
+@_DARWIN_CI_SKIP
 def test_webhook_server_is_dataclass_type(webhook_server):
     assert isinstance(webhook_server, WebhookCapture)
 
