@@ -941,7 +941,16 @@ class TestTemplatesExport:
         assert bundle["templates"][0]["id"] == "proj-tmpl"
 
     def test_export_include_models(self, capsys, tmp_path):
-        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        # Template must reference `opus` for it to survive the alias filter
+        # — bare `--include-models` no longer copies the whole worca.models
+        # block verbatim.
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "proj-tmpl", {
+            **_minimal("proj-tmpl", tier="project"),
+            "config": {"agents": {"planner": {"model": "opus"}}},
+        })
         out_file = tmp_path / "bundle.json"
         settings = {"models": {"opus": "claude-opus-4-6"}}
         self._run_export(
@@ -1195,6 +1204,13 @@ class TestTemplatesImport:
         settings_path.write_text(json.dumps({"worca": {}}))
 
         bundle = _make_bundle(
+            templates=[{
+                "id": "imported-tmpl",
+                "name": "Imported Template",
+                "description": "A template from a bundle",
+                "tags": ["fast"],
+                "config": {"agents": {"planner": {"model": "proxy"}}},
+            }],
             models={
                 "proxy": {
                     "id": "claude-opus-4-6",
@@ -1308,6 +1324,8 @@ class TestTemplatesImport:
         assert (project_dir / "imported-tmpl" / "template.json").exists()
 
     def test_import_with_models_and_pricing(self, capsys, tmp_path):
+        # Template must reference `opus` to survive the alias filter; bundle
+        # pricing top-level keys (currency) pass through regardless.
         builtin_dir = tmp_path / "builtin"
         builtin_dir.mkdir()
         project_dir = tmp_path / "project"
@@ -1318,6 +1336,13 @@ class TestTemplatesImport:
         settings_path.write_text(json.dumps({"worca": {"models": {"sonnet": "claude-sonnet-4-6"}}}))
 
         bundle = _make_bundle(
+            templates=[{
+                "id": "imported-tmpl",
+                "name": "Imported Template",
+                "description": "A template from a bundle",
+                "tags": ["fast"],
+                "config": {"agents": {"planner": {"model": "opus"}}},
+            }],
             models={"opus": "claude-opus-4-6"},
             pricing={"currency": "USD"},
         )
@@ -1433,6 +1458,9 @@ class TestImportRollbackOnSettingsFailure:
 
         bundle = _make_bundle(models={"opus": "claude-opus-4-6"})
         bundle["templates"][0]["name"] = "New"
+        # Template must reference `opus` for bundle_models to survive the
+        # alias filter and settings.json to be touched at all.
+        bundle["templates"][0]["config"] = {"agents": {"planner": {"model": "opus"}}}
         bundle_file = tmp_path / "bundle.json"
         bundle_file.write_text(json.dumps(bundle))
 
@@ -1442,15 +1470,20 @@ class TestImportRollbackOnSettingsFailure:
                 raise OSError("simulated cross-device move")
             return original_replace(src, dst)
 
+        # Interactive `r`eplace for the existing-template collision; new
+        # `opus` model in bundle doesn't collide with existing `sonnet`, so
+        # the alias-collision prompt is never reached.
         with patch(
             "worca.cli.templates._resolve_dirs",
             return_value=(builtin_dir, project_dir, user_dir),
         ), patch(
             "worca.cli.templates._find_settings_path",
             return_value=str(settings_path),
-        ), patch("os.replace", side_effect=failing_replace):
+        ), patch("os.replace", side_effect=failing_replace), patch(
+            "builtins.input", return_value="r",
+        ):
             with pytest.raises(SystemExit):
-                main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+                main(["templates", "import", "--from", str(bundle_file)])
 
         # settings.json restored to original content
         restored = json.loads(settings_path.read_text())
@@ -1589,7 +1622,22 @@ class TestImportDeepMerge:
             "other_top_level": {"keep_me": True},
         }))
 
+        # Templates must reference both aliases for them to survive the
+        # alias filter; bundle's `sonnet` matches the target's `sonnet`
+        # (no collision), so neither alias triggers the collision prompt.
         bundle = _make_bundle(
+            templates=[{
+                "id": "imported-tmpl",
+                "name": "Imported Template",
+                "description": "",
+                "tags": [],
+                "config": {
+                    "agents": {
+                        "planner": {"model": "opus"},
+                        "implementer": {"model": "sonnet"},
+                    },
+                },
+            }],
             models={"opus": "claude-opus-4-6", "sonnet": "claude-sonnet-4-6"},
         )
         bundle_file = tmp_path / "bundle.json"
@@ -1628,6 +1676,9 @@ class TestImportPlaceholderWarning:
         settings_path = settings_dir / "settings.json"
         settings_path.write_text(json.dumps({"worca": {}}))
 
+        # Template references `opus` so the bundle's opus model survives the
+        # alias filter; the FOO_TOKEN placeholder under models.opus.env must
+        # then land in settings and be reported.
         bundle = _make_bundle(
             templates=[{
                 "id": "with-secrets",
@@ -1637,6 +1688,7 @@ class TestImportPlaceholderWarning:
                 "config": {
                     "agents": {
                         "planner": {
+                            "model": "opus",
                             "env": {"ANTHROPIC_API_KEY": "<YOUR-SECRET-HERE>"},
                         },
                     },
@@ -1662,3 +1714,285 @@ class TestImportPlaceholderWarning:
         assert "placeholder" in err.lower()
         assert "ANTHROPIC_API_KEY" in err
         assert "FOO_TOKEN" in err
+
+
+# ---------------------------------------------------------------------------
+# Alias-scoped models/pricing filtering (export + import) and per-alias
+# collision UX on import. The general policy is:
+#   - export drops models/pricing entries the bundled templates don't
+#     reference (one-hop alias chain followed);
+#   - import does the same against the bundled templates that landed;
+#   - on top of that, import detects per-alias collisions against the
+#     target settings and refuses to silently overwrite them.
+# ---------------------------------------------------------------------------
+
+
+class TestExportAliasFiltering:
+    def _setup(self, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        return builtin_dir, project_dir, user_dir
+
+    def test_export_drops_unreferenced_models(self, capsys, tmp_path):
+        builtin_dir, project_dir, user_dir = self._setup(tmp_path)
+        _write_template(project_dir / "uses-opus", {
+            **_minimal("uses-opus", tier="project"),
+            "config": {"agents": {"planner": {"model": "opus"}}},
+        })
+        settings = {
+            "models": {
+                "opus": "claude-opus-4-6",
+                "sonnet": "claude-sonnet-4-6",
+                "haiku": "claude-haiku-4-5",
+            },
+        }
+        out_file = tmp_path / "bundle.json"
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._load_current_worca_config",
+            return_value=settings,
+        ):
+            main(["templates", "export", "--to", str(out_file), "--include-models"])
+
+        bundle = json.loads(out_file.read_text())
+        assert set(bundle["models"].keys()) == {"opus"}
+        err = capsys.readouterr().err
+        assert "haiku" in err and "sonnet" in err
+
+    def test_export_follows_one_hop_alias_chain(self, capsys, tmp_path):
+        """Template references glm-ds, glm-ds.id is opus — both must be kept."""
+        builtin_dir, project_dir, user_dir = self._setup(tmp_path)
+        _write_template(project_dir / "uses-glm", {
+            **_minimal("uses-glm", tier="project"),
+            "config": {"agents": {"planner": {"model": "glm-ds"}}},
+        })
+        settings = {
+            "models": {
+                "opus": "claude-opus-4-6",
+                "sonnet": "claude-sonnet-4-6",
+                "glm-ds": {"id": "opus", "env": {"ANTHROPIC_BASE_URL": "https://x/"}},
+            },
+        }
+        out_file = tmp_path / "bundle.json"
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._load_current_worca_config",
+            return_value=settings,
+        ):
+            main(["templates", "export", "--to", str(out_file), "--include-models"])
+
+        bundle = json.loads(out_file.read_text())
+        assert set(bundle["models"].keys()) == {"glm-ds", "opus"}
+        assert "sonnet" not in bundle["models"]
+
+    def test_export_pricing_keeps_non_models_keys(self, capsys, tmp_path):
+        """server_tools, currency, last_updated are project-wide context —
+        they must survive even when no templates reference any model."""
+        builtin_dir, project_dir, user_dir = self._setup(tmp_path)
+        _write_template(project_dir / "no-models", _minimal("no-models", tier="project"))
+        settings = {
+            "pricing": {
+                "models": {"opus": {"input_per_mtok": 5}},
+                "server_tools": {"web_search_per_request": 0.01},
+                "currency": "USD",
+                "last_updated": "2026-04-06",
+            },
+        }
+        out_file = tmp_path / "bundle.json"
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._load_current_worca_config",
+            return_value=settings,
+        ):
+            main(["templates", "export", "--to", str(out_file), "--include-pricing"])
+
+        bundle = json.loads(out_file.read_text())
+        # models filtered to empty (no template references anything)...
+        assert bundle["pricing"]["models"] == {}
+        # ...but the rest of the pricing context is preserved.
+        assert bundle["pricing"]["currency"] == "USD"
+        assert bundle["pricing"]["server_tools"]["web_search_per_request"] == 0.01
+        assert bundle["pricing"]["last_updated"] == "2026-04-06"
+
+    def test_export_no_model_refs_drops_models_block(self, capsys, tmp_path):
+        """Bare `--include-models` on a template that uses no models drops
+        the `models` key entirely rather than emitting an empty {}."""
+        builtin_dir, project_dir, user_dir = self._setup(tmp_path)
+        _write_template(project_dir / "no-models", _minimal("no-models", tier="project"))
+        settings = {"models": {"opus": "claude-opus-4-6"}}
+        out_file = tmp_path / "bundle.json"
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._load_current_worca_config",
+            return_value=settings,
+        ):
+            main(["templates", "export", "--to", str(out_file), "--include-models"])
+
+        bundle = json.loads(out_file.read_text())
+        assert "models" not in bundle
+        err = capsys.readouterr().err
+        assert "no templates reference any model alias" in err
+
+
+class TestImportAliasFiltering:
+    def test_import_drops_unreferenced_bundle_models(self, capsys, tmp_path):
+        """Bundle ships sonnet+haiku but the imported template only uses opus
+        — only opus should land in settings.json."""
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        bundle = _make_bundle(
+            templates=[{
+                "id": "imported-tmpl",
+                "name": "Imported",
+                "description": "",
+                "tags": [],
+                "config": {"agents": {"planner": {"model": "opus"}}},
+            }],
+            models={
+                "opus": "claude-opus-4-6",
+                "sonnet": "claude-sonnet-4-6",
+                "haiku": "claude-haiku-4-5",
+            },
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ):
+            main(["templates", "import", "--from", str(bundle_file), "--non-interactive"])
+
+        written = json.loads(settings_path.read_text())
+        assert set(written["worca"]["models"].keys()) == {"opus"}
+
+
+class TestImportAliasCollision:
+    """When bundle's alias would overwrite a different local value, the
+    importer must surface the collision and (in non-interactive mode)
+    default to preserving the local value."""
+
+    def _run(self, tmp_path, *, current_models, bundle_models, template_model="opus",
+             interactive_input=None):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {"models": current_models}}))
+
+        bundle = _make_bundle(
+            templates=[{
+                "id": "uses-alias",
+                "name": "Uses Alias",
+                "description": "",
+                "tags": [],
+                "config": {"agents": {"planner": {"model": template_model}}},
+            }],
+            models=bundle_models,
+        )
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        patches = [
+            patch("worca.cli.templates._resolve_dirs",
+                  return_value=(builtin_dir, project_dir, user_dir)),
+            patch("worca.cli.templates._find_settings_path",
+                  return_value=str(settings_path)),
+        ]
+        args = ["templates", "import", "--from", str(bundle_file)]
+        if interactive_input is None:
+            args.append("--non-interactive")
+        else:
+            patches.append(patch("builtins.input", return_value=interactive_input))
+
+        for p in patches:
+            p.__enter__()
+        try:
+            try:
+                main(args)
+            except SystemExit:
+                pass  # `abort` raises SystemExit — caller asserts side-effects
+        finally:
+            for p in reversed(patches):
+                p.__exit__(None, None, None)
+
+        return json.loads(settings_path.read_text())
+
+    def test_same_value_is_not_a_collision(self, capsys, tmp_path):
+        written = self._run(
+            tmp_path,
+            current_models={"opus": "claude-opus-4-6"},
+            bundle_models={"opus": "claude-opus-4-6"},
+        )
+        # Identical value: no prompt, no warning, value preserved.
+        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
+        err = capsys.readouterr().err
+        assert "would overwrite" not in err
+
+    def test_different_value_non_interactive_keeps_local(self, capsys, tmp_path):
+        """Bundle's opus differs from local's — non-interactive defaults to
+        skip (preserve target), bundle value dropped."""
+        written = self._run(
+            tmp_path,
+            current_models={"opus": "claude-opus-4-7"},  # newer locally
+            bundle_models={"opus": "claude-opus-4-6"},   # older in bundle
+        )
+        assert written["worca"]["models"]["opus"] == "claude-opus-4-7"
+        err = capsys.readouterr().err
+        assert "would overwrite" in err
+        assert "kept target's existing values" in err
+
+    def test_different_value_interactive_replace(self, capsys, tmp_path):
+        written = self._run(
+            tmp_path,
+            current_models={"opus": "claude-opus-4-7"},
+            bundle_models={"opus": "claude-opus-4-6"},
+            interactive_input="r",
+        )
+        # Replace: bundle wins.
+        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
+
+    def test_different_value_interactive_skip(self, capsys, tmp_path):
+        written = self._run(
+            tmp_path,
+            current_models={"opus": "claude-opus-4-7"},
+            bundle_models={"opus": "claude-opus-4-6"},
+            interactive_input="s",
+        )
+        # Skip: local preserved.
+        assert written["worca"]["models"]["opus"] == "claude-opus-4-7"
+
+    def test_new_alias_no_collision(self, capsys, tmp_path):
+        """Bundle adds a fresh alias that doesn't exist locally — no collision,
+        merge proceeds, no overwrite warning."""
+        written = self._run(
+            tmp_path,
+            current_models={"sonnet": "claude-sonnet-4-6"},
+            bundle_models={"opus": "claude-opus-4-6"},
+        )
+        assert written["worca"]["models"]["opus"] == "claude-opus-4-6"
+        assert written["worca"]["models"]["sonnet"] == "claude-sonnet-4-6"
+        err = capsys.readouterr().err
+        assert "would overwrite" not in err

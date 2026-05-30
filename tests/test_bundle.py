@@ -11,6 +11,7 @@ from worca.orchestrator.bundle import (
     ID_RE,
     SECRET_PLACEHOLDER,
     build_export_manifest,
+    collect_referenced_model_aliases,
     fetch_bundle,
     redact_bundle,
     validate_bundle,
@@ -588,3 +589,88 @@ class TestHttpsHardening:
         req.full_url = "https://a.example.com/bundle.json"
         with pytest.raises(ValueError, match="refusing redirect"):
             handler.redirect_request(req, None, 302, "Found", {}, "https://b.example.com/")
+
+
+# ---------------------------------------------------------------------------
+# Alias-collection helper — drives the filter that scopes worca.models and
+# worca.pricing.models to entries the bundled templates actually reference.
+# ---------------------------------------------------------------------------
+
+class TestCollectReferencedModelAliases:
+    """`collect_referenced_model_aliases` reads templates[*].config.agents.*.model
+    and follows one-hop {id: <alias>} chains in the models map."""
+
+    def test_no_templates_returns_empty(self):
+        assert collect_referenced_model_aliases([], {"opus": "claude-opus-4-6"}) == set()
+
+    def test_template_without_agents_returns_empty(self):
+        templates = [{"id": "t", "config": {}}]
+        assert collect_referenced_model_aliases(templates, {"opus": "x"}) == set()
+
+    def test_direct_reference_included(self):
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "opus"}}}}]
+        models = {"opus": "claude-opus-4-6", "sonnet": "claude-sonnet-4-6"}
+        assert collect_referenced_model_aliases(templates, models) == {"opus"}
+
+    def test_one_hop_id_chain_followed(self):
+        """glm-ds -> opus: both should be in the closed set."""
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "glm-ds"}}}}]
+        models = {
+            "opus": "claude-opus-4-6",
+            "glm-ds": {"id": "opus", "env": {"ANTHROPIC_BASE_URL": "https://x/"}},
+        }
+        assert collect_referenced_model_aliases(templates, models) == {"glm-ds", "opus"}
+
+    def test_chain_terminates_at_string_id(self):
+        """If id resolves to a non-alias (literal model name not in map),
+        chain stops without error."""
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "alt"}}}}]
+        models = {"alt": {"id": "claude-opus-4-6-direct", "env": {}}}
+        # alt is included; "claude-opus-4-6-direct" not in models -> not added.
+        assert collect_referenced_model_aliases(templates, models) == {"alt"}
+
+    def test_unknown_alias_silently_dropped(self):
+        """Typo or stale reference: not in models map, just skipped."""
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "typo"}}}}]
+        assert collect_referenced_model_aliases(templates, {"opus": "x"}) == set()
+
+    def test_multiple_agents_multiple_aliases(self):
+        templates = [{
+            "id": "t",
+            "config": {
+                "agents": {
+                    "planner": {"model": "opus"},
+                    "implementer": {"model": "sonnet"},
+                    "tester": {"model": "sonnet"},  # dedup
+                },
+            },
+        }]
+        models = {"opus": "x", "sonnet": "y", "haiku": "z"}
+        assert collect_referenced_model_aliases(templates, models) == {"opus", "sonnet"}
+
+    def test_multiple_templates_union(self):
+        templates = [
+            {"id": "a", "config": {"agents": {"planner": {"model": "opus"}}}},
+            {"id": "b", "config": {"agents": {"planner": {"model": "sonnet"}}}},
+        ]
+        models = {"opus": "x", "sonnet": "y", "haiku": "z"}
+        assert collect_referenced_model_aliases(templates, models) == {"opus", "sonnet"}
+
+    def test_cyclic_id_chain_terminates(self):
+        """Defensive: a malformed alias graph (a -> b -> a) must not loop."""
+        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "a"}}}}]
+        models = {"a": {"id": "b"}, "b": {"id": "a"}}
+        # Both reachable; the visited set short-circuits the cycle.
+        assert collect_referenced_model_aliases(templates, models) == {"a", "b"}
+
+    def test_malformed_inputs_dont_crash(self):
+        """Tolerate non-dict templates, non-dict configs, non-dict agents."""
+        templates = [
+            None,  # type: ignore
+            "not a dict",  # type: ignore
+            {"id": "ok", "config": None},
+            {"id": "ok2", "config": {"agents": "not a dict"}},
+            {"id": "ok3", "config": {"agents": {"planner": "not a dict"}}},
+            {"id": "ok4", "config": {"agents": {"planner": {"model": 123}}}},  # non-string model
+        ]
+        assert collect_referenced_model_aliases(templates, {"opus": "x"}) == set()

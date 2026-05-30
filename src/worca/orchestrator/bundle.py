@@ -81,6 +81,52 @@ CONFIG_ALLOWLIST: frozenset[str] = frozenset({
 })
 
 
+def collect_referenced_model_aliases(
+    templates: list[dict], all_models: dict
+) -> set[str]:
+    """Closed set of model aliases the given templates actually reference.
+
+    Walks each template's `config.agents.*.model` value and follows any
+    one-hop `{id: <other-alias>}` chain into `all_models`. Aliases not present
+    in `all_models` are skipped (caller may want to surface them separately
+    as typos / unknown refs).
+
+    Used by export to drop unreferenced entries from `worca.models` and
+    `worca.pricing.models`, and by import to apply the symmetric filter
+    against the bundle's contents.
+    """
+    referenced: set[str] = set()
+    to_visit: list[str] = []
+
+    for tmpl in templates:
+        if not isinstance(tmpl, dict):
+            continue
+        config = tmpl.get("config")
+        if not isinstance(config, dict):
+            continue
+        agents = config.get("agents")
+        if not isinstance(agents, dict):
+            continue
+        for agent_cfg in agents.values():
+            if isinstance(agent_cfg, dict):
+                model = agent_cfg.get("model")
+                if isinstance(model, str):
+                    to_visit.append(model)
+
+    while to_visit:
+        alias = to_visit.pop()
+        if alias in referenced or alias not in all_models:
+            continue
+        referenced.add(alias)
+        entry = all_models[alias]
+        if isinstance(entry, dict):
+            sub_id = entry.get("id")
+            if isinstance(sub_id, str):
+                to_visit.append(sub_id)
+
+    return referenced
+
+
 def build_export_manifest(
     templates: list[dict],
     models: dict | None = None,

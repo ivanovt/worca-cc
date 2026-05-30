@@ -24,6 +24,7 @@ from worca.orchestrator.bundle import (
     ID_RE,
     SECRET_PLACEHOLDER,
     build_export_manifest,
+    collect_referenced_model_aliases,
     fetch_bundle,
     redact_bundle,
     validate_bundle,
@@ -455,8 +456,20 @@ def cmd_templates_export(args):
             entry["params"] = tmpl.params
         templates.append(entry)
 
-    models = worca_config.get("models") if args.include_models else None
-    pricing = worca_config.get("pricing") if args.include_pricing else None
+    all_models = worca_config.get("models") or {}
+    referenced_aliases = collect_referenced_model_aliases(templates, all_models)
+
+    models = None
+    if args.include_models:
+        models, _ = _filter_models_by_aliases(
+            all_models, referenced_aliases, direction="export"
+        )
+
+    pricing = None
+    if args.include_pricing:
+        pricing, _ = _filter_pricing_by_aliases(
+            worca_config.get("pricing") or {}, referenced_aliases, direction="export"
+        )
 
     manifest = build_export_manifest(templates, models=models, pricing=pricing)
     redacted, redacted_paths = redact_bundle(manifest)
@@ -586,6 +599,27 @@ def cmd_templates_import(args):
     settings_patch: dict = {}
     settings_path = _find_settings_path()
 
+    # Filter bundle's models/pricing to aliases actually referenced by templates
+    # that will land. Anything else is over-inclusion — it would silently
+    # inject entries the user didn't ask for and may overwrite their existing
+    # aliases. Mirror of the same filter on export.
+    if bundle_models or bundle_pricing:
+        imported_templates_list = list(to_import.values())
+        all_bundle_models = bundle_models or {}
+        referenced = collect_referenced_model_aliases(
+            imported_templates_list, all_bundle_models
+        )
+        if bundle_models:
+            bundle_models, _ = _filter_models_by_aliases(
+                bundle_models, referenced, direction="import"
+            )
+        if bundle_pricing:
+            bundle_pricing, _ = _filter_pricing_by_aliases(
+                bundle_pricing, referenced, direction="import"
+            )
+
+    # Apply reserved-env-key stripping in place so collision comparison and
+    # downstream merge both see the sanitized values.
     if bundle_models:
         cleaned_models: dict = {}
         for model_key, model_entry in bundle_models.items():
@@ -600,7 +634,18 @@ def cmd_templates_import(args):
                 if not safe_env:
                     del model_entry["env"]
             cleaned_models[model_key] = model_entry
-        settings_patch["models"] = cleaned_models
+        bundle_models = cleaned_models
+
+    # Detect per-alias collisions against the target's current settings and
+    # let the user decide (or default to skip in non-interactive mode). This
+    # mirrors the per-template collision UX rather than silently letting the
+    # bundle overwrite local model/pricing definitions via deep_merge.
+    bundle_models, bundle_pricing = _resolve_settings_alias_collisions(
+        bundle_models, bundle_pricing, settings_path, non_interactive
+    )
+
+    if bundle_models:
+        settings_patch["models"] = bundle_models
 
     if bundle_pricing:
         settings_patch["pricing"] = bundle_pricing
@@ -644,6 +689,165 @@ def cmd_templates_import(args):
     if skipped_ids:
         summary += f" (skipped: {', '.join(skipped_ids)})"
     print(summary)
+
+
+def _filter_models_by_aliases(
+    all_models: dict, referenced: set[str], *, direction: str
+) -> tuple[dict | None, list[str]]:
+    """Restrict `all_models` to entries in `referenced`.
+
+    Returns (filtered_dict_or_None, dropped_aliases). `None` is returned (not
+    `{}`) when no entries survive, so callers can skip emitting the key
+    entirely. Drops are logged to stderr with the given `direction` label
+    ("export" / "import") so users can tell why the bundle is smaller than
+    expected.
+    """
+    if not all_models:
+        return None, []
+    filtered = {k: v for k, v in all_models.items() if k in referenced}
+    dropped = sorted(set(all_models) - set(filtered))
+    if dropped:
+        print(
+            f"info: dropped {len(dropped)} unreferenced model alias(es) "
+            f"from {direction}: {', '.join(dropped)}",
+            file=sys.stderr,
+        )
+    if not filtered:
+        if referenced:
+            # Bundle/templates referenced aliases we couldn't resolve — surface that.
+            print(
+                f"info: --include-models had no effect on {direction} — referenced "
+                f"alias(es) {sorted(referenced)} not found in models map",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"info: --include-models had no effect on {direction} — no templates "
+                "reference any model alias",
+                file=sys.stderr,
+            )
+        return None, dropped
+    return filtered, dropped
+
+
+def _filter_pricing_by_aliases(
+    all_pricing: dict, referenced: set[str], *, direction: str
+) -> tuple[dict | None, list[str]]:
+    """Restrict `pricing.models` to entries in `referenced`; keep other
+    top-level pricing keys (`server_tools`, `currency`, `last_updated`, ...)
+    intact — they are project-wide context, not alias-specific.
+
+    Returns (filtered_dict_or_None, dropped_aliases). Returns `None` when
+    `all_pricing` is empty.
+    """
+    if not all_pricing:
+        return None, []
+    pricing_models = all_pricing.get("models") or {}
+    filtered_pm = {k: v for k, v in pricing_models.items() if k in referenced}
+    dropped = sorted(set(pricing_models) - set(filtered_pm))
+    if dropped:
+        print(
+            f"info: dropped {len(dropped)} unreferenced pricing entry(ies) "
+            f"from {direction}: {', '.join(dropped)}",
+            file=sys.stderr,
+        )
+    result = {**all_pricing}
+    if "models" in result:
+        result["models"] = filtered_pm
+    return result, dropped
+
+
+def _resolve_settings_alias_collisions(
+    bundle_models: dict | None,
+    bundle_pricing: dict | None,
+    settings_path: str | None,
+    non_interactive: bool,
+) -> tuple[dict | None, dict | None]:
+    """For each alias the bundle would merge into `settings.worca.models` or
+    `settings.worca.pricing.models`, compare against the target's current
+    value. Surface collisions (different values for the same key) and either
+    skip them (non-interactive / EOF) or prompt for replace/skip/abort.
+
+    No prompt is shown when collisions are absent. The reason this exists at
+    all is that the underlying `deep_merge` lets bundle values silently
+    overwrite local aliases — which is fine for additive merges but a real
+    footgun when the bundle ships e.g. `opus: claude-opus-4-6` over a local
+    `opus: claude-opus-4-7`.
+    """
+    current_models: dict = {}
+    current_pricing_models: dict = {}
+    if settings_path:
+        sp = Path(settings_path)
+        if sp.exists():
+            try:
+                current_settings = json.loads(sp.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                current_settings = {}
+            worca_cfg = (current_settings.get("worca") or {}) if isinstance(current_settings, dict) else {}
+            current_models = worca_cfg.get("models") or {}
+            current_pricing_models = (worca_cfg.get("pricing") or {}).get("models") or {}
+
+    model_collisions = sorted(
+        k for k, v in (bundle_models or {}).items()
+        if k in current_models and current_models[k] != v
+    )
+    pricing_models_block = (bundle_pricing or {}).get("models") or {}
+    pricing_collisions = sorted(
+        k for k, v in pricing_models_block.items()
+        if k in current_pricing_models and current_pricing_models[k] != v
+    )
+
+    if not model_collisions and not pricing_collisions:
+        return bundle_models, bundle_pricing
+
+    summary_parts = []
+    if model_collisions:
+        summary_parts.append(f"models: {', '.join(model_collisions)}")
+    if pricing_collisions:
+        summary_parts.append(f"pricing.models: {', '.join(pricing_collisions)}")
+    print(
+        f"warning: bundle would overwrite existing values for {'; '.join(summary_parts)}",
+        file=sys.stderr,
+    )
+
+    def _drop_collisions(bm, bp):
+        if bm is not None:
+            bm = {k: v for k, v in bm.items() if k not in model_collisions}
+            if not bm:
+                bm = None
+        if bp is not None and isinstance(bp.get("models"), dict):
+            new_pm = {k: v for k, v in bp["models"].items() if k not in pricing_collisions}
+            bp = {**bp, "models": new_pm}
+        return bm, bp
+
+    if non_interactive:
+        print(
+            "  non-interactive: kept target's existing values, skipped bundle's overwrites",
+            file=sys.stderr,
+        )
+        return _drop_collisions(bundle_models, bundle_pricing)
+
+    while True:
+        try:
+            answer = input("[r]eplace all / [s]kip collided / [a]bort? ")
+        except EOFError:
+            print(
+                "  no stdin: kept target's existing values, skipped bundle's overwrites",
+                file=sys.stderr,
+            )
+            return _drop_collisions(bundle_models, bundle_pricing)
+        choice = answer.strip().lower()
+        if choice.startswith("a"):
+            print("aborted", file=sys.stderr)
+            raise SystemExit(1)
+        if choice.startswith("r"):
+            return bundle_models, bundle_pricing
+        if choice.startswith("s"):
+            return _drop_collisions(bundle_models, bundle_pricing)
+        print(
+            f"  unrecognized choice {answer!r} — enter r, s, or a",
+            file=sys.stderr,
+        )
 
 
 def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:

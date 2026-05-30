@@ -34,11 +34,11 @@ Summarize the available templates to the user in one compact table: ID, tier, an
 
 ### Phase 1: Intent interview
 
-Use **batched `AskUserQuestion`** — present all questions in a single message so the user answers them at once, not iteratively.
+Use **batched `AskUserQuestion`** — present each batch in a single message so the user answers them at once, not iteratively. `AskUserQuestion` caps each call at 4 questions and each question at 4 options, so the interview is split into two batches. Batch 2 also lets follow-ups (model tier, plan-review mode) react to Batch 1 answers.
 
-Ask these questions (adapt phrasing to what you already know from the conversation):
+**Batch 1 (4 questions — purpose, rigor, stage toggles):**
 
-1. **Purpose / use-case** — "What kind of work is this template for?" Options: feature development, bug fixing, refactoring, investigation/analysis, test coverage, quick one-off fix, other.
+1. **Purpose / use-case** — "What kind of work is this template for?" Options: feature development, bug fixing, refactoring, investigation/analysis. (If none fit, the user picks "Other" — automatically offered by the harness — and types free-text.)
 
 2. **Rigor vs speed** — "How thorough should the pipeline be?" Options:
    - Full rigor (plan review + learn + all approval gates)
@@ -46,31 +46,39 @@ Ask these questions (adapt phrasing to what you already know from the conversati
    - Fast (skip optional stages, minimal loops)
    - Minimal (bare minimum — plan + implement only)
 
-3. **Stages to toggle** — "Which optional stages should be ON?" (multi-select). Options:
-   - Plan review (`stages.plan_review.enabled`)
+3. **Core stages to toggle** — "Which production stages should be ON?" (multi-select, 3 options). Options:
    - Test (`stages.test.enabled`)
    - Code review (`stages.review.enabled`)
    - PR creation (`stages.pr.enabled`)
-   - Learn (`stages.learn.enabled`)
 
    Pre-select based on the rigor answer. Let the user override.
 
-4. **Plan review mode** — only ask this if Plan review is ON from question 3. "Which plan review mode?" Options:
+4. **Advanced governance stages to toggle** — "Which advanced governance stages should be ON?" (multi-select, 2 options). Options:
+   - Plan review (`stages.plan_review.enabled`)
+   - Learn (`stages.learn.enabled`)
+
+   Pre-select based on the rigor answer (Full rigor → both on; Balanced/Fast/Minimal → both off).
+
+**Batch 2 (2-3 questions — plan-review mode if enabled, governance override, model tier):**
+
+5. **Plan review mode** — *only include this question in Batch 2 if Plan review was selected in Batch 1 (question 4).* "Which plan review mode?" Options:
    - Review (default) — reviewer sends feedback, planner revises in a loop. Preserves independent verification (two agents, two perspectives) but costs extra iterations (`stages.plan_review.mode = "review"`)
    - Review & Edit — reviewer can directly edit the plan, shortcutting the loop. Faster (often single-pass) but the reviewer is both critic and author, losing the independent-verification trade-off (`stages.plan_review.mode = "review_and_edit"`)
 
-5. **Governance override** — "Should the project enforce a specific plan review mode?" Options:
+6. **Governance override** — "Should the project enforce a specific plan review mode?" Options:
    - Auto (default) — mode comes from the template or pipeline config, no enforcement (`governance.plan_review_enforce = "auto"`)
    - Enforce review — always use review mode regardless of template (`governance.plan_review_enforce = "review"`)
    - Enforce review & edit — always use review-and-edit regardless of template (`governance.plan_review_enforce = "review_and_edit"`)
 
-6. **Model tier** — "Which model tier for key agents?" Options:
+7. **Model tier** — "Which model tier for key agents?" Options:
    - All Opus (thorough, slower)
    - Opus planning + Sonnet implementation (balanced — the default)
    - All Sonnet (fastest, lower quality on complex tasks)
    - Custom (will ask per-agent in a follow-up)
 
 If the user selected "Custom" for model tier, ask a follow-up with per-agent model selection for planner, coordinator, implementer, tester, and reviewer.
+
+**Do not combine the two batches into a single `AskUserQuestion` call** — six (or seven) questions exceeds the 4-question cap and the call will fail with `Invalid tool parameters`. Likewise, do not collapse the core + advanced stages back into a single 5-option question.
 
 ### Phase 2: Reuse-first proposal
 
