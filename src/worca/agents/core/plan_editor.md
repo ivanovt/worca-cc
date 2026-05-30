@@ -47,7 +47,12 @@ You receive the current implementation plan and the original work request. Your 
 Produce a structured result following the `plan_review.json` schema:
 
 - `outcome`: `"approve"` if no issues found; `"approve_with_edits"` if you rewrote the plan to resolve issues
-- `issues`: array of issue objects with `category`, `severity`, `description`, and optionally `suggestion` and `evidence`
+- `issues`: array of issue objects with `category`, `severity`, `description`, and optionally `suggestion`, `evidence`, and `resolution`
+- `resolution` (per issue, required when outcome is `approve_with_edits`): what you did about this issue. One of:
+  - `"edited"` — you rewrote `{{plan_file}}` to fix this issue. Set ONLY when you actually made a corresponding edit.
+  - `"deferred"` — the issue is real but you noted it for the implementer to address during implementation (the `suggestion` field should explain what the implementer should do).
+  - `"dismissed"` — false positive or trivial; recorded for the audit trail but no action needed.
+  The pipeline compares plan content before/after you run; if you did not actually modify the plan file, **every** `resolution: "edited"` value is automatically downgraded to `"deferred"` and the outcome to `"approve"` — so claiming `edited` without making the edit gains nothing, but mislabelling makes the audit trail misleading. Set `resolution` honestly.
 - `summary`: 1–3 sentence summary of your overall finding
 
 **Issue categories:** `completeness`, `feasibility`, `test_strategy`, `architecture`, `decomposition`, `risk`, `security`, `performance`, `api_assumption`

@@ -3217,6 +3217,17 @@ def run_pipeline(
                         outcome = "approve_with_edits"
                     else:
                         outcome = "approve"
+                        # Per-issue resolution backstop: the editor's
+                        # self-reported resolution='edited' is only credible
+                        # when the plan actually changed. With no real edit,
+                        # downgrade every "edited" claim to "deferred" so the
+                        # audit trail (status.json + PLAN_EDITED + UI dialog)
+                        # truthfully reflects what was written, not what was
+                        # claimed.
+                        if isinstance(result, dict):
+                            for _iss in result.get("issues") or []:
+                                if isinstance(_iss, dict) and _iss.get("resolution") == "edited":
+                                    _iss["resolution"] = "deferred"
                         if (run_dir and _pre and _post and _post != _pre
                                 and os.path.isfile(_post)):
                             try:

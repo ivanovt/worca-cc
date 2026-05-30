@@ -32,6 +32,11 @@
           },
           "evidence": {
             "type": "string"
+          },
+          "resolution": {
+            "description": "What the editor did about this issue. 'edited' = resolved by rewriting the plan; 'deferred' = noted for the implementer to address during implementation; 'dismissed' = false positive or trivial. Omit in review (read-only) mode. The pipeline's content-hash backstop downgrades all 'edited' values to 'deferred' if the plan file was not actually modified.",
+            "type": "string",
+            "enum": ["edited", "deferred", "dismissed"]
           }
         }
       }

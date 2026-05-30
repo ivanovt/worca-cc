@@ -47,9 +47,9 @@ function makeRun({
 describe('plan_review stage mode data', () => {
   // The header used to carry an always-on "review & edit" mode badge per the
   // original W-059 §6 audit triad. We dropped it: the mode is already implied
-  // by the dialog heading ("Issues resolved by reviewer" vs "Feedback to
-  // planner") and the approve_with_edits chip, so the header badge was
-  // redundant noise on top of an already-busy stage card.
+  // by the dialog heading ("Plan review findings" vs "Feedback to planner")
+  // and the approve_with_edits chip, so the header badge was redundant noise
+  // on top of an already-busy stage card.
   it('does not render a mode badge in the stage header', () => {
     const html = renderToString(
       runDetailView(
@@ -140,10 +140,13 @@ describe('plan_review issues panel labeling', () => {
       ),
     );
     expect(html).toContain('Feedback to planner');
-    expect(html).not.toContain('Issues resolved by reviewer');
+    expect(html).not.toContain('Plan review findings');
   });
 
-  it('shows "Issues resolved by reviewer" heading in review_and_edit mode', () => {
+  it('shows "Plan review findings" heading in review_and_edit mode', () => {
+    // Renamed from "Issues resolved by reviewer" once we started grouping
+    // issues by resolution — the umbrella heading no longer asserts that
+    // every listed issue was edited in the plan.
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -154,7 +157,7 @@ describe('plan_review issues panel labeling', () => {
         }),
       ),
     );
-    expect(html).toContain('Issues resolved by reviewer');
+    expect(html).toContain('Plan review findings');
     expect(html).not.toContain('Feedback to planner');
   });
 
@@ -200,7 +203,7 @@ describe('plan_review issues panel labeling', () => {
       ),
     );
     expect(html).not.toContain('Feedback to planner');
-    expect(html).not.toContain('Issues resolved by reviewer');
+    expect(html).not.toContain('Plan review findings');
   });
 
   it('does not render issues panel when output has no issues', () => {
@@ -208,7 +211,7 @@ describe('plan_review issues panel labeling', () => {
       runDetailView(makeRun({ mode: 'review', modeReason: 'default' })),
     );
     expect(html).not.toContain('Feedback to planner');
-    expect(html).not.toContain('Issues resolved by reviewer');
+    expect(html).not.toContain('Plan review findings');
   });
 
   it('shows "Feedback to planner" when mode is absent (default)', () => {
@@ -317,5 +320,110 @@ describe('plan_review issues dialog UX', () => {
     );
     expect(html).toContain('View plan · plan-001.md');
     expect(html).not.toContain('View plan · plan-002.md');
+  });
+});
+
+describe('plan_review issues dialog: grouping + chrome parity with plan dialog', () => {
+  function makeRunWithIssues(mode, issues) {
+    return {
+      id: 'test-run-002',
+      stages: {
+        plan: { status: 'completed', iterations: [{ number: 1 }] },
+        plan_review: {
+          status: 'completed',
+          mode,
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'approve_with_edits',
+              output: { issues, outcome: 'approve_with_edits', summary: 't' },
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  it('groups edit-mode issues into Resolved / Noted-for-implementer / Dismissed sections', () => {
+    const issues = [
+      {
+        category: 'architecture',
+        severity: 'major',
+        description: 'a',
+        resolution: 'edited',
+      },
+      {
+        category: 'feasibility',
+        severity: 'minor',
+        description: 'b',
+        resolution: 'deferred',
+      },
+      {
+        category: 'test_strategy',
+        severity: 'suggestion',
+        description: 'c',
+        resolution: 'dismissed',
+      },
+    ];
+    const html = renderToString(
+      runDetailView(makeRunWithIssues('review_and_edit', issues)),
+    );
+    expect(html).toContain('Resolved (edited in plan) (1)');
+    expect(html).toContain('Noted for implementer (1)');
+    expect(html).toContain('Dismissed (1)');
+  });
+
+  it('issues without an explicit resolution land under Noted-for-implementer (backward compatible)', () => {
+    // Old runs (and review-mode runs) have no resolution field — must not
+    // disappear, must surface as Noted so the audit trail stays complete.
+    const issues = [
+      {
+        category: 'architecture',
+        severity: 'major',
+        description: 'no resolution field',
+      },
+    ];
+    const html = renderToString(
+      runDetailView(makeRunWithIssues('review_and_edit', issues)),
+    );
+    expect(html).toContain('Noted for implementer (1)');
+    expect(html).not.toContain('Resolved (edited in plan)');
+  });
+
+  it('review mode renders a single ungrouped list (no resolution semantics)', () => {
+    const issues = [
+      { category: 'architecture', severity: 'major', description: 'x' },
+      { category: 'test_strategy', severity: 'minor', description: 'y' },
+    ];
+    const html = renderToString(
+      runDetailView(makeRunWithIssues('review', issues)),
+    );
+    // Review mode keeps "Feedback to planner" heading and does NOT show any
+    // resolution sub-sections.
+    expect(html).toContain('Feedback to planner');
+    expect(html).not.toContain('Resolved (edited in plan)');
+    expect(html).not.toContain('Noted for implementer');
+    expect(html).not.toContain('Dismissed');
+  });
+
+  it('dialog mirrors the plan dialog chrome (markdown-dialog class + Copy + Close)', () => {
+    const issues = [
+      {
+        category: 'architecture',
+        severity: 'major',
+        description: 'a',
+        resolution: 'edited',
+      },
+    ];
+    const html = renderToString(
+      runDetailView(makeRunWithIssues('review_and_edit', issues)),
+    );
+    // markdown-dialog gives shared chrome (scroll, sizing) with the plan dialog.
+    expect(html).toContain('plan-review-issues-dialog');
+    expect(html).toContain('markdown-dialog');
+    // Copy + Close buttons match the plan dialog's footer.
+    expect(html).toContain('btn-copy-plan-review-issues');
+    expect(html).toContain('btn-close-plan-review-issues');
   });
 });

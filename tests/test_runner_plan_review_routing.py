@@ -741,12 +741,19 @@ class TestEditModeBranch:
             if stage == Stage.PLAN:
                 return _mock_stage(stage, {"approved": True, "approach": "x", "tasks_outline": []})
             if stage == Stage.PLAN_REVIEW:
-                # Editor self-reports edits but writes nothing — observed in
-                # practice when the model defaults to reviewer behavior.
+                # Editor self-reports edits AND tags each issue resolution as
+                # "edited" — but writes nothing. The runner's content-hash
+                # check should catch the lie and downgrade both the outcome
+                # AND every per-issue resolution claim.
                 return _mock_stage(stage, {
                     "outcome": "approve_with_edits",
                     "issues": [
-                        {"severity": "major", "category": "feasibility", "description": "b"},
+                        {
+                            "severity": "major",
+                            "category": "feasibility",
+                            "description": "b",
+                            "resolution": "edited",
+                        },
                     ],
                     "summary": "Claimed edits but didn't write",
                 })
@@ -761,11 +768,18 @@ class TestEditModeBranch:
             stage_name = args[1] if len(args) > 1 else kwargs.get("stage_name")
             if stage_name == "plan_review":
                 captured_outcomes["plan_review"] = kwargs.get("outcome")
-            # Snapshot WORCA_PLAN_FILE at the moment plan_review's iteration
-            # is recorded — by then the runner has already collapsed any no-op
-            # plan-(N+1).md and re-pointed back to the pre-edit original.
-            if stage_name == "plan_review":
+                # Snapshot WORCA_PLAN_FILE at the moment plan_review's
+                # iteration is recorded — by then the runner has collapsed
+                # any no-op plan-(N+1).md and re-pointed back to the pre-edit
+                # original.
                 captured_outcomes["plan_file_env"] = os.environ.get("WORCA_PLAN_FILE", "")
+                # Capture the per-issue resolution values from the iteration's
+                # recorded output to verify the backstop downgraded them.
+                output = kwargs.get("output")
+                if isinstance(output, dict):
+                    captured_outcomes["issue_resolutions"] = [
+                        i.get("resolution") for i in (output.get("issues") or [])
+                    ]
             return _orig_ci(*args, **kwargs)
 
         with patch("worca.orchestrator.runner.complete_iteration", side_effect=tracking_complete):
@@ -790,6 +804,12 @@ class TestEditModeBranch:
         assert captured_outcomes.get("plan_file_env", "").endswith("plan-001.md"), (
             f"Expected plan_file_env to end with plan-001.md, got "
             f"{captured_outcomes.get('plan_file_env')!r}"
+        )
+        # Per-issue backstop: the editor's resolution='edited' claim is
+        # downgraded to 'deferred' since the file wasn't actually modified.
+        assert captured_outcomes.get("issue_resolutions") == ["deferred"], (
+            f"Expected issue_resolutions to be ['deferred'] (backstop downgrade), "
+            f"got {captured_outcomes.get('issue_resolutions')!r}"
         )
 
     def test_review_mode_does_not_emit_plan_edited(self, tmp_path):
