@@ -819,6 +819,24 @@ class TestWorcaTemplateSkillShipping:
         assert content.startswith("---")
         assert "name: worca-template" in content
 
+    def test_install_skills_copies_sibling_assets(self, tmp_path):
+        """_install_skills must copy non-SKILL.md sibling files (e.g. worca-notify's
+        send.mjs). Without this, the worca-notify skill would ship a SKILL.md that
+        instructs Claude to invoke a Node script that doesn't exist on the target."""
+        from worca.cli.init import _install_skills
+
+        source = Path(__file__).resolve().parent.parent / "src" / "worca"
+        git_root = tmp_path / "project"
+        git_root.mkdir()
+        _install_skills(source, git_root)
+        send_mjs = git_root / ".claude" / "skills" / "worca-notify" / "send.mjs"
+        skill_md = git_root / ".claude" / "skills" / "worca-notify" / "SKILL.md"
+        assert send_mjs.exists(), "worca-notify/send.mjs was not installed"
+        assert skill_md.exists(), "worca-notify/SKILL.md was not installed"
+        # send.mjs must be substantial (>= 1KB) — guards against a stray
+        # empty-file install if directory iteration ever silently fails.
+        assert send_mjs.stat().st_size > 1024
+
 
 # ---------------------------------------------------------------------------
 # worca templates export

@@ -22,6 +22,7 @@ node_modules/
 # Skills installed by `worca init` from src/worca/skills/ (source of truth lives there)
 .claude/skills/worca-analyze/
 .claude/skills/worca-template/
+.claude/skills/worca-notify/
 
 # Test artifacts
 test-results/

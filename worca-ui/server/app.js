@@ -865,6 +865,47 @@ export function createApp(options = {}) {
     res.json(integrations.status());
   });
 
+  // POST /api/integrations/send — fan out a NormalizedMessage to one or
+  // more chat platforms through the same allowlist + rate-limiter pipeline
+  // the worca event fan-out uses. Drives the worca-notify skill.
+  //
+  // Body shape:
+  //   {
+  //     platforms?: string[],         // omit → all enabled chat adapters
+  //     message: NormalizedMessage,   // { title, body: MessageSegment[], severity }
+  //     chat_id?: string              // override the configured chat_id
+  //   }
+  //
+  // Returns 200 with `{ results: [{ platform, ok, error? }] }` for both
+  // total-success and partial-success cases; 4xx only for malformed input.
+  app.post('/api/integrations/send', async (req, res) => {
+    const integrations = app.locals.integrations;
+    if (!integrations) {
+      return res
+        .status(503)
+        .json({ error: 'integrations subsystem not initialized' });
+    }
+    const { platforms, message, chat_id: chatIdOverride } = req.body ?? {};
+    if (!message || typeof message !== 'object') {
+      return res
+        .status(400)
+        .json({ error: 'message is required and must be an object' });
+    }
+    if (platforms !== undefined && !Array.isArray(platforms)) {
+      return res.status(400).json({ error: 'platforms must be an array' });
+    }
+    try {
+      const out = await integrations.sendOutbound({
+        platforms,
+        message,
+        chatIdOverride,
+      });
+      res.json(out);
+    } catch (err) {
+      res.status(400).json({ error: String(err?.message ?? err) });
+    }
+  });
+
   // GET /api/integrations/config — return saved config (secrets redacted)
   app.get('/api/integrations/config', (_req, res) => {
     const configPath = join(prefsDir, 'integrations', 'config.json');
