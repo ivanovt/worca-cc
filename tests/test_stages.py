@@ -702,6 +702,54 @@ class TestStageConfigModelEnv:
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "full-id"
 
+    def test_stage_config_records_model_alias_when_distinct_from_id(self, tmp_path):
+        """The user-typed alias survives next to the resolved id, so the UI can
+        render ``Model: glm-ds  ID: opus`` without re-resolving."""
+        settings = {
+            "worca": {
+                "models": {
+                    "glm-ds": {"id": "opus", "env": {"ANTHROPIC_BASE_URL": "https://example.com"}}
+                },
+                "agents": {"planner": {"model": "glm-ds"}}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model"] == "opus"
+        assert config["model_alias"] == "glm-ds"
+
+    def test_stage_config_model_alias_is_none_when_alias_equals_id(self, tmp_path):
+        """Plain-model configs (no alias->id mapping) record model_alias=None so
+        the UI falls back to the single 'Model:' line — backward-compatible."""
+        settings = {
+            "worca": {
+                "models": {"opus": "claude-opus-4-6"},
+                "agents": {"planner": {"model": "opus"}}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        # The user typed "opus", resolve_model returns "claude-opus-4-6",
+        # so they differ — alias preserved.
+        assert config["model"] == "claude-opus-4-6"
+        assert config["model_alias"] == "opus"
+
+    def test_stage_config_model_alias_is_none_for_passthrough_id(self, tmp_path):
+        """When the user types an id with no model-map entry (passthrough), the
+        alias equals the id, so model_alias stays None — no UI churn."""
+        settings = {
+            "worca": {
+                "agents": {"planner": {"model": "claude-opus-4-6"}}
+            }
+        }
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps(settings))
+        config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
+        assert config["model"] == "claude-opus-4-6"
+        assert config["model_alias"] is None
+
 
 class TestResolvePlanReviewMode:
     """Tests for resolve_plan_review_mode() precedence logic."""

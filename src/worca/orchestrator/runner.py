@@ -2455,6 +2455,15 @@ def run_pipeline(
                 "started_at": stage_started,
                 "agent": stage_config["agent"],
                 "model": stage_config["model"],
+                # model_alias preserves the user-typed alias (e.g. "glm-ds")
+                # alongside the resolved id ("opus"). Omit when the user's
+                # configured value IS already the resolved id, so old runs and
+                # plain-model configs are unchanged on disk (backward compat).
+                **(
+                    {"model_alias": stage_config["model_alias"]}
+                    if stage_config.get("model_alias")
+                    else {}
+                ),
             }
             if prev_iterations:
                 status["stages"][current_stage.value]["iterations"] = prev_iterations
@@ -2509,12 +2518,19 @@ def run_pipeline(
                     _effort_env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = _eff_level
 
             # Start a new iteration record
+            _iter_kwargs = {
+                "agent": stage_config["agent"],
+                "model": stage_config["model"],
+                "trigger": trigger,
+                "effort": _effort_dict,
+            }
+            # Only set model_alias when distinct from the resolved id — keeps
+            # old runs and plain-model configs unchanged on disk.
+            if stage_config.get("model_alias"):
+                _iter_kwargs["model_alias"] = stage_config["model_alias"]
             iter_record = start_iteration(
                 status, current_stage.value,
-                agent=stage_config["agent"],
-                model=stage_config["model"],
-                trigger=trigger,
-                effort=_effort_dict,
+                **_iter_kwargs,
             )
             iter_num = iter_record["number"]
             save_status(status, actual_status_path)

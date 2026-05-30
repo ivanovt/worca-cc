@@ -118,9 +118,15 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     model_map = worca.get("models", {})
     raw_model = agent_config.get("model", "sonnet")
     model_id, model_env = _resolve_model(raw_model, model_map)
+    # model_alias preserves what the user typed (e.g. "glm-ds"), so the UI can
+    # show "Model: glm-ds  ID: opus" — the alias is otherwise lost at this seam
+    # because the runner only persists the resolved id downstream. None means
+    # "no distinct alias" (the user's configured value is already a model id).
+    model_alias = raw_model if raw_model != model_id else None
     return {
         "agent": agent_name,
         "model": model_id,
+        "model_alias": model_alias,
         "model_env": model_env,
         "max_turns": agent_config.get("max_turns", 30),
         "effort": agent_config.get("effort"),

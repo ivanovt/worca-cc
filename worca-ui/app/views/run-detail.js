@@ -1286,6 +1286,9 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
     status: stage.status,
     agent: stageAgent || undefined,
     model: stageModel || undefined,
+    // model_alias preserves the user-typed alias (e.g. "glm-ds") next to the
+    // resolved id ("opus"). Omitted on old runs and plain-model configs.
+    model_alias: stage.model_alias || undefined,
     cost_usd: _stageCost(iterations),
     token_usage: stage.token_usage || undefined,
     duration: wallMs > 0 ? formatDuration(wallMs) : undefined,
@@ -1313,6 +1316,7 @@ export function _stageToJson(key, stage, stageAgent, stageModel, promptData) {
       trigger: it.trigger || undefined,
       agent: it.agent || undefined,
       model: it.model || undefined,
+      model_alias: it.model_alias || undefined,
       turns: it.turns || undefined,
       cost_usd: it.cost_usd || undefined,
       duration_ms: it.duration_ms || undefined,
@@ -1370,6 +1374,22 @@ function timingStripView(startedAt, completedAt, extra = nothing) {
   `;
 }
 
+// Render the Model: (alias) + ID: (resolved id) pair when an alias was
+// recorded on the stage/iteration. Backward-compatible: when model_alias is
+// missing (old runs, plain-model configs) or matches the resolved id, falls
+// back to the single "Model: <id>" label so existing runs render unchanged.
+function _modelInfoView(model, modelAlias) {
+  if (!model) return nothing;
+  const hasAlias = !!modelAlias && modelAlias !== model;
+  if (!hasAlias) {
+    return html`<span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${model}</span></span>`;
+  }
+  return html`
+    <span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${modelAlias}</span></span>
+    <span class="stage-info-item"><span class="meta-label">ID:</span> <span class="meta-value">${model}</span></span>
+  `;
+}
+
 function _iterationDetailView(
   iter,
   stageKey,
@@ -1396,7 +1416,7 @@ function _iterationDetailView(
       ${timingStripView(iter.started_at, iter.completed_at)}
       <div class="stage-info-strip">
         ${agentName ? html`<span class="stage-info-item"><span class="meta-label">Agent:</span> <span class="meta-value">${agentName}</span></span>` : nothing}
-        ${model ? html`<span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${model}</span></span>` : nothing}
+        ${_modelInfoView(model, iter.model_alias)}
         ${iter.turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iter.turns}</span></span>` : nothing}
         ${iter.duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iter.duration_api_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round((iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at)) * 100)}%)` : ''}</span></span>` : nothing}
         ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
@@ -1951,7 +1971,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${timingStripView(stage.started_at, stage.completed_at)}
                       <div class="stage-info-strip">
                         ${stageAgent ? html`<span class="stage-info-item"><span class="meta-label">Agent:</span> <span class="meta-value">${stageAgent}</span></span>` : nothing}
-                        ${stageModel ? html`<span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${stageModel}</span></span>` : nothing}
+                        ${_modelInfoView(stageModel, stage.model_alias)}
                         ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iterations[0].duration_api_ms)}${stageMs > 0 ? ` (${Math.round((iterations[0].duration_api_ms / stageMs) * 100)}%)` : ''}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
