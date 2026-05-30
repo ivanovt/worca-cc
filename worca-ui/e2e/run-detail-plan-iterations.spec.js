@@ -62,23 +62,28 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
         .first();
       await planPanel.locator('.stage-panel-header').click();
       await expect(planPanel).toHaveAttribute('open', '', { timeout: 5000 });
-      await planPanel.locator('.btn-view-run-plan').first().click();
+      // Button label is the exact filename the click opens — PLAN stage
+      // produced plan-001.md, so PLAN's button labels and opens that file.
+      const planBtn = planPanel.locator('.btn-view-run-plan').first();
+      await expect(planBtn).toContainText('plan-001.md');
+      await planBtn.click();
 
       const dialog = page.locator('sl-dialog.run-plan-dialog');
       await expect(dialog).toBeVisible({ timeout: 5000 });
 
-      // The latest revision (v2) is shown by default.
-      await expect(dialog).toContainText('REVISEDMARKER', { timeout: 5000 });
+      // Opens the labelled revision (v1, the planner's output).
+      await expect(dialog).toContainText('ORIGINALMARKER', { timeout: 5000 });
 
       // Both revisions are offered in the selector.
       await expect(dialog.locator('.plan-iter-btn')).toHaveCount(2);
 
-      // Switching to v1 (original) loads the original content.
+      // Switching to v2 (current) loads the revised content — exercises the
+      // selector wiring that the original assertion guarded.
       await dialog
-        .locator('.plan-iter-btn', { hasText: 'original' })
+        .locator('.plan-iter-btn', { hasText: 'current' })
         .first()
         .click();
-      await expect(dialog).toContainText('ORIGINALMARKER', { timeout: 5000 });
+      await expect(dialog).toContainText('REVISEDMARKER', { timeout: 5000 });
     } finally {
       await ctx.close();
     }
@@ -112,7 +117,9 @@ test.describe('run-detail plan revision viewer (W-061)', () => {
 
       const btn = reviewPanel.locator('.btn-view-run-plan');
       await expect(btn).toHaveCount(1);
-      await expect(btn).toContainText('v1');
+      // Label is the exact filename — plan_review iter-1 with outcome
+      // 'approve' (review-mode no-loopback case) ends at plan-001.md.
+      await expect(btn).toContainText('plan-001.md');
       await btn.click();
 
       const dialog = page.locator('sl-dialog.run-plan-dialog');
