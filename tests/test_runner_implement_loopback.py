@@ -230,11 +230,20 @@ class TestTestToImplementLoopbackPersistence:
             call_order.append(("save_context", None))
             return original_save_ctx(self, path)
 
+        # Return bead on initial claim, None on after-implement check so the
+        # pipeline drains after 1 bead and advances to TEST.
+        ready_calls = [0]
+        def mock_query_ready(*a, **kw):
+            ready_calls[0] += 1
+            if ready_calls[0] <= 1:
+                return {"id": "beads-aaa", "title": "Bead AAA"}
+            return None
+
         with patch("worca.orchestrator.runner.save_status", side_effect=tracking_save):
             with patch.object(PromptBuilder, "save_context", tracking_save_ctx):
                 with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
                     with patch("worca.orchestrator.runner._query_ready_bead",
-                               return_value={"id": "beads-aaa", "title": "Bead AAA"}):
+                               side_effect=mock_query_ready):
                         with patch("worca.orchestrator.runner._claim_bead", return_value=True):
                             with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                                 with patch("worca.orchestrator.runner.bd_close", return_value=True):
@@ -359,11 +368,20 @@ class TestReviewToImplementLoopbackPersistence:
             call_order.append(("save_context", None))
             return original_save_ctx(self, path)
 
+        # Return bead on initial claim, None on after-implement check so the
+        # pipeline drains after 1 bead and advances to REVIEW.
+        ready_calls = [0]
+        def mock_query_ready(*a, **kw):
+            ready_calls[0] += 1
+            if ready_calls[0] <= 1:
+                return {"id": "beads-aaa", "title": "Bead AAA"}
+            return None
+
         with patch("worca.orchestrator.runner.save_status", side_effect=tracking_save):
             with patch.object(PromptBuilder, "save_context", tracking_save_ctx):
                 with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
                     with patch("worca.orchestrator.runner._query_ready_bead",
-                               return_value={"id": "beads-aaa", "title": "Bead AAA"}):
+                               side_effect=mock_query_ready):
                         with patch("worca.orchestrator.runner._claim_bead", return_value=True):
                             with patch("worca.orchestrator.runner.bd_show", return_value={"description": ""}):
                                 with patch("worca.orchestrator.runner.bd_close", return_value=True):

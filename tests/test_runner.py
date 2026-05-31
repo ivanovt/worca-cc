@@ -20,6 +20,7 @@ from worca.orchestrator.runner import (
     _agent_path,
     LoopExhaustedError,
     PipelineError,
+    PipelineInterrupted,
 )
 from worca.orchestrator.stages import Stage
 
@@ -617,10 +618,14 @@ def test_bead_limit_derived_from_coordinator(tmp_path):
             return {"files_changed": [], "tests_added": []}, {"type": "result"}
         return {}, {"type": "result"}
 
-    # Always return a bead — the max_beads counter should be the limit
+    # Return beads until the queue drains after len(bead_ids) implementations.
+    # Each bead requires 2 calls (claim + after-implement check); the last
+    # after-implement check returns None to signal the queue is empty.
     call_count = [0]
     def mock_query_ready(allowed_ids=None, run_id=None):
         call_count[0] += 1
+        if call_count[0] >= 2 * len(bead_ids):
+            return None
         return {"id": f"beads-{call_count[0]:03d}", "title": f"Bead {call_count[0]}"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
@@ -1041,8 +1046,8 @@ def test_run_pipeline_gh_issue_complete_called_after_completed_at_set(tmp_path):
     assert "token_usage" in call_status
 
 
-def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
-    """Warning is logged when bd ready returns beads beyond expected count."""
+def test_bead_limit_warns_on_stale_beads(tmp_path):
+    """Safety cap raises PipelineInterrupted when bd ready never drains."""
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -1082,7 +1087,7 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
             return {"files_changed": [], "tests_added": []}, {"type": "result"}
         return {}, {"type": "result"}
 
-    # Mock _query_ready_bead to always return a bead (simulating stale beads)
+    # Mock _query_ready_bead to always return a bead (simulating a never-draining queue)
     def mock_query_ready(allowed_ids=None, run_id=None):
         return {"id": "beads-stale", "title": "Stale bead"}
 
@@ -1097,16 +1102,13 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
                                     with patch("worca.orchestrator.runner.create_branch"):
                                         with patch("worca.orchestrator.runner._write_pid"):
                                             with patch("worca.orchestrator.runner._remove_pid"):
-                                                run_pipeline(
-                                                    wr,
-                                                    plan_file=str(plan),
-                                                    settings_path=str(settings),
-                                                    status_path=status_path,
-                                                )
-
-    # Check that the stale bead warning was printed to stderr
-    captured = capsys.readouterr()
-    assert "stale beads" in captured.err.lower()
+                                                with pytest.raises(PipelineInterrupted, match="implement_incomplete"):
+                                                    run_pipeline(
+                                                        wr,
+                                                        plan_file=str(plan),
+                                                        settings_path=str(settings),
+                                                        status_path=status_path,
+                                                    )
 
 
 # --- gh_issue_fail integration (run_pipeline.py exception handlers) ---
