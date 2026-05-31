@@ -612,21 +612,25 @@ class TestCollectReferencedModelAliases:
         models = {"opus": "claude-opus-4-6", "sonnet": "claude-sonnet-4-6"}
         assert collect_referenced_model_aliases(templates, models) == {"opus"}
 
-    def test_one_hop_id_chain_followed(self):
-        """glm-ds -> opus: both should be in the closed set."""
+    def test_id_field_is_not_followed_into_other_aliases(self):
+        """`models["glm-ds"] = {"id": "opus", ...}` does NOT pull in
+        models["opus"]. `id` is the literal string passed to claude --model
+        (resolve_model is non-recursive in worca.utils.settings); pricing in
+        worca.utils.token_usage also looks up by alias name directly, never
+        by the id field. So `opus` is dead weight in this bundle even though
+        glm-ds's id happens to match an existing alias name."""
         templates = [{"id": "t", "config": {"agents": {"planner": {"model": "glm-ds"}}}}]
         models = {
             "opus": "claude-opus-4-6",
             "glm-ds": {"id": "opus", "env": {"ANTHROPIC_BASE_URL": "https://x/"}},
         }
-        assert collect_referenced_model_aliases(templates, models) == {"glm-ds", "opus"}
+        assert collect_referenced_model_aliases(templates, models) == {"glm-ds"}
 
-    def test_chain_terminates_at_string_id(self):
-        """If id resolves to a non-alias (literal model name not in map),
-        chain stops without error."""
+    def test_id_field_value_is_irrelevant(self):
+        """`id` is never used as a lookup key, so its value (CLI shorthand,
+        full model ID, anything else) doesn't matter to the filter."""
         templates = [{"id": "t", "config": {"agents": {"planner": {"model": "alt"}}}}]
         models = {"alt": {"id": "claude-opus-4-6-direct", "env": {}}}
-        # alt is included; "claude-opus-4-6-direct" not in models -> not added.
         assert collect_referenced_model_aliases(templates, models) == {"alt"}
 
     def test_unknown_alias_silently_dropped(self):
@@ -655,13 +659,6 @@ class TestCollectReferencedModelAliases:
         ]
         models = {"opus": "x", "sonnet": "y", "haiku": "z"}
         assert collect_referenced_model_aliases(templates, models) == {"opus", "sonnet"}
-
-    def test_cyclic_id_chain_terminates(self):
-        """Defensive: a malformed alias graph (a -> b -> a) must not loop."""
-        templates = [{"id": "t", "config": {"agents": {"planner": {"model": "a"}}}}]
-        models = {"a": {"id": "b"}, "b": {"id": "a"}}
-        # Both reachable; the visited set short-circuits the cycle.
-        assert collect_referenced_model_aliases(templates, models) == {"a", "b"}
 
     def test_malformed_inputs_dont_crash(self):
         """Tolerate non-dict templates, non-dict configs, non-dict agents."""

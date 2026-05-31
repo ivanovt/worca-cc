@@ -1762,8 +1762,11 @@ class TestExportAliasFiltering:
         err = capsys.readouterr().err
         assert "haiku" in err and "sonnet" in err
 
-    def test_export_follows_one_hop_alias_chain(self, capsys, tmp_path):
-        """Template references glm-ds, glm-ds.id is opus — both must be kept."""
+    def test_export_keeps_only_directly_referenced_alias(self, capsys, tmp_path):
+        """Template references glm-ds. glm-ds.id happens to be "opus" but
+        that does NOT pull worca.models["opus"] into the bundle — `id` is the
+        literal string passed to claude --model, not a recursive alias
+        reference. Only glm-ds should survive."""
         builtin_dir, project_dir, user_dir = self._setup(tmp_path)
         _write_template(project_dir / "uses-glm", {
             **_minimal("uses-glm", tier="project"),
@@ -1787,7 +1790,8 @@ class TestExportAliasFiltering:
             main(["templates", "export", "--to", str(out_file), "--include-models"])
 
         bundle = json.loads(out_file.read_text())
-        assert set(bundle["models"].keys()) == {"glm-ds", "opus"}
+        assert set(bundle["models"].keys()) == {"glm-ds"}
+        assert "opus" not in bundle["models"]
         assert "sonnet" not in bundle["models"]
 
     def test_export_pricing_keeps_non_models_keys(self, capsys, tmp_path):

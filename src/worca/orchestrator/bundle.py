@@ -84,19 +84,27 @@ CONFIG_ALLOWLIST: frozenset[str] = frozenset({
 def collect_referenced_model_aliases(
     templates: list[dict], all_models: dict
 ) -> set[str]:
-    """Closed set of model aliases the given templates actually reference.
+    """Set of `worca.models` aliases the given templates actually reference.
 
-    Walks each template's `config.agents.*.model` value and follows any
-    one-hop `{id: <other-alias>}` chain into `all_models`. Aliases not present
-    in `all_models` are skipped (caller may want to surface them separately
-    as typos / unknown refs).
+    Walks each template's `config.agents.*.model` value and returns the
+    aliases that appear in `all_models`. Aliases not present in `all_models`
+    are dropped silently (caller may surface them separately as typos).
+
+    Why no recursion through the `id` field: `resolve_model()` in
+    `worca.utils.settings` is a single non-recursive lookup that returns
+    `entry["id"]` verbatim as the string passed to `claude --model …`.
+    The `id` is a claude-CLI shorthand (`"opus"` / `"sonnet"` / `"haiku"`)
+    or a full model ID — it is NOT another worca alias to be resolved.
+    Similarly, pricing in `worca.utils.token_usage` uses the alias name
+    directly as the lookup key, with no fallback to whatever the `id` points
+    at. So `models["glm-ds"] = {"id": "opus", ...}` does not imply that
+    `models["opus"]` is needed for glm-ds to function.
 
     Used by export to drop unreferenced entries from `worca.models` and
     `worca.pricing.models`, and by import to apply the symmetric filter
     against the bundle's contents.
     """
     referenced: set[str] = set()
-    to_visit: list[str] = []
 
     for tmpl in templates:
         if not isinstance(tmpl, dict):
@@ -110,19 +118,8 @@ def collect_referenced_model_aliases(
         for agent_cfg in agents.values():
             if isinstance(agent_cfg, dict):
                 model = agent_cfg.get("model")
-                if isinstance(model, str):
-                    to_visit.append(model)
-
-    while to_visit:
-        alias = to_visit.pop()
-        if alias in referenced or alias not in all_models:
-            continue
-        referenced.add(alias)
-        entry = all_models[alias]
-        if isinstance(entry, dict):
-            sub_id = entry.get("id")
-            if isinstance(sub_id, str):
-                to_visit.append(sub_id)
+                if isinstance(model, str) and model in all_models:
+                    referenced.add(model)
 
     return referenced
 
