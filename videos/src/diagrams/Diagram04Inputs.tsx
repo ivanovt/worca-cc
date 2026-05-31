@@ -2,20 +2,11 @@
  * §4 — Work inputs differ on detail and on enforcement.
  *
  * Visual: four input documents on the left, the worca container on the
- * right, animated arrows flowing in.
+ * right, animated arrows flowing in. Guide gets a NORM stamp + thicker
+ * mint arrow to convey normative authority.
  *
- *   prompt       ─────►
- *   issue        ─────►   ┌──────────┐
- *   plan file    ─────►   │  worca   │
- *                         └──────────┘
- *   guide        ═NORM══►  (separated; guide is normative)
- *
- * Reveal cadence matches the four input types in narration order. The
- * guide gets a distinct styling — accent border, "NORMATIVE" stamp,
- * thicker arrow — to convey that it overrides the others.
- *
- * Bullet 4 is the longest in the series at ~50s. Stride is ~9s per
- * reveal, leaving room for the "guide wins" beat at the end.
+ * Layout uses fixed pixel coordinates (no derived widths) so the arrow
+ * geometry is obvious at a glance and easy to audit.
  */
 
 import React from "react";
@@ -30,9 +21,7 @@ import type { DiagramProps } from "./registry";
 interface InputDef {
   label: string;
   sublabel: string;
-  /** Doc icon label (small text inside the paper). */
   iconLabel: string;
-  /** "NORMATIVE" stamp shown on the guide. */
   stamp?: string;
   tint: "default" | "accent";
 }
@@ -44,69 +33,60 @@ const INPUTS: InputDef[] = [
   { label: "Guide", sublabel: "normative", iconLabel: "RFC", stamp: "NORM", tint: "accent" },
 ];
 
-const DOC_SIZE = 110;
-const ROW_HEIGHT = 110;
-const ROW_GAP = 24;
-const COL_GAP = 80;          // gap between doc icon and label
+// Fixed layout in the diagram's local coord system.
+const DOC_SIZE = 100;
+const DOC_W = DOC_SIZE * 0.78;
+const LABEL_COL_X = DOC_W + 40;        // label column starts here
+const LABEL_COL_W = 220;
+const INPUT_COL_END = LABEL_COL_X + LABEL_COL_W;  // 358 — right edge of inputs
+const ARROW_START_X = INPUT_COL_END + 20;          // 378
+const WORCA_LEFT = 900;                            // big arrow gap
 const WORCA_W = 240;
 const WORCA_H = 200;
+const ROW_H = 110;
+const ROW_GAP = 22;
+const TOTAL_W = WORCA_LEFT + WORCA_W;
+const TOTAL_H = INPUTS.length * ROW_H + (INPUTS.length - 1) * ROW_GAP;
 
 export const Diagram04Inputs: React.FC<DiagramProps> = () => {
   const frame = useCurrentFrame();
 
-  // §4 narration is ~50s. Lead-in 0.8s = 24f. Reveal first input at f30,
-  // then stride 90f (~3s — leaves clear room before the next one).
   const FIRST = 30;
   const STRIDE = 90;
   const inputReveals = INPUTS.map((_, i) =>
     useReveal({ startFrame: FIRST + i * STRIDE }),
   );
-  // worca container appears very early so the inputs visibly flow INTO it.
   const worcaReveal = useReveal({ startFrame: 12 });
-  // "guide wins" callout — fades in after the guide arrow has connected.
-  const guideWinsReveal = useReveal({ startFrame: FIRST + 4 * STRIDE + 10 });
+  const guideWinsReveal = useReveal({ startFrame: FIRST + 4 * STRIDE - 30 });
 
-  // Layout
-  const leftColW = DOC_SIZE * 0.78 + COL_GAP + 240; // doc + gap + label block
-  const totalWidth = leftColW + 220 /* arrow zone */ + WORCA_W;
-  const totalHeight = INPUTS.length * ROW_HEIGHT + (INPUTS.length - 1) * ROW_GAP;
+  const rowTop = (i: number) => i * (ROW_H + ROW_GAP);
+  const rowCenterY = (i: number) => rowTop(i) + ROW_H / 2;
 
-  const rowTop = (i: number) => i * (ROW_HEIGHT + ROW_GAP);
-  const rowCenterY = (i: number) => rowTop(i) + ROW_HEIGHT / 2;
-
-  const worcaTop = (totalHeight - WORCA_H) / 2;
-  const worcaLeft = totalWidth - WORCA_W;
+  const worcaTop = (TOTAL_H - WORCA_H) / 2;
   const worcaCenterY = worcaTop + WORCA_H / 2;
 
   return (
-    <div
-      style={{
-        position: "relative",
-        width: totalWidth,
-        height: totalHeight,
-      }}
-    >
-      {/* Arrows from each input row INTO the worca container. */}
+    <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>
+      {/* Arrows: from right edge of input column to left edge of worca */}
       {INPUTS.map((input, i) => {
         const arrowStart = FIRST + i * STRIDE + 8;
         const elapsed = Math.max(0, frame - arrowStart);
-        const visible = elapsed > 0 ? 1 : 0;
         const isGuide = input.tint === "accent";
         return (
           <Arrow
             key={`ai-${i}`}
-            from={[leftColW + 240 + 8, rowCenterY(i)]}
-            to={[worcaLeft - 8, worcaCenterY]}
+            from={[ARROW_START_X, rowCenterY(i)]}
+            to={[WORCA_LEFT - 12, worcaCenterY]}
             color={isGuide ? theme.accent : theme.textSecondary}
-            dashFlow={isGuide ? 1.2 : 0.6}
+            dashFlow={isGuide ? 1.2 : 0.55}
             elapsed={elapsed}
             strokeWidth={isGuide ? 4 : 2.5}
-            style={{ opacity: visible }}
+            style={{ opacity: elapsed > 0 ? 1 : 0 }}
           />
         );
       })}
 
-      {/* Input rows — doc icon + label block */}
+      {/* Input rows */}
       {INPUTS.map((input, i) => (
         <div
           key={input.label}
@@ -114,9 +94,11 @@ export const Diagram04Inputs: React.FC<DiagramProps> = () => {
             position: "absolute",
             left: 0,
             top: rowTop(i),
+            width: INPUT_COL_END,
+            height: ROW_H,
             display: "flex",
             alignItems: "center",
-            gap: COL_GAP,
+            gap: 40,
             opacity: inputReveals[i].opacity,
             transform: inputReveals[i].transform,
           }}
@@ -127,17 +109,11 @@ export const Diagram04Inputs: React.FC<DiagramProps> = () => {
             label={input.iconLabel}
             stamp={input.stamp}
           />
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 4,
-            }}
-          >
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
             <div
               style={{
                 fontFamily: fonts.body,
-                fontSize: 30,
+                fontSize: 28,
                 fontWeight: 600,
                 color: input.tint === "accent" ? theme.accent : theme.text,
               }}
@@ -147,7 +123,7 @@ export const Diagram04Inputs: React.FC<DiagramProps> = () => {
             <div
               style={{
                 fontFamily: fonts.mono,
-                fontSize: 15,
+                fontSize: 14,
                 letterSpacing: "0.14em",
                 textTransform: "uppercase",
                 color: theme.textSecondary,
@@ -156,8 +132,6 @@ export const Diagram04Inputs: React.FC<DiagramProps> = () => {
               {input.sublabel}
             </div>
           </div>
-          {/* extra width spacer so layout left column is uniform */}
-          <div style={{ width: Math.max(0, 240 - 240) }} />
         </div>
       ))}
 
@@ -165,7 +139,7 @@ export const Diagram04Inputs: React.FC<DiagramProps> = () => {
       <div
         style={{
           position: "absolute",
-          left: worcaLeft,
+          left: WORCA_LEFT,
           top: worcaTop,
           opacity: worcaReveal.opacity,
           transform: worcaReveal.transform,
@@ -180,12 +154,11 @@ export const Diagram04Inputs: React.FC<DiagramProps> = () => {
         />
       </div>
 
-      {/* "guide wins" callout — fades in near the end of the bullet,
-          underneath the worca container, to land the closing point. */}
+      {/* "guide wins" callout under worca container */}
       <div
         style={{
           position: "absolute",
-          left: worcaLeft + 12,
+          left: WORCA_LEFT + 12,
           top: worcaTop + WORCA_H + 18,
           opacity: guideWinsReveal.opacity,
           fontFamily: fonts.mono,
