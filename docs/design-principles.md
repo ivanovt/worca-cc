@@ -43,7 +43,7 @@ See [`docs/state-action-matrix.md`](./state-action-matrix.md) for the full state
 - **Plan review `review_and_edit` mode trades independent re-verification for warm-context editing** — the reviewer rewrites the plan in place instead of looping back to a cold Planner restart. Off by default; a governance override (`plan_review_enforce`) can force either mode project-wide. The tradeoff is explicit: one fewer Opus cold-start per revision, at the cost of losing the Planner's independent fresh-eyes check.
 
 ## Modularity & Configuration
-- **Tiered template resolution: user > project > built-in** — override without forking.
+- **Tiered template resolution: project > user > built-in** — override without forking.
 - **Agent prompts are composable section blocks** — overlay-merge model for targeted overrides.
 - **Governance-protected sections cannot be replaced** — safety sections are immutable by design.
 - **Entire template directory snapshotted into results** — complete trace of the exact config used.

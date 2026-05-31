@@ -23,7 +23,7 @@ Run the CLI to discover all templates across all three tiers (built-in, project,
 worca templates list --json
 ```
 
-This returns a JSON array with `{id, name, description, tier, tags, builtin, created_at}` per entry. The resolver enforces user > project > built-in priority on ID collision — the JSON reflects what will actually be applied at runtime.
+This returns a JSON array with `{id, name, description, tier, tags, builtin, created_at}` per entry. The resolver enforces project > user > built-in priority on ID collision — the JSON reflects what will actually be applied at runtime.
 
 For each template, also read its `config` to understand what it overrides. Use `worca templates show <id>` for each, or read the `template.json` files directly:
 - Built-in: `.claude/worca/templates/*/template.json`
@@ -109,7 +109,7 @@ Use `AskUserQuestion`:
 | **Project** (default) | `.claude/templates/` | Git-shared, team-wide | Checked into the repo; all team members get it |
 | **User** | `~/.worca/templates/` | Personal, cross-project | Only on your machine; works across all your projects |
 
-Explain: user-scope templates override project-scope templates on ID collision (user > project > built-in). Built-in IDs cannot be reused — the resolver rejects them.
+Explain: project-scope templates override user-scope templates on ID collision (project > user > built-in). Built-in IDs cannot be reused — the resolver rejects them.
 
 The answer maps to the CLI flag: user scope → `--global`, project scope → default (no flag).
 

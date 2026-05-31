@@ -105,7 +105,7 @@ worca templates delete my-workflow
 worca templates create --from-file ./my-template.json   # or '-' for stdin
 ```
 
-`worca templates list --json` emits a machine-readable array (id, name, description, tier, tags, builtin, created_at). Templates resolve in tiers — **user > project > built-in** — so a user template shadows a project one of the same name.
+`worca templates list --json` emits a machine-readable array (id, name, description, tier, tags, builtin, created_at). Templates resolve in tiers — **project > user > built-in** — so a project template shadows a user one of the same name.
 
 ### Export to a bundle
 

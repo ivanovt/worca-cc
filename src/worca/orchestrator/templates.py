@@ -145,7 +145,7 @@ class TemplateResolver:
     def list(self) -> list[TemplateSummary]:
         """Return all templates across all tiers, deduplicated by ID.
 
-        Priority: user > project > builtin (highest wins on collision).
+        Priority: project > user > builtin (highest wins on collision).
         Sort order: builtins alpha, project alpha, user newest-first.
         """
         builtins = self._scan_tier(self._builtin_dir, "builtin")
@@ -155,13 +155,13 @@ class TemplateResolver:
         # Collect seen IDs in priority order (highest priority first)
         seen: dict[str, TemplateSummary] = {}
 
+        # Project templates sorted alphabetically
+        for t in sorted(projects, key=lambda t: t.id):
+            seen.setdefault(t.id, t)
+
         # User templates sorted newest-first
         users_sorted = sorted(users, key=lambda t: t.created_at, reverse=True)
         for t in users_sorted:
-            seen.setdefault(t.id, t)
-
-        # Project templates sorted alphabetically
-        for t in sorted(projects, key=lambda t: t.id):
             seen.setdefault(t.id, t)
 
         # Builtin templates sorted alphabetically
@@ -183,10 +183,10 @@ class TemplateResolver:
         return result_builtins + result_projects + result_users
 
     def get(self, template_id: str) -> "Template | None":
-        """Fetch a template by ID. Searches user > project > builtin."""
+        """Fetch a template by ID. Searches project > user > builtin."""
         for tier, tier_dir in [
-            ("user", self._user_dir),
             ("project", self._project_dir),
+            ("user", self._user_dir),
             ("builtin", self._builtin_dir),
         ]:
             if tier_dir is None or not tier_dir.is_dir():

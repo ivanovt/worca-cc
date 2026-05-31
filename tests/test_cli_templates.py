@@ -249,7 +249,7 @@ class TestTemplatesShow:
         _write_template(builtin_dir / "my-tmpl", _minimal("my-tmpl", name="Built-in Version"))
         _write_template(project_dir / "my-tmpl", _minimal("my-tmpl", name="Project Version", tier="project"))
         out = self._run_show(capsys, "my-tmpl", builtin_dir=builtin_dir, project_dir=project_dir)
-        # user > project > builtin; project wins here
+        # project > user > builtin; project wins here
         # But TemplateResolver.get() includes tier in the Template object
         # The JSON output for "show" comes from template.json, which has "name"
         parsed = json.loads(out.out)

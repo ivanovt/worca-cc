@@ -64,7 +64,7 @@ class TestTemplateResolverList:
         assert results[ids.index("bugfix")].tier == "builtin"
         assert results[ids.index("custom")].tier == "project"
 
-    def test_deduplicates_by_id_user_wins_over_project_and_builtin(self, tmp_path):
+    def test_deduplicates_by_id_project_wins_over_user_and_builtin(self, tmp_path):
         builtin_dir = tmp_path / "builtin"
         project_dir = tmp_path / "project"
         user_dir = tmp_path / "user"
@@ -79,7 +79,7 @@ class TestTemplateResolverList:
 
         shared = [r for r in results if r.id == "shared"]
         assert len(shared) == 1
-        assert shared[0].tier == "user"
+        assert shared[0].tier == "project"
 
     def test_deduplicates_project_wins_over_builtin(self, tmp_path):
         builtin_dir = tmp_path / "builtin"
@@ -171,6 +171,18 @@ class TestTemplateResolverGet:
 
         assert result is not None
         assert result.tier == "user"
+
+    def test_get_project_wins_over_user(self, tmp_path):
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "shared", _minimal("shared", "project"))
+        _write_template(user_dir / "shared", _minimal("shared", "user"))
+
+        resolver = TemplateResolver(None, project_dir, user_dir)
+        result = resolver.get("shared")
+
+        assert result is not None
+        assert result.tier == "project"
 
     def test_returns_template_object(self, tmp_path):
         builtin_dir = tmp_path / "builtin"

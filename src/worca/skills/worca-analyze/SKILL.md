@@ -98,13 +98,13 @@ If the user declines, skip silently.
 
 ### Phase 5: Recommend a template
 
-Resolve available templates across all three tiers (user > project > built-in wins on ID collision):
+Resolve available templates across all three tiers (project > user > built-in wins on ID collision):
 
 ```bash
 worca templates list --json
 ```
 
-Each entry has `{id, name, description, tier, tags, builtin, created_at}`. `tier` is `"builtin" | "project" | "user"`. The resolver already enforces user > project > built-in priority, so the JSON reflects which template will actually be applied at run time on an ID collision — trust it.
+Each entry has `{id, name, description, tier, tags, builtin, created_at}`. `tier` is `"builtin" | "project" | "user"`. The resolver already enforces project > user > built-in priority, so the JSON reflects which template will actually be applied at run time on an ID collision — trust it.
 
 Fallback discovery if the CLI form fails (older worca-cc install before this flag landed):
 - Built-in: `<repo-root>/src/worca/templates/*/template.json` (when running inside worca-cc itself), or `.claude/worca/templates/*/template.json` (consumer projects after `worca init`)
