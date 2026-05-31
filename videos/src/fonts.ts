@@ -1,24 +1,25 @@
 /**
  * Brand font loading.
  *
- * Resolves the three Google Fonts used by the worca marketing site through
- * Remotion's @remotion/google-fonts helpers, so font data is bundled with
- * the render instead of fetched at runtime.
+ * Resolves the brand fonts through Remotion's @remotion/google-fonts
+ * helpers so font data is bundled with the render. We use Outfit for
+ * everything textual (titles AND body) — heavy weight for titles, regular
+ * for body — and JetBrains Mono for the wordmark, scene counters, and
+ * stage chips.
  *
- * Marketing site --font-display / --font-body / --font-mono → Syne / Outfit /
- * JetBrains Mono.
+ * Syne (the marketing site's display font) was tried first but proved
+ * hard to read at video scale; Outfit at 800 weight gives the same
+ * brand presence without sacrificing legibility.
  */
 
-import { loadFont as loadSyne } from "@remotion/google-fonts/Syne";
 import { loadFont as loadOutfit } from "@remotion/google-fonts/Outfit";
 import { loadFont as loadJetBrains } from "@remotion/google-fonts/JetBrainsMono";
 
-const syne = loadSyne();
 const outfit = loadOutfit();
 const jetbrains = loadJetBrains();
 
 export const fonts = {
-  display: syne.fontFamily,    // Syne — headings, chapter titles
-  body: outfit.fontFamily,     // Outfit — body / paragraphs
-  mono: jetbrains.fontFamily,  // JetBrains Mono — wordmark, code, status pills
+  display: outfit.fontFamily,  // Outfit — titles (800), chapter titles (800)
+  body: outfit.fontFamily,     // Outfit — body labels, paragraphs (400-600)
+  mono: jetbrains.fontFamily,  // JetBrains Mono — wordmark, counters, chips
 };

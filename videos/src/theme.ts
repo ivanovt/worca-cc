@@ -53,7 +53,9 @@ export const theme = {
   // ── Typography ───────────────────────────────────────────────────────
   // Font families are resolved through @remotion/google-fonts loaders in
   // src/fonts.ts — these strings are fallbacks if a loader hasn't run.
-  fontDisplay: "'Syne', sans-serif",
+  // Syne was tried for display and dropped for readability; Outfit at
+  // weight 800 carries the brand presence and stays legible on screen.
+  fontDisplay: "'Outfit', sans-serif",
   fontBody: "'Outfit', sans-serif",
   fontMono: "'JetBrains Mono', monospace",
 
@@ -76,10 +78,11 @@ export const theme = {
   weightBody: 400,
   weightBodyMedium: 500,
 
-  lineHeightTitle: 1.05,
+  lineHeightTitle: 1.1,
   lineHeightBody: 1.4,
-  letterSpacingTitle: "-0.03em",
-  letterSpacingDisplay: "-0.02em",
+  // Outfit doesn't need aggressive negative tracking the way Syne did.
+  letterSpacingTitle: "-0.015em",
+  letterSpacingDisplay: "-0.01em",
 
   // ── Layout ───────────────────────────────────────────────────────────
   // Tighter than the first pass — the diagram now owns the lower ~60% of

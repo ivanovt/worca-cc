@@ -1,9 +1,14 @@
 /**
  * §15 — Built-in templates, and your own.
  *
- * Visual: a 2x2 grid of template cards. Each card shows the template
- * name, a brief description, and the stage chips that template enables.
- * The fourth ("Custom") card has accent styling.
+ * Visual: a 2x2 grid of four real built-in templates, each card showing
+ * the template name, its description, and the stage chips it activates.
+ *
+ * Template names match the actual templates shipped in
+ * src/worca/templates/. The set chosen here covers the spectrum from
+ * full pipeline (feature) → focused (bugfix) → analysis-only
+ * (investigate) → minimal (quick-fix), making the variety visible in
+ * one frame.
  */
 
 import React from "react";
@@ -14,41 +19,51 @@ import { useReveal } from "./useReveal";
 import type { DiagramProps } from "./registry";
 
 interface Template {
-  name: string;
+  /** Exact template id from src/worca/templates/<id>/template.json */
+  id: string;
   description: string;
   stages: string[];
+  /** Whether the card should be styled as a built-in (mint border on hover)
+   *  or as the "yours" custom slot. */
   custom?: boolean;
 }
 
+// Verified against src/worca/templates/*/template.json. The "yours"
+// card stands in for the fact that any of these can be forked or written
+// from scratch.
 const TEMPLATES: Template[] = [
   {
-    name: "Feature",
-    description: "Full pipeline with planning, review, and testing",
-    stages: ["Plan", "Coord", "Impl", "Test", "Review", "PR"],
+    id: "feature",
+    description: "Full pipeline with plan review and learn",
+    stages: ["plan", "review-plan", "coord", "impl", "test", "review", "pr", "learn"],
   },
   {
-    name: "Bug fix",
-    description: "Skip planning, jump to implement",
-    stages: ["Impl", "Test", "Review", "PR"],
+    id: "bugfix",
+    description: "Opus investigates root cause, focused fix",
+    stages: ["plan", "coord", "impl", "test", "review", "pr"],
   },
   {
-    name: "Docs only",
-    description: "No implementer-tester loop",
-    stages: ["Plan", "Docs", "PR"],
+    id: "investigate",
+    description: "Analysis only — no implementation changes",
+    stages: ["plan", "pr"],
   },
   {
-    name: "Custom",
-    description: "Write your own template",
-    stages: ["+", "your", "stages"],
-    custom: true,
+    id: "quick-fix",
+    description: "Minimal — no test, review, or PR",
+    stages: ["plan", "impl"],
   },
 ];
 
+// And a fifth caption at the bottom hints at the rest of the family
+// (feature-minor, feature-fast, refactor, test-only) without
+// crowding the grid.
+const OTHERS = ["feature-minor", "feature-fast", "refactor", "test-only", "+ yours"];
+
 const CARD_W = 580;
-const CARD_H = 240;
+const CARD_H = 230;
 const GAP = 28;
 const TOTAL_W = CARD_W * 2 + GAP;
-const TOTAL_H = CARD_H * 2 + GAP;
+const TOTAL_H = CARD_H * 2 + GAP + 70; // extra row for OTHERS strip
 
 export const Diagram15Templates: React.FC<DiagramProps> = () => {
   const FIRST = 20;
@@ -56,6 +71,7 @@ export const Diagram15Templates: React.FC<DiagramProps> = () => {
   const reveals = TEMPLATES.map((_, i) =>
     useReveal({ startFrame: FIRST + i * STRIDE }),
   );
+  const othersReveal = useReveal({ startFrame: FIRST + TEMPLATES.length * STRIDE });
 
   return (
     <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>
@@ -64,7 +80,7 @@ export const Diagram15Templates: React.FC<DiagramProps> = () => {
         const row = Math.floor(i / 2);
         return (
           <div
-            key={t.name}
+            key={t.id}
             style={{
               position: "absolute",
               left: col * (CARD_W + GAP),
@@ -72,41 +88,40 @@ export const Diagram15Templates: React.FC<DiagramProps> = () => {
               width: CARD_W,
               height: CARD_H,
               background: theme.bgCard,
-              border: `2px solid ${t.custom ? theme.accent : theme.borderLight}`,
+              border: `2px solid ${theme.borderLight}`,
               borderRadius: 14,
-              padding: "26px 30px",
+              padding: "24px 28px",
               display: "flex",
               flexDirection: "column",
-              gap: 14,
+              gap: 12,
               opacity: reveals[i].opacity,
               transform: reveals[i].transform,
-              boxShadow: t.custom
-                ? `0 0 24px ${theme.accentDim}, 0 8px 24px rgba(0,0,0,0.4)`
-                : "0 8px 24px rgba(0,0,0,0.35)",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
             }}
           >
             <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
               <div
                 style={{
-                  fontFamily: fonts.body,
-                  fontSize: 32,
+                  fontFamily: fonts.mono,
+                  fontSize: 26,
                   fontWeight: 700,
-                  color: t.custom ? theme.accent : theme.text,
+                  color: theme.text,
                   lineHeight: 1.1,
+                  letterSpacing: "0.02em",
                 }}
               >
-                {t.name}
+                {t.id}
               </div>
               <div
                 style={{
                   fontFamily: fonts.mono,
-                  fontSize: 12,
+                  fontSize: 11,
                   letterSpacing: "0.18em",
                   textTransform: "uppercase",
                   color: theme.textMuted,
                 }}
               >
-                {t.custom ? "yours" : "built-in"}
+                built-in
               </div>
             </div>
             <div
@@ -125,7 +140,7 @@ export const Diagram15Templates: React.FC<DiagramProps> = () => {
               style={{
                 marginTop: "auto",
                 display: "flex",
-                gap: 8,
+                gap: 6,
                 flexWrap: "wrap",
               }}
             >
@@ -133,16 +148,15 @@ export const Diagram15Templates: React.FC<DiagramProps> = () => {
                 <div
                   key={s}
                   style={{
-                    padding: "6px 12px",
-                    background: t.custom ? "transparent" : theme.bgPrimary,
-                    border: `1.5px solid ${t.custom ? theme.accent : theme.borderLight}`,
-                    borderRadius: 6,
+                    padding: "5px 9px",
+                    background: theme.bgPrimary,
+                    border: `1.5px solid ${theme.borderLight}`,
+                    borderRadius: 5,
                     fontFamily: fonts.mono,
-                    fontSize: 13,
-                    letterSpacing: "0.06em",
-                    color: t.custom ? theme.accent : theme.text,
-                    fontWeight: 600,
-                    textTransform: "uppercase",
+                    fontSize: 12,
+                    letterSpacing: "0.04em",
+                    color: theme.textSecondary,
+                    fontWeight: 500,
                   }}
                 >
                   {s}
@@ -152,6 +166,55 @@ export const Diagram15Templates: React.FC<DiagramProps> = () => {
           </div>
         );
       })}
+
+      {/* "and more" strip below the grid */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 2 * (CARD_H + GAP),
+          width: TOTAL_W,
+          opacity: othersReveal.opacity,
+          transform: othersReveal.transform,
+          display: "flex",
+          alignItems: "center",
+          gap: 18,
+          paddingLeft: 4,
+        }}
+      >
+        <div
+          style={{
+            fontFamily: fonts.mono,
+            fontSize: 14,
+            letterSpacing: "0.20em",
+            textTransform: "uppercase",
+            color: theme.textSecondary,
+          }}
+        >
+          and more →
+        </div>
+        {OTHERS.map((o) => {
+          const isCustom = o === "+ yours";
+          return (
+            <div
+              key={o}
+              style={{
+                padding: "8px 14px",
+                background: "transparent",
+                border: `1.5px solid ${isCustom ? theme.accent : theme.borderLight}`,
+                borderRadius: 6,
+                fontFamily: fonts.mono,
+                fontSize: 14,
+                letterSpacing: "0.04em",
+                color: isCustom ? theme.accent : theme.textSecondary,
+                fontWeight: 600,
+              }}
+            >
+              {o}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
