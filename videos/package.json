@@ -1,0 +1,35 @@
+{
+  "name": "worca-videos",
+  "version": "0.1.0",
+  "description": "Remotion source for the worca 'How worca works' video series (3 chapters, 18 bullets).",
+  "private": true,
+  "repository": {},
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@remotion/cli": "4.0.469",
+    "@remotion/google-fonts": "4.0.469",
+    "@remotion/media": "4.0.469",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "remotion": "4.0.469"
+  },
+  "devDependencies": {
+    "@remotion/eslint-config-flat": "4.0.469",
+    "@types/react": "19.2.7",
+    "@types/web": "0.0.166",
+    "eslint": "9.19.0",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3"
+  },
+  "scripts": {
+    "dev": "remotion studio",
+    "studio": "remotion studio",
+    "build": "remotion bundle",
+    "render": "remotion render",
+    "upgrade": "remotion upgrade",
+    "lint": "eslint src && tsc"
+  },
+  "sideEffects": [
+    "*.css"
+  ]
+}
