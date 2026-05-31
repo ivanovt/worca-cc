@@ -1868,7 +1868,6 @@ def _query_ready_bead(allowed_ids: list[str] | None = None, run_id: str | None =
 
     Args:
         allowed_ids: If provided, only return beads whose ID is in this list.
-                     This prevents picking up stale beads from prior runs.
         run_id: If provided, pass --label run:{run_id} to bd ready so only
                 beads from this run are returned. Without this, the 10-item
                 display limit in bd ready can be filled by unrelated beads.
@@ -3572,6 +3571,14 @@ def run_pipeline(
                                     bead_id=claimed_bead,
                                     error="bd_close failed",
                                 ))
+                        # Record the bead as processed regardless of bd_close
+                        # outcome — implementation is the expensive step and
+                        # must not be retried on the same bead. Persisting here
+                        # (via save_context below) lets resume skip it too.
+                        _implemented = prompt_builder.get_context("implemented_bead_ids") or []
+                        if claimed_bead not in _implemented:
+                            _implemented.append(claimed_bead)
+                            prompt_builder.update_context("implemented_bead_ids", _implemented)
 
                     # Accumulate files across all beads
                     all_files = prompt_builder.get_context("all_files_changed") or []
@@ -3589,8 +3596,23 @@ def run_pipeline(
                     # is stopped between bead iterations, resume must re-enter
                     # IMPLEMENT to process remaining beads.
                     next_bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
+                    # Drain when bd_ready re-surfaces an already-implemented
+                    # bead. Happens when the bead store doesn't reflect our
+                    # closure yet (slow daemon, stateless test stub, or a
+                    # bd_close failure). Re-implementing is never the right
+                    # answer — advance instead.
+                    if next_bead:
+                        _impl_set = set(prompt_builder.get_context("implemented_bead_ids") or [])
+                        if next_bead["id"] in _impl_set:
+                            _log(
+                                f"bd ready returned already-implemented bead {next_bead['id']} "
+                                f"— treating bead queue as drained",
+                                "warn",
+                            )
+                            next_bead = None
                     if next_bead and Stage.IMPLEMENT in stage_order:
-                        if loop_counters["bead_iteration"] < max_beads:
+                        safety_cap = max(max_beads, len(run_bead_ids or [])) + 3
+                        if loop_counters["bead_iteration"] < safety_cap:
                             # Keep stage in_progress between beads so resume works
                             if prompt_context_path:
                                 prompt_builder.save_context(prompt_context_path)
@@ -3606,9 +3628,12 @@ def run_pipeline(
                                 ))
                             continue
                         else:
-                            if next_bead:
-                                _log(f"Bead limit reached ({max_beads}) but bd ready still has beads — possible stale beads from prior run", "warn")
-                            _log(f"Bead iteration limit reached after {loop_counters['bead_iteration']} beads", "warn")
+                            _log(f"Safety cap reached ({safety_cap}) but bd ready still has "
+                                 f"run-scoped beads — halting to prevent partial implementation", "err")
+                            raise PipelineInterrupted(
+                                f"implement_incomplete: bead {next_bead['id']} and possibly more still unstarted",
+                                stop_reason="implement_incomplete",
+                            )
 
                     # All beads done — NOW mark IMPLEMENT completed
                     prompt_builder.update_context("files_changed", list(set(all_files)))

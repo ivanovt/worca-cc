@@ -617,10 +617,14 @@ def test_bead_limit_derived_from_coordinator(tmp_path):
             return {"files_changed": [], "tests_added": []}, {"type": "result"}
         return {}, {"type": "result"}
 
-    # Always return a bead — the max_beads counter should be the limit
+    # Return beads until the queue drains after len(bead_ids) implementations.
+    # Each bead requires 2 calls (claim + after-implement check); the last
+    # after-implement check returns None to signal the queue is empty.
     call_count = [0]
     def mock_query_ready(allowed_ids=None, run_id=None):
         call_count[0] += 1
+        if call_count[0] >= 2 * len(bead_ids):
+            return None
         return {"id": f"beads-{call_count[0]:03d}", "title": f"Bead {call_count[0]}"}
 
     with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage):
@@ -1042,7 +1046,14 @@ def test_run_pipeline_gh_issue_complete_called_after_completed_at_set(tmp_path):
 
 
 def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
-    """Warning is logged when bd ready returns beads beyond expected count."""
+    """When bd ready re-surfaces an already-implemented bead, the runner
+    drains the queue and advances rather than looping or halting.
+
+    This is the realistic stale-bead scenario: bd_close succeeded but the
+    next bd_ready call still returns the same bead (slow daemon, stateless
+    test stub, or a bd_close that quietly failed). Re-implementing is never
+    correct — the runner must treat the queue as drained and move on.
+    """
     from worca.orchestrator.work_request import WorkRequest
 
     plan = tmp_path / "plan.md"
@@ -1072,7 +1083,6 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
     status_path = str(worca_dir / "status.json")
     wr = WorkRequest(source_type="prompt", title="Test stale beads")
 
-    # Coordinator returns 2 beads
     bead_ids = ["beads-aaa", "beads-bbb"]
 
     def mock_run_stage(stage, context, settings_path, msize=1, iteration=1, prompt_override=None, **kwargs):
@@ -1082,7 +1092,8 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
             return {"files_changed": [], "tests_added": []}, {"type": "result"}
         return {}, {"type": "result"}
 
-    # Mock _query_ready_bead to always return a bead (simulating stale beads)
+    # Mock _query_ready_bead to always return the same bead — simulating bd
+    # state that doesn't reflect our closures.
     def mock_query_ready(allowed_ids=None, run_id=None):
         return {"id": "beads-stale", "title": "Stale bead"}
 
@@ -1104,9 +1115,11 @@ def test_bead_limit_warns_on_stale_beads(tmp_path, capsys):
                                                     status_path=status_path,
                                                 )
 
-    # Check that the stale bead warning was printed to stderr
     captured = capsys.readouterr()
-    assert "stale beads" in captured.err.lower()
+    assert "already-implemented bead beads-stale" in captured.err, (
+        "runner must log the already-implemented drain message when bd_ready "
+        f"re-surfaces a closed bead; stderr was:\n{captured.err}"
+    )
 
 
 # --- gh_issue_fail integration (run_pipeline.py exception handlers) ---
