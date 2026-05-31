@@ -5481,6 +5481,16 @@ sl-tooltip.bead-tooltip::part(body) {
   text-align: center;
 }
 
+/* Transient "Saved" pill after a successful per-card save — kept subtle.
+   Uses the green design-token rather than red/orange because save is a
+   non-destructive confirmation; matches the badge-color-language guide
+   (worca-ui/docs/badge-color-language.md): green = done. */
+.model-card-status--saved {
+  color: var(--success, #22c55e);
+  font-style: normal;
+  font-weight: 500;
+}
+
 .settings-tab-description {
   font-size: 12px;
   color: var(--muted);

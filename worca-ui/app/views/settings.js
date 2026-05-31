@@ -1682,6 +1682,27 @@ function _cardIsValid(name) {
   return s.env.every((row) => _envKeyValidationError(row.k) === null);
 }
 
+// Names of model cards that successfully saved within the last
+// MODEL_SAVED_INDICATOR_MS window. Populated by _saveModelEnv on success;
+// cleared by a per-name timer or on the next edit. Used by _modelCardView
+// to render a transient "Saved" pill in place of "Unsaved changes" so the
+// user gets visible confirmation now that the Save button is no longer
+// gated on dirty state.
+export const _modelsRecentlySaved = new Map();
+const MODEL_SAVED_INDICATOR_MS = 2000;
+
+// Save is gated only by validity — we intentionally do NOT gate on
+// state.dirty. The dirty flag is unreliable (a type-then-undo edit leaves
+// dirty=true while values match the server), and idempotent re-saves are
+// harmless: the PUT writes the same JSON to .claude/settings.local.json,
+// which is deep-merged at read time with no watchers attached.
+//
+// Exported for unit testing — the BooleanAttributePart in the template
+// can't be inspected via renderToString, so we pin the gate logic here.
+export function _isCardSaveDisabled(name) {
+  return !_cardIsValid(name);
+}
+
 function _updateEnvField(name, rowId, field, value, rerender) {
   const s = _modelsEditState.get(name);
   if (!s) return;
@@ -1741,7 +1762,7 @@ function _discardModelEdits(name, rerender) {
   rerender();
 }
 
-async function _saveModelEnv(name, rerender) {
+export async function _saveModelEnv(name, rerender) {
   const s = _modelsEditState.get(name);
   if (!s) return;
   const env = {};
@@ -1770,6 +1791,16 @@ async function _saveModelEnv(name, rerender) {
     _modelsEditState.delete(name); // next render initializes from server
     saveStatus = 'success';
     saveMessage = `Saved ${name}`;
+    // Per-card transient "Saved" pill — clears itself after the window.
+    // Replaces an existing timer so back-to-back saves on the same card
+    // don't double-schedule a rerender.
+    const existingTimer = _modelsRecentlySaved.get(name);
+    if (existingTimer) clearTimeout(existingTimer);
+    const timerId = setTimeout(() => {
+      _modelsRecentlySaved.delete(name);
+      rerender();
+    }, MODEL_SAVED_INDICATOR_MS);
+    _modelsRecentlySaved.set(name, timerId);
     await loadSettings(_settingsProjectId);
   } catch (err) {
     saveStatus = 'error';
@@ -2339,7 +2370,8 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
   const entry = _normalizeModelEntry(serverEntryRaw);
   const state = _getOrInitModelState(name, entry);
   const isBuiltin = BUILTIN_MODEL_NAMES.has(name);
-  const valid = _cardIsValid(name);
+  const saveDisabled = _isCardSaveDisabled(name);
+  const recentlySaved = _modelsRecentlySaved.has(name);
   const envCount = state.env.filter((r) => r.k.trim() !== '').length;
   const invalidCount = state.env.filter(
     (r) => _envKeyValidationError(r.k) !== null,
@@ -2455,8 +2487,10 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
           ${unsafeHTML(iconSvg(Trash2, 12))}
           Delete
         </sl-button>
-        <span class="model-card-status">
-          ${state.dirty ? 'Unsaved changes' : ''}
+        <span
+          class="model-card-status ${recentlySaved && !state.dirty ? 'model-card-status--saved' : ''}"
+        >
+          ${state.dirty ? 'Unsaved changes' : recentlySaved ? 'Saved' : ''}
         </span>
         <sl-button
           variant="default"
@@ -2469,7 +2503,7 @@ function _modelCardView(name, serverEntryRaw, modelsConfig, rerender) {
         <sl-button
           variant="primary"
           size="small"
-          ?disabled=${!state.dirty || !valid}
+          ?disabled=${saveDisabled}
           @click=${() => _saveModelEnv(name, rerender)}
         >
           ${unsafeHTML(iconSvg(Save, 12))}

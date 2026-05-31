@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 describe('getModelKeys', () => {
   it('returns configured keys in insertion order', async () => {
@@ -201,6 +201,167 @@ describe('_getOrInitModelState', () => {
     });
     expect(same).toBe(state); // same reference
     expect(same.id).toBe('user-edited-id'); // user's edit preserved
+  });
+});
+
+describe('_isCardSaveDisabled (Save button gate)', () => {
+  // The Save button is intentionally NOT gated on state.dirty — re-saving
+  // identical config is harmless (idempotent PUT to settings.local.json),
+  // and the dirty flag is unreliable (a type-then-undo leaves dirty=true
+  // while values match the server). Validity is the only gate.
+
+  it('returns false when card has no buffer yet (post-load clean state)', async () => {
+    const { _isCardSaveDisabled, _modelsEditState } = await import(
+      './settings.js'
+    );
+    _modelsEditState.clear();
+    // No entry in _modelsEditState — card just rendered against server state.
+    // Old behavior: button was disabled (dirty=false). New behavior: enabled.
+    expect(_isCardSaveDisabled('opus')).toBe(false);
+  });
+
+  it('returns false when card is clean (dirty=false, all keys valid)', async () => {
+    const { _isCardSaveDisabled, _getOrInitModelState, _modelsEditState } =
+      await import('./settings.js');
+    _modelsEditState.clear();
+    _getOrInitModelState('alt-fast', {
+      id: 'x',
+      env: { ANTHROPIC_BASE_URL: 'http://x' },
+    });
+    // dirty defaults to false; only valid keys; Save must NOT be disabled.
+    // This is the core change: pre-fix, this returned true.
+    expect(_isCardSaveDisabled('alt-fast')).toBe(false);
+  });
+
+  it('returns false when card is dirty and all keys are valid', async () => {
+    const { _isCardSaveDisabled, _getOrInitModelState, _modelsEditState } =
+      await import('./settings.js');
+    _modelsEditState.clear();
+    const state = _getOrInitModelState('alt-fast', {
+      id: 'x',
+      env: { ANTHROPIC_BASE_URL: 'http://x' },
+    });
+    state.dirty = true;
+    state.env[0].v = 'http://changed';
+    expect(_isCardSaveDisabled('alt-fast')).toBe(false);
+  });
+
+  it('returns true when any env key is invalid (reserved key)', async () => {
+    const { _isCardSaveDisabled, _getOrInitModelState, _modelsEditState } =
+      await import('./settings.js');
+    _modelsEditState.clear();
+    const state = _getOrInitModelState('alt-fast', {
+      id: 'x',
+      env: { ANTHROPIC_BASE_URL: 'http://x' },
+    });
+    state.env.push({ k: 'PATH', v: '/sneaky', _id: 'r1' });
+    // PATH is a reserved key (denylist via reserved-env-keys.json).
+    // Validity gate fires regardless of dirty state.
+    expect(_isCardSaveDisabled('alt-fast')).toBe(true);
+  });
+
+  it('returns true when an env key has a reserved prefix', async () => {
+    const { _isCardSaveDisabled, _getOrInitModelState, _modelsEditState } =
+      await import('./settings.js');
+    _modelsEditState.clear();
+    const state = _getOrInitModelState('alt-fast', {
+      id: 'x',
+      env: { OK: 'v' },
+    });
+    state.env.push({ k: 'WORCA_AGENT', v: 'guardian', _id: 'r1' });
+    expect(_isCardSaveDisabled('alt-fast')).toBe(true);
+  });
+});
+
+describe('_modelsRecentlySaved (post-save "Saved" indicator)', () => {
+  // The per-card "Saved" pill replaces the old dirty-gated semantic. After a
+  // successful _saveModelEnv the model's name lives in this Map for
+  // MODEL_SAVED_INDICATOR_MS (2s), then a timer clears it and rerenders.
+
+  it('is exported as a Map', async () => {
+    const { _modelsRecentlySaved } = await import('./settings.js');
+    expect(_modelsRecentlySaved).toBeInstanceOf(Map);
+  });
+
+  it('is populated after a successful _saveModelEnv and cleared after the window', async () => {
+    const {
+      _saveModelEnv,
+      _getOrInitModelState,
+      _modelsEditState,
+      _modelsRecentlySaved,
+    } = await import('./settings.js');
+    _modelsEditState.clear();
+    _modelsRecentlySaved.clear();
+
+    _getOrInitModelState('alt-fast', { id: 'x', env: { K: 'v' } });
+
+    // Stub global fetch with a 200 response so _saveModelEnv's PUT succeeds.
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+
+    vi.useFakeTimers();
+    try {
+      const rerender = vi.fn();
+      await _saveModelEnv('alt-fast', rerender);
+      // Right after success: the name is in the Map with a pending timer.
+      expect(_modelsRecentlySaved.has('alt-fast')).toBe(true);
+      // After the 2s window, the timer clears the entry and rerenders.
+      vi.advanceTimersByTime(2100);
+      expect(_modelsRecentlySaved.has('alt-fast')).toBe(false);
+      expect(rerender).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  it('replaces an existing timer on back-to-back saves to the same card', async () => {
+    const {
+      _saveModelEnv,
+      _getOrInitModelState,
+      _modelsEditState,
+      _modelsRecentlySaved,
+    } = await import('./settings.js');
+    _modelsEditState.clear();
+    _modelsRecentlySaved.clear();
+
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({}),
+    });
+
+    vi.useFakeTimers();
+    try {
+      const rerender = vi.fn();
+      _getOrInitModelState('alt-fast', { id: 'x', env: { K: 'v' } });
+      await _saveModelEnv('alt-fast', rerender);
+      const firstTimer = _modelsRecentlySaved.get('alt-fast');
+
+      // Trigger a second save before the first timer fires
+      vi.advanceTimersByTime(500);
+      _getOrInitModelState('alt-fast', { id: 'x', env: { K: 'v2' } });
+      await _saveModelEnv('alt-fast', rerender);
+      const secondTimer = _modelsRecentlySaved.get('alt-fast');
+
+      // Old timer was cleared, new one took its place.
+      expect(secondTimer).not.toBe(firstTimer);
+      // The entry persists through the original 2s window (would have fired
+      // at 2000ms total but we replaced it at 500ms with a fresh 2s timer).
+      vi.advanceTimersByTime(1600); // total 2100ms — past the original deadline
+      expect(_modelsRecentlySaved.has('alt-fast')).toBe(true);
+      // Past the new timer deadline (500 + 2000 = 2500ms total).
+      vi.advanceTimersByTime(500);
+      expect(_modelsRecentlySaved.has('alt-fast')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+      globalThis.fetch = origFetch;
+    }
   });
 });
 
