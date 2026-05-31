@@ -317,8 +317,21 @@ def cmd_templates_create(args):
     print(f"created template '{template.id}' in {tier_label}")
 
 
-def _find_settings_path() -> str | None:
-    """Locate .claude/settings.json from git root, returning its path or None."""
+def _find_settings_path(scope: str = "project") -> str | None:
+    """Locate the settings.json that template-import should write to.
+
+    For ``scope == "user"`` returns the user-global path
+    (``~/.worca/settings.json`` by default; honors ``$WORCA_HOME`` and the
+    global-disable toggle via ``worca.utils.settings._default_global_path``).
+    The file does not need to exist yet — ``_atomic_import`` creates it.
+
+    For ``scope == "project"`` (the default) walks up from cwd to ``.git`` and
+    returns ``<git-root>/.claude/settings.json``; returns ``None`` outside a
+    git repo so the caller can error out.
+    """
+    if scope == "user":
+        from worca.utils.settings import _default_global_path
+        return _default_global_path()
     cwd = Path.cwd().resolve()
     for parent in [cwd, *cwd.parents]:
         if (parent / ".git").exists():
@@ -567,19 +580,6 @@ def cmd_templates_import(args):
     bundle_models = manifest.get("models")
     bundle_pricing = manifest.get("pricing")
 
-    if scope == "user" and (bundle_models or bundle_pricing):
-        skipped_parts = []
-        if bundle_models:
-            skipped_parts.append("models")
-        if bundle_pricing:
-            skipped_parts.append("pricing")
-        print(
-            f"skipped: {', '.join(skipped_parts)} (user-scope import — no user-level settings.json)",
-            file=sys.stderr,
-        )
-        bundle_models = None
-        bundle_pricing = None
-
     resolver = _make_resolver()
     _, project_dir, user_dir = _resolve_dirs()
     target_dir = user_dir if scope == "user" else project_dir
@@ -640,7 +640,7 @@ def cmd_templates_import(args):
             to_import[tid] = tmpl
 
     settings_patch: dict = {}
-    settings_path = _find_settings_path()
+    settings_path = _find_settings_path(scope)
 
     # Filter bundle's models/pricing to aliases actually referenced by templates
     # that will land. Anything else is over-inclusion — it would silently

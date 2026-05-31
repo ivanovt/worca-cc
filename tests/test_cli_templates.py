@@ -1169,13 +1169,31 @@ class TestTemplatesImport:
         data = json.loads((project_dir / "imported-tmpl" / "template.json").read_text())
         assert data["name"] == "New Name"
 
-    def test_import_scope_user_skips_models_pricing(self, capsys, tmp_path):
+    def test_import_scope_user_writes_models_to_user_global_settings(self, capsys, tmp_path):
+        """User-scope import lands models/pricing in ~/.worca/settings.json.
+
+        Previously the import command skipped bundle models/pricing on
+        ``--scope user`` with a misleading ``no user-level settings.json``
+        stderr message. The file is a first-class worca concept —
+        ``load_global_settings`` reads it and project settings deep-merge
+        over it — so the import now writes there directly.
+        """
         builtin_dir = tmp_path / "builtin"
         builtin_dir.mkdir()
         project_dir = tmp_path / "project"
         user_dir = tmp_path / "user"
+        # The user-global settings file lives next to user_dir for this test
+        # so we keep both sides of the user-tier under one mocked root.
+        user_settings_path = tmp_path / "worca-home" / "settings.json"
         bundle = _make_bundle(
-            models={"opus": "claude-opus-4-6"},
+            templates=[{
+                "id": "imported-tmpl",
+                "name": "Imported Template",
+                "description": "A template from a bundle",
+                "tags": ["fast"],
+                "config": {"agents": {"planner": {"model": "opus"}}},
+            }],
+            models={"opus": {"id": "claude-opus-4-6"}},
             pricing={"currency": "USD"},
         )
         bundle_file = tmp_path / "bundle.json"
@@ -1186,13 +1204,44 @@ class TestTemplatesImport:
             return_value=(builtin_dir, project_dir, user_dir),
         ), patch(
             "worca.cli.templates._find_settings_path",
-            return_value=str(tmp_path / ".claude" / "settings.json"),
+            side_effect=lambda scope="project": (
+                str(user_settings_path) if scope == "user" else None
+            ),
         ):
             main(["templates", "import", "--from", str(bundle_file), "--scope", "user", "--non-interactive"])
 
         out = capsys.readouterr()
-        assert "skipped" in out.err.lower() or "skip" in out.err.lower()
+        # Template landed at user scope
         assert (user_dir / "imported-tmpl" / "template.json").exists()
+        # Models/pricing landed in the user-global settings.json — no longer skipped
+        assert user_settings_path.exists(), (
+            f"user-global settings.json was not created at {user_settings_path}; "
+            f"stderr was:\n{out.err}"
+        )
+        settings = json.loads(user_settings_path.read_text())
+        worca_settings = settings.get("worca", {})
+        assert worca_settings.get("models", {}).get("opus") == {"id": "claude-opus-4-6"}, (
+            f"bundle model 'opus' must land in worca.models; got {worca_settings.get('models')}"
+        )
+        assert worca_settings.get("pricing") == {"currency": "USD"}
+        # No "skipped: models" message — the old stderr line is gone.
+        assert "skipped: models" not in out.err
+        assert "skipped: pricing" not in out.err
+
+    def test_find_settings_path_user_scope_returns_global_path(self, monkeypatch, tmp_path):
+        """``_find_settings_path("user")`` resolves to ``~/.worca/settings.json``
+        (honoring ``$WORCA_HOME``), independent of the cwd or any .git root.
+
+        Pins the contract that lets ``_atomic_import`` write to the user-global
+        settings file on ``--scope user``.
+        """
+        from worca.cli.templates import _find_settings_path
+
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "worca-home"))
+        path = _find_settings_path("user")
+        assert path is not None
+        assert path.endswith("settings.json")
+        assert str(tmp_path / "worca-home") in path
 
     def test_import_reserved_env_key_stripping(self, capsys, tmp_path):
         builtin_dir = tmp_path / "builtin"

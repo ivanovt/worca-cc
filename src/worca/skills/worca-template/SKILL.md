@@ -206,8 +206,8 @@ Guides the user through importing templates (and optionally models/pricing) from
    ⚠️ Imported bundles are config-as-data: they get merged into `settings.json` and drive subsequent pipeline runs. **Only import bundles from sources you trust** — the HTTPS hardening covers obvious SSRF cases but cannot defend against a malicious upstream.
 
 2. **Target scope** — Ask via `AskUserQuestion`:
-   - **Project** (default) — writes templates to `.claude/templates/`, merges models/pricing into `settings.json`
-   - **User** — writes templates to `~/.worca/templates/` (models and pricing are skipped with a warning since there is no user-level `settings.json`)
+   - **Project** (default) — writes templates to `.claude/templates/`, merges models/pricing into the project `.claude/settings.json`
+   - **User** — writes templates to `~/.worca/templates/` and merges models/pricing into the user-global `~/.worca/settings.json` (the file `load_global_settings()` reads at runtime; deep-merged under project settings on overlap)
 
 3. **Run the import:**
 
