@@ -119,26 +119,20 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
     agent_name = stage_entry.get("agent") or STAGE_AGENT_MAP.get(stage)
 
     if agent_name is None:
-        return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "effort": None, "schema": None}
+        return {"agent": None, "model": None, "model_env": {}, "max_turns": None, "effort": None, "schema": None, "cost_alias": None}
 
     agent_config = worca.get("agents", {}).get(agent_name, {})
     model_map = worca.get("models", {})
     raw_model = agent_config.get("model", "sonnet")
     model_id, model_env = _resolve_model(raw_model, model_map)
-    # model_alias is set only when this alias rewires Claude CLI to a non-
-    # Anthropic endpoint (via ANTHROPIC_BASE_URL in the alias's env block).
-    # That's the one case where Claude CLI's total_cost_usd is computed against
-    # the wrong pricing table and worca needs to override it from
-    # worca.pricing.models.<alias>. For every other alias (built-in shorthands
-    # like "opus"/"sonnet"/"haiku", or user renames that don't reroute the
-    # API), Claude CLI's cost number remains authoritative and model_alias
-    # stays None — no override path is taken downstream.
+    model_alias = raw_model if raw_model != model_id else None
     _reroutes_api = bool(_ALT_ENDPOINT_ENV_KEYS & set(model_env or {}))
-    model_alias = raw_model if _reroutes_api else None
+    cost_alias = raw_model if _reroutes_api else None
     return {
         "agent": agent_name,
         "model": model_id,
         "model_alias": model_alias,
+        "cost_alias": cost_alias,
         "model_env": model_env,
         "max_turns": agent_config.get("max_turns", 30),
         "effort": agent_config.get("effort"),

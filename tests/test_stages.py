@@ -719,11 +719,12 @@ class TestStageConfigModelEnv:
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "opus"
         assert config["model_alias"] == "glm-ds"
+        assert config["cost_alias"] == "glm-ds"
 
-    def test_stage_config_model_alias_none_for_shorthand_without_env(self, tmp_path):
-        """Built-in-style shorthand (``"opus"`` → ``"claude-opus-4-6"``) without
-        an env block must NOT set model_alias — otherwise vanilla installs
-        silently switch from Claude CLI's cost to the local pricing table."""
+    def test_stage_config_model_alias_set_for_shorthand_without_env(self, tmp_path):
+        """Built-in-style shorthand (``"opus"`` → ``"claude-opus-4-6"``) records
+        model_alias for UI display, but cost_alias stays None because no
+        alt-endpoint env key is present."""
         settings = {
             "worca": {
                 "models": {"opus": "claude-opus-4-6"},
@@ -734,12 +735,13 @@ class TestStageConfigModelEnv:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "claude-opus-4-6"
-        assert config["model_alias"] is None
+        assert config["model_alias"] == "opus"
+        assert config["cost_alias"] is None
 
-    def test_stage_config_model_alias_none_for_rename_without_endpoint_env(self, tmp_path):
-        """A user rename that ships env vars unrelated to API routing (e.g. a
-        ``CLAUDE_CODE_MAX_OUTPUT_TOKENS`` tuning knob) stays on Claude CLI's
-        cost — the override is opt-in via ANTHROPIC_BASE_URL, nothing else."""
+    def test_stage_config_model_alias_set_for_rename_without_endpoint_env(self, tmp_path):
+        """A user rename (``"tuned-opus"`` → ``"claude-opus-4-6"``) records
+        model_alias for UI display, but cost_alias stays None because the env
+        block has no alt-endpoint key."""
         settings = {
             "worca": {
                 "models": {
@@ -755,18 +757,20 @@ class TestStageConfigModelEnv:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "claude-opus-4-6"
-        assert config["model_alias"] is None
+        assert config["model_alias"] == "tuned-opus"
+        assert config["cost_alias"] is None
 
-    def test_stage_config_model_alias_none_on_vanilla_install(self, tmp_path):
+    def test_stage_config_cost_alias_none_on_vanilla_install(self, tmp_path):
         """No ``worca.models`` at all, agent uses the default ``"sonnet"`` →
-        alias must be None so Claude CLI's authoritative cost is preserved.
-        This is the regression-prevention test for the broad-trigger bug."""
+        model_alias is ``"sonnet"`` for UI display, cost_alias is None so
+        Claude CLI's authoritative cost is preserved."""
         settings = {"worca": {"agents": {"planner": {"model": "sonnet"}}}}
         settings_file = tmp_path / "settings.json"
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "claude-sonnet-4-6"
-        assert config["model_alias"] is None
+        assert config["model_alias"] == "sonnet"
+        assert config["cost_alias"] is None
 
     def test_stage_config_model_alias_is_none_for_passthrough_id(self, tmp_path):
         """When the user types an id with no model-map entry (passthrough), no
@@ -781,6 +785,7 @@ class TestStageConfigModelEnv:
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["model"] == "claude-opus-4-6"
         assert config["model_alias"] is None
+        assert config["cost_alias"] is None
 
 
 class TestResolvePlanReviewMode:

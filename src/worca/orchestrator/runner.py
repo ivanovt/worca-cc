@@ -1349,7 +1349,7 @@ def run_stage(
         output_format="stream-json",
         json_schema=_schema_path(config["schema"]),
         model=config.get("model"),
-        model_alias=config.get("model_alias"),
+        model_alias=config.get("cost_alias"),
         model_env=merged_env,
         log_path=log_path,
         on_event=on_event,
