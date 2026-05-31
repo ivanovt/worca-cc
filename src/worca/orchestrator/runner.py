@@ -3571,6 +3571,14 @@ def run_pipeline(
                                     bead_id=claimed_bead,
                                     error="bd_close failed",
                                 ))
+                        # Record the bead as processed regardless of bd_close
+                        # outcome — implementation is the expensive step and
+                        # must not be retried on the same bead. Persisting here
+                        # (via save_context below) lets resume skip it too.
+                        _implemented = prompt_builder.get_context("implemented_bead_ids") or []
+                        if claimed_bead not in _implemented:
+                            _implemented.append(claimed_bead)
+                            prompt_builder.update_context("implemented_bead_ids", _implemented)
 
                     # Accumulate files across all beads
                     all_files = prompt_builder.get_context("all_files_changed") or []
@@ -3588,6 +3596,20 @@ def run_pipeline(
                     # is stopped between bead iterations, resume must re-enter
                     # IMPLEMENT to process remaining beads.
                     next_bead = _query_ready_bead(allowed_ids=run_bead_ids, run_id=status.get("run_id"))
+                    # Drain when bd_ready re-surfaces an already-implemented
+                    # bead. Happens when the bead store doesn't reflect our
+                    # closure yet (slow daemon, stateless test stub, or a
+                    # bd_close failure). Re-implementing is never the right
+                    # answer — advance instead.
+                    if next_bead:
+                        _impl_set = set(prompt_builder.get_context("implemented_bead_ids") or [])
+                        if next_bead["id"] in _impl_set:
+                            _log(
+                                f"bd ready returned already-implemented bead {next_bead['id']} "
+                                f"— treating bead queue as drained",
+                                "warn",
+                            )
+                            next_bead = None
                     if next_bead and Stage.IMPLEMENT in stage_order:
                         safety_cap = max(max_beads, len(run_bead_ids or [])) + 3
                         if loop_counters["bead_iteration"] < safety_cap:
