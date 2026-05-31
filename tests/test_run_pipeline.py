@@ -373,10 +373,15 @@ class TestTemplateMain:
 
     @patch("worca.scripts.run_pipeline.run_pipeline")
     def test_template_config_merged_before_launch(self, mock_run_pipeline, tmp_path):
-        """Template apply() is called with current worca config; merged settings passed to runner."""
+        """Template apply() is called with a STRIPPED current worca config (Phase 1):
+        template-owned keys (loops) are removed before merge; cross-template keys (models) survive.
+        Merged settings then land in the temp settings file passed to the runner."""
         from worca.scripts.run_pipeline import main
 
-        settings_path = self._make_settings(tmp_path, {"loops": {"test": 2}})
+        settings_path = self._make_settings(
+            tmp_path,
+            {"loops": {"test": 2}, "models": {"opus": "claude-opus-4-7"}},
+        )
 
         # Capture the temp settings content before the finally block deletes it
         captured_settings = {}
@@ -392,7 +397,11 @@ class TestTemplateMain:
         mock_run_pipeline.side_effect = capture_and_return
 
         mock_resolver = MagicMock()
-        mock_resolver.apply.return_value = {"loops": {"test": 3}, "stages": {}}
+        mock_resolver.apply.return_value = {
+            "loops": {"test": 3},
+            "stages": {},
+            "models": {"opus": "claude-opus-4-7"},
+        }
         mock_resolver.get.return_value = MagicMock(agents_dir=None)
 
         with patch("sys.argv", [
@@ -407,11 +416,11 @@ class TestTemplateMain:
                     mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
                     main()
 
-        # apply() called with current worca config
+        # apply() called with the STRIPPED worca dict (loops removed, models kept)
         mock_resolver.apply.assert_called_once()
         call_args = mock_resolver.apply.call_args
         assert call_args[0][0] == "bugfix"
-        assert call_args[0][1] == {"loops": {"test": 2}}
+        assert call_args[0][1] == {"models": {"opus": "claude-opus-4-7"}}
 
         # run_pipeline called with a temp settings path (not the original)
         call_kwargs = mock_run_pipeline.call_args[1]
@@ -587,6 +596,175 @@ class TestTemplateMain:
 
         assert "data" in captured_settings, "Temp settings file was not readable during run_pipeline call"
         assert captured_settings["data"]["worca"].get("_template_agents_dir") == "/some/template/agents"
+
+
+class TestTemplatePhase1Stripping:
+    """Phase 1: when a template is in play, TEMPLATE_OWNED_KEYS are stripped
+    from the project-settings merge base BEFORE the template applies. This
+    makes shared templates behave identically across machines."""
+
+    def _make_settings(self, tmp_path, worca_config=None):
+        data = {"worca": worca_config or {}}
+        p = tmp_path / ".claude" / "settings.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data))
+        return str(p)
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_template_strips_all_owned_keys(self, mock_run_pipeline, tmp_path):
+        """Every TEMPLATE_OWNED_KEYS path is removed from the merge base; cross-template keys survive."""
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(
+            tmp_path,
+            {
+                # All template-owned — should be stripped
+                "agents": {"implementer": {"model": "sonnet"}},
+                "stages": {"plan_review": {"enabled": True}},
+                "loops": {"implement_test": 7},
+                "circuit_breaker": {"max_consecutive_failures": 9},
+                "effort": {"auto_mode": "reactive"},
+                "governance": {
+                    "dispatch": {"_defaults": {"tools": ["Bash"]}},
+                    "guards": {"block_graphify_mutation": True},  # cross-template, kept
+                },
+                # Cross-template — should survive
+                "models": {"opus": "claude-opus-4-7"},
+                "webhooks": [{"url": "https://x"}],
+                "default_template": "bugfix",
+            },
+        )
+
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_resolver.get.return_value = MagicMock(agents_dir=None, tier="builtin")
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--template", "bugfix",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                    from worca.orchestrator.work_request import WorkRequest
+                    mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                    main()
+
+        base_passed_to_apply = mock_resolver.apply.call_args[0][1]
+        # Template-owned keys gone
+        for key in ("agents", "stages", "loops", "circuit_breaker", "effort"):
+            assert key not in base_passed_to_apply, f"{key} should have been stripped"
+        # governance.dispatch gone but governance.guards preserved
+        assert "dispatch" not in base_passed_to_apply.get("governance", {})
+        assert base_passed_to_apply["governance"]["guards"] == {"block_graphify_mutation": True}
+        # Cross-template keys preserved
+        assert base_passed_to_apply["models"] == {"opus": "claude-opus-4-7"}
+        assert base_passed_to_apply["webhooks"] == [{"url": "https://x"}]
+        assert base_passed_to_apply["default_template"] == "bugfix"
+
+
+class TestDefaultTemplateResolution:
+    """Phase 1: when --template is not passed, worca.default_template is used."""
+
+    def _make_settings(self, tmp_path, worca_config=None):
+        data = {"worca": worca_config or {}}
+        p = tmp_path / ".claude" / "settings.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data))
+        return str(p)
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_default_template_used_when_arg_missing(self, mock_run_pipeline, tmp_path):
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path, {"default_template": "quick-fix"})
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_resolver.get.return_value = MagicMock(agents_dir=None, tier="builtin")
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                    from worca.orchestrator.work_request import WorkRequest
+                    mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                    main()
+
+        # apply was called with the default template id
+        assert mock_resolver.apply.call_args[0][0] == "quick-fix"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_explicit_template_overrides_default(self, mock_run_pipeline, tmp_path):
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path, {"default_template": "quick-fix"})
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_resolver.get.return_value = MagicMock(agents_dir=None, tier="builtin")
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--template", "bugfix",  # explicit overrides default
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                    from worca.orchestrator.work_request import WorkRequest
+                    mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                    main()
+
+        assert mock_resolver.apply.call_args[0][0] == "bugfix"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_no_default_no_arg_runs_without_template(self, mock_run_pipeline, tmp_path):
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path)  # no default_template
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                from worca.orchestrator.work_request import WorkRequest
+                mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                main()
+
+        # run_pipeline saw the ORIGINAL settings path — no temp file written
+        assert mock_run_pipeline.call_args[1]["settings_path"] == settings_path
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_invalid_default_template_value_is_ignored(self, mock_run_pipeline, tmp_path):
+        """Non-string or empty default_template is treated as not set."""
+        from worca.scripts.run_pipeline import main
+
+        settings_path = self._make_settings(tmp_path, {"default_template": ""})
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": "run-001"}
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--prompt", "Fix bug",
+            "--settings", settings_path,
+            "--status-dir", str(tmp_path / ".worca"),
+        ]):
+            with patch("worca.scripts.run_pipeline.normalize") as mock_norm:
+                from worca.orchestrator.work_request import WorkRequest
+                mock_norm.return_value = WorkRequest(source_type="prompt", title="Fix bug")
+                main()
+
+        # Empty string treated as no default → original settings path used
+        assert mock_run_pipeline.call_args[1]["settings_path"] == settings_path
 
 
 class TestPipelineTemplateFormatting:

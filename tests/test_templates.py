@@ -1,17 +1,20 @@
 """Tests for TemplateResolver.__init__, list(), and get()."""
 
+import copy
 import json
 from pathlib import Path
 
 import pytest
 
 from worca.orchestrator.templates import (
+    TEMPLATE_OWNED_KEYS,
     Template,
     TemplateSummary,
     TemplateError,
     TemplateResolver,
     deep_merge_config,
     render_params,
+    strip_template_owned,
 )
 
 
@@ -631,3 +634,75 @@ class TestTemplateResolverApplyConfig:
         result = resolver.apply("tmpl", current)
         assert result is not current
         assert current == current_copy
+
+
+# ---------------------------------------------------------------------------
+# strip_template_owned + TEMPLATE_OWNED_KEYS
+# ---------------------------------------------------------------------------
+
+
+class TestStripTemplateOwned:
+    def test_empty_settings_is_noop(self):
+        assert strip_template_owned({}) == {}
+
+    def test_strips_all_top_level_template_owned_keys(self):
+        worca = {
+            "agents": {"implementer": {"model": "sonnet"}},
+            "stages": {"plan_review": {"enabled": True}},
+            "loops": {"implement_test": 3},
+            "circuit_breaker": {"max_consecutive_failures": 5},
+            "effort": {"auto_mode": "adaptive"},
+        }
+        assert strip_template_owned(worca) == {}
+
+    def test_strips_nested_governance_dispatch_but_keeps_guards(self):
+        worca = {
+            "governance": {
+                "dispatch": {"_defaults": {"tools": ["*"]}},
+                "guards": {"block_graphify_mutation": True},
+            }
+        }
+        result = strip_template_owned(worca)
+        assert "dispatch" not in result["governance"]
+        assert result["governance"]["guards"] == {"block_graphify_mutation": True}
+
+    def test_preserves_cross_template_keys(self):
+        worca = {
+            "models": {"opus": "claude-opus-4-7"},
+            "webhooks": [{"url": "https://x"}],
+            "pricing": {"models": {}},
+            "graphify": {"enabled": True},
+            "code_review_graph": {"enabled": False},
+            "default_template": "feature",
+            # template-owned, will be stripped
+            "agents": {"planner": {"model": "opus"}},
+        }
+        result = strip_template_owned(worca)
+        assert "agents" not in result
+        assert result["models"] == {"opus": "claude-opus-4-7"}
+        assert result["webhooks"] == [{"url": "https://x"}]
+        assert result["pricing"] == {"models": {}}
+        assert result["graphify"] == {"enabled": True}
+        assert result["code_review_graph"] == {"enabled": False}
+        assert result["default_template"] == "feature"
+
+    def test_does_not_mutate_input(self):
+        worca = {"agents": {"x": {"model": "opus"}}, "models": {"opus": "id"}}
+        snapshot = copy.deepcopy(worca)
+        _ = strip_template_owned(worca)
+        assert worca == snapshot
+
+    def test_governance_empty_after_dispatch_strip_is_kept_as_empty_dict(self):
+        worca = {"governance": {"dispatch": {"_defaults": {"tools": ["*"]}}}}
+        result = strip_template_owned(worca)
+        assert result == {"governance": {}}
+
+    def test_missing_intermediate_paths_are_silently_skipped(self):
+        worca = {"models": {"opus": "id"}}
+        assert strip_template_owned(worca) == {"models": {"opus": "id"}}
+
+    def test_template_owned_keys_constant_shape(self):
+        for path in TEMPLATE_OWNED_KEYS:
+            assert isinstance(path, tuple)
+            assert all(isinstance(segment, str) for segment in path)
+            assert len(path) >= 1

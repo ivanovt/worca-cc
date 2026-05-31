@@ -252,23 +252,38 @@ def main():
     _resolver = None
     _pipeline_template = None
 
+    # Load project settings once — used to (a) fall back to worca.default_template
+    # when --template wasn't passed, and (b) form the merge base when applying
+    # the resolved template.
+    try:
+        from worca.utils.settings import load_settings as _load_settings
+        _project_settings = _load_settings(args.settings)
+    except Exception:
+        _project_settings = {}
+    _project_worca = _project_settings.get("worca", {})
+
+    # Phase 1: fall back to worca.default_template when --template wasn't passed.
+    if not _template_id:
+        _default = _project_worca.get("default_template")
+        if isinstance(_default, str) and _default:
+            _template_id = _default
+
     if _template_id:
         import tempfile
-        from worca.orchestrator.templates import TemplateError
+        from worca.orchestrator.templates import TemplateError, strip_template_owned
 
         _params = _parse_params(args.param or [])
-
-        try:
-            from worca.utils.settings import load_settings as _load_settings
-            _current_settings = _load_settings(args.settings)
-        except Exception:
-            _current_settings = {}
-
-        _current_worca = _current_settings.get("worca", {})
         _resolver = _make_template_resolver(args.settings)
 
+        # Phase 1: strip TEMPLATE_OWNED_KEYS from the merge base so leftover
+        # project-Settings values can't leak in for keys the template doesn't
+        # explicitly set. Cross-template keys (models, webhooks, pricing,
+        # governance.guards, graphify, code_review_graph, default_template
+        # itself) are preserved.
+        _base_for_template = strip_template_owned(_project_worca)
+
         try:
-            _merged_worca = _resolver.apply(_template_id, _current_worca, _params)
+            _merged_worca = _resolver.apply(_template_id, _base_for_template, _params)
         except TemplateError as e:
             print(f"error: template '{_template_id}': {e}", file=sys.stderr)
             raise SystemExit(2)
@@ -283,7 +298,7 @@ def main():
             _tier_display = "worca" if _tmpl.tier == "builtin" else _tmpl.tier
             _pipeline_template = f"{_tier_display}:{_template_id}"
 
-        _merged_settings = {**_current_settings, "worca": _merged_worca}
+        _merged_settings = {**_project_settings, "worca": _merged_worca}
         _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
         json.dump(_merged_settings, _tmp, indent=2)
         _tmp.close()

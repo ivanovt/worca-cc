@@ -1,11 +1,53 @@
 """Template resolver and utility functions for pipeline templates."""
 
+import copy
 import json
 import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Keys under `worca.*` that are owned by the selected template at run launch.
+# When a template is in play (explicit at launch or resolved from
+# worca.default_template), these are stripped from the project-settings merge
+# base BEFORE the template's config applies. Result: a shared template behaves
+# identically across machines until explicitly edited.
+#
+# Keys NOT in this list (worca.models, worca.webhooks, worca.pricing,
+# worca.governance.guards, worca.graphify, worca.code_review_graph,
+# stages.preflight.checks, etc.) stay cross-template — they're project-machine
+# concerns (creds, infra, integrations) that should be the same for every
+# template the project runs.
+TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
+    ("agents",),
+    ("stages",),
+    ("loops",),
+    ("circuit_breaker",),
+    ("effort",),
+    ("governance", "dispatch"),
+]
+
+
+def strip_template_owned(worca_settings: dict) -> dict:
+    """Return a deep-copy of worca_settings with every TEMPLATE_OWNED_KEYS path removed.
+
+    Called by run launch before a template's config is deep-merged in, so
+    project Settings can't leak template-driven keys into the merge base.
+    Missing intermediate paths are skipped silently — a clean project that
+    never customized any of these keys is a no-op.
+    """
+    result = copy.deepcopy(worca_settings)
+    for path in TEMPLATE_OWNED_KEYS:
+        node = result
+        for segment in path[:-1]:
+            if not isinstance(node, dict) or segment not in node:
+                node = None
+                break
+            node = node[segment]
+        if isinstance(node, dict) and path[-1] in node:
+            del node[path[-1]]
+    return result
 
 
 @dataclass

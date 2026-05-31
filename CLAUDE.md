@@ -118,6 +118,7 @@ Skills and subagents in this repo split into two scopes:
 ## Configuration
 
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
+- `worca.default_template` — optional template id pinned as the project default; every run uses it unless `--template` overrides at launch
 - `worca.stages` — enable/disable stages, override agents
 - `worca.agents` — model, max_turns, and effort per agent
 - `worca.effort` — auto_mode, auto_cap for adaptive effort levels (see [`docs/effort.md`](./docs/effort.md))
@@ -125,6 +126,8 @@ Agent config in `.claude/settings.json` under the `worca` namespace. Key section
 - `worca.loops` — max iterations for test/review/planning retry loops
 - `worca.circuit_breaker` — error classification and halt thresholds
 - `worca.governance` — hook guards and dispatch rules (see [`docs/governance.md`](./docs/governance.md) for the full reference)
+
+**Template-driven keys.** When a template is in play at run launch (explicit or via `worca.default_template`), these are stripped from the project-Settings merge base before the template's `config` applies: `worca.agents`, `worca.stages`, `worca.loops`, `worca.circuit_breaker`, `worca.effort`, `worca.governance.dispatch`. The template owns them outright. Cross-template keys (`models`, `webhooks`, `pricing`, `governance.guards`, `graphify`, `code_review_graph`, preflight definitions) keep applying. Full precedence reference: [`docs/configuration-precedence.md`](./docs/configuration-precedence.md).
 
 ### Model Profiles (`worca.models`)
 
