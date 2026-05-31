@@ -162,13 +162,6 @@ const v3: BulletScene[] = [
       "worca can push run updates into the chat tools your team already uses. Set up an integration once. That can be Telegram, Discord, or Slack. From then on, worca notifies you when something interesting happens. A plan is ready. A pull request has been opened. The run has paused. A circuit breaker tripped. On Telegram, those notifications come with inline actions. You can pause, resume, or stop a run right from the chat. No need to open the UI. And from inside a run, agents can reach out to you directly through the notify skill. For example, an agent might say: \"I'm waiting on a clarification, please reply when you can.\" You can leave the UI closed and still stay in the loop on long-running work.",
     words: 126,
   },
-  {
-    id: 18,
-    title: "Strategic context persists across sessions",
-    body:
-      "Strategic work needs to survive across sessions. Multi-step features. Dependencies between tasks. Work the pipeline discovers along the way. All of these live in beads. Beads are a lightweight, git-tracked issue store. The next session sees them. The next agent sees them. Every fleet child sees them too. Small day-to-day todos stay ephemeral. But anything you'd be sad to lose when a session ends should become a bead.",
-    words: 68,
-  },
 ];
 
 export const chapters: Record<1 | 2 | 3, Chapter> = {
@@ -176,3 +169,10 @@ export const chapters: Record<1 | 2 | 3, Chapter> = {
   2: { number: 2, title: "Inside a worca run", scenes: v2 },
   3: { number: 3, title: "Worca in your workflow", scenes: v3 },
 };
+
+/** Total bullets across all three videos. Drives the "NN / TOTAL"
+ *  counter shown in the top-right of each bullet scene. */
+export const totalBullets =
+  chapters[1].scenes.length +
+  chapters[2].scenes.length +
+  chapters[3].scenes.length;

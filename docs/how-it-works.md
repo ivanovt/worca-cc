@@ -78,7 +78,7 @@ Let's get specific about what you can do in the UI. You can read the generated p
 
 ## Video 3 — Worca in your workflow
 
-*Bullets 13–18 · ~3.6 min raw narration at 150 wpm*
+*Bullets 13–17 · ~3.2 min raw narration at 150 wpm*
 
 ### 13. Each run lives in its own git worktree, so parallel runs never collide
 
@@ -104,10 +104,6 @@ The pipeline emits a typed event stream. There are around 80 different event typ
 
 worca can push run updates into the chat tools your team already uses. Set up an integration once. That can be Telegram, Discord, or Slack. From then on, worca notifies you when something interesting happens. A plan is ready. A pull request has been opened. The run has paused. A circuit breaker tripped. On Telegram, those notifications come with inline actions. You can pause, resume, or stop a run right from the chat. No need to open the UI. And from inside a run, agents can reach out to you directly through the notify skill. For example, an agent might say: "I'm waiting on a clarification, please reply when you can." You can leave the UI closed and still stay in the loop on long-running work.
 
-### 18. Strategic context persists across sessions
-
-Strategic work needs to survive across sessions. Multi-step features. Dependencies between tasks. Work the pipeline discovers along the way. All of these live in beads. Beads are a lightweight, git-tracked issue store. The next session sees them. The next agent sees them. Every fleet child sees them too. Small day-to-day todos stay ephemeral. But anything you'd be sad to lose when a session ends should become a bead.
-
 ---
 
 ## Per-video summary
@@ -116,5 +112,5 @@ Strategic work needs to survive across sessions. Multi-step features. Dependenci
 |---:|---|---|---:|---:|
 | 1 | Introducing worca | 1–5 | 388 | 2.6 min |
 | 2 | Inside a worca run | 6–12 | 579 | 3.9 min |
-| 3 | Worca in your workflow | 13–18 | 541 | 3.6 min |
-| | **Total** | **18** | **1508** | **10.1 min** |
+| 3 | Worca in your workflow | 13–17 | 473 | 3.2 min |
+| | **Total** | **17** | **1440** | **9.6 min** |

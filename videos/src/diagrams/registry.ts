@@ -28,7 +28,6 @@ import { Diagram14Layers } from "./Diagram14Layers";
 import { Diagram15Templates } from "./Diagram15Templates";
 import { Diagram16Events } from "./Diagram16Events";
 import { Diagram17Chat } from "./Diagram17Chat";
-import { Diagram18Beads } from "./Diagram18Beads";
 
 export interface DiagramProps {
   /** Word count of the bullet — diagrams use this to pace their reveal
@@ -54,7 +53,6 @@ const REGISTRY: Partial<Record<number, React.FC<DiagramProps>>> = {
   15: Diagram15Templates,
   16: Diagram16Events,
   17: Diagram17Chat,
-  18: Diagram18Beads,
 };
 
 export const diagramFor = (bulletId: number): React.FC<DiagramProps> =>
