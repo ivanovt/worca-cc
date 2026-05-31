@@ -17,16 +17,20 @@ worca configuration lives under a `worca` key in `.claude/settings.json`. **The 
 
 ## The `worca` namespace
 
+Sections marked **† template-owned** are stripped from the merge base when a template is in play at run launch (explicit `--template` or `worca.default_template` fallback) — the selected template's `config` provides them instead. See [Configuration precedence](/configuration/precedence/).
+
 | Section | Controls | UI panel | See |
 |---|---|---|---|
-| `worca.stages` | Enable/disable stages; override the agent per stage. | Settings → Stages | [Stages](/configuration/stages/) |
-| `worca.agents` | Per-agent `model`, `max_turns`, `effort`. | Settings → Agents | [Agents & models](/configuration/agents-and-models/) |
+| `worca.default_template` | Template id pinned as the project default; every run uses it unless `--template` overrides at launch. | Settings (per-project) | [Configuration precedence](/configuration/precedence/) |
+| `worca.stages` **†** | Enable/disable stages; override the agent per stage. `stages.preflight` is a cross-template carve-out and survives strip. | Settings → Stages | [Stages](/configuration/stages/) |
+| `worca.agents` **†** | Per-agent `model`, `max_turns`, `effort`. | Settings → Agents | [Agents & models](/configuration/agents-and-models/) |
 | `worca.models` | Alias → model ID (string) or `{id, env}` profile. | Settings → Models | [Adding & routing models](/advanced/adding-models/) |
-| `worca.effort` | `auto_mode`, `auto_cap` for adaptive effort. | Settings → Effort | [Tuning effort](/advanced/tuning-effort/) |
-| `worca.loops` | Max iterations for the test / review / planning loops. | Settings → Loop Limits | [Loops & circuit breaker](/configuration/loops-and-circuit-breaker/) |
-| `worca.circuit_breaker` | Error classification and halt thresholds. | Settings → Circuit Breaker | [Loops & circuit breaker](/configuration/loops-and-circuit-breaker/) |
-| `worca.governance` | Hook guards and the three-tier `dispatch` rules. | Settings → Governance | [Dispatch governance](/advanced/dispatch-governance/) |
-| `worca.milestones` | Approval gates (`plan_approval`, `pr_approval`). | Settings → Approval Gates | [Controlling a run](/running-pipelines/controlling-a-run/) |
+| `worca.effort` **†** | `auto_mode`, `auto_cap` for adaptive effort. | Settings → Effort | [Tuning effort](/advanced/tuning-effort/) |
+| `worca.loops` **†** | Max iterations for the test / review / planning loops. | Settings → Loop Limits | [Loops & circuit breaker](/configuration/loops-and-circuit-breaker/) |
+| `worca.circuit_breaker` **†** | Error classification and halt thresholds. | Settings → Circuit Breaker | [Loops & circuit breaker](/configuration/loops-and-circuit-breaker/) |
+| `worca.governance.dispatch` **†** | Per-agent `tools` / `skills` / `subagents` allowlists. | Settings → Governance → Dispatch Rules | [Dispatch governance](/advanced/dispatch-governance/) |
+| `worca.governance.guards` | Hook guards (e.g. `block_graphify_mutation`). Cross-template. | Settings → Governance → Guard Rules | [Dispatch governance](/advanced/dispatch-governance/) |
+| `worca.milestones` **†** | Approval gates (`plan_approval`, `pr_approval`, `deploy_approval`). | Settings → Approval Gates | [Controlling a run](/running-pipelines/controlling-a-run/) |
 | `worca.webhooks` | Outbound event subscriptions. | Settings → Webhooks | [Webhooks](/integrations/webhooks/) |
 | `worca.graphify` | Knowledge-graph `enabled` / `mode`. | Settings → Graphify | [Knowledge graph](/advanced/knowledge-graph/) |
 | `worca.guide` | `max_bytes` cap on combined guide content. | Settings → Fleet & guide | [Guides](/advanced/guides/) |

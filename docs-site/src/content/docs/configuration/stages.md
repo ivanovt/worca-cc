@@ -7,6 +7,10 @@ sidebar:
 
 The pipeline's nine stages are described in [The pipeline & stages](/concepts/the-pipeline-and-stages/). **Every stage except Preflight has an on/off toggle.** The **Settings → Stages** panel lists all eight agent stages — Plan, Plan Review, Coordinate, Implement, Test, Review, PR, Learn — each with an enable switch. In practice you'll change the stage set by picking a [template](/concepts/pipeline-templates/) rather than flipping switches by hand.
 
+:::caution[Stage toggles are template-owned]
+`worca.stages` (excluding `stages.preflight`) is a **template-owned** key. When a template is in play, the on/off toggles you flip in **Settings → Stages** are **stripped** before the template's config applies — the active template decides what runs. The stage toggles in Settings only take effect when no template is selected. `stages.preflight` is a cross-template carve-out and always survives, so project preflight checks apply regardless of template. See [Configuration precedence](/configuration/precedence/).
+:::
+
 :::note[Screenshot — coming soon]
 The Settings → Stages panel: every agent stage with its enable toggle and assigned agent.
 :::

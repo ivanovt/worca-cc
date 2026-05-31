@@ -40,6 +40,7 @@ Whether you click it in Settings or run `worca init --upgrade`, the refresh:
 - merges new default settings keys without overwriting your values;
 - applies key renames and path migrations deterministically;
 - extracts naturally-global keys into `~/.worca/settings.json`;
+- **(0.46+)** auto-migrates customized template-owned keys into an auto-generated `_legacy-settings` project template and pins it as `worca.default_template`, so existing behavior carries forward through the [Phase 1 strip semantics](/configuration/precedence/) with no observable change;
 - adds missing `.gitignore` entries and initializes beads if needed.
 
 It's idempotent — doing it twice is safe.

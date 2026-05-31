@@ -7,6 +7,10 @@ sidebar:
 
 The pipeline retries work automatically, but never forever. Two mechanisms bound it: per-loop iteration limits and a circuit breaker.
 
+:::caution[Loops and circuit breaker are template-owned]
+`worca.loops` and `worca.circuit_breaker` are **template-owned** keys. When a template is in play, the values you set in **Settings → Loop Limits** and **Settings → Circuit Breaker** are **stripped** before the template's config applies — the active template's limits and thresholds take over. The Settings values only take effect when no template is selected. To change loop/circuit-breaker behavior for a specific template, edit that template. See [Configuration precedence](/configuration/precedence/).
+:::
+
 ## Loop limits
 
 Three stages can send work back upstream:

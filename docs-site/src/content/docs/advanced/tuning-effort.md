@@ -9,6 +9,10 @@ sidebar:
 
 You set a per-agent effort level in **Settings → Agents**, right alongside its model and max-turns (see [Agents & models](/configuration/agents-and-models/)), and the pipeline-wide knobs (`auto_mode`, `auto_cap`) in **Settings → Effort**. The level each iteration actually ran at appears as a badge in the run-detail view. This page explains the model underneath those controls — how a value resolves, escalates on retries, and collapses onto a model's ladder. The `worca.effort` JSON shown below is what the Effort panel writes.
 
+:::caution[Effort is template-owned]
+Both `worca.effort` and the per-agent `effort` field under `worca.agents.*` are **template-owned** — when a template is in play (explicit at launch or via `worca.default_template`), Settings values for these keys are **stripped** before the template's config applies. The values in **Settings → Effort** and **Settings → Agents** only take effect when **no** template is selected. To change effort for a specific template, edit the template itself. See [Configuration precedence](/configuration/precedence/) for the full strip-and-merge rules.
+:::
+
 ## Modes
 
 `worca.effort.auto_mode` controls two things: where an agent's starting effort comes from, and whether a loopback bumps it.

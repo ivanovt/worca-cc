@@ -7,6 +7,10 @@ sidebar:
 
 Each stage is run by an agent, and you can tune three things per agent from **Settings → Agents**: the **model**, the **max turns**, and the reasoning **effort**.
 
+:::caution[Agents are template-owned]
+`worca.agents` is a **template-owned** key. When a template is in play (explicit at launch or via `worca.default_template`), the values you set in **Settings → Agents** are **stripped** before the template's config applies — the active template's agent config takes over. To change agent config for a specific template, edit that template. See [Configuration precedence](/configuration/precedence/).
+:::
+
 ## Model and turns
 
 - **Model** — which Claude model the agent runs. Defaults track stage complexity: the reasoning-heavy stages (Planner, Plan Reviewer, Coordinator, Reviewer, Guardian, Learner) typically run Opus, while the build-and-test stages run a faster model.

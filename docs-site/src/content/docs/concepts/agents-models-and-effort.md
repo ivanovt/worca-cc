@@ -9,7 +9,7 @@ Each stage is run by an agent, and each agent is assigned a Claude model and a r
 
 ## Models per stage
 
-worca doesn't impose fixed model tiers. The default model for each stage generally tracks the stage's complexity — the more reasoning-heavy stages (**Planner, Plan Reviewer, Coordinator, Reviewer, Guardian, and Learner**) are typically set to **Opus**, while the build-and-test stages run a faster model. This is configured per stage in the **template**, and you can override the model (and max turns) per agent in the Settings UI.
+worca doesn't impose fixed model tiers. The default model for each stage generally tracks the stage's complexity — the more reasoning-heavy stages (**Planner, Plan Reviewer, Coordinator, Reviewer, Guardian, and Learner**) are typically set to **Opus**, while the build-and-test stages run a faster model. This is configured per stage in the **template**, and you can set per-agent model and max-turns in the Settings UI — note that those Settings values are template-owned: they apply when no template is in play, but the active template's agent config wins on overlap. See [Configuration precedence](/configuration/precedence/).
 
 ## Reasoning effort
 
