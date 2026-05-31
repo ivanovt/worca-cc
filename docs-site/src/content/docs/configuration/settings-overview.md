@@ -31,4 +31,4 @@ The **Preferences** tab edits the global file; everything else edits the project
 Secrets must never go in `settings.json` (it's committed). The Secrets panel writes exclusively to the gitignored `settings.local.json`. See [Secrets](/configuration/secrets/).
 :::
 
-The per-key reference is in [settings.json reference](/reference/settings/).
+The per-key reference is in [settings.json reference](/reference/settings/). For how these three files combine with user settings and named templates at run launch, see [Configuration precedence](/configuration/precedence/).
