@@ -25,6 +25,11 @@ TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
     ("circuit_breaker",),
     ("effort",),
     ("governance", "dispatch"),
+    # Approval gates (plan_approval / pr_approval / deploy_approval). Every
+    # existing built-in already declares these per its intent; promoting the
+    # block to template-owned closes the "teammate's Settings silently flips
+    # my gates" gap and makes the template's gate posture explicit.
+    ("milestones",),
 ]
 
 # Nested paths that sit under a template-owned block but are themselves

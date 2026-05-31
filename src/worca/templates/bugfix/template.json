@@ -60,6 +60,7 @@
     },
     "milestones": {
       "plan_approval": false,
+      "pr_approval": false,
       "deploy_approval": false
     },
     "circuit_breaker": {
