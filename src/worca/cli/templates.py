@@ -341,6 +341,18 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
     The backup-aside step uses `shutil.move` (rename within the same parent
     directory — single FS, atomic on POSIX) before any destructive mutation,
     so a write failure in step 3 always has something to roll back to.
+
+    Cross-filesystem safety: `os.replace` requires source and destination on
+    the same filesystem (EXDEV on POSIX, ERROR_NOT_SAME_DEVICE on Windows
+    cross-drive). The system tempdir is on a different volume from the repo
+    in common setups — macOS (`/private/var/folders/...` vs `/Volumes/X`),
+    Linux (`/tmp` tmpfs vs ext4 on `/home`), Windows (`C:\\Users\\…\\Temp`
+    vs `D:\\repo`). To guarantee single-FS for the atomic replace, we stage
+    `settings.json` in the SAME parent directory as the target, not in the
+    system tempdir. Template directories can keep staging in the system
+    tempdir because `shutil.copytree` is a file-by-file copy (no rename),
+    which handles cross-device natively. Same pattern as `state/status.py`
+    and `cli/init.py`.
     """
     target_real = target_dir.resolve()
     for tmpl_id in templates:
@@ -354,6 +366,10 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
     # (original_path, backup_path, kind) — kind is "dir" or "file"
     backups: list[tuple[Path, Path, str]] = []
     committed_templates: list[Path] = []
+    # Settings staging file lives next to the target (see docstring). Tracked
+    # separately so the finally block can sweep it on rollback / mid-commit
+    # failure without relying on the system-tempdir cleanup.
+    staged_settings_local: Path | None = None
 
     def _bak_name(p: Path) -> Path:
         return p.with_name(p.name + f".bak-{uuid.uuid4().hex[:8]}")
@@ -367,7 +383,10 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
                 json.dumps(tmpl_data, indent=2), encoding="utf-8"
             )
 
-        staged_settings = None
+        # Serialize the patched settings now (early failure on JSON errors)
+        # but defer the file write to the commit phase so it lands in the
+        # target's directory — required for same-FS os.replace below.
+        new_settings_text: str | None = None
         if settings_patch and settings_path:
             sp = Path(settings_path)
             if sp.exists():
@@ -375,10 +394,7 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
             else:
                 current = {}
             patched = deep_merge(current, {"worca": settings_patch})
-            staged_settings = staging / "settings.json"
-            staged_settings.write_text(
-                json.dumps(patched, indent=2), encoding="utf-8"
-            )
+            new_settings_text = json.dumps(patched, indent=2)
 
         # ---- Commit with backup-first ----
         try:
@@ -392,13 +408,31 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
                 shutil.copytree(str(src), str(dst))
                 committed_templates.append(dst)
 
-            if staged_settings is not None and settings_path:
+            if new_settings_text is not None and settings_path:
                 sp = Path(settings_path)
+                # Ensure the target's parent exists before staging next to it.
+                # In normal usage this is always `.claude/`, which the caller
+                # guarantees exists, but be defensive.
+                sp.parent.mkdir(parents=True, exist_ok=True)
                 if sp.exists():
                     bak = _bak_name(sp)
                     shutil.copy2(str(sp), str(bak))
                     backups.append((sp, bak, "file"))
-                os.replace(str(staged_settings), settings_path)
+                # Stage in target's directory so os.replace is single-FS on
+                # POSIX (no EXDEV) and Windows (no ERROR_NOT_SAME_DEVICE).
+                # The hidden prefix keeps the staging file out of casual
+                # `ls` and prevents tools watching the directory from
+                # confusing it with a real settings.json.
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=".settings.json.import-",
+                    suffix=".tmp",
+                    dir=str(sp.parent),
+                )
+                staged_settings_local = Path(tmp_name)
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(new_settings_text)
+                os.replace(str(staged_settings_local), str(sp))
+                staged_settings_local = None  # consumed by os.replace
         except Exception:
             # Rollback: tear down what we committed, then restore backups.
             for d in committed_templates:
@@ -425,6 +459,15 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
                     except OSError:
                         pass
     finally:
+        # Sweep any staged-next-to-target settings file that wasn't consumed
+        # (write failure, os.replace failure, or pre-replace exception).
+        # Required so the rollback-leftover assertion `no .bak-* siblings`
+        # also holds for our import-staging file.
+        if staged_settings_local is not None:
+            try:
+                staged_settings_local.unlink()
+            except OSError:
+                pass
         shutil.rmtree(staging, ignore_errors=True)
 
 

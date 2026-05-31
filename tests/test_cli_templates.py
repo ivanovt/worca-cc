@@ -1,6 +1,7 @@
 """Tests for worca templates CLI subcommands (list, show, create)."""
 
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1500,6 +1501,128 @@ class TestImportRollbackOnSettingsFailure:
             p for p in settings_dir.iterdir() if ".bak-" in p.name
         ]
         assert leftovers == [], f"leftover backups after rollback: {leftovers}"
+
+
+class TestImportCrossDeviceSafety:
+    """Regression: settings.json staging file must live in the SAME parent
+    directory as the target so the final `os.replace` is single-filesystem.
+
+    Background: `tempfile.mkdtemp()` returns a path under `tempfile.gettempdir()`
+    (`/private/var/folders/...` on macOS, `/tmp` on Linux, `C:\\…\\Temp` on
+    Windows) which is frequently on a different filesystem from the project
+    repo (`/Volumes/X`, ext4 on `/home`, a `D:\\` drive). Staging settings.json
+    in the system tempdir and then calling `os.replace(staged, target)` raises
+    `OSError: [Errno 18] Cross-device link` on POSIX and
+    `ERROR_NOT_SAME_DEVICE` on Windows — wiping the import via the rollback
+    path even though nothing is actually wrong with the bundle.
+    """
+
+    def test_settings_staged_in_target_dir(self, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        # Bundle must include a model the imported template references, so
+        # the settings.json patch is non-empty and os.replace is reached.
+        bundle = _make_bundle(models={"opus": "claude-opus-4-6"})
+        bundle["templates"][0]["config"] = {"agents": {"planner": {"model": "opus"}}}
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        captured: list[tuple[str, str]] = []
+        original_replace = os.replace
+
+        def capturing_replace(src, dst, *args, **kwargs):
+            captured.append((str(src), str(dst)))
+            return original_replace(src, dst, *args, **kwargs)
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ), patch("worca.cli.templates.os.replace", side_effect=capturing_replace):
+            main(["templates", "import", "--from", str(bundle_file)])
+
+        settings_calls = [c for c in captured if c[1] == str(settings_path)]
+        assert len(settings_calls) == 1, (
+            f"expected exactly one os.replace targeting settings.json, "
+            f"got {settings_calls}"
+        )
+        src, dst = settings_calls[0]
+        assert Path(src).parent == Path(dst).parent, (
+            f"settings.json staging must be in the same directory as the target "
+            f"so os.replace stays single-filesystem. "
+            f"src parent: {Path(src).parent}, dst parent: {Path(dst).parent}. "
+            f"Cross-device staging triggers EXDEV on POSIX / ERROR_NOT_SAME_DEVICE "
+            f"on Windows and silently routes the import through the rollback path."
+        )
+
+    def test_import_succeeds_under_simulated_cross_device_rename(self, tmp_path):
+        """Simulate a real cross-device rename by raising EXDEV from os.replace
+        whenever src and dst are in different parent directories — that's the
+        kernel's actual EXDEV trigger condition. Before the fix, the settings
+        staging file lived under the system tempdir while the target lived in
+        the project's `.claude/`, so this check would fire and the import would
+        bail. After the fix, every `os.replace` in the import path has src and
+        dst as siblings, so the simulated EXDEV never fires."""
+        import errno
+
+        builtin_dir = tmp_path / "builtin"
+        builtin_dir.mkdir()
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        settings_dir = tmp_path / ".claude"
+        settings_dir.mkdir()
+        settings_path = settings_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        bundle = _make_bundle(models={"opus": "claude-opus-4-6"})
+        bundle["templates"][0]["config"] = {"agents": {"planner": {"model": "opus"}}}
+        bundle_file = tmp_path / "bundle.json"
+        bundle_file.write_text(json.dumps(bundle))
+
+        original_replace = os.replace
+
+        def exdev_on_different_parents(src, dst, *args, **kwargs):
+            if Path(src).parent.resolve() != Path(dst).parent.resolve():
+                raise OSError(errno.EXDEV, "simulated cross-device link")
+            return original_replace(src, dst, *args, **kwargs)
+
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(settings_path),
+        ), patch(
+            "worca.cli.templates.os.replace",
+            side_effect=exdev_on_different_parents,
+        ):
+            main(["templates", "import", "--from", str(bundle_file)])
+
+        # Template landed
+        landed = json.loads(
+            (project_dir / "imported-tmpl" / "template.json").read_text()
+        )
+        assert landed["config"]["agents"]["planner"]["model"] == "opus"
+        # Settings.json picked up the new model alias
+        post = json.loads(settings_path.read_text())
+        assert post["worca"]["models"]["opus"] == "claude-opus-4-6"
+        # And no staged-import or .bak-* leftovers next to settings.json
+        leftovers = [
+            p for p in settings_dir.iterdir()
+            if p.name != "settings.json" and (
+                ".bak-" in p.name or p.name.startswith(".settings.json.import-")
+            )
+        ]
+        assert leftovers == [], f"leftover staging/backup files: {leftovers}"
 
 
 class TestImportMixedCollision:
