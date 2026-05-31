@@ -20,14 +20,18 @@ def _config():
 
 class TestTemplateLoading:
     def test_enabled_stages(self):
+        # Post-Phase-1: built-ins are enriched with the full stages set, so
+        # `plan` (always-enabled per shipped defaults) is now explicit.
         stages = _config()["stages"]
         enabled = {name for name, cfg in stages.items() if cfg.get("enabled", True)}
-        assert enabled == {"plan_review", "pr"}
+        assert enabled == {"plan", "plan_review", "pr"}
 
     def test_disabled_stages(self):
+        # Post-Phase-1 enrichment also makes `learn` explicit (disabled per
+        # shipped defaults; `investigate` is an analysis-only flow).
         stages = _config()["stages"]
         disabled = {name for name, cfg in stages.items() if not cfg.get("enabled", True)}
-        assert disabled == {"coordinate", "implement", "test", "review"}
+        assert disabled == {"coordinate", "implement", "test", "review", "learn"}
 
     def test_preflight_not_disabled(self):
         stages = _config()["stages"]

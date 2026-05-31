@@ -81,6 +81,22 @@ export function getModelKeys(worca) {
   return keys.length > 0 ? keys : DEFAULT_MODEL_KEYS;
 }
 
+// Banner shown at the top of every Settings tab whose keys are template-driven
+// (Agents, Pipeline, Effort, Governance.dispatch sub-panel). Phase 1 of the
+// template-driven pipelines work made these keys lose to the selected template
+// at run launch — the values here only apply when no template is in play and
+// no worca.default_template is set.
+export const TEMPLATE_DRIVEN_BANNER = html`
+  <sl-alert variant="neutral" open class="template-driven-banner">
+    <strong>Template-driven settings.</strong>
+    When a pipeline template is in play at run launch — either picked
+    explicitly or pinned via <code>worca.default_template</code> — these
+    values are <em>not</em> applied. The selected template owns them. The
+    values here only take effect when no template is selected.
+    <a href="https://docs.worca.dev/configuration/precedence/" target="_blank" rel="noopener">Learn more →</a>
+  </sl-alert>
+`;
+
 const GLOBAL_ONLY_KEY_PATHS = [
   ['parallel', 'cleanup_policy'],
   ['parallel', 'max_concurrent_pipelines'],
@@ -922,6 +938,7 @@ function agentsTab(worca, rerender) {
   const modelOptions = getModelKeys(worca);
   return html`
     <div class="settings-tab-content">
+      ${TEMPLATE_DRIVEN_BANNER}
       <div class="settings-cards">
         ${AGENT_NAMES.map((name) => {
           const agent = agents[name] || {};
@@ -980,6 +997,7 @@ export function pipelineTab(worca, rerender) {
 
   return html`
     <div class="settings-tab-content">
+      ${TEMPLATE_DRIVEN_BANNER}
       <h3 class="settings-section-title">Preflight</h3>
       <div class="settings-grid">
         <div class="settings-field">
@@ -1257,6 +1275,7 @@ export function governanceTab(worca, permissions, rerender) {
       </div>
 
       <h3 class="settings-section-title">Dispatch Rules</h3>
+      ${TEMPLATE_DRIVEN_BANNER}
       ${legacyDispatchBanner}
       ${[
         { section: 'tools', knownItems: knownTools },
@@ -2621,6 +2640,7 @@ export function effortTab(worca, rerender) {
 
   return html`
     <div class="settings-tab-content">
+      ${TEMPLATE_DRIVEN_BANNER}
       <h3 class="settings-section-title">Effort Mode</h3>
       <div class="settings-grid">
         <div class="settings-field">

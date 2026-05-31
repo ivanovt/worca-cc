@@ -768,3 +768,162 @@ class TestStripInertMilestoneKeys:
             ms = json.load(f)["worca"]["milestones"]
         assert ms["pr_approval"] == "always"
         assert ms["deploy_approval"] == 1
+
+
+class TestMigrateToLegacyTemplate:
+    """Phase 1: on `worca init --upgrade`, snapshot customized template-owned
+    keys into a `_legacy-settings` template and set worca.default_template."""
+
+    def _write_settings(self, git_root: Path, worca_cfg: dict):
+        claude_dir = git_root / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        settings_path = claude_dir / "settings.json"
+        settings_path.write_text(json.dumps({"worca": worca_cfg}))
+        return settings_path
+
+    def test_skips_when_no_settings_file(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        assert _migrate_to_legacy_template(tmp_path) is None
+
+    def test_skips_when_no_template_owned_customizations(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {"models": {"opus": "claude-opus-4-7"}})
+        assert _migrate_to_legacy_template(tmp_path) is None
+        assert not (tmp_path / ".claude" / "templates" / "_legacy-settings").exists()
+
+    def test_skips_when_default_template_already_set(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "default_template": "feature",
+            "loops": {"implement_test": 5},  # would otherwise be captured
+        })
+        assert _migrate_to_legacy_template(tmp_path) is None
+
+    def test_captures_customized_keys_into_template(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "agents": {"implementer": {"model": "sonnet", "max_turns": 80}},
+            "loops": {"implement_test": 5},
+            "circuit_breaker": {"max_consecutive_failures": 7},
+            "effort": {"auto_mode": "reactive"},
+            "governance": {
+                "dispatch": {"_defaults": {"tools": ["Bash"]}},
+                "guards": {"block_graphify_mutation": True},  # NOT template-owned
+            },
+            # cross-template; must NOT be captured
+            "models": {"opus": "claude-opus-4-7"},
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result == "_legacy-settings"
+
+        tmpl_path = tmp_path / ".claude" / "templates" / "_legacy-settings" / "template.json"
+        assert tmpl_path.exists()
+        tmpl = json.loads(tmpl_path.read_text())
+
+        assert tmpl["id"] == "_legacy-settings"
+        assert tmpl["auto_generated"] is True
+        assert tmpl["builtin"] is False
+        assert "auto-migrated" in tmpl["tags"]
+
+        cfg = tmpl["config"]
+        # Template-owned keys captured
+        assert cfg["agents"] == {"implementer": {"model": "sonnet", "max_turns": 80}}
+        assert cfg["loops"] == {"implement_test": 5}
+        assert cfg["circuit_breaker"] == {"max_consecutive_failures": 7}
+        assert cfg["effort"] == {"auto_mode": "reactive"}
+        assert cfg["governance"] == {"dispatch": {"_defaults": {"tools": ["Bash"]}}}
+        # Cross-template keys NOT captured
+        assert "models" not in cfg
+        assert "guards" not in cfg.get("governance", {})
+
+    def test_sets_default_template_in_settings(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        settings_path = self._write_settings(tmp_path, {
+            "loops": {"implement_test": 5},
+        })
+        _migrate_to_legacy_template(tmp_path)
+        merged = json.loads(settings_path.read_text())
+        assert merged["worca"]["default_template"] == "_legacy-settings"
+        # Original keys NOT removed from settings.json — strip happens at run launch
+        assert merged["worca"]["loops"] == {"implement_test": 5}
+
+    def test_idempotent_on_second_run(self, tmp_path):
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {"loops": {"implement_test": 5}})
+        first = _migrate_to_legacy_template(tmp_path)
+        assert first == "_legacy-settings"
+        second = _migrate_to_legacy_template(tmp_path)
+        assert second is None  # default_template now set, so skipped
+
+    def test_migration_skips_stages_preflight_carveout(self, tmp_path):
+        """stages.preflight is cross-template — the auto-generated template
+        must not snapshot it, otherwise later edits to preflight in Settings
+        would never take effect (the template would freeze the snapshot)."""
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "stages": {
+                "preflight": {"enabled": True, "require": ["ruff check"]},
+                "plan_review": {"enabled": True},
+                "learn": {"enabled": True},
+            },
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+
+        tmpl_path = tmp_path / ".claude" / "templates" / result / "template.json"
+        tmpl = json.loads(tmpl_path.read_text())
+        cfg = tmpl["config"]
+
+        # Non-preflight stages captured
+        assert cfg["stages"].get("plan_review") == {"enabled": True}
+        assert cfg["stages"].get("learn") == {"enabled": True}
+        # preflight NOT in the snapshot — stays cross-template
+        assert "preflight" not in cfg["stages"]
+
+    def test_migration_drops_empty_stages_block_after_carveout(self, tmp_path):
+        """If the only thing in stages was preflight, dropping it should drop
+        the whole stages block from the snapshot (no hollow {})."""
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "stages": {"preflight": {"enabled": True, "require": []}},
+            "loops": {"implement_test": 5},
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+
+        tmpl = json.loads(
+            (tmp_path / ".claude" / "templates" / result / "template.json").read_text()
+        )
+        assert "stages" not in tmpl["config"]
+        assert tmpl["config"]["loops"] == {"implement_test": 5}
+
+    def test_collision_renames_with_timestamp(self, tmp_path):
+        """User already has a project template literally named _legacy-settings."""
+        from worca.cli.init import _migrate_to_legacy_template
+
+        # Pre-existing user-authored _legacy-settings template
+        existing = tmp_path / ".claude" / "templates" / "_legacy-settings"
+        existing.mkdir(parents=True)
+        (existing / "template.json").write_text(json.dumps({
+            "id": "_legacy-settings",
+            "name": "User's existing thing",
+            "config": {"loops": {"implement_test": 99}},
+        }))
+
+        self._write_settings(tmp_path, {"loops": {"implement_test": 5}})
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+        assert result.startswith("_legacy-settings-")
+        assert result != "_legacy-settings"
+
+        # Existing template untouched
+        kept = json.loads((existing / "template.json").read_text())
+        assert kept["name"] == "User's existing thing"
+
+        # New template written under timestamped name
+        new_path = tmp_path / ".claude" / "templates" / result / "template.json"
+        assert new_path.exists()

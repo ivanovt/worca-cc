@@ -1,11 +1,112 @@
 """Template resolver and utility functions for pipeline templates."""
 
+import copy
 import json
 import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+# Keys under `worca.*` that are owned by the selected template at run launch.
+# When a template is in play (explicit at launch or resolved from
+# worca.default_template), these are stripped from the project-settings merge
+# base BEFORE the template's config applies. Result: a shared template behaves
+# identically across machines until explicitly edited.
+#
+# Keys NOT in this list (worca.models, worca.webhooks, worca.pricing,
+# worca.governance.guards, worca.graphify, worca.code_review_graph, etc.)
+# stay cross-template — they're project-machine concerns (creds, infra,
+# integrations) that should be the same for every template the project runs.
+TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
+    ("agents",),
+    ("stages",),
+    ("loops",),
+    ("circuit_breaker",),
+    ("effort",),
+    ("governance", "dispatch"),
+    # Approval gates (plan_approval / pr_approval / deploy_approval). Every
+    # existing built-in already declares these per its intent; promoting the
+    # block to template-owned closes the "teammate's Settings silently flips
+    # my gates" gap and makes the template's gate posture explicit.
+    ("milestones",),
+]
+
+# Nested paths that sit under a template-owned block but are themselves
+# cross-template: stripped along with the parent, then restored from the
+# project's Settings before the template's config applies. The template can
+# still deep-merge over them (so a template that explicitly sets
+# stages.preflight.enabled=false still wins), but project Settings values
+# survive when the template doesn't touch them.
+#
+# stages.preflight: the preflight check list is a project-machine concern
+# (what does THIS project need to pass before launching?) — not a template
+# choice. Every template should respect the project's preflight setup unless
+# it explicitly opts out.
+CROSS_TEMPLATE_CARVEOUTS: list[tuple[str, ...]] = [
+    ("stages", "preflight"),
+]
+
+
+def _get_at_path(d: dict, path: tuple[str, ...]):
+    """Walk path; return the leaf value or None if any segment is missing."""
+    node = d
+    for segment in path:
+        if not isinstance(node, dict) or segment not in node:
+            return None
+        node = node[segment]
+    return node
+
+
+def _set_at_path(d: dict, path: tuple[str, ...], value) -> None:
+    """Set value at path, creating intermediate dicts as needed."""
+    node = d
+    for segment in path[:-1]:
+        node = node.setdefault(segment, {})
+    node[path[-1]] = value
+
+
+def _delete_at_path(d: dict, path: tuple[str, ...]) -> None:
+    """Delete the leaf at path; no-op if any segment is missing."""
+    node = d
+    for segment in path[:-1]:
+        if not isinstance(node, dict) or segment not in node:
+            return
+        node = node[segment]
+    if isinstance(node, dict) and path[-1] in node:
+        del node[path[-1]]
+
+
+def strip_template_owned(worca_settings: dict) -> dict:
+    """Return a deep-copy of worca_settings with every TEMPLATE_OWNED_KEYS path
+    removed, then restore CROSS_TEMPLATE_CARVEOUTS from the original.
+
+    Called by run launch before a template's config is deep-merged in, so
+    project Settings can't leak template-driven keys into the merge base.
+    Cross-template carve-outs (e.g. stages.preflight) are preserved so they
+    still flow through to the merged config — the template can still override
+    them via deep-merge if it explicitly sets a value.
+
+    Missing intermediate paths are skipped silently — a clean project that
+    never customized any of these keys is a no-op.
+    """
+    # Snapshot carve-outs from the original settings BEFORE stripping.
+    saved_carveouts: list[tuple[tuple[str, ...], object]] = []
+    for path in CROSS_TEMPLATE_CARVEOUTS:
+        value = _get_at_path(worca_settings, path)
+        if value is not None:
+            saved_carveouts.append((path, copy.deepcopy(value)))
+
+    # Strip the template-owned paths.
+    result = copy.deepcopy(worca_settings)
+    for path in TEMPLATE_OWNED_KEYS:
+        _delete_at_path(result, path)
+
+    # Restore carve-outs so they survive into the template-merge base.
+    for path, value in saved_carveouts:
+        _set_at_path(result, path, value)
+
+    return result
 
 
 @dataclass
