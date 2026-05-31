@@ -1,10 +1,12 @@
 # How worca works
 
-A layered walkthrough of what worca is and how it organizes autonomous software development, grouped into eight sections that go from the broadest framing to the deeper mechanics. The paragraph text under each bullet is written as a spoken video script: short sentences, conversational pacing, no symbolic notation. The same content backs the **How it works** section of docs.worca.dev — wording will be cut and tuned per surface, but the sequence stays.
+A layered walkthrough of what worca is and how it organizes autonomous software development, structured as a three-video story (eighteen bullets total) that goes from the broadest framing to the deeper mechanics. The paragraph text under each bullet is written as a spoken video script: short sentences, conversational pacing, no symbolic notation. The same content backs the **How it works** section of docs.worca.dev — wording will be cut and tuned per surface, but the sequence stays.
 
 ---
 
-## I. What worca is
+## Video 1 — Introducing worca
+
+*Bullets 1–5 · ~2.6 min raw narration at 150 wpm*
 
 ### 1. worca is an orchestrator for your AI coding agent
 
@@ -17,10 +19,6 @@ Every step runs in a fresh agent. That agent only sees what it needs to do its j
 ### 3. The full flow runs as a pipeline, defined by a template
 
 The full flow runs as a pipeline. A pipeline is your workflow, written down. It moves through stages. Each stage has its own specialized agent. Each agent gets a prompt tailored to its role. And it gets a message tailored to the current state of the work. worca ships with several pipeline templates built in. You can also write your own.
-
----
-
-## II. Starting a run
 
 ### 4. Work inputs differ on detail and on enforcement
 
@@ -36,7 +34,9 @@ Reading and re-reading source files is the biggest token sink in autonomous codi
 
 ---
 
-## III. Inside a run
+## Video 2 — Inside a worca run
+
+*Bullets 6–12 · ~3.9 min raw narration at 150 wpm*
 
 ### 6. The stages run in a clear order, and each one has a job
 
@@ -64,10 +64,6 @@ When things fail, worca self-corrects. If tests fail, the tester sends the failu
 
 Cost is a real concern. Every stage logs what it spent. Every run rolls up a total. You can see all of it in the UI. But visibility alone is not enough. worca gives you three ways to control spend. The first is the effort cap. It bounds how high reasoning effort can escalate. The second is the circuit breaker. It halts a run when failure patterns suggest you're throwing good money after bad. The third is the model profile. You choose which model runs each stage. Use Opus where you need depth. Use Sonnet where you need speed. Route through your own gateway if you have one. So the question of how much a run will cost becomes a budget you set.
 
----
-
-## IV. Seeing what's happening
-
 ### 11. Every action and every artifact is traceable in the UI
 
 Every action and every artifact is traceable. The worca-ui web interface gives you the full picture. Stage progression. Iterations. Time spent. Cost. Tool calls. Agent prompts and responses. Nothing the pipeline does is hidden from you.
@@ -80,17 +76,15 @@ Let's get specific about what you can do in the UI. You can read the generated p
 
 ---
 
-## V. Beyond a single run
+## Video 3 — Worca in your workflow
+
+*Bullets 13–18 · ~3.6 min raw narration at 150 wpm*
 
 ### 13. Each run lives in its own git worktree, so parallel runs never collide
 
 Each run lives in its own git worktree. That means parallel runs never collide with each other. worca builds on this with two scale-out modes. The first is fleet mode. It takes one prompt and runs it across many independent projects at the same time. That's perfect for rolling a fix across every repo you own. The second is workspace mode. This one is for interdependent projects. A master planner figures out the dependency order. Child pipelines run tier by tier. And between tiers, worca runs cross-project integration tests to keep everything in sync.
 
 *See also: [`docs/fleet-runs.md`](./fleet-runs.md), [`docs/workspace-runs.md`](./workspace-runs.md).*
-
----
-
-## VI. Customizing the pipeline
 
 ### 14. You shape worca to your team without forking it
 
@@ -99,10 +93,6 @@ You can shape worca to your team without forking it. Almost every part of a pipe
 ### 15. Built-in templates, and your own
 
 worca ships with a set of built-in pipeline templates. They cover the common shapes of work. There's a full feature pipeline with planning, review, and testing. There's a bug-fix pipeline that skips planning. There's a docs-only pipeline. And several more. Each template is a complete recipe. Stage list. Agent prompts. Loop budgets. Model assignments. Most of the time, picking the right template is all you need. When the built-ins don't fit, you can write your own. Today this is done through settings. A richer template-authoring experience is coming to the UI.
-
----
-
-## VII. Notifications and integrations
 
 ### 16. Events out, control in
 
@@ -114,17 +104,17 @@ The pipeline emits a typed event stream. There are around 80 different event typ
 
 worca can push run updates into the chat tools your team already uses. Set up an integration once. That can be Telegram, Discord, or Slack. From then on, worca notifies you when something interesting happens. A plan is ready. A pull request has been opened. The run has paused. A circuit breaker tripped. On Telegram, those notifications come with inline actions. You can pause, resume, or stop a run right from the chat. No need to open the UI. And from inside a run, agents can reach out to you directly through the notify skill. For example, an agent might say: "I'm waiting on a clarification, please reply when you can." You can leave the UI closed and still stay in the loop on long-running work.
 
----
-
-## VIII. Continuity across sessions
-
 ### 18. Strategic context persists across sessions
 
 Strategic work needs to survive across sessions. Multi-step features. Dependencies between tasks. Work the pipeline discovers along the way. All of these live in beads. Beads are a lightweight, git-tracked issue store. The next session sees them. The next agent sees them. Every fleet child sees them too. Small day-to-day todos stay ephemeral. But anything you'd be sad to lose when a session ends should become a bead.
 
 ---
 
-## Cuts for shorter variants
+## Per-video summary
 
-- **10-bullet cut** (concept video, ~5 min): §1, §3, §4, §6, §8, §9, §10, §13, §15, §17.
-- **5-bullet trailer** (~90 seconds): §1, §3, §6, §8, §13 — what it is, how it's organized, what it does, how it stays honest, how it scales.
+| Video | Title | Bullets | Words | Raw narration |
+|---:|---|---|---:|---:|
+| 1 | Introducing worca | 1–5 | 388 | 2.6 min |
+| 2 | Inside a worca run | 6–12 | 579 | 3.9 min |
+| 3 | Worca in your workflow | 13–18 | 541 | 3.6 min |
+| | **Total** | **18** | **1508** | **10.1 min** |
