@@ -45,8 +45,9 @@ import { stageTimelineView } from './stage-timeline.js';
 // W-061: plans are append-only numbered revisions (plan-001.md, …). The dialog
 // lists them and lets the user view any revision; the latest is the current
 // plan. Content is cached per (run, revision); the iteration list per run.
-const _runPlanText = new Map(); // `${runId}#${n|'latest'}` -> markdown | null (404)
+const _runPlanText = new Map(); // `${runId}#${n|'latest'}` -> markdown string
 const _runPlanTextFetching = new Set();
+export const _runPlanTextNotFound = new Set();
 const _runPlanIters = new Map(); // run_id -> [{n, file}]  (empty for legacy runs)
 const _runPlanItersFetching = new Set();
 let _planDialogRunId = null; // null when closed; run_id when open
@@ -69,7 +70,7 @@ function _planTextKey(runId, n) {
   return `${runId}#${n == null ? 'latest' : n}`;
 }
 
-function _ensurePlanItersFetched(run, rerender) {
+export function _ensurePlanItersFetched(run, rerender) {
   const runId = run?.id;
   if (!runId) return;
   if (_runPlanIters.has(runId) || _runPlanItersFetching.has(runId)) return;
@@ -79,28 +80,29 @@ function _ensurePlanItersFetched(run, rerender) {
   })
     .then(async (r) => {
       _runPlanItersFetching.delete(runId);
+      if (!r.ok) {
+        rerender?.();
+        return;
+      }
       let list = [];
-      if (r.ok) {
-        try {
-          const j = await r.json();
-          if (Array.isArray(j?.iterations)) list = j.iterations;
-        } catch {
-          list = [];
-        }
+      try {
+        const j = await r.json();
+        if (Array.isArray(j?.iterations)) list = j.iterations;
+      } catch {
+        list = [];
       }
       _runPlanIters.set(runId, list);
       rerender?.();
     })
     .catch(() => {
       _runPlanItersFetching.delete(runId);
-      _runPlanIters.set(runId, []);
       rerender?.();
     });
 }
 
 // n === null fetches the current (latest) plan via /plan; a number fetches a
 // specific revision via /plan?iteration=N.
-function _ensureRunPlanFetched(run, n, rerender) {
+export function _ensureRunPlanFetched(run, n, rerender) {
   const runId = run?.id;
   if (!runId) return;
   const key = _planTextKey(runId, n);
@@ -114,12 +116,16 @@ function _ensureRunPlanFetched(run, n, rerender) {
   fetch(url, { headers: { Accept: 'text/markdown' } })
     .then(async (r) => {
       _runPlanTextFetching.delete(key);
-      _runPlanText.set(key, r.ok ? await r.text() : null);
+      if (r.ok) {
+        _runPlanText.set(key, await r.text());
+        _runPlanTextNotFound.delete(key);
+      } else {
+        _runPlanTextNotFound.add(key);
+      }
       rerender?.();
     })
     .catch(() => {
       _runPlanTextFetching.delete(key);
-      _runPlanText.set(key, null);
       rerender?.();
     });
 }
@@ -147,6 +153,7 @@ function _planIterationButton(key, iter, run, rerender) {
   // it; in that case surface the editor's output here. Review-mode revisions
   // are produced by the NEXT planner iter, so plan_review iter N still ends
   // at plan-N.
+  if (iter?.status !== 'completed') return nothing;
   const iterNum = iter?.number || 1;
   const isEditOutput =
     key === 'plan_review' && iter?.outcome === 'approve_with_edits';
@@ -246,13 +253,22 @@ function _planArtifactDialog(run, rerender) {
       : nothing;
 
   const body = (() => {
-    if (planText === undefined) {
+    if (planText !== undefined) {
+      return html`<div class="markdown-body">${unsafeHTML(renderMarkdown(planText || ''))}</div>`;
+    }
+    if (_runPlanTextFetching.has(textKey)) {
       return html`<div class="plan-loading"><sl-spinner></sl-spinner> Loading plan…</div>`;
     }
-    if (planText === null) {
+    if (_runPlanTextNotFound.has(textKey)) {
+      const planInProgress =
+        run?.stages?.plan?.status === 'in_progress' ||
+        run?.stages?.plan_review?.status === 'in_progress';
+      if (planInProgress) {
+        return html`<div class="plan-loading">Planner is still writing this revision.</div>`;
+      }
       return html`<div class="plan-error">No plan file found for this run.</div>`;
     }
-    return html`<div class="markdown-body">${unsafeHTML(renderMarkdown(planText || ''))}</div>`;
+    return html`<div class="plan-loading"><sl-spinner></sl-spinner> Loading plan…</div>`;
   })();
   return html`
     <sl-dialog
@@ -698,7 +714,7 @@ function _issuesToMarkdown(issues, stageMode, baseHeading, iterNum) {
       i.suggestion ? `\n  - _Suggestion:_ ${i.suggestion}` : ''
     }`;
   if (stageMode !== 'review_and_edit') {
-    return head + issues.map(row).join('\n') + '\n';
+    return `${head}${issues.map(row).join('\n')}\n`;
   }
   const groups = _groupIssuesByResolution(issues, stageMode);
   const fmt = (h, rows) =>
@@ -1374,19 +1390,15 @@ function timingStripView(startedAt, completedAt, extra = nothing) {
   `;
 }
 
-// Render the Model: (alias) + ID: (resolved id) pair when an alias was
-// recorded on the stage/iteration. Backward-compatible: when model_alias is
-// missing (old runs, plain-model configs) or matches the resolved id, falls
-// back to the single "Model: <id>" label so existing runs render unchanged.
 function _modelInfoView(model, modelAlias) {
   if (!model) return nothing;
   const hasAlias = !!modelAlias && modelAlias !== model;
   if (!hasAlias) {
-    return html`<span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${model}</span></span>`;
+    return html`<span class="stage-info-item"><span class="meta-label">Model ID:</span> <span class="meta-value">${model}</span></span>`;
   }
   return html`
-    <span class="stage-info-item"><span class="meta-label">Model:</span> <span class="meta-value">${modelAlias}</span></span>
-    <span class="stage-info-item"><span class="meta-label">ID:</span> <span class="meta-value">${model}</span></span>
+    <span class="stage-info-item"><span class="meta-label">Model Alias:</span> <span class="meta-value">${modelAlias}</span></span>
+    <span class="stage-info-item"><span class="meta-label">Model ID:</span> <span class="meta-value">${model}</span></span>
   `;
 }
 

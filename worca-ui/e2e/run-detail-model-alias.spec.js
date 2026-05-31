@@ -6,10 +6,10 @@ const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 // Pin the rendering of the Model / ID label pair end-to-end. The runner
 // records model_alias on each stage and per-iteration when the user-typed
 // alias resolves to a different id (e.g. "glm-ds" -> "opus"); the UI then
-// renders "Model: glm-ds  ID: opus" instead of a single "Model: opus" line.
+// renders "Model Alias: glm-ds  Model ID: opus" instead of a single "Model ID: opus" line.
 // Old runs without the field still render the original single-label form.
 test.describe('run-detail Model / ID rendering', () => {
-  test('renders Model: <alias>  ID: <id> when stage.model_alias is recorded', async ({
+  test('renders Model Alias: <alias>  Model ID: <id> when stage.model_alias is recorded', async ({
     page,
   }) => {
     const ctx = await startServer();
@@ -53,17 +53,17 @@ test.describe('run-detail Model / ID rendering', () => {
       const infoStrip = planPanel.locator('.stage-info-strip').first();
       // Two labels are rendered when the alias differs from the resolved id.
       const labels = infoStrip.locator('.meta-label');
-      await expect(labels.filter({ hasText: 'Model:' })).toHaveCount(1);
-      await expect(labels.filter({ hasText: 'ID:' })).toHaveCount(1);
-      // The alias is the primary "Model:" value, the resolved id is the "ID:" value.
-      await expect(infoStrip).toContainText('Model: glm-ds');
-      await expect(infoStrip).toContainText('ID: opus');
+      await expect(labels.filter({ hasText: 'Model Alias:' })).toHaveCount(1);
+      await expect(labels.filter({ hasText: 'Model ID:' })).toHaveCount(1);
+      // The alias is the primary "Model Alias:" value, the resolved id is the "Model ID:" value.
+      await expect(infoStrip).toContainText('Model Alias: glm-ds');
+      await expect(infoStrip).toContainText('Model ID: opus');
     } finally {
       await ctx.close();
     }
   });
 
-  test('renders only Model: <id> when no alias is recorded (backward-compatible)', async ({
+  test('renders only Model ID: <id> when no alias is recorded (backward-compatible)', async ({
     page,
   }) => {
     const ctx = await startServer();
@@ -107,9 +107,9 @@ test.describe('run-detail Model / ID rendering', () => {
 
       const infoStrip = planPanel.locator('.stage-info-strip').first();
       const labels = infoStrip.locator('.meta-label');
-      await expect(labels.filter({ hasText: 'Model:' })).toHaveCount(1);
-      await expect(labels.filter({ hasText: 'ID:' })).toHaveCount(0);
-      await expect(infoStrip).toContainText('Model: opus');
+      await expect(labels.filter({ hasText: 'Model ID:' })).toHaveCount(1);
+      await expect(labels.filter({ hasText: 'Model Alias:' })).toHaveCount(0);
+      await expect(infoStrip).toContainText('Model ID: opus');
     } finally {
       await ctx.close();
     }

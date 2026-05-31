@@ -102,7 +102,7 @@ describe('iteration tags layout', () => {
     const html = renderToString(runDetailView(run));
     expect(html).toContain('Agent:');
     expect(html).toContain('implementer');
-    expect(html).toContain('Model:');
+    expect(html).toContain('Model ID:');
     expect(html).toContain('claude-sonnet-4-6');
     // Old parenthesized format should not appear
     expect(html).not.toContain('(claude-sonnet-4-6)');
