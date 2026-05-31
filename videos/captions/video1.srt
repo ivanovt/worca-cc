@@ -1,0 +1,195 @@
+1
+00:00:03,800 --> 00:00:07,400
+worca is an orchestrator for your AI coding agent.
+
+2
+00:00:07,400 --> 00:00:10,600
+It runs your development process step by step.
+
+3
+00:00:10,600 --> 00:00:14,200
+So the agent always starts with a design document.
+
+4
+00:00:14,200 --> 00:00:17,000
+It always implements and runs the tests.
+
+5
+00:00:17,000 --> 00:00:19,400
+It always performs a code review.
+
+6
+00:00:19,400 --> 00:00:21,000
+Nothing important gets skipped.
+
+7
+00:00:22,800 --> 00:00:25,600
+Every step runs in a fresh agent.
+
+8
+00:00:25,600 --> 00:00:30,000
+That agent only sees what it needs to do its job.
+
+9
+00:00:30,000 --> 00:00:32,000
+The planner sees the request.
+
+10
+00:00:32,000 --> 00:00:36,000
+The implementer sees the design decisions for one code change.
+
+11
+00:00:36,000 --> 00:00:38,800
+The reviewer sees the diff to review.
+
+12
+00:00:38,800 --> 00:00:40,400
+Nothing leaks across stages.
+
+13
+00:00:40,400 --> 00:00:41,600
+Nothing is missing.
+
+14
+00:00:41,600 --> 00:00:43,200
+Each agent stays focused.
+
+15
+00:00:45,000 --> 00:00:47,800
+The full flow runs as a pipeline.
+
+16
+00:00:47,800 --> 00:00:50,600
+A pipeline is your workflow, written down.
+
+17
+00:00:50,600 --> 00:00:52,200
+It moves through stages.
+
+18
+00:00:52,200 --> 00:00:55,000
+Each stage has its own specialized agent.
+
+19
+00:00:55,000 --> 00:00:58,600
+Each agent gets a prompt tailored to its role.
+
+20
+00:00:58,600 --> 00:01:03,800
+And it gets a message tailored to the current state of the work.
+
+21
+00:01:03,800 --> 00:01:07,000
+worca ships with several pipeline templates built in.
+
+22
+00:01:07,000 --> 00:01:09,400
+You can also write your own.
+
+23
+00:01:11,200 --> 00:01:15,200
+There are four ways to tell worca what to do.
+
+24
+00:01:15,200 --> 00:01:17,200
+The simplest is a prompt.
+
+25
+00:01:17,200 --> 00:01:22,800
+You describe the work in plain language, and the planner takes it from there.
+
+26
+00:01:22,800 --> 00:01:25,200
+Next up is a GitHub issue.
+
+27
+00:01:25,200 --> 00:01:30,000
+It carries more structure, and the planner uses it as a brief.
+
+28
+00:01:30,000 --> 00:01:32,800
+Even richer is a pre-existing plan file.
+
+29
+00:01:32,800 --> 00:01:36,000
+With that, the planner stage is skipped entirely.
+
+30
+00:01:36,000 --> 00:01:39,200
+Every later stage works from your plan directly.
+
+31
+00:01:39,200 --> 00:01:42,800
+The fourth input is different from the first three.
+
+32
+00:01:42,800 --> 00:01:44,400
+It's called a guide.
+
+33
+00:01:44,400 --> 00:01:46,800
+A guide doesn't describe the work.
+
+34
+00:01:46,800 --> 00:01:49,600
+It constrains how the work is done.
+
+35
+00:01:49,600 --> 00:01:54,000
+Think of an RFC, a migration spec, or a coding standard.
+
+36
+00:01:54,000 --> 00:01:57,600
+Every agent treats the guide as the highest authority.
+
+37
+00:01:57,600 --> 00:02:01,600
+If the plan and the guide disagree, the guide wins.
+
+38
+00:02:03,400 --> 00:02:08,600
+Reading and re-reading source files is the biggest token sink in autonomous coding.
+
+39
+00:02:08,600 --> 00:02:14,200
+To cut that cost, worca can build a structural knowledge graph of your repository.
+
+40
+00:02:14,200 --> 00:02:17,400
+The graph captures how your code fits together.
+
+41
+00:02:17,400 --> 00:02:21,400
+Agents query the graph instead of grepping their way around.
+
+42
+00:02:21,400 --> 00:02:23,400
+Two engines plug in here.
+
+43
+00:02:23,400 --> 00:02:25,000
+The first is graphify.
+
+44
+00:02:25,000 --> 00:02:29,400
+It maps the AST and call structure of your source code.
+
+45
+00:02:29,400 --> 00:02:31,000
+The second is CRG.
+
+46
+00:02:31,000 --> 00:02:37,000
+CRG runs in structural mode today, and a richer semantic mode is on the roadmap.
+
+47
+00:02:37,000 --> 00:02:39,400
+Either way, the graph is advisory.
+
+48
+00:02:39,400 --> 00:02:42,200
+It never overrides what you asked for.
+
+49
+00:02:42,200 --> 00:02:46,200
+It just helps the agents find their way around faster.

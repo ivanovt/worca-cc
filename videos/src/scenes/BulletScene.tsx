@@ -8,11 +8,17 @@
  *
  *   ─────  (accent rule, animates in)
  *
- *   Big chapter title in Syne, up to 2 lines.
+ *   Big chapter title in Syne, up to 3 lines.
  *
- *   Body paragraph in Outfit, revealed sentence by sentence as the
- *   narration would progress. Body size scales down for longer bullets so
- *   the whole paragraph fits comfortably on one screen.
+ *   ┌─────────────────────────────────────────────────────────────────────┐
+ *   │                                                                     │
+ *   │                 DIAGRAM — resolved from src/diagrams/registry.ts    │
+ *   │                                                                     │
+ *   └─────────────────────────────────────────────────────────────────────┘
+ *
+ * Body text is NOT rendered on screen — narration is conveyed by the
+ * diagram + voiceover, and subtitles are emitted separately as .srt files
+ * (see scripts/generate-srt.ts).
  *
  * Timing: all animations are frame-driven via useCurrentFrame + interpolate.
  * No CSS transitions anywhere.
@@ -24,7 +30,6 @@ import {
   Easing,
   interpolate,
   useCurrentFrame,
-  useVideoConfig,
 } from "remotion";
 
 import { Background } from "../components/Background";
@@ -32,6 +37,7 @@ import { Wordmark } from "../components/Wordmark";
 import { fonts } from "../fonts";
 import { theme } from "../theme";
 import type { BulletScene as BulletSceneData } from "../lib/script";
+import { diagramFor } from "../diagrams/registry";
 
 interface Props {
   scene: BulletSceneData;
@@ -39,26 +45,8 @@ interface Props {
   sceneLabel: string;
 }
 
-/** Auto-pick a body font size so longer paragraphs still fit on one screen. */
-const bodyFontSizeForWords = (words: number): number => {
-  if (words <= 60) return theme.sizeBody;            // 60px — short bullets
-  if (words <= 90) return theme.sizeBody - 8;        // 52px
-  if (words <= 120) return theme.sizeBody - 14;      // 46px
-  return theme.sizeBody - 20;                        // 40px — longest bullets (~126 words)
-};
-
-/** Naive sentence split — fine for the script we wrote (short declarative
- *  sentences, no abbreviations like "Dr." or "e.g."). */
-const splitSentences = (body: string): string[] => {
-  return body
-    .split(/(?<=[.!?])\s+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-};
-
 export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
   const frame = useCurrentFrame();
-  const { fps, durationInFrames } = useVideoConfig();
 
   const ease = Easing.bezier(...theme.easeOut);
 
@@ -69,35 +57,26 @@ export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
     easing: ease,
   });
 
-  // ── Title fade-up (8 .. 28f) ───────────────────────────────────────────
-  const titleOpacity = interpolate(frame, [8, 28], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: ease,
-  });
-  const titleTranslate = interpolate(frame, [8, 28], [40, 0], {
+  // ── Accent rule draws right (10 .. 30f) ────────────────────────────────
+  const ruleScaleX = interpolate(frame, [10, 30], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: ease,
   });
 
-  // ── Accent rule draws right (20 .. 40f) ────────────────────────────────
-  const ruleScaleX = interpolate(frame, [20, 40], [0, 1], {
+  // ── Title fade-up (18 .. 38f) ──────────────────────────────────────────
+  const titleOpacity = interpolate(frame, [18, 38], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: ease,
+  });
+  const titleTranslate = interpolate(frame, [18, 38], [32, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
     easing: ease,
   });
 
-  // ── Body sentence reveal ───────────────────────────────────────────────
-  // Sentences fade in evenly across the narration window: from frame 40
-  // through (durationInFrames - 1.0s). Each sentence gets its own
-  // interpolation slot.
-  const sentences = splitSentences(scene.body);
-  const bodyStart = 40;
-  const bodyEnd = Math.max(bodyStart + sentences.length * 10, durationInFrames - fps);
-  const sentenceWindow = (bodyEnd - bodyStart) / Math.max(sentences.length, 1);
-
-  const bodyFontSize = bodyFontSizeForWords(scene.words);
+  const Diagram = diagramFor(scene.id);
 
   return (
     <AbsoluteFill>
@@ -127,7 +106,7 @@ export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
               fontFamily: fonts.mono,
               fontSize: theme.sizeCaption,
               fontWeight: 500,
-              letterSpacing: "0.08em",
+              letterSpacing: "0.10em",
               color: theme.textSecondary,
               textTransform: "uppercase",
             }}
@@ -136,21 +115,20 @@ export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
           </div>
         </div>
 
-        {/* ── Body block ─────────────────────────────────────────────── */}
+        {/* ── Title block ─────────────────────────────────────────────── */}
         <div
           style={{
-            marginTop: 80,
+            marginTop: 56,
             maxWidth: theme.contentMaxWidth,
             display: "flex",
             flexDirection: "column",
-            gap: 40,
+            gap: 28,
           }}
         >
-          {/* Accent rule */}
           <div
             style={{
-              width: 200,
-              height: 6,
+              width: 140,
+              height: 5,
               backgroundColor: theme.accent,
               borderRadius: 3,
               transform: `scaleX(${ruleScaleX})`,
@@ -158,8 +136,6 @@ export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
               boxShadow: `0 0 24px ${theme.accentDim}`,
             }}
           />
-
-          {/* Title */}
           <h1
             style={{
               fontFamily: fonts.display,
@@ -171,50 +147,25 @@ export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
               opacity: titleOpacity,
               transform: `translateY(${titleTranslate}px)`,
               margin: 0,
+              maxWidth: theme.contentMaxWidth,
             }}
           >
             {scene.title}
           </h1>
+        </div>
 
-          {/* Body paragraph — sentence-by-sentence reveal */}
-          <div
-            style={{
-              fontFamily: fonts.body,
-              fontSize: bodyFontSize,
-              fontWeight: theme.weightBody,
-              lineHeight: theme.lineHeightBody,
-              color: theme.textSecondary,
-              marginTop: 32,
-            }}
-          >
-            {sentences.map((sentence, idx) => {
-              const startF = bodyStart + idx * sentenceWindow;
-              const endF = startF + 12;
-              const opacity = interpolate(frame, [startF, endF], [0, 1], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: ease,
-              });
-              const ty = interpolate(frame, [startF, endF], [16, 0], {
-                extrapolateLeft: "clamp",
-                extrapolateRight: "clamp",
-                easing: ease,
-              });
-              return (
-                <span
-                  key={idx}
-                  style={{
-                    opacity,
-                    display: "inline",
-                    transform: `translateY(${ty}px)`,
-                  }}
-                >
-                  {sentence}
-                  {idx < sentences.length - 1 ? " " : ""}
-                </span>
-              );
-            })}
-          </div>
+        {/* ── Diagram block ───────────────────────────────────────────── */}
+        <div
+          style={{
+            marginTop: 56,
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            minHeight: theme.diagramAreaHeight,
+          }}
+        >
+          <Diagram words={scene.words} />
         </div>
       </div>
     </AbsoluteFill>

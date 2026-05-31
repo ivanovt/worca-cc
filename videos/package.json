@@ -19,6 +19,7 @@
     "@types/web": "0.0.166",
     "eslint": "9.19.0",
     "prettier": "3.8.1",
+    "tsx": "^4.22.4",
     "typescript": "5.9.3"
   },
   "scripts": {
@@ -27,6 +28,7 @@
     "build": "remotion bundle",
     "render": "remotion render",
     "upgrade": "remotion upgrade",
+    "captions": "tsx scripts/generate-srt.ts",
     "lint": "eslint src && tsc"
   },
   "sideEffects": [

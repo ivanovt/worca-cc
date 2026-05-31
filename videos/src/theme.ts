@@ -57,15 +57,19 @@ export const theme = {
   fontBody: "'Outfit', sans-serif",
   fontMono: "'JetBrains Mono', monospace",
 
-  // Sizes (px) — tuned for a 1920x1080 canvas with comfortable readability
-  sizeWordmark: 56 * SCALE,
-  sizeChapterEyebrow: 36 * SCALE,
-  sizeChapterTitle: 160 * SCALE,
-  sizeBulletNumber: 72 * SCALE,
-  sizeTitle: 110 * SCALE,
-  sizeBody: 60 * SCALE,
-  sizeBodySmall: 44 * SCALE,
-  sizeCaption: 32 * SCALE,
+  // Sizes (px) — tuned for a 1920x1080 canvas.
+  // Bullet title and chapter title were reduced from the first pass to free
+  // up vertical room for the per-bullet diagrams that now own most of the
+  // canvas. Body text is no longer rendered on screen (subtitles are emitted
+  // separately as .srt), so body-* sizes are kept only for any future use.
+  sizeWordmark: 48 * SCALE,
+  sizeChapterEyebrow: 30 * SCALE,
+  sizeChapterTitle: 140 * SCALE,
+  sizeBulletNumber: 56 * SCALE,
+  sizeTitle: 76 * SCALE,
+  sizeBody: 44 * SCALE,
+  sizeBodySmall: 36 * SCALE,
+  sizeCaption: 26 * SCALE,
 
   weightDisplay: 800,
   weightTitle: 700,
@@ -78,11 +82,12 @@ export const theme = {
   letterSpacingDisplay: "-0.02em",
 
   // ── Layout ───────────────────────────────────────────────────────────
-  // Safe area: 1600x800, leaving 160px gutters horizontally and 140px
-  // vertically. Numbers below are gutter values.
-  gutterX: 160,
-  gutterY: 140,
-  contentMaxWidth: 1600,
+  // Tighter than the first pass — the diagram now owns the lower ~60% of
+  // the canvas, so the title/topbar block gives back some pixels.
+  gutterX: 120,
+  gutterY: 80,
+  contentMaxWidth: 1680,
+  diagramAreaHeight: 620,   // rough vertical budget for the diagram block
 
   // ── Motion ───────────────────────────────────────────────────────────
   // Matches the marketing site's --ease-out: cubic-bezier(0.16, 1, 0.3, 1).
