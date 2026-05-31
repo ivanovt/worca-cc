@@ -767,6 +767,18 @@ W-057: Optional code-review-graph (CRG) MCP integration (Tree-sitter AST graph, 
 
 ### 0.43.x → 0.44.0
 
+**Bundle export/import scoped to referenced model aliases + per-alias collision UX.**
+
+- `worca templates export --include-models / --include-pricing` now drops `worca.models` and `worca.pricing.models` entries that the exported templates don't actually reference (via `config.agents.*.model`). Previously the entire blocks were copied verbatim, so a one-template export shipped every alias in your `settings.json`.
+- `worca templates import` applies the same filter against the bundled templates that landed, and additionally detects per-alias collisions against the target's current `settings.worca.models` and `pricing.models`. Different-value collisions surface a warning and prompt `[r]eplace / [s]kip / [a]bort`; `--non-interactive` defaults to skip (preserve target's values). Same-value entries are no-ops.
+- Top-level pricing keys (`server_tools`, `currency`, `last_updated`) still pass through because they're project-wide context, not alias-specific.
+- The `id` field on a model entry is **not** treated as a recursive alias reference — it's the literal string passed to `claude --model`. So `models["glm-ds"] = {"id": "opus", ...}` does not pull `models["opus"]` into the bundle.
+- `worca-template` skill interview is split into two `AskUserQuestion` batches and the previous 5-option "stages to toggle" question is split into core (Test / Code review / PR creation) + advanced governance (Plan review / Learn) — single-batch form hit the 4-question / 4-option caps and failed with `Invalid tool parameters`.
+
+No automatic migration required. Re-exporting old bundles will produce smaller, scope-correct bundles.
+
+---
+
 W-059: Plan review `review_and_edit` mode — optional in-place plan editing by the reviewer.
 
 **New feature — opt-in, off by default.** When `worca.stages.plan_review.mode` is set to `"review_and_edit"`, the Plan Reviewer rewrites the plan in place to resolve critical/major issues and self-approves, skipping the loopback to the Planner. Default behavior (`mode: "review"`) is unchanged. Plan review itself remains disabled by default (`worca.stages.plan_review.enabled: false`).
