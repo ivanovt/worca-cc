@@ -210,4 +210,86 @@ describe('new-run — fetchTemplates via newRunView', () => {
 
     expect(fetchedUrls.some((u) => u.includes('/api/templates'))).toBe(true);
   });
+
+  it('calls GET /api/projects/:id/settings to resolve worca.default_template', async () => {
+    const fetchedUrls = [];
+    globalThis.fetch = vi.fn((url) => {
+      fetchedUrls.push(url);
+      if (url.includes('/settings')) {
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({ worca: { default_template: 'bugfix' } }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, templates: [], branches: [] }),
+      });
+    });
+
+    resetNewRunState();
+    newRunView({ currentProjectId: 'proj-abc' }, { rerender: vi.fn() });
+
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(
+      fetchedUrls.some((u) => u.includes('/api/projects/proj-abc/settings')),
+    ).toBe(true);
+  });
+});
+
+describe('new-run — defaultOptionLabel reflects worca.default_template', () => {
+  let defaultOptionLabel, resetNewRunState;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.doMock('lit-html', () => ({ html: () => null, nothing: null }));
+    vi.doMock('lit-html/directives/unsafe-html.js', () => ({
+      unsafeHTML: () => null,
+    }));
+    vi.doMock('../utils/icons.js', () => ({
+      iconSvg: () => '',
+      FileText: 'FileText',
+      Circle: 'Circle',
+      CircleAlert: 'CircleAlert',
+      CircleCheck: 'CircleCheck',
+      CircleSlash: 'CircleSlash',
+      Loader: 'Loader',
+      Pause: 'Pause',
+    }));
+    vi.doMock('./settings.js', () => ({
+      getDefaults: () => ({ msize: 1, mloops: 1 }),
+    }));
+
+    const mod = await import('./new-run.js');
+    defaultOptionLabel = mod.defaultOptionLabel;
+    resetNewRunState = mod.resetNewRunState;
+  });
+
+  it('shows "raw settings.json" when default_template is unset', () => {
+    resetNewRunState({ defaultTemplateId: '' });
+    expect(defaultOptionLabel()).toBe('No template (raw settings.json)');
+  });
+
+  it('shows the resolved template name when default_template is set and found', () => {
+    resetNewRunState({
+      defaultTemplateId: 'bugfix',
+      templates: [
+        { id: 'bugfix', name: 'Bugfix', tier: 'worca' },
+        { id: 'feature', name: 'Feature Development', tier: 'worca' },
+      ],
+    });
+    expect(defaultOptionLabel()).toBe('★ Default template: Bugfix');
+  });
+
+  it('marks unknown default_template ids as missing', () => {
+    resetNewRunState({
+      defaultTemplateId: 'ghost-template',
+      templates: [],
+    });
+    expect(defaultOptionLabel()).toBe(
+      '★ Default template: ghost-template (missing)',
+    );
+  });
 });

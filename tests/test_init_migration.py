@@ -856,6 +856,50 @@ class TestMigrateToLegacyTemplate:
         second = _migrate_to_legacy_template(tmp_path)
         assert second is None  # default_template now set, so skipped
 
+    def test_migration_skips_stages_preflight_carveout(self, tmp_path):
+        """stages.preflight is cross-template — the auto-generated template
+        must not snapshot it, otherwise later edits to preflight in Settings
+        would never take effect (the template would freeze the snapshot)."""
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "stages": {
+                "preflight": {"enabled": True, "require": ["ruff check"]},
+                "plan_review": {"enabled": True},
+                "learn": {"enabled": True},
+            },
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+
+        tmpl_path = tmp_path / ".claude" / "templates" / result / "template.json"
+        tmpl = json.loads(tmpl_path.read_text())
+        cfg = tmpl["config"]
+
+        # Non-preflight stages captured
+        assert cfg["stages"].get("plan_review") == {"enabled": True}
+        assert cfg["stages"].get("learn") == {"enabled": True}
+        # preflight NOT in the snapshot — stays cross-template
+        assert "preflight" not in cfg["stages"]
+
+    def test_migration_drops_empty_stages_block_after_carveout(self, tmp_path):
+        """If the only thing in stages was preflight, dropping it should drop
+        the whole stages block from the snapshot (no hollow {})."""
+        from worca.cli.init import _migrate_to_legacy_template
+        self._write_settings(tmp_path, {
+            "stages": {"preflight": {"enabled": True, "require": []}},
+            "loops": {"implement_test": 5},
+        })
+
+        result = _migrate_to_legacy_template(tmp_path)
+        assert result is not None
+
+        tmpl = json.loads(
+            (tmp_path / ".claude" / "templates" / result / "template.json").read_text()
+        )
+        assert "stages" not in tmpl["config"]
+        assert tmpl["config"]["loops"] == {"implement_test": 5}
+
     def test_collision_renames_with_timestamp(self, tmp_path):
         """User already has a project template literally named _legacy-settings."""
         from worca.cli.init import _migrate_to_legacy_template

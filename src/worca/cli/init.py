@@ -476,7 +476,10 @@ def _migrate_to_legacy_template(git_root: Path) -> str | None:
     import time
     from datetime import datetime, timezone
 
-    from worca.orchestrator.templates import TEMPLATE_OWNED_KEYS
+    from worca.orchestrator.templates import (
+        CROSS_TEMPLATE_CARVEOUTS,
+        TEMPLATE_OWNED_KEYS,
+    )
 
     settings_path = git_root / ".claude" / "settings.json"
     if not settings_path.exists():
@@ -512,7 +515,24 @@ def _migrate_to_legacy_template(git_root: Path) -> str | None:
         target = captured
         for segment in path[:-1]:
             target = target.setdefault(segment, {})
-        target[path[-1]] = value
+        target[path[-1]] = copy.deepcopy(value)
+
+    # Drop cross-template carve-outs (e.g. stages.preflight) from the snapshot
+    # so the template doesn't freeze project-Settings values that should keep
+    # flowing through on every run.
+    for path in CROSS_TEMPLATE_CARVEOUTS:
+        target = captured
+        for segment in path[:-1]:
+            if not isinstance(target, dict) or segment not in target:
+                target = None
+                break
+            target = target[segment]
+        if isinstance(target, dict) and path[-1] in target:
+            del target[path[-1]]
+        # If we just emptied a parent dict (e.g. captured["stages"] is now {}),
+        # remove it too so the snapshot doesn't ship hollow blocks.
+        if path[0] in captured and captured[path[0]] == {}:
+            del captured[path[0]]
 
     if not captured:
         return None  # clean project; nothing to capture

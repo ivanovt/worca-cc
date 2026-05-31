@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from worca.orchestrator.templates import (
+    CROSS_TEMPLATE_CARVEOUTS,
     TEMPLATE_OWNED_KEYS,
     Template,
     TemplateSummary,
@@ -706,3 +707,35 @@ class TestStripTemplateOwned:
             assert isinstance(path, tuple)
             assert all(isinstance(segment, str) for segment in path)
             assert len(path) >= 1
+
+    def test_preserves_stages_preflight_through_strip(self):
+        """stages.preflight is a cross-template carve-out — it survives the
+        stages-block strip so project-Settings preflight checks still apply."""
+        worca = {
+            "stages": {
+                "preflight": {"enabled": True, "require": ["npm test"]},
+                "plan_review": {"enabled": True},
+                "learn": {"enabled": True},
+            },
+        }
+        result = strip_template_owned(worca)
+        assert "plan_review" not in result.get("stages", {})
+        assert "learn" not in result.get("stages", {})
+        assert result["stages"]["preflight"] == {
+            "enabled": True,
+            "require": ["npm test"],
+        }
+
+    def test_no_stages_key_when_preflight_absent(self):
+        """No preflight in the input → carve-out doesn't fabricate one."""
+        worca = {"stages": {"plan_review": {"enabled": True}}}
+        result = strip_template_owned(worca)
+        assert "stages" not in result
+
+    def test_carveouts_constant_shape(self):
+        for path in CROSS_TEMPLATE_CARVEOUTS:
+            assert isinstance(path, tuple)
+            assert all(isinstance(segment, str) for segment in path)
+            assert any(
+                path[: len(owned)] == owned for owned in TEMPLATE_OWNED_KEYS
+            ), f"carve-out {path} doesn't sit under any TEMPLATE_OWNED_KEYS path"

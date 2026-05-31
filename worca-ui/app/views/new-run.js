@@ -16,7 +16,8 @@ let selectedPlan = '';
 let branches = null; // null = not fetched, [] = fetched but empty
 let selectedBranch = ''; // empty = new branch
 let templates = null; // null = not fetched
-let selectedTemplate = 'default'; // 'default' = built-in worca pipeline
+let selectedTemplate = 'default'; // 'default' = worca.default_template (if set) or raw settings.json
+let defaultTemplateId = ''; // worca.default_template from project settings ('' = unset)
 let prBaseBranch = '';
 let prBaseBranchError = '';
 let selectedProject = null; // project picked in All Projects mode
@@ -44,6 +45,8 @@ export function resetNewRunState(overrides = {}) {
   prBaseBranch = overrides.prBaseBranch ?? '';
   prBaseBranchError = overrides.prBaseBranchError ?? '';
   selectedTemplate = overrides.selectedTemplate ?? 'default';
+  defaultTemplateId = overrides.defaultTemplateId ?? '';
+  if ('templates' in overrides) templates = overrides.templates;
   selectedProject = overrides.selectedProject ?? null;
   projectEditable = overrides.projectEditable ?? false;
   if ('bannerDismissed' in overrides)
@@ -128,6 +131,42 @@ function fetchTemplates(projectId) {
       templates = [];
       return [];
     });
+}
+
+// Phase 1: fetch the project's worca.default_template so the "default" option
+// in the dropdown can name what will actually run when no explicit template
+// is picked at launch.
+function fetchDefaultTemplate(projectId) {
+  if (!projectId) {
+    defaultTemplateId = '';
+    return Promise.resolve('');
+  }
+  return fetch(`/api/projects/${projectId}/settings`)
+    .then((r) => r.json())
+    .then((data) => {
+      defaultTemplateId =
+        typeof data?.worca?.default_template === 'string'
+          ? data.worca.default_template
+          : '';
+      return defaultTemplateId;
+    })
+    .catch(() => {
+      defaultTemplateId = '';
+      return '';
+    });
+}
+
+// Build the label for the "default" dropdown option. With Phase 1 in play,
+// picking this option does not always mean "raw settings.json" — if
+// worca.default_template is set, the runtime resolves it and applies that
+// template instead. Show the resolved template name so users know.
+export function defaultOptionLabel() {
+  if (!defaultTemplateId) {
+    return 'No template (raw settings.json)';
+  }
+  const tmpl = (templates || []).find((t) => t.id === defaultTemplateId);
+  const name = tmpl ? tmpl.name || tmpl.id : `${defaultTemplateId} (missing)`;
+  return `★ Default template: ${name}`;
 }
 
 function templatesByTier() {
@@ -305,11 +344,13 @@ export function newRunView(_state, { rerender }) {
     selectedProject = e.target.value || null;
     branches = null;
     templates = null;
+    defaultTemplateId = '';
     planFiles = null;
     const newId = selectedProject;
     if (newId) {
       fetchBranches(newId).then(() => rerender());
       fetchTemplates(newId).then(() => rerender());
+      fetchDefaultTemplate(newId).then(() => rerender());
     }
     rerender();
   }
@@ -334,6 +375,7 @@ export function newRunView(_state, { rerender }) {
   // Fetch templates once
   if (templates === null) {
     fetchTemplates(effectiveId).then(() => rerender());
+    fetchDefaultTemplate(effectiveId).then(() => rerender());
   }
 
   function handleTemplateChange(e) {
@@ -548,7 +590,7 @@ export function newRunView(_state, { rerender }) {
             <div class="settings-field">
               <label class="settings-label">Pipeline Template</label>
               <sl-select value=${selectedTemplate} @sl-change=${handleTemplateChange}>
-                <sl-option value="default">Project Default (settings.json)</sl-option>
+                <sl-option value="default">${defaultOptionLabel()}</sl-option>
                 ${
                   tiers.user.length > 0
                     ? html`
