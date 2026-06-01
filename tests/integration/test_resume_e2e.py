@@ -357,8 +357,8 @@ def test_resume_preserves_template_model_alias(pipeline_env):
         if it.get("model_alias") != "test-impl-alias"
     ]
     assert not bad, (
-        f"resumed implementer iterations have wrong model_alias "
-        f"(expected 'test-impl-alias' for all):\n"
+        "resumed implementer iterations have wrong model_alias "
+        "(expected 'test-impl-alias' for all):\n"
         + "\n".join(
             f"  iter {it.get('number')}: model_alias={it.get('model_alias')!r}"
             for it in bad
