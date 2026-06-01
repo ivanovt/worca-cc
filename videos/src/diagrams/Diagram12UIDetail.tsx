@@ -11,11 +11,16 @@ import React from "react";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 interface Panel {
   name: string;
   hint: string;
+  /** Cue word from the §12 narration that triggers this panel's reveal. */
+  cue: string;
+  /** 0 = first match; needed when a cue word appears earlier. */
+  cueOccurrence?: number;
   /** Grid placement */
   col: number;
   row: number;
@@ -24,12 +29,15 @@ interface Panel {
 }
 
 // 4-column grid with 2 rows.
+// Script (§12): "You can read the generated plan. … You can open any
+// stage and read its agent prompt. … You can browse the beads. … You
+// can read the reviewer's verdict … You can see test output…"
 const PANELS: Panel[] = [
-  { name: "Plan", hint: "the full design doc", col: 1, row: 1, colSpan: 2, rowSpan: 1 },
-  { name: "Stage prompt", hint: "what worca asked the agent", col: 3, row: 1, colSpan: 2, rowSpan: 1 },
-  { name: "Beads", hint: "complexity tiers", col: 1, row: 2, colSpan: 1, rowSpan: 1 },
-  { name: "Reviewer verdict", hint: "diff + verdict", col: 2, row: 2, colSpan: 2, rowSpan: 1 },
-  { name: "Tests", hint: "every iteration", col: 4, row: 2, colSpan: 1, rowSpan: 1 },
+  { name: "Plan", hint: "the full design doc", cue: "plan", col: 1, row: 1, colSpan: 2 },
+  { name: "Stage prompt", hint: "what worca asked the agent", cue: "prompt", col: 3, row: 1, colSpan: 2 },
+  { name: "Beads", hint: "complexity tiers", cue: "beads", col: 1, row: 2 },
+  { name: "Reviewer verdict", hint: "diff + verdict", cue: "verdict", col: 2, row: 2, colSpan: 2 },
+  { name: "Tests", hint: "every iteration", cue: "test", col: 4, row: 2 },
 ];
 
 const WIN_W = 1180;
@@ -40,10 +48,16 @@ const GRID_GAP = 16;
 
 export const Diagram12UIDetail: React.FC<DiagramProps> = () => {
   const winReveal = useReveal({ startFrame: 14 });
-  const FIRST = 50;
-  const STRIDE = 50;
-  const panelReveals = PANELS.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
+  const FALLBACK_FIRST = 50;
+  const FALLBACK_STRIDE = 50;
+  const panelReveals = PANELS.map((p, i) =>
+    useReveal({
+      startFrame: cueFrame(2, 12, p.cue, {
+        fallback: FALLBACK_FIRST + i * FALLBACK_STRIDE,
+        occurrence: p.cueOccurrence ?? 0,
+        offsetFrames: -4,
+      }),
+    }),
   );
 
   // Body area dimensions

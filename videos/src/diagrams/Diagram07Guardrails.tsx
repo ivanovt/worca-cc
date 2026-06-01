@@ -12,6 +12,7 @@ import { Easing, interpolate, useCurrentFrame } from "remotion";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 interface Limit {
@@ -38,19 +39,34 @@ export const Diagram07Guardrails: React.FC<DiagramProps> = () => {
   const frame = useCurrentFrame();
   const ease = Easing.bezier(...theme.easeOut);
 
-  const FIRST = 24;
-  const STRIDE = 80;
-
-  const reveals = LIMITS.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
-  );
+  // Cue each gauge to the line of narration that introduces it. Falls
+  // back to fixed strides if there's no audio yet for §7.
+  // Script: "How many review rounds are allowed? How many test retries?
+  //          How much can a single run cost before it halts?"
+  const FALLBACK_FIRST = 24;
+  const FALLBACK_STRIDE = 80;
+  const limitStarts = [
+    cueFrame(2, 7, "review", {
+      fallback: FALLBACK_FIRST,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 7, "retries", {
+      fallback: FALLBACK_FIRST + FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 7, "cost", {
+      fallback: FALLBACK_FIRST + 2 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+  ];
+  const reveals = limitStarts.map((startFrame) => useReveal({ startFrame }));
 
   return (
     <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>
       {LIMITS.map((limit, i) => {
         const rowTop = i * (ROW_H + ROW_GAP);
         const fillFrac = limit.current / limit.max;
-        const fillStart = FIRST + i * STRIDE + 14;
+        const fillStart = limitStarts[i] + 14;
         const fillProgress = interpolate(
           frame,
           [fillStart, fillStart + 26],

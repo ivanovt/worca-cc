@@ -11,9 +11,19 @@ import React from "react";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
-const PANELS = ["Stages", "Iterations", "Cost", "Tool calls", "Prompts"];
+// Each panel pairs with the cue word that triggers its reveal. Script
+// (§11): "Stage progression. Iterations. Time spent. Cost. Tool calls.
+// Agent prompts and responses."
+const PANELS: Array<{ label: string; cue: string }> = [
+  { label: "Stages", cue: "stage" },
+  { label: "Iterations", cue: "iterations" },
+  { label: "Cost", cue: "cost" },
+  { label: "Tool calls", cue: "tool" },
+  { label: "Prompts", cue: "prompts" },
+];
 
 const WIN_W = 1100;
 const WIN_H = 500;
@@ -21,11 +31,16 @@ const CHROME_H = 56;
 
 export const Diagram11UI: React.FC<DiagramProps> = () => {
   const winReveal = useReveal({ startFrame: 14 });
-  const FIRST = 50;
-  const STRIDE = 32;
+  const FALLBACK_FIRST = 50;
+  const FALLBACK_STRIDE = 32;
 
-  const tabReveals = PANELS.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
+  const tabReveals = PANELS.map((p, i) =>
+    useReveal({
+      startFrame: cueFrame(2, 11, p.cue, {
+        fallback: FALLBACK_FIRST + i * FALLBACK_STRIDE,
+        offsetFrames: -4,
+      }),
+    }),
   );
 
   return (
@@ -118,7 +133,7 @@ export const Diagram11UI: React.FC<DiagramProps> = () => {
         >
           {PANELS.map((p, i) => (
             <div
-              key={p}
+              key={p.label}
               style={{
                 padding: "26px 28px",
                 background: theme.bgPrimary,
@@ -143,7 +158,7 @@ export const Diagram11UI: React.FC<DiagramProps> = () => {
                   color: theme.text,
                 }}
               >
-                {p}
+                {p.label}
               </div>
               {/* placeholder rows */}
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

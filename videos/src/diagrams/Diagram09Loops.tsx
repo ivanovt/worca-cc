@@ -22,6 +22,7 @@ import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { Node } from "./primitives";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 const NODE_W = 260;
@@ -40,29 +41,58 @@ const NODE_CENTER_Y = NODE_Y + NODE_H / 2;
 export const Diagram09Loops: React.FC<DiagramProps> = () => {
   const frame = useCurrentFrame();
 
-  // Reveals
-  const impReveal = useReveal({ startFrame: 18 });
-  const testReveal = useReveal({ startFrame: 40 });
-  const arrowReveal = useReveal({ startFrame: 60 });
-  const counterReveal = useReveal({ startFrame: 80 });
-  const cbReveal = useReveal({ startFrame: 280 });
-  const effortReveal = useReveal({ startFrame: 200 });
+  // Cue each element to its line of narration.
+  // Script: "If tests fail, the tester sends the failure back to the
+  //          implementer, and the implementer tries again. … Each loop
+  //          has a maximum number of iterations. A circuit breaker
+  //          watches for patterns… If a task keeps looping back, the
+  //          next pass runs at a higher reasoning level."
+  const testerStart = cueFrame(2, 9, "tester", {
+    fallback: 40,
+    offsetFrames: -6,
+  });
+  const implementerStart = cueFrame(2, 9, "implementer", {
+    fallback: 18,
+    offsetFrames: -6,
+  });
+  const arrowStart = cueFrame(2, 9, "back", {
+    fallback: 60,
+    offsetFrames: -6,
+  });
+  const iterStart = cueFrame(2, 9, "iterations", {
+    fallback: 90,
+    offsetFrames: -6,
+  });
+  const effortStart = cueFrame(2, 9, "reasoning", {
+    fallback: 200,
+    offsetFrames: -6,
+  });
+  const cbStart = cueFrame(2, 9, "circuit", {
+    fallback: 280,
+    offsetFrames: -6,
+  });
 
-  // Iteration counter: 1 → 2 → 3 → MAX, advancing every ~70f
-  const iterStart = 90;
+  const impReveal = useReveal({ startFrame: implementerStart });
+  const testReveal = useReveal({ startFrame: testerStart });
+  const arrowReveal = useReveal({ startFrame: arrowStart });
+  const counterReveal = useReveal({ startFrame: iterStart });
+  const cbReveal = useReveal({ startFrame: cbStart });
+  const effortReveal = useReveal({ startFrame: effortStart });
+
+  // Iteration counter: 1 → 2 → 3, advancing every ~70f after iterStart.
   const iteration = Math.min(
     3,
-    Math.floor(Math.max(0, frame - iterStart) / 70) + 1,
+    Math.floor(Math.max(0, frame - iterStart - 30) / 70) + 1,
   );
-  const tripped = frame >= 280;
+  const tripped = frame >= cbStart;
 
-  // Curve animations: a top arc (impl → tester) and a bottom arc back.
-  // Use dash offset for flow.
-  const arcDashOffset = -((frame - 60) * 1.0);
+  // Dash flow on the loop arcs starts when the arrow first appears.
+  const arcDashOffset = -((frame - arrowStart) * 1.0);
 
-  // Effort label progression: medium (≤180) → high (180-260) → max (>260)
+  // Effort label progression: medium → high (when effort cue lands) →
+  // max (when circuit-breaker cue lands).
   const effortStage =
-    frame < 200 ? "medium" : frame < 280 ? "high" : "max";
+    frame < effortStart ? "medium" : frame < cbStart ? "high" : "max";
   const effortColor =
     effortStage === "max"
       ? theme.accentBright

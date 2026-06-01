@@ -21,6 +21,7 @@ import { Easing, interpolate, useCurrentFrame } from "remotion";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 const METER_W = 1080;
@@ -35,18 +36,47 @@ export const Diagram10Cost: React.FC<DiagramProps> = () => {
   const frame = useCurrentFrame();
   const ease = Easing.bezier(...theme.easeOut);
 
-  const meterReveal = useReveal({ startFrame: 18 });
-  const knobReveal1 = useReveal({ startFrame: 90 });
-  const knobReveal2 = useReveal({ startFrame: 170 });
-  const knobReveal3 = useReveal({ startFrame: 250 });
-
-  // Meter fill animates upward from 0 to 0.74 over the first second of
-  // the cost meter reveal.
-  const fillFrac = interpolate(frame, [30, 80], [0, 0.74], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-    easing: ease,
+  // Script: "Every stage logs what it spent. … worca gives you three
+  //          ways to control spend. The first is the effort cap. … The
+  //          second is the circuit breaker. … The third is the model
+  //          profile."
+  const meterStart = cueFrame(2, 10, "cost", {
+    fallback: 18,
+    occurrence: 0,
+    offsetFrames: -6,
   });
+  const knob1Start = cueFrame(2, 10, "effort", {
+    fallback: 90,
+    occurrence: 0,
+    offsetFrames: -6,
+  });
+  const knob2Start = cueFrame(2, 10, "circuit", {
+    fallback: 170,
+    occurrence: 0,
+    offsetFrames: -6,
+  });
+  const knob3Start = cueFrame(2, 10, "model", {
+    fallback: 250,
+    occurrence: 0,
+    offsetFrames: -6,
+  });
+
+  const meterReveal = useReveal({ startFrame: meterStart });
+  const knobReveal1 = useReveal({ startFrame: knob1Start });
+  const knobReveal2 = useReveal({ startFrame: knob2Start });
+  const knobReveal3 = useReveal({ startFrame: knob3Start });
+
+  // Meter fill animates from 0 to 0.74 once the meter has landed.
+  const fillFrac = interpolate(
+    frame,
+    [meterStart + 12, meterStart + 62],
+    [0, 0.74],
+    {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+      easing: ease,
+    },
+  );
 
   return (
     <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>

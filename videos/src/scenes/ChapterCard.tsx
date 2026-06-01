@@ -32,14 +32,11 @@ import { theme } from "../theme";
 interface Props {
   chapterNumber: 1 | 2 | 3;
   chapterTitle: string;
-  /** "intro" plays in; "outro" plays out. */
-  variant: "intro" | "outro";
 }
 
 export const ChapterCard: React.FC<Props> = ({
   chapterNumber,
   chapterTitle,
-  variant,
 }) => {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
@@ -135,9 +132,7 @@ export const ChapterCard: React.FC<Props> = ({
             letterSpacing: "0.04em",
           }}
         >
-          {variant === "intro"
-            ? `How worca works · chapter ${chapterNumber} of 3`
-            : "How worca works · continue to the next chapter"}
+          How worca works
         </div>
       </div>
     </AbsoluteFill>

@@ -56,7 +56,6 @@ export const Chapter: React.FC<ChapterProps> = ({ chapterNumber = 1 }) => {
         <ChapterCard
           chapterNumber={chapterNumber}
           chapterTitle={chapter.title}
-          variant="intro"
         />
       </Sequence>
 
@@ -71,7 +70,6 @@ export const Chapter: React.FC<ChapterProps> = ({ chapterNumber = 1 }) => {
         <ChapterCard
           chapterNumber={chapterNumber}
           chapterTitle={chapter.title}
-          variant="outro"
         />
       </Sequence>
     </AbsoluteFill>

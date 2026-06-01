@@ -16,6 +16,7 @@ import React from "react";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 type Outcome = "blocked" | "allowed";
@@ -49,14 +50,30 @@ const HOOK_X = AGENT_W + GAP;
 const OUTCOME_X = HOOK_X + HOOK_W + GAP;
 
 export const Diagram08Governance: React.FC<DiagramProps> = () => {
-  const FIRST = 24;
-  const STRIDE = 70;
+  // Each row cues to the agent name being spoken.
+  // Script: "The planner cannot write source files. The implementer
+  //          cannot commit. Only the guardian can commit…"
+  const FALLBACK_FIRST = 24;
+  const FALLBACK_STRIDE = 70;
+  const rowStarts = [
+    cueFrame(2, 8, "planner", {
+      fallback: FALLBACK_FIRST,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 8, "implementer", {
+      fallback: FALLBACK_FIRST + FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 8, "guardian", {
+      fallback: FALLBACK_FIRST + 2 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+  ];
 
-  const rowReveals = ROWS.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
-  );
-  const outcomeReveals = ROWS.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE + 28 }),
+  const rowReveals = rowStarts.map((startFrame) => useReveal({ startFrame }));
+  // The hook outcome (BLOCKED / ALLOWED) lands ~1s after the agent name.
+  const outcomeReveals = rowStarts.map((startFrame) =>
+    useReveal({ startFrame: startFrame + 28 }),
   );
 
   return (
