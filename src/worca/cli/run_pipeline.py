@@ -86,6 +86,8 @@ def cmd_run(args: Namespace) -> None:
         cmd.extend(["--source", args.source_arg])
     if args.template:
         cmd.extend(["--template", args.template])
+    if args.force_template_change:
+        cmd.append("--force-template-change")
     for p in args.param or []:
         cmd.extend(["--param", p])
 

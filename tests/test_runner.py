@@ -4640,3 +4640,180 @@ class TestLogStageMetricsCostOverride:
         out = capsys.readouterr().err
         assert "cost=$2.50" in out, f"override cost not in log: {out}"
         assert "$4.09" not in out, f"raw envelope cost leaked into log: {out}"
+
+
+# --- Template lifecycle events ---
+
+def _make_template_event_settings(tmp_path):
+    """Minimal settings with only coordinate stage enabled (no plan needed)."""
+    cfg = {
+        "worca": {
+            "stages": {
+                "plan": {"agent": "planner", "enabled": False},
+                "coordinate": {"agent": "coordinator", "enabled": True},
+                "implement": {"agent": "implementer", "enabled": False},
+                "test": {"agent": "tester", "enabled": False},
+                "review": {"agent": "guardian", "enabled": False},
+                "pr": {"agent": "guardian", "enabled": False},
+            },
+            "agents": {"coordinator": {"model": "opus", "max_turns": 10}},
+            "loops": {},
+        }
+    }
+    p = tmp_path / "settings.json"
+    p.write_text(json.dumps(cfg))
+    return str(p)
+
+
+def _run_pipeline_with_template(tmp_path, pipeline_template=None, resume=False,
+                                 resume_status=None):
+    """Helper: run_pipeline with optional pipeline_template and resume support."""
+    from worca.orchestrator.work_request import WorkRequest
+
+    plan = tmp_path / "plan.md"
+    plan.write_text("# Plan\n")
+    wr = WorkRequest(source_type="prompt", title="Template event test")
+    settings_path = _make_template_event_settings(tmp_path)
+    worca_dir = tmp_path / ".worca"
+    worca_dir.mkdir(exist_ok=True)
+    status_path = str(worca_dir / "status.json")
+
+    if resume_status:
+        # Write status directly into per-run dir (resume reads from runs/<id>/)
+        run_id = resume_status["run_id"]
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "status.json").write_text(json.dumps(resume_status))
+
+    def mock_run_stage(stage, context, settings_path, msize=1, iteration=1,
+                       prompt_override=None, **kwargs):
+        return {"beads_ids": [], "dependency_graph": {}}, {"type": "result"}
+
+    with patch("worca.orchestrator.runner.run_stage", side_effect=mock_run_stage), \
+         patch("worca.orchestrator.runner.create_branch"), \
+         patch("worca.orchestrator.runner._write_pid"), \
+         patch("worca.orchestrator.runner._remove_pid"):
+        return run_pipeline(
+            wr,
+            plan_file=str(plan),
+            settings_path=settings_path,
+            status_path=status_path,
+            pipeline_template=pipeline_template,
+            resume=resume,
+        )
+
+
+def _read_events(tmp_path, run_id):
+    """Read all events from events.jsonl for a run."""
+    events_path = tmp_path / ".worca" / "runs" / run_id / "events.jsonl"
+    return [json.loads(line) for line in events_path.read_text().strip().split("\n") if line.strip()]
+
+
+def test_run_pipeline_emits_template_applied_on_fresh_start(tmp_path, monkeypatch):
+    """pipeline.template.applied is emitted on fresh start when pipeline_template is set."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template="project:my-template")
+    events = _read_events(tmp_path, result["run_id"])
+    event_types = [e["event_type"] for e in events]
+    assert "pipeline.template.applied" in event_types
+
+
+def test_run_pipeline_template_applied_payload_launch_source(tmp_path, monkeypatch):
+    """TEMPLATE_APPLIED payload has source='launch' on fresh start."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template="project:my-template")
+    events = _read_events(tmp_path, result["run_id"])
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.applied")
+    assert evt["payload"]["source"] == "launch"
+
+
+def test_run_pipeline_template_applied_payload_template_id_and_tier(tmp_path, monkeypatch):
+    """TEMPLATE_APPLIED payload correctly splits 'tier:id' into template_id and tier."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template="project:my-template")
+    events = _read_events(tmp_path, result["run_id"])
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.applied")
+    assert evt["payload"]["template_id"] == "my-template"
+    assert evt["payload"]["tier"] == "project"
+
+
+def test_run_pipeline_no_template_event_when_no_template(tmp_path, monkeypatch):
+    """No pipeline.template.applied event when pipeline_template is None."""
+    monkeypatch.chdir(tmp_path)
+    result = _run_pipeline_with_template(tmp_path, pipeline_template=None)
+    events = _read_events(tmp_path, result["run_id"])
+    event_types = [e["event_type"] for e in events]
+    assert "pipeline.template.applied" not in event_types
+    assert "pipeline.template.dropped" not in event_types
+
+
+def test_run_pipeline_emits_template_applied_on_resume(tmp_path, monkeypatch):
+    """TEMPLATE_APPLIED is emitted with source='resume' when resuming a run that had a template."""
+    monkeypatch.chdir(tmp_path)
+    run_id = "20260101-000000-000-tmpl-resume"
+    resume_status = {
+        "run_id": run_id,
+        "pipeline_status": "failed",
+        "work_request": {"title": "Template event test"},
+        "branch": "feat/template-resume",
+        "pipeline_template": "project:my-template",
+        "stages": {
+            "plan": {"status": "completed"},
+            "plan_review": {"status": "pending"},
+            "coordinate": {"status": "pending"},
+            "implement": {"status": "pending"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "milestones": {},
+        "loop_counters": {},
+    }
+    result = _run_pipeline_with_template(
+        tmp_path,
+        pipeline_template="my-template",
+        resume=True,
+        resume_status=resume_status,
+    )
+    events = _read_events(tmp_path, result["run_id"])
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.applied")
+    assert evt["payload"]["source"] == "resume"
+    assert evt["payload"]["template_id"] == "my-template"
+    assert evt["payload"]["tier"] == "project"
+
+
+def test_run_pipeline_emits_template_dropped_on_resume_regression(tmp_path, monkeypatch):
+    """TEMPLATE_DROPPED is emitted when a resumed run has a persisted template
+    but the runner receives pipeline_template=None (regression guard)."""
+    monkeypatch.chdir(tmp_path)
+    run_id = "20260101-000000-000-tmpl-dropped"
+    resume_status = {
+        "run_id": run_id,
+        "pipeline_status": "failed",
+        "work_request": {"title": "Template event test"},
+        "branch": "feat/template-dropped",
+        "pipeline_template": "project:my-template",
+        "stages": {
+            "plan": {"status": "completed"},
+            "plan_review": {"status": "pending"},
+            "coordinate": {"status": "pending"},
+            "implement": {"status": "pending"},
+            "test": {"status": "pending"},
+            "review": {"status": "pending"},
+            "pr": {"status": "pending"},
+        },
+        "milestones": {},
+        "loop_counters": {},
+    }
+    result = _run_pipeline_with_template(
+        tmp_path,
+        pipeline_template=None,  # template not passed → regression scenario
+        resume=True,
+        resume_status=resume_status,
+    )
+    events = _read_events(tmp_path, result["run_id"])
+    event_types = [e["event_type"] for e in events]
+    assert "pipeline.template.dropped" in event_types
+    evt = next(e for e in events if e["event_type"] == "pipeline.template.dropped")
+    assert evt["payload"]["template_id"] == "my-template"
+    assert evt["payload"]["reason"] == "missing_on_resume"

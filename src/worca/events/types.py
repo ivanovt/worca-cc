@@ -123,6 +123,13 @@ PREFLIGHT_SKIPPED   = "pipeline.preflight.skipped"
 PLAN_EDITED = "pipeline.plan_review.edited"
 
 # ---------------------------------------------------------------------------
+# Template lifecycle (2 events)
+# ---------------------------------------------------------------------------
+
+TEMPLATE_APPLIED = "pipeline.template.applied"
+TEMPLATE_DROPPED = "pipeline.template.dropped"
+
+# ---------------------------------------------------------------------------
 # Learn stage events (2 events)
 # ---------------------------------------------------------------------------
 
@@ -874,6 +881,30 @@ def plan_edited_payload(
     if original_plan_path is not None:
         p["original_plan_path"] = original_plan_path
     return p
+
+
+# ---------------------------------------------------------------------------
+# Template lifecycle payload builders
+# ---------------------------------------------------------------------------
+
+def template_applied_payload(
+    template_id: str,
+    source: str,
+    tier: str = None,
+) -> dict:
+    """source: 'launch' | 'resume' | 'default'; tier: 'builtin' | 'project' | 'user'."""
+    p: dict = {"template_id": template_id, "source": source}
+    if tier is not None:
+        p["tier"] = tier
+    return p
+
+
+def template_dropped_payload(
+    template_id: str,
+    reason: str,
+) -> dict:
+    """reason: 'not_found' | 'resolve_error' | 'missing_on_resume'."""
+    return {"template_id": template_id, "reason": reason}
 
 
 # ---------------------------------------------------------------------------

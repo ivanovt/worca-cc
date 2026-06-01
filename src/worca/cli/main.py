@@ -189,6 +189,12 @@ def create_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--resume", action="store_true", help="Resume from last checkpoint")
     run_parser.add_argument("--source", dest="source_arg", default=None, help="Work source")
     run_parser.add_argument("--template", default=None, help="Template ID to apply before running")
+    run_parser.add_argument(
+        "--force-template-change",
+        action="store_true",
+        default=False,
+        help="Allow switching to a different template when resuming a run",
+    )
     run_parser.add_argument("--param", action="append", metavar="KEY=VALUE", help="Template parameter override (repeatable)")
     run_parser.add_argument(
         "--worktree",

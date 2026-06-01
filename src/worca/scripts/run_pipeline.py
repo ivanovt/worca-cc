@@ -46,6 +46,8 @@ def create_parser():
     parser.add_argument("--worktree", action="store_true",
                         help="Worktree mode: skip branch creation and register in multi-pipeline registry")
     parser.add_argument("--template", help="Template ID to apply before running")
+    parser.add_argument("--force-template-change", action="store_true", default=False,
+                        help="Allow --template to override the persisted pipeline_template on resume")
     parser.add_argument("--param", action="append", metavar="KEY=VALUE",
                         help="Template parameter override (repeatable)")
     parser.add_argument("--guide", action="append", metavar="PATH",
@@ -211,6 +213,24 @@ def main():
         else:
             print(f"error: cannot resume — status file not found: {status_file}", file=sys.stderr)
             raise SystemExit(2)
+        # Restore pipeline_template from status.json when --template not explicitly passed.
+        _explicit_template = args.template
+        if not args.template:
+            _persisted_template = existing.get("pipeline_template")
+            if isinstance(_persisted_template, str) and _persisted_template:
+                args.template = _persisted_template.split(":")[1] if ":" in _persisted_template else _persisted_template
+        elif not args.force_template_change:
+            _persisted_template = existing.get("pipeline_template")
+            if isinstance(_persisted_template, str) and _persisted_template:
+                _persisted_bare = _persisted_template.split(":")[1] if ":" in _persisted_template else _persisted_template
+                if _explicit_template != _persisted_bare:
+                    print(
+                        f"error: --template {_explicit_template!r} conflicts with persisted "
+                        f"pipeline_template {_persisted_template!r}; "
+                        "use --force-template-change to override",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(2)
         plan_file = args.plan
         print(f"Resuming pipeline: {work_request.title}")
     else:
@@ -308,6 +328,22 @@ def main():
 
     effective_settings_path = _temp_settings_path if _template_id else args.settings
 
+    # On resume the run_dir is already known — write forensic snapshot before the run
+    # so crashes/kills don't leave the dir without template evidence.
+    if args.resume and _template_id and _resolver:
+        _resume_run_dir = os.path.dirname(os.path.abspath(status_file))
+        try:
+            _resolver.snapshot_to_run(_template_id, _resume_run_dir, _params)
+        except Exception as snap_err:
+            print(f"warning: template snapshot failed: {snap_err}", file=sys.stderr)
+        if _merged_settings:
+            try:
+                Path(_resume_run_dir, "settings.json").write_text(
+                    json.dumps(_merged_settings, indent=2), encoding="utf-8"
+                )
+            except OSError:
+                pass
+
     try:
         effective_status_path = os.path.join(args.status_dir, "status.json")
         status = run_pipeline(
@@ -326,8 +362,9 @@ def main():
             run_id=args.run_id,
         )
 
-        # Snapshot template to run dir and write merged settings for traceability
-        if _template_id and _resolver and status.get("run_id"):
+        # Snapshot template to run dir and write merged settings for traceability.
+        # Resume path: already written before run_pipeline() — skip here to avoid duplicates.
+        if not args.resume and _template_id and _resolver and status.get("run_id"):
             run_dir = os.path.join(args.status_dir, "runs", status["run_id"])
             try:
                 _resolver.snapshot_to_run(_template_id, run_dir, _params)
