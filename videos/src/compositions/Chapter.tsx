@@ -13,7 +13,7 @@ import { AbsoluteFill, Sequence } from "remotion";
 import { ChapterCard } from "../scenes/ChapterCard";
 import { BulletScene } from "../scenes/BulletScene";
 import { chapters, totalBullets } from "../lib/script";
-import { chapterCardFrames, sceneFramesForWords } from "../lib/timing";
+import { chapterCardFrames, sceneFrames } from "../lib/timing";
 
 export interface ChapterProps {
   // Optional with a default so the type matches Remotion's loose
@@ -28,8 +28,8 @@ export const Chapter: React.FC<ChapterProps> = ({ chapterNumber = 1 }) => {
   const outro = chapterCardFrames();
 
   let cursor = intro;
-  const sceneSequences = chapter.scenes.map((scene, idx) => {
-    const frames = sceneFramesForWords(scene.words);
+  const sceneSequences = chapter.scenes.map((scene) => {
+    const frames = sceneFrames(chapterNumber, scene.id, scene.words);
     const from = cursor;
     cursor += frames;
     const label = `${String(scene.id).padStart(2, "0")} / ${totalBullets}`;
@@ -41,7 +41,11 @@ export const Chapter: React.FC<ChapterProps> = ({ chapterNumber = 1 }) => {
         layout="none"
         name={`#${scene.id} — ${scene.title.slice(0, 40)}`}
       >
-        <BulletScene scene={scene} sceneLabel={label} />
+        <BulletScene
+          scene={scene}
+          sceneLabel={label}
+          chapterNumber={chapterNumber}
+        />
       </Sequence>
     );
   });
@@ -79,11 +83,11 @@ export const Chapter: React.FC<ChapterProps> = ({ chapterNumber = 1 }) => {
   );
 };
 
-/** Total length of a chapter in frames — used by Root.tsx calculateMetadata. */
+/** Total length of a chapter in frames — used by Root.tsx Composition. */
 export const chapterDurationFrames = (chapterNumber: 1 | 2 | 3): number => {
   const chapter = chapters[chapterNumber];
   const sum = chapter.scenes.reduce(
-    (acc, s) => acc + sceneFramesForWords(s.words),
+    (acc, s) => acc + sceneFrames(chapterNumber, s.id, s.words),
     0,
   );
   return chapterCardFrames() + sum + chapterCardFrames();

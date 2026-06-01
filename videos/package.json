@@ -29,6 +29,7 @@
     "render": "remotion render",
     "upgrade": "remotion upgrade",
     "captions": "tsx scripts/generate-srt.ts",
+    "voiceover": "tsx scripts/generate-voiceover.ts",
     "lint": "eslint src && tsc"
   },
   "sideEffects": [

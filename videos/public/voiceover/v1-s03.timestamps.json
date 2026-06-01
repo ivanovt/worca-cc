@@ -1,0 +1,310 @@
+{
+  "durationSeconds": 23.545,
+  "words": [
+    {
+      "word": "The",
+      "startSeconds": 0,
+      "endSeconds": 0.139
+    },
+    {
+      "word": "full",
+      "startSeconds": 0.186,
+      "endSeconds": 0.406
+    },
+    {
+      "word": "flow",
+      "startSeconds": 0.476,
+      "endSeconds": 0.894
+    },
+    {
+      "word": "runs",
+      "startSeconds": 1.068,
+      "endSeconds": 1.451
+    },
+    {
+      "word": "as",
+      "startSeconds": 1.498,
+      "endSeconds": 1.591
+    },
+    {
+      "word": "a",
+      "startSeconds": 1.637,
+      "endSeconds": 1.672
+    },
+    {
+      "word": "pipeline",
+      "startSeconds": 1.718,
+      "endSeconds": 2.426
+    },
+    {
+      "word": "A",
+      "startSeconds": 2.763,
+      "endSeconds": 2.833
+    },
+    {
+      "word": "pipeline",
+      "startSeconds": 2.914,
+      "endSeconds": 3.553
+    },
+    {
+      "word": "is",
+      "startSeconds": 3.622,
+      "endSeconds": 3.773
+    },
+    {
+      "word": "your",
+      "startSeconds": 3.831,
+      "endSeconds": 3.982
+    },
+    {
+      "word": "workflow",
+      "startSeconds": 4.052,
+      "endSeconds": 4.69
+    },
+    {
+      "word": "written",
+      "startSeconds": 4.876,
+      "endSeconds": 5.201
+    },
+    {
+      "word": "down",
+      "startSeconds": 5.271,
+      "endSeconds": 5.724
+    },
+    {
+      "word": "It",
+      "startSeconds": 6.084,
+      "endSeconds": 6.223
+    },
+    {
+      "word": "moves",
+      "startSeconds": 6.293,
+      "endSeconds": 6.711
+    },
+    {
+      "word": "through",
+      "startSeconds": 6.757,
+      "endSeconds": 7.024
+    },
+    {
+      "word": "stages",
+      "startSeconds": 7.082,
+      "endSeconds": 7.732
+    },
+    {
+      "word": "Each",
+      "startSeconds": 8.057,
+      "endSeconds": 8.278
+    },
+    {
+      "word": "stage",
+      "startSeconds": 8.336,
+      "endSeconds": 8.777
+    },
+    {
+      "word": "has",
+      "startSeconds": 8.812,
+      "endSeconds": 8.951
+    },
+    {
+      "word": "its",
+      "startSeconds": 9.009,
+      "endSeconds": 9.125
+    },
+    {
+      "word": "own",
+      "startSeconds": 9.172,
+      "endSeconds": 9.381
+    },
+    {
+      "word": "specialized",
+      "startSeconds": 9.451,
+      "endSeconds": 10.182
+    },
+    {
+      "word": "agent",
+      "startSeconds": 10.24,
+      "endSeconds": 10.658
+    },
+    {
+      "word": "Each",
+      "startSeconds": 10.971,
+      "endSeconds": 11.192
+    },
+    {
+      "word": "agent",
+      "startSeconds": 11.25,
+      "endSeconds": 11.575
+    },
+    {
+      "word": "gets",
+      "startSeconds": 11.622,
+      "endSeconds": 11.831
+    },
+    {
+      "word": "a",
+      "startSeconds": 11.865,
+      "endSeconds": 11.9
+    },
+    {
+      "word": "prompt",
+      "startSeconds": 11.958,
+      "endSeconds": 12.388
+    },
+    {
+      "word": "tailored",
+      "startSeconds": 12.481,
+      "endSeconds": 12.91
+    },
+    {
+      "word": "to",
+      "startSeconds": 12.945,
+      "endSeconds": 13.015
+    },
+    {
+      "word": "its",
+      "startSeconds": 13.108,
+      "endSeconds": 13.224
+    },
+    {
+      "word": "role",
+      "startSeconds": 13.282,
+      "endSeconds": 13.816
+    },
+    {
+      "word": "And",
+      "startSeconds": 14.06,
+      "endSeconds": 14.234
+    },
+    {
+      "word": "it",
+      "startSeconds": 14.292,
+      "endSeconds": 14.35
+    },
+    {
+      "word": "gets",
+      "startSeconds": 14.396,
+      "endSeconds": 14.582
+    },
+    {
+      "word": "a",
+      "startSeconds": 14.617,
+      "endSeconds": 14.652
+    },
+    {
+      "word": "message",
+      "startSeconds": 14.721,
+      "endSeconds": 15.081
+    },
+    {
+      "word": "tailored",
+      "startSeconds": 15.128,
+      "endSeconds": 15.488
+    },
+    {
+      "word": "to",
+      "startSeconds": 15.523,
+      "endSeconds": 15.581
+    },
+    {
+      "word": "the",
+      "startSeconds": 15.639,
+      "endSeconds": 15.708
+    },
+    {
+      "word": "current",
+      "startSeconds": 15.755,
+      "endSeconds": 16.057
+    },
+    {
+      "word": "state",
+      "startSeconds": 16.103,
+      "endSeconds": 16.358
+    },
+    {
+      "word": "of",
+      "startSeconds": 16.382,
+      "endSeconds": 16.428
+    },
+    {
+      "word": "the",
+      "startSeconds": 16.474,
+      "endSeconds": 16.544
+    },
+    {
+      "word": "work",
+      "startSeconds": 16.591,
+      "endSeconds": 16.881
+    },
+    {
+      "word": "worca",
+      "startSeconds": 17.357,
+      "endSeconds": 17.775
+    },
+    {
+      "word": "ships",
+      "startSeconds": 17.833,
+      "endSeconds": 18.239
+    },
+    {
+      "word": "with",
+      "startSeconds": 18.448,
+      "endSeconds": 18.646
+    },
+    {
+      "word": "several",
+      "startSeconds": 18.704,
+      "endSeconds": 19.145
+    },
+    {
+      "word": "pipeline",
+      "startSeconds": 19.238,
+      "endSeconds": 19.934
+    },
+    {
+      "word": "templates",
+      "startSeconds": 19.981,
+      "endSeconds": 20.515
+    },
+    {
+      "word": "built",
+      "startSeconds": 20.573,
+      "endSeconds": 20.851
+    },
+    {
+      "word": "in",
+      "startSeconds": 20.933,
+      "endSeconds": 21.177
+    },
+    {
+      "word": "You",
+      "startSeconds": 21.734,
+      "endSeconds": 21.85
+    },
+    {
+      "word": "can",
+      "startSeconds": 21.896,
+      "endSeconds": 22.001
+    },
+    {
+      "word": "also",
+      "startSeconds": 22.047,
+      "endSeconds": 22.349
+    },
+    {
+      "word": "write",
+      "startSeconds": 22.407,
+      "endSeconds": 22.663
+    },
+    {
+      "word": "your",
+      "startSeconds": 22.697,
+      "endSeconds": 22.848
+    },
+    {
+      "word": "own",
+      "startSeconds": 22.918,
+      "endSeconds": 23.266
+    }
+  ]
+}

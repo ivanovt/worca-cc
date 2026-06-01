@@ -1,0 +1,220 @@
+{
+  "durationSeconds": 16.811,
+  "words": [
+    {
+      "word": "worca",
+      "startSeconds": 0,
+      "endSeconds": 0.464
+    },
+    {
+      "word": "is",
+      "startSeconds": 0.546,
+      "endSeconds": 0.662
+    },
+    {
+      "word": "an",
+      "startSeconds": 0.708,
+      "endSeconds": 0.778
+    },
+    {
+      "word": "orchestrator",
+      "startSeconds": 0.859,
+      "endSeconds": 1.521
+    },
+    {
+      "word": "for",
+      "startSeconds": 1.579,
+      "endSeconds": 1.695
+    },
+    {
+      "word": "your",
+      "startSeconds": 1.753,
+      "endSeconds": 1.892
+    },
+    {
+      "word": "AI",
+      "startSeconds": 1.962,
+      "endSeconds": 2.357
+    },
+    {
+      "word": "coding",
+      "startSeconds": 2.426,
+      "endSeconds": 2.752
+    },
+    {
+      "word": "agent",
+      "startSeconds": 2.81,
+      "endSeconds": 3.193
+    },
+    {
+      "word": "It",
+      "startSeconds": 3.518,
+      "endSeconds": 3.657
+    },
+    {
+      "word": "runs",
+      "startSeconds": 3.704,
+      "endSeconds": 3.947
+    },
+    {
+      "word": "your",
+      "startSeconds": 3.982,
+      "endSeconds": 4.087
+    },
+    {
+      "word": "development",
+      "startSeconds": 4.133,
+      "endSeconds": 4.598
+    },
+    {
+      "word": "process",
+      "startSeconds": 4.644,
+      "endSeconds": 5.12
+    },
+    {
+      "word": "step",
+      "startSeconds": 5.155,
+      "endSeconds": 5.375
+    },
+    {
+      "word": "by",
+      "startSeconds": 5.445,
+      "endSeconds": 5.584
+    },
+    {
+      "word": "step",
+      "startSeconds": 5.654,
+      "endSeconds": 6.014
+    },
+    {
+      "word": "So",
+      "startSeconds": 6.339,
+      "endSeconds": 6.467
+    },
+    {
+      "word": "the",
+      "startSeconds": 6.525,
+      "endSeconds": 6.594
+    },
+    {
+      "word": "agent",
+      "startSeconds": 6.664,
+      "endSeconds": 7.001
+    },
+    {
+      "word": "always",
+      "startSeconds": 7.047,
+      "endSeconds": 7.407
+    },
+    {
+      "word": "starts",
+      "startSeconds": 7.442,
+      "endSeconds": 7.779
+    },
+    {
+      "word": "with",
+      "startSeconds": 7.802,
+      "endSeconds": 7.918
+    },
+    {
+      "word": "a",
+      "startSeconds": 7.964,
+      "endSeconds": 7.988
+    },
+    {
+      "word": "design",
+      "startSeconds": 8.046,
+      "endSeconds": 8.499
+    },
+    {
+      "word": "document",
+      "startSeconds": 8.568,
+      "endSeconds": 9.125
+    },
+    {
+      "word": "It",
+      "startSeconds": 9.485,
+      "endSeconds": 9.625
+    },
+    {
+      "word": "always",
+      "startSeconds": 9.683,
+      "endSeconds": 10.066
+    },
+    {
+      "word": "implements",
+      "startSeconds": 10.124,
+      "endSeconds": 10.646
+    },
+    {
+      "word": "and",
+      "startSeconds": 10.693,
+      "endSeconds": 10.797
+    },
+    {
+      "word": "runs",
+      "startSeconds": 10.879,
+      "endSeconds": 11.215
+    },
+    {
+      "word": "the",
+      "startSeconds": 11.285,
+      "endSeconds": 11.366
+    },
+    {
+      "word": "tests",
+      "startSeconds": 11.424,
+      "endSeconds": 12.005
+    },
+    {
+      "word": "It",
+      "startSeconds": 12.33,
+      "endSeconds": 12.458
+    },
+    {
+      "word": "always",
+      "startSeconds": 12.516,
+      "endSeconds": 12.852
+    },
+    {
+      "word": "performs",
+      "startSeconds": 12.91,
+      "endSeconds": 13.433
+    },
+    {
+      "word": "a",
+      "startSeconds": 13.479,
+      "endSeconds": 13.502
+    },
+    {
+      "word": "code",
+      "startSeconds": 13.572,
+      "endSeconds": 13.897
+    },
+    {
+      "word": "review",
+      "startSeconds": 13.944,
+      "endSeconds": 14.373
+    },
+    {
+      "word": "Nothing",
+      "startSeconds": 14.965,
+      "endSeconds": 15.279
+    },
+    {
+      "word": "important",
+      "startSeconds": 15.337,
+      "endSeconds": 15.801
+    },
+    {
+      "word": "gets",
+      "startSeconds": 15.848,
+      "endSeconds": 16.045
+    },
+    {
+      "word": "skipped",
+      "startSeconds": 16.08,
+      "endSeconds": 16.533
+    }
+  ]
+}

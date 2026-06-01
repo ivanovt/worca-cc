@@ -13,6 +13,7 @@
 
 import { chapters } from "./script";
 import type { BulletScene, Chapter } from "./script";
+import { audioDuration } from "./audio-manifest.generated";
 
 const WORDS_PER_SECOND = 2.5;
 const LEAD_IN_SECONDS = 0.8;
@@ -54,10 +55,14 @@ const splitSentences = (body: string): string[] =>
 
 const buildCuesForBullet = (
   scene: BulletScene,
+  chapterNumber: number,
   bulletStartSeconds: number,
 ): { cues: Omit<Cue, "index">[]; bulletDurationSeconds: number } => {
   const sentences = splitSentences(scene.body);
-  const narrationSeconds = scene.words / WORDS_PER_SECOND;
+  // Prefer the real audio duration when a voiceover has been generated;
+  // fall back to the 150 wpm estimate otherwise.
+  const actualAudio = audioDuration(chapterNumber, scene.id);
+  const narrationSeconds = actualAudio ?? scene.words / WORDS_PER_SECOND;
   const bulletDurationSeconds =
     LEAD_IN_SECONDS + narrationSeconds + LEAD_OUT_SECONDS;
 
@@ -87,7 +92,11 @@ export const buildSrtForChapter = (chapter: Chapter): string => {
   let nextIndex = 1;
 
   for (const scene of chapter.scenes) {
-    const { cues, bulletDurationSeconds } = buildCuesForBullet(scene, cumulative);
+    const { cues, bulletDurationSeconds } = buildCuesForBullet(
+      scene,
+      chapter.number,
+      cumulative,
+    );
     for (const cue of cues) {
       allCues.push({ ...cue, index: nextIndex++ });
     }

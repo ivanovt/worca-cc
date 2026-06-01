@@ -1,0 +1,260 @@
+{
+  "durationSeconds": 20.341,
+  "words": [
+    {
+      "word": "Every",
+      "startSeconds": 0,
+      "endSeconds": 0.337
+    },
+    {
+      "word": "step",
+      "startSeconds": 0.383,
+      "endSeconds": 0.662
+    },
+    {
+      "word": "runs",
+      "startSeconds": 0.743,
+      "endSeconds": 1.161
+    },
+    {
+      "word": "in",
+      "startSeconds": 1.219,
+      "endSeconds": 1.289
+    },
+    {
+      "word": "a",
+      "startSeconds": 1.335,
+      "endSeconds": 1.358
+    },
+    {
+      "word": "fresh",
+      "startSeconds": 1.416,
+      "endSeconds": 1.683
+    },
+    {
+      "word": "agent",
+      "startSeconds": 1.741,
+      "endSeconds": 2.159
+    },
+    {
+      "word": "That",
+      "startSeconds": 2.45,
+      "endSeconds": 2.694
+    },
+    {
+      "word": "agent",
+      "startSeconds": 2.752,
+      "endSeconds": 3.065
+    },
+    {
+      "word": "only",
+      "startSeconds": 3.135,
+      "endSeconds": 3.46
+    },
+    {
+      "word": "sees",
+      "startSeconds": 3.518,
+      "endSeconds": 3.843
+    },
+    {
+      "word": "what",
+      "startSeconds": 3.889,
+      "endSeconds": 4.04
+    },
+    {
+      "word": "it",
+      "startSeconds": 4.075,
+      "endSeconds": 4.145
+    },
+    {
+      "word": "needs",
+      "startSeconds": 4.214,
+      "endSeconds": 4.505
+    },
+    {
+      "word": "to",
+      "startSeconds": 4.563,
+      "endSeconds": 4.632
+    },
+    {
+      "word": "do",
+      "startSeconds": 4.702,
+      "endSeconds": 4.807
+    },
+    {
+      "word": "its",
+      "startSeconds": 4.888,
+      "endSeconds": 5.016
+    },
+    {
+      "word": "job",
+      "startSeconds": 5.085,
+      "endSeconds": 5.538
+    },
+    {
+      "word": "The",
+      "startSeconds": 5.933,
+      "endSeconds": 6.049
+    },
+    {
+      "word": "planner",
+      "startSeconds": 6.095,
+      "endSeconds": 6.467
+    },
+    {
+      "word": "sees",
+      "startSeconds": 6.536,
+      "endSeconds": 6.792
+    },
+    {
+      "word": "the",
+      "startSeconds": 6.85,
+      "endSeconds": 6.92
+    },
+    {
+      "word": "request",
+      "startSeconds": 6.978,
+      "endSeconds": 7.523
+    },
+    {
+      "word": "The",
+      "startSeconds": 7.825,
+      "endSeconds": 7.953
+    },
+    {
+      "word": "implementer",
+      "startSeconds": 8.034,
+      "endSeconds": 8.638
+    },
+    {
+      "word": "sees",
+      "startSeconds": 8.696,
+      "endSeconds": 8.963
+    },
+    {
+      "word": "the",
+      "startSeconds": 9.033,
+      "endSeconds": 9.102
+    },
+    {
+      "word": "design",
+      "startSeconds": 9.16,
+      "endSeconds": 9.59
+    },
+    {
+      "word": "decisions",
+      "startSeconds": 9.648,
+      "endSeconds": 10.147
+    },
+    {
+      "word": "for",
+      "startSeconds": 10.205,
+      "endSeconds": 10.333
+    },
+    {
+      "word": "one",
+      "startSeconds": 10.414,
+      "endSeconds": 10.623
+    },
+    {
+      "word": "code",
+      "startSeconds": 10.681,
+      "endSeconds": 10.983
+    },
+    {
+      "word": "change",
+      "startSeconds": 11.018,
+      "endSeconds": 11.598
+    },
+    {
+      "word": "The",
+      "startSeconds": 11.784,
+      "endSeconds": 11.889
+    },
+    {
+      "word": "reviewer",
+      "startSeconds": 11.958,
+      "endSeconds": 12.353
+    },
+    {
+      "word": "sees",
+      "startSeconds": 12.423,
+      "endSeconds": 12.713
+    },
+    {
+      "word": "the",
+      "startSeconds": 12.783,
+      "endSeconds": 12.864
+    },
+    {
+      "word": "diff",
+      "startSeconds": 12.945,
+      "endSeconds": 13.212
+    },
+    {
+      "word": "to",
+      "startSeconds": 13.27,
+      "endSeconds": 13.34
+    },
+    {
+      "word": "review",
+      "startSeconds": 13.433,
+      "endSeconds": 13.862
+    },
+    {
+      "word": "Nothing",
+      "startSeconds": 14.245,
+      "endSeconds": 14.629
+    },
+    {
+      "word": "leaks",
+      "startSeconds": 14.71,
+      "endSeconds": 15.012
+    },
+    {
+      "word": "across",
+      "startSeconds": 15.058,
+      "endSeconds": 15.43
+    },
+    {
+      "word": "stages",
+      "startSeconds": 15.476,
+      "endSeconds": 16.138
+    },
+    {
+      "word": "Nothing",
+      "startSeconds": 16.475,
+      "endSeconds": 16.858
+    },
+    {
+      "word": "is",
+      "startSeconds": 16.927,
+      "endSeconds": 17.043
+    },
+    {
+      "word": "missing",
+      "startSeconds": 17.113,
+      "endSeconds": 17.508
+    },
+    {
+      "word": "Each",
+      "startSeconds": 17.937,
+      "endSeconds": 18.216
+    },
+    {
+      "word": "agent",
+      "startSeconds": 18.297,
+      "endSeconds": 18.82
+    },
+    {
+      "word": "stays",
+      "startSeconds": 18.994,
+      "endSeconds": 19.412
+    },
+    {
+      "word": "focused",
+      "startSeconds": 19.493,
+      "endSeconds": 20.097
+    }
+  ]
+}

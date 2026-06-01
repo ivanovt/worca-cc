@@ -29,8 +29,11 @@ import {
   AbsoluteFill,
   Easing,
   interpolate,
+  Sequence,
+  staticFile,
   useCurrentFrame,
 } from "remotion";
+import { Audio } from "@remotion/media";
 
 import { Background } from "../components/Background";
 import { Wordmark } from "../components/Wordmark";
@@ -38,15 +41,30 @@ import { fonts } from "../fonts";
 import { theme } from "../theme";
 import type { BulletScene as BulletSceneData } from "../lib/script";
 import { diagramFor } from "../diagrams/registry";
+import { hasAudio } from "../lib/audio-manifest.generated";
+import { LEAD_IN_FRAMES } from "../lib/timing";
 
 interface Props {
   scene: BulletSceneData;
-  /** "01 / 18" style scene counter shown top-right. */
+  /** "01 / 17" style scene counter shown top-right. */
   sceneLabel: string;
+  /** 1 / 2 / 3 — used to resolve the bullet's voiceover audio file. */
+  chapterNumber: 1 | 2 | 3;
 }
 
-export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
+export const BulletScene: React.FC<Props> = ({
+  scene,
+  sceneLabel,
+  chapterNumber,
+}) => {
   const frame = useCurrentFrame();
+
+  // Resolve the voiceover audio file for this bullet, if one exists.
+  // Pattern: public/voiceover/v{chapter}-s{NN}.mp3
+  const audioId = `v${chapterNumber}-s${String(scene.id).padStart(2, "0")}`;
+  const audioSrc = hasAudio(chapterNumber, scene.id)
+    ? staticFile(`voiceover/${audioId}.mp3`)
+    : null;
 
   const ease = Easing.bezier(...theme.easeOut);
 
@@ -81,6 +99,15 @@ export const BulletScene: React.FC<Props> = ({ scene, sceneLabel }) => {
   return (
     <AbsoluteFill>
       <Background />
+
+      {/* Voiceover audio — plays after LEAD_IN_FRAMES so the title card
+          has time to land before narration starts. Wrapping in a Sequence
+          with `from` is how Remotion delays media playback. */}
+      {audioSrc ? (
+        <Sequence from={LEAD_IN_FRAMES} layout="none">
+          <Audio src={audioSrc} />
+        </Sequence>
+      ) : null}
 
       <div
         style={{

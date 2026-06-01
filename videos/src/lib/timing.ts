@@ -8,8 +8,9 @@
  */
 
 import { theme } from "../theme";
+import { audioDuration } from "./audio-manifest.generated";
 
-/** 150 wpm = 2.5 wps; the same baseline used in docs/how-it-works.md. */
+/** 150 wpm = 2.5 wps; fallback baseline when no audio exists yet. */
 const WORDS_PER_SECOND = 2.5;
 
 /** Breath before the first word — title card lands and settles. */
@@ -21,9 +22,23 @@ const LEAD_OUT_SECONDS = 1.0;
 /** Title-card-only segments (chapter intro / outro) get this fixed duration. */
 export const CHAPTER_CARD_SECONDS = 3.0;
 
+/** Word-count fallback used when no audio file is yet on disk. Each scene
+ *  ends up at lead_in + narration + lead_out. */
 export const sceneFramesForWords = (words: number): number => {
   const narration = words / WORDS_PER_SECOND;
   return Math.ceil((LEAD_IN_SECONDS + narration + LEAD_OUT_SECONDS) * theme.fps);
+};
+
+/** Resolves the duration of one bullet scene: audio-driven if a voiceover
+ *  manifest entry exists, word-count estimate otherwise. */
+export const sceneFrames = (chapter: number, sceneId: number, words: number): number => {
+  const audioSec = audioDuration(chapter, sceneId);
+  if (audioSec !== undefined) {
+    return Math.ceil(
+      (LEAD_IN_SECONDS + audioSec + LEAD_OUT_SECONDS) * theme.fps,
+    );
+  }
+  return sceneFramesForWords(words);
 };
 
 export const chapterCardFrames = (): number =>

@@ -1,0 +1,540 @@
+{
+  "durationSeconds": 44.768,
+  "words": [
+    {
+      "word": "Reading",
+      "startSeconds": 0,
+      "endSeconds": 0.464
+    },
+    {
+      "word": "and",
+      "startSeconds": 0.557,
+      "endSeconds": 0.766
+    },
+    {
+      "word": "re-reading",
+      "startSeconds": 0.882,
+      "endSeconds": 1.463
+    },
+    {
+      "word": "source",
+      "startSeconds": 1.556,
+      "endSeconds": 1.869
+    },
+    {
+      "word": "files",
+      "startSeconds": 1.904,
+      "endSeconds": 2.392
+    },
+    {
+      "word": "is",
+      "startSeconds": 2.461,
+      "endSeconds": 2.566
+    },
+    {
+      "word": "the",
+      "startSeconds": 2.635,
+      "endSeconds": 2.705
+    },
+    {
+      "word": "biggest",
+      "startSeconds": 2.775,
+      "endSeconds": 3.088
+    },
+    {
+      "word": "token",
+      "startSeconds": 3.135,
+      "endSeconds": 3.471
+    },
+    {
+      "word": "sink",
+      "startSeconds": 3.553,
+      "endSeconds": 3.855
+    },
+    {
+      "word": "in",
+      "startSeconds": 3.924,
+      "endSeconds": 4.005
+    },
+    {
+      "word": "autonomous",
+      "startSeconds": 4.063,
+      "endSeconds": 4.598
+    },
+    {
+      "word": "coding",
+      "startSeconds": 4.656,
+      "endSeconds": 5.039
+    },
+    {
+      "word": "To",
+      "startSeconds": 5.538,
+      "endSeconds": 5.654
+    },
+    {
+      "word": "cut",
+      "startSeconds": 5.735,
+      "endSeconds": 5.944
+    },
+    {
+      "word": "that",
+      "startSeconds": 6.002,
+      "endSeconds": 6.177
+    },
+    {
+      "word": "cost",
+      "startSeconds": 6.246,
+      "endSeconds": 6.711
+    },
+    {
+      "word": "worca",
+      "startSeconds": 7.036,
+      "endSeconds": 7.465
+    },
+    {
+      "word": "can",
+      "startSeconds": 7.523,
+      "endSeconds": 7.651
+    },
+    {
+      "word": "build",
+      "startSeconds": 7.709,
+      "endSeconds": 7.941
+    },
+    {
+      "word": "a",
+      "startSeconds": 7.988,
+      "endSeconds": 8.011
+    },
+    {
+      "word": "structural",
+      "startSeconds": 8.057,
+      "endSeconds": 8.568
+    },
+    {
+      "word": "knowledge",
+      "startSeconds": 8.638,
+      "endSeconds": 9.033
+    },
+    {
+      "word": "graph",
+      "startSeconds": 9.067,
+      "endSeconds": 9.439
+    },
+    {
+      "word": "of",
+      "startSeconds": 9.485,
+      "endSeconds": 9.543
+    },
+    {
+      "word": "your",
+      "startSeconds": 9.601,
+      "endSeconds": 9.718
+    },
+    {
+      "word": "repository",
+      "startSeconds": 9.776,
+      "endSeconds": 10.612
+    },
+    {
+      "word": "The",
+      "startSeconds": 11.053,
+      "endSeconds": 11.157
+    },
+    {
+      "word": "graph",
+      "startSeconds": 11.215,
+      "endSeconds": 11.656
+    },
+    {
+      "word": "captures",
+      "startSeconds": 11.726,
+      "endSeconds": 12.167
+    },
+    {
+      "word": "how",
+      "startSeconds": 12.214,
+      "endSeconds": 12.353
+    },
+    {
+      "word": "your",
+      "startSeconds": 12.423,
+      "endSeconds": 12.562
+    },
+    {
+      "word": "code",
+      "startSeconds": 12.632,
+      "endSeconds": 12.945
+    },
+    {
+      "word": "fits",
+      "startSeconds": 12.992,
+      "endSeconds": 13.235
+    },
+    {
+      "word": "together",
+      "startSeconds": 13.282,
+      "endSeconds": 13.746
+    },
+    {
+      "word": "Agents",
+      "startSeconds": 14.118,
+      "endSeconds": 14.582
+    },
+    {
+      "word": "query",
+      "startSeconds": 14.663,
+      "endSeconds": 15.035
+    },
+    {
+      "word": "the",
+      "startSeconds": 15.081,
+      "endSeconds": 15.151
+    },
+    {
+      "word": "graph",
+      "startSeconds": 15.198,
+      "endSeconds": 15.569
+    },
+    {
+      "word": "instead",
+      "startSeconds": 15.627,
+      "endSeconds": 15.999
+    },
+    {
+      "word": "of",
+      "startSeconds": 16.034,
+      "endSeconds": 16.092
+    },
+    {
+      "word": "grepping",
+      "startSeconds": 16.161,
+      "endSeconds": 16.498
+    },
+    {
+      "word": "their",
+      "startSeconds": 16.556,
+      "endSeconds": 16.73
+    },
+    {
+      "word": "way",
+      "startSeconds": 16.777,
+      "endSeconds": 16.951
+    },
+    {
+      "word": "around",
+      "startSeconds": 16.997,
+      "endSeconds": 17.589
+    },
+    {
+      "word": "Two",
+      "startSeconds": 18.193,
+      "endSeconds": 18.46
+    },
+    {
+      "word": "engines",
+      "startSeconds": 18.611,
+      "endSeconds": 19.342
+    },
+    {
+      "word": "plug",
+      "startSeconds": 19.482,
+      "endSeconds": 19.876
+    },
+    {
+      "word": "in",
+      "startSeconds": 19.958,
+      "endSeconds": 20.178
+    },
+    {
+      "word": "here",
+      "startSeconds": 20.283,
+      "endSeconds": 20.805
+    },
+    {
+      "word": "The",
+      "startSeconds": 21.328,
+      "endSeconds": 21.444
+    },
+    {
+      "word": "first",
+      "startSeconds": 21.502,
+      "endSeconds": 21.746
+    },
+    {
+      "word": "is",
+      "startSeconds": 21.792,
+      "endSeconds": 21.873
+    },
+    {
+      "word": "graphify",
+      "startSeconds": 21.931,
+      "endSeconds": 22.698
+    },
+    {
+      "word": "It",
+      "startSeconds": 23.023,
+      "endSeconds": 23.174
+    },
+    {
+      "word": "maps",
+      "startSeconds": 23.232,
+      "endSeconds": 23.568
+    },
+    {
+      "word": "the",
+      "startSeconds": 23.615,
+      "endSeconds": 23.708
+    },
+    {
+      "word": "AST",
+      "startSeconds": 23.801,
+      "endSeconds": 24.393
+    },
+    {
+      "word": "and",
+      "startSeconds": 24.625,
+      "endSeconds": 24.718
+    },
+    {
+      "word": "call",
+      "startSeconds": 24.799,
+      "endSeconds": 25.066
+    },
+    {
+      "word": "structure",
+      "startSeconds": 25.159,
+      "endSeconds": 25.647
+    },
+    {
+      "word": "of",
+      "startSeconds": 25.693,
+      "endSeconds": 25.751
+    },
+    {
+      "word": "your",
+      "startSeconds": 25.809,
+      "endSeconds": 25.96
+    },
+    {
+      "word": "source",
+      "startSeconds": 26.041,
+      "endSeconds": 26.343
+    },
+    {
+      "word": "code",
+      "startSeconds": 26.39,
+      "endSeconds": 26.889
+    },
+    {
+      "word": "The",
+      "startSeconds": 27.353,
+      "endSeconds": 27.469
+    },
+    {
+      "word": "second",
+      "startSeconds": 27.527,
+      "endSeconds": 27.829
+    },
+    {
+      "word": "is",
+      "startSeconds": 27.911,
+      "endSeconds": 28.131
+    },
+    {
+      "word": "CRG",
+      "startSeconds": 28.328,
+      "endSeconds": 29.083
+    },
+    {
+      "word": "CRG",
+      "startSeconds": 29.815,
+      "endSeconds": 30.314
+    },
+    {
+      "word": "runs",
+      "startSeconds": 30.465,
+      "endSeconds": 30.755
+    },
+    {
+      "word": "in",
+      "startSeconds": 30.813,
+      "endSeconds": 30.894
+    },
+    {
+      "word": "structural",
+      "startSeconds": 30.964,
+      "endSeconds": 31.475
+    },
+    {
+      "word": "mode",
+      "startSeconds": 31.533,
+      "endSeconds": 31.788
+    },
+    {
+      "word": "today",
+      "startSeconds": 31.835,
+      "endSeconds": 32.322
+    },
+    {
+      "word": "and",
+      "startSeconds": 32.566,
+      "endSeconds": 32.752
+    },
+    {
+      "word": "a",
+      "startSeconds": 32.798,
+      "endSeconds": 32.833
+    },
+    {
+      "word": "richer",
+      "startSeconds": 32.914,
+      "endSeconds": 33.181
+    },
+    {
+      "word": "semantic",
+      "startSeconds": 33.239,
+      "endSeconds": 33.738
+    },
+    {
+      "word": "mode",
+      "startSeconds": 33.796,
+      "endSeconds": 34.04
+    },
+    {
+      "word": "is",
+      "startSeconds": 34.075,
+      "endSeconds": 34.156
+    },
+    {
+      "word": "on",
+      "startSeconds": 34.214,
+      "endSeconds": 34.319
+    },
+    {
+      "word": "the",
+      "startSeconds": 34.365,
+      "endSeconds": 34.423
+    },
+    {
+      "word": "roadmap",
+      "startSeconds": 34.481,
+      "endSeconds": 35.05
+    },
+    {
+      "word": "Either",
+      "startSeconds": 35.631,
+      "endSeconds": 35.898
+    },
+    {
+      "word": "way",
+      "startSeconds": 35.956,
+      "endSeconds": 36.165
+    },
+    {
+      "word": "the",
+      "startSeconds": 36.235,
+      "endSeconds": 36.304
+    },
+    {
+      "word": "graph",
+      "startSeconds": 36.351,
+      "endSeconds": 36.711
+    },
+    {
+      "word": "is",
+      "startSeconds": 36.78,
+      "endSeconds": 36.978
+    },
+    {
+      "word": "advisory",
+      "startSeconds": 37.047,
+      "endSeconds": 37.964
+    },
+    {
+      "word": "It",
+      "startSeconds": 38.557,
+      "endSeconds": 38.696
+    },
+    {
+      "word": "never",
+      "startSeconds": 38.742,
+      "endSeconds": 38.94
+    },
+    {
+      "word": "overrides",
+      "startSeconds": 39.009,
+      "endSeconds": 39.706
+    },
+    {
+      "word": "what",
+      "startSeconds": 39.729,
+      "endSeconds": 39.869
+    },
+    {
+      "word": "you",
+      "startSeconds": 39.915,
+      "endSeconds": 40.008
+    },
+    {
+      "word": "asked",
+      "startSeconds": 40.124,
+      "endSeconds": 40.484
+    },
+    {
+      "word": "for",
+      "startSeconds": 40.542,
+      "endSeconds": 40.902
+    },
+    {
+      "word": "It",
+      "startSeconds": 41.297,
+      "endSeconds": 41.436
+    },
+    {
+      "word": "just",
+      "startSeconds": 41.482,
+      "endSeconds": 41.668
+    },
+    {
+      "word": "helps",
+      "startSeconds": 41.703,
+      "endSeconds": 41.935
+    },
+    {
+      "word": "the",
+      "startSeconds": 41.982,
+      "endSeconds": 42.074
+    },
+    {
+      "word": "agents",
+      "startSeconds": 42.156,
+      "endSeconds": 42.585
+    },
+    {
+      "word": "find",
+      "startSeconds": 42.632,
+      "endSeconds": 42.899
+    },
+    {
+      "word": "their",
+      "startSeconds": 42.945,
+      "endSeconds": 43.119
+    },
+    {
+      "word": "way",
+      "startSeconds": 43.177,
+      "endSeconds": 43.34
+    },
+    {
+      "word": "around",
+      "startSeconds": 43.398,
+      "endSeconds": 43.851
+    },
+    {
+      "word": "faster",
+      "startSeconds": 43.932,
+      "endSeconds": 44.489
+    }
+  ]
+}
