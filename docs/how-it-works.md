@@ -28,7 +28,7 @@ There are four ways to tell worca what to do. The simplest is a prompt. You desc
 
 ### 5. Code orientation through a knowledge graph
 
-Reading and re-reading source files is the biggest token sink in autonomous coding. To cut that cost, worca can build a structural knowledge graph of your repository. The graph captures how your code fits together. Agents query the graph instead of grepping their way around. Two engines plug in here. The first is graphify. It maps the AST and call structure of your source code. The second is CRG. CRG runs in structural mode today, and a richer semantic mode is on the roadmap. Either way, the graph is advisory. It never overrides what you asked for. It just helps the agents find their way around faster.
+Reading and re-reading source files is the biggest token sink in autonomous coding. To cut that cost, worca can build a structural knowledge graph of your repository. The graph captures how your code fits together. Agents query the graph instead of grepping their way around. Two engines plug in here. The first is graphify. It maps the AST and call structure of your source code. The second is Code Review Graph. Code Review Graph runs in structural mode today, and a richer semantic mode is on the roadmap. Either way, the graph is advisory. It never overrides what you asked for. It just helps the agents find their way around faster.
 
 *See also: [`docs/plans/W-053-graphify-integration.md`](./plans/W-053-graphify-integration.md).*
 
@@ -78,7 +78,7 @@ Let's get specific about what you can do in the UI. You can read the generated p
 
 ## Video 3 — Worca in your workflow
 
-*Bullets 13–18 · ~3.6 min raw narration at 150 wpm*
+*Bullets 13–17 · ~3.3 min raw narration at 150 wpm*
 
 ### 13. Each run lives in its own git worktree, so parallel runs never collide
 
@@ -92,7 +92,7 @@ You can shape worca to your team without forking it. Almost every part of a pipe
 
 ### 15. Built-in templates, and your own
 
-worca ships with a set of built-in pipeline templates. They cover the common shapes of work. There's a full feature pipeline with planning, review, and testing. There's a bug-fix pipeline that skips planning. There's a docs-only pipeline. And several more. Each template is a complete recipe. Stage list. Agent prompts. Loop budgets. Model assignments. Most of the time, picking the right template is all you need. When the built-ins don't fit, you can write your own. Today this is done through settings. A richer template-authoring experience is coming to the UI.
+worca ships with a set of built-in pipeline templates. They cover the common shapes of work. There's a full feature pipeline with planning, review, and testing. A bug-fix pipeline skips planning and jumps straight to the implementer. An investigate pipeline produces a plan without changing any code. A quick-fix pipeline drops review and the PR step for trivial changes. And several more cover other shapes of work. Each template is a complete recipe. Stage list. Agent prompts. Loop budgets. Model assignments. Most of the time, picking the right template is all you need. When the built-ins don't fit, you can write your own. Today this is done through settings. A richer template-authoring experience is coming to the UI.
 
 ### 16. Events out, control in
 
@@ -104,17 +104,13 @@ The pipeline emits a typed event stream. There are around 80 different event typ
 
 worca can push run updates into the chat tools your team already uses. Set up an integration once. That can be Telegram, Discord, or Slack. From then on, worca notifies you when something interesting happens. A plan is ready. A pull request has been opened. The run has paused. A circuit breaker tripped. On Telegram, those notifications come with inline actions. You can pause, resume, or stop a run right from the chat. No need to open the UI. And from inside a run, agents can reach out to you directly through the notify skill. For example, an agent might say: "I'm waiting on a clarification, please reply when you can." You can leave the UI closed and still stay in the loop on long-running work.
 
-### 18. Strategic context persists across sessions
-
-Strategic work needs to survive across sessions. Multi-step features. Dependencies between tasks. Work the pipeline discovers along the way. All of these live in beads. Beads are a lightweight, git-tracked issue store. The next session sees them. The next agent sees them. Every fleet child sees them too. Small day-to-day todos stay ephemeral. But anything you'd be sad to lose when a session ends should become a bead.
-
 ---
 
 ## Per-video summary
 
 | Video | Title | Bullets | Words | Raw narration |
 |---:|---|---|---:|---:|
-| 1 | Introducing worca | 1–5 | 388 | 2.6 min |
+| 1 | Introducing worca | 1–5 | 392 | 2.6 min |
 | 2 | Inside a worca run | 6–12 | 579 | 3.9 min |
-| 3 | Worca in your workflow | 13–18 | 541 | 3.6 min |
-| | **Total** | **18** | **1508** | **10.1 min** |
+| 3 | Worca in your workflow | 13–17 | 499 | 3.3 min |
+| | **Total** | **17** | **1470** | **9.8 min** |
