@@ -137,6 +137,19 @@ The only header difference: the back arrow on the run page goes to the runs list
 - `width = max(MIN_BAR_PX, (bar.durMs / totalMs) × swimlaneWidth)` — `MIN_BAR_PX = 12` so sub-second bars remain hoverable
 - `fill = statusColor(bar.status)` (green = completed, blue = in_progress, red = failed, grey = skipped — reuses palette from existing `statusClass` in `worca-ui/app/utils/status-badge.js`)
 - `stroke-left = stageHue` (3px left-edge accent) — implemented as a separate `<rect>` 3px wide at `x`, fill = stageHue, so the bar identity is readable when zoomed past the row label
+- **Stage hue palette** (canonical, keyed by `Stage` enum from `src/worca/orchestrator/stages.py:7`). These are *identity* colours for the 3px left-edge accent, not status colours — the bar fill continues to use the existing status palette from `worca-ui/app/utils/status-badge.js`. Exposed as `--stage-hue-<key>` CSS variables on `:root` (not hardcoded into SVG attributes) so light/dark mode and future palette tweaks land in one place:
+
+  | Stage | Hue | Hex |
+  |---|---|---|
+  | `PREFLIGHT` | slate | `#64748b` |
+  | `PLAN` | indigo | `#4f46e5` |
+  | `PLAN_REVIEW` | violet | `#7c3aed` |
+  | `COORDINATE` | teal | `#0d9488` |
+  | `IMPLEMENT` | purple | `#9333ea` |
+  | `TEST` | amber | `#d97706` |
+  | `REVIEW` | emerald | `#059669` |
+  | `PR` | cyan | `#0891b2` |
+  | `LEARN` | rose | `#e11d48` |
 
 **Centered duration badge:**
 
@@ -170,9 +183,9 @@ The only header difference: the back arrow on the run page goes to the runs list
 
 **Wheel zoom:** `wheel` event on the SVG canvas, `deltaY > 0` zooms out, `deltaY < 0` zooms in. Zoom is anchored at the mouse pointer's time coordinate: `panMs` is adjusted so the time under the cursor stays put.
 
-**Drag-to-zoom region:** mouse-down on the time axis (or shift+drag on the canvas) renders a translucent selection rectangle; mouse-up sets `scale, panMs` to fit the selected window. Standard pattern from D3 brush.
+**Drag-to-zoom region:** both triggers are in-scope for phase 1 — mouse-down on the time axis *and* shift+drag on the canvas. Either gesture renders a translucent selection rectangle; mouse-up sets `scale, panMs` to fit the selected window. Standard pattern from D3 brush. Two triggers because the axis is a small target at fit-to-run zoom but is the discoverable gesture for first-time users; shift+drag becomes natural once the user is already manipulating the canvas.
 
-**Pan:** middle-mouse drag, or shift+wheel for horizontal scroll when zoomed in. (Optional — could be deferred to phase 2.)
+**Pan:** middle-mouse drag *and* shift+wheel for horizontal scroll when zoomed in. Both are in-scope for phase 1 — shift+wheel costs ~10 lines once wheel-zoom exists; middle-mouse drag is a routine `mousedown/mousemove/mouseup` handler set. Pan is bounded so the canvas cannot scroll past the run's `[runStart, runEnd]` window.
 
 **Time axis:** `<g class="axis">` at the bottom of the SVG. Tick spacing is adaptive: minutes at `scale < 4`, 10-second ticks at `4 ≤ scale < 16`, 1-second ticks at `scale ≥ 16`. Tick labels formatted as `m:ss` (mm:ss for runs > 1h). The axis itself is hoverable, surfacing the wall-clock time under the cursor.
 
@@ -205,9 +218,13 @@ Returned at 00:04:21
 
 ### 7. Click-to-drill
 
-Clicking an iteration bar opens an `sl-drawer` from the right, showing per-iteration detail: bead links, model, effort level, token usage, raw `iterations[k]` JSON (collapsed by default). This reuses the per-iteration accordion content already rendered in the run detail page — extract it into `iterationDetailView(iteration, stageKey, run)` and call from both pages.
+Clicking an iteration bar opens an `sl-drawer` from the right, showing per-iteration detail: bead links, model, effort level, token usage, raw `iterations[k]` JSON (collapsed by default).
 
-Out of scope for phase 1: streaming log tail inside the drawer (the run detail page already has its own log panel). The drawer's "Open logs" button deep-links to `#/<section>/<runId>` with a query param that scrolls to the iteration's log entry.
+**Phase-1 scope — minimal rendering, no extraction.** The drawer ships with its own self-contained rendering: status pip, formatted duration, cost, model, agent, and the raw `iterations[k]` JSON in a collapsed `<details>` block. It does **not** consume the run detail page's per-iteration accordion content (`_effortRowView`, `_classificationRowView`, `_dispatchEventsRowsView`, `_planIterationButton`, `_planReviewIssuesButton`, and their supporting helpers — ~30 functions in `run-detail.js`).
+
+**Rationale for deferring extraction.** Pulling those helpers across the file boundary also requires relocating the module-level dialog singletons (`_issuesDialogIter`, `_planArtifactDialog`) and converting many `function _x()` declarations to exported symbols. Bundling that refactor with a brand-new view forces the reviewer to mentally separate two unrelated changes. The end state — a shared `iterationDetailView(iteration, stageKey, run)` consumed by both pages — is still the target, just filed as a clean follow-up that touches only `run-detail.js` and the new file. The bar tooltip already carries the dense per-iteration info, so the minimal drawer is functionally sufficient on day 1.
+
+Out of scope for phase 1 (and tracked under the follow-up): full extraction into a shared `iterationDetailView` helper; streaming log tail inside the drawer (the run detail page already has its own log panel). The drawer's "Open logs" button deep-links to `#/<section>/<runId>` with a query param that scrolls to the iteration's log entry.
 
 ## Implementation Plan
 
@@ -250,15 +267,14 @@ Out of scope for phase 1: streaming log tail inside the drawer (the run detail p
 
 ### Phase 4: Tooltips and click-to-drill
 
-**Files:** `worca-ui/app/views/run-timeline.js`, `worca-ui/app/views/iteration-detail.js` (extracted from `run-detail.js`)
+**Files:** `worca-ui/app/views/run-timeline.js`
 
 **Tasks:**
 
 1. Single floating tooltip `<div>`; show/hide and reposition via `mousemove` on bars and gaps.
 2. Format tooltip content per Design §6.
-3. Extract per-iteration accordion content from `run-detail.js` into `iterationDetailView(iteration, stageKey, run)`.
-4. Click on a bar opens an `sl-drawer` mounting `iterationDetailView(...)`.
-5. Loopback arrow highlight: bar `mouseenter` adds a `.highlight` class to matching arrows; `mouseleave` removes it.
+3. Click on a bar opens an `sl-drawer` mounting a self-contained minimal iteration-detail body (status, duration, cost, model, agent, collapsed raw JSON) — inlined in `run-timeline.js`, **not** extracted from `run-detail.js`. See §7 for rationale; full extraction is filed as a follow-up.
+4. Loopback arrow highlight: bar `mouseenter` adds a `.highlight` class to matching arrows; `mouseleave` removes it.
 
 ### Phase 5: Loopback hide threshold + polish
 
@@ -279,8 +295,7 @@ Out of scope for phase 1: streaming log tail inside the drawer (the run detail p
 | `worca-ui/app/main.js` | Dispatch `runTimelineView` when `action === 'timeline'` and a run is loaded |
 | `worca-ui/app/views/run-detail.js` | Extract header to shared helper; add right-aligned `Timeline` button under stages strip |
 | `worca-ui/app/views/run-page-header.js` | New — shared header (back, status badge, title, Pause/Stop) for run and timeline pages |
-| `worca-ui/app/views/run-timeline.js` | New — top-level timeline page: header + SVG canvas + toolbar + tooltip layer |
-| `worca-ui/app/views/iteration-detail.js` | New — per-iteration drawer body, reused by `run-detail.js` and the timeline click-to-drill |
+| `worca-ui/app/views/run-timeline.js` | New — top-level timeline page: header + SVG canvas + toolbar + tooltip layer + self-contained drawer body (no extraction from `run-detail.js`) |
 | `worca-ui/app/utils/timeline-layout.js` | New — pure projection from `run.stages` to swimlane layout model |
 | `worca-ui/app/utils/timeline-zoom.js` | New — scale/pan math, mouse-anchored zoom, drag-to-zoom helpers |
 | `worca-ui/app/utils/stage-hues.js` | New — canonical per-stage accent color map keyed by `Stage` enum values from `src/worca/orchestrator/stages.py` |
@@ -338,7 +353,6 @@ Out of scope for phase 1: streaming log tail inside the drawer (the run detail p
 |------|--------|
 | `worca-ui/app/views/run-timeline.js` | Create |
 | `worca-ui/app/views/run-page-header.js` | Create |
-| `worca-ui/app/views/iteration-detail.js` | Create (extracted from `run-detail.js`) |
 | `worca-ui/app/utils/timeline-layout.js` | Create |
 | `worca-ui/app/utils/timeline-zoom.js` | Create |
 | `worca-ui/app/utils/stage-hues.js` | Create |
@@ -352,6 +366,7 @@ Out of scope for phase 1: streaming log tail inside the drawer (the run detail p
 
 ## Out of Scope
 
+- **`iterationDetailView` extraction.** The drawer ships with self-contained minimal rendering in phase 1; pulling the ~30 `_iter*` / `_effort*` / `_dispatch*` / `_classification*` / dispatch-event helpers and the module-level dialog singletons (`_issuesDialogIter`, `_planArtifactDialog`) out of `run-detail.js` into a shared `iterationDetailView(iteration, stageKey, run)` is filed as a clean follow-up that touches only `run-detail.js` and the new file. End state unchanged; just sequenced after this PR lands.
 - **Replacement of the run detail page.** The timeline is a *specialized addition*; the existing dot-and-line stage strip stays as the at-a-glance summary on the run page.
 - **Cost overlay.** Cost lives in tooltips only. No per-stage `$` label below the bar, no run-level cost chart.
 - **Implementer parallelism rendering.** Multi-bead parallel iterations get a single bar each — sub-row / stacked-bar layout is deferred until orchestrator-side parallelism is implemented.
