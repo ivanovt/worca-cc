@@ -28,7 +28,7 @@
     "upgrade": "remotion upgrade",
     "lint": "eslint src && tsc",
 
-    "voiceover": "tsx scripts/generate-voiceover.ts",
+    "voiceover": "tsx --env-file-if-exists=.env.local scripts/generate-voiceover.ts",
     "captions": "tsx scripts/generate-srt.ts",
     "render": "tsx scripts/render-all.ts",
     "posters": "tsx scripts/generate-posters.ts",

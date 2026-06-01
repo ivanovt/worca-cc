@@ -43,15 +43,20 @@ const FORCE = process.argv.includes("--force");
 const CHAPTER_ARG = process.argv.find((a) => a.startsWith("--chapter="));
 const CHAPTER_FILTER = CHAPTER_ARG ? Number(CHAPTER_ARG.split("=")[1]) : null;
 
-const API_KEY = process.env.ELEVENLABS_API_KEY;
-const VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
-const MODEL_ID = process.env.ELEVENLABS_MODEL_ID ?? "eleven_multilingual_v2";
+// Brand voice — hardcoded so every run produces audio in the same voice
+// regardless of the user's shell environment. Override only by editing
+// this file. The API key is the only thing that comes from outside.
+const VOICE_ID = "bbGtsRRKUfYO634UxSjz";
+const MODEL_ID = "eleven_multilingual_v2";
 
-if (!API_KEY || !VOICE_ID) {
+const API_KEY = process.env.ELEVENLABS_API_KEY;
+
+if (!API_KEY) {
   console.error(
-    "ERROR: ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID are both required.\n" +
-      "Pass inline:\n" +
-      "  ELEVENLABS_API_KEY=… ELEVENLABS_VOICE_ID=… npm run voiceover\n",
+    "ERROR: ELEVENLABS_API_KEY is required.\n" +
+      "Put it in videos/.env.local (gitignored):\n" +
+      "  ELEVENLABS_API_KEY=sk_...\n" +
+      "Then re-run `npm run voiceover`.\n",
   );
   process.exit(1);
 }
