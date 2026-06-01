@@ -65,10 +65,19 @@ import {
 import {
   getEffectiveProjectId,
   getNewRunSubmitState,
+  invalidateTemplateCache,
   isAtCapacity,
   newRunView,
   submitNewRun,
 } from './views/new-run.js';
+import {
+  copyGistUrl,
+  exportTemplate,
+  fetchTemplates,
+  pipelinesView,
+  setupTemplatePolling,
+} from './views/pipelines.js';
+import { pipelinesEditorView } from './views/pipelines-editor.js';
 import { runCardView } from './views/run-card.js';
 import {
   prApprovalPanelView,
@@ -205,6 +214,7 @@ let autoScroll = true;
 let settings = {};
 let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
+let _templateGuard = null; // null | { tid, scope, action: 'delete'|'edit', count: number }
 let restartStageKey = null;
 
 // -- Fleet views --
@@ -532,6 +542,12 @@ let costsTokenData = {}; // { runId: { stage: [ { inputTokens, outputTokens, ...
 let costsExpanded = null; // runId or null
 let costsFetched = false;
 
+// -- Pipelines / Templates --
+let _templatesPollCleanup = null;
+// Editor state and cleanup from pipelines-editor module
+let _editorModule = null;
+let getEditorState = null;
+
 // ── Integrations state ──────────────────────────────────────────────────
 let integrationsStatus = null;
 let integrationsConfig = null;
@@ -778,6 +794,11 @@ function resetProjectState() {
   costsTokenData = {};
   costsExpanded = null;
   costsFetched = false;
+  // Pipelines / Templates
+  if (_templatesPollCleanup) {
+    _templatesPollCleanup();
+    _templatesPollCleanup = null;
+  }
   // Webhook UI
   webhookSelectedId = null;
   webhookCategoryFilter = 'all';
@@ -1574,6 +1595,10 @@ onHashChange((newRoute) => {
     }
   }
 
+  if (route.section === 'new-run') {
+    invalidateTemplateCache();
+  }
+
   if (route.section === 'costs') {
     costsFetched = false;
     fetchCostsData();
@@ -1626,6 +1651,141 @@ function handleSaveSourceRepo(sourceRepo) {
   store.setState({ preferences: { source_repo: sourceRepo } });
 }
 
+// --- Pipelines / Templates handlers ---
+
+async function handleSetDefaultTemplate(tid) {
+  try {
+    const res = await fetch(projectUrl('/default-template'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      _showToast(data.error || 'Failed to set default template', 'danger');
+      return;
+    }
+    // Update settings to reflect the new default
+    settings = {
+      ...settings,
+      worca: { ...settings.worca, default_template: tid },
+    };
+    _showToast(`Default template set to "${tid}"`, 'success');
+    rerender();
+  } catch (err) {
+    _showToast(`Failed to set default template: ${err.message}`, 'danger');
+  }
+}
+
+function _countInflightRunsForTemplate(tid) {
+  const runs = store.getState().runs || {};
+  return Object.values(runs).filter(
+    (r) =>
+      r.pipeline_template === tid &&
+      (r.pipeline_status === 'running' || r.pipeline_status === 'paused'),
+  ).length;
+}
+
+async function handleDeleteTemplate(tid, scope) {
+  const count = _countInflightRunsForTemplate(tid);
+  if (count > 0) {
+    _templateGuard = { tid, scope, action: 'delete', count };
+    rerender();
+    requestAnimationFrame(() => {
+      document.querySelector('.template-guard-dialog')?.show();
+    });
+    return;
+  }
+  await _executeDeleteTemplate(tid, scope);
+}
+
+async function _executeDeleteTemplate(tid, scope) {
+  try {
+    const res = await fetch(projectUrl(`/templates/${tid}?scope=${scope}`), {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to delete template');
+      return;
+    }
+    const templates = await fetchTemplates(
+      store.getState().currentProjectId || null,
+    );
+    store.setState({ templates });
+    rerender();
+  } catch (err) {
+    showActionError(`Failed to delete template: ${err.message}`);
+  }
+}
+
+function handleEditTemplate(tid) {
+  const count = _countInflightRunsForTemplate(tid);
+  if (count > 0) {
+    _templateGuard = { tid, scope: null, action: 'edit', count };
+    rerender();
+    requestAnimationFrame(() => {
+      document.querySelector('.template-guard-dialog')?.show();
+    });
+    return;
+  }
+  navigate('pipelines', tid, route.projectId, 'edit');
+}
+
+function _confirmTemplateGuard() {
+  const guard = _templateGuard;
+  _templateGuard = null;
+  document.querySelector('.template-guard-dialog')?.hide();
+  if (!guard) return;
+  if (guard.action === 'delete') {
+    _executeDeleteTemplate(guard.tid, guard.scope);
+  } else {
+    navigate('pipelines', guard.tid, route.projectId, 'edit');
+  }
+}
+
+function _dismissTemplateGuard() {
+  _templateGuard = null;
+  rerender();
+}
+
+async function handleDuplicateTemplate(tid) {
+  try {
+    const res = await fetch(projectUrl(`/templates/${tid}/duplicate`), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dst_id: tid, dst_scope: 'project' }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to duplicate template');
+      return;
+    }
+    const dstId = data.dst_id || tid;
+    navigate('pipelines', dstId, route.projectId, 'edit');
+  } catch (err) {
+    showActionError(`Failed to duplicate template: ${err.message}`);
+  }
+}
+
+function handleExportTemplate(tid) {
+  const projectId = store.getState().currentProjectId || null;
+
+  // Find template to get its name
+  const template = (store.getState().templates || []).find((t) => t.id === tid);
+
+  exportTemplate(projectId, tid, template?.name || tid);
+}
+
+async function handleCopyGistUrl(tid) {
+  const projectId = store.getState().currentProjectId || null;
+
+  // Find template to get its name
+  const template = (store.getState().templates || []).find((t) => t.id === tid);
+
+  await copyGistUrl(projectId, tid, template?.name || tid);
+}
+
 function handleStageFilter(stage) {
   logFilter = stage;
   // Auto-select last iteration when a stage is chosen
@@ -1672,6 +1832,26 @@ function handleToggleAutoScroll() {
   autoScroll = !autoScroll;
   rerender();
 }
+
+function _showToast(message, variant = 'success') {
+  const alert = Object.assign(document.createElement('sl-alert'), {
+    variant,
+    closable: true,
+    duration: 4000,
+  });
+  alert.textContent = String(message);
+  document.body.append(alert);
+  requestAnimationFrame(() => alert.toast());
+}
+
+document.addEventListener('worca:toast', (e) => {
+  const { message, variant } = e.detail || {};
+  if (message) _showToast(message, variant || 'success');
+});
+window.addEventListener('worca:toast', (e) => {
+  const { message, variant } = e.detail || {};
+  if (message) _showToast(message, variant || 'success');
+});
 
 function showActionError(msg) {
   actionError = msg;
@@ -3000,6 +3180,14 @@ function contentHeaderView() {
   } else if (route.section === 'settings') {
     title = 'Settings';
     showBack = true;
+  } else if (route.section === 'pipelines') {
+    if (route.action === 'edit' || route.action === 'duplicate') {
+      title = 'Edit Pipeline Template';
+      showBack = true;
+    } else {
+      title = 'Pipelines';
+      showBack = false;
+    }
   } else if (route.section === 'project-settings') {
     title = 'Project Settings';
     showBack = true;
@@ -3098,12 +3286,13 @@ function mainContentView() {
 
   // The runId catch-all renders the per-run pipeline detail view. Exclude
   // sections that own their own :id sub-route (fleet-runs, workspace-runs,
-  // workspaces — the create-definition flow).
+  // workspaces — the create-definition flow, pipelines for template editing).
   if (
     route.runId &&
     route.section !== 'fleet-runs' &&
     route.section !== 'workspace-runs' &&
-    route.section !== 'workspaces'
+    route.section !== 'workspaces' &&
+    route.section !== 'pipelines'
   ) {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
@@ -3228,6 +3417,63 @@ function mainContentView() {
 
   if (route.section === 'new-run') {
     return newRunView(viewState, { rerender });
+  }
+
+  if (route.section === 'pipelines') {
+    // Set up template polling on first entry
+    if (!_templatesPollCleanup) {
+      _templatesPollCleanup = setupTemplatePolling(
+        { currentProjectId: route.projectId },
+        store,
+        rerender,
+      );
+    }
+
+    // /pipelines/:tid/edit → editor (load and edit template)
+    if (route.runId && route.action === 'edit') {
+      const tid = route.runId;
+      // Import editor module and get state functions (without await to keep function sync)
+      if (!_editorModule) {
+        import('./views/pipelines-editor.js').then((mod) => {
+          _editorModule = mod;
+          ({ getEditorState } = mod);
+          rerender();
+        });
+        return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading editor…</div>`;
+      }
+      const editorStateCurr = getEditorState();
+      // Load template on first entry
+      if (editorStateCurr.templateId !== tid) {
+        _editorModule.loadTemplate(tid, route.projectId).then(() => rerender());
+        return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading template…</div>`;
+      }
+      return pipelinesEditorView(state, {
+        tid,
+        projectId: route.projectId,
+        scope: 'project',
+        onSaved: () => {
+          // Refresh templates list on save
+          fetchTemplates(route.projectId || null).then((templates) => {
+            store.setState({ templates });
+          });
+          navigate('pipelines', null, route.projectId);
+        },
+        onCancel: () => navigate('pipelines', null, route.projectId),
+        rerender,
+      });
+    }
+
+    const defaultTemplate = settings.worca?.default_template || null;
+    return pipelinesView(viewState, {
+      rerender,
+      defaultTemplate,
+      onCreate: () => navigate('pipelines', 'new', route.projectId),
+      onEdit: handleEditTemplate,
+      onDuplicate: handleDuplicateTemplate,
+      onSetDefault: handleSetDefaultTemplate,
+      onDelete: handleDeleteTemplate,
+      onExport: handleExportTemplate,
+    });
   }
 
   if (route.section === 'fleet-runs') {
@@ -3623,6 +3869,24 @@ function rerender() {
         <sl-button slot="footer" variant="primary" @click=${() => {
           document.getElementById('action-error-dialog')?.hide();
         }}>OK</sl-button>
+      </sl-dialog>
+    `
+        : ''
+    }
+    ${
+      _templateGuard
+        ? html`
+      <sl-dialog class="template-guard-dialog" label="Template In Use" @sl-after-hide=${_dismissTemplateGuard}>
+        <p>${_templateGuard.count} ${_templateGuard.count === 1 ? 'run' : 'runs'} in flight ${_templateGuard.count === 1 ? 'is' : 'are'} currently using this template.</p>
+        <p>${
+          _templateGuard.action === 'delete'
+            ? 'Deleting it will not affect running pipelines, but new runs will no longer find this template.'
+            : 'Editing it will not affect running pipelines, but changes will apply to future runs.'
+        }</p>
+        <sl-button slot="footer" variant="default" @click=${() => {
+          document.querySelector('.template-guard-dialog')?.hide();
+        }}>Cancel</sl-button>
+        <sl-button slot="footer" variant=${_templateGuard.action === 'delete' ? 'danger' : 'warning'} @click=${_confirmTemplateGuard}>${_templateGuard.action === 'delete' ? 'Delete Anyway' : 'Edit Anyway'}</sl-button>
       </sl-dialog>
     `
         : ''

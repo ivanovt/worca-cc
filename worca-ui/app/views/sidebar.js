@@ -6,6 +6,7 @@ import {
   Boxes,
   ChevronDown,
   Coins,
+  FileText,
   GitBranch,
   iconSvg,
   List,
@@ -346,6 +347,13 @@ export function sidebarView(
                 ? html`<sl-badge variant="${workspaceBadgeVariant}" pill class="workspaces-count-badge">${workspaceBadgeCount}</sl-badge>`
                 : ''
           }
+        </div>
+        <div class="sidebar-item ${route.section === 'pipelines' ? 'active' : ''}"
+             @click=${() => onNavigate('pipelines')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(FileText, 16))}
+            <span>Pipelines</span>
+          </span>
         </div>
       </div>
 

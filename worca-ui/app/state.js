@@ -113,7 +113,10 @@ export function createStore(initial = {}) {
         next.classifierModel === state.classifierModel &&
         next.cleanupPolicy === state.cleanupPolicy &&
         next.maxConcurrentPipelines === state.maxConcurrentPipelines &&
-        next.totalRunning === state.totalRunning
+        next.totalRunning === state.totalRunning &&
+        next.templates === state.templates &&
+        next.templatesLoaded === state.templatesLoaded &&
+        next.templatesError === state.templatesError
       )
         return;
       state = next;

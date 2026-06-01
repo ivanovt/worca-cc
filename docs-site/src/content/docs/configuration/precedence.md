@@ -85,5 +85,6 @@ If your project sets `loops.implement_test: 3` and you launch with the `quick-fi
 ## See also
 
 - [Settings overview](/configuration/settings-overview/) — where the Settings panel writes, and the three on-disk files it spans.
+- [Pipelines editor](/configuration/pipelines-editor/) — browse, create, edit, and manage templates from the dashboard instead of the CLI.
 - [Authoring, sharing & importing templates](/advanced/authoring-templates/) — how to create a project or user template that participates in the templates column above.
 - [Agents & models](/configuration/agents-and-models/) — per-agent model selection and the `worca.models` alias dict.

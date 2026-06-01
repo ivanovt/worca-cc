@@ -74,6 +74,10 @@ Anything else you put in `~/.worca/settings.json` (e.g., `worca.agents.implement
 - **`.local.json` deep-merges into its sibling `.json`** per tier at load time. That's how the W-051 split keeps `id` in `settings.json` and `env` in `settings.local.json` while presenting a unified `worca.models` to the rest of the pipeline. The merge applies to the project pair; for the user pair, only the code paths that call `load_settings()` (not the ones that `json.load()` global directly) honor `~/.worca/settings.local.json`.
 - **CLI/API overrides aren't a free-form override layer** — each flag targets specific keys (`--mloops` → `loops.*`, `--msize` → effort sizing, `--template` → template id, `--param` → template params). There is no "override anything from the CLI" path.
 
+## Managing templates in the UI
+
+The **Pipelines** section in the dashboard lets you browse, create, edit, duplicate, and delete templates without touching the CLI or editing JSON by hand. It also surfaces the dedup/shadowing relationships described above and marks the current default template. See the [Pipelines editor walkthrough](https://docs.worca.dev/configuration/pipelines-editor/) on the docs site.
+
 ## Code references
 
 | Behavior | File | Symbol |

@@ -41,6 +41,7 @@ import {
 import { validateIntegrationsConfig } from './settings-validator.js';
 import { createStatusRouter } from './status-routes.js';
 import { discoverSubagents } from './subagents-discovery.js';
+import { createTemplatesRoutes } from './templates-routes.js';
 import { checkWorcaVersion } from './version-check.js';
 import { getVersionInfo } from './versions.js';
 import { createInbox } from './webhook-inbox.js';

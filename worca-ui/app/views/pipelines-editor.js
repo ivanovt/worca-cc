@@ -1,0 +1,1488 @@
+/**
+ * Pipelines editor view — structured form editor for template configuration.
+ *
+ * Sections:
+ * - Stages — toggle list of every stage with agent picker
+ * - Agents — matrix of model/max_turns/effort per agent
+ * - Loops — max iteration inputs
+ * - Circuit breaker — enabled toggle and max failures
+ * - Governance dispatch — per-agent allowlists for tools/skills/subagents
+ * - JSON power-user toggle — raw JSON editor with bidirectional sync
+ * - Diff vs built-in — for project/user templates with built-in counterpart
+ *
+ * Route: /pipelines/:tid/edit
+ */
+
+import { html, nothing } from 'lit-html';
+import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
+import {
+  ArrowLeft,
+  CircleCheck,
+  iconSvg,
+  RefreshCw,
+  Save,
+  Settings,
+  Shield,
+  Zap,
+} from '../utils/icons.js';
+import {
+  diffSummary,
+  diffTemplateConfig,
+  formatDiffValue,
+  getDiffLabel,
+  shadowsBuiltin,
+} from '../utils/templates.js';
+import { AGENT_NAMES } from './agent-names.js';
+import { dispatchSectionView } from './dispatch-section.js';
+import { getModelKeys, STAGE_AGENT_MAP } from './settings.js';
+
+// --- Editor state and validation ---
+
+let editorState = {
+  templateId: null,
+  template: null, // { id, name, description, tags, config, params, tier }
+  builtinTemplate: null, // Built-in template config for diff view (id exists in builtin tier)
+  loading: true,
+  error: null,
+  saving: false,
+  saveMessage: '',
+  validationIssues: [],
+  // Sync mode: 'form' | 'json' | 'diff'
+  viewMode: 'form',
+  // Form edit buffer
+  formBuffer: null, // deep clone of config on init, accumulates edits
+  // JSON edit buffer
+  jsonBuffer: '',
+  // Diff state
+  diffData: null, // Computed diff result
+  loadingBuiltin: false,
+  // Track if this is a new template (create) or existing (update)
+  isNewTemplate: false,
+};
+
+// Debounce timer for validation
+let validateDebounceTimer = null;
+const VALIDATE_DEBOUNCE_MS = 300;
+
+/**
+ * Initialize editor state for a template.
+ * Exported so main.js can proactively fetch during navigation.
+ */
+export function initEditorState() {
+  editorState = {
+    templateId: null,
+    template: null,
+    builtinTemplate: null,
+    loading: true,
+    error: null,
+    saving: false,
+    saveMessage: '',
+    validationIssues: [],
+    viewMode: 'form',
+    formBuffer: null,
+    jsonBuffer: '',
+    diffData: null,
+    loadingBuiltin: false,
+    isNewTemplate: false,
+  };
+  dispatchEditState = { tools: {}, skills: {}, subagents: {} };
+  return editorState;
+}
+
+/**
+ * Access the editor state object (for main.js integration).
+ */
+export { editorState };
+
+/**
+ * Get the current editor state.
+ * Exported as a function for main.js integration.
+ */
+export function getEditorState() {
+  return editorState;
+}
+
+/**
+ * Cleanup editor state on route change.
+ */
+export function cleanupEditorState() {
+  initEditorState();
+}
+
+// Default values for form fields
+const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+// Stage configuration defaults
+const DEFAULT_STAGES = {
+  preflight: { agent: 'none', enabled: true },
+  plan: { agent: 'planner', enabled: true },
+  plan_review: { agent: 'plan_reviewer', enabled: false },
+  coordinate: { agent: 'coordinator', enabled: true },
+  implement: { agent: 'implementer', enabled: true },
+  test: { agent: 'tester', enabled: true },
+  review: { agent: 'reviewer', enabled: true },
+  pr: { agent: 'guardian', enabled: true },
+  learn: { agent: 'learner', enabled: false },
+};
+
+// Loop defaults
+const DEFAULT_LOOPS = {
+  implement_test: 0,
+  pr_changes: 0,
+  restart_planning: 0,
+};
+
+// Circuit breaker defaults
+const DEFAULT_CIRCUIT_BREAKER = {
+  enabled: true,
+  max_consecutive_failures: 3,
+};
+
+// Governance defaults
+const DEFAULT_GOVERNANCE = {
+  guards: {
+    block_rm_rf: true,
+    block_env_write: true,
+    block_force_push: true,
+    restrict_git_commit: true,
+  },
+  test_gate_strikes: 2,
+  dispatch: {
+    tools: { ...DISPATCH_DEFAULTS.tools },
+    skills: { ...DISPATCH_DEFAULTS.skills },
+    subagents: { ...DISPATCH_DEFAULTS.subagents },
+  },
+};
+
+// --- Helper functions ---
+
+/**
+ * Deep clone a value, handling undefined/null gracefully.
+ */
+function deepClone(val) {
+  if (val === undefined || val === null) return null;
+  return JSON.parse(JSON.stringify(val));
+}
+
+/**
+ * Get model keys from settings or fall back to built-in list.
+ */
+function getModelOptions(worca) {
+  return getModelKeys(worca || {});
+}
+
+/**
+ * Normalize stage config to match expected shape.
+ */
+function normalizeStageConfig(stages) {
+  const result = { ...DEFAULT_STAGES, ...(stages || {}) };
+  for (const stage of Object.keys(DEFAULT_STAGES)) {
+    if (!result[stage]) {
+      result[stage] = {
+        enabled: false,
+        agent: STAGE_AGENT_MAP[stage] || 'none',
+      };
+    } else {
+      result[stage].enabled ??= true;
+      result[stage].agent ??= STAGE_AGENT_MAP[stage] || 'none';
+    }
+  }
+  return result;
+}
+
+/**
+ * Merge template config with built-in defaults for form editing.
+ */
+function buildFormBuffer(templateConfig, settings) {
+  const config = templateConfig || {};
+  const form = {};
+
+  // Stages
+  form.stages = normalizeStageConfig(config.stages);
+
+  // Agents
+  form.agents = {};
+  for (const name of AGENT_NAMES) {
+    const agentConfig = config.agents?.[name] || {};
+    form.agents[name] = {
+      model: agentConfig.model || 'sonnet',
+      max_turns: agentConfig.max_turns || 30,
+      effort: agentConfig.effort || null,
+    };
+  }
+
+  // Loops
+  form.loops = { ...DEFAULT_LOOPS, ...(config.loops || {}) };
+
+  // Circuit breaker
+  form.circuit_breaker = {
+    ...DEFAULT_CIRCUIT_BREAKER,
+    ...(config.circuit_breaker || {}),
+  };
+
+  // Governance
+  form.governance = deepMergeGovernance(
+    config.governance,
+    settings?.worca?.governance,
+  );
+
+  return form;
+}
+
+/**
+ * Deep merge governance config with defaults.
+ */
+function deepMergeGovernance(gov, defaultGov) {
+  const base = deepMergeGovernanceTiered(
+    gov?.dispatch || {},
+    defaultGov?.dispatch || {},
+  );
+  const guards = {
+    ...DEFAULT_GOVERNANCE.guards,
+    ...(defaultGov?.guards || {}),
+    ...(gov?.guards || {}),
+  };
+
+  return {
+    guards,
+    test_gate_strikes:
+      gov?.test_gate_strikes ?? defaultGov?.test_gate_strikes ?? 2,
+    dispatch: base,
+  };
+}
+
+/**
+ * Deep merge dispatch governance (3-tier + per-agent).
+ */
+function deepMergeGovernanceTiered(dispatch, defaultDispatch) {
+  const tiered = {
+    always_disallowed: [...(defaultDispatch?.always_disallowed || [])],
+    default_denied: [...(defaultDispatch?.default_denied || [])],
+    per_agent_allow: {},
+  };
+
+  // Merge default per_agent entries
+  const perAgent = { ...(defaultDispatch?.per_agent_allow || {}) };
+  for (const [agent, defEntries] of Object.entries(perAgent)) {
+    tiered.per_agent_allow[agent] = [...(defEntries || [])];
+  }
+
+  // Overlay template dispatch settings
+  if (dispatch) {
+    if (dispatch.always_disallowed) {
+      tiered.always_disallowed = [...dispatch.always_disallowed];
+    }
+    if (dispatch.default_denied) {
+      tiered.default_denied = [...dispatch.default_denied];
+    }
+    if (dispatch.per_agent_allow) {
+      const overlay = dispatch.per_agent_allow;
+      for (const [agent, entries] of Object.entries(overlay)) {
+        tiered.per_agent_allow[agent] = [...(entries || [])];
+      }
+    }
+  }
+
+  return tiered;
+}
+
+/**
+ * Convert form buffer back to template config shape.
+ */
+function formBufferToConfig(formBuffer) {
+  const config = {};
+
+  // Stages
+  config.stages = {};
+  for (const [stage, stageConfig] of Object.entries(formBuffer.stages || {})) {
+    config.stages[stage] = {
+      enabled: stageConfig.enabled,
+      agent: stageConfig.agent,
+    };
+    // Skip mode for plan_review unless it's set (matches Python-side handling)
+    if (stage === 'plan_review' && stageConfig.mode) {
+      config.stages[stage].mode = stageConfig.mode;
+    }
+  }
+
+  // Agents
+  config.agents = {};
+  for (const name of AGENT_NAMES) {
+    const agent = formBuffer.agents[name] || {};
+    if (agent.effort) {
+      config.agents[name] = {
+        model: agent.model,
+        max_turns: agent.max_turns,
+        effort: agent.effort,
+      };
+    } else {
+      config.agents[name] = {
+        model: agent.model,
+        max_turns: agent.max_turns,
+      };
+    }
+  }
+
+  // Loops
+  config.loops = {};
+  for (const [key, val] of Object.entries(formBuffer.loops || DEFAULT_LOOPS)) {
+    if (val && val > 0) {
+      config.loops[key] = val;
+    }
+  }
+
+  // Circuit breaker
+  config.circuit_breaker = formBuffer.circuit_breaker;
+
+  // Governance
+  config.governance = formBuffer.governance;
+
+  return config;
+}
+
+/**
+ * Validate config against server.
+ */
+async function validateConfig(projectId, config, settingsPath) {
+  try {
+    const url = projectId
+      ? `/api/projects/${projectId}/templates/_check/validate`
+      : '/api/templates/_check/validate';
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ config }),
+    });
+    const data = await res.json();
+    return data.ok
+      ? data.issues || []
+      : [
+          {
+            field: '',
+            severity: 'error',
+            message: data.error || 'Validation failed',
+          },
+        ];
+  } catch (err) {
+    return [{ field: '', severity: 'error', message: err.message }];
+  }
+}
+
+/**
+ * Validate config with debouncing (for field blur events).
+ * Updates editorState.validationIssues in place.
+ */
+function validateConfigDebounced(projectId, formBuffer, viewMode, rerender) {
+  // Cancel any pending validation
+  if (validateDebounceTimer) {
+    clearTimeout(validateDebounceTimer);
+  }
+
+  // Schedule new validation after debounce period
+  validateDebounceTimer = setTimeout(async () => {
+    try {
+      const config =
+        viewMode === 'json'
+          ? JSON.parse(editorState.jsonBuffer || '{}')
+          : formBufferToConfig(formBuffer);
+
+      const issues = await validateConfig(projectId, config);
+      editorState.validationIssues = issues;
+
+      // Rerender if there are issues to show
+      if (issues.length > 0 && rerender) {
+        rerender();
+      }
+    } catch (err) {
+      // Ignore validation errors during typing/debounce
+      console.warn('Validation error (debounced):', err.message);
+    }
+  }, VALIDATE_DEBOUNCE_MS);
+}
+
+/**
+ * Show toast notification.
+ */
+function showToast(message, variant = 'success') {
+  const evt = new CustomEvent('worca:toast', {
+    bubbles: true,
+    detail: { message, variant },
+  });
+  document.dispatchEvent(evt);
+}
+
+/**
+ * Load template from server.
+ */
+export async function loadTemplate(tid, projectId) {
+  editorState.loading = true;
+  editorState.error = null;
+  editorState.templateId = tid;
+  editorState.template = null;
+  editorState.builtinTemplate = null;
+  editorState.diffData = null;
+
+  try {
+    const url = projectId
+      ? `/api/projects/${projectId}/templates/${tid}`
+      : `/api/templates/${tid}`;
+    const res = await fetch(url);
+
+    // If template doesn't exist (404), it's a new template being created
+    if (res.status === 404 || tid === 'new') {
+      editorState.isNewTemplate = true;
+      editorState.template = {
+        id: tid === 'new' ? '' : tid,
+        name: 'New Template',
+        description: '',
+        tags: [],
+        params: {},
+        config: {},
+      };
+      editorState.formBuffer = buildFormBuffer({}, { worca: {} });
+      editorState.jsonBuffer = JSON.stringify({}, null, 2);
+      editorState.validationIssues = [];
+    } else {
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to load template');
+
+      editorState.isNewTemplate = false;
+      editorState.template = data.template;
+      editorState.formBuffer = buildFormBuffer(data.template.config, {
+        worca: data.template,
+      });
+      editorState.jsonBuffer = JSON.stringify(
+        data.template.config || {},
+        null,
+        2,
+      );
+      editorState.validationIssues = [];
+
+      // Load built-in template for diff if this template shadows a built-in
+      if (shadowsBuiltin(data.template || {}));
+      await loadBuiltinTemplate(tid, projectId);
+    }
+  } catch (err) {
+    editorState.error = err.message;
+  } finally {
+    editorState.loading = false;
+  }
+}
+
+/**
+ * Load built-in template for diff comparison.
+ */
+async function loadBuiltinTemplate(tid, projectId) {
+  editorState.loadingBuiltin = true;
+  try {
+    // Try fetching from the built-in tier (worca tier)
+    const url = projectId
+      ? `/api/projects/${projectId}/templates/${tid}?tier=worca`
+      : `/api/templates/${tid}?tier=worca`;
+
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.ok && data.template) {
+        editorState.builtinTemplate = data.template.config || {};
+        // Compute diff on load
+        computeDiff();
+      }
+    }
+  } catch (err) {
+    // Diff is advisory - fail gracefully if we can't fetch built-in
+    console.warn('Failed to load built-in template for diff:', err);
+  } finally {
+    editorState.loadingBuiltin = false;
+  }
+}
+
+/**
+ * Compute diff between current config and built-in template.
+ */
+function computeDiff() {
+  if (!editorState.builtinTemplate) {
+    editorState.diffData = null;
+    return;
+  }
+
+  const currentConfig =
+    editorState.viewMode === 'json'
+      ? JSON.parse(editorState.jsonBuffer || '{}')
+      : formBufferToConfig(editorState.formBuffer);
+
+  editorState.diffData = diffTemplateConfig(
+    currentConfig,
+    editorState.builtinTemplate,
+  );
+}
+
+/**
+ * Save template to server.
+ * Handles both create (POST) and update (PUT) operations.
+ */
+export async function saveTemplate(tid, scope, projectId, onSaved) {
+  if (editorState.saving) return;
+
+  editorState.saving = true;
+  editorState.saveMessage = '';
+
+  try {
+    const config =
+      editorState.viewMode === 'json'
+        ? JSON.parse(editorState.jsonBuffer)
+        : formBufferToConfig(editorState.formBuffer);
+
+    // Run validation immediately (non-debounced) on save
+    const issues = await validateConfig(projectId, config);
+    editorState.validationIssues = issues;
+
+    if (issues.some((i) => i.severity === 'error')) {
+      editorState.saveMessage = 'Validation failed — fix errors before saving';
+      editorState.saving = false;
+      showToast('Validation failed — fix errors before saving', 'danger');
+      return;
+    }
+
+    const isNew = editorState.isNewTemplate || tid === 'new';
+    const effectiveTid = editorState.template?.id || tid || 'new-template';
+    const effectiveScope = scope || 'project';
+
+    const payload = {
+      scope: effectiveScope,
+      id: effectiveTid,
+      name: editorState.template?.name || effectiveTid,
+      description: editorState.template?.description || '',
+      tags: editorState.template?.tags || [],
+      params: editorState.template?.params || {},
+      config,
+    };
+
+    let url;
+    let method;
+
+    if (isNew) {
+      // POST /templates (create new template)
+      url = projectId
+        ? `/api/projects/${projectId}/templates`
+        : '/api/templates';
+      method = 'POST';
+    } else {
+      // PUT /templates/:tid (update existing template)
+      url = projectId
+        ? `/api/projects/${projectId}/templates/${effectiveTid}?scope=${effectiveScope}`
+        : `/api/templates/${effectiveTid}?scope=${effectiveScope}`;
+      method = 'PUT';
+    }
+
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const body = await res.json();
+      throw new Error(body.error || `HTTP ${res.status}`);
+    }
+
+    editorState.saveMessage = 'Template saved successfully';
+    editorState.isNewTemplate = false;
+
+    // Show toast notification
+    showToast(
+      isNew
+        ? `Template "${payload.name}" created successfully`
+        : `Template "${payload.name}" updated successfully`,
+      'success',
+    );
+
+    // Trigger callback for redirect to list view
+    if (onSaved) onSaved();
+  } catch (err) {
+    editorState.saveMessage = `Failed to save: ${err.message}`;
+    editorState.validationIssues.push({
+      field: '',
+      severity: 'error',
+      message: err.message,
+    });
+    showToast(`Failed to save: ${err.message}`, 'danger');
+  } finally {
+    editorState.saving = false;
+  }
+}
+
+/**
+ * Cancel editing and navigate back to list.
+ */
+export function cancelEdit(onCancel) {
+  // Cancel any pending validation
+  if (validateDebounceTimer) {
+    clearTimeout(validateDebounceTimer);
+    validateDebounceTimer = null;
+  }
+  if (onCancel) onCancel();
+}
+
+/**
+ * Switch between form, JSON, and diff view mode.
+ */
+function switchViewMode(mode, rerender) {
+  if (editorState.viewMode === mode) return;
+
+  if (mode === 'json') {
+    // Sync form buffer to JSON
+    editorState.jsonBuffer = JSON.stringify(
+      formBufferToConfig(editorState.formBuffer),
+      null,
+      2,
+    );
+  } else if (mode === 'form') {
+    // Sync JSON to form buffer
+    try {
+      const config = JSON.parse(editorState.jsonBuffer);
+      const currentTemplate = editorState.template || {};
+      editorState.formBuffer = buildFormBuffer(config, {
+        worca: currentTemplate,
+      });
+    } catch (err) {
+      editorState.saveMessage =
+        'Invalid JSON — fix before switching to form view';
+      return;
+    }
+  } else if (mode === 'diff') {
+    // Sync form buffer to JSON for diff comparison
+    editorState.jsonBuffer = JSON.stringify(
+      formBufferToConfig(editorState.formBuffer),
+      null,
+      2,
+    );
+  } else {
+    // Switching from diff - sync json buffer to form
+    try {
+      editorState.formBuffer = buildFormBuffer(
+        JSON.parse(editorState.jsonBuffer || '{}'),
+        { worca: editorState.template },
+      );
+    } catch (err) {
+      console.error('Failed to parse JSON when leaving diff view:', err);
+      return;
+    }
+  }
+
+  editorState.viewMode = mode;
+  editorState.validationIssues = [];
+  editorState.saveMessage = '';
+
+  // Update diff when switching to diff mode or when leaving it
+  if (mode === 'diff' && editorState.builtinTemplate) {
+    computeDiff();
+  }
+
+  rerender();
+}
+
+/**
+ * Reset a specific config path to its built-in value.
+ * Used by the diff view's "Reset" button.
+ */
+function resetToBuiltin(dottPath, rerender) {
+  if (!editorState.builtinTemplate || !dottPath) return;
+
+  const builtinValue = getNestedValue(editorState.builtinTemplate, dottPath);
+
+  if (editorState.viewMode === 'json') {
+    // Update JSON buffer by parsing, setting value, and re-stringifying
+    try {
+      const config = JSON.parse(editorState.jsonBuffer);
+      setNestedValue(config, dottPath, builtinValue);
+      editorState.jsonBuffer = JSON.stringify(config, null, 2);
+      // Sync to form buffer
+      editorState.formBuffer = buildFormBuffer(config, {
+        worca: editorState.template,
+      });
+    } catch (err) {
+      console.error('Failed to reset value:', err);
+      return;
+    }
+  } else {
+    // Update form buffer directly
+    setNestedValueInFormBuffer(editorState.formBuffer, dottPath, builtinValue);
+  }
+
+  // Recompute diff
+  computeDiff();
+  rerender();
+}
+
+/**
+ * Get a nested value from an object using dot notation.
+ */
+function getNestedValue(obj, path) {
+  return path
+    .split('.')
+    .reduce(
+      (acc, key) => (acc && acc[key] !== undefined ? acc[key] : undefined),
+      obj,
+    );
+}
+
+/**
+ * Set a nested value in an object using dot notation.
+ * Creates intermediate objects as needed.
+ */
+function setNestedValue(obj, path, value) {
+  const keys = path.split('.');
+  let current = obj;
+
+  for (let i = 0; i < keys.length - 1; i++) {
+    const key = keys[i];
+    if (!current[key]) {
+      current[key] = {};
+    }
+    current = current[key];
+  }
+
+  current[keys[keys.length - 1]] = value;
+  return obj;
+}
+
+/**
+ * Set a nested value in the form buffer, being aware of its structure.
+ * The form buffer has a specific structure; this handles mapping to it.
+ */
+function setNestedValueInFormBuffer(formBuffer, path, value) {
+  const keys = path.split('.');
+
+  // Map config paths to form buffer structure
+  if (keys[0] === 'stages') {
+    if (keys[1] && keys[2]) {
+      // stages.planner.enabled
+      formBuffer.stages = formBuffer.stages || {};
+      formBuffer.stages[keys[1]] = formBuffer.stages[keys[1]] || {};
+      formBuffer.stages[keys[1]][keys[2]] = value;
+    }
+  } else if (keys[0] === 'agents') {
+    if (keys[1] && keys[2]) {
+      // agents.planner.model
+      formBuffer.agents = formBuffer.agents || {};
+      formBuffer.agents[keys[1]] = formBuffer.agents[keys[1]] || {};
+      formBuffer.agents[keys[1]][keys[2]] = value;
+    }
+  } else if (keys[0] === 'loops') {
+    if (keys[1]) {
+      // loops.implement_test
+      formBuffer.loops = formBuffer.loops || {};
+      formBuffer.loops[keys[1]] = value;
+    }
+  } else if (keys[0] === 'circuit_breaker') {
+    if (keys[1]) {
+      // circuit_breaker.enabled
+      formBuffer.circuit_breaker = formBuffer.circuit_breaker || {};
+      formBuffer.circuit_breaker[keys[1]] = value;
+    }
+  } else if (keys[0] === 'governance') {
+    formBuffer.governance = formBuffer.governance || {
+      guards: {},
+      dispatch: {},
+    };
+    if (keys[1] === 'guards' && keys[2]) {
+      // governance.guards.block_rm_rf
+      formBuffer.governance.guards[keys[2]] = value;
+    } else if (keys[1] === 'dispatch' && keys[2]) {
+      // governance.dispatch.tools.<key>
+      formBuffer.governance.dispatch = formBuffer.governance.dispatch || {};
+      formBuffer.governance.dispatch[keys[2]] = value;
+    }
+  }
+}
+
+/**
+ * Dispatch edit state for governance sections.
+ */
+let dispatchEditState = {
+  tools: {},
+  skills: {},
+  subagents: {},
+};
+
+function resetDispatchEditState() {
+  dispatchEditState = { tools: {}, skills: {}, subagents: {} };
+}
+
+/**
+ * Log lifecycle hook for pipelines editor.
+ */
+export function logLifecycle(hook, ...args) {
+  console.log(`[pipelines-editor] ${hook}`, ...args);
+}
+
+// --- Render functions ---
+
+/**
+ * Main pipelines editor view.
+ * @param {object} state - store state (for settings, etc.)
+ * @param {object} options - { tid, projectId, scope, onSaved, onCancel, rerender }
+ */
+export function pipelinesEditorView(state, options) {
+  const {
+    tid,
+    projectId,
+    scope = 'project',
+    onSaved,
+    onCancel,
+    rerender,
+  } = options || {};
+
+  const {
+    formBuffer,
+    template,
+    loading,
+    error,
+    saving,
+    saveMessage,
+    validationIssues,
+    viewMode,
+  } = editorState;
+  const settings = state?.settings || {};
+  const hasErrors = validationIssues.some((i) => i.severity === 'error');
+  const hasWarnings = validationIssues.some((i) => i.severity === 'warning');
+
+  if (loading) {
+    return html`
+      <div class="pipelines-editor">
+        <div class="editor-header">
+          <button class="icon-btn" @click=${() => cancelEdit(onCancel)}>
+            ${unsafeHTML(iconSvg(ArrowLeft, 20))}
+          </button>
+          <h1 class="editor-title">Loading template…</h1>
+        </div>
+        <div class="editor-content">
+          <sl-spinner></sl-spinner>
+        </div>
+      </div>
+    `;
+  }
+
+  if (error) {
+    return html`
+      <div class="pipelines-editor">
+        <div class="editor-header">
+          <button class="icon-btn" @click=${() => cancelEdit(onCancel)}>
+            ${unsafeHTML(iconSvg(ArrowLeft, 20))}
+          </button>
+          <h1 class="editor-title">Error</h1>
+        </div>
+        <div class="editor-content">
+          <sl-alert variant="danger" open>
+            <strong>Failed to load template</strong>
+            ${error}
+          </sl-alert>
+        </div>
+      </div>
+    `;
+  }
+
+  const templateName = template?.name || tid;
+  const scopeDisplay = scope.charAt(0).toUpperCase() + scope.slice(1);
+
+  return html`
+    <div class="pipelines-editor">
+      <div class="editor-header">
+        <button class="icon-btn" @click=${onCancel || (() => {})} title="Back to list">
+          ${unsafeHTML(iconSvg(ArrowLeft, 20))}
+        </button>
+        <div class="editor-title-group">
+          <h1 class="editor-title">${templateName}</h1>
+          <sl-badge variant="neutral" pill>${scopeDisplay}</sl-badge>
+        </div>
+        <div class="editor-mode-toggle">
+          <sl-button-group>
+            <sl-button
+              .variant=${viewMode === 'form' ? 'primary' : 'default'}
+              size="small"
+              @click=${() => switchViewMode('form', rerender)}
+            >
+              ${unsafeHTML(iconSvg(Settings, 14))} Form
+            </sl-button>
+            <sl-button
+              .variant=${viewMode === 'json' ? 'primary' : 'default'}
+              size="small"
+              @click=${() => switchViewMode('json', rerender)}
+            >
+              ${unsafeHTML(iconSvg(Zap, 14))} JSON
+            </sl-button>${
+              shadowsBuiltin(template)
+                ? html`
+              <sl-button
+                .variant=${viewMode === 'diff' ? 'primary' : 'default'}
+                size="small"
+                @click=${() => switchViewMode('diff', rerender)}
+              >
+                ${unsafeHTML(iconSvg(RefreshCw, 14))} Diff
+              </sl-button>`
+                : nothing
+            }</sl-button-group>
+        </div>
+      </div>
+
+      ${
+        saveMessage
+          ? html`
+        <sl-alert
+          variant=${hasErrors || saveMessage.includes('Failed') ? 'danger' : 'success'}
+          open
+          class="editor-save-alert"
+          closable
+          @sl-after-hide=${() => {
+            editorState.saveMessage = '';
+            rerender();
+          }}
+        >
+          ${saveMessage}
+        </sl-alert>
+        `
+          : nothing
+      }
+
+      ${
+        hasErrors || hasWarnings
+          ? html`
+        <sl-alert
+          variant=${hasErrors ? 'danger' : 'warning'}
+          open
+          class="editor-validation-alert"
+        >
+          <strong>${hasErrors ? 'Validation errors' : 'Validation warnings'}</strong>
+          <ul class="validation-list">
+            ${validationIssues.map(
+              (issue) => html`
+                <li>
+                  ${issue.field ? html`<code>${issue.field}</code>: ` : ''} ${issue.message}
+                </li>
+              `,
+            )}
+          </ul>
+        </sl-alert>
+        `
+          : nothing
+      }
+
+      <div class="editor-content">
+        ${
+          viewMode === 'form'
+            ? html`
+              ${_stagesSection(formBuffer, projectId, rerender)}
+              ${_agentsSection(formBuffer, settings, projectId, rerender)}
+              ${_loopsSection(formBuffer, projectId, rerender)}
+              ${_circuitBreakerSection(formBuffer, projectId, rerender)}
+              ${_governanceSection(formBuffer, settings, projectId, rerender)}
+            `
+            : viewMode === 'json'
+              ? html`${_jsonSection(projectId, rerender)}`
+              : shadowsBuiltin(template)
+                ? html`${_diffSection(rerender)}`
+                : html`<p class="editor-empty-hint">Diff view is only available for templates that override a built-in template.</p>`
+        }
+      </div>
+
+      <div class="editor-footer">
+        <sl-button
+          variant="primary"
+          size="small"
+          ?disabled=${saving || hasErrors}
+           @click=${() => saveTemplate(tid, scope, projectId, onSaved)}
+        >
+          ${saving ? html`<sl-spinner></sl-spinner>` : unsafeHTML(iconSvg(Save, 14))}
+          ${saving ? 'Saving…' : 'Save Template'}
+        </sl-button>
+        <sl-button
+          variant="default"
+          size="small"
+          outline
+          @click=${() => cancelEdit(onCancel)}
+        >
+          Cancel
+        </sl-button>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Render the Stages configuration section.
+ */
+function _stagesSection(formBuffer, projectId, rerender) {
+  const stages = formBuffer?.stages || DEFAULT_STAGES;
+  const state = editorState;
+
+  return html`
+    <section class="editor-section">
+      <h2 class="section-title">Stages</h2>
+      <div class="stages-list">
+        ${Object.entries(stages).map(([stageKey, stageConfig]) => {
+          const isEnabled = stageConfig.enabled !== false;
+          return html`
+              <div class="stage-row ${isEnabled ? 'stage-row--enabled' : 'stage-row--disabled'}">
+                <div class="stage-row-info">
+                  <sl-switch
+                    .checked=${isEnabled}
+                    size="small"
+                    @sl-change=${(e) => {
+                      editorState.formBuffer.stages[stageKey].enabled =
+                        e.target.checked;
+                      rerender();
+                    }}
+                    @sl-blur=${() => {
+                      validateConfigDebounced(
+                        projectId,
+                        editorState.formBuffer,
+                        state.viewMode,
+                        rerender,
+                      );
+                    }}
+                  ></sl-switch>
+                  <span class="stage-name">${stageKey}</span>
+                </div>
+                <div class="stage-row-agent">
+                  <sl-select
+                    id="stage-${stageKey}-agent"
+                    .value=${stageConfig.agent || STAGE_AGENT_MAP[stageKey] || 'none'}
+                    size="small"
+                    hoist
+                    ?disabled=${!isEnabled}
+                    @sl-change=${(e) => {
+                      editorState.formBuffer.stages[stageKey].agent =
+                        e.target.value;
+                      rerender();
+                    }}
+                    @sl-blur=${() => {
+                      validateConfigDebounced(
+                        projectId,
+                        editorState.formBuffer,
+                        state.viewMode,
+                        rerender,
+                      );
+                    }}
+                  >
+                    ${AGENT_NAMES.map((agent) => html`<sl-option value="${agent}">${agent}</sl-option>`)}
+                    <sl-option value="none">None</sl-option>
+                  </sl-select>
+                </div>
+              </div>
+            `;
+        })}
+      </div>
+    </section>
+  `;
+}
+
+/**
+ * Render the Agents configuration section (matrix).
+ */
+function _agentsSection(formBuffer, settings, projectId, rerender) {
+  const agents = formBuffer?.agents || {};
+  const modelOptions = getModelOptions(settings?.worca);
+  const state = editorState;
+
+  return html`
+    <section class="editor-section">
+      <h2 class="section-title">Agents</h2>
+      <div class="agents-matrix">
+        ${AGENT_NAMES.map((name) => {
+          const agent = agents[name] || {};
+          return html`
+            <div class="agent-row">
+              <span class="agent-name">${name}</span>
+              <div class="agent-fields">
+                <div class="agent-field">
+                  <label class="field-label">Model</label>
+                  <sl-select
+                    id="agent-${name}-model"
+                    .value=${agent.model || 'sonnet'}
+                    size="small"
+                    hoist
+                    @sl-change=${(e) => {
+                      editorState.formBuffer.agents[name].model =
+                        e.target.value;
+                      rerender();
+                    }}
+                    @sl-blur=${() => {
+                      validateConfigDebounced(
+                        projectId,
+                        editorState.formBuffer,
+                        state.viewMode,
+                        rerender,
+                      );
+                    }}
+                  >
+                    ${modelOptions.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+                  </sl-select>
+                </div>
+                <div class="agent-field">
+                  <label class="field-label">Max Turns</label>
+                  <sl-input
+                    id="agent-${name}-turns"
+                    type="number"
+                    .value=${agent.max_turns || 30}
+                    size="small"
+                    min="1"
+                    max="200"
+                    @sl-input=${(e) => {
+                      editorState.formBuffer.agents[name].max_turns =
+                        parseInt(e.target.value, 10) || 30;
+                      rerender();
+                    }}
+                    @sl-blur=${() => {
+                      validateConfigDebounced(
+                        projectId,
+                        editorState.formBuffer,
+                        state.viewMode,
+                        rerender,
+                      );
+                    }}
+                  ></sl-input>
+                </div>
+                <div class="agent-field">
+                  <label class="field-label">Effort</label>
+                  <sl-select
+                    id="effort-agent-${name}"
+                    .value=${agent.effort || ''}
+                    size="small"
+                    hoist
+                    @sl-change=${(e) => {
+                      const val = e.target.value || null;
+                      editorState.formBuffer.agents[name].effort = val;
+                      rerender();
+                    }}
+                    @sl-blur=${() => {
+                      validateConfigDebounced(
+                        projectId,
+                        editorState.formBuffer,
+                        state.viewMode,
+                        rerender,
+                      );
+                    }}
+                  >
+                    <sl-option value="">(default)</sl-option>
+                    ${EFFORT_LEVELS.map(
+                      (level) =>
+                        html`<sl-option value="${level}">${level}</sl-option>`,
+                    )}
+                  </sl-select>
+                </div>
+              </div>
+            </div>
+          `;
+        })}
+      </div>
+    </section>
+  `;
+}
+
+/**
+ * Render the Loops configuration section.
+ */
+function _loopsSection(formBuffer, projectId, rerender) {
+  const loops = formBuffer?.loops || DEFAULT_LOOPS;
+  const state = editorState;
+
+  return html`
+    <section class="editor-section">
+      <h2 class="section-title">Loop Limits</h2>
+      <div class="loops-grid">
+        ${[
+          { key: 'implement_test', label: 'Implement ↔ Test' },
+          { key: 'pr_changes', label: 'PR Changes' },
+          { key: 'restart_planning', label: 'Restart Planning' },
+        ].map(
+          (item) => html`
+            <div class="loop-field">
+              <label class="field-label">${item.label}</label>
+              <sl-input
+                id="loop-${item.key}"
+                type="number"
+                .value=${loops[item.key] || 0}
+                size="small"
+                min="0"
+                max="50"
+                placeholder="0"
+                @sl-input=${(e) => {
+                  editorState.formBuffer.loops[item.key] =
+                    parseInt(e.target.value, 10) || 0;
+                  rerender();
+                }}
+                @sl-blur=${() => {
+                  validateConfigDebounced(
+                    projectId,
+                    editorState.formBuffer,
+                    state.viewMode,
+                    rerender,
+                  );
+                }}
+              ></sl-input>
+            </div>
+          `,
+        )}
+      </div>
+    </section>
+  `;
+}
+
+/**
+ * Render the Circuit Breaker configuration section.
+ */
+function _circuitBreakerSection(formBuffer, projectId, rerender) {
+  const cb = formBuffer?.circuit_breaker || DEFAULT_CIRCUIT_BREAKER;
+  const state = editorState;
+
+  return html`
+    <section class="editor-section">
+      <h2 class="section-title">Circuit Breaker</h2>
+      <div class="circuit-breaker-grid">
+        <div class="cb-field">
+          <div class="cb-field-row">
+            <sl-switch
+              id="cb-enabled"
+              ?checked=${cb.enabled !== false}
+              size="small"
+              @sl-change=${(e) => {
+                editorState.formBuffer.circuit_breaker.enabled =
+                  e.target.checked;
+                rerender();
+              }}
+              @sl-blur=${() => {
+                validateConfigDebounced(
+                  projectId,
+                  editorState.formBuffer,
+                  state.viewMode,
+                  rerender,
+                );
+              }}
+            >
+              Enabled
+            </sl-switch>
+            <span class="field-hint">Halt pipeline after consecutive errors</span>
+          </div>
+        </div>
+        <div class="cb-field">
+          <label class="field-label">Max Consecutive Failures</label>
+          <sl-input
+            id="cb-max-failures"
+            type="number"
+            .value=${cb.max_consecutive_failures ?? 3}
+            size="small"
+            min="1"
+            max="10"
+            ?disabled=${cb.enabled === false}
+            @sl-input=${(e) => {
+              editorState.formBuffer.circuit_breaker.max_consecutive_failures =
+                parseInt(e.target.value, 10) || 3;
+              rerender();
+            }}
+            @sl-blur=${() => {
+              validateConfigDebounced(
+                projectId,
+                editorState.formBuffer,
+                state.viewMode,
+                rerender,
+              );
+            }}
+          ></sl-input>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+/**
+ * Render the Governance dispatch section.
+ */
+function _governanceSection(formBuffer, settings, projectId, rerender) {
+  const gov = formBuffer?.governance || DEFAULT_GOVERNANCE;
+  const dispatch = gov.dispatch || DEFAULT_GOVERNANCE.dispatch;
+  const state = editorState;
+
+  return html`
+    <section class="editor-section">
+      <div class="section-header">
+        <h2 class="section-title">Governance Dispatch</h2>
+        <sl-badge variant="neutral" pill>${unsafeHTML(iconSvg(Shield, 14))} Tools / Skills / Subagents</sl-badge>
+      </div>
+      <div class="governance-content">
+        ${['tools', 'skills', 'subagents'].map((section) => {
+          return dispatchSectionView({
+            section,
+            config: dispatch[section] || {},
+            knownItems:
+              section === 'tools' ? [] : section === 'skills' ? [] : [],
+            agentRoles: AGENT_NAMES,
+            defaults: DISPATCH_DEFAULTS[section],
+            onChange: (newConfig) => {
+              if (!editorState.formBuffer.governance) {
+                editorState.formBuffer.governance = { ...DEFAULT_GOVERNANCE };
+              }
+              if (!editorState.formBuffer.governance.dispatch) {
+                editorState.formBuffer.governance.dispatch = {
+                  ...DEFAULT_GOVERNANCE.dispatch,
+                };
+              }
+              editorState.formBuffer.governance.dispatch[section] = newConfig;
+              rerender();
+            },
+            state: dispatchEditState[section],
+            rerender,
+            showTitle: true,
+          });
+        })}
+      </div>
+    </section>
+  `;
+}
+
+/**
+ * Render the JSON editor section.
+ */
+function _jsonSection(projectId, rerender) {
+  const buffer = editorState.jsonBuffer || '{}';
+  const state = editorState;
+
+  return html`
+    <section class="editor-section editor-section--json">
+      <h2 class="section-title">Configuration JSON</h2>
+      <div class="json-editor-wrapper">
+        <sl-textarea
+          id="template-config-json"
+          class="json-editor"
+          .value=${buffer}
+          rows="25"
+          spellcheck="false"
+          @sl-input=${(e) => {
+            editorState.jsonBuffer = e.target.value;
+            rerender();
+          }}
+          @sl-change=${() => {
+            // Update diff if we have a built-in template to compare against
+            if (shadowsBuiltin(editorState.template)) {
+              computeDiff();
+            }
+            validateConfigDebounced(
+              projectId,
+              editorState.formBuffer,
+              state.viewMode,
+              rerender,
+            );
+          }}
+        ></sl-textarea>
+      </div>
+      <div class="json-editor-hint">
+        Raw JSON configuration. Edits here sync to the form view when you switch back to Form mode.
+      </div>
+    </section>
+  `;
+}
+
+/**
+ * Render the diff section comparing current config with built-in.
+ * Shows a table of differences with reset buttons for each changed key.
+ */
+function _diffSection(rerender) {
+  const diffData = editorState.diffData || [];
+  const changedDiffs = diffData.filter((d) => d.changed);
+
+  if (editorState.loadingBuiltin) {
+    return html`
+      <section class="editor-section editor-section--diff">
+        <h2 class="section-title">Diff vs Built-in</h2>
+        <div class="diff-loading">
+          <sl-spinner></sl-spinner> Loading built-in template for comparison…
+        </div>
+      </section>
+    `;
+  }
+
+  if (!editorState.builtinTemplate) {
+    return html`
+      <section class="editor-section editor-section--diff">
+        <h2 class="section-title">Diff vs Built-in</h2>
+        <div class="diff-empty">
+          <p>Unable to load built-in template for comparison.</p>
+          <sl-alert variant="neutral" open>
+            Diff view requires the built-in template to be available on the server.
+          </sl-alert>
+        </div>
+      </section>
+    `;
+  }
+
+  return html`
+    <section class="editor-section editor-section--diff">
+      <div class="section-header">
+        <h2 class="section-title">Diff vs Built-in</h2>
+        <sl-badge variant="${changedDiffs.length === 0 ? 'success' : 'neutral'}" pill>
+          ${diffSummary(diffData)}
+        </sl-badge>
+      </div>
+      <div class="diff-content">
+        <p class="diff-hint">
+          This view shows how your template differs from the built-in version.
+          Use the <sl-tooltip content="Reset value to built-in"><span class="diff-reset-icon">${unsafeHTML(iconSvg(RefreshCw, 14))}</span></sl-tooltip> button to reset individual keys to their built-in value.
+        </p>
+        ${
+          changedDiffs.length === 0
+            ? html`
+              <div class="diff-no-changes">
+                ${unsafeHTML(iconSvg(CircleCheck, 48))}
+                <h3>No differences</h3>
+                <p>Your template matches the built-in version exactly.</p>
+              </div>
+            `
+            : html`
+              <div class="diff-table-container">
+                <table class="diff-table">
+                  <thead>
+                    <tr>
+                      <th>Path</th>
+                      <th>Built-in Value</th>
+                      <th>Your Value</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${changedDiffs.map(
+                      (diff) => html`
+                        <tr class="diff-row ${diff.changed ? 'diff-row--changed' : ''}">
+                          <td class="diff-path">
+                            <code>${diff.dotPath}</code>
+                            <span class="diff-label">${getDiffLabel(diff.key) || diff.key}</span>
+                          </td>
+                          <td class="diff-value diff-value--builtin">
+                            ${formatDiffValue(diff.builtinValue)}
+                          </td>
+                          <td class="diff-value diff-value--current">
+                            ${formatDiffValue(diff.currentValue)}
+                          </td>
+                          <td class="diff-actions">
+                            <sl-button
+                              size="small"
+                              outline
+                              @click=${() => resetToBuiltin(diff.dotPath, rerender)}
+                            >
+                              ${unsafeHTML(iconSvg(RefreshCw, 12))} Reset
+                            </sl-button>
+                          </td>
+                        </tr>
+                      `,
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            `
+        }
+      </div>
+    </section>
+  `;
+}

@@ -134,6 +134,15 @@ describe('workspace CSS — DAG styling', () => {
       '--status-planning',
       '--status-integration-testing',
       '--status-integration-failed',
+      '--fg-muted',
+      '--fg-active',
+      '--radius-lg',
+      '--sl-font-mono',
+      '--json',
+      '--disabled',
+      '--changed',
+      '--builtin',
+      '--current',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

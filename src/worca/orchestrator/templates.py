@@ -1,5 +1,7 @@
 """Template resolver and utility functions for pipeline templates."""
 
+from __future__ import annotations
+
 import copy
 import json
 import re
@@ -451,6 +453,228 @@ class TemplateResolver:
             )
         rendered_config = _render_params_in_dict(template.config, params or {}, template.params)
         return deep_merge_config(current_worca, rendered_config)
+
+    def validate(
+        self, template_id: str, base_settings: dict, params: dict | None = None
+    ) -> list[dict]:
+        """Simulate apply() over base_settings (or {}); return a list of validation issues.
+
+        Returns a list where each entry matches this schema:
+        {
+          "field": "<string>",  // dot-notation path, e.g. "agents.planner.model"
+          "severity": "error" | "warning",
+          "message": "<string>"
+        }
+
+        Severity values:
+        - "error": a run with this config would break (shape violation, required field missing, invalid enum)
+        - "warning": suspicious but legal (e.g. references a model alias not in worca.models — silently
+          falls back via _DEFAULT_MODEL_MAP, but worth flagging)
+
+        The method renders parameters, deep-merges template config with base settings,
+        then validates the merged config. Does not mutate inputs.
+        """
+        template = self.get(template_id)
+        if template is None:
+            raise TemplateError(
+                f"Template '{template_id}' not found.",
+                code="not_found",
+                details={"template_id": template_id},
+            )
+
+        # Render params and deep merge
+        rendered_config = _render_params_in_dict(template.config, params or {}, template.params)
+        merged = deep_merge_config(base_settings or {}, rendered_config)
+
+        issues = []
+
+        # Validate agents: all agent keys must be known
+        from worca.orchestrator.stages import ALL_AGENTS
+
+        all_agents: frozenset = ALL_AGENTS
+        known_agents = {v for v in all_agents if v is not None}
+        agents_config = merged.get("agents", {})
+        for agent_key in agents_config:
+            if agent_key not in known_agents:
+                issues.append({
+                    "field": f"agents.{agent_key}",
+                    "severity": "error",
+                    "message": f"Unknown agent '{agent_key}'. Must be one of: {sorted(known_agents)}",
+                })
+
+        # Validate model aliases and per-agent effort levels
+        models_config = merged.get("models", {})
+        for agent_name in known_agents:
+            agent_data = agents_config.get(agent_name, {})
+            if not isinstance(agent_data, dict):
+                continue
+
+            # Validate model alias
+            model = agent_data.get("model")
+            if model and isinstance(model, str):
+                # Check if this model alias is defined in the merged config's models section
+                if model not in models_config and model not in ("opa", "oha"):
+                    from worca.utils.settings import _DEFAULT_MODEL_MAP
+                    if model not in _DEFAULT_MODEL_MAP:
+                        # Not in project models or default map - warn
+                        issues.append({
+                            "field": f"agents.{agent_name}.model",
+                            "severity": "warning",
+                            "message": f"Model alias '{model}' is not defined in worca.models and not in default map (may be treated as a raw model ID)",
+                        })
+
+            # Validate per-agent effort level under agents.<agent_name>.effort
+            VALID_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+            agent_effort = agent_data.get("effort")
+            if agent_effort and agent_effort not in VALID_EFFORT_LEVELS:
+                issues.append({
+                    "field": f"agents.{agent_name}.effort",
+                    "severity": "error",
+                    "message": f"Invalid effort level for {agent_name}: '{agent_effort}'. Must be one of: {sorted(VALID_EFFORT_LEVELS)}",
+                })
+
+        # Validate effort levels
+        VALID_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
+        effort_config = merged.get("effort", {})
+        if isinstance(effort_config, dict):
+            # Validate auto_cap
+            auto_cap = effort_config.get("auto_cap")
+            if auto_cap and auto_cap not in VALID_EFFORT_LEVELS:
+                issues.append({
+                    "field": "effort.auto_cap",
+                    "severity": "error",
+                    "message": f"Invalid effort level for auto_cap: '{auto_cap}'. Must be one of: {sorted(VALID_EFFORT_LEVELS)}",
+                })
+
+            # Validate per-agent effort
+            for agent_name, agent_effort in effort_config.items():
+                if agent_name == auto_cap or not isinstance(agent_effort, dict):
+                    continue
+                effort_level = agent_effort.get("effort")
+                if effort_level and effort_level not in VALID_EFFORT_LEVELS:
+                    issues.append({
+                        "field": f"effort.{agent_name}.effort",
+                        "severity": "error",
+                        "message": f"Invalid effort level for {agent_name}: '{effort_level}'. Must be one of: {sorted(VALID_EFFORT_LEVELS)}",
+                    })
+
+        return issues
+
+    def duplicate(self, src_id: str, dst_id: str, dst_scope: str = "project") -> "Template":
+        """Resolve src_id from any tier, write a copy to dst_scope as dst_id.
+
+        Args:
+            src_id: Template id to copy from (resolves from any tier: project → user → builtin)
+            dst_id: Id to assign to the copy in the destination scope
+            dst_scope: "project" or "user" (builtin is not a valid destination)
+
+        Returns:
+            Template instance representing the copied template
+
+        Raises:
+            TemplateError(builtin_conflict): if dst_id matches a built-in template id
+            TemplateError(name_collision): if dst_id already exists in dst_scope
+            TemplateError(not_found): if src_id not found
+            TemplateError(validation_error): if dst_scope is invalid
+        """
+        # Validate destination scope
+        if dst_scope not in ("project", "user"):
+            raise TemplateError(
+                f"dst_scope must be 'project' or 'user', got {dst_scope!r}",
+                code="validation_error",
+                details={"dst_scope": dst_scope},
+            )
+
+        # Check for builtin destination ID conflict - do this BEFORE source lookup
+        if self._builtin_dir is not None and (self._builtin_dir / dst_id).is_dir():
+            raise TemplateError(
+                f"Cannot duplicate to built-in ID '{dst_id}'.",
+                code="builtin_conflict",
+                details={"template_id": dst_id},
+            )
+
+        # Determine destination directory
+        scope_dir = self._user_dir if dst_scope == "user" else self._project_dir
+        if scope_dir is None:
+            raise TemplateError(
+                f"Destination scope '{dst_scope}' is not available.",
+                code="validation_error",
+                details={"dst_scope": dst_scope},
+            )
+
+        scope_path = Path(scope_dir)
+        tmpl_dir = scope_path / dst_id
+
+        # Check for name collision in target scope
+        if tmpl_dir.is_dir():
+            raise TemplateError(
+                f"Template ID '{dst_id}' already exists in {dst_scope} scope.",
+                code="name_collision",
+                details={"template_id": dst_id, "scope": dst_scope},
+            )
+
+        # Load source template using existing get() method (resolves by priority)
+        src_template = self.get(src_id)
+        if src_template is None:
+            raise TemplateError(
+                f"Template '{src_id}' not found.",
+                code="not_found",
+                details={"template_id": src_id},
+            )
+
+        # Create destination directory
+        scope_path.mkdir(parents=True, exist_ok=True)
+        tmpl_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prepare destination template data - preserve all fields from source
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        dst_data = {
+            "id": dst_id,
+            "name": src_template.name,
+            "description": src_template.description,
+            "builtin": False,  # Duplicates are never built-in
+            "created_at": now,
+            "tags": list(src_template.tags),  # Copy tags
+            "params": copy.deepcopy(src_template.params),  # Deep copy params
+            "config": copy.deepcopy(src_template.config),  # Deep copy config
+        }
+
+        # Read the source template.json to preserve any custom fields
+        source_manifest = Path(src_template.source_dir) / "template.json"
+        if source_manifest.is_file():
+            source_data = json.loads(source_manifest.read_text(encoding="utf-8"))
+            # Preserve any additional fields not in our base set
+            for key, value in source_data.items():
+                if key not in ["id", "name", "description", "builtin", "created_at", "tags", "params", "config"]:
+                    dst_data[key] = value
+
+        # Write template.json
+        (tmpl_dir / "template.json").write_text(json.dumps(dst_data, indent=2), encoding="utf-8")
+
+        # Copy agents directory if present
+        if src_template.agents_dir and Path(src_template.agents_dir).is_dir():
+            src_agents_dir = Path(src_template.agents_dir)
+            dest_agents_dir = tmpl_dir / "agents"
+            if dest_agents_dir.is_dir():
+                shutil.rmtree(dest_agents_dir)
+            shutil.copytree(src_agents_dir, dest_agents_dir)
+
+        # Return new Template instance
+        tier = "user" if dst_scope == "user" else "project"
+        agents_path = tmpl_dir / "agents"
+        return Template(
+            id=dst_id,
+            name=dst_data["name"],
+            description=dst_data["description"],
+            builtin=False,
+            created_at=now,
+            tags=dst_data["tags"],
+            params=dst_data["params"],
+            config=dst_data["config"],
+            agents_dir=str(agents_path) if agents_path.is_dir() else None,
+            source_dir=str(tmpl_dir),
+            tier=tier,
+        )
 
 
 def _render_params_in_dict(obj, params: dict, param_defs: dict):

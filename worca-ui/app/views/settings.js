@@ -995,9 +995,30 @@ export function pipelineTab(worca, rerender) {
     require: [],
   };
 
+  // Deep-link card for Template-driven settings per W-062 Phase 6
+  const templateDrivenCard = html`
+    <div class="pipelines-deep-link-card">
+      <div class="pipelines-deep-link-content">
+        <div class="pipelines-deep-link-icon">
+          ${unsafeHTML(iconSvg(Workflow, 20))}
+        </div>
+        <div class="pipelines-deep-link-text">
+          <div class="pipelines-deep-link-title">Template-driven settings</div>
+          <div class="pipelines-deep-link-desc">
+            Agents, Pipeline stages, Effort, and Governance dispatch are owned by the selected template
+          </div>
+        </div>
+        <a href="#/pipelines" class="pipelines-deep-link-btn">
+          Edit pipelines
+          ${unsafeHTML(iconSvg(Pencil, 14))}
+        </a>
+      </div>
+    </div>
+  `;
+
   return html`
     <div class="settings-tab-content">
-      ${TEMPLATE_DRIVEN_BANNER}
+      ${templateDrivenCard}
       <h3 class="settings-section-title">Preflight</h3>
       <div class="settings-grid">
         <div class="settings-field">

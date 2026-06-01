@@ -6,25 +6,25 @@ import { getDefaults } from './settings.js';
 import { projectStatus } from './sidebar.js';
 
 // Module-level state
-let sourceType = 'none';
-let submitStatus = null; // null | 'submitting' | 'error'
-let submitError = '';
-let planFiles = null; // cached response
-let planFilter = '';
-let planDropdownOpen = false;
-let selectedPlan = '';
-let branches = null; // null = not fetched, [] = fetched but empty
-let selectedBranch = ''; // empty = new branch
-let templates = null; // null = not fetched
-let selectedTemplate = 'default'; // 'default' = worca.default_template (if set) or raw settings.json
-let defaultTemplateId = ''; // worca.default_template from project settings ('' = unset)
-let prBaseBranch = '';
-let prBaseBranchError = '';
-let selectedProject = null; // project picked in All Projects mode
-let projectEditable = false; // Change link toggles read-only → editable
+export let sourceType = 'none';
+export let submitStatus = null; // null | 'submitting' | 'error'
+export let submitError = '';
+export let planFiles = null; // cached response
+export let planFilter = '';
+export let planDropdownOpen = false;
+export let selectedPlan = '';
+export let branches = null; // null = not fetched, [] = fetched but empty
+export let selectedBranch = ''; // empty = new branch
+export let templates = null; // null = not fetched
+export let selectedTemplate = 'default'; // 'default' = worca.default_template (if set) or raw settings.json
+export let defaultTemplateId = ''; // worca.default_template from project settings ('' = unset)
+export let prBaseBranch = '';
+export let prBaseBranchError = '';
+export let selectedProject = null; // project picked in All Projects mode
+export let projectEditable = false; // Change link toggles read-only → editable
 
 // Dismissable worktree info banner — persisted via localStorage
-let bannerDismissed = (() => {
+export let bannerDismissed = (() => {
   try {
     return localStorage.getItem('worca.worktree-banner-dismissed') === '1';
   } catch {
@@ -35,6 +35,11 @@ let bannerDismissed = (() => {
 /**
  * Reset module state for testing or re-initialization.
  */
+export function invalidateTemplateCache() {
+  templates = null;
+  defaultTemplateId = '';
+}
+
 export function resetNewRunState(overrides = {}) {
   sourceType = overrides.sourceType ?? 'none';
   submitStatus = null;
@@ -51,6 +56,9 @@ export function resetNewRunState(overrides = {}) {
   projectEditable = overrides.projectEditable ?? false;
   if ('bannerDismissed' in overrides)
     bannerDismissed = overrides.bannerDismissed;
+  if ('planDropdownOpen' in overrides)
+    planDropdownOpen = overrides.planDropdownOpen;
+  if ('branches' in overrides) branches = overrides.branches;
 }
 
 function sourceLabel(type) {
@@ -124,7 +132,17 @@ function fetchTemplates(projectId) {
   return fetch(url)
     .then((r) => r.json())
     .then((data) => {
-      if (data.ok) templates = data.templates;
+      if (data.ok) {
+        templates = data.templates;
+
+        // Auto-select the default template if it's present in the templates list
+        if (defaultTemplateId) {
+          const found = templates.find((t) => t.id === defaultTemplateId);
+          if (found && selectedTemplate === 'default') {
+            selectedTemplate = defaultTemplateId;
+          }
+        }
+      }
       return templates || [];
     })
     .catch(() => {
@@ -137,17 +155,25 @@ function fetchTemplates(projectId) {
 // in the dropdown can name what will actually run when no explicit template
 // is picked at launch.
 function fetchDefaultTemplate(projectId) {
-  if (!projectId) {
-    defaultTemplateId = '';
-    return Promise.resolve('');
-  }
-  return fetch(`/api/projects/${projectId}/settings`)
+  const url = projectId
+    ? `/api/projects/${projectId}/settings`
+    : '/api/settings';
+  return fetch(url)
     .then((r) => r.json())
     .then((data) => {
       defaultTemplateId =
         typeof data?.worca?.default_template === 'string'
           ? data.worca.default_template
           : '';
+
+      // Auto-select the default template if it's present in the templates list
+      if (defaultTemplateId && templates) {
+        const found = templates.find((t) => t.id === defaultTemplateId);
+        if (found && selectedTemplate === 'default') {
+          selectedTemplate = defaultTemplateId;
+        }
+      }
+
       return defaultTemplateId;
     })
     .catch(() => {
@@ -600,7 +626,7 @@ export function newRunView(_state, { rerender }) {
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
-                    ${t.name}
+                    ${t.name}${t.id === defaultTemplateId ? html` ★` : nothing}
                     ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
                   </sl-option>`,
                   )}
@@ -616,7 +642,7 @@ export function newRunView(_state, { rerender }) {
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
-                    ${t.name}
+                    ${t.name}${t.id === defaultTemplateId ? html` ★` : nothing}
                     ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
                   </sl-option>`,
                   )}
@@ -632,7 +658,7 @@ export function newRunView(_state, { rerender }) {
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
-                    ${t.name}
+                    ${t.name}${t.id === defaultTemplateId ? html` ★` : nothing}
                     ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
                   </sl-option>`,
                   )}
