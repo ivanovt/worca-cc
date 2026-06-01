@@ -25,12 +25,16 @@
   "scripts": {
     "dev": "remotion studio",
     "studio": "remotion studio",
-    "build": "remotion bundle",
-    "render": "remotion render",
     "upgrade": "remotion upgrade",
-    "captions": "tsx scripts/generate-srt.ts",
+    "lint": "eslint src && tsc",
+
     "voiceover": "tsx scripts/generate-voiceover.ts",
-    "lint": "eslint src && tsc"
+    "captions": "tsx scripts/generate-srt.ts",
+    "render": "tsx scripts/render-all.ts",
+    "posters": "tsx scripts/generate-posters.ts",
+    "publish": "tsx scripts/publish-to-docs.ts",
+
+    "build:videos": "npm run voiceover && npm run captions && npm run render && npm run posters && npm run publish"
   },
   "sideEffects": [
     "*.css"

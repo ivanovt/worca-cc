@@ -40,8 +40,10 @@ import { Wordmark } from "../components/Wordmark";
 import { fonts } from "../fonts";
 import { theme } from "../theme";
 import type { BulletScene as BulletSceneData } from "../lib/script";
+import { chapters } from "../lib/script";
 import { diagramFor } from "../diagrams/registry";
 import { hasAudio } from "../lib/audio-manifest.generated";
+import { audioUrl } from "../lib/paths";
 import { LEAD_IN_FRAMES } from "../lib/timing";
 
 interface Props {
@@ -54,10 +56,11 @@ export const BulletScene: React.FC<Props> = ({ scene, chapterNumber }) => {
   const frame = useCurrentFrame();
 
   // Resolve the voiceover audio file for this bullet, if one exists.
-  // Pattern: public/voiceover/v{chapter}-s{NN}.mp3
-  const audioId = `v${chapterNumber}-s${String(scene.id).padStart(2, "0")}`;
+  // Path lives under public/voiceover/<chapter-slug>/s<NN>-<slug>.mp3
+  // — derived in lib/paths.ts so this stays in lockstep with the
+  // voiceover script.
   const audioSrc = hasAudio(chapterNumber, scene.id)
-    ? staticFile(`voiceover/${audioId}.mp3`)
+    ? staticFile(audioUrl(chapters[chapterNumber], scene))
     : null;
 
   const ease = Easing.bezier(...theme.easeOut);
