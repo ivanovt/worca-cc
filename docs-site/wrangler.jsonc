@@ -10,7 +10,13 @@
 	"assets": {
 		"directory": "./dist",
 		"binding": "ASSETS",
-		"not_found_handling": "404-page"
+		"not_found_handling": "404-page",
+		// By default Workers Assets serves matching files BEFORE the script
+		// runs, so our Range-handler never sees video requests. Listing the
+		// video paths here makes the Worker fire first for them while every
+		// other asset (HTML, CSS, JS, fonts, images, posters) still goes
+		// straight through the binding with zero overhead.
+		"run_worker_first": ["/videos/*.mp4", "/videos/*.webm", "/videos/*.m4v", "/videos/*.mov"]
 	},
 	// Option B staging environment: a second Worker (worca-docs-staging) tracks
 	// the `master` branch and serves staging.docs.worca.dev. Its Workers Builds
@@ -23,7 +29,8 @@
 			"assets": {
 				"directory": "./dist",
 				"binding": "ASSETS",
-				"not_found_handling": "404-page"
+				"not_found_handling": "404-page",
+				"run_worker_first": ["/videos/*.mp4", "/videos/*.webm", "/videos/*.m4v", "/videos/*.mov"]
 			}
 		}
 	}
