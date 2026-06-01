@@ -18,6 +18,7 @@
     "sharp": "^0.34.5"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260601.1",
     "wrangler": "^4.95.0"
   }
 }
