@@ -95,6 +95,8 @@ from worca.events.types import (
     learn_completed_payload, learn_failed_payload,
     PLAN_EDITED, plan_edited_payload,
     GUIDE_CONFLICT, guide_conflict_payload,
+    TEMPLATE_APPLIED, TEMPLATE_DROPPED,
+    template_applied_payload, template_dropped_payload,
 )
 
 # Maps pipeline stages to their user-message block files. The stage's
@@ -2225,6 +2227,32 @@ def run_pipeline(
             if _branch_just_created:
                 emit_event(ctx, GIT_BRANCH_CREATED, git_branch_created_payload(
                     branch=branch_name,
+                ))
+
+            # Emit template lifecycle event now that EventContext is ready.
+            _persisted_tmpl = status.get("pipeline_template")
+            _is_resume = resume_stage is not None
+            if _is_resume and _persisted_tmpl and isinstance(_persisted_tmpl, str) and not pipeline_template:
+                # Regression guard: resumed run had a template persisted but
+                # the caller didn't pass pipeline_template (template wasn't
+                # restored). Shouldn't fire after the Phase 1 fix, but catches
+                # regressions where the template is silently dropped on resume.
+                _dropped_id = _persisted_tmpl.split(":", 1)[-1]
+                emit_event(ctx, TEMPLATE_DROPPED, template_dropped_payload(
+                    template_id=_dropped_id,
+                    reason="missing_on_resume",
+                ))
+            elif _persisted_tmpl and isinstance(_persisted_tmpl, str):
+                _source = "resume" if _is_resume else "launch"
+                _parts = _persisted_tmpl.split(":", 1)
+                if len(_parts) == 2:
+                    _tier, _tmpl_id = _parts
+                else:
+                    _tier, _tmpl_id = None, _parts[0]
+                emit_event(ctx, TEMPLATE_APPLIED, template_applied_payload(
+                    template_id=_tmpl_id,
+                    source=_source,
+                    tier=_tier,
                 ))
 
         context = {

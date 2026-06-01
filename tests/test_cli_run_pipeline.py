@@ -182,3 +182,58 @@ class TestCmdRunWorktree:
         argv = mock_run.call_args[0][0]
         assert "run_pipeline.py" in argv[1]
         assert "run_worktree.py" not in argv[1]
+
+
+class TestForceTemplateChangeFlag:
+    """--force-template-change is accepted and forwarded to the subprocess."""
+
+    def _scaffold(self, tmp_path, monkeypatch):
+        (tmp_path / ".git").mkdir()
+        scripts = tmp_path / ".claude" / "worca" / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "run_pipeline.py").write_text("")
+        monkeypatch.chdir(tmp_path)
+
+    def test_force_template_change_accepted_by_parser(self):
+        from worca.cli.main import create_parser
+        parser = create_parser()
+        args = parser.parse_args(["run", "--template", "t1", "--force-template-change"])
+        assert args.force_template_change is True
+
+    def test_force_template_change_defaults_false(self):
+        from worca.cli.main import create_parser
+        parser = create_parser()
+        args = parser.parse_args(["run", "--template", "t1"])
+        assert args.force_template_change is False
+
+    def test_force_template_change_forwarded_to_subprocess(self, tmp_path, monkeypatch):
+        self._scaffold(tmp_path, monkeypatch)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit):
+                main(["run", "--template", "t1", "--force-template-change"])
+        argv = mock_run.call_args[0][0]
+        assert "--force-template-change" in argv
+
+    def test_force_template_change_not_forwarded_when_absent(self, tmp_path, monkeypatch):
+        self._scaffold(tmp_path, monkeypatch)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit):
+                main(["run", "--template", "t1"])
+        argv = mock_run.call_args[0][0]
+        assert "--force-template-change" not in argv
+
+    def test_template_still_forwarded_alongside_force_flag(self, tmp_path, monkeypatch):
+        self._scaffold(tmp_path, monkeypatch)
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            from worca.cli.main import main
+            with pytest.raises(SystemExit):
+                main(["run", "--template", "bugfix", "--force-template-change"])
+        argv = mock_run.call_args[0][0]
+        assert "--template" in argv
+        assert argv[argv.index("--template") + 1] == "bugfix"
+        assert "--force-template-change" in argv

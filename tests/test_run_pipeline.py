@@ -308,6 +308,16 @@ class TestTemplateArgs:
         args = parser.parse_args(["--prompt", "Fix"])
         assert args.param is None
 
+    def test_force_template_change_default_false(self):
+        parser = create_parser()
+        args = parser.parse_args(["--prompt", "Fix"])
+        assert args.force_template_change is False
+
+    def test_force_template_change_flag_sets_true(self):
+        parser = create_parser()
+        args = parser.parse_args(["--prompt", "Fix", "--force-template-change"])
+        assert args.force_template_change is True
+
 
 class TestParseParams:
     """Test the _parse_params helper."""
@@ -887,6 +897,503 @@ class TestPipelineTemplateFormatting:
 
         call_kwargs = mock_run_pipeline.call_args[1]
         assert call_kwargs.get("pipeline_template") is None
+
+
+class TestResumeRestoresPipelineTemplate:
+    """On resume, pipeline_template from status.json is restored when --template not passed."""
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_restores_template_from_status(self, mock_run_pipeline, tmp_path):
+        """When resuming without --template, persisted pipeline_template is applied."""
+        from worca.scripts.run_pipeline import main
+
+        worca_dir = tmp_path / ".worca"
+        run_id = "20260601-120000-000-abcd"
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        status = {
+            "pipeline_status": "paused",
+            "run_id": run_id,
+            "pipeline_template": "worca:bugfix",
+            "work_request": {
+                "source_type": "prompt",
+                "title": "Fix bug",
+                "description": "desc",
+            },
+        }
+        (run_dir / "status.json").write_text(json.dumps(status))
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": run_id}
+
+        settings_path = tmp_path / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_tmpl = MagicMock()
+        mock_tmpl.agents_dir = None
+        mock_tmpl.tier = "builtin"
+        mock_resolver.get.return_value = mock_tmpl
+
+        with patch("sys.argv", [
+            "run_pipeline.py",
+            "--resume",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                main()
+
+        call_kwargs = mock_run_pipeline.call_args[1]
+        assert call_kwargs.get("pipeline_template") == "worca:bugfix"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_explicit_template_overrides_status_with_force(self, mock_run_pipeline, tmp_path):
+        """When resuming with --template and --force-template-change, explicit flag wins."""
+        from worca.scripts.run_pipeline import main
+
+        worca_dir = tmp_path / ".worca"
+        run_id = "20260601-120000-000-efgh"
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        status = {
+            "pipeline_status": "paused",
+            "run_id": run_id,
+            "pipeline_template": "worca:bugfix",
+            "work_request": {
+                "source_type": "prompt",
+                "title": "Fix bug",
+                "description": "desc",
+            },
+        }
+        (run_dir / "status.json").write_text(json.dumps(status))
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": run_id}
+
+        settings_path = tmp_path / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_tmpl = MagicMock()
+        mock_tmpl.agents_dir = None
+        mock_tmpl.tier = "builtin"
+        mock_resolver.get.return_value = mock_tmpl
+
+        with patch("sys.argv", [
+            "run_pipeline.py",
+            "--resume",
+            "--template", "hotfix",
+            "--force-template-change",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                main()
+
+        call_kwargs = mock_run_pipeline.call_args[1]
+        assert call_kwargs.get("pipeline_template") == "worca:hotfix"
+
+    def test_resume_conflicting_template_exits_2(self, tmp_path, capsys):
+        """Resuming with --template that conflicts with persisted template exits 2."""
+        from worca.scripts.run_pipeline import main
+
+        worca_dir = tmp_path / ".worca"
+        run_id = "20260601-120000-000-conf"
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        status = {
+            "pipeline_status": "paused",
+            "run_id": run_id,
+            "pipeline_template": "worca:bugfix",
+            "work_request": {
+                "source_type": "prompt",
+                "title": "Fix bug",
+                "description": "desc",
+            },
+        }
+        (run_dir / "status.json").write_text(json.dumps(status))
+
+        settings_path = tmp_path / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        with patch("sys.argv", [
+            "run_pipeline.py",
+            "--resume",
+            "--template", "hotfix",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert "hotfix" in captured.err
+        assert "bugfix" in captured.err
+
+    def test_resume_matching_template_no_conflict(self, tmp_path):
+        """Resuming with --template matching persisted bare ID does not exit."""
+        from worca.scripts.run_pipeline import main
+
+        worca_dir = tmp_path / ".worca"
+        run_id = "20260601-120000-000-match"
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        status = {
+            "pipeline_status": "paused",
+            "run_id": run_id,
+            "pipeline_template": "worca:bugfix",
+            "work_request": {
+                "source_type": "prompt",
+                "title": "Fix bug",
+                "description": "desc",
+            },
+        }
+        (run_dir / "status.json").write_text(json.dumps(status))
+
+        settings_path = tmp_path / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_tmpl = MagicMock()
+        mock_tmpl.agents_dir = None
+        mock_tmpl.tier = "builtin"
+        mock_resolver.get.return_value = mock_tmpl
+
+        with patch("worca.scripts.run_pipeline.run_pipeline") as mock_run:
+            mock_run.return_value = {"pipeline_status": "completed", "run_id": run_id}
+            with patch("sys.argv", [
+                "run_pipeline.py",
+                "--resume",
+                "--template", "bugfix",
+                "--settings", str(settings_path),
+                "--status-dir", str(worca_dir),
+            ]):
+                with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                    main()  # should not raise
+
+        mock_run.assert_called_once()
+
+    def test_resume_force_template_change_allows_different_template(self, tmp_path):
+        """--force-template-change bypasses conflict guard even when templates differ."""
+        from worca.scripts.run_pipeline import main
+
+        worca_dir = tmp_path / ".worca"
+        run_id = "20260601-120000-000-force"
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        status = {
+            "pipeline_status": "paused",
+            "run_id": run_id,
+            "pipeline_template": "project:special",
+            "work_request": {
+                "source_type": "prompt",
+                "title": "Fix bug",
+                "description": "desc",
+            },
+        }
+        (run_dir / "status.json").write_text(json.dumps(status))
+
+        settings_path = tmp_path / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"worca": {}}))
+
+        mock_resolver = MagicMock()
+        mock_resolver.apply.return_value = {}
+        mock_tmpl = MagicMock()
+        mock_tmpl.agents_dir = None
+        mock_tmpl.tier = "builtin"
+        mock_resolver.get.return_value = mock_tmpl
+
+        with patch("worca.scripts.run_pipeline.run_pipeline") as mock_run:
+            mock_run.return_value = {"pipeline_status": "completed", "run_id": run_id}
+            with patch("sys.argv", [
+                "run_pipeline.py",
+                "--resume",
+                "--template", "hotfix",
+                "--force-template-change",
+                "--settings", str(settings_path),
+                "--status-dir", str(worca_dir),
+            ]):
+                with patch("worca.scripts.run_pipeline._make_template_resolver", return_value=mock_resolver):
+                    main()  # should not raise
+
+        mock_run.assert_called_once()
+
+
+class TestResumeTemplateRestoration:
+    """Unit tests for pipeline_template restoration and conflict guard on resume.
+
+    Tests use pipeline_template: "project:my-template" as the canonical persisted value.
+    """
+
+    def _make_status(self, base_dir, run_id, pipeline_template="project:my-template"):
+        """Write status.json with a paused run under base_dir/.worca/runs/run_id/."""
+        worca_dir = base_dir / ".worca"
+        run_dir = worca_dir / "runs" / run_id
+        run_dir.mkdir(parents=True)
+        status = {
+            "pipeline_status": "paused",
+            "run_id": run_id,
+            "work_request": {
+                "source_type": "prompt",
+                "title": "Template restore test",
+                "description": "test",
+            },
+        }
+        if pipeline_template is not None:
+            status["pipeline_template"] = pipeline_template
+        (run_dir / "status.json").write_text(json.dumps(status))
+        return worca_dir
+
+    def _make_settings(self, base_dir, worca_config=None):
+        settings_path = base_dir / ".claude" / "settings.json"
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(json.dumps({"worca": worca_config or {}}))
+        return settings_path
+
+    def _mock_resolver(self, tier="project"):
+        resolver = MagicMock()
+        resolver.apply.return_value = {}
+        tmpl = MagicMock()
+        tmpl.agents_dir = None
+        tmpl.tier = tier
+        resolver.get.return_value = tmpl
+        return resolver
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_restores_pipeline_template_from_status(self, mock_run_pipeline, tmp_path):
+        """Resume without --template reads pipeline_template from status.json and applies it."""
+        from worca.scripts.run_pipeline import main
+
+        run_id = "20260601-trt-0001-aaaa"
+        worca_dir = self._make_status(tmp_path, run_id, "project:my-template")
+        settings_path = self._make_settings(tmp_path)
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": run_id}
+        mock_resolver = self._mock_resolver("project")
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--resume",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver",
+                       return_value=mock_resolver):
+                main()
+
+        # Bare ID extracted from "project:my-template" and passed to apply()
+        mock_resolver.apply.assert_called_once()
+        assert mock_resolver.apply.call_args[0][0] == "my-template"
+        # Temp (merged) settings file was used, not the original
+        call_kwargs = mock_run_pipeline.call_args[1]
+        assert call_kwargs["settings_path"] != str(settings_path)
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_without_persisted_template_falls_back_to_default(
+        self, mock_run_pipeline, tmp_path
+    ):
+        """Resume with no pipeline_template in status.json falls back to worca.default_template."""
+        from worca.scripts.run_pipeline import main
+
+        run_id = "20260601-trt-0002-bbbb"
+        # pipeline_template=None → key absent from status.json
+        worca_dir = self._make_status(tmp_path, run_id, pipeline_template=None)
+        settings_path = self._make_settings(tmp_path, {"default_template": "quick-fix"})
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": run_id}
+        mock_resolver = self._mock_resolver("builtin")
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--resume",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver",
+                       return_value=mock_resolver):
+                main()
+
+        # Fell through to worca.default_template
+        mock_resolver.apply.assert_called_once()
+        assert mock_resolver.apply.call_args[0][0] == "quick-fix"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_with_explicit_matching_template_succeeds(
+        self, mock_run_pipeline, tmp_path
+    ):
+        """--template my-template on resume matches persisted project:my-template — no error."""
+        from worca.scripts.run_pipeline import main
+
+        run_id = "20260601-trt-0003-cccc"
+        worca_dir = self._make_status(tmp_path, run_id, "project:my-template")
+        settings_path = self._make_settings(tmp_path)
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": run_id}
+        mock_resolver = self._mock_resolver("project")
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--resume",
+            "--template", "my-template",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver",
+                       return_value=mock_resolver):
+                main()  # must not raise
+
+        mock_run_pipeline.assert_called_once()
+
+    def test_resume_with_conflicting_template_errors(self, tmp_path, capsys):
+        """--template other-template conflicts with persisted project:my-template → SystemExit(2)."""
+        from worca.scripts.run_pipeline import main
+
+        run_id = "20260601-trt-0004-dddd"
+        worca_dir = self._make_status(tmp_path, run_id, "project:my-template")
+        settings_path = self._make_settings(tmp_path)
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--resume",
+            "--template", "other-template",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+
+        assert exc_info.value.code == 2
+        captured = capsys.readouterr()
+        assert "other-template" in captured.err
+        assert "my-template" in captured.err
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_with_conflicting_template_force_override(
+        self, mock_run_pipeline, tmp_path
+    ):
+        """--force-template-change bypasses the conflict guard; explicit --template wins."""
+        from worca.scripts.run_pipeline import main
+
+        run_id = "20260601-trt-0005-eeee"
+        worca_dir = self._make_status(tmp_path, run_id, "project:my-template")
+        settings_path = self._make_settings(tmp_path)
+        mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": run_id}
+        mock_resolver = self._mock_resolver("builtin")
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--resume",
+            "--template", "other-template",
+            "--force-template-change",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver",
+                       return_value=mock_resolver):
+                main()  # must not raise
+
+        # The override template was applied, not the persisted one
+        mock_resolver.apply.assert_called_once()
+        assert mock_resolver.apply.call_args[0][0] == "other-template"
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_handles_malformed_pipeline_template(self, mock_run_pipeline, tmp_path):
+        """Malformed pipeline_template (empty string, non-string) is ignored gracefully."""
+        from worca.scripts.run_pipeline import main
+
+        for bad_value, label in [("", "empty"), (42, "int"), (None, "null")]:
+            sub = tmp_path / label
+            sub.mkdir()
+            run_id = "20260601-trt-0006-ffff"
+            worca_dir = self._make_status(sub, run_id, pipeline_template=bad_value)
+            settings_path = self._make_settings(sub)
+            mock_run_pipeline.reset_mock()
+            mock_run_pipeline.return_value = {"pipeline_status": "completed", "run_id": run_id}
+
+            with patch("sys.argv", [
+                "run_pipeline.py", "--resume",
+                "--settings", str(settings_path),
+                "--status-dir", str(worca_dir),
+            ]):
+                main()  # must not raise
+
+            # No template applied — run_pipeline received the original settings path
+            call_kwargs = mock_run_pipeline.call_args[1]
+            assert call_kwargs["settings_path"] == str(settings_path), (
+                f"malformed pipeline_template {bad_value!r} should not trigger template application"
+            )
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_writes_snapshot_before_run_pipeline(self, mock_run_pipeline, tmp_path):
+        """On resume with a template, snapshot_to_run is called before run_pipeline()."""
+        from worca.scripts.run_pipeline import main
+
+        run_id = "20260601-trt-0007-gggg"
+        worca_dir = self._make_status(tmp_path, run_id, "project:my-template")
+        settings_path = self._make_settings(tmp_path)
+        run_dir = worca_dir / "runs" / run_id
+
+        call_order = []
+
+        def record_snapshot(*args, **kwargs):
+            call_order.append("snapshot")
+
+        def record_run_pipeline(*args, **kwargs):
+            call_order.append("run_pipeline")
+            return {"pipeline_status": "completed", "run_id": run_id}
+
+        mock_run_pipeline.side_effect = record_run_pipeline
+        mock_resolver = self._mock_resolver("project")
+        mock_resolver.snapshot_to_run.side_effect = record_snapshot
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--resume",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver",
+                       return_value=mock_resolver):
+                main()
+
+        assert call_order.index("snapshot") < call_order.index("run_pipeline"), (
+            "snapshot_to_run must be called before run_pipeline on resume"
+        )
+        mock_resolver.snapshot_to_run.assert_called_once_with("my-template", str(run_dir), {})
+
+    @patch("worca.scripts.run_pipeline.run_pipeline")
+    def test_resume_writes_merged_settings_before_run_pipeline(self, mock_run_pipeline, tmp_path):
+        """On resume with a template, merged settings.json is written before run_pipeline()."""
+        from worca.scripts.run_pipeline import main
+
+        run_id = "20260601-trt-0008-hhhh"
+        worca_dir = self._make_status(tmp_path, run_id, "project:my-template")
+        settings_path = self._make_settings(tmp_path, {"loops": {"test": 3}})
+        run_dir = worca_dir / "runs" / run_id
+
+        settings_written_before_run = []
+
+        def check_and_record_run(*args, **kwargs):
+            # Check if settings.json already exists in run_dir at the time run_pipeline is called
+            sf = run_dir / "settings.json"
+            settings_written_before_run.append(sf.exists())
+            return {"pipeline_status": "completed", "run_id": run_id}
+
+        mock_run_pipeline.side_effect = check_and_record_run
+        mock_resolver = self._mock_resolver("project")
+        mock_resolver.apply.return_value = {"loops": {"test": 9}}
+
+        with patch("sys.argv", [
+            "run_pipeline.py", "--resume",
+            "--settings", str(settings_path),
+            "--status-dir", str(worca_dir),
+        ]):
+            with patch("worca.scripts.run_pipeline._make_template_resolver",
+                       return_value=mock_resolver):
+                main()
+
+        assert settings_written_before_run == [True], (
+            "merged settings.json must exist in run_dir before run_pipeline is called"
+        )
+        written = json.loads((run_dir / "settings.json").read_text())
+        assert written["worca"]["loops"]["test"] == 9
 
 
 class TestResumeAmbiguousError:

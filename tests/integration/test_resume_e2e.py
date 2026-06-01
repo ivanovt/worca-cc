@@ -262,3 +262,105 @@ def test_resume_emits_run_completed_in_run_dir_events(pipeline_env):
         f"final terminal event must be pipeline.run.completed; "
         f"got terminals: {[e.get('event_type') for e in terminals]}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Resume preserves the template-pinned model alias for the implementer
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.timeout(180)
+@pytest.mark.skipif(sys.platform == "win32", reason="signal-based tests require Unix")
+def test_resume_preserves_template_model_alias(pipeline_env):
+    """SIGKILL mid-implementer on a template-pinned run must result in the
+    resumed iteration using the *template's* model alias, not the project
+    default.
+
+    Reproduction scenario for the original bug: without the fix, resume
+    re-resolved the model from project settings (ignoring the persisted
+    ``pipeline_template`` in status.json), so the implementer ran with the
+    project default model alias instead of the template-pinned one.
+
+    Setup:
+    - Write a project-level template (``test-impl-alias``) that pins
+      ``agents.implementer.model`` to a custom alias ``"test-impl-alias"``
+      mapped to ``claude-sonnet-4-5`` in ``worca.models``.
+    - The project settings keep the default implementer model (``"sonnet"``
+      resolving to a different ID), so the alias divergence is detectable.
+    - Launch with ``--template test-impl-alias``, SIGKILL mid-implementer.
+    - Resume WITHOUT ``--template`` — the runner must restore the template
+      from ``status.json``'s ``pipeline_template`` field.
+    - Assert every implementer iteration recorded after resume carries
+      ``model_alias == "test-impl-alias"``.
+    """
+    # 1. Write the template into the project's .claude/templates/ directory.
+    tmpl_dir = pipeline_env.project / ".claude" / "templates" / "test-impl-alias"
+    tmpl_dir.mkdir(parents=True, exist_ok=True)
+    template_json = {
+        "id": "test-impl-alias",
+        "name": "Test Impl Alias",
+        "description": "Template that pins implementer to a custom model alias.",
+        "config": {
+            "agents": {
+                "implementer": {"model": "test-impl-alias", "max_turns": 5}
+            }
+        },
+    }
+    (tmpl_dir / "template.json").write_text(json.dumps(template_json))
+
+    # 2. Add the alias → real model-id mapping in settings so resolution
+    #    succeeds (mock_claude ignores the model flag, but the runner must be
+    #    able to resolve the alias to avoid an error at start-up).
+    settings_path = pipeline_env.project / ".claude" / "settings.json"
+    settings = json.loads(settings_path.read_text())
+    settings.setdefault("worca", {}).setdefault("models", {})
+    # Map the alias to an actual Claude model ID
+    settings["worca"]["models"]["test-impl-alias"] = "claude-sonnet-4-5-20241022"
+    settings_path.write_text(json.dumps(settings, indent=2))
+
+    # 3. Crash mid-implementer on first run (template-pinned).
+    first = run_and_act(
+        pipeline_env,
+        _HANG_AT_IMPLEMENT,
+        send_sigkill,
+        act_after_stage="implement",
+        timeout=20,
+        extra_args=["--template", "test-impl-alias"],
+    )
+    assert first.status.get("pipeline_status") not in (
+        "completed", "failed", "interrupted"
+    ), (
+        f"first run should be non-terminal after SIGKILL; "
+        f"got {first.status.get('pipeline_status')!r}"
+    )
+    # Confirm template was recorded in status.json
+    assert "test-impl-alias" in (first.status.get("pipeline_template") or ""), (
+        f"pipeline_template not recorded; status: {first.status.get('pipeline_template')!r}"
+    )
+
+    # 4. Resume without --template — template must be restored from status.json.
+    resumed = pipeline_env.run(_ALL_SUCCEED, extra_args=["--resume"], timeout=60)
+    assert resumed.returncode == 0, (
+        f"resume should complete cleanly; rc={resumed.returncode}\n"
+        f"stderr: {resumed.stderr[:500]}"
+    )
+    assert resumed.status.get("pipeline_status") == "completed"
+
+    # 5. Every implementer iteration written during/after resume must carry
+    #    the template-pinned alias — not the project default ("sonnet" / None).
+    implement_stage = resumed.status.get("stages", {}).get("implement", {})
+    iterations = implement_stage.get("iterations") or []
+    assert iterations, "expected at least one implementer iteration after resume"
+
+    bad = [
+        it for it in iterations
+        if it.get("model_alias") != "test-impl-alias"
+    ]
+    assert not bad, (
+        "resumed implementer iterations have wrong model_alias "
+        "(expected 'test-impl-alias' for all):\n"
+        + "\n".join(
+            f"  iter {it.get('number')}: model_alias={it.get('model_alias')!r}"
+            for it in bad
+        )
+    )

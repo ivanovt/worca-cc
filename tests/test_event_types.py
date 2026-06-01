@@ -95,6 +95,9 @@ PIPELINE_CONSTANTS = [
     # Learn stage uses generic STAGE_STARTED/COMPLETED/FAILED with stage="learn"
     # Plan review detail (1)
     ("PLAN_EDITED", "pipeline.plan_review.edited"),
+    # Template lifecycle (2)
+    ("TEMPLATE_APPLIED", "pipeline.template.applied"),
+    ("TEMPLATE_DROPPED", "pipeline.template.dropped"),
 ]
 
 CONTROL_CONSTANTS = [
@@ -134,18 +137,19 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 53 pipeline.* outbound constants.
+    """There must be exactly 55 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
-    + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED = 53.
+    + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED
+    + 2 template lifecycle events = 55.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 53, (
-        f"Expected 53 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 55, (
+        f"Expected 55 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -229,6 +233,9 @@ EXPECTED_BUILDERS = [
     # pipeline.learn.* — removed; learn uses generic stage events
     # pipeline.plan_review.*
     "plan_edited_payload",
+    # pipeline.template.*
+    "template_applied_payload",
+    "template_dropped_payload",
     # control.*
     "control_milestone_approve_payload",
     "control_pipeline_pause_payload",
@@ -1105,3 +1112,55 @@ def test_plan_edited_payload_original_plan_path_omitted_when_none():
         issue_counts={"critical": 0, "major": 0, "minor": 0, "suggestion": 0},
     )
     assert "original_plan_path" not in p
+
+
+# ---------------------------------------------------------------------------
+# Template lifecycle payload builders
+# ---------------------------------------------------------------------------
+
+def test_template_applied_payload_required_fields():
+    from worca.events.types import template_applied_payload
+    p = template_applied_payload(
+        template_id="my-template",
+        source="launch",
+        tier="project",
+    )
+    assert p["template_id"] == "my-template"
+    assert p["source"] == "launch"
+    assert p["tier"] == "project"
+    assert isinstance(p, dict)
+
+
+def test_template_applied_payload_source_values():
+    from worca.events.types import template_applied_payload
+    for source in ("launch", "resume", "default"):
+        p = template_applied_payload(
+            template_id="tmpl", source=source, tier="builtin",
+        )
+        assert p["source"] == source
+
+
+def test_template_applied_payload_tier_optional():
+    from worca.events.types import template_applied_payload
+    p = template_applied_payload(template_id="tmpl", source="launch")
+    assert p["template_id"] == "tmpl"
+    assert p["source"] == "launch"
+    assert "tier" not in p
+
+
+def test_template_dropped_payload_required_fields():
+    from worca.events.types import template_dropped_payload
+    p = template_dropped_payload(
+        template_id="my-template",
+        reason="not_found",
+    )
+    assert p["template_id"] == "my-template"
+    assert p["reason"] == "not_found"
+    assert isinstance(p, dict)
+
+
+def test_template_dropped_payload_reason_values():
+    from worca.events.types import template_dropped_payload
+    for reason in ("not_found", "resolve_error", "missing_on_resume"):
+        p = template_dropped_payload(template_id="tmpl", reason=reason)
+        assert p["reason"] == reason
