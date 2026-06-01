@@ -16,6 +16,7 @@ import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { Arrow, DocIcon, Node } from "./primitives";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 interface InputDef {
@@ -51,13 +52,47 @@ const TOTAL_H = INPUTS.length * ROW_H + (INPUTS.length - 1) * ROW_GAP;
 export const Diagram04Inputs: React.FC<DiagramProps> = () => {
   const frame = useCurrentFrame();
 
-  const FIRST = 30;
-  const STRIDE = 90;
-  const inputReveals = INPUTS.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
+  // Cue each input reveal to the moment its name is spoken. The cue word
+  // for "plan file" is "pre-existing" (the unique cue word in the line
+  // "Even richer is a pre-existing plan file"); "plan" by itself appears
+  // many times. Guide cues on "called" (the unique phrase "It's called a
+  // guide").
+  // Fallback strides are kept as a safety net if the audio is missing.
+  const FALLBACK_FIRST = 30;
+  const FALLBACK_STRIDE = 90;
+
+  const promptStart = cueFrame(1, 4, "prompt", {
+    fallback: FALLBACK_FIRST,
+    occurrence: 0,
+    offsetFrames: -4,
+  });
+  const issueStart = cueFrame(1, 4, "GitHub", {
+    fallback: FALLBACK_FIRST + FALLBACK_STRIDE,
+    occurrence: 0,
+    offsetFrames: -4,
+  });
+  const planStart = cueFrame(1, 4, "pre-existing", {
+    fallback: FALLBACK_FIRST + 2 * FALLBACK_STRIDE,
+    occurrence: 0,
+    offsetFrames: -4,
+  });
+  const guideStart = cueFrame(1, 4, "called", {
+    fallback: FALLBACK_FIRST + 3 * FALLBACK_STRIDE,
+    occurrence: 0,
+    offsetFrames: -4,
+  });
+  const guideWinsCueStart = cueFrame(1, 4, "wins", {
+    fallback: FALLBACK_FIRST + 4 * FALLBACK_STRIDE - 30,
+    occurrence: 0,
+    offsetFrames: -4,
+  });
+
+  const inputStarts = [promptStart, issueStart, planStart, guideStart];
+  const inputReveals = inputStarts.map((startFrame) =>
+    useReveal({ startFrame }),
   );
   const worcaReveal = useReveal({ startFrame: 12 });
-  const guideWinsReveal = useReveal({ startFrame: FIRST + 4 * STRIDE - 30 });
+  const guideWinsReveal = useReveal({ startFrame: guideWinsCueStart });
 
   const rowTop = (i: number) => i * (ROW_H + ROW_GAP);
   const rowCenterY = (i: number) => rowTop(i) + ROW_H / 2;
@@ -67,9 +102,10 @@ export const Diagram04Inputs: React.FC<DiagramProps> = () => {
 
   return (
     <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>
-      {/* Arrows: from right edge of input column to left edge of worca */}
+      {/* Arrows: from right edge of input column to left edge of worca.
+          Each arrow starts flowing 8 frames after its input lands. */}
       {INPUTS.map((input, i) => {
-        const arrowStart = FIRST + i * STRIDE + 8;
+        const arrowStart = inputStarts[i] + 8;
         const elapsed = Math.max(0, frame - arrowStart);
         const isGuide = input.tint === "accent";
         return (

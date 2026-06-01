@@ -46,17 +46,11 @@ import { LEAD_IN_FRAMES } from "../lib/timing";
 
 interface Props {
   scene: BulletSceneData;
-  /** "01 / 17" style scene counter shown top-right. */
-  sceneLabel: string;
   /** 1 / 2 / 3 — used to resolve the bullet's voiceover audio file. */
   chapterNumber: 1 | 2 | 3;
 }
 
-export const BulletScene: React.FC<Props> = ({
-  scene,
-  sceneLabel,
-  chapterNumber,
-}) => {
+export const BulletScene: React.FC<Props> = ({ scene, chapterNumber }) => {
   const frame = useCurrentFrame();
 
   // Resolve the voiceover audio file for this bullet, if one exists.
@@ -123,23 +117,10 @@ export const BulletScene: React.FC<Props> = ({
           style={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
             opacity: topOpacity,
           }}
         >
           <Wordmark />
-          <div
-            style={{
-              fontFamily: fonts.mono,
-              fontSize: theme.sizeCaption,
-              fontWeight: 500,
-              letterSpacing: "0.10em",
-              color: theme.textSecondary,
-              textTransform: "uppercase",
-            }}
-          >
-            {sceneLabel}
-          </div>
         </div>
 
         {/* ── Title block ─────────────────────────────────────────────── */}

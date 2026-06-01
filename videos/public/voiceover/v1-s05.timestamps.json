@@ -1,540 +1,560 @@
 {
-  "durationSeconds": 44.768,
+  "durationSeconds": 46.905,
   "words": [
     {
       "word": "Reading",
       "startSeconds": 0,
-      "endSeconds": 0.464
+      "endSeconds": 0.418
     },
     {
       "word": "and",
-      "startSeconds": 0.557,
-      "endSeconds": 0.766
+      "startSeconds": 0.511,
+      "endSeconds": 0.673
     },
     {
       "word": "re-reading",
-      "startSeconds": 0.882,
-      "endSeconds": 1.463
+      "startSeconds": 0.755,
+      "endSeconds": 1.231
     },
     {
       "word": "source",
-      "startSeconds": 1.556,
-      "endSeconds": 1.869
+      "startSeconds": 1.312,
+      "endSeconds": 1.591
     },
     {
       "word": "files",
-      "startSeconds": 1.904,
-      "endSeconds": 2.392
+      "startSeconds": 1.625,
+      "endSeconds": 2.043
     },
     {
       "word": "is",
-      "startSeconds": 2.461,
-      "endSeconds": 2.566
+      "startSeconds": 2.368,
+      "endSeconds": 2.531
     },
     {
       "word": "the",
-      "startSeconds": 2.635,
-      "endSeconds": 2.705
+      "startSeconds": 2.577,
+      "endSeconds": 2.647
     },
     {
       "word": "biggest",
-      "startSeconds": 2.775,
-      "endSeconds": 3.088
+      "startSeconds": 2.705,
+      "endSeconds": 3.042
     },
     {
       "word": "token",
-      "startSeconds": 3.135,
-      "endSeconds": 3.471
+      "startSeconds": 3.1,
+      "endSeconds": 3.448
     },
     {
       "word": "sink",
-      "startSeconds": 3.553,
-      "endSeconds": 3.855
+      "startSeconds": 3.529,
+      "endSeconds": 3.831
     },
     {
       "word": "in",
-      "startSeconds": 3.924,
-      "endSeconds": 4.005
+      "startSeconds": 3.913,
+      "endSeconds": 4.017
     },
     {
       "word": "autonomous",
-      "startSeconds": 4.063,
-      "endSeconds": 4.598
+      "startSeconds": 4.075,
+      "endSeconds": 4.586
     },
     {
       "word": "coding",
       "startSeconds": 4.656,
-      "endSeconds": 5.039
+      "endSeconds": 5.016
     },
     {
       "word": "To",
-      "startSeconds": 5.538,
-      "endSeconds": 5.654
+      "startSeconds": 5.793,
+      "endSeconds": 5.921
     },
     {
       "word": "cut",
-      "startSeconds": 5.735,
-      "endSeconds": 5.944
-    },
-    {
-      "word": "that",
-      "startSeconds": 6.002,
+      "startSeconds": 5.991,
       "endSeconds": 6.177
     },
     {
+      "word": "that",
+      "startSeconds": 6.223,
+      "endSeconds": 6.374
+    },
+    {
       "word": "cost",
-      "startSeconds": 6.246,
-      "endSeconds": 6.711
+      "startSeconds": 6.444,
+      "endSeconds": 6.908
     },
     {
       "word": "worca",
-      "startSeconds": 7.036,
-      "endSeconds": 7.465
+      "startSeconds": 7.233,
+      "endSeconds": 7.535
     },
     {
       "word": "can",
-      "startSeconds": 7.523,
-      "endSeconds": 7.651
+      "startSeconds": 7.581,
+      "endSeconds": 7.709
     },
     {
       "word": "build",
-      "startSeconds": 7.709,
-      "endSeconds": 7.941
+      "startSeconds": 7.755,
+      "endSeconds": 7.976
     },
     {
       "word": "a",
-      "startSeconds": 7.988,
-      "endSeconds": 8.011
+      "startSeconds": 8.022,
+      "endSeconds": 8.057
     },
     {
       "word": "structural",
-      "startSeconds": 8.057,
+      "startSeconds": 8.115,
       "endSeconds": 8.568
     },
     {
       "word": "knowledge",
-      "startSeconds": 8.638,
-      "endSeconds": 9.033
+      "startSeconds": 8.626,
+      "endSeconds": 8.986
     },
     {
       "word": "graph",
-      "startSeconds": 9.067,
-      "endSeconds": 9.439
+      "startSeconds": 9.021,
+      "endSeconds": 9.346
     },
     {
       "word": "of",
-      "startSeconds": 9.485,
-      "endSeconds": 9.543
+      "startSeconds": 9.392,
+      "endSeconds": 9.485
     },
     {
       "word": "your",
-      "startSeconds": 9.601,
-      "endSeconds": 9.718
+      "startSeconds": 9.543,
+      "endSeconds": 9.659
     },
     {
       "word": "repository",
-      "startSeconds": 9.776,
-      "endSeconds": 10.612
+      "startSeconds": 9.706,
+      "endSeconds": 10.495
     },
     {
       "word": "The",
-      "startSeconds": 11.053,
-      "endSeconds": 11.157
+      "startSeconds": 11.111,
+      "endSeconds": 11.227
     },
     {
       "word": "graph",
-      "startSeconds": 11.215,
-      "endSeconds": 11.656
+      "startSeconds": 11.285,
+      "endSeconds": 11.575
     },
     {
       "word": "captures",
-      "startSeconds": 11.726,
-      "endSeconds": 12.167
+      "startSeconds": 11.61,
+      "endSeconds": 12.074
     },
     {
       "word": "how",
-      "startSeconds": 12.214,
-      "endSeconds": 12.353
+      "startSeconds": 12.132,
+      "endSeconds": 12.249
     },
     {
       "word": "your",
-      "startSeconds": 12.423,
-      "endSeconds": 12.562
+      "startSeconds": 12.295,
+      "endSeconds": 12.411
     },
     {
       "word": "code",
-      "startSeconds": 12.632,
-      "endSeconds": 12.945
+      "startSeconds": 12.481,
+      "endSeconds": 12.817
     },
     {
       "word": "fits",
-      "startSeconds": 12.992,
-      "endSeconds": 13.235
+      "startSeconds": 12.875,
+      "endSeconds": 13.131
     },
     {
       "word": "together",
-      "startSeconds": 13.282,
-      "endSeconds": 13.746
+      "startSeconds": 13.177,
+      "endSeconds": 13.63
     },
     {
       "word": "Agents",
-      "startSeconds": 14.118,
-      "endSeconds": 14.582
+      "startSeconds": 14.501,
+      "endSeconds": 14.919
     },
     {
       "word": "query",
-      "startSeconds": 14.663,
-      "endSeconds": 15.035
+      "startSeconds": 14.988,
+      "endSeconds": 15.267
     },
     {
       "word": "the",
-      "startSeconds": 15.081,
-      "endSeconds": 15.151
+      "startSeconds": 15.314,
+      "endSeconds": 15.384
     },
     {
       "word": "graph",
-      "startSeconds": 15.198,
-      "endSeconds": 15.569
+      "startSeconds": 15.43,
+      "endSeconds": 15.813
     },
     {
       "word": "instead",
-      "startSeconds": 15.627,
-      "endSeconds": 15.999
+      "startSeconds": 16.022,
+      "endSeconds": 16.37
     },
     {
       "word": "of",
-      "startSeconds": 16.034,
-      "endSeconds": 16.092
+      "startSeconds": 16.405,
+      "endSeconds": 16.452
     },
     {
       "word": "grepping",
-      "startSeconds": 16.161,
-      "endSeconds": 16.498
+      "startSeconds": 16.521,
+      "endSeconds": 16.87
     },
     {
       "word": "their",
-      "startSeconds": 16.556,
-      "endSeconds": 16.73
+      "startSeconds": 16.928,
+      "endSeconds": 17.067
     },
     {
       "word": "way",
-      "startSeconds": 16.777,
-      "endSeconds": 16.951
+      "startSeconds": 17.125,
+      "endSeconds": 17.276
     },
     {
       "word": "around",
-      "startSeconds": 16.997,
-      "endSeconds": 17.589
+      "startSeconds": 17.334,
+      "endSeconds": 17.81
     },
     {
       "word": "Two",
-      "startSeconds": 18.193,
-      "endSeconds": 18.46
+      "startSeconds": 18.6,
+      "endSeconds": 18.785
     },
     {
       "word": "engines",
-      "startSeconds": 18.611,
-      "endSeconds": 19.342
+      "startSeconds": 18.867,
+      "endSeconds": 19.215
     },
     {
       "word": "plug",
-      "startSeconds": 19.482,
-      "endSeconds": 19.876
+      "startSeconds": 19.284,
+      "endSeconds": 19.517
     },
     {
       "word": "in",
-      "startSeconds": 19.958,
-      "endSeconds": 20.178
+      "startSeconds": 19.575,
+      "endSeconds": 19.633
     },
     {
       "word": "here",
-      "startSeconds": 20.283,
-      "endSeconds": 20.805
+      "startSeconds": 19.714,
+      "endSeconds": 20.062
     },
     {
       "word": "The",
-      "startSeconds": 21.328,
-      "endSeconds": 21.444
+      "startSeconds": 20.782,
+      "endSeconds": 20.91
     },
     {
       "word": "first",
-      "startSeconds": 21.502,
-      "endSeconds": 21.746
+      "startSeconds": 20.98,
+      "endSeconds": 21.247
     },
     {
       "word": "is",
-      "startSeconds": 21.792,
-      "endSeconds": 21.873
+      "startSeconds": 21.305,
+      "endSeconds": 21.386
     },
     {
       "word": "graphify",
-      "startSeconds": 21.931,
-      "endSeconds": 22.698
+      "startSeconds": 21.444,
+      "endSeconds": 22.059
     },
     {
       "word": "It",
-      "startSeconds": 23.023,
-      "endSeconds": 23.174
+      "startSeconds": 22.93,
+      "endSeconds": 23.069
     },
     {
       "word": "maps",
-      "startSeconds": 23.232,
-      "endSeconds": 23.568
+      "startSeconds": 23.127,
+      "endSeconds": 23.394
     },
     {
       "word": "the",
-      "startSeconds": 23.615,
-      "endSeconds": 23.708
+      "startSeconds": 23.429,
+      "endSeconds": 23.511
     },
     {
       "word": "AST",
-      "startSeconds": 23.801,
-      "endSeconds": 24.393
+      "startSeconds": 23.592,
+      "endSeconds": 24.126
     },
     {
       "word": "and",
-      "startSeconds": 24.625,
-      "endSeconds": 24.718
+      "startSeconds": 24.567,
+      "endSeconds": 24.764
     },
     {
       "word": "call",
-      "startSeconds": 24.799,
-      "endSeconds": 25.066
+      "startSeconds": 24.834,
+      "endSeconds": 25.008
     },
     {
       "word": "structure",
-      "startSeconds": 25.159,
-      "endSeconds": 25.647
+      "startSeconds": 25.089,
+      "endSeconds": 25.577
     },
     {
       "word": "of",
-      "startSeconds": 25.693,
-      "endSeconds": 25.751
+      "startSeconds": 25.658,
+      "endSeconds": 25.786
     },
     {
       "word": "your",
-      "startSeconds": 25.809,
-      "endSeconds": 25.96
+      "startSeconds": 25.844,
+      "endSeconds": 25.949
     },
     {
       "word": "source",
-      "startSeconds": 26.041,
-      "endSeconds": 26.343
+      "startSeconds": 26.007,
+      "endSeconds": 26.274
     },
     {
       "word": "code",
-      "startSeconds": 26.39,
-      "endSeconds": 26.889
+      "startSeconds": 26.309,
+      "endSeconds": 26.645
     },
     {
       "word": "The",
-      "startSeconds": 27.353,
-      "endSeconds": 27.469
-    },
-    {
-      "word": "second",
-      "startSeconds": 27.527,
+      "startSeconds": 27.713,
       "endSeconds": 27.829
     },
     {
+      "word": "second",
+      "startSeconds": 27.899,
+      "endSeconds": 28.352
+    },
+    {
       "word": "is",
-      "startSeconds": 27.911,
-      "endSeconds": 28.131
+      "startSeconds": 28.677,
+      "endSeconds": 28.839
     },
     {
-      "word": "CRG",
-      "startSeconds": 28.328,
-      "endSeconds": 29.083
+      "word": "Code",
+      "startSeconds": 28.909,
+      "endSeconds": 29.176
     },
     {
-      "word": "CRG",
-      "startSeconds": 29.815,
-      "endSeconds": 30.314
+      "word": "Review",
+      "startSeconds": 29.211,
+      "endSeconds": 29.536
+    },
+    {
+      "word": "Graph",
+      "startSeconds": 29.606,
+      "endSeconds": 30.047
+    },
+    {
+      "word": "Code",
+      "startSeconds": 31.15,
+      "endSeconds": 31.417
+    },
+    {
+      "word": "Review",
+      "startSeconds": 31.452,
+      "endSeconds": 31.696
+    },
+    {
+      "word": "Graph",
+      "startSeconds": 31.765,
+      "endSeconds": 32.172
     },
     {
       "word": "runs",
-      "startSeconds": 30.465,
-      "endSeconds": 30.755
+      "startSeconds": 32.45,
+      "endSeconds": 32.706
     },
     {
       "word": "in",
-      "startSeconds": 30.813,
-      "endSeconds": 30.894
+      "startSeconds": 32.752,
+      "endSeconds": 32.822
     },
     {
       "word": "structural",
-      "startSeconds": 30.964,
-      "endSeconds": 31.475
+      "startSeconds": 32.868,
+      "endSeconds": 33.321
     },
     {
       "word": "mode",
-      "startSeconds": 31.533,
-      "endSeconds": 31.788
+      "startSeconds": 33.391,
+      "endSeconds": 33.6
     },
     {
       "word": "today",
-      "startSeconds": 31.835,
-      "endSeconds": 32.322
+      "startSeconds": 33.635,
+      "endSeconds": 34.076
     },
     {
       "word": "and",
-      "startSeconds": 32.566,
-      "endSeconds": 32.752
+      "startSeconds": 34.494,
+      "endSeconds": 34.645
     },
     {
       "word": "a",
-      "startSeconds": 32.798,
-      "endSeconds": 32.833
+      "startSeconds": 34.703,
+      "endSeconds": 34.726
     },
     {
       "word": "richer",
-      "startSeconds": 32.914,
-      "endSeconds": 33.181
+      "startSeconds": 34.796,
+      "endSeconds": 35.039
     },
     {
       "word": "semantic",
-      "startSeconds": 33.239,
-      "endSeconds": 33.738
+      "startSeconds": 35.109,
+      "endSeconds": 35.585
     },
     {
       "word": "mode",
-      "startSeconds": 33.796,
-      "endSeconds": 34.04
+      "startSeconds": 35.643,
+      "endSeconds": 35.945
     },
     {
       "word": "is",
-      "startSeconds": 34.075,
-      "endSeconds": 34.156
+      "startSeconds": 36.003,
+      "endSeconds": 36.154
     },
     {
       "word": "on",
-      "startSeconds": 34.214,
-      "endSeconds": 34.319
+      "startSeconds": 36.224,
+      "endSeconds": 36.34
     },
     {
       "word": "the",
-      "startSeconds": 34.365,
-      "endSeconds": 34.423
+      "startSeconds": 36.386,
+      "endSeconds": 36.456
     },
     {
       "word": "roadmap",
-      "startSeconds": 34.481,
-      "endSeconds": 35.05
+      "startSeconds": 36.514,
+      "endSeconds": 37.025
     },
     {
       "word": "Either",
-      "startSeconds": 35.631,
-      "endSeconds": 35.898
+      "startSeconds": 37.896,
+      "endSeconds": 38.163
     },
     {
       "word": "way",
-      "startSeconds": 35.956,
-      "endSeconds": 36.165
+      "startSeconds": 38.232,
+      "endSeconds": 38.499
     },
     {
       "word": "the",
-      "startSeconds": 36.235,
-      "endSeconds": 36.304
+      "startSeconds": 38.848,
+      "endSeconds": 38.952
     },
     {
       "word": "graph",
-      "startSeconds": 36.351,
-      "endSeconds": 36.711
+      "startSeconds": 39.01,
+      "endSeconds": 39.347
     },
     {
       "word": "is",
-      "startSeconds": 36.78,
-      "endSeconds": 36.978
+      "startSeconds": 39.405,
+      "endSeconds": 39.521
     },
     {
       "word": "advisory",
-      "startSeconds": 37.047,
-      "endSeconds": 37.964
+      "startSeconds": 39.567,
+      "endSeconds": 40.148
     },
     {
       "word": "It",
-      "startSeconds": 38.557,
-      "endSeconds": 38.696
+      "startSeconds": 40.763,
+      "endSeconds": 40.903
     },
     {
       "word": "never",
-      "startSeconds": 38.742,
-      "endSeconds": 38.94
+      "startSeconds": 40.972,
+      "endSeconds": 41.216
     },
     {
       "word": "overrides",
-      "startSeconds": 39.009,
-      "endSeconds": 39.706
+      "startSeconds": 41.297,
+      "endSeconds": 41.913
     },
     {
       "word": "what",
-      "startSeconds": 39.729,
-      "endSeconds": 39.869
+      "startSeconds": 41.947,
+      "endSeconds": 42.075
     },
     {
       "word": "you",
-      "startSeconds": 39.915,
-      "endSeconds": 40.008
+      "startSeconds": 42.11,
+      "endSeconds": 42.191
     },
     {
       "word": "asked",
-      "startSeconds": 40.124,
-      "endSeconds": 40.484
+      "startSeconds": 42.284,
+      "endSeconds": 42.551
     },
     {
       "word": "for",
-      "startSeconds": 40.542,
-      "endSeconds": 40.902
+      "startSeconds": 42.598,
+      "endSeconds": 42.83
     },
     {
       "word": "It",
-      "startSeconds": 41.297,
-      "endSeconds": 41.436
+      "startSeconds": 43.445,
+      "endSeconds": 43.573
     },
     {
       "word": "just",
-      "startSeconds": 41.482,
-      "endSeconds": 41.668
+      "startSeconds": 43.619,
+      "endSeconds": 43.793
     },
     {
       "word": "helps",
-      "startSeconds": 41.703,
-      "endSeconds": 41.935
+      "startSeconds": 43.851,
+      "endSeconds": 44.142
     },
     {
       "word": "the",
-      "startSeconds": 41.982,
-      "endSeconds": 42.074
+      "startSeconds": 44.177,
+      "endSeconds": 44.258
     },
     {
       "word": "agents",
-      "startSeconds": 42.156,
-      "endSeconds": 42.585
+      "startSeconds": 44.327,
+      "endSeconds": 44.769
     },
     {
       "word": "find",
-      "startSeconds": 42.632,
-      "endSeconds": 42.899
+      "startSeconds": 44.862,
+      "endSeconds": 45.117
     },
     {
       "word": "their",
-      "startSeconds": 42.945,
-      "endSeconds": 43.119
+      "startSeconds": 45.152,
+      "endSeconds": 45.279
     },
     {
       "word": "way",
-      "startSeconds": 43.177,
-      "endSeconds": 43.34
+      "startSeconds": 45.338,
+      "endSeconds": 45.488
     },
     {
       "word": "around",
-      "startSeconds": 43.398,
-      "endSeconds": 43.851
+      "startSeconds": 45.558,
+      "endSeconds": 45.953
     },
     {
       "word": "faster",
-      "startSeconds": 43.932,
-      "endSeconds": 44.489
+      "startSeconds": 46.046,
+      "endSeconds": 46.533
     }
   ]
 }

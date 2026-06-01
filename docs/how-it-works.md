@@ -28,7 +28,7 @@ There are four ways to tell worca what to do. The simplest is a prompt. You desc
 
 ### 5. Code orientation through a knowledge graph
 
-Reading and re-reading source files is the biggest token sink in autonomous coding. To cut that cost, worca can build a structural knowledge graph of your repository. The graph captures how your code fits together. Agents query the graph instead of grepping their way around. Two engines plug in here. The first is graphify. It maps the AST and call structure of your source code. The second is CRG. CRG runs in structural mode today, and a richer semantic mode is on the roadmap. Either way, the graph is advisory. It never overrides what you asked for. It just helps the agents find their way around faster.
+Reading and re-reading source files is the biggest token sink in autonomous coding. To cut that cost, worca can build a structural knowledge graph of your repository. The graph captures how your code fits together. Agents query the graph instead of grepping their way around. Two engines plug in here. The first is graphify. It maps the AST and call structure of your source code. The second is Code Review Graph. Code Review Graph runs in structural mode today, and a richer semantic mode is on the roadmap. Either way, the graph is advisory. It never overrides what you asked for. It just helps the agents find their way around faster.
 
 *See also: [`docs/plans/W-053-graphify-integration.md`](./plans/W-053-graphify-integration.md).*
 

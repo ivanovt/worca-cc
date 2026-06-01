@@ -1,635 +1,635 @@
 {
-  "durationSeconds": 48.437,
+  "durationSeconds": 50.341,
   "words": [
     {
       "word": "There",
       "startSeconds": 0,
-      "endSeconds": 0.232
+      "endSeconds": 0.221
     },
     {
       "word": "are",
-      "startSeconds": 0.267,
-      "endSeconds": 0.383
+      "startSeconds": 0.244,
+      "endSeconds": 0.348
     },
     {
       "word": "four",
-      "startSeconds": 0.43,
-      "endSeconds": 0.65
+      "startSeconds": 0.406,
+      "endSeconds": 0.639
     },
     {
       "word": "ways",
-      "startSeconds": 0.72,
-      "endSeconds": 1.115
+      "startSeconds": 0.708,
+      "endSeconds": 1.022
     },
     {
       "word": "to",
-      "startSeconds": 1.173,
-      "endSeconds": 1.242
+      "startSeconds": 1.091,
+      "endSeconds": 1.161
     },
     {
       "word": "tell",
-      "startSeconds": 1.3,
-      "endSeconds": 1.498
+      "startSeconds": 1.231,
+      "endSeconds": 1.416
     },
     {
       "word": "worca",
-      "startSeconds": 1.567,
+      "startSeconds": 1.486,
       "endSeconds": 1.892
     },
     {
       "word": "what",
       "startSeconds": 1.962,
-      "endSeconds": 2.136
+      "endSeconds": 2.148
     },
     {
       "word": "to",
-      "startSeconds": 2.194,
-      "endSeconds": 2.264
+      "startSeconds": 2.183,
+      "endSeconds": 2.241
     },
     {
       "word": "do",
-      "startSeconds": 2.345,
-      "endSeconds": 2.577
+      "startSeconds": 2.322,
+      "endSeconds": 2.519
     },
     {
       "word": "The",
-      "startSeconds": 3.1,
-      "endSeconds": 3.228
+      "startSeconds": 3.39,
+      "endSeconds": 3.518
     },
     {
       "word": "simplest",
-      "startSeconds": 3.297,
-      "endSeconds": 3.901
+      "startSeconds": 3.576,
+      "endSeconds": 4.098
     },
     {
       "word": "is",
-      "startSeconds": 4.052,
-      "endSeconds": 4.226
+      "startSeconds": 4.191,
+      "endSeconds": 4.342
     },
     {
       "word": "a",
-      "startSeconds": 4.272,
-      "endSeconds": 4.307
+      "startSeconds": 4.389,
+      "endSeconds": 4.412
     },
     {
       "word": "prompt",
-      "startSeconds": 4.354,
-      "endSeconds": 4.911
+      "startSeconds": 4.47,
+      "endSeconds": 4.888
     },
     {
       "word": "You",
-      "startSeconds": 5.445,
-      "endSeconds": 5.561
+      "startSeconds": 5.48,
+      "endSeconds": 5.596
     },
     {
       "word": "describe",
-      "startSeconds": 5.631,
-      "endSeconds": 6.142
+      "startSeconds": 5.654,
+      "endSeconds": 6.095
     },
     {
       "word": "the",
-      "startSeconds": 6.177,
-      "endSeconds": 6.246
+      "startSeconds": 6.118,
+      "endSeconds": 6.188
     },
     {
       "word": "work",
-      "startSeconds": 6.293,
-      "endSeconds": 6.502
+      "startSeconds": 6.246,
+      "endSeconds": 6.49
     },
     {
       "word": "in",
-      "startSeconds": 6.56,
-      "endSeconds": 6.641
+      "startSeconds": 6.571,
+      "endSeconds": 6.653
     },
     {
       "word": "plain",
       "startSeconds": 6.722,
-      "endSeconds": 7.047
+      "endSeconds": 6.989
     },
     {
       "word": "language",
-      "startSeconds": 7.163,
-      "endSeconds": 7.779
+      "startSeconds": 7.07,
+      "endSeconds": 7.651
     },
     {
       "word": "and",
-      "startSeconds": 7.837,
-      "endSeconds": 7.964
+      "startSeconds": 7.895,
+      "endSeconds": 8.034
     },
     {
       "word": "the",
-      "startSeconds": 8.022,
-      "endSeconds": 8.092
+      "startSeconds": 8.081,
+      "endSeconds": 8.15
     },
     {
       "word": "planner",
-      "startSeconds": 8.127,
-      "endSeconds": 8.452
+      "startSeconds": 8.197,
+      "endSeconds": 8.522
     },
     {
       "word": "takes",
-      "startSeconds": 8.498,
-      "endSeconds": 8.731
+      "startSeconds": 8.58,
+      "endSeconds": 8.812
     },
     {
       "word": "it",
-      "startSeconds": 8.766,
-      "endSeconds": 8.835
+      "startSeconds": 8.858,
+      "endSeconds": 8.928
     },
     {
       "word": "from",
-      "startSeconds": 8.858,
-      "endSeconds": 8.998
+      "startSeconds": 8.975,
+      "endSeconds": 9.114
     },
     {
       "word": "there",
-      "startSeconds": 9.044,
-      "endSeconds": 9.474
+      "startSeconds": 9.172,
+      "endSeconds": 9.497
     },
     {
       "word": "Next",
-      "startSeconds": 9.903,
-      "endSeconds": 10.217
+      "startSeconds": 10.368,
+      "endSeconds": 10.658
     },
     {
       "word": "up",
-      "startSeconds": 10.31,
-      "endSeconds": 10.461
+      "startSeconds": 10.728,
+      "endSeconds": 10.89
     },
     {
       "word": "is",
-      "startSeconds": 10.553,
-      "endSeconds": 10.716
+      "startSeconds": 11.134,
+      "endSeconds": 11.297
     },
     {
       "word": "a",
-      "startSeconds": 10.762,
-      "endSeconds": 10.786
+      "startSeconds": 11.343,
+      "endSeconds": 11.366
     },
     {
       "word": "GitHub",
-      "startSeconds": 10.879,
-      "endSeconds": 11.378
+      "startSeconds": 11.436,
+      "endSeconds": 11.807
     },
     {
       "word": "issue",
-      "startSeconds": 11.459,
-      "endSeconds": 11.958
+      "startSeconds": 11.9,
+      "endSeconds": 12.318
     },
     {
       "word": "It",
-      "startSeconds": 12.388,
-      "endSeconds": 12.527
+      "startSeconds": 12.794,
+      "endSeconds": 12.934
     },
     {
       "word": "carries",
-      "startSeconds": 12.574,
-      "endSeconds": 12.91
+      "startSeconds": 12.992,
+      "endSeconds": 13.305
     },
     {
       "word": "more",
-      "startSeconds": 12.968,
-      "endSeconds": 13.142
+      "startSeconds": 13.363,
+      "endSeconds": 13.526
     },
     {
       "word": "structure",
-      "startSeconds": 13.201,
-      "endSeconds": 13.816
+      "startSeconds": 13.572,
+      "endSeconds": 14.153
     },
     {
       "word": "and",
-      "startSeconds": 13.932,
-      "endSeconds": 14.071
+      "startSeconds": 14.512,
+      "endSeconds": 14.652
     },
     {
       "word": "the",
-      "startSeconds": 14.118,
-      "endSeconds": 14.187
+      "startSeconds": 14.687,
+      "endSeconds": 14.756
     },
     {
       "word": "planner",
-      "startSeconds": 14.222,
-      "endSeconds": 14.582
+      "startSeconds": 14.803,
+      "endSeconds": 15.139
     },
     {
       "word": "uses",
-      "startSeconds": 14.663,
-      "endSeconds": 15.047
+      "startSeconds": 15.221,
+      "endSeconds": 15.534
     },
     {
       "word": "it",
-      "startSeconds": 15.105,
-      "endSeconds": 15.197
+      "startSeconds": 15.592,
+      "endSeconds": 15.709
     },
     {
       "word": "as",
-      "startSeconds": 15.255,
-      "endSeconds": 15.395
+      "startSeconds": 15.79,
+      "endSeconds": 15.952
     },
     {
       "word": "a",
-      "startSeconds": 15.441,
-      "endSeconds": 15.476
+      "startSeconds": 16.011,
+      "endSeconds": 16.034
     },
     {
       "word": "brief",
-      "startSeconds": 15.534,
-      "endSeconds": 15.906
+      "startSeconds": 16.092,
+      "endSeconds": 16.428
     },
     {
       "word": "Even",
-      "startSeconds": 16.231,
-      "endSeconds": 16.498
+      "startSeconds": 17.183,
+      "endSeconds": 17.45
     },
     {
       "word": "richer",
-      "startSeconds": 16.567,
-      "endSeconds": 16.916
+      "startSeconds": 17.531,
+      "endSeconds": 17.903
     },
     {
       "word": "is",
-      "startSeconds": 17.009,
-      "endSeconds": 17.136
+      "startSeconds": 18.112,
+      "endSeconds": 18.274
     },
     {
       "word": "a",
-      "startSeconds": 17.183,
-      "endSeconds": 17.206
+      "startSeconds": 18.321,
+      "endSeconds": 18.344
     },
     {
       "word": "pre-existing",
-      "startSeconds": 17.276,
-      "endSeconds": 18.03
+      "startSeconds": 18.425,
+      "endSeconds": 19.157
     },
     {
       "word": "plan",
-      "startSeconds": 18.112,
-      "endSeconds": 18.437
+      "startSeconds": 19.238,
+      "endSeconds": 19.517
     },
     {
       "word": "file",
-      "startSeconds": 18.553,
-      "endSeconds": 19.029
+      "startSeconds": 19.598,
+      "endSeconds": 20.004
     },
     {
       "word": "With",
-      "startSeconds": 19.296,
-      "endSeconds": 19.505
+      "startSeconds": 20.631,
+      "endSeconds": 20.829
     },
     {
       "word": "that",
-      "startSeconds": 19.54,
-      "endSeconds": 19.923
+      "startSeconds": 20.875,
+      "endSeconds": 21.258
     },
     {
       "word": "the",
-      "startSeconds": 20.027,
-      "endSeconds": 20.132
+      "startSeconds": 21.618,
+      "endSeconds": 21.723
     },
     {
       "word": "planner",
-      "startSeconds": 20.178,
-      "endSeconds": 20.503
+      "startSeconds": 21.781,
+      "endSeconds": 22.094
     },
     {
       "word": "stage",
-      "startSeconds": 20.55,
-      "endSeconds": 20.886
+      "startSeconds": 22.152,
+      "endSeconds": 22.5
     },
     {
       "word": "is",
-      "startSeconds": 20.921,
-      "endSeconds": 21.002
+      "startSeconds": 22.559,
+      "endSeconds": 22.675
     },
     {
       "word": "skipped",
-      "startSeconds": 21.06,
-      "endSeconds": 21.42
+      "startSeconds": 22.721,
+      "endSeconds": 23.116
     },
     {
       "word": "entirely",
-      "startSeconds": 21.467,
-      "endSeconds": 22.233
+      "startSeconds": 23.197,
+      "endSeconds": 23.859
     },
     {
       "word": "Every",
-      "startSeconds": 22.674,
-      "endSeconds": 22.965
+      "startSeconds": 24.637,
+      "endSeconds": 24.927
     },
     {
       "word": "later",
-      "startSeconds": 23.034,
-      "endSeconds": 23.29
+      "startSeconds": 24.997,
+      "endSeconds": 25.24
     },
     {
       "word": "stage",
-      "startSeconds": 23.348,
-      "endSeconds": 23.777
+      "startSeconds": 25.298,
+      "endSeconds": 25.798
     },
     {
       "word": "works",
-      "startSeconds": 23.824,
-      "endSeconds": 24.079
+      "startSeconds": 25.867,
+      "endSeconds": 26.158
     },
     {
       "word": "from",
-      "startSeconds": 24.126,
-      "endSeconds": 24.3
+      "startSeconds": 26.204,
+      "endSeconds": 26.32
     },
     {
       "word": "your",
-      "startSeconds": 24.369,
-      "endSeconds": 24.532
+      "startSeconds": 26.367,
+      "endSeconds": 26.483
     },
     {
       "word": "plan",
-      "startSeconds": 24.602,
-      "endSeconds": 24.95
+      "startSeconds": 26.541,
+      "endSeconds": 26.901
     },
     {
       "word": "directly",
-      "startSeconds": 25.019,
-      "endSeconds": 25.67
+      "startSeconds": 27.017,
+      "endSeconds": 27.574
     },
     {
       "word": "The",
-      "startSeconds": 26.111,
-      "endSeconds": 26.215
+      "startSeconds": 28.352,
+      "endSeconds": 28.491
     },
     {
       "word": "fourth",
-      "startSeconds": 26.273,
-      "endSeconds": 26.517
+      "startSeconds": 28.573,
+      "endSeconds": 28.863
     },
     {
       "word": "input",
-      "startSeconds": 26.575,
-      "endSeconds": 26.97
+      "startSeconds": 28.956,
+      "endSeconds": 29.397
     },
     {
       "word": "is",
-      "startSeconds": 27.028,
-      "endSeconds": 27.098
+      "startSeconds": 29.571,
+      "endSeconds": 29.734
     },
     {
       "word": "different",
-      "startSeconds": 27.156,
-      "endSeconds": 27.446
+      "startSeconds": 29.803,
+      "endSeconds": 30.14
     },
     {
       "word": "from",
-      "startSeconds": 27.469,
-      "endSeconds": 27.597
+      "startSeconds": 30.186,
+      "endSeconds": 30.314
     },
     {
       "word": "the",
-      "startSeconds": 27.643,
-      "endSeconds": 27.713
+      "startSeconds": 30.36,
+      "endSeconds": 30.43
     },
     {
       "word": "first",
-      "startSeconds": 27.759,
-      "endSeconds": 28.015
+      "startSeconds": 30.488,
+      "endSeconds": 30.778
     },
     {
       "word": "three",
-      "startSeconds": 28.073,
-      "endSeconds": 28.502
+      "startSeconds": 30.836,
+      "endSeconds": 31.231
     },
     {
       "word": "It's",
-      "startSeconds": 28.769,
-      "endSeconds": 28.967
+      "startSeconds": 31.742,
+      "endSeconds": 31.939
     },
     {
       "word": "called",
-      "startSeconds": 29.013,
-      "endSeconds": 29.292
-    },
-    {
-      "word": "a",
-      "startSeconds": 29.327,
-      "endSeconds": 29.35
-    },
-    {
-      "word": "guide",
-      "startSeconds": 29.431,
-      "endSeconds": 30.139
-    },
-    {
-      "word": "A",
-      "startSeconds": 30.383,
-      "endSeconds": 30.465
-    },
-    {
-      "word": "guide",
-      "startSeconds": 30.546,
-      "endSeconds": 30.86
-    },
-    {
-      "word": "doesn't",
-      "startSeconds": 30.895,
-      "endSeconds": 31.185
-    },
-    {
-      "word": "describe",
-      "startSeconds": 31.231,
-      "endSeconds": 31.858
-    },
-    {
-      "word": "the",
-      "startSeconds": 31.893,
-      "endSeconds": 31.963
-    },
-    {
-      "word": "work",
-      "startSeconds": 32.021,
+      "startSeconds": 31.997,
       "endSeconds": 32.346
     },
     {
-      "word": "It",
-      "startSeconds": 32.706,
-      "endSeconds": 32.857
+      "word": "a",
+      "startSeconds": 32.415,
+      "endSeconds": 32.485
     },
     {
-      "word": "constrains",
-      "startSeconds": 32.903,
-      "endSeconds": 33.611
+      "word": "guide",
+      "startSeconds": 32.566,
+      "endSeconds": 33.019
     },
     {
-      "word": "how",
-      "startSeconds": 33.727,
-      "endSeconds": 34.087
+      "word": "A",
+      "startSeconds": 33.484,
+      "endSeconds": 33.576
+    },
+    {
+      "word": "guide",
+      "startSeconds": 33.669,
+      "endSeconds": 33.924
+    },
+    {
+      "word": "doesn't",
+      "startSeconds": 33.948,
+      "endSeconds": 34.203
+    },
+    {
+      "word": "describe",
+      "startSeconds": 34.238,
+      "endSeconds": 34.725
     },
     {
       "word": "the",
-      "startSeconds": 34.203,
-      "endSeconds": 34.273
+      "startSeconds": 34.76,
+      "endSeconds": 34.83
     },
     {
       "word": "work",
-      "startSeconds": 34.331,
-      "endSeconds": 34.517
+      "startSeconds": 34.888,
+      "endSeconds": 35.167
+    },
+    {
+      "word": "It",
+      "startSeconds": 35.701,
+      "endSeconds": 35.828
+    },
+    {
+      "word": "constrains",
+      "startSeconds": 35.875,
+      "endSeconds": 36.42
+    },
+    {
+      "word": "how",
+      "startSeconds": 36.478,
+      "endSeconds": 36.606
+    },
+    {
+      "word": "the",
+      "startSeconds": 36.664,
+      "endSeconds": 36.734
+    },
+    {
+      "word": "work",
+      "startSeconds": 36.78,
+      "endSeconds": 36.955
     },
     {
       "word": "is",
-      "startSeconds": 34.575,
-      "endSeconds": 34.656
+      "startSeconds": 37.013,
+      "endSeconds": 37.094
     },
     {
       "word": "done",
-      "startSeconds": 34.726,
-      "endSeconds": 35.19
+      "startSeconds": 37.152,
+      "endSeconds": 37.535
     },
     {
       "word": "Think",
-      "startSeconds": 35.817,
-      "endSeconds": 36.038
+      "startSeconds": 38.197,
+      "endSeconds": 38.406
     },
     {
       "word": "of",
-      "startSeconds": 36.084,
-      "endSeconds": 36.131
+      "startSeconds": 38.452,
+      "endSeconds": 38.499
     },
     {
       "word": "an",
-      "startSeconds": 36.177,
-      "endSeconds": 36.247
+      "startSeconds": 38.545,
+      "endSeconds": 38.615
     },
     {
       "word": "RFC",
-      "startSeconds": 36.34,
-      "endSeconds": 36.85
-    },
-    {
-      "word": "a",
-      "startSeconds": 37.408,
-      "endSeconds": 37.466
-    },
-    {
-      "word": "migration",
-      "startSeconds": 37.559,
-      "endSeconds": 38.186
-    },
-    {
-      "word": "spec",
-      "startSeconds": 38.267,
-      "endSeconds": 38.638
-    },
-    {
-      "word": "or",
-      "startSeconds": 38.94,
-      "endSeconds": 39.103
-    },
-    {
-      "word": "a",
-      "startSeconds": 39.161,
+      "startSeconds": 38.708,
       "endSeconds": 39.184
     },
     {
+      "word": "a",
+      "startSeconds": 39.753,
+      "endSeconds": 39.822
+    },
+    {
+      "word": "migration",
+      "startSeconds": 39.903,
+      "endSeconds": 40.403
+    },
+    {
+      "word": "spec",
+      "startSeconds": 40.472,
+      "endSeconds": 40.855
+    },
+    {
+      "word": "or",
+      "startSeconds": 41.25,
+      "endSeconds": 41.39
+    },
+    {
+      "word": "a",
+      "startSeconds": 41.424,
+      "endSeconds": 41.448
+    },
+    {
       "word": "coding",
-      "startSeconds": 39.242,
-      "endSeconds": 39.579
+      "startSeconds": 41.517,
+      "endSeconds": 41.831
     },
     {
       "word": "standard",
-      "startSeconds": 39.648,
-      "endSeconds": 40.206
+      "startSeconds": 41.889,
+      "endSeconds": 42.33
     },
     {
       "word": "Every",
-      "startSeconds": 40.798,
-      "endSeconds": 41.088
+      "startSeconds": 43.119,
+      "endSeconds": 43.421
     },
     {
       "word": "agent",
-      "startSeconds": 41.158,
-      "endSeconds": 41.576
+      "startSeconds": 43.491,
+      "endSeconds": 43.816
     },
     {
       "word": "treats",
-      "startSeconds": 41.645,
-      "endSeconds": 41.982
+      "startSeconds": 43.851,
+      "endSeconds": 44.129
     },
     {
       "word": "the",
-      "startSeconds": 42.04,
-      "endSeconds": 42.11
+      "startSeconds": 44.176,
+      "endSeconds": 44.246
     },
     {
       "word": "guide",
-      "startSeconds": 42.168,
-      "endSeconds": 42.563
+      "startSeconds": 44.304,
+      "endSeconds": 44.745
     },
     {
       "word": "as",
-      "startSeconds": 42.597,
-      "endSeconds": 42.702
+      "startSeconds": 44.791,
+      "endSeconds": 44.954
     },
     {
       "word": "the",
-      "startSeconds": 42.76,
-      "endSeconds": 42.841
+      "startSeconds": 45,
+      "endSeconds": 45.07
     },
     {
       "word": "highest",
-      "startSeconds": 42.922,
-      "endSeconds": 43.329
+      "startSeconds": 45.151,
+      "endSeconds": 45.523
     },
     {
       "word": "authority",
-      "startSeconds": 43.375,
-      "endSeconds": 43.944
+      "startSeconds": 45.581,
+      "endSeconds": 46.092
     },
     {
       "word": "If",
-      "startSeconds": 44.501,
-      "endSeconds": 44.641
+      "startSeconds": 46.811,
+      "endSeconds": 46.939
     },
     {
       "word": "the",
-      "startSeconds": 44.687,
-      "endSeconds": 44.757
+      "startSeconds": 46.997,
+      "endSeconds": 47.067
     },
     {
       "word": "plan",
-      "startSeconds": 44.803,
-      "endSeconds": 45.163
+      "startSeconds": 47.125,
+      "endSeconds": 47.415
     },
     {
       "word": "and",
-      "startSeconds": 45.233,
-      "endSeconds": 45.349
+      "startSeconds": 47.473,
+      "endSeconds": 47.543
     },
     {
       "word": "the",
-      "startSeconds": 45.395,
-      "endSeconds": 45.465
+      "startSeconds": 47.578,
+      "endSeconds": 47.647
     },
     {
       "word": "guide",
-      "startSeconds": 45.523,
-      "endSeconds": 45.895
+      "startSeconds": 47.705,
+      "endSeconds": 47.984
     },
     {
       "word": "disagree",
-      "startSeconds": 45.941,
-      "endSeconds": 46.661
+      "startSeconds": 48.019,
+      "endSeconds": 48.669
     },
     {
       "word": "the",
-      "startSeconds": 46.928,
-      "endSeconds": 47.021
+      "startSeconds": 49.075,
+      "endSeconds": 49.18
     },
     {
       "word": "guide",
-      "startSeconds": 47.09,
-      "endSeconds": 47.497
+      "startSeconds": 49.238,
+      "endSeconds": 49.516
     },
     {
       "word": "wins",
-      "startSeconds": 47.543,
-      "endSeconds": 48.159
+      "startSeconds": 49.563,
+      "endSeconds": 49.981
     }
   ]
 }

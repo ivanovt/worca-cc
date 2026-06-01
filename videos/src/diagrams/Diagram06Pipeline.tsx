@@ -24,6 +24,7 @@ import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { Arrow, Node, type NodeTint } from "./primitives";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 const STAGES: Array<{ label: string; sub: string; tint: NodeTint }> = [
@@ -48,12 +49,45 @@ export const Diagram06Pipeline: React.FC<DiagramProps> = () => {
   const frame = useCurrentFrame();
   const ease = Easing.bezier(...theme.easeOut);
 
-  // Reveal cadence
-  const FIRST = 30;
-  const STRIDE = 60; // 2s per stage @ 30fps
+  // Each stage cues to its spoken name. The script says "plan reviewer"
+  // before the standalone "reviewer", so the Reviewer stage uses
+  // occurrence 1 to skip past that.
+  const FALLBACK_FIRST = 30;
+  const FALLBACK_STRIDE = 60;
+  const stageStarts = [
+    cueFrame(2, 6, "planner", {
+      fallback: FALLBACK_FIRST + 0 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 6, "coordinator", {
+      fallback: FALLBACK_FIRST + 1 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 6, "implementer", {
+      fallback: FALLBACK_FIRST + 2 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 6, "tester", {
+      fallback: FALLBACK_FIRST + 3 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 6, "reviewer", {
+      fallback: FALLBACK_FIRST + 4 * FALLBACK_STRIDE,
+      occurrence: 1, // skip "plan reviewer"
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 6, "guardian", {
+      fallback: FALLBACK_FIRST + 5 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(2, 6, "learner", {
+      fallback: FALLBACK_FIRST + 6 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+  ];
 
-  const reveals = STAGES.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
+  const reveals = stageStarts.map((startFrame) =>
+    useReveal({ startFrame }),
   );
 
   const totalWidth = NODE_W * STAGES.length + GAP * (STAGES.length - 1);
@@ -63,16 +97,20 @@ export const Diagram06Pipeline: React.FC<DiagramProps> = () => {
   const nodeRight = (i: number) => nodeLeft(i) + NODE_W;
   const nodeCenter = (i: number) => nodeLeft(i) + NODE_W / 2;
 
-  // Beads — drop below the row, between Coordinator (i=1) and Implementer
-  // (i=2). Each bead pops on with a small overshoot one after another, just
-  // before the Implementer card lands.
-  const beadsStart = FIRST + 1.5 * STRIDE;
+  // Beads pop below the row when the narration says "beads".
+  const beadsStart = cueFrame(2, 6, "beads", {
+    fallback: stageStarts[2] - 10,
+    offsetFrames: -4,
+  });
   const beadX = (nodeRight(1) + nodeLeft(2)) / 2;
   const beadY = nodeCenterY + 130;
 
-  // PR badge — emerges down-right of Guardian.
+  // PR badge emerges from Guardian when the narration says "pull".
   const prReveal = useReveal({
-    startFrame: FIRST + 5 * STRIDE + 18,
+    startFrame: cueFrame(2, 6, "pull", {
+      fallback: stageStarts[5] + 20,
+      offsetFrames: -4,
+    }),
     translateY: 20,
   });
 
@@ -86,7 +124,7 @@ export const Diagram06Pipeline: React.FC<DiagramProps> = () => {
     >
       {/* Arrows between stages */}
       {STAGES.slice(0, -1).map((_, i) => {
-        const arrowStart = FIRST + (i + 1) * STRIDE - 6;
+        const arrowStart = stageStarts[i + 1] + 4;
         const elapsed = Math.max(0, frame - arrowStart);
         const visible = elapsed > 0 ? 1 : 0;
         return (

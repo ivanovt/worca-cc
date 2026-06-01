@@ -9,7 +9,7 @@
  *   │  src/  │ ──┐    ●───●───●               │Agent │
  *   │  *.ts  │   │    │ \ │ / │   ◄────────── │      │
  *   └────────┘   ├─►  ●───●───●     query     └──────┘
- *               graphify · CRG
+ *               graphify · Code Review Graph
  */
 
 import React from "react";
@@ -165,7 +165,7 @@ export const Diagram05Graph: React.FC<DiagramProps> = () => {
       >
         graphify
         <br />
-        crg
+        code review graph
       </div>
 
       {/* Graph SVG */}

@@ -18,6 +18,7 @@ import { useCurrentFrame } from "remotion";
 import { theme } from "../theme";
 import { Arrow, Node } from "./primitives";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 const STEPS = [
@@ -36,14 +37,30 @@ const ARROW_INSET = 6;       // tiny gap between node edge and arrow
 export const Diagram01Orchestrator: React.FC<DiagramProps> = () => {
   const frame = useCurrentFrame();
 
-  // Bullet 1 narration is ~17s. Scene lead-in is 24f, so we land step 1 at
-  // frame 28 (~0.9s after scene start) and stride ~2.5s between steps.
-  const FIRST = 28;
-  const STRIDE = 75;
+  // Each step is cued to its narration word. Falls back to fixed strides
+  // if there's no audio yet.
+  const FALLBACK_FIRST = 28;
+  const FALLBACK_STRIDE = 75;
+  const stepStarts = [
+    cueFrame(1, 1, "design", {
+      fallback: FALLBACK_FIRST,
+      offsetFrames: -4,
+    }),
+    cueFrame(1, 1, "implements", {
+      fallback: FALLBACK_FIRST + FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(1, 1, "tests", {
+      fallback: FALLBACK_FIRST + 2 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+    cueFrame(1, 1, "review", {
+      fallback: FALLBACK_FIRST + 3 * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
+  ];
 
-  const reveals = STEPS.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
-  );
+  const reveals = stepStarts.map((startFrame) => useReveal({ startFrame }));
 
   // Layout in top-left coords inside the diagram container.
   const totalWidth = NODE_W * STEPS.length + GAP * (STEPS.length - 1);
@@ -64,7 +81,8 @@ export const Diagram01Orchestrator: React.FC<DiagramProps> = () => {
       {/* Arrows between consecutive steps. Each arrow fades on as the
           next step lands; the dashes then flow at a steady cadence. */}
       {STEPS.slice(0, -1).map((_, i) => {
-        const arrowStart = FIRST + (i + 1) * STRIDE - 6;
+        // Arrow appears 4f after the destination step has landed.
+        const arrowStart = stepStarts[i + 1] + 4;
         const elapsed = Math.max(0, frame - arrowStart);
         const visible = elapsed > 0 ? 1 : 0;
         return (

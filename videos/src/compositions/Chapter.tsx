@@ -12,7 +12,7 @@ import { AbsoluteFill, Sequence } from "remotion";
 
 import { ChapterCard } from "../scenes/ChapterCard";
 import { BulletScene } from "../scenes/BulletScene";
-import { chapters, totalBullets } from "../lib/script";
+import { chapters } from "../lib/script";
 import { chapterCardFrames, sceneFrames } from "../lib/timing";
 
 export interface ChapterProps {
@@ -32,7 +32,6 @@ export const Chapter: React.FC<ChapterProps> = ({ chapterNumber = 1 }) => {
     const frames = sceneFrames(chapterNumber, scene.id, scene.words);
     const from = cursor;
     cursor += frames;
-    const label = `${String(scene.id).padStart(2, "0")} / ${totalBullets}`;
     return (
       <Sequence
         key={scene.id}
@@ -41,11 +40,7 @@ export const Chapter: React.FC<ChapterProps> = ({ chapterNumber = 1 }) => {
         layout="none"
         name={`#${scene.id} — ${scene.title.slice(0, 40)}`}
       >
-        <BulletScene
-          scene={scene}
-          sceneLabel={label}
-          chapterNumber={chapterNumber}
-        />
+        <BulletScene scene={scene} chapterNumber={chapterNumber} />
       </Sequence>
     );
   });
