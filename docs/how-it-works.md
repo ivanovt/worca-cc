@@ -78,7 +78,7 @@ Let's get specific about what you can do in the UI. You can read the generated p
 
 ## Video 3 — Worca in your workflow
 
-*Bullets 13–17 · ~3.2 min raw narration at 150 wpm*
+*Bullets 13–17 · ~3.3 min raw narration at 150 wpm*
 
 ### 13. Each run lives in its own git worktree, so parallel runs never collide
 
@@ -92,7 +92,7 @@ You can shape worca to your team without forking it. Almost every part of a pipe
 
 ### 15. Built-in templates, and your own
 
-worca ships with a set of built-in pipeline templates. They cover the common shapes of work. There's a full feature pipeline with planning, review, and testing. There's a bug-fix pipeline that skips planning. There's a docs-only pipeline. And several more. Each template is a complete recipe. Stage list. Agent prompts. Loop budgets. Model assignments. Most of the time, picking the right template is all you need. When the built-ins don't fit, you can write your own. Today this is done through settings. A richer template-authoring experience is coming to the UI.
+worca ships with a set of built-in pipeline templates. They cover the common shapes of work. There's a full feature pipeline with planning, review, and testing. A bug-fix pipeline skips planning and jumps straight to the implementer. An investigate pipeline produces a plan without changing any code. A quick-fix pipeline drops review and the PR step for trivial changes. And several more cover other shapes of work. Each template is a complete recipe. Stage list. Agent prompts. Loop budgets. Model assignments. Most of the time, picking the right template is all you need. When the built-ins don't fit, you can write your own. Today this is done through settings. A richer template-authoring experience is coming to the UI.
 
 ### 16. Events out, control in
 
@@ -110,7 +110,7 @@ worca can push run updates into the chat tools your team already uses. Set up an
 
 | Video | Title | Bullets | Words | Raw narration |
 |---:|---|---|---:|---:|
-| 1 | Introducing worca | 1–5 | 388 | 2.6 min |
+| 1 | Introducing worca | 1–5 | 392 | 2.6 min |
 | 2 | Inside a worca run | 6–12 | 579 | 3.9 min |
-| 3 | Worca in your workflow | 13–17 | 473 | 3.2 min |
-| | **Total** | **17** | **1440** | **9.6 min** |
+| 3 | Worca in your workflow | 13–17 | 499 | 3.3 min |
+| | **Total** | **17** | **1470** | **9.8 min** |

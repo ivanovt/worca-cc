@@ -18,6 +18,7 @@ import React from "react";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import { Arrow, Node } from "./primitives";
 import type { DiagramProps } from "./registry";
 
@@ -32,9 +33,26 @@ const FLEET_X = TILE_W + TILE_GAP;
 const WORK_X = 2 * (TILE_W + TILE_GAP);
 
 export const Diagram13Modes: React.FC<DiagramProps> = () => {
-  const singleReveal = useReveal({ startFrame: 18 });
-  const fleetReveal = useReveal({ startFrame: 100 });
-  const workReveal = useReveal({ startFrame: 200 });
+  // Script: "Each run lives in its own git worktree. … The first is
+  //          fleet mode. … The second is workspace mode."
+  const singleReveal = useReveal({
+    startFrame: cueFrame(3, 13, "worktree", {
+      fallback: 18,
+      offsetFrames: -6,
+    }),
+  });
+  const fleetReveal = useReveal({
+    startFrame: cueFrame(3, 13, "fleet", {
+      fallback: 100,
+      offsetFrames: -6,
+    }),
+  });
+  const workReveal = useReveal({
+    startFrame: cueFrame(3, 13, "workspace", {
+      fallback: 200,
+      offsetFrames: -6,
+    }),
+  });
 
   return (
     <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>

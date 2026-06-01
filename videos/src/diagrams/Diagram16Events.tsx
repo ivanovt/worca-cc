@@ -13,13 +13,17 @@ import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { Arrow, Node } from "./primitives";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
-const EVENT_CHIPS = [
-  "stage.started",
-  "bead.completed",
-  "test.passed",
-  "cost.tick",
+// Each chip is the event name (shown on screen) and the narration cue
+// word that triggers its reveal. Script (§16): "Stage starts. Bead
+// completions. Test results. Cost ticks."
+const EVENT_CHIPS: Array<{ label: string; cue: string }> = [
+  { label: "stage.started", cue: "stage" },
+  { label: "bead.completed", cue: "bead" },
+  { label: "test.passed", cue: "test" },
+  { label: "cost.tick", cue: "cost" },
 ];
 
 const SUBS = [
@@ -48,14 +52,33 @@ const CONTROL_X = 0;
 export const Diagram16Events: React.FC<DiagramProps> = () => {
   const pipelineReveal = useReveal({ startFrame: 14 });
 
-  const chipReveals = EVENT_CHIPS.map((_, i) =>
-    useReveal({ startFrame: 50 + i * 18 }),
+  // Event chips cued to their respective narration words.
+  const chipReveals = EVENT_CHIPS.map((c, i) =>
+    useReveal({
+      startFrame: cueFrame(3, 16, c.cue, {
+        fallback: 50 + i * 18,
+        offsetFrames: -4,
+      }),
+    }),
   );
 
+  // Subscribers appear when "subscribe" is said (covers both Webhook + Chat).
+  const subscribeStart = cueFrame(3, 16, "subscribe", {
+    fallback: 140,
+    offsetFrames: -6,
+  });
   const subReveals = SUBS.map((_, i) =>
-    useReveal({ startFrame: 140 + i * 28 }),
+    useReveal({ startFrame: subscribeStart + i * 16 }),
   );
-  const controlReveal = useReveal({ startFrame: 240 });
+
+  // Control webhook box + inbound arrow land on "control".
+  const controlReveal = useReveal({
+    startFrame: cueFrame(3, 16, "control", {
+      fallback: 240,
+      occurrence: 1, // skip the "Control decisions" event-list mention
+      offsetFrames: -6,
+    }),
+  });
 
   return (
     <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>
@@ -86,7 +109,7 @@ export const Diagram16Events: React.FC<DiagramProps> = () => {
         const y = PIPELINE_CENTER_Y + Math.sin(angle) * r * 0.55 - 18;
         return (
           <div
-            key={chip}
+            key={chip.label}
             style={{
               position: "absolute",
               left: x,
@@ -103,7 +126,7 @@ export const Diagram16Events: React.FC<DiagramProps> = () => {
               transform: chipReveals[i].transform,
             }}
           >
-            {chip}
+            {chip.label}
           </div>
         );
       })}

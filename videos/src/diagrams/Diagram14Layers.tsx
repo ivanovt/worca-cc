@@ -12,6 +12,7 @@ import React from "react";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 const OUTER_W = 760;
@@ -22,9 +23,27 @@ const INNER_W = 380;
 const INNER_H = 220;
 
 export const Diagram14Layers: React.FC<DiagramProps> = () => {
-  const outerReveal = useReveal({ startFrame: 20 });
-  const middleReveal = useReveal({ startFrame: 90 });
-  const innerReveal = useReveal({ startFrame: 160 });
+  // Script: "The template picks the overall shape. Per-agent overrides
+  //          tune individual stages. And the guide you attach at run
+  //          time enforces a spec that nothing else can override."
+  const outerReveal = useReveal({
+    startFrame: cueFrame(3, 14, "template", {
+      fallback: 20,
+      offsetFrames: -6,
+    }),
+  });
+  const middleReveal = useReveal({
+    startFrame: cueFrame(3, 14, "overrides", {
+      fallback: 90,
+      offsetFrames: -6,
+    }),
+  });
+  const innerReveal = useReveal({
+    startFrame: cueFrame(3, 14, "guide", {
+      fallback: 160,
+      offsetFrames: -6,
+    }),
+  });
 
   return (
     <div style={{ position: "relative", width: OUTER_W, height: OUTER_H }}>

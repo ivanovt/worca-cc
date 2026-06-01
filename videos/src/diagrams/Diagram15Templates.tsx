@@ -16,6 +16,7 @@ import React from "react";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 interface Template {
@@ -23,34 +24,40 @@ interface Template {
   id: string;
   description: string;
   stages: string[];
+  /** Cue word from §15 narration that triggers this card's reveal. */
+  cue: string;
   /** Whether the card should be styled as a built-in (mint border on hover)
    *  or as the "yours" custom slot. */
   custom?: boolean;
 }
 
-// Verified against src/worca/templates/*/template.json. The "yours"
-// card stands in for the fact that any of these can be forked or written
-// from scratch.
+// Verified against src/worca/templates/*/template.json. The script
+// introduces them in this exact order: feature → bug-fix → investigate
+// → quick-fix → "and several more".
 const TEMPLATES: Template[] = [
   {
     id: "feature",
     description: "Full pipeline with plan review and learn",
     stages: ["plan", "review-plan", "coord", "impl", "test", "review", "pr", "learn"],
+    cue: "feature",
   },
   {
     id: "bugfix",
     description: "Opus investigates root cause, focused fix",
     stages: ["plan", "coord", "impl", "test", "review", "pr"],
+    cue: "skips",
   },
   {
     id: "investigate",
     description: "Analysis only — no implementation changes",
     stages: ["plan", "pr"],
+    cue: "investigate",
   },
   {
     id: "quick-fix",
     description: "Minimal — no test, review, or PR",
     stages: ["plan", "impl"],
+    cue: "drops",
   },
 ];
 
@@ -66,12 +73,23 @@ const TOTAL_W = CARD_W * 2 + GAP;
 const TOTAL_H = CARD_H * 2 + GAP + 70; // extra row for OTHERS strip
 
 export const Diagram15Templates: React.FC<DiagramProps> = () => {
-  const FIRST = 20;
-  const STRIDE = 60;
-  const reveals = TEMPLATES.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
+  const FALLBACK_FIRST = 20;
+  const FALLBACK_STRIDE = 60;
+  const reveals = TEMPLATES.map((t, i) =>
+    useReveal({
+      startFrame: cueFrame(3, 15, t.cue, {
+        fallback: FALLBACK_FIRST + i * FALLBACK_STRIDE,
+        offsetFrames: -6,
+      }),
+    }),
   );
-  const othersReveal = useReveal({ startFrame: FIRST + TEMPLATES.length * STRIDE });
+  // "AND MORE →" strip lands on "several" in "And several more cover…"
+  const othersReveal = useReveal({
+    startFrame: cueFrame(3, 15, "several", {
+      fallback: FALLBACK_FIRST + TEMPLATES.length * FALLBACK_STRIDE,
+      offsetFrames: -6,
+    }),
+  });
 
   return (
     <div style={{ position: "relative", width: TOTAL_W, height: TOTAL_H }}>

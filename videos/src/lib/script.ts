@@ -145,8 +145,8 @@ const v3: BulletScene[] = [
     id: 15,
     title: "Built-in templates, and your own",
     body:
-      "worca ships with a set of built-in pipeline templates. They cover the common shapes of work. There's a full feature pipeline with planning, review, and testing. There's a bug-fix pipeline that skips planning. There's a docs-only pipeline. And several more. Each template is a complete recipe. Stage list. Agent prompts. Loop budgets. Model assignments. Most of the time, picking the right template is all you need. When the built-ins don't fit, you can write your own. Today this is done through settings. A richer template-authoring experience is coming to the UI.",
-    words: 91,
+      "worca ships with a set of built-in pipeline templates. They cover the common shapes of work. There's a full feature pipeline with planning, review, and testing. A bug-fix pipeline skips planning and jumps straight to the implementer. An investigate pipeline produces a plan without changing any code. A quick-fix pipeline drops review and the PR step for trivial changes. And several more cover other shapes of work. Each template is a complete recipe. Stage list. Agent prompts. Loop budgets. Model assignments. Most of the time, picking the right template is all you need. When the built-ins don't fit, you can write your own. Today this is done through settings. A richer template-authoring experience is coming to the UI.",
+    words: 117,
   },
   {
     id: 16,

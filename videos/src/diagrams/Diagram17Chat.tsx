@@ -11,6 +11,7 @@ import React from "react";
 import { theme } from "../theme";
 import { fonts } from "../fonts";
 import { useReveal } from "./useReveal";
+import { cueFrame } from "../lib/cue";
 import type { DiagramProps } from "./registry";
 
 interface Msg {
@@ -18,13 +19,20 @@ interface Msg {
   text: string;
   /** Optional accent tint for the message bubble border. */
   tone?: "info" | "success" | "warn" | "error";
+  /** Cue word from §17 narration that triggers this message. */
+  cue: string;
+  /** 0-based occurrence index when the cue word appears more than once. */
+  cueOccurrence?: number;
 }
 
+// Script (§17): "A plan is ready. A pull request has been opened. The
+// run has paused. A circuit breaker tripped. … those notifications come
+// with inline actions."
 const MESSAGES: Msg[] = [
-  { icon: "📋", text: "Plan is ready for review", tone: "info" },
-  { icon: "🚀", text: "PR opened: #143 (auth-refactor)", tone: "success" },
-  { icon: "⏸", text: "Run paused at the test gate", tone: "warn" },
-  { icon: "⚠", text: "Circuit breaker tripped on retries", tone: "error" },
+  { icon: "📋", text: "Plan is ready for review", tone: "info", cue: "plan" },
+  { icon: "🚀", text: "PR opened: #143 (auth-refactor)", tone: "success", cue: "pull" },
+  { icon: "⏸", text: "Run paused at the test gate", tone: "warn", cue: "paused" },
+  { icon: "⚠", text: "Circuit breaker tripped on retries", tone: "error", cue: "circuit" },
 ];
 
 const ACTIONS = ["Pause", "Resume", "Stop"];
@@ -45,13 +53,24 @@ const TONE_COLOR: Record<NonNullable<Msg["tone"]>, string> = {
 export const Diagram17Chat: React.FC<DiagramProps> = () => {
   const panelReveal = useReveal({ startFrame: 14 });
 
-  const FIRST = 60;
-  const STRIDE = 80;
-  const msgReveals = MESSAGES.map((_, i) =>
-    useReveal({ startFrame: FIRST + i * STRIDE }),
+  const FALLBACK_FIRST = 60;
+  const FALLBACK_STRIDE = 80;
+  const msgReveals = MESSAGES.map((m, i) =>
+    useReveal({
+      startFrame: cueFrame(3, 17, m.cue, {
+        fallback: FALLBACK_FIRST + i * FALLBACK_STRIDE,
+        occurrence: m.cueOccurrence ?? 0,
+        offsetFrames: -4,
+      }),
+    }),
   );
+  // Action buttons land on "actions" in "those notifications come with
+  // inline actions".
   const actionsReveal = useReveal({
-    startFrame: FIRST + MESSAGES.length * STRIDE,
+    startFrame: cueFrame(3, 17, "actions", {
+      fallback: FALLBACK_FIRST + MESSAGES.length * FALLBACK_STRIDE,
+      offsetFrames: -4,
+    }),
   });
 
   return (
