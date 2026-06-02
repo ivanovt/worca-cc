@@ -5,7 +5,7 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { startServer } from './fixtures.js';
+import { startServer, expandAllTierSections } from './fixtures.js';
 
 const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 
@@ -90,6 +90,7 @@ test('set as default button updates star badge on template card', async ({ page 
 
     // Navigate to pipelines page
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
 
     // Wait for templates to load - wait for the templates to be fetched and cards to appear
     const cards = page.locator('.template-card');
@@ -159,6 +160,7 @@ test('setting default template pre-selects it in new run dropdown', async ({ pag
 
     // Navigate to pipelines and set beta as default
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card').first()).toBeAttached({ timeout: 15000 });
     await expect(page.locator('.template-card')).toHaveCount(3, { timeout: 5000 });
 
@@ -219,6 +221,7 @@ test('switching default template from one to another updates badges correctly', 
 
     // Navigate to pipelines and set first as default
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card')).toHaveCount(2);
 
     let apiResponse = page.waitForResponse(
@@ -296,6 +299,7 @@ test('built-in templates do not show Set Default button', async ({ page }) => {
     createTestTemplate(ctx.dir, 'project-editable', 'Project Editable Template');
 
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card').first()).toBeAttached({ timeout: 15000 });
     await expect(page.locator('.template-card')).toHaveCount(2, { timeout: 5000 });
 
@@ -333,6 +337,7 @@ test('invalid template ID shows error toast when setting default', async ({ page
 
     // Navigate to templates
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card')).toHaveCount(1);
 
     // Intercept the PUT request and modify the body to send an invalid tid.
@@ -399,6 +404,7 @@ test('new run dropdown shows star annotation for newly-set default template', as
 
     // Now set it as default
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card')).toHaveCount(1);
     const apiResponse = page.waitForResponse(
       (res) =>

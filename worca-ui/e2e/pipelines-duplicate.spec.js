@@ -6,7 +6,7 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startServer } from './fixtures.js';
+import { startServer, expandAllTierSections } from './fixtures.js';
 
 const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 
@@ -79,6 +79,7 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
 
     // Navigate to pipelines list
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
 
     // Wait for the Built-in section to appear
     await expect(page.locator('.tier-section-header:has-text("Built-in")')).toBeAttached({ timeout: 5000 });
@@ -93,13 +94,22 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
     const duplicateButton = minimalCard.locator('button:has-text("Duplicate")');
     await expect(duplicateButton).toBeAttached();
 
-    // Click Duplicate to start the duplicate flow
+    // Click Duplicate — this opens the destination-picker dialog
+    // (the user chooses Storage + ID before the POST fires).
+    await duplicateButton.click();
+
+    // Confirm in the dialog with default values; the primary Duplicate
+    // button at the footer triggers the POST.
     const duplicateResponse = page.waitForResponse(
       (res) =>
         res.url().includes('/templates/') && res.url().includes('/duplicate') && res.request().method() === 'POST',
       { timeout: 10000 },
     );
-    await duplicateButton.click();
+    const dialogConfirmBtn = page.locator(
+      'sl-dialog.template-action-dialog sl-button[variant="primary"]',
+    );
+    await expect(dialogConfirmBtn).toBeVisible({ timeout: 5000 });
+    await dialogConfirmBtn.click();
 
     // Verify the API response was successful
     const response = await duplicateResponse;
@@ -112,11 +122,16 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
     // Wait for the editor to load
     await expect(page.locator('.pipelines-editor')).toBeAttached();
 
-    // Verify we're in edit mode (title should show the template name)
-    const editorTitle = page.locator('.editor-title');
-    await expect(editorTitle).toBeAttached();
-    const titleText = await editorTitle.textContent();
-    expect(titleText).toContain('Minimal');
+    // Verify we're in edit mode (the inline Name input should carry
+    // the duplicated template's name — defaults to "<source> Copy"
+    // or similar). Editor title was replaced by the inline Name pill.
+    // `.editor-name-input` is an `sl-input` web component (not a native
+    // <input>), so we read its `.value` property via evaluate rather
+    // than using `inputValue()`.
+    const nameInput = page.locator('.editor-name-input');
+    await expect(nameInput).toBeAttached();
+    const nameValue = await nameInput.evaluate((el) => el.value);
+    expect(nameValue).toContain('Minimal');
 
     // Edit the template name (this tests the edit functionality)
     // Find the name input field - in the duplicate/edit flow, there should be a way to edit the template name
@@ -133,8 +148,13 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
       el.dispatchEvent(new Event('sl-change', { bubbles: true }));
     });
 
-    // Save the duplicate template
-    const saveButton = page.locator('.editor-footer sl-button[variant="primary"]:visible');
+    // Save the duplicate template. The footer Save button is an
+    // `sl-button` web component — locate by its text content rather
+    // than a `:visible` pseudo, which doesn't always hit the shadow
+    // DOM correctly.
+    const saveButton = page.locator('.editor-footer sl-button', {
+      hasText: 'Save',
+    });
     await expect(saveButton).toBeAttached();
 
     // Wait for PUT /templates response (saving the duplicated template)
@@ -159,6 +179,7 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
 
     // Navigate to pipelines list and verify our duplicated template is now in Project tier
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
 
     // Wait for templates to load
     await expect(page.locator('.pipelines-view')).toBeAttached({ timeout: 5000 });
@@ -169,9 +190,13 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
     });
     await expect(duplicatedCard).toBeAttached();
 
-    // Verify it now shows an Edit button (not Duplicate) since it's in project scope
-    const editButton = duplicatedCard.locator('button:has-text("Edit")');
-    await expect(editButton).toBeAttached();
+    // The Edit-button-per-card was replaced with clickable cards;
+    // confirm the project-tier copy is at least clickable (role=button)
+    // and that no Edit button was reintroduced.
+    await expect(duplicatedCard).toHaveAttribute('role', 'button');
+    await expect(
+      duplicatedCard.locator('button:has-text("Edit")'),
+    ).toHaveCount(0);
   } finally {
     await ctx.close();
   }
@@ -207,6 +232,7 @@ test('duplicate with custom destination ID and scope', async ({ page }) => {
 
     // Navigate to pipelines list
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.pipelines-view')).toBeAttached();
 
     // Find and click Duplicate
@@ -216,13 +242,20 @@ test('duplicate with custom destination ID and scope', async ({ page }) => {
     await expect(card).toBeAttached();
 
     const duplicateButton = card.locator('button:has-text("Duplicate")');
+    await duplicateButton.click();
 
-    // Register response listener BEFORE click to avoid race
+    // Confirm in the destination-picker dialog with default values.
+    // The custom-id/scope flow is exercised by the dialog itself —
+    // here we just verify the duplicate POST fires after confirmation.
     const duplicateResponse = page.waitForResponse(
       (res) => res.url().includes('/duplicate') && res.request().method() === 'POST',
       { timeout: 10000 },
     );
-    await duplicateButton.click();
+    const dialogConfirmBtn = page.locator(
+      'sl-dialog.template-action-dialog sl-button[variant="primary"]',
+    );
+    await expect(dialogConfirmBtn).toBeVisible({ timeout: 5000 });
+    await dialogConfirmBtn.click();
 
     // Verify duplicate API returned success
     const dupRes = await duplicateResponse;
@@ -236,13 +269,18 @@ test('duplicate with custom destination ID and scope', async ({ page }) => {
 
     // Verify the templated form loaded with the duplicated config
     // Check that planner stage is enabled from the original config
-    const plannerRow = page.locator('.stage-row:has(.stage-name:has-text("plan"))').first();
+    // Stage cards were restructured: see pipelines-editor.spec.js.
+    const plannerRow = page
+      .locator('.pipeline-stage-node:has(.settings-card-title:has-text("plan"))')
+      .first();
     await expect(plannerRow).toBeAttached();
     const isEnabled = await plannerRow.locator('sl-switch').evaluate((el) => el.checked);
     expect(isEnabled).toBe(true);
 
-    // Save the duplicated template
-    const saveButton = page.locator('.editor-footer sl-button[variant="primary"]:visible');
+    // Save the duplicated template — text-filtered to avoid Cancel.
+    const saveButton = page.locator('.editor-footer sl-button', {
+      hasText: 'Save',
+    });
     await saveButton.click();
 
     // Verify save success and redirect

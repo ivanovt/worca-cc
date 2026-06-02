@@ -6,7 +6,7 @@
 import { test, expect } from '@playwright/test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { startServer, seedRun } from './fixtures.js';
+import { startServer, seedRun, expandAllTierSections } from './fixtures.js';
 
 const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 
@@ -66,6 +66,7 @@ test('delete button shows guard dialog when runs are in-flight using the templat
     });
 
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
     // Click the Delete button on the template card
@@ -120,6 +121,7 @@ test('confirming guard dialog on delete actually deletes the template', async ({
     });
 
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
     const card = page.locator(
@@ -191,11 +193,14 @@ test('edit button shows guard dialog when runs are in-flight using the template'
     });
 
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
+    // Cards are now whole-clickable surfaces — the per-card Edit
+    // button was removed. Click the card itself to fire the edit
+    // path (and trigger the guard dialog when runs are in flight).
     const card = page.locator('.template-card:has(.run-card-title:has-text("Busy Template"))');
-    const editBtn = card.locator('button:has-text("Edit")');
-    await editBtn.click();
+    await card.click();
 
     // Guard dialog should appear
     const dialog = page.locator('sl-dialog.template-guard-dialog');
@@ -243,6 +248,7 @@ test('no guard dialog when template has no in-flight runs', async ({ page }) => 
     });
 
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
     const card = page.locator('.template-card:has(.run-card-title:has-text("Idle Template"))');
@@ -307,6 +313,7 @@ test('guard dialog only counts runs using the specific template', async ({ page 
     });
 
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
     await expect(page.locator('.template-card').first()).toBeAttached({ timeout: 10000 });
 
     const card = page.locator('.template-card:has(.run-card-title:has-text("Target Template"))');

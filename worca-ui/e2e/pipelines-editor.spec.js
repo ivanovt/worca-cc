@@ -46,14 +46,22 @@ test('create template from blank', async ({ page }) => {
 
     // Wait for editor to load with a longer timeout
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
-    await expect(page.locator('.editor-title')).toHaveText('New Template', { timeout: 5000 });
+    // Name lives in the inline editable Name pill (sl-input), not a
+    // static .editor-title heading. New templates default the value
+    // to "New Template" via _initEditTemplate().
+    await expect(page.locator('.editor-name-input')).toHaveValue('New Template', { timeout: 5000 });
 
     // Verify the editor mode toggle is present
     const formBtn = page.locator('.editor-mode-toggle sl-button:first-child');
     await expect(formBtn).toBeAttached({ timeout: 5000 });
 
     // Toggle a stage (e.g., disable plan_review stage)
-    const planReviewRow = page.locator('.stage-row:has(.stage-name:has-text("plan_review"))');
+    // Stage cards were restructured during the editor redesign — the
+    // outer node is `.pipeline-stage-node`, the name lives in
+    // `.settings-card-title`, and the toggle is `sl-switch#stage-<id>-enabled`.
+    const planReviewRow = page.locator(
+      '.pipeline-stage-node:has(.settings-card-title:has-text("plan_review"))',
+    );
     await expect(planReviewRow).toBeAttached();
     const planReviewSwitch = planReviewRow.locator('sl-switch');
     await planReviewSwitch.click();
@@ -77,10 +85,11 @@ test('create template from blank', async ({ page }) => {
     const formModeBtn = page.locator('.editor-mode-toggle sl-button:first-child');
     await formModeBtn.click();
 
-    // Click Save button
-    const saveButton = page.locator(
-      '.editor-footer sl-button[variant="primary"]:visible',
-    );
+    // Click Save button — disambiguate from the sibling Cancel
+    // button by text content (both are `sl-button` web components).
+    const saveButton = page.locator('.editor-footer sl-button', {
+      hasText: 'Save',
+    });
     await expect(saveButton).toBeAttached();
 
     // Wait for POST /api/templates response and redirect to pipelines list
@@ -161,10 +170,10 @@ test('edit existing template', async ({ page }) => {
       el.dispatchEvent(new Event('sl-input', { bubbles: true }));
     });
 
-    // Save changes
-    const saveButton = page.locator(
-      '.editor-footer sl-button[variant="primary"]:visible',
-    );
+    // Save changes — text-filtered to avoid matching the Cancel sibling.
+    const saveButton = page.locator('.editor-footer sl-button', {
+      hasText: 'Save',
+    });
     const apiResponse = page.waitForResponse(
       (res) =>
         res.url().includes('/templates/test-edit') &&
@@ -243,7 +252,12 @@ test('JSON toggle round-trip preserves edits', async ({ page }) => {
 
     // Verify changes persisted to form fields
     // Check plan_review is now enabled
-    const planReviewRow = page.locator('.stage-row:has(.stage-name:has-text("plan_review"))');
+    // Stage cards were restructured during the editor redesign — the
+    // outer node is `.pipeline-stage-node`, the name lives in
+    // `.settings-card-title`, and the toggle is `sl-switch#stage-<id>-enabled`.
+    const planReviewRow = page.locator(
+      '.pipeline-stage-node:has(.settings-card-title:has-text("plan_review"))',
+    );
     await expect(planReviewRow).toBeAttached();
     const isChecked = await planReviewRow.locator('sl-switch').evaluate((el) => el.checked);
     expect(isChecked).toBe(true);
@@ -303,10 +317,10 @@ test('Save shows validation error for invalid JSON', async ({ page }) => {
       el.dispatchEvent(new Event('sl-input', { bubbles: true }));
     });
 
-    // Click Save button
-    const saveButton = page.locator(
-      '.editor-footer sl-button[variant="primary"]:visible',
-    );
+    // Click Save button — text-filtered to avoid the Cancel sibling.
+    const saveButton = page.locator('.editor-footer sl-button', {
+      hasText: 'Save',
+    });
     await saveButton.click();
 
     // Expect validation error toast (JSON.parse failure) — use first() to
