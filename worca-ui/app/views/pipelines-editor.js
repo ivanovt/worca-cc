@@ -992,16 +992,19 @@ export function pipelinesEditorView(state, options) {
     <div class="pipelines-editor">
       <div class="editor-subheader">
         <div class="editor-subheader-title-group">
-          <sl-input
-            class="editor-name-input"
-            size="small"
-            placeholder="Display name"
-            .value=${nameDraft || ''}
-            ?disabled=${isBuiltinTier}
-            @sl-input=${onNameInput}
-          ></sl-input>
-          <span class="editor-id-badge" title="Template ID">
-            <span class="editor-id-label">ID:</span>
+          <span class="editor-field-pill editor-name-pill" title="Template name">
+            <span class="editor-field-pill-label">Name:</span>
+            <sl-input
+              class="editor-name-input"
+              size="small"
+              placeholder="Display name"
+              .value=${nameDraft || ''}
+              ?disabled=${isBuiltinTier}
+              @sl-input=${onNameInput}
+            ></sl-input>
+          </span>
+          <span class="editor-field-pill editor-id-badge" title="Template ID">
+            <span class="editor-field-pill-label">ID:</span>
             <sl-input
               class="editor-id-input"
               size="small"
@@ -1011,18 +1014,13 @@ export function pipelinesEditorView(state, options) {
               @sl-input=${onIdInput}
             ></sl-input>
           </span>
-          <sl-badge variant="neutral" pill>${tierDisplay}</sl-badge>
-          ${
-            readOnly
-              ? html`<sl-badge
-                  variant="warning"
-                  pill
-                  class="editor-readonly-badge"
-                  title="Built-in templates can't be modified. Use Duplicate to fork into project or user scope."
-                  >Read-only</sl-badge
-                >`
-              : ''
-          }
+          <span
+            class="editor-field-pill editor-storage-pill"
+            title="Where this template lives (immutable)"
+          >
+            <span class="editor-field-pill-label">Storage:</span>
+            <span class="editor-storage-value">${tierDisplay}</span>
+          </span>
         </div>
         <div class="editor-mode-toggle">
           <sl-button-group>
@@ -1172,7 +1170,7 @@ export function pipelinesEditorView(state, options) {
                     ? html`<sl-spinner></sl-spinner>`
                     : unsafeHTML(iconSvg(Save, 14))
                 }
-                ${saving ? 'Saving…' : 'Save Template'}
+                ${saving ? 'Saving…' : 'Save'}
               </sl-button>`
         }
         <sl-button

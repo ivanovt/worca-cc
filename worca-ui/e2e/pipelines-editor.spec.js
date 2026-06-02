@@ -141,8 +141,9 @@ test('edit existing template', async ({ page }) => {
     await page.goto(`${ctx.url}/#/templates/project/test-edit/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
-    // Verify template loaded
-    await expect(page.locator('.editor-title')).toHaveText('Test Edit Template');
+    // Verify template loaded — name is now in the inline editable
+    // Name pill (sl-input) rather than a static .editor-title heading.
+    await expect(page.locator('.editor-name-input')).toHaveValue('Test Edit Template');
 
     // Edit planner model via Shoelace sl-select (use evaluate to set value)
     const plannerModelSelect = page.locator('#agent-planner-model');

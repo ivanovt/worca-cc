@@ -7100,19 +7100,15 @@ sl-dialog.markdown-dialog::part(body) {
 }
 
 /*
- * Inline editable Name + ID in the editor subheader. Name takes the
- * lion's share of width; the ID badge sits flush next to it, both
- * editable, with the same gray-pill treatment used for the read-only
- * id on the list cards.
+ * Inline editable Name + ID + read-only Storage in the editor
+ * subheader. All three share the same gray-pill chassis
+ * (`.editor-field-pill`) so the row reads as a single field group;
+ * size/weight variants live on the per-pill modifier class.
+ *
+ * Name is the widest (flex-grow), ID is mid-width with a monospace
+ * input, Storage is a fixed compact pill showing the tier.
  */
-.editor-name-input {
-  flex: 1 1 200px;
-  min-width: 0;
-}
-.editor-name-input::part(form-control-input) {
-  font-weight: 600;
-}
-.editor-id-badge {
+.editor-field-pill {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -7120,16 +7116,37 @@ sl-dialog.markdown-dialog::part(body) {
   border-radius: 9999px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-subtle, var(--border));
-  flex: 0 1 240px;
   min-width: 0;
 }
-.editor-id-label {
+.editor-field-pill-label {
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-muted);
   flex-shrink: 0;
+}
+
+.editor-name-pill {
+  flex: 1 1 240px;
+  padding-right: 4px;
+}
+.editor-name-input {
+  flex: 1;
+  min-width: 0;
+}
+.editor-name-input::part(form-control-input) {
+  font-weight: 600;
+}
+.editor-name-input::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  min-height: 22px;
+}
+
+.editor-id-badge {
+  flex: 0 1 240px;
 }
 .editor-id-input {
   flex: 1;
@@ -7145,6 +7162,17 @@ sl-dialog.markdown-dialog::part(body) {
   background: transparent;
   box-shadow: none;
   min-height: 22px;
+}
+
+.editor-storage-pill {
+  flex: 0 0 auto;
+  padding: 2px 10px 2px 8px;
+}
+.editor-storage-value {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg);
+  text-transform: capitalize;
 }
 
 .editor-subheader-title {
@@ -7186,24 +7214,31 @@ sl-dialog.markdown-dialog::part(body) {
 }
 
 /*
- * Editor content gate: when readOnly, every form control inside
- * becomes non-interactive. pointer-events:none blocks click +
- * keyboard activation, the muted opacity signals "look, don't
- * touch", and `aria-disabled="true"` on the wrapper tells assistive
- * tech the surface is locked. Inputs visually keep their value so
- * users can still read / copy from them.
+ * Editor content gate: when readOnly, the form controls inside each
+ * tab panel (and the JSON view) become non-interactive — but the
+ * tab nav stays clickable so users can move between Models /
+ * Stages / Agents / etc. to inspect the whole template. We scope
+ * pointer-events:none to the panels (not the whole content) so the
+ * `<sl-tab slot="nav">` items still take clicks.
+ *
+ * `aria-disabled="true"` on the wrapper tells assistive tech the
+ * surface is locked; the per-panel muted opacity signals "look,
+ * don't touch". Inputs visually keep their value so users can still
+ * read and copy from them.
  *
  * Cheaper than threading a `disabled` flag through every section
  * and every input; tradeoff is screen readers won't announce each
- * control as disabled — only the container. Acceptable for a
+ * control as disabled — only the panel container. Acceptable for a
  * read-only inspector mode.
  */
-.editor-content--readonly {
+.editor-content--readonly sl-tab-panel,
+.editor-content--readonly .editor-section--json {
   pointer-events: none;
   opacity: 0.7;
   user-select: text; /* let users still highlight + copy values */
 }
-.editor-content--readonly * {
+.editor-content--readonly sl-tab-panel *,
+.editor-content--readonly .editor-section--json * {
   cursor: default !important;
 }
 

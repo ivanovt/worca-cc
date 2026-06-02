@@ -3832,8 +3832,21 @@ function contentHeaderView() {
     showBack = true;
   } else if (route.section === 'templates') {
     if (route.action === 'edit' || route.action === 'duplicate') {
-      title = 'Edit Template';
+      // Built-ins open as a read-only inspector — title and badge
+      // make that explicit in the page header (no Save in the
+      // editor footer for these). Project/user templates stay as
+      // a normal "Edit Template" surface.
+      const builtinView = route.tier === 'builtin';
+      title = builtinView ? 'View Template' : 'Edit Template';
       showBack = true;
+      if (builtinView) {
+        badge = html`<sl-badge
+          variant="warning"
+          pill
+          title="Built-in templates can't be modified. Use Duplicate to fork into project or user scope."
+          >Read-only</sl-badge
+        >`;
+      }
     } else {
       title = 'Pipeline Templates';
       showBack = false;
