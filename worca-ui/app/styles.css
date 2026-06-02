@@ -7213,14 +7213,18 @@ sl-dialog.markdown-dialog::part(body) {
 }
 
 /*
- * Description input sits on its own row below the Name / ID /
- * Storage pill row. Templates carry a short paragraph that the
- * list card and the launcher dropdown show under the name, so it
- * gets a textarea that wraps and grows but stays compact when
- * empty.
+ * Description section sits above the tab group inside the scroll
+ * area — outside any tab so it always shows. Matches the
+ * settings-section header style (h3.settings-section-title +
+ * settings-field + label + textarea) so the editor reads like
+ * the rest of the app.
  */
-.editor-description-row {
-  padding: 4px 0 0;
+.editor-description-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+  margin-bottom: 4px;
 }
 .editor-description-input {
   width: 100%;
@@ -7339,7 +7343,10 @@ sl-dialog.markdown-dialog::part(body) {
 
 .editor-tab-group {
   --indicator-color: var(--accent, var(--sl-color-primary-600, #4f9eff));
-  --track-color: transparent;
+  /* Keep Shoelace's default track color (subtle border under the tab
+   * row) so the editor matches the Project Settings convention of a
+   * horizontal line between the nav and the panel content. Used to
+   * be `transparent` which suppressed that divider. */
 }
 .editor-tab-group::part(base) {
   /* Hand the scroll to .editor-content so the tab nav stays sticky. */

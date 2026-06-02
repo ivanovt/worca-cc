@@ -2440,22 +2440,28 @@ async function _confirmTemplateActionDialog() {
   }
 }
 
-function handleExportTemplate(tid) {
+function handleExportTemplate(tid, tier) {
   const projectId = store.getState().currentProjectId || null;
-
-  // Find template to get its name
-  const template = (store.getState().templates || []).find((t) => t.id === tid);
-
-  exportTemplate(projectId, tid, template?.name || tid);
+  // The cards pass tier alongside id — find the template by both so
+  // we get the right name (and don't accidentally pick up a same-id
+  // sibling from a different tier).
+  const template = (store.getState().templates || []).find(
+    (t) => t.id === tid && (!tier || t.tier === tier),
+  );
+  exportTemplate(projectId, tid, tier || template?.tier, template?.name || tid);
 }
 
-async function handleCopyGistUrl(tid) {
+async function handleCopyGistUrl(tid, tier) {
   const projectId = store.getState().currentProjectId || null;
-
-  // Find template to get its name
-  const template = (store.getState().templates || []).find((t) => t.id === tid);
-
-  await copyGistUrl(projectId, tid, template?.name || tid);
+  const template = (store.getState().templates || []).find(
+    (t) => t.id === tid && (!tier || t.tier === tier),
+  );
+  await copyGistUrl(
+    projectId,
+    tid,
+    tier || template?.tier,
+    template?.name || tid,
+  );
 }
 
 function handleStageFilter(stage) {
@@ -2516,11 +2522,12 @@ function _showToast(message, variant = 'success') {
   requestAnimationFrame(() => alert.toast());
 }
 
+// Single listener on `document` handles every `worca:toast` event —
+// because the dispatched CustomEvent has `bubbles: true`, both
+// document-target and document.dispatchEvent forms reach this. The
+// previous code also registered a `window` listener, which fired a
+// second time for any bubbled event (every Save = two toasts).
 document.addEventListener('worca:toast', (e) => {
-  const { message, variant } = e.detail || {};
-  if (message) _showToast(message, variant || 'success');
-});
-window.addEventListener('worca:toast', (e) => {
   const { message, variant } = e.detail || {};
   if (message) _showToast(message, variant || 'success');
 });

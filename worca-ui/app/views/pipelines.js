@@ -90,13 +90,22 @@ function normalizeTier(tier) {
  * @param {string} templateId - Template ID to export
  * @param {string} templateName - Optional template name for filename
  */
-export async function exportTemplate(projectId, templateId, templateName) {
+export async function exportTemplate(
+  projectId,
+  templateId,
+  tier,
+  templateName,
+) {
   try {
     const baseUrl = projectId
       ? `/api/projects/${projectId}/templates`
       : '/api/templates';
 
-    const response = await fetch(`${baseUrl}/${templateId}/bundle`);
+    // The bundle route is `/templates/:tier/:id/bundle` after the
+    // (tier, id) primary-key redesign. Fall back to 'project' when
+    // the caller didn't supply a tier — most card actions know it.
+    const tierSlug = tier || 'project';
+    const response = await fetch(`${baseUrl}/${tierSlug}/${templateId}/bundle`);
     const data = await response.json();
 
     if (!data.ok) {
@@ -124,7 +133,7 @@ export async function exportTemplate(projectId, templateId, templateName) {
     URL.revokeObjectURL(url);
 
     // Dispatch success toast
-    window.dispatchEvent(
+    document.dispatchEvent(
       new CustomEvent('worca:toast', {
         detail: {
           message: `Template "${templateName || templateId}" exported successfully`,
@@ -136,7 +145,7 @@ export async function exportTemplate(projectId, templateId, templateName) {
     return { success: true, filename };
   } catch (err) {
     // Dispatch error toast
-    window.dispatchEvent(
+    document.dispatchEvent(
       new CustomEvent('worca:toast', {
         detail: {
           message: `Failed to export template: ${err.message}`,
@@ -159,15 +168,17 @@ export async function exportTemplate(projectId, templateId, templateName) {
  * @param {string} templateId - Template ID to gist
  * @param {string} templateName - Optional template name for toast message
  */
-export async function copyGistUrl(projectId, templateId, templateName) {
+export async function copyGistUrl(projectId, templateId, tier, templateName) {
   try {
     const baseUrl = projectId
       ? `/api/projects/${projectId}/templates`
       : '/api/templates';
 
-    // Check if gh CLI is available by trying to create gist
+    // Bundle route is `/templates/:tier/:id/bundle` (the gist
+    // format is the same endpoint with ?format=gist).
+    const tierSlug = tier || 'project';
     const response = await fetch(
-      `${baseUrl}/${templateId}/bundle?format=gist`,
+      `${baseUrl}/${tierSlug}/${templateId}/bundle?format=gist`,
       {
         method: 'POST',
       },
@@ -191,7 +202,7 @@ export async function copyGistUrl(projectId, templateId, templateName) {
     await navigator.clipboard.writeText(data.gist_url);
 
     // Dispatch success toast
-    window.dispatchEvent(
+    document.dispatchEvent(
       new CustomEvent('worca:toast', {
         detail: {
           message: `Gist URL copied to clipboard`,
@@ -207,7 +218,7 @@ export async function copyGistUrl(projectId, templateId, templateName) {
       ? 'GitHub CLI is not available on the server'
       : `Failed to create gist: ${err.message}`;
 
-    window.dispatchEvent(
+    document.dispatchEvent(
       new CustomEvent('worca:toast', {
         detail: { message, variant: 'danger' },
       }),
@@ -531,7 +542,7 @@ function _templateCard(template, defaultTemplate, handlers) {
         </button>
         <button
           class="action-btn action-btn--secondary"
-          @click=${() => onExport?.(id)}
+          @click=${() => onExport?.(id, resolvedTier)}
           title="Export template bundle"
         >
           ${unsafeHTML(iconSvg(Download, 14))}

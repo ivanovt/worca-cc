@@ -439,11 +439,15 @@ function validateConfigDebounced(projectId, formBuffer, viewMode, rerender) {
           ? JSON.parse(editorState.jsonBuffer || '{}')
           : formBufferToConfig(formBuffer);
 
+      const hadIssues = (editorState.validationIssues || []).length > 0;
       const issues = await validateConfig(projectId, config);
       editorState.validationIssues = issues;
 
-      // Rerender if there are issues to show
-      if (issues.length > 0 && rerender) {
+      // Rerender if the panel needs to show OR HIDE. Without the
+      // `hadIssues` half, the panel would re-render in but never
+      // re-render out — a fixed field would leave a stale error
+      // visible until the next manual rerender.
+      if ((issues.length > 0 || hadIssues) && rerender) {
         rerender();
       }
     } catch (err) {
@@ -1050,17 +1054,31 @@ export function pipelinesEditorView(state, options) {
     ? `An id "${trimmedIdDraft}" already exists in the ${tier} scope.`
     : '';
 
+  // When the user starts editing Name or ID, drop server-attached
+  // save-error issues (entries with empty `field` — the shape we
+  // push in saveTemplate's catch). Without this, an error like
+  // "dst_id is required" lingers after the user supplies the
+  // missing value; the inline panel would still tell them to fix
+  // a field they've already fixed.
+  function _clearStaleSaveErrors() {
+    if (!editorState.validationIssues?.length) return;
+    editorState.validationIssues = editorState.validationIssues.filter(
+      (issue) => issue.field !== '' || issue.severity !== 'error',
+    );
+  }
   const onNameInput = (e) => {
     const newName = e.target.value;
     editorState.nameDraft = newName;
     if (!idDirty) {
       editorState.idDraft = slugifyId(newName);
     }
+    _clearStaleSaveErrors();
     rerender();
   };
   const onIdInput = (e) => {
     editorState.idDraft = e.target.value.trim();
     editorState.idDirty = true;
+    _clearStaleSaveErrors();
     rerender();
   };
 
@@ -1068,94 +1086,55 @@ export function pipelinesEditorView(state, options) {
     <div class="pipelines-editor">
       <div class="editor-subheader">
         <div class="editor-subheader-title-group">
-          <span class="editor-field-pill editor-name-pill" title="Template name">
-            <span class="editor-field-pill-label">Name:</span>
-            <sl-input
-              class="editor-name-input"
-              size="small"
-              placeholder="Display name"
-              .value=${nameDraft || ''}
-              ?disabled=${isBuiltinTier}
-              @sl-input=${onNameInput}
-            ></sl-input>
-          </span>
-          <span
-            class="editor-field-pill editor-id-badge${idCollision ? ' editor-field-pill--invalid' : ''}"
-            title=${idCollision ? idHelpText : 'Template ID'}
-          >
-            <span class="editor-field-pill-label">ID:</span>
-            <sl-input
-              class="editor-id-input"
-              size="small"
-              placeholder="template-id"
-              .value=${idDraft || ''}
-              ?disabled=${isBuiltinTier}
-              @sl-input=${onIdInput}
-            ></sl-input>
-          </span>
+          <sl-tooltip content="Template name">
+            <span class="editor-field-pill editor-name-pill">
+              <span class="editor-field-pill-label">Name:</span>
+              <sl-input
+                class="editor-name-input"
+                size="small"
+                placeholder="Display name"
+                .value=${nameDraft || ''}
+                ?disabled=${isBuiltinTier}
+                @sl-input=${onNameInput}
+              ></sl-input>
+            </span>
+          </sl-tooltip>
+          <sl-tooltip content=${idCollision ? idHelpText : 'Template ID'}>
+            <span
+              class="editor-field-pill editor-id-badge${idCollision ? ' editor-field-pill--invalid' : ''}"
+            >
+              <span class="editor-field-pill-label">ID:</span>
+              <sl-input
+                class="editor-id-input"
+                size="small"
+                placeholder="template-id"
+                .value=${idDraft || ''}
+                ?disabled=${isBuiltinTier}
+                @sl-input=${onIdInput}
+              ></sl-input>
+            </span>
+          </sl-tooltip>
           ${
             idCollision
-              ? html`<sl-badge
-                  variant="warning"
-                  pill
-                  class="editor-id-collision-badge"
-                  title=${idHelpText}
-                  >ID already exists</sl-badge
-                >`
+              ? html`<sl-tooltip content=${idHelpText}>
+                  <sl-badge
+                    variant="warning"
+                    pill
+                    class="editor-id-collision-badge"
+                    >ID already exists</sl-badge
+                  >
+                </sl-tooltip>`
               : ''
           }
-          <span
-            class="editor-field-pill editor-storage-pill"
-            title="Where this template lives (immutable)"
-          >
-            <span class="editor-field-pill-label">Storage:</span>
-            <span class="editor-storage-value">${tierDisplay}</span>
-          </span>
-        </div>
-        <div class="editor-mode-toggle">
-          <sl-button-group>
-            <sl-button
-              .variant=${viewMode === 'form' ? 'primary' : 'default'}
-              size="small"
-              @click=${() => switchViewMode('form', rerender)}
+          <sl-tooltip content="Where this template lives (immutable)">
+            <sl-badge
+              variant="primary"
+              pill
+              class="editor-storage-badge"
+              >Storage: ${tierDisplay}</sl-badge
             >
-              ${unsafeHTML(iconSvg(Settings, 14))} Form
-            </sl-button>
-            <sl-button
-              .variant=${viewMode === 'json' ? 'primary' : 'default'}
-              size="small"
-              @click=${() => switchViewMode('json', rerender)}
-            >
-              ${unsafeHTML(iconSvg(Zap, 14))} JSON
-            </sl-button>${
-              shadowsBuiltin(template)
-                ? html`
-              <sl-button
-                .variant=${viewMode === 'diff' ? 'primary' : 'default'}
-                size="small"
-                @click=${() => switchViewMode('diff', rerender)}
-              >
-                ${unsafeHTML(iconSvg(RefreshCw, 14))} Diff
-              </sl-button>`
-                : nothing
-            }</sl-button-group>
+          </sl-tooltip>
         </div>
-      </div>
-
-      <div class="editor-description-row">
-        <sl-textarea
-          class="editor-description-input"
-          size="small"
-          rows="2"
-          placeholder="Optional description — shown on the template card and in the launcher dropdown."
-          resize="auto"
-          .value=${descriptionDraft || ''}
-          ?disabled=${isBuiltinTier}
-          @sl-input=${(e) => {
-            editorState.descriptionDraft = e.target.value;
-            rerender();
-          }}
-        ></sl-textarea>
       </div>
 
       ${
@@ -1185,60 +1164,72 @@ export function pipelinesEditorView(state, options) {
         class="editor-content${readOnly ? ' editor-content--readonly' : ''}"
         aria-disabled=${ifDefined(readOnly ? 'true' : undefined)}
       >
-        ${
-          viewMode === 'form'
-            ? html`
-              <sl-tab-group class="editor-tab-group">
-                <!--
-                  Three template-editor tabs:
-                    Agents    → effort policy (auto_mode + auto_cap)
-                                + per-agent Model / Turns / Effort
-                    Pipeline  → stages + loops + circuit_breaker
-                                (mirrors Project Settings → Pipeline)
-                    Governance → dispatch allow/deny lists
+        <div class="editor-description-section">
+          <h3 class="settings-section-title">Description</h3>
+          <p class="settings-section-desc">
+            Pipeline description text — shown on the template card
+            and in the launcher dropdown.
+          </p>
+          <sl-textarea
+            id="editor-description-input"
+            class="editor-description-input"
+            size="small"
+            rows="2"
+            placeholder="Optional. e.g. Fast bug-fix pipeline: Opus planner investigates, coordinator slices into focused tasks, implementer fixes."
+            resize="auto"
+            .value=${descriptionDraft || ''}
+            ?disabled=${isBuiltinTier}
+            @sl-input=${(e) => {
+              editorState.descriptionDraft = e.target.value;
+              rerender();
+            }}
+          ></sl-textarea>
+        </div>
 
-                  Effort got folded into Agents because there were
-                  only two pipeline-wide knobs and the per-agent
-                  effort column already lived in Agents — two tabs
-                  for one concern was busywork. Models / Pricing /
-                  Webhooks / Graphify / Code Review Graph stay in
-                  Project Settings — they are cross-template.
-                -->
-                <sl-tab slot="nav" panel="agents">
-                  ${unsafeHTML(iconSvg(Users, 14))}
-                  Agents
-                </sl-tab>
-                <sl-tab slot="nav" panel="pipeline">
-                  ${unsafeHTML(iconSvg(Workflow, 14))}
-                  Pipeline
-                </sl-tab>
-                <sl-tab slot="nav" panel="governance">
-                  ${unsafeHTML(iconSvg(Shield, 14))}
-                  Governance
-                </sl-tab>
+        <sl-tab-group class="editor-tab-group">
+          <!--
+            Three template-editor tabs:
+              Agents    → effort policy (auto_mode + auto_cap)
+                          + per-agent Model / Turns / Effort
+              Pipeline  → stages + loops + circuit_breaker
+                          (mirrors Project Settings → Pipeline)
+              Governance → dispatch allow/deny lists
 
-                <sl-tab-panel name="agents">
-                  ${_agentsTab(formBuffer, settings, projectId, rerender)}
-                </sl-tab-panel>
-                <sl-tab-panel name="pipeline">
-                  <div class="editor-pipeline-tab">
-                    ${_stagesSection(formBuffer, projectId, rerender)}
-                    ${_milestonesSection(formBuffer, projectId, rerender)}
-                    ${_loopsSection(formBuffer, projectId, rerender)}
-                    ${_circuitBreakerSection(formBuffer, projectId, rerender)}
-                  </div>
-                </sl-tab-panel>
-                <sl-tab-panel name="governance">
-                  ${_governanceSection(formBuffer, settings, projectId, rerender)}
-                </sl-tab-panel>
-              </sl-tab-group>
-            `
-            : viewMode === 'json'
-              ? html`${_jsonSection(projectId, rerender)}`
-              : shadowsBuiltin(template)
-                ? html`${_diffSection(rerender)}`
-                : html`<p class="editor-empty-hint">Diff view is only available for templates that override a built-in template.</p>`
-        }
+            Effort got folded into Agents because there were only
+            two pipeline-wide knobs and the per-agent effort column
+            already lived in Agents — two tabs for one concern was
+            busywork. Models / Pricing / Webhooks / Graphify / Code
+            Review Graph stay in Project Settings — they are
+            cross-template.
+          -->
+          <sl-tab slot="nav" panel="agents">
+            ${unsafeHTML(iconSvg(Users, 14))}
+            Agents
+          </sl-tab>
+          <sl-tab slot="nav" panel="pipeline">
+            ${unsafeHTML(iconSvg(Workflow, 14))}
+            Pipeline
+          </sl-tab>
+          <sl-tab slot="nav" panel="governance">
+            ${unsafeHTML(iconSvg(Shield, 14))}
+            Governance
+          </sl-tab>
+
+          <sl-tab-panel name="agents">
+            ${_agentsTab(formBuffer, settings, projectId, rerender)}
+          </sl-tab-panel>
+          <sl-tab-panel name="pipeline">
+            <div class="editor-pipeline-tab">
+              ${_stagesSection(formBuffer, projectId, rerender)}
+              ${_milestonesSection(formBuffer, projectId, rerender)}
+              ${_loopsSection(formBuffer, projectId, rerender)}
+              ${_circuitBreakerSection(formBuffer, projectId, rerender)}
+            </div>
+          </sl-tab-panel>
+          <sl-tab-panel name="governance">
+            ${_governanceSection(formBuffer, settings, projectId, rerender)}
+          </sl-tab-panel>
+        </sl-tab-group>
       </div>
 
       <div class="editor-footer">

@@ -228,7 +228,12 @@ test('edit existing template', async ({ page }) => {
 
 // ─── Test 3: JSON toggle round-trip ───────────────────────────────────────────
 
-test('JSON toggle round-trip preserves edits', async ({ page }) => {
+// JSON / Diff view modes were removed entirely from the template
+// editor — nobody hand-edits JSON for templates in the UI. The two
+// tests that exercised those modes ("JSON toggle round-trip" and
+// "Save shows validation error for invalid JSON") were dropped
+// alongside that change.
+test.skip('JSON toggle round-trip preserves edits', async () => {
   const ctx = await startServer();
   try {
     // Create a test template
@@ -320,7 +325,7 @@ test('JSON toggle round-trip preserves edits', async ({ page }) => {
 
 // ─── Test 4: Save shows validation error for invalid JSON ─────────────────────
 
-test('Save shows validation error for invalid JSON', async ({ page }) => {
+test.skip('Save shows validation error for invalid JSON', async () => {
   const ctx = await startServer();
   try {
     // Create a test template
