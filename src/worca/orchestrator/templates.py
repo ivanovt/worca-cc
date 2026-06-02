@@ -168,6 +168,113 @@ def deep_merge_config(base: dict, overlay: dict) -> dict:
     return result
 
 
+VALID_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+
+def validate_merged_config(merged: dict) -> list[dict]:
+    """Run validation rules against an already-merged worca config.
+
+    Single source of truth for the validation ruleset. Used by both
+    `TemplateResolver.validate` (template + base settings → merge → check)
+    and the CLI's `worca templates validate --config <json>` (caller has
+    pre-merged config in hand).
+
+    Returns a list of issues:
+        {"field": <dot.path>, "severity": "error" | "warning", "message": <str>}
+
+    "error" means a run with this config would break; "warning" is suspicious
+    but legal (e.g. model alias falls back via `_DEFAULT_MODEL_MAP`).
+    """
+    from worca.orchestrator.stages import ALL_AGENTS
+    from worca.utils.settings import _DEFAULT_MODEL_MAP
+
+    issues: list[dict] = []
+    if not isinstance(merged, dict):
+        issues.append({
+            "field": "",
+            "severity": "error",
+            "message": "config must be a JSON object",
+        })
+        return issues
+
+    known_agents = {v for v in ALL_AGENTS if v is not None}
+    agents_config = merged.get("agents", {}) if isinstance(merged.get("agents"), dict) else {}
+    models_config = merged.get("models", {}) if isinstance(merged.get("models"), dict) else {}
+
+    for agent_key in agents_config:
+        if agent_key not in known_agents:
+            issues.append({
+                "field": f"agents.{agent_key}",
+                "severity": "error",
+                "message": (
+                    f"Unknown agent '{agent_key}'. "
+                    f"Must be one of: {sorted(known_agents)}"
+                ),
+            })
+
+    for agent_name in known_agents:
+        agent_data = agents_config.get(agent_name, {})
+        if not isinstance(agent_data, dict):
+            continue
+
+        model = agent_data.get("model")
+        if (
+            model
+            and isinstance(model, str)
+            and model not in models_config
+            and model not in ("opa", "oha")
+            and model not in _DEFAULT_MODEL_MAP
+        ):
+            issues.append({
+                "field": f"agents.{agent_name}.model",
+                "severity": "warning",
+                "message": (
+                    f"Model alias '{model}' is not defined in worca.models "
+                    "and not in default map (may be treated as a raw model ID)"
+                ),
+            })
+
+        agent_effort = agent_data.get("effort")
+        if agent_effort and agent_effort not in VALID_EFFORT_LEVELS:
+            issues.append({
+                "field": f"agents.{agent_name}.effort",
+                "severity": "error",
+                "message": (
+                    f"Invalid effort level for {agent_name}: '{agent_effort}'. "
+                    f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                ),
+            })
+
+    effort_config = merged.get("effort", {})
+    if isinstance(effort_config, dict):
+        auto_cap = effort_config.get("auto_cap")
+        if auto_cap and auto_cap not in VALID_EFFORT_LEVELS:
+            issues.append({
+                "field": "effort.auto_cap",
+                "severity": "error",
+                "message": (
+                    f"Invalid effort level for auto_cap: '{auto_cap}'. "
+                    f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                ),
+            })
+
+        for agent_name, agent_effort in effort_config.items():
+            if agent_name == "auto_cap" or not isinstance(agent_effort, dict):
+                continue
+            effort_level = agent_effort.get("effort")
+            if effort_level and effort_level not in VALID_EFFORT_LEVELS:
+                issues.append({
+                    "field": f"effort.{agent_name}.effort",
+                    "severity": "error",
+                    "message": (
+                        f"Invalid effort level for {agent_name}: '{effort_level}'. "
+                        f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                    ),
+                })
+
+    return issues
+
+
 class TemplateResolver:
     def __init__(self, builtin_dir, project_dir, user_dir):
         """
@@ -459,20 +566,13 @@ class TemplateResolver:
     ) -> list[dict]:
         """Simulate apply() over base_settings (or {}); return a list of validation issues.
 
-        Returns a list where each entry matches this schema:
-        {
-          "field": "<string>",  // dot-notation path, e.g. "agents.planner.model"
-          "severity": "error" | "warning",
-          "message": "<string>"
-        }
+        Renders params, deep-merges the template config with base settings,
+        then runs `validate_merged_config` on the merged result. Use
+        `validate_merged_config` directly when the caller already has a
+        merged config in hand (e.g. the CLI's interactive `--config` mode).
 
-        Severity values:
-        - "error": a run with this config would break (shape violation, required field missing, invalid enum)
-        - "warning": suspicious but legal (e.g. references a model alias not in worca.models — silently
-          falls back via _DEFAULT_MODEL_MAP, but worth flagging)
-
-        The method renders parameters, deep-merges template config with base settings,
-        then validates the merged config. Does not mutate inputs.
+        Issue schema:
+            {"field": <dot.path>, "severity": "error" | "warning", "message": <str>}
         """
         template = self.get(template_id)
         if template is None:
@@ -482,83 +582,9 @@ class TemplateResolver:
                 details={"template_id": template_id},
             )
 
-        # Render params and deep merge
         rendered_config = _render_params_in_dict(template.config, params or {}, template.params)
         merged = deep_merge_config(base_settings or {}, rendered_config)
-
-        issues = []
-
-        # Validate agents: all agent keys must be known
-        from worca.orchestrator.stages import ALL_AGENTS
-
-        all_agents: frozenset = ALL_AGENTS
-        known_agents = {v for v in all_agents if v is not None}
-        agents_config = merged.get("agents", {})
-        for agent_key in agents_config:
-            if agent_key not in known_agents:
-                issues.append({
-                    "field": f"agents.{agent_key}",
-                    "severity": "error",
-                    "message": f"Unknown agent '{agent_key}'. Must be one of: {sorted(known_agents)}",
-                })
-
-        # Validate model aliases and per-agent effort levels
-        models_config = merged.get("models", {})
-        for agent_name in known_agents:
-            agent_data = agents_config.get(agent_name, {})
-            if not isinstance(agent_data, dict):
-                continue
-
-            # Validate model alias
-            model = agent_data.get("model")
-            if model and isinstance(model, str):
-                # Check if this model alias is defined in the merged config's models section
-                if model not in models_config and model not in ("opa", "oha"):
-                    from worca.utils.settings import _DEFAULT_MODEL_MAP
-                    if model not in _DEFAULT_MODEL_MAP:
-                        # Not in project models or default map - warn
-                        issues.append({
-                            "field": f"agents.{agent_name}.model",
-                            "severity": "warning",
-                            "message": f"Model alias '{model}' is not defined in worca.models and not in default map (may be treated as a raw model ID)",
-                        })
-
-            # Validate per-agent effort level under agents.<agent_name>.effort
-            VALID_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
-            agent_effort = agent_data.get("effort")
-            if agent_effort and agent_effort not in VALID_EFFORT_LEVELS:
-                issues.append({
-                    "field": f"agents.{agent_name}.effort",
-                    "severity": "error",
-                    "message": f"Invalid effort level for {agent_name}: '{agent_effort}'. Must be one of: {sorted(VALID_EFFORT_LEVELS)}",
-                })
-
-        # Validate effort levels
-        VALID_EFFORT_LEVELS = {"low", "medium", "high", "xhigh", "max"}
-        effort_config = merged.get("effort", {})
-        if isinstance(effort_config, dict):
-            # Validate auto_cap
-            auto_cap = effort_config.get("auto_cap")
-            if auto_cap and auto_cap not in VALID_EFFORT_LEVELS:
-                issues.append({
-                    "field": "effort.auto_cap",
-                    "severity": "error",
-                    "message": f"Invalid effort level for auto_cap: '{auto_cap}'. Must be one of: {sorted(VALID_EFFORT_LEVELS)}",
-                })
-
-            # Validate per-agent effort
-            for agent_name, agent_effort in effort_config.items():
-                if agent_name == auto_cap or not isinstance(agent_effort, dict):
-                    continue
-                effort_level = agent_effort.get("effort")
-                if effort_level and effort_level not in VALID_EFFORT_LEVELS:
-                    issues.append({
-                        "field": f"effort.{agent_name}.effort",
-                        "severity": "error",
-                        "message": f"Invalid effort level for {agent_name}: '{effort_level}'. Must be one of: {sorted(VALID_EFFORT_LEVELS)}",
-                    })
-
-        return issues
+        return validate_merged_config(merged)
 
     def duplicate(self, src_id: str, dst_id: str, dst_scope: str = "project") -> "Template":
         """Resolve src_id from any tier, write a copy to dst_scope as dst_id.

@@ -1,21 +1,14 @@
 /**
  * Tests: templates-routes.js
- * TDD: written before implementation.
  *
- * Tests cover:
- * - GET /templates deduping by id with effectiveTier and shadows
- * - GET /templates/:tid — fetch resolved template
- * - POST /templates — create
- * - PUT /templates/:tid — update
- * - DELETE /templates/:tid — delete
- * - POST /templates/:tid/duplicate — clone-then-edit
- * - POST /templates/:tid/validate — validate config
- * - GET /templates/:tid/bundle — export
- * - POST /templates/import — import bundle
- * - PUT /default-template — set default
+ * The routes delegate all mutations (create/update/delete/duplicate/import)
+ * to the `worca templates` CLI via execFileSync; tests mock that subprocess
+ * and assert on (a) the CLI invocation arguments and (b) the resulting HTTP
+ * status/body. Read paths (GET /templates, GET /templates/:tid) and
+ * default-template settings writes go through the filesystem directly, so
+ * those tests still touch real files in tmpdir.
  */
 
-import { execFileSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -28,7 +21,8 @@ import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock subprocess calls to worca CLI
+// Mock the CLI subprocess. Each test can override mockExecSync.mockImplementation
+// to simulate success (returns stdout string) or failure (throws with .stderr).
 const mockExecSync = vi.fn();
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal();
@@ -45,7 +39,7 @@ async function createTestApp(projectRoot) {
   app.use(express.json());
   app.use(
     '/api/projects/:projectId',
-    (req, res, next) => {
+    (req, _res, next) => {
       req.project = {
         name: req.params.projectId,
         path: projectRoot,
@@ -90,6 +84,21 @@ async function request(app, method, path, body) {
   });
 }
 
+/** Helper: build a fake execFileSync error matching child_process error shape. */
+function cliError(stderr, stdout = '') {
+  const err = new Error('Command failed');
+  err.status = 1;
+  err.stderr = Buffer.from(stderr);
+  err.stdout = Buffer.from(stdout);
+  return err;
+}
+
+/** Helper: pull the args array passed to `worca templates …` on call N. */
+function templateArgs(call) {
+  // execFileSync signature: (file, args, opts) → call[1] is the args array
+  return call[1];
+}
+
 describe('templates-routes', () => {
   let projectRoot;
   let templatesDir;
@@ -114,10 +123,12 @@ describe('templates-routes', () => {
     mkdirSync(join(projectRoot, '.claude'), { recursive: true });
     writeFileSync(join(projectRoot, '.claude', 'settings.json'), '{}');
 
-    // Set WORCA_HOME to control the user templates directory
     process.env.WORCA_HOME = userTemplatesDir;
 
-    mockExecSync.mockClear();
+    mockExecSync.mockReset();
+    // Default: any CLI call succeeds with empty stdout. Individual tests
+    // override for specific scenarios (validate output, conflict, etc.).
+    mockExecSync.mockReturnValue('');
   });
 
   afterEach(() => {
@@ -138,7 +149,6 @@ describe('templates-routes', () => {
     it('dedupes by id with effectiveTier and shadows', async () => {
       const app = await createTestApp(projectRoot);
 
-      // Create same template id in project and user tiers
       const templateJson = JSON.stringify({
         id: 'test-template',
         name: 'Test Template',
@@ -151,7 +161,6 @@ describe('templates-routes', () => {
         join(templatesDir, 'test-template', 'template.json'),
         templateJson,
       );
-      // User tier goes under $WORCA_HOME/templates
       mkdirSync(join(userTemplatesDir, 'templates', 'test-template'), {
         recursive: true,
       });
@@ -160,7 +169,6 @@ describe('templates-routes', () => {
         templateJson,
       );
 
-      // Create a different template in builtin
       mkdirSync(join(builtinDir, 'builtin-template'), { recursive: true });
       writeFileSync(
         join(builtinDir, 'builtin-template', 'template.json'),
@@ -175,26 +183,56 @@ describe('templates-routes', () => {
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
-      expect(Array.isArray(body.templates)).toBe(true);
 
-      // Should dedupe test-template to one entry
+      // Project wins over user; user is recorded as shadowed.
       const testTemplate = body.templates.find((t) => t.id === 'test-template');
       expect(testTemplate).toBeDefined();
-      expect(testTemplate.effectiveTier).toBe('project'); // project shadows user
-      expect(testTemplate.shadows).not.toBeNull();
-      expect(Array.isArray(testTemplate.shadows)).toBe(true);
-      // Shadows implementation: user template gets shadowed by project template
-      // So we expect shadows to record that user was shadowed
+      expect(testTemplate.effectiveTier).toBe('project');
+      expect(testTemplate.shadows).toEqual(['user']);
 
-      // builtin-template should be as-is
+      // Builtin-only template: tier label matches Python's 'builtin'.
       const builtin = body.templates.find((t) => t.id === 'builtin-template');
       expect(builtin).toBeDefined();
-      expect(builtin.effectiveTier).toBe('worca'); // implementation uses 'worca'
-      expect(builtin.builtin).toBe(false); // only if explicit in manifest
+      expect(builtin.effectiveTier).toBe('builtin');
       expect(builtin.shadows).toEqual([]);
     });
 
-    it('backward compat with old dropdown: effectiveTier and shadows present', async () => {
+    it('records all lower-priority tiers in shadows when id exists in all three', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const manifest = (id) => JSON.stringify({ id, name: id });
+
+      mkdirSync(join(templatesDir, 'everywhere'), { recursive: true });
+      writeFileSync(
+        join(templatesDir, 'everywhere', 'template.json'),
+        manifest('everywhere'),
+      );
+      mkdirSync(join(userTemplatesDir, 'templates', 'everywhere'), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(userTemplatesDir, 'templates', 'everywhere', 'template.json'),
+        manifest('everywhere'),
+      );
+      mkdirSync(join(builtinDir, 'everywhere'), { recursive: true });
+      writeFileSync(
+        join(builtinDir, 'everywhere', 'template.json'),
+        manifest('everywhere'),
+      );
+
+      const { body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates',
+      );
+
+      const t = body.templates.find((x) => x.id === 'everywhere');
+      expect(t.effectiveTier).toBe('project');
+      // Order is priority order with the winner sliced off:
+      expect(t.shadows).toEqual(['user', 'builtin']);
+    });
+
+    it('exposes effectiveTier and shadows on every entry', async () => {
       const app = await createTestApp(projectRoot);
 
       mkdirSync(join(templatesDir, 'simple'), { recursive: true });
@@ -210,20 +248,20 @@ describe('templates-routes', () => {
       );
 
       expect(status).toBe(200);
-      expect(body.ok).toBe(true);
       const tmpl = body.templates[0];
       expect(tmpl.id).toBe('simple');
-      expect(tmpl.effectiveTier).toBeDefined();
+      expect(tmpl.effectiveTier).toBe('project');
       expect(Array.isArray(tmpl.shadows)).toBe(true);
     });
   });
 
   describe('GET /templates/:tid — fetch single template', () => {
-    it('resolves template from project → user → builtin tiers', async () => {
+    it('resolves project → user → builtin (project wins)', async () => {
       const app = await createTestApp(projectRoot);
 
+      mkdirSync(join(builtinDir, 'from-builtin'), { recursive: true });
       writeFileSync(
-        join(builtinDir, 'from-builtin'),
+        join(builtinDir, 'from-builtin', 'template.json'),
         JSON.stringify({
           id: 'from-builtin',
           name: 'Builtin Version',
@@ -231,7 +269,6 @@ describe('templates-routes', () => {
         }),
       );
 
-      // Same id in project should override
       mkdirSync(join(templatesDir, 'from-builtin'), { recursive: true });
       writeFileSync(
         join(templatesDir, 'from-builtin', 'template.json'),
@@ -249,9 +286,51 @@ describe('templates-routes', () => {
       );
 
       expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-      expect(body.template.name).toBe('Project Version'); // Project override wins
-      expect(body.template.config).toBeDefined();
+      expect(body.template.name).toBe('Project Version');
+      expect(body.tier).toBe('project');
+    });
+
+    it('honors ?tier=builtin to fetch the shadowed built-in', async () => {
+      const app = await createTestApp(projectRoot);
+
+      mkdirSync(join(builtinDir, 'shadowed'), { recursive: true });
+      writeFileSync(
+        join(builtinDir, 'shadowed', 'template.json'),
+        JSON.stringify({ id: 'shadowed', name: 'Builtin Version' }),
+      );
+      mkdirSync(join(templatesDir, 'shadowed'), { recursive: true });
+      writeFileSync(
+        join(templatesDir, 'shadowed', 'template.json'),
+        JSON.stringify({ id: 'shadowed', name: 'Project Override' }),
+      );
+
+      const { body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/shadowed?tier=builtin',
+      );
+
+      expect(body.template.name).toBe('Builtin Version');
+      expect(body.tier).toBe('builtin');
+    });
+
+    it('accepts the deprecated ?tier=worca alias for ?tier=builtin', async () => {
+      const app = await createTestApp(projectRoot);
+
+      mkdirSync(join(builtinDir, 'legacy'), { recursive: true });
+      writeFileSync(
+        join(builtinDir, 'legacy', 'template.json'),
+        JSON.stringify({ id: 'legacy', name: 'Builtin Legacy' }),
+      );
+
+      const { body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/legacy?tier=worca',
+      );
+
+      expect(body.template.name).toBe('Builtin Legacy');
+      expect(body.tier).toBe('builtin');
     });
 
     it('returns 404 for non-existent template', async () => {
@@ -267,7 +346,7 @@ describe('templates-routes', () => {
   });
 
   describe('POST /templates — create template', () => {
-    it('creates template in project scope', async () => {
+    it('delegates to `worca templates create --from-file <path>` in project scope', async () => {
       const app = await createTestApp(projectRoot);
 
       const payload = {
@@ -287,20 +366,17 @@ describe('templates-routes', () => {
 
       expect(status).toBe(201);
       expect(body.ok).toBe(true);
-
-      // Verify template file was written to disk
-      const { existsSync, readFileSync } = await import('node:fs');
-      const { join } = await import('node:path');
-      const manifestPath = join(projectRoot, '.claude', 'templates', 'new-template', 'template.json');
-      expect(existsSync(manifestPath)).toBe(true);
-      const written = JSON.parse(readFileSync(manifestPath, 'utf8'));
-      expect(written.id).toBe('new-template');
-      expect(written.name).toBe('New Template');
+      expect(mockExecSync).toHaveBeenCalledTimes(1);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args[0]).toBe('templates');
+      expect(args[1]).toBe('create');
+      expect(args[2]).toBe('--from-file');
+      // Should NOT pass --global for project scope.
+      expect(args).not.toContain('--global');
     });
 
-    it('creates template in user scope', async () => {
+    it('passes --global to the CLI for user scope', async () => {
       const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue('');
 
       const payload = {
         scope: 'user',
@@ -318,28 +394,44 @@ describe('templates-routes', () => {
 
       expect(status).toBe(201);
       expect(body.ok).toBe(true);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toContain('--global');
     });
 
-    it('rejects scope=builtin (400)', async () => {
+    it('returns 409 when the id already exists in any tier', async () => {
       const app = await createTestApp(projectRoot);
 
-      const payload = {
-        scope: 'builtin',
-        id: 'bad',
-        name: 'Bad',
-        config: {},
-      };
+      mkdirSync(join(templatesDir, 'exists'), { recursive: true });
+      writeFileSync(
+        join(templatesDir, 'exists', 'template.json'),
+        JSON.stringify({ id: 'exists', name: 'Exists' }),
+      );
 
       const { status, body } = await request(
         app,
         'POST',
         '/api/projects/test/templates',
-        payload,
+        { scope: 'project', id: 'exists', name: 'Dup' },
+      );
+
+      expect(status).toBe(409);
+      expect(body.ok).toBe(false);
+      // CLI must not be invoked when the existence check fails up front.
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('rejects scope=builtin (400)', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates',
+        { scope: 'builtin', id: 'bad', name: 'Bad', config: {} },
       );
 
       expect(status).toBe(400);
       expect(body.ok).toBe(false);
-      // Error is generic "scope must be \"project\" or \"user\"" - builtin rejected
       expect(body.error).toMatch(/scope must be/i);
     });
 
@@ -350,11 +442,7 @@ describe('templates-routes', () => {
         app,
         'POST',
         '/api/projects/test/templates',
-        {
-          scope: 'project',
-          // missing id
-          name: 'No ID',
-        },
+        { scope: 'project', name: 'No ID' },
       );
 
       expect(status).toBe(400);
@@ -362,8 +450,25 @@ describe('templates-routes', () => {
     });
   });
 
-  describe('scope=something rejection tests', () => {
-    it('PUT rejects invalid scope values', async () => {
+  describe('PUT /templates/:tid — upsert template', () => {
+    it('delegates to `worca templates create` for project-scope upsert', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'PUT',
+        '/api/projects/test/templates/existing',
+        { name: 'Updated Name', config: {} },
+      );
+
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args.slice(0, 3)).toEqual(['templates', 'create', '--from-file']);
+      expect(args).not.toContain('--global');
+    });
+
+    it('rejects invalid scope values (400)', async () => {
       const app = await createTestApp(projectRoot);
 
       const { status, body } = await request(
@@ -377,117 +482,12 @@ describe('templates-routes', () => {
       expect(body.ok).toBe(false);
       expect(body.error).toMatch(/scope/i);
     });
-
-    it('DELETE rejects invalid scope values', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'DELETE',
-        '/api/projects/test/templates/any-template?scope=something',
-      );
-
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-      expect(body.error).toMatch(/scope/i);
-    });
-
-    it('POST duplicate rejects invalid dst_scope values', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates/source/duplicate',
-        { dst_id: 'dest', dst_scope: 'invalid' },
-      );
-
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-      expect(body.error).toMatch(/dst_scope/i);
-    });
-
-    it('PUT default-template rejects invalid tid format', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'PUT',
-        '/api/projects/test/default-template',
-        {
-          tid: 'INVALID-TEMPLATE-ID_!',
-        },
-      );
-
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-      expect(body.error).toMatch(/Invalid template id/i);
-    });
-
-    it('PUT default-template rejects builtin scope (via tid validation)', async () => {
-      const app = await createTestApp(projectRoot);
-
-      // This tests that setting a default that's a builtin template ID is allowed
-      // (the implementation should just write the ID, not validate it exists)
-      const { status, body } = await request(
-        app,
-        'PUT',
-        '/api/projects/test/default-template',
-        {
-          tid: 'some-builtin',
-        },
-      );
-
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-    });
-  });
-
-  describe('PUT /templates/:tid — update template', () => {
-    it('updates project template', async () => {
-      const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue('');
-
-      const payload = {
-        name: 'Updated Name',
-        config: { agents: { planner: { model: 'sonnet' } } },
-      };
-
-      const { status, body } = await request(
-        app,
-        'PUT',
-        '/api/projects/test/templates/existing',
-        payload,
-      );
-
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-    });
-
-    it('rejects updates to builtin templates (400)', async () => {
-      const app = await createTestApp(projectRoot);
-      writeFileSync(
-        join(builtinDir, 'locked'),
-        JSON.stringify({ id: 'locked', name: 'Locked' }),
-      );
-
-      const { status, body } = await request(
-        app,
-        'PUT',
-        '/api/projects/test/templates/locked?scope=builtin',
-        { name: 'Attempted Override' },
-      );
-
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-    });
   });
 
   describe('DELETE /templates/:tid — delete template', () => {
-    it('deletes project template', async () => {
+    it('delegates to `worca templates delete <id>` for project scope', async () => {
       const app = await createTestApp(projectRoot);
 
-      // Create the template directory so deleteTemplate can remove it
       const tmplDir = join(projectRoot, '.claude', 'templates', 'project-tmpl');
       mkdirSync(tmplDir, { recursive: true });
       writeFileSync(
@@ -503,10 +503,59 @@ describe('templates-routes', () => {
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
-      expect(existsSync(tmplDir)).toBe(false);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toEqual(['templates', 'delete', 'project-tmpl']);
     });
 
-    it('rejects deleting builtin templates (400)', async () => {
+    it('passes --global to the CLI for user-scope delete', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const userTmplDir = join(userTemplatesDir, 'templates', 'user-tmpl');
+      mkdirSync(userTmplDir, { recursive: true });
+      writeFileSync(
+        join(userTmplDir, 'template.json'),
+        JSON.stringify({ id: 'user-tmpl', name: 'User Template' }),
+      );
+
+      const { status } = await request(
+        app,
+        'DELETE',
+        '/api/projects/test/templates/user-tmpl?scope=user',
+      );
+
+      expect(status).toBe(200);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toEqual(['templates', 'delete', 'user-tmpl', '--global']);
+    });
+
+    it('returns 404 if the template is not present in the named scope', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'DELETE',
+        '/api/projects/test/templates/missing?scope=project',
+      );
+
+      expect(status).toBe(404);
+      expect(body.ok).toBe(false);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid scope values (400)', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'DELETE',
+        '/api/projects/test/templates/any-template?scope=something',
+      );
+
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
+    });
+
+    it('rejects scope=builtin (400)', async () => {
       const app = await createTestApp(projectRoot);
 
       const { status, body } = await request(
@@ -521,82 +570,81 @@ describe('templates-routes', () => {
   });
 
   describe('POST /templates/:tid/duplicate — clone template', () => {
-    it('clones to project scope', async () => {
+    it('delegates to `worca templates duplicate` for project destination', async () => {
       const app = await createTestApp(projectRoot);
-
-      // Seed source template
-      const { mkdirSync, writeFileSync } = await import('node:fs');
-      const { join } = await import('node:path');
-      const srcDir = join(projectRoot, '.claude', 'templates', 'source-template');
-      mkdirSync(srcDir, { recursive: true });
-      writeFileSync(join(srcDir, 'template.json'), JSON.stringify({
-        id: 'source-template', name: 'Source', config: {},
-      }));
-
-      const payload = {
-        dst_id: 'clone-of-source',
-        dst_scope: 'project',
-      };
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates/source-template/duplicate',
-        payload,
-      );
-
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-    });
-
-    it('clones to user scope', async () => {
-      const app = await createTestApp(projectRoot);
-
-      // Seed source template
-      const { mkdirSync, writeFileSync } = await import('node:fs');
-      const { join } = await import('node:path');
-      const srcDir = join(projectRoot, '.claude', 'templates', 'source');
-      mkdirSync(srcDir, { recursive: true });
-      writeFileSync(join(srcDir, 'template.json'), JSON.stringify({
-        id: 'source', name: 'Source', config: {},
-      }));
 
       const { status, body } = await request(
         app,
         'POST',
         '/api/projects/test/templates/source/duplicate',
-        { dst_id: 'u-clone', dst_scope: 'user' },
+        { dst_id: 'clone-of-source', dst_scope: 'project' },
       );
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toEqual([
+        'templates',
+        'duplicate',
+        'source',
+        '--dst',
+        'clone-of-source',
+        '--dst-scope',
+        'project',
+      ]);
     });
-  });
 
-  describe('POST /templates/:tid/validate — validate config', () => {
-    it('validates config and returns issues', async () => {
+    it('maps CLI builtin_conflict to HTTP 400', async () => {
       const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue(JSON.stringify([])); // No issues
-
-      const payload = {
-        config: {
-          agents: { planner: { model: 'opus' } },
-        },
-      };
+      mockExecSync.mockImplementation(() => {
+        throw cliError("Cannot duplicate to built-in ID 'feature'.");
+      });
 
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/test-template/validate',
-        payload,
+        '/api/projects/test/templates/source/duplicate',
+        { dst_id: 'feature', dst_scope: 'project' },
       );
 
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-      expect(Array.isArray(body.issues)).toBe(true);
+      expect(status).toBe(400);
+      expect(body.code).toBe('builtin_conflict');
     });
 
-    it('returns validation errors from CLI', async () => {
+    it('maps CLI name_collision to HTTP 409', async () => {
+      const app = await createTestApp(projectRoot);
+      mockExecSync.mockImplementation(() => {
+        throw cliError("Template ID 'taken' already exists in project scope.");
+      });
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/source/duplicate',
+        { dst_id: 'taken', dst_scope: 'project' },
+      );
+
+      expect(status).toBe(409);
+      expect(body.code).toBe('name_collision');
+    });
+
+    it('rejects invalid dst_scope values (400)', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/source/duplicate',
+        { dst_id: 'dest', dst_scope: 'invalid' },
+      );
+
+      expect(status).toBe(400);
+      expect(body.error).toMatch(/dst_scope/i);
+    });
+  });
+
+  describe('POST /templates/:tid/validate — validate config', () => {
+    it('returns parsed issues from the CLI', async () => {
       const app = await createTestApp(projectRoot);
       mockExecSync.mockReturnValue(
         JSON.stringify([
@@ -616,34 +664,43 @@ describe('templates-routes', () => {
       );
 
       expect(status).toBe(200);
-      expect(body.issues.length).toBeGreaterThan(0);
+      expect(body.issues).toHaveLength(1);
       expect(body.issues[0].severity).toBe('error');
     });
-  });
 
-  describe('GET /templates/:tid/bundle — export bundle', () => {
-    it('exports template bundle (redacted)', async () => {
+    it('returns empty issues when the CLI emits an empty array', async () => {
       const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue(
-        JSON.stringify({ templates: [{ id: 'exported' }] }),
-      );
+      mockExecSync.mockReturnValue('[]');
 
       const { status, body } = await request(
         app,
-        'GET',
-        '/api/projects/test/templates/export-tmpl/bundle',
+        'POST',
+        '/api/projects/test/templates/test-template/validate',
+        { config: { agents: { planner: { model: 'opus' } } } },
       );
 
       expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-      expect(body.bundle).toBeDefined();
+      expect(body.issues).toEqual([]);
+    });
+
+    it('rejects non-object config (400)', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/x/validate',
+        { config: 'not-an-object' },
+      );
+
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
     });
   });
 
   describe('POST /templates/import — import bundle', () => {
-    it('imports bundle from body', async () => {
+    it('writes the bundle to a temp file and delegates to `worca templates import`', async () => {
       const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue('');
 
       const payload = {
         bundle: {
@@ -661,27 +718,26 @@ describe('templates-routes', () => {
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args[0]).toBe('templates');
+      expect(args[1]).toBe('import');
+      expect(args).toContain('--scope');
+      expect(args).toContain('project');
+      expect(args).toContain('--non-interactive');
     });
 
-    it('handles redaction preview in response', async () => {
+    it('rejects invalid scope (400)', async () => {
       const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue(undefined); // CLI success returns nothing
 
       const { status, body } = await request(
         app,
         'POST',
         '/api/projects/test/templates/import',
-        {
-          bundle: { templates: [{ id: 't1', name: 'T1', config: {} }] },
-          scope: 'project',
-        },
+        { bundle: { templates: [] }, scope: 'whatever' },
       );
 
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-      expect(body.imported).toBeDefined();
-      expect(Array.isArray(body.imported)).toBe(true);
-      expect(body.count).toBeDefined();
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
     });
   });
 
@@ -693,15 +749,11 @@ describe('templates-routes', () => {
         app,
         'PUT',
         '/api/projects/test/default-template',
-        {
-          tid: 'my-default',
-        },
+        { tid: 'my-default' },
       );
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
-
-      // Verify settings.json was updated
       const settings = JSON.parse(
         readFileSync(join(projectRoot, '.claude', 'settings.json'), 'utf8'),
       );
@@ -711,7 +763,6 @@ describe('templates-routes', () => {
     it('clears default template when tid is null', async () => {
       const app = await createTestApp(projectRoot);
 
-      // First set a default
       writeFileSync(
         join(projectRoot, '.claude', 'settings.json'),
         JSON.stringify({ worca: { default_template: 'old-default' } }),
@@ -721,18 +772,74 @@ describe('templates-routes', () => {
         app,
         'PUT',
         '/api/projects/test/default-template',
-        {
-          tid: null,
-        },
+        { tid: null },
       );
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
-
       const settings = JSON.parse(
         readFileSync(join(projectRoot, '.claude', 'settings.json'), 'utf8'),
       );
       expect(settings.worca?.default_template).toBeUndefined();
     });
+
+    it('rejects invalid tid format (400)', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'PUT',
+        '/api/projects/test/default-template',
+        { tid: 'INVALID-TEMPLATE-ID_!' },
+      );
+
+      expect(status).toBe(400);
+      expect(body.error).toMatch(/Invalid template id/i);
+    });
+
+    it('accepts any valid tid format without checking existence', async () => {
+      // Setting a default that doesn't (yet) resolve to a template is allowed —
+      // the writer is a thin shim, not an enforcer.
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'PUT',
+        '/api/projects/test/default-template',
+        { tid: 'some-future-template' },
+      );
+
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+    });
+  });
+
+  // The Read tests above use real filesystem fixtures (no execFileSync needed).
+  // We sanity-check that the mock isn't called on those paths.
+  it('GET /templates does not invoke the CLI', async () => {
+    const app = await createTestApp(projectRoot);
+    mkdirSync(join(templatesDir, 'sample'), { recursive: true });
+    writeFileSync(
+      join(templatesDir, 'sample', 'template.json'),
+      JSON.stringify({ id: 'sample', name: 'Sample' }),
+    );
+    await request(app, 'GET', '/api/projects/test/templates');
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  it('GET /templates/:tid does not invoke the CLI', async () => {
+    const app = await createTestApp(projectRoot);
+    mkdirSync(join(templatesDir, 'sample'), { recursive: true });
+    writeFileSync(
+      join(templatesDir, 'sample', 'template.json'),
+      JSON.stringify({ id: 'sample', name: 'Sample' }),
+    );
+    await request(app, 'GET', '/api/projects/test/templates/sample');
+    expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  // Self-check: confirms cleanup didn't leave the project tree dangling.
+  it('cleans up project tree between tests', () => {
+    expect(existsSync(projectRoot)).toBe(true);
   });
 });

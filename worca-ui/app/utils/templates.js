@@ -132,18 +132,20 @@ function deepEqual(a, b) {
 export function shadowsBuiltin(template) {
   if (!template) return false;
 
-  // Check if shadows array contains 'worca' (built-in)
-  if (template.shadows && template.shadows.includes('worca')) {
+  // The API uses 'builtin' (matching Python's TemplateResolver). The
+  // 'worca' string is the legacy alias for the same tier; we accept it
+  // so older cached responses don't suddenly stop reporting shadows.
+  const isBuiltinTier = (t) => t === 'builtin' || t === 'worca';
+
+  if (template.shadows?.some(isBuiltinTier)) {
     return true;
   }
-
-  // Check effectiveTier
-  if (template.effectiveTier === 'worca') {
-    return false; // This is the built-in itself
+  if (isBuiltinTier(template.effectiveTier)) {
+    return false; // This is the built-in itself.
   }
-
-  // If it's project or user tier, assume it shadows a built-in
-  // (worca templates are always part of shadows when overridden)
+  // Project/user effectiveTier without an explicit shadow array still
+  // implies a built-in is being overridden, because the API only emits
+  // a project/user row when it found at least one match in any tier.
   return (
     template.effectiveTier === 'project' || template.effectiveTier === 'user'
   );

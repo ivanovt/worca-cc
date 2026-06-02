@@ -304,7 +304,7 @@ class TestTemplateResolverDuplicate:
             },
         )
 
-        result = resolver.duplicate("minimal", "minimal-copy", "user")
+        resolver.duplicate("minimal", "minimal-copy", "user")
 
         # Check the written JSON was correct
         dest_json = tmp_path / "user" / "minimal-copy" / "template.json"

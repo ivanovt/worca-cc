@@ -29,7 +29,7 @@ import { getDefaultBranch } from './git-helpers.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
 import { createModelEnvRouter } from './model-env-routes.js';
-import { preferencesPath, templatesDir } from './paths.js';
+import { preferencesPath } from './paths.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import { countRunningPipelinesAcrossProjects } from './process-registry.js';
