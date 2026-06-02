@@ -2115,14 +2115,18 @@ function _templateActionDialogTemplate(state) {
       @sl-initial-focus=${(e) => {
         // sl-dialog's default focus lands on the close button. Pre-empt
         // it so initial focus goes to the first form field instead —
-        // less keyboard friction (start typing immediately).
+        // less keyboard friction (start typing immediately). Only
+        // intercept the dialog's own initial-focus event; bubbled
+        // events from children (e.g. sl-select) reach this listener
+        // too and must be ignored.
+        if (e.target !== e.currentTarget) return;
         e.preventDefault();
       }}
       @sl-after-show=${(e) => {
-        // sl-after-show fires once the dialog's open-transition has
-        // settled, by which time every slotted element is reachable.
-        // For Create/Duplicate/Rename the first input is the id field;
-        // for Import it's the file picker.
+        // Same bubbling guard: sl-select / sl-tab-group inside the
+        // dialog fire their own sl-after-show events. Only the
+        // dialog's own settle matters for our focus shift.
+        if (e.target !== e.currentTarget) return;
         const dialog = e.target;
         const target =
           dialog.querySelector('sl-input') ||
@@ -2132,7 +2136,14 @@ function _templateActionDialogTemplate(state) {
           target.focus();
         }
       }}
-      @sl-after-hide=${_dismissTemplateActionDialog}
+      @sl-after-hide=${(e) => {
+        // Critical: sl-select's dropdown close fires sl-after-hide too,
+        // and the event bubbles up to this listener. Without this
+        // guard, changing the Storage dropdown would close the
+        // entire dialog as if the user had clicked Cancel.
+        if (e.target !== e.currentTarget) return;
+        _dismissTemplateActionDialog();
+      }}
     >
       ${body}
       ${
