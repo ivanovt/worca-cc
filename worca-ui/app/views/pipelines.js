@@ -54,10 +54,10 @@ const TIER_SECTIONS = [
     emptyTitle: 'No project templates yet',
     emptyDesc:
       'Click New, Import a bundle, or Duplicate a built-in to create one here.',
-    // Project + User open by default — these are the writable tiers and
-    // the ones a user most often acts on. Built-ins are reference and
-    // start collapsed to keep the page short; one click expands them.
-    defaultOpen: true,
+    // All tiers start collapsed. The count badge in each summary makes
+    // it easy to scan "is there anything here?" without expanding;
+    // users open the tier they actually want to act on.
+    defaultOpen: false,
   },
   {
     key: 'user',
@@ -67,7 +67,7 @@ const TIER_SECTIONS = [
     emptyTitle: 'No user templates yet',
     emptyDesc:
       'Duplicate a template into this scope to share it across every project on this machine.',
-    defaultOpen: true,
+    defaultOpen: false,
   },
   {
     key: 'builtin',
