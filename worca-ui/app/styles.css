@@ -10,6 +10,16 @@
   --bg: #ffffff;
   --bg-secondary: #f8fafc;
   --bg-tertiary: #f1f5f9;
+  /* Card / panel surface. `--surface` was used in several places
+   * (`.run-card`, sidebar widgets, settings cards) without ever
+   * being defined, so it silently resolved to `unset` → no
+   * background. That was invisible while the page background and
+   * cards were both white, but the moment a parent panel tinted
+   * itself gray (e.g. `.pipelines-tier-section` → `--bg-secondary`)
+   * the cards turned transparent. Alias it to `--bg` so cards
+   * always render on a white (light) / dark-slate (dark) surface
+   * regardless of what's behind them. */
+  --surface: var(--bg);
   --border: #e2e8f0;
   --border-subtle: rgba(226, 232, 240, 0.6);
   --muted: #94a3b8;
@@ -6771,7 +6781,12 @@ sl-dialog.markdown-dialog::part(body) {
 .pipelines-tier-section::part(base) {
   border: 1px solid var(--border-subtle, var(--border));
   border-radius: var(--radius-lg);
-  background: var(--surface);
+  /* Match the new-run-section panel chrome so the tier sections
+   * read as the same kind of grouping (gray-tinted surface holding
+   * a heading + a stack of items). Previously these were on the
+   * default `--surface`, which left the cards floating with no
+   * visual hierarchy against the page background. */
+  background: var(--bg-secondary);
 }
 .pipelines-tier-section::part(header) {
   padding: 12px 16px;

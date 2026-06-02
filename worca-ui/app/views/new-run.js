@@ -219,9 +219,13 @@ export function defaultOptionLabel() {
 }
 
 function templatesByTier() {
-  const result = { worca: [], project: [], user: [] };
+  // Tier names are `project`, `user`, `builtin` (was `worca` in an
+  // earlier iteration of the resolver; the bucket name was never
+  // updated, so anything with `tier: "builtin"` was silently dropped
+  // and the "Built-in" group never rendered in the launcher).
+  const result = { builtin: [], project: [], user: [] };
   for (const t of templates || []) {
-    const tier = t.tier;
+    const tier = t.tier === 'worca' ? 'builtin' : t.tier;
     if (result[tier]) result[tier].push(t);
   }
   return result;
@@ -673,11 +677,11 @@ export function newRunView(_state, { rerender }) {
                     : nothing
                 }
                 ${
-                  tiers.worca.length > 0
+                  tiers.builtin.length > 0
                     ? html`
                   <sl-divider></sl-divider>
-                  <small class="template-group-label">WORCA</small>
-                  ${tiers.worca.map(
+                  <small class="template-group-label">BUILT-IN</small>
+                  ${tiers.builtin.map(
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
@@ -689,7 +693,7 @@ export function newRunView(_state, { rerender }) {
                     : nothing
                 }
               </sl-select>
-              <span class="settings-field-hint">Customize stages and agent behavior. Groups: user, project, worca (built-in).</span>
+              <span class="settings-field-hint">Customize stages and agent behavior. Groups: user, project, built-in.</span>
               ${(() => {
                 const sel = (templates || []).find(
                   (t) => t.id === selectedTemplate,
