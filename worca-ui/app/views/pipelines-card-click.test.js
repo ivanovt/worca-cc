@@ -2,9 +2,12 @@
  * Tests: clickable template cards in the Pipelines view.
  *
  * The Edit button was removed in favor of whole-card clickability.
- * Project/user cards: click → onEdit. Built-in cards: click → onDuplicate
- * (the canonical "shadow & edit" path). Action buttons inside the card
- * must stop propagation so they don't double-fire as a card click.
+ * All cards (including built-in) route to onEdit when clicked — the
+ * editor renders a read-only inspector for built-ins so users can
+ * see what's inside without having to fork first. Duplicate stays
+ * available as an explicit button on built-in cards for the canonical
+ * "shadow & edit" path. Action buttons inside the card must stop
+ * propagation so they don't double-fire as a card click.
  *
  * @vitest-environment jsdom
  */
@@ -84,7 +87,9 @@ describe('pipelinesView — clickable cards', () => {
     expect(handlers.calls).toEqual(['edit:my-tpl']);
   });
 
-  it('built-in card click invokes onDuplicate (canonical shadow & edit)', () => {
+  it('built-in card click invokes onEdit (read-only inspector view)', () => {
+    // Built-ins open in the editor in read-only mode so users can
+    // inspect what's inside. Duplicate stays separate (button below).
     const handlers = snapshotHandlers();
     container = mount(
       { templates: TEMPLATES, templatesLoaded: true, worcaCliStatus: HEALTHY },
@@ -93,7 +98,7 @@ describe('pipelinesView — clickable cards', () => {
     const card = cardForId(container, 'Minimal Pipeline');
     expect(card).toBeDefined();
     card.click();
-    expect(handlers.calls).toEqual(['duplicate:minimal']);
+    expect(handlers.calls).toEqual(['edit:minimal']);
   });
 
   it('Edit button is no longer rendered on any card', () => {

@@ -6864,25 +6864,12 @@ sl-dialog.markdown-dialog::part(body) {
 }
 
 /*
- * Card top-row layout: the heading column (name above id) sits between
- * the file-text icon and the optional ★ Default badge. Stacking name +
- * id lets the human-friendly name stay primary while the technical id
- * — what you'd type into `--template` or see in the URL bar — sits
- * right under it in a muted monospace, the same treatment we use for
- * paths and other identifiers across the app.
- */
-.template-card-headings {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  flex: 1;
-  min-width: 0;
-}
-/*
  * "ID: <slug>" badge — pill-shaped with a subtle gray background to
- * read as a handle/identifier chip rather than incidental text. Uses
- * Settings-style tokens (--bg-secondary, --border-subtle) so it lands
- * in the same visual family as our other chips and badges.
+ * read as a handle/identifier chip rather than incidental text. Sits
+ * inline with the file-text icon, name, and Default badge on the
+ * card's top row (mirrors the tier section header layout). Uses
+ * Settings-style tokens (--bg-secondary, --border-subtle) so it
+ * lands in the same visual family as our other chips and badges.
  */
 .template-card-id-badge {
   display: inline-flex;
@@ -6937,6 +6924,21 @@ sl-dialog.markdown-dialog::part(body) {
 .template-default-badge {
   margin-right: 8px;
   font-weight: 600;
+}
+
+/*
+ * Top row hugs naturally: icon, name, "ID:slug" badge, and the
+ * ★ Default badge all sit on one line. Without this override the
+ * shared `.run-card-title { flex: 1 }` rule would soak up all the
+ * horizontal space and create an awkward gap between the title and
+ * the ID badge. Here we let the title stay its natural width and
+ * shove the Default badge to the right edge with margin-left:auto.
+ */
+.template-card .run-card-title {
+  flex: 0 0 auto;
+}
+.template-card .template-default-badge {
+  margin-left: auto;
 }
 
 .template-tier-badge {
@@ -7172,6 +7174,37 @@ sl-dialog.markdown-dialog::part(body) {
 
 .editor-mode-toggle {
   margin-left: auto;
+}
+
+/*
+ * Read-only badge in the editor subheader. Sits next to the tier
+ * badge whenever we're viewing a built-in template; visually warns
+ * the user that nothing they type here will save.
+ */
+.editor-readonly-badge {
+  margin-left: 4px;
+}
+
+/*
+ * Editor content gate: when readOnly, every form control inside
+ * becomes non-interactive. pointer-events:none blocks click +
+ * keyboard activation, the muted opacity signals "look, don't
+ * touch", and `aria-disabled="true"` on the wrapper tells assistive
+ * tech the surface is locked. Inputs visually keep their value so
+ * users can still read / copy from them.
+ *
+ * Cheaper than threading a `disabled` flag through every section
+ * and every input; tradeoff is screen readers won't announce each
+ * control as disabled — only the container. Acceptable for a
+ * read-only inspector mode.
+ */
+.editor-content--readonly {
+  pointer-events: none;
+  opacity: 0.7;
+  user-select: text; /* let users still highlight + copy values */
+}
+.editor-content--readonly * {
+  cursor: default !important;
 }
 
 /*

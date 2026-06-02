@@ -454,16 +454,17 @@ function _templateCard(template, defaultTemplate, handlers) {
     (!defaultRef.tier || normalizeTier(defaultRef.tier) === resolvedTier);
   const isBuiltin = resolvedTier === 'builtin' || builtin;
 
-  // Whole-card click → Edit (or Duplicate-to-Edit for built-ins).
-  // Both handlers now need (id, tier) so the new (tier, id) endpoints
-  // can resolve the right copy without a precedence-based fallback.
-  const cardClick = isBuiltin ? onDuplicate : onEdit;
+  // Whole-card click → open the editor. For built-ins the editor
+  // renders read-only (form inputs disabled, no Save button); to
+  // actually fork a built-in the user clicks the explicit Duplicate
+  // button. One gesture, one meaning: "show me this template".
+  const cardClick = onEdit;
   const cardClickable = Boolean(cardClick);
   const cardClass = `run-card template-card${cardClickable ? ' template-card--clickable' : ''}`;
   const cardTitle = !cardClickable
     ? 'Upgrade worca-cc to enable editing'
     : isBuiltin
-      ? 'Click to duplicate into project scope and edit'
+      ? 'Click to view template (read-only) — use Duplicate to edit'
       : 'Click to edit template';
   const onCardActivate = cardClickable
     ? () => cardClick(id, resolvedTier)
@@ -494,13 +495,11 @@ function _templateCard(template, defaultTemplate, handlers) {
     >
       <div class="run-card-top">
         <span class="run-card-status">${unsafeHTML(iconSvg(FileText, 16))}</span>
-        <div class="template-card-headings">
-          <span class="run-card-title">${name || id}</span>
-          <span class="template-card-id-badge" title="Template id">
-            <span class="template-card-id-label">ID:</span>
-            <code class="template-card-id">${id}</code>
-          </span>
-        </div>
+        <span class="run-card-title">${name || id}</span>
+        <span class="template-card-id-badge" title="Template id">
+          <span class="template-card-id-label">ID:</span>
+          <code class="template-card-id">${id}</code>
+        </span>
         ${
           isDefault
             ? html`<sl-badge variant="primary" pill class="template-default-badge" title="Default template"

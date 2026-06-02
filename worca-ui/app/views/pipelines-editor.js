@@ -14,6 +14,7 @@
  */
 
 import { html, nothing } from 'lit-html';
+import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
 import {
@@ -965,11 +966,14 @@ export function pipelinesEditorView(state, options) {
   }
 
   const tierDisplay = tier.charAt(0).toUpperCase() + tier.slice(1);
-  // Name + Id are editable inline. Name → Id auto-slugs until the
-  // user manually touches the Id field (idDirty=true). Built-ins are
-  // read-only and route fetches succeed but PUT 405s — disable the
-  // inputs so the user knows up front.
+  // Built-ins open in the same editor view as project/user templates
+  // but every input is disabled and Save is hidden — the user can
+  // read the config and JSON, but can't save changes. To actually
+  // edit a built-in they hit the explicit Duplicate button on the
+  // list card; that creates a project copy and routes here in
+  // editable mode.
   const isBuiltinTier = tier === 'builtin';
+  const readOnly = isBuiltinTier;
   const onNameInput = (e) => {
     const newName = e.target.value;
     editorState.nameDraft = newName;
@@ -1008,6 +1012,17 @@ export function pipelinesEditorView(state, options) {
             ></sl-input>
           </span>
           <sl-badge variant="neutral" pill>${tierDisplay}</sl-badge>
+          ${
+            readOnly
+              ? html`<sl-badge
+                  variant="warning"
+                  pill
+                  class="editor-readonly-badge"
+                  title="Built-in templates can't be modified. Use Duplicate to fork into project or user scope."
+                  >Read-only</sl-badge
+                >`
+              : ''
+          }
         </div>
         <div class="editor-mode-toggle">
           <sl-button-group>
@@ -1081,7 +1096,10 @@ export function pipelinesEditorView(state, options) {
           : nothing
       }
 
-      <div class="editor-content">
+      <div
+        class="editor-content${readOnly ? ' editor-content--readonly' : ''}"
+        aria-disabled=${ifDefined(readOnly ? 'true' : undefined)}
+      >
         ${
           viewMode === 'form'
             ? html`
@@ -1140,22 +1158,30 @@ export function pipelinesEditorView(state, options) {
       </div>
 
       <div class="editor-footer">
-        <sl-button
-          variant="primary"
-          size="small"
-          ?disabled=${saving || hasErrors}
-           @click=${() => saveTemplate(tid, tier, projectId, onSaved)}
-        >
-          ${saving ? html`<sl-spinner></sl-spinner>` : unsafeHTML(iconSvg(Save, 14))}
-          ${saving ? 'Saving…' : 'Save Template'}
-        </sl-button>
+        ${
+          readOnly
+            ? nothing
+            : html`<sl-button
+                variant="primary"
+                size="small"
+                ?disabled=${saving || hasErrors}
+                @click=${() => saveTemplate(tid, tier, projectId, onSaved)}
+              >
+                ${
+                  saving
+                    ? html`<sl-spinner></sl-spinner>`
+                    : unsafeHTML(iconSvg(Save, 14))
+                }
+                ${saving ? 'Saving…' : 'Save Template'}
+              </sl-button>`
+        }
         <sl-button
           variant="default"
           size="small"
           outline
           @click=${() => cancelEdit(onCancel)}
         >
-          Cancel
+          ${readOnly ? 'Close' : 'Cancel'}
         </sl-button>
       </div>
     </div>
