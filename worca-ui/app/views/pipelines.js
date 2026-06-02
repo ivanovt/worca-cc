@@ -451,7 +451,6 @@ function _templateCard(template, defaultTemplateId, handlers) {
     id,
     name,
     description,
-    tags = [],
     effectiveTier,
     tier,
     builtin = false,
@@ -499,7 +498,10 @@ function _templateCard(template, defaultTemplateId, handlers) {
     >
       <div class="run-card-top">
         <span class="run-card-status">${unsafeHTML(iconSvg(FileText, 16))}</span>
-        <span class="run-card-title">${name || id}</span>
+        <div class="template-card-headings">
+          <span class="run-card-title">${name || id}</span>
+          <code class="template-card-id" title="Template id">${id}</code>
+        </div>
         ${
           isDefault
             ? html`<sl-badge variant="primary" pill class="template-default-badge" title="Default template"
@@ -516,14 +518,6 @@ function _templateCard(template, defaultTemplateId, handlers) {
             <span class="meta-value">${description}</span>
           </span>
         </div>`
-          : ''
-      }
-
-      ${
-        tags && tags.length > 0
-          ? html`<div class="run-card-stages">
-            ${tags.map((tag) => html`<sl-tag size="small">${tag}</sl-tag>`)}
-          </div>`
           : ''
       }
 

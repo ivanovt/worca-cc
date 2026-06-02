@@ -6858,9 +6858,35 @@ sl-dialog.markdown-dialog::part(body) {
 
 .template-card {
   /* +50% on the original 140px to stay proportional with the wider
-     grid track; longer descriptions and tag rows now have headroom
-     before the card needs to grow further. */
+     grid track; longer descriptions now have headroom before the card
+     needs to grow further. */
   min-height: 210px;
+}
+
+/*
+ * Card top-row layout: the heading column (name above id) sits between
+ * the file-text icon and the optional ★ Default badge. Stacking name +
+ * id lets the human-friendly name stay primary while the technical id
+ * — what you'd type into `--template` or see in the URL bar — sits
+ * right under it in a muted monospace, the same treatment we use for
+ * paths and other identifiers across the app.
+ */
+.template-card-headings {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.template-card-id {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  color: var(--fg-muted);
+  background: transparent;
+  padding: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /*
