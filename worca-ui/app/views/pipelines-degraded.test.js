@@ -216,7 +216,11 @@ describe('pipelinesView — degraded mode', () => {
     ).toBeNull();
   });
 
-  it('disables the empty-state Create / Import buttons in degraded mode', () => {
+  it('renders an empty placeholder for every tier when no templates exist', () => {
+    // The old "no templates anywhere" full-page empty state was
+    // removed in favour of per-tier placeholders so the page structure
+    // stays consistent. Create / Import affordances live in the page
+    // chrome (main.js) now — they're tested at the chrome layer.
     container = mount(
       {
         templates: [],
@@ -225,14 +229,10 @@ describe('pipelinesView — degraded mode', () => {
       },
       snapshotHandlers(),
     );
-    const empty = container.querySelector('.empty-state.pipelines-empty');
-    expect(empty).not.toBeNull();
-    const buttons = empty.querySelectorAll('sl-button');
-    expect(buttons.length).toBeGreaterThanOrEqual(2);
-    for (const btn of buttons) {
-      // sl-button reflects `disabled` as a boolean attribute
-      expect(btn.hasAttribute('disabled')).toBe(true);
-    }
+    const empties = container.querySelectorAll('.tier-section-empty');
+    expect(empties.length).toBe(3);
+    // The legacy global empty-state must not render anymore.
+    expect(container.querySelector('.empty-state.pipelines-empty')).toBeNull();
   });
 
   it('renders the special "worca CLI not found" wording when installed is null', () => {

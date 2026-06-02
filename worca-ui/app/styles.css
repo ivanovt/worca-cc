@@ -6765,11 +6765,78 @@ sl-dialog.markdown-dialog::part(body) {
   gap: 12px;
 }
 
+/*
+ * Tier-section header: icon + uppercase title + count badge + one-line
+ * description. The header sits on its own row, with the description
+ * wrapping to a second row below — keeps the title row scannable while
+ * still giving the user enough context to tell the tiers apart.
+ *
+ * Layout uses a 2-row grid: top row [icon | title | count | spacer],
+ * second row [description] spanning all columns under the title.
+ */
 .tier-section-header {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 10px;
   margin: 0;
-  font-size: 16px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border-subtle, var(--border));
+}
+.tier-section-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  grid-row: 1;
+}
+.tier-section-title {
+  margin: 0;
+  font-size: 12px;
   font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  grid-row: 1;
+}
+.tier-section-count {
+  grid-row: 1;
+  font-size: 11px;
+}
+.tier-section-desc {
+  grid-row: 2;
+  grid-column: 2 / -1;
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/*
+ * Empty-tier placeholder — sits inside an otherwise normal
+ * .pipelines-tier-section so the page never collapses around an empty
+ * tier. Uses the dashed Settings-style border to read as "absence,
+ * not error".
+ */
+.tier-section-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 18px 20px;
+  border: 1px dashed var(--border-subtle, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.tier-section-empty-title {
+  font-weight: 600;
+  font-size: 13px;
   color: var(--fg);
+}
+.tier-section-empty-desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--fg-muted);
 }
 
 .pipelines-grid {

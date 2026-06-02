@@ -17,14 +17,17 @@ import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Copy,
+  Cpu,
   Download,
   FileText,
+  FolderOpen,
   iconSvg,
   Pencil,
   Plus,
   Star,
   Trash2,
   Upload,
+  Users,
 } from '../utils/icons.js';
 
 // Tier variant mapping per badge-color-language guide
@@ -34,6 +37,43 @@ const TIER_VARIANT = {
   user: 'warning', // user templates are global but need attention
   worca: 'neutral', // built-in templates are immutable defaults
 };
+
+/**
+ * Per-tier metadata for the section headers. Drives the icon, the
+ * uppercase label, the one-line description, and the empty-state
+ * placeholder shown when the tier has zero templates. Keeping this in
+ * one map (rather than three inline `_tierSection` calls) means a copy
+ * change touches one place.
+ */
+const TIER_SECTIONS = [
+  {
+    key: 'project',
+    title: 'Project',
+    icon: FolderOpen,
+    desc: 'Stored in this repo at .claude/templates/ — versioned with code.',
+    emptyTitle: 'No project templates yet',
+    emptyDesc:
+      'Click New, Import a bundle, or Duplicate a built-in to create one here.',
+  },
+  {
+    key: 'user',
+    title: 'User',
+    icon: Users,
+    desc: 'Shared across all your projects from ~/.worca/templates/.',
+    emptyTitle: 'No user templates yet',
+    emptyDesc:
+      'Duplicate a template into this scope to share it across every project on this machine.',
+  },
+  {
+    key: 'builtin',
+    title: 'Built-in',
+    icon: Cpu,
+    desc: 'Ship with worca-cc. Immutable — duplicate to edit.',
+    emptyTitle: 'No built-in templates found',
+    emptyDesc:
+      'These ship with worca-cc; run `worca init --upgrade` if you expect them and none show up.',
+  },
+];
 
 // Backwards compat: alias effectiveTier to tier for old code that reads "tier"
 function normalizeTier(effectiveTier) {
@@ -291,49 +331,18 @@ export function pipelinesView(state, options) {
             ? html`<sl-spinner class="pipelines-loading-spinner"></sl-spinner>`
             : html`
               ${
-                !hasTemplates
-                  ? _emptyState(
-                      degraded ? null : onCreate,
-                      degraded ? null : onImport,
-                      degraded,
-                    )
-                  : html`
-                    ${
-                      // Render in applicability order: project first (most
-                      // specific override), user next (cross-project shared),
-                      // built-in last (the immutable defaults that the others
-                      // shadow). This matches how the merge resolver picks
-                      // a winner top-down at run launch.
-                      grouped.project.length > 0
-                        ? _tierSection(
-                            'Project',
-                            grouped.project,
-                            defaultTemplate,
-                            handlers,
-                          )
-                        : ''
-                    }
-                    ${
-                      grouped.user.length > 0
-                        ? _tierSection(
-                            'User',
-                            grouped.user,
-                            defaultTemplate,
-                            handlers,
-                          )
-                        : ''
-                    }
-                    ${
-                      grouped.builtins.length > 0
-                        ? _tierSection(
-                            'Built-in',
-                            grouped.builtins,
-                            defaultTemplate,
-                            handlers,
-                          )
-                        : ''
-                    }
-                  `
+                // Always render all three sections, in applicability order
+                // (project → user → built-in). Empty tiers stay visible
+                // with a short note explaining what *would* live there,
+                // so the structure of the page never depends on what the
+                // current project happens to contain.
+                TIER_SECTIONS.map((tier) => {
+                  const list =
+                    tier.key === 'builtin'
+                      ? grouped.builtins
+                      : grouped[tier.key];
+                  return _tierSection(tier, list, defaultTemplate, handlers);
+                })
               }
             `
         }
@@ -375,19 +384,44 @@ function _degradedBanner(status) {
 }
 
 /**
- * Render a tier section header with cards.
+ * Render a tier section: header (icon + title + count + description)
+ * followed by either the cards grid or a tier-specific empty note.
+ *
+ * Always renders — empty tiers stay visible with the note so the
+ * structure of the page is consistent regardless of what's installed.
  */
-function _tierSection(title, templates, defaultTemplateId, handlers) {
-  if (!templates || templates.length === 0) return nothing;
+function _tierSection(tier, templates, defaultTemplateId, handlers) {
+  const list = templates || [];
+  const count = list.length;
 
-  // Pass the handlers bag through verbatim so adding a new action only
-  // requires touching the top-level view + the card.
   return html`
-    <section class="pipelines-tier-section">
-      <h2 class="tier-section-header">${title}</h2>
-      <div class="pipelines-grid">
-        ${templates.map((t) => _templateCard(t, defaultTemplateId, handlers))}
-      </div>
+    <section class="pipelines-tier-section pipelines-tier-section--${tier.key}">
+      <header class="tier-section-header">
+        <span class="tier-section-icon">
+          ${unsafeHTML(iconSvg(tier.icon, 16))}
+        </span>
+        <h2 class="tier-section-title">${tier.title}</h2>
+        <sl-badge variant="neutral" pill class="tier-section-count"
+          >${count}</sl-badge
+        >
+        <p class="tier-section-desc">${tier.desc}</p>
+      </header>
+      ${
+        count > 0
+          ? html`
+              <div class="pipelines-grid">
+                ${list.map((t) =>
+                  _templateCard(t, defaultTemplateId, handlers),
+                )}
+              </div>
+            `
+          : html`
+              <div class="tier-section-empty">
+                <div class="tier-section-empty-title">${tier.emptyTitle}</div>
+                <p class="tier-section-empty-desc">${tier.emptyDesc}</p>
+              </div>
+            `
+      }
     </section>
   `;
 }
