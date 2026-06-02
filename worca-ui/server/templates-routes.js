@@ -179,12 +179,19 @@ function resolveTemplate(projectRoot, tid, tierFilter) {
  */
 function runWorcaTemplates(projectRoot, args, opts = {}) {
   try {
-    const stdout = execFileSync('worca', ['templates', ...args], {
-      cwd: projectRoot,
-      encoding: 'utf8',
-      timeout: opts.timeout ?? 30000,
-      input: opts.stdin,
-    });
+    // `--project-root` pins the project tier explicitly so the CLI does
+    // not rely on a `.git` walk from cwd — which fails for non-git
+    // worca-ui projects and for e2e fixtures that use tmpdir.
+    const stdout = execFileSync(
+      'worca',
+      ['templates', '--project-root', projectRoot, ...args],
+      {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        timeout: opts.timeout ?? 30000,
+        input: opts.stdin,
+      },
+    );
     return typeof stdout === 'string' ? stdout.trim() : '';
   } catch (err) {
     const stderr = err.stderr?.toString?.() || '';

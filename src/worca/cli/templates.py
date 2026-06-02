@@ -37,41 +37,75 @@ from worca.utils.env import filter_model_env
 from worca.utils.settings import deep_merge
 
 
-def _resolve_dirs():
+def _resolve_dirs(project_root: str | None = None):
     """Return (builtin_dir, project_dir, user_dir) for TemplateResolver.
 
-    builtin_dir: .claude/worca/templates/ (runtime copy) when inside a project,
-                 or src/worca/templates/ from the installed package outside a project
-    project_dir: .claude/templates/ relative to git root (or None if not in a repo)
-    user_dir:    ~/.worca/templates/
-    """
-    # Walk up to find git root
-    git_root = None
-    cwd = Path.cwd().resolve()
-    for parent in [cwd, *cwd.parents]:
-        if (parent / ".git").exists():
-            git_root = parent
-            break
+    Resolution order for the project root:
+      1. explicit `project_root` arg (passed via `--project-root` from
+         non-git callers like worca-ui's templates-routes shim)
+      2. nearest ancestor of cwd that contains a `.git/` directory
+      3. cwd itself (so the CLI is usable outside a git repo, e.g. when
+         worca-ui runs against a plain directory)
 
-    if git_root is not None:
-        builtin_dir = git_root / ".claude" / "worca" / "templates"
-        project_dir = git_root / ".claude" / "templates"
+    builtin_dir: `.claude/worca/templates/` under the resolved root if it
+                 exists, else the installed package's `src/worca/templates/`.
+    project_dir: `.claude/templates/` under the resolved root.
+    user_dir:    `~/.worca/templates/` (honors `$WORCA_HOME` via Path.home).
+    """
+    if project_root:
+        resolved_root = Path(project_root).resolve()
+    else:
+        cwd = Path.cwd().resolve()
+        resolved_root = cwd
+        for parent in [cwd, *cwd.parents]:
+            if (parent / ".git").exists():
+                resolved_root = parent
+                break
+
+    candidate_builtin = resolved_root / ".claude" / "worca" / "templates"
+    if candidate_builtin.is_dir():
+        builtin_dir = candidate_builtin
     else:
         builtin_dir = Path(__file__).parent.parent / "templates"
-        project_dir = None
+    project_dir = resolved_root / ".claude" / "templates"
 
     user_dir = Path.home() / ".worca" / "templates"
     return builtin_dir, project_dir, user_dir
 
 
-def _make_resolver():
-    builtin_dir, project_dir, user_dir = _resolve_dirs()
+def _make_resolver(project_root: str | None = None):
+    builtin_dir, project_dir, user_dir = _resolve_dirs(project_root)
     return TemplateResolver(builtin_dir, project_dir, user_dir)
+
+
+def _print_validation_details(details):
+    """Print TemplateError.details to stderr in a stable format.
+
+    `details` is either a list of `{field, message}` dicts (returned by
+    `TemplateResolver.save` validation) or a single dict of metadata
+    (e.g. `{"dst_scope": ...}` from `TemplateResolver.duplicate`). The
+    list form gets the bulleted field/message rendering; the dict form
+    is printed as `key: value` lines so the underlying problem is still
+    visible to the caller.
+    """
+    if isinstance(details, list):
+        for detail in details:
+            if isinstance(detail, dict):
+                field = detail.get("field", "?")
+                message = detail.get("message", "")
+                print(f"  - {field}: {message}", file=sys.stderr)
+            else:
+                print(f"  - {detail}", file=sys.stderr)
+    elif isinstance(details, dict):
+        for key, value in details.items():
+            print(f"  - {key}: {value}", file=sys.stderr)
+    else:
+        print(f"  - {details}", file=sys.stderr)
 
 
 def cmd_templates_list(args):
     """worca templates list — tabular output, or JSON when --json is passed."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     templates = resolver.list()
 
     if getattr(args, "json", False):
@@ -110,7 +144,7 @@ def cmd_templates_list(args):
 
 def cmd_templates_show(args):
     """worca templates show <id> — pretty-print template.json."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     template = resolver.get(args.template_id)
     if template is None:
         print(
@@ -127,6 +161,16 @@ def cmd_templates_show(args):
 def register_subcommand(sub):
     """Register `worca templates` with its sub-subcommands into the given subparser group."""
     templates_parser = sub.add_parser("templates", help="Manage pipeline templates")
+    templates_parser.add_argument(
+        "--project-root",
+        dest="project_root",
+        default=None,
+        help=(
+            "Project root directory. Overrides the default `.git`-walk and "
+            "cwd-fallback resolution. Used by non-git callers (e.g. worca-ui's "
+            "templates-routes shim) to pin the project tier explicitly."
+        ),
+    )
     templates_sub = templates_parser.add_subparsers(dest="templates_command")
 
     # list
@@ -286,7 +330,7 @@ def _load_current_worca_config() -> dict:
 
 def cmd_templates_save(args):
     """worca templates save <id> — snapshot current settings as template."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     scope = "user" if args.global_ else "project"
     template_id = args.template_id
     description = args.description or ""
@@ -327,7 +371,7 @@ def cmd_templates_create(args):
         print(f"error: failed to read template JSON: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     scope = "user" if args.global_ else "project"
 
     try:
@@ -335,8 +379,7 @@ def cmd_templates_create(args):
     except TemplateError as e:
         if e.code == "validation_error" and e.details:
             print("error: template validation failed:", file=sys.stderr)
-            for detail in e.details:
-                print(f"  - {detail['field']}: {detail['message']}", file=sys.stderr)
+            _print_validation_details(e.details)
         else:
             print(f"error: {e}", file=sys.stderr)
         raise SystemExit(1)
@@ -514,7 +557,7 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
 
 def cmd_templates_export(args):
     """worca templates export --to <path|gist> — export templates as a bundle."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     worca_config = _load_current_worca_config()
 
     if args.templates_filter:
@@ -608,7 +651,7 @@ def cmd_templates_import(args):
     bundle_models = manifest.get("models")
     bundle_pricing = manifest.get("pricing")
 
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     _, project_dir, user_dir = _resolve_dirs()
     target_dir = user_dir if scope == "user" else project_dir
     if target_dir is None:
@@ -938,7 +981,7 @@ def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:
 
 def cmd_templates_delete(args):
     """worca templates delete <id> — remove a project or user template."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     scope = "user" if args.global_ else "project"
     template_id = args.template_id
 
@@ -1006,7 +1049,7 @@ def cmd_templates_duplicate(args):
     dst_id = args.dst
     dst_scope = args.dst_scope
 
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
 
     try:
         resolver.duplicate(src_id, dst_id, dst_scope)
@@ -1019,8 +1062,7 @@ def cmd_templates_duplicate(args):
     except TemplateError as e:
         if e.code == "validation_error" and e.details:
             print("error: template validation failed:", file=sys.stderr)
-            for detail in e.details:
-                print(f"  - {detail['field']}: {detail['message']}", file=sys.stderr)
+            _print_validation_details(e.details)
         else:
             print(f"error: {e}", file=sys.stderr)
         raise SystemExit(1)

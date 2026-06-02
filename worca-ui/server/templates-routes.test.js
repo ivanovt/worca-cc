@@ -93,9 +93,27 @@ function cliError(stderr, stdout = '') {
   return err;
 }
 
-/** Helper: pull the args array passed to `worca templates …` on call N. */
+/**
+ * Helper: pull the args array passed to `worca templates …` on call N.
+ *
+ * The route handler always inserts `--project-root <projectRoot>` after
+ * `templates` so the CLI doesn't need a `.git` walk. We strip that
+ * scaffolding here so individual tests can assert against the
+ * subcommand and its flags without re-encoding the project path each
+ * time. `rawArgs(call)` returns the unmodified args if a test needs
+ * to verify the scaffolding itself.
+ */
 function templateArgs(call) {
   // execFileSync signature: (file, args, opts) → call[1] is the args array
+  const args = call[1];
+  // Expected prefix: ['templates', '--project-root', <root>, …]
+  if (args[0] === 'templates' && args[1] === '--project-root') {
+    return ['templates', ...args.slice(3)];
+  }
+  return args;
+}
+
+function rawArgs(call) {
   return call[1];
 }
 
@@ -346,6 +364,20 @@ describe('templates-routes', () => {
   });
 
   describe('POST /templates — create template', () => {
+    it('passes --project-root to the CLI so non-git project roots resolve correctly', async () => {
+      const app = await createTestApp(projectRoot);
+      await request(app, 'POST', '/api/projects/test/templates', {
+        scope: 'project',
+        id: 'flag-check',
+        name: 'Flag Check',
+        config: {},
+      });
+      const raw = rawArgs(mockExecSync.mock.calls[0]);
+      const flagIdx = raw.indexOf('--project-root');
+      expect(flagIdx).toBe(1);
+      expect(raw[flagIdx + 1]).toBe(projectRoot);
+    });
+
     it('delegates to `worca templates create --from-file <path>` in project scope', async () => {
       const app = await createTestApp(projectRoot);
 
