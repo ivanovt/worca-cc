@@ -46,10 +46,11 @@ const TIER_SECTIONS = [
     emptyTitle: 'No project templates yet',
     emptyDesc:
       'Click New, Import a bundle, or Duplicate a built-in to create one here.',
-    // All tiers start collapsed. The count badge in each summary makes
-    // it easy to scan "is there anything here?" without expanding;
-    // users open the tier they actually want to act on.
-    defaultOpen: false,
+    // Project is the tier users land in this page to manage, so open
+    // it by default. User and Built-in stay collapsed — their count
+    // badge in the summary tells you at a glance whether there's
+    // anything inside without expanding.
+    defaultOpen: true,
   },
   {
     key: 'user',
@@ -520,23 +521,19 @@ function _templateCard(template, defaultTemplate, handlers) {
       }
 
       <div class="run-card-actions" @click=${stop}>
-        ${
-          isBuiltin
-            ? html`<button
-              class="action-btn action-btn--secondary"
-              ?disabled=${!onDuplicate}
-              @click=${() => onDuplicate?.(id, resolvedTier)}
-              title=${
-                onDuplicate
-                  ? 'Duplicate to project or user scope'
-                  : 'Upgrade worca-cc to enable duplicate'
-              }
-            >
-              ${unsafeHTML(iconSvg(Copy, 14))}
-              Duplicate
-            </button>`
-            : ''
-        }
+        <button
+          class="action-btn action-btn--secondary"
+          ?disabled=${!onDuplicate}
+          @click=${() => onDuplicate?.(id, resolvedTier)}
+          title=${
+            onDuplicate
+              ? 'Duplicate to another storage location'
+              : 'Upgrade worca-cc to enable duplicate'
+          }
+        >
+          ${unsafeHTML(iconSvg(Copy, 14))}
+          Duplicate
+        </button>
         ${
           // Set Default is a project-level setting (worca.default_template
           // in .claude/settings.json), so it only makes sense to point at

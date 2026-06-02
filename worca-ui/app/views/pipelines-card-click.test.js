@@ -114,16 +114,22 @@ describe('pipelinesView — clickable cards', () => {
     }
   });
 
-  it('keeps the Duplicate button on built-in cards as an explicit affordance', () => {
+  it('exposes Duplicate on every card regardless of tier', () => {
+    // Duplicate is universal: from a project card you might fork into
+    // user scope; from a user card you might fork back into the
+    // project; from a built-in you'd "shadow & edit". One button,
+    // one mental model — the target storage is picked in the dialog.
     container = mount(
       { templates: TEMPLATES, templatesLoaded: true, worcaCliStatus: HEALTHY },
       snapshotHandlers(),
     );
-    const card = cardForId(container, 'Minimal Pipeline');
-    const dupBtn = Array.from(card.querySelectorAll('button')).find((b) =>
-      (b.textContent || '').includes('Duplicate'),
-    );
-    expect(dupBtn).toBeDefined();
+    for (const name of ['Minimal Pipeline', 'My Project Tpl']) {
+      const card = cardForId(container, name);
+      const dupBtn = Array.from(card.querySelectorAll('button')).find((b) =>
+        (b.textContent || '').includes('Duplicate'),
+      );
+      expect(dupBtn).toBeDefined();
+    }
   });
 
   it('Rename action fires onRename with (id, scope) and only on project/user cards', () => {

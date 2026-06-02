@@ -7270,6 +7270,24 @@ sl-dialog.markdown-dialog::part(body) {
   /* Hand the scroll to .editor-content so the tab nav stays sticky. */
   height: 100%;
 }
+/*
+ * Tab nav style mirrors the project Settings tabs: 13px medium,
+ * 10/16 padding, and a clear gap between the icon and the label
+ * so the icon doesn't visually fuse with the first letter.
+ */
+.editor-tab-group sl-tab::part(base) {
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 16px;
+  gap: 6px;
+  display: flex;
+  align-items: center;
+}
+.editor-tab-group sl-tab svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
 .editor-tab-group sl-tab-panel::part(base) {
   padding: 16px 4px 0;
 }

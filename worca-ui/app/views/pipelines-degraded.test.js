@@ -129,17 +129,17 @@ describe('pipelinesView — degraded mode', () => {
     );
     const cards = container.querySelectorAll('.template-card');
     expect(cards.length).toBe(2);
-    // The Edit button was removed in favor of clickable cards; only the
-    // remaining write-action buttons (Duplicate on builtin, SetDefault +
-    // Delete on project/user) should carry the "Upgrade worca-cc"
-    // tooltip. All must be `disabled`.
+    // The Edit button was removed in favor of clickable cards. Duplicate
+    // now renders on every tier (project, user, built-in) so it shows
+    // up alongside the project-only write actions (Set Default,
+    // Rename, Delete). All must be `disabled`.
     const upgradeBtns = container.querySelectorAll(
       'button[title^="Upgrade worca-cc"]',
     );
     // 1 (builtin Duplicate)
-    // + 3 (project Set Default + Rename + Delete)
-    // = 4.
-    expect(upgradeBtns.length).toBe(4);
+    // + 4 (project Duplicate + Set Default + Rename + Delete)
+    // = 5.
+    expect(upgradeBtns.length).toBe(5);
     for (const btn of upgradeBtns) {
       expect(btn.disabled).toBe(true);
     }
