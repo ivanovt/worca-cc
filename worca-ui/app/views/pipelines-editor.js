@@ -54,6 +54,7 @@ let editorState = {
   // whether the user has manually touched a field, so the Create flow's
   // auto-slug only fires until the user takes manual control.
   nameDraft: '',
+  descriptionDraft: '',
   idDraft: '',
   idDirty: false,
   template: null, // { id, name, description, tags, config, params, tier }
@@ -89,6 +90,7 @@ export function initEditorState() {
     templateId: null,
     tier: null,
     nameDraft: '',
+    descriptionDraft: '',
     idDraft: '',
     idDirty: false,
     template: null,
@@ -493,6 +495,7 @@ export async function loadTemplate(tier, tid, projectId) {
   editorState.diffData = null;
   editorState.idDirty = false;
   editorState.nameDraft = '';
+  editorState.descriptionDraft = '';
   editorState.idDraft = tid || '';
 
   try {
@@ -513,6 +516,7 @@ export async function loadTemplate(tier, tid, projectId) {
         config: {},
       };
       editorState.nameDraft = 'New Template';
+      editorState.descriptionDraft = '';
       editorState.idDraft = tid === 'new' ? '' : tid;
       editorState.formBuffer = buildFormBuffer({}, { worca: {} });
       editorState.jsonBuffer = JSON.stringify({}, null, 2);
@@ -525,6 +529,7 @@ export async function loadTemplate(tier, tid, projectId) {
       editorState.isNewTemplate = false;
       editorState.template = data.template;
       editorState.nameDraft = data.template.name || tid;
+      editorState.descriptionDraft = data.template.description || '';
       editorState.idDraft = data.template.id || tid;
       editorState.formBuffer = buildFormBuffer(data.template.config, {
         worca: data.template,
@@ -639,9 +644,13 @@ export async function saveTemplate(tid, tier, projectId, onSaved) {
       editorState.template?.name ||
       dstId;
 
+    const dstDescription =
+      (editorState.descriptionDraft || '').trim() ||
+      editorState.template?.description ||
+      '';
     const payload = {
       name: dstName,
-      description: editorState.template?.description || '',
+      description: dstDescription,
       tags: editorState.template?.tags || [],
       params: editorState.template?.params || {},
       config,
@@ -706,6 +715,7 @@ export async function saveTemplate(tid, tier, projectId, onSaved) {
       ...(editorState.template || {}),
       id: dstId,
       name: dstName,
+      description: dstDescription,
     };
 
     showToast(
@@ -714,7 +724,14 @@ export async function saveTemplate(tid, tier, projectId, onSaved) {
         : `Template "${dstName}" updated successfully`,
       'success',
     );
-    if (onSaved) onSaved();
+    // Tell the parent the canonical (tier, id) post-save so it can
+    // either stay on the editor (toast + same page) or update the
+    // URL if the id changed (rename). dstTier === srcTier today —
+    // the editor doesn't support tier moves — but we pass both so
+    // callers can opt to rename-and-redirect uniformly.
+    if (onSaved) {
+      onSaved({ newId: dstId, newTier: srcTier });
+    }
   } catch (err) {
     editorState.saveMessage = `Failed to save: ${err.message}`;
     editorState.validationIssues.push({
@@ -960,6 +977,7 @@ export function pipelinesEditorView(state, options) {
     validationIssues,
     viewMode,
     nameDraft,
+    descriptionDraft,
     idDraft,
     idDirty,
   } = editorState;
@@ -1124,24 +1142,21 @@ export function pipelinesEditorView(state, options) {
         </div>
       </div>
 
-      ${
-        saveMessage
-          ? html`
-        <sl-alert
-          variant=${hasErrors || saveMessage.includes('Failed') ? 'danger' : 'success'}
-          open
-          class="editor-save-alert"
-          closable
-          @sl-after-hide=${() => {
-            editorState.saveMessage = '';
+      <div class="editor-description-row">
+        <sl-textarea
+          class="editor-description-input"
+          size="small"
+          rows="2"
+          placeholder="Optional description — shown on the template card and in the launcher dropdown."
+          resize="auto"
+          .value=${descriptionDraft || ''}
+          ?disabled=${isBuiltinTier}
+          @sl-input=${(e) => {
+            editorState.descriptionDraft = e.target.value;
             rerender();
           }}
-        >
-          ${saveMessage}
-        </sl-alert>
-        `
-          : nothing
-      }
+        ></sl-textarea>
+      </div>
 
       ${
         hasErrors || hasWarnings

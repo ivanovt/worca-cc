@@ -4286,15 +4286,30 @@ function mainContentView() {
         tid,
         tier,
         projectId: route.projectId,
-        onSaved: () => {
-          // Refresh templates list on save, then back to the list view.
+        onSaved: ({ newId, newTier } = {}) => {
+          // Stay on the editor page after Save — consistent with the
+          // Project Settings tabs (toast + same page), and lets the
+          // user keep editing without losing the tab they're on.
+          // Just refresh the templates list in the background so the
+          // ★ Default badge and other list-derived state stay fresh.
           fetchTemplates(route.projectId || null).then((templates) => {
             store.setState({
               templates,
               defaultTemplate: templates.defaultTemplate,
             });
           });
-          navigate('templates', null, route.projectId);
+          // If the save renamed the template (id changed), update the
+          // URL in place so the next reload / link works — without
+          // this the editor would 404 on refresh.
+          if (newId && (newId !== tid || newTier !== tier)) {
+            navigate(
+              'templates',
+              newId,
+              route.projectId,
+              'edit',
+              newTier || tier,
+            );
+          }
         },
         onCancel: () => navigate('templates', null, route.projectId),
         rerender,

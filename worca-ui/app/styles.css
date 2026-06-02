@@ -6958,13 +6958,30 @@ sl-dialog.markdown-dialog::part(body) {
  * the title soaks up the horizontal space and pushes the Default
  * badge to the right edge.
  *
- * The "ID:slug" handle lives on its own row below, left-aligned,
- * so the title can breathe and a long name doesn't compete with
- * the id chip for width.
+ * The "ID:slug" handle and the description below it are both
+ * indented to align with the title's left edge (i.e. past the
+ * icon's column). The icon is 16px wide and the .run-card-top
+ * gap is 10px, so 26px of left padding aligns subsequent rows
+ * with the title.
  */
 .template-card-id-row {
   display: flex;
   margin-top: 6px;
+  padding-left: 26px;
+}
+.template-card .run-card-meta {
+  padding-left: 26px;
+}
+
+/*
+ * Buttons pin to the card's bottom so cards of varying heights
+ * (description length, badge presence) line their action rows up
+ * with each other in a tier-section grid. `margin-top: auto` on
+ * the last child of a column-flex container absorbs the extra
+ * vertical space.
+ */
+.template-card .run-card-actions {
+  margin-top: auto;
 }
 
 .template-tier-badge {
@@ -7193,6 +7210,25 @@ sl-dialog.markdown-dialog::part(body) {
 .editor-storage-pill {
   flex: 0 0 auto;
   padding: 2px 10px 2px 8px;
+}
+
+/*
+ * Description input sits on its own row below the Name / ID /
+ * Storage pill row. Templates carry a short paragraph that the
+ * list card and the launcher dropdown show under the name, so it
+ * gets a textarea that wraps and grows but stays compact when
+ * empty.
+ */
+.editor-description-row {
+  padding: 4px 0 0;
+}
+.editor-description-input {
+  width: 100%;
+}
+.editor-description-input::part(textarea) {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--fg);
 }
 .editor-storage-value {
   font-size: 12px;
