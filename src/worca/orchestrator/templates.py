@@ -430,12 +430,16 @@ class TemplateResolver:
         (dest / "resolved-params.json").write_text(json.dumps(resolved_params, indent=2), encoding="utf-8")
 
     def save(self, template_data: dict, scope: str = "project") -> "Template":
-        """Save a new template. scope is 'project' or 'user'.
+        """Save (upsert) a template. scope is 'project' or 'user'.
+
+        Saving a template whose id matches a built-in is explicitly allowed:
+        the project/user copy shadows the built-in, which is the canonical
+        editing flow. scope is restricted to 'project'|'user' so there is
+        no path by which save() can overwrite a built-in on disk.
 
         Validates all fields. Raises TemplateError(validation_error) with a
-        details list if any field is invalid. Raises TemplateError(builtin_conflict)
-        if the id matches a built-in template. Creates {scope_dir}/{id}/ and writes
-        template.json with builtin=false and created_at set to now.
+        details list if any field is invalid. Creates {scope_dir}/{id}/ and
+        writes template.json with builtin=false and created_at set to now.
         """
         scope_dir = self._user_dir if scope == "user" else self._project_dir
 
@@ -468,14 +472,6 @@ class TemplateResolver:
                 "Template validation failed.",
                 code="validation_error",
                 details=errors,
-            )
-
-        # Check for builtin ID conflict
-        if self._builtin_dir is not None and (self._builtin_dir / template_id).is_dir():
-            raise TemplateError(
-                f"Cannot save template with built-in ID '{template_id}'.",
-                code="builtin_conflict",
-                details={"template_id": template_id},
             )
 
         scope_path = Path(scope_dir)
@@ -513,18 +509,15 @@ class TemplateResolver:
         )
 
     def delete(self, template_id: str, scope: str = "project") -> bool:
-        """Delete a template directory. Cannot delete built-ins.
+        """Delete a template directory from project or user scope.
 
-        Raises TemplateError(builtin) if template_id matches a built-in.
+        Deleting a project/user template whose id matches a built-in is
+        explicitly allowed: it un-shadows the built-in, which is the
+        symmetric inverse of `save()`'s shadow-create. scope is restricted
+        to 'project'|'user' so this never touches the built-in tier.
+
         Raises TemplateError(not_found) if not found in the given scope.
         """
-        if self._builtin_dir is not None and (self._builtin_dir / template_id).is_dir():
-            raise TemplateError(
-                f"Cannot delete built-in template '{template_id}'.",
-                code="builtin",
-                details={"template_id": template_id},
-            )
-
         scope_dir = self._user_dir if scope == "user" else self._project_dir
         if scope_dir is None:
             raise TemplateError(
