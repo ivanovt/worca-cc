@@ -3186,7 +3186,7 @@ function contentHeaderView() {
       title = 'Edit Pipeline Template';
       showBack = true;
     } else {
-      title = 'Pipelines';
+      title = 'Project Pipelines';
       showBack = false;
     }
   } else if (route.section === 'project-settings') {
@@ -3421,6 +3421,23 @@ function mainContentView() {
   }
 
   if (route.section === 'pipelines') {
+    // Pipelines are project-scoped (the underlying CLI writes to
+    // `.claude/templates/` under the resolved project root). In true
+    // All-Projects mode there's no project to scope to, so show the
+    // same "select a project first" empty state used by Project Settings.
+    const isAllProjects =
+      (state.projects || []).length > 1 && !state.currentProjectId;
+    if (isAllProjects) {
+      return html`
+        <div class="empty-state pipelines-empty">
+          <p>Select a project from the sidebar to view its pipeline templates.</p>
+          <sl-button variant="primary" @click=${() => navigate('dashboard', null, null)}>
+            Back to Dashboard
+          </sl-button>
+        </div>
+      `;
+    }
+
     // Set up template polling on first entry
     if (!_templatesPollCleanup) {
       _templatesPollCleanup = setupTemplatePolling(

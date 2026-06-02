@@ -291,10 +291,15 @@ export function pipelinesView(state, options) {
                   ? _emptyState(degraded ? null : onCreate, degraded)
                   : html`
                     ${
-                      grouped.builtins.length > 0
+                      // Render in applicability order: project first (most
+                      // specific override), user next (cross-project shared),
+                      // built-in last (the immutable defaults that the others
+                      // shadow). This matches how the merge resolver picks
+                      // a winner top-down at run launch.
+                      grouped.project.length > 0
                         ? _tierSection(
-                            'Built-in',
-                            grouped.builtins,
+                            'Project',
+                            grouped.project,
                             defaultTemplate,
                             handlers,
                           )
@@ -311,10 +316,10 @@ export function pipelinesView(state, options) {
                         : ''
                     }
                     ${
-                      grouped.project.length > 0
+                      grouped.builtins.length > 0
                         ? _tierSection(
-                            'Project',
-                            grouped.project,
+                            'Built-in',
+                            grouped.builtins,
                             defaultTemplate,
                             handlers,
                           )
