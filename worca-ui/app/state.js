@@ -116,7 +116,13 @@ export function createStore(initial = {}) {
         next.totalRunning === state.totalRunning &&
         next.templates === state.templates &&
         next.templatesLoaded === state.templatesLoaded &&
-        next.templatesError === state.templatesError
+        next.templatesError === state.templatesError &&
+        // defaultTemplate is the project's default_template pointer
+        // (bundled with /templates). Without this comparison the
+        // editor's Set Default ↔ Unset Default toggle would not
+        // re-render after a successful PUT because the no-op
+        // detector would treat the patch as unchanged.
+        next.defaultTemplate === state.defaultTemplate
       )
         return;
       state = next;

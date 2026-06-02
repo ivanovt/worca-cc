@@ -2952,7 +2952,18 @@ sl-option.template-grouped::part(label) {
   font-weight: 500;
 }
 
-/* Description wraps below name, aligned with label */
+/* Description wraps below name, aligned with the label's left edge.
+ * Shoelace renders the option as `[checked-icon] [prefix] [label] [suffix]`
+ * on a single flex row. With `flex-wrap: wrap`, the suffix lands on
+ * a new line — but at the parent's left edge, NOT under the label.
+ * We push it back so "ID: foo" sits directly under "Foo" instead of
+ * indented to the prefix slot. Shoelace's prefix slot is ~24px wide
+ * by default; we use the same offset as the label's apparent x.
+ *
+ * The 14px is empirical: 24px ::part(base) padding-left minus the
+ * ~10px the prefix slot is currently empty (no checkmark on
+ * non-selected items). Adjust if Shoelace changes its inner spacing.
+ */
 sl-option.template-grouped::part(suffix) {
   flex-basis: 100%;
   font-size: 11px;
@@ -2961,7 +2972,7 @@ sl-option.template-grouped::part(suffix) {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  padding: 0 0 4px;
+  padding: 0 0 4px 14px;
 }
 
 /* Fix contrast on selected/current option description */

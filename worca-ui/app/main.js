@@ -3889,6 +3889,19 @@ function contentHeaderView() {
         const isThisDefault =
           defaultId === route.runId &&
           (!defaultTier || defaultTier === route.tier);
+        // When this template is the project default, show a "★
+        // Default" badge inline next to the title so the user can
+        // tell at a glance which template is pinned. Mirrors the
+        // ★ Default badge that the list card carries.
+        if (isThisDefault) {
+          badge = html`<sl-badge
+            variant="primary"
+            pill
+            class="template-default-badge"
+            title="This template is the project's default"
+            >★ Default</sl-badge
+          >`;
+        }
         const cliOk = state.worcaCliStatus?.ok !== false;
         actionButton = html`
           <button
@@ -3964,8 +3977,8 @@ function contentHeaderView() {
       `
           : ''
       }
-      ${badge || ''}
       <h1 class="content-header-title">${title}</h1>
+      ${badge || ''}
       ${
         actionButton
           ? html`<div class="content-header-actions">
