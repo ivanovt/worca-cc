@@ -172,10 +172,10 @@ function resolveTemplate(projectRoot, tid, tierFilter) {
  *
  * Returns the trimmed stdout on success. On non-zero exit, throws an
  * Error whose `cliCode` field carries a normalized error code parsed
- * from stderr ('builtin_conflict' | 'name_collision' | 'not_found' |
- * 'validation_error' | 'unknown'), and whose `cliStderr` field carries
- * the raw stderr text. Route handlers use `cliCode` to map to HTTP
- * status codes without re-implementing collision/conflict detection.
+ * from stderr ('name_collision' | 'not_found' | 'validation_error' |
+ * 'unknown'), and whose `cliStderr` field carries the raw stderr text.
+ * Route handlers use `cliCode` to map to HTTP status codes without
+ * re-implementing collision/conflict detection.
  */
 function runWorcaTemplates(projectRoot, args, opts = {}) {
   try {
@@ -199,11 +199,6 @@ function runWorcaTemplates(projectRoot, args, opts = {}) {
     const combined = `${stderr}\n${stdout}`.toLowerCase();
     let code = 'unknown';
     if (
-      combined.includes('built-in') &&
-      (combined.includes('conflict') || combined.includes('cannot'))
-    ) {
-      code = 'builtin_conflict';
-    } else if (
       combined.includes('already exists') ||
       combined.includes('name_collision')
     ) {
@@ -231,8 +226,6 @@ function runWorcaTemplates(projectRoot, args, opts = {}) {
  */
 function statusForCliCode(code) {
   switch (code) {
-    case 'builtin_conflict':
-      return 400;
     case 'name_collision':
       return 409;
     case 'not_found':

@@ -626,21 +626,23 @@ describe('templates-routes', () => {
       ]);
     });
 
-    it('maps CLI builtin_conflict to HTTP 400', async () => {
+    it('duplicating a built-in to the same id is allowed (canonical shadow flow)', async () => {
+      // The UI's "Duplicate" button on a built-in template card sends
+      // dst_id == src_id; that's how a user clones a built-in into their
+      // project scope to edit it. The CLI must accept this; the server
+      // must propagate as 200.
       const app = await createTestApp(projectRoot);
-      mockExecSync.mockImplementation(() => {
-        throw cliError("Cannot duplicate to built-in ID 'feature'.");
-      });
+      mockExecSync.mockReturnValue('');
 
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/source/duplicate',
-        { dst_id: 'feature', dst_scope: 'project' },
+        '/api/projects/test/templates/minimal/duplicate',
+        { dst_id: 'minimal', dst_scope: 'project' },
       );
 
-      expect(status).toBe(400);
-      expect(body.code).toBe('builtin_conflict');
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
     });
 
     it('maps CLI name_collision to HTTP 409', async () => {

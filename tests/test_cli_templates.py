@@ -499,11 +499,27 @@ class TestResolveDirs:
         _, project_dir, _ = _resolve_dirs()
         assert project_dir == tmp_path / ".claude" / "templates"
 
-    def test_project_dir_is_none_outside_project(self, tmp_path, monkeypatch):
-        """project_dir is None when not inside a git repo."""
+    def test_project_dir_falls_back_to_cwd_outside_git_repo(self, tmp_path, monkeypatch):
+        """When not inside a git repo, project_dir falls back to <cwd>/.claude/templates.
+
+        worca-ui supports running against non-git project directories
+        (e2e Playwright fixtures, plain user workspaces). The CLI must
+        match: project-scope operations need a writable target even
+        outside a repo. Pre-fix, project_dir was None here and every
+        project-scope duplicate/create failed with "Destination scope
+        'project' is not available."
+        """
         monkeypatch.chdir(tmp_path)
         _, project_dir, _ = _resolve_dirs()
-        assert project_dir is None
+        assert project_dir == tmp_path / ".claude" / "templates"
+
+    def test_project_dir_uses_explicit_project_root(self, tmp_path, monkeypatch):
+        """The --project-root flag overrides both `.git` walk and cwd."""
+        monkeypatch.chdir(tmp_path)
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        _, project_dir, _ = _resolve_dirs(project_root=str(other))
+        assert project_dir == other / ".claude" / "templates"
 
 
 # ---------------------------------------------------------------------------

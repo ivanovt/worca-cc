@@ -183,17 +183,37 @@ class TestTemplateResolverDuplicate:
         # agents_dir should be None
         assert result.agents_dir is None
 
-    def test_duplicate_refuses_builtin_dst_id(self, tmp_path):
-        """Duplicate should raise builtin_conflict if dst_id matches a builtin."""
+    def test_duplicate_builtin_to_same_id_shadows_in_project_scope(self, tmp_path):
+        """Duplicating a built-in with the SAME id into project scope is the
+        canonical 'clone built-in to edit it' flow. The result must land in
+        the project tier and shadow (not overwrite) the built-in.
+        """
         resolver = _make_resolver_with_tiers(tmp_path)
 
-        _write_template(tmp_path / "builtin" / "builtin-tmpl", _minimal("builtin-tmpl"))
+        _write_template(
+            tmp_path / "builtin" / "minimal",
+            _minimal("minimal") | {"name": "Built-in Minimal"},
+        )
+
+        result = resolver.duplicate("minimal", "minimal", "project")
+
+        # The clone lives in project scope (not overwriting the built-in)
+        assert result.tier == "project"
+        assert (tmp_path / "project" / "minimal" / "template.json").is_file()
+        # And the built-in is still intact in the builtin tier
+        assert (tmp_path / "builtin" / "minimal" / "template.json").is_file()
+
+    def test_duplicate_rejects_invalid_dst_scope(self, tmp_path):
+        """`dst_scope` must be 'project' or 'user'; 'builtin' is rejected because
+        the built-in tier is immutable to the CRUD API.
+        """
+        resolver = _make_resolver_with_tiers(tmp_path)
+        _write_template(tmp_path / "builtin" / "src", _minimal("src"))
 
         with pytest.raises(TemplateError) as exc_info:
-            resolver.duplicate("source", "builtin-tmpl", "project")
+            resolver.duplicate("src", "dst", "builtin")
 
-        assert exc_info.value.code == "builtin_conflict"
-        assert "builtin-tmpl" in str(exc_info.value)
+        assert exc_info.value.code == "validation_error"
 
     def test_duplicate_refuses_name_collision_in_project_scope(self, tmp_path):
         """Duplicate should raise name_collision if dst_id exists in target scope."""

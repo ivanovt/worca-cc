@@ -40,31 +40,43 @@ from worca.utils.settings import deep_merge
 def _resolve_dirs(project_root: str | None = None):
     """Return (builtin_dir, project_dir, user_dir) for TemplateResolver.
 
-    Resolution order for the project root:
-      1. explicit `project_root` arg (passed via `--project-root` from
-         non-git callers like worca-ui's templates-routes shim)
-      2. nearest ancestor of cwd that contains a `.git/` directory
-      3. cwd itself (so the CLI is usable outside a git repo, e.g. when
-         worca-ui runs against a plain directory)
+    Project-root resolution:
+      1. explicit `project_root` arg (from `--project-root`, used by
+         worca-ui's templates-routes shim against non-git tmpdirs)
+      2. nearest ancestor of cwd that contains `.git/`
+      3. cwd itself — so the CLI is usable against plain directories
+         (worca-ui supports non-git projects; the CLI must match)
 
-    builtin_dir: `.claude/worca/templates/` under the resolved root if it
-                 exists, else the installed package's `src/worca/templates/`.
-    project_dir: `.claude/templates/` under the resolved root.
-    user_dir:    `~/.worca/templates/` (honors `$WORCA_HOME` via Path.home).
+    Once a project root is resolved (explicit OR via `.git` walk):
+      - `builtin_dir` = `<root>/.claude/worca/templates/` (the runtime
+        copy created by `worca init`; non-existent is fine — scan_tier
+        is_dir-checks before iterating).
+      - `project_dir` = `<root>/.claude/templates/`.
+
+    When we fall back to plain cwd (no `--project-root`, no `.git`):
+      - `builtin_dir` falls back to the installed package's
+        `src/worca/templates/`, so `worca templates list` outside any
+        project still shows the shipped templates.
+      - `project_dir` = `<cwd>/.claude/templates/`, so duplicate /
+        create still work and write under cwd.
+
+    `user_dir` is always `~/.worca/templates/`.
     """
-    if project_root:
+    explicit_root = bool(project_root)
+    git_root = None
+    cwd = Path.cwd().resolve()
+    if explicit_root:
         resolved_root = Path(project_root).resolve()
     else:
-        cwd = Path.cwd().resolve()
         resolved_root = cwd
         for parent in [cwd, *cwd.parents]:
             if (parent / ".git").exists():
+                git_root = parent
                 resolved_root = parent
                 break
 
-    candidate_builtin = resolved_root / ".claude" / "worca" / "templates"
-    if candidate_builtin.is_dir():
-        builtin_dir = candidate_builtin
+    if explicit_root or git_root is not None:
+        builtin_dir = resolved_root / ".claude" / "worca" / "templates"
     else:
         builtin_dir = Path(__file__).parent.parent / "templates"
     project_dir = resolved_root / ".claude" / "templates"

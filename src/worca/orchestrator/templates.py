@@ -589,6 +589,12 @@ class TemplateResolver:
     def duplicate(self, src_id: str, dst_id: str, dst_scope: str = "project") -> "Template":
         """Resolve src_id from any tier, write a copy to dst_scope as dst_id.
 
+        Duplicating a built-in to project/user scope with the SAME id is
+        the canonical "shadow a built-in to edit it" UX path — that is
+        explicitly supported. `dst_scope` is already restricted to
+        'project' or 'user', so there is no path by which `duplicate`
+        can overwrite a built-in on disk.
+
         Args:
             src_id: Template id to copy from (resolves from any tier: project → user → builtin)
             dst_id: Id to assign to the copy in the destination scope
@@ -598,10 +604,9 @@ class TemplateResolver:
             Template instance representing the copied template
 
         Raises:
-            TemplateError(builtin_conflict): if dst_id matches a built-in template id
             TemplateError(name_collision): if dst_id already exists in dst_scope
             TemplateError(not_found): if src_id not found
-            TemplateError(validation_error): if dst_scope is invalid
+            TemplateError(validation_error): if dst_scope is invalid or unavailable
         """
         # Validate destination scope
         if dst_scope not in ("project", "user"):
@@ -609,14 +614,6 @@ class TemplateResolver:
                 f"dst_scope must be 'project' or 'user', got {dst_scope!r}",
                 code="validation_error",
                 details={"dst_scope": dst_scope},
-            )
-
-        # Check for builtin destination ID conflict - do this BEFORE source lookup
-        if self._builtin_dir is not None and (self._builtin_dir / dst_id).is_dir():
-            raise TemplateError(
-                f"Cannot duplicate to built-in ID '{dst_id}'.",
-                code="builtin_conflict",
-                details={"template_id": dst_id},
             )
 
         # Determine destination directory
