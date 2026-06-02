@@ -30,14 +30,6 @@ import {
   Users,
 } from '../utils/icons.js';
 
-// Tier variant mapping per badge-color-language guide
-// Blue (primary) = active/foreground, Orange (warning) = caution, Grey (neutral) = inactive
-const TIER_VARIANT = {
-  project: 'primary', // project templates are the most relevant
-  user: 'warning', // user templates are global but need attention
-  worca: 'neutral', // built-in templates are immutable defaults
-};
-
 /**
  * Per-tier metadata for the section headers. Drives the icon, the
  * uppercase label, the one-line description, and the empty-state
@@ -468,7 +460,6 @@ function _templateCard(template, defaultTemplateId, handlers) {
 
   const resolvedTier = normalizeTier(effectiveTier || tier);
   const isDefault = id === defaultTemplateId;
-  const tierVariant = TIER_VARIANT[resolvedTier] || 'neutral';
   const isBuiltin = resolvedTier === 'builtin' || builtin;
 
   // Whole-card click → Edit (or Duplicate-to-Edit for built-ins).
@@ -517,7 +508,6 @@ function _templateCard(template, defaultTemplateId, handlers) {
             >`
             : ''
         }
-        <sl-badge variant=${tierVariant} pill class="template-tier-badge">${resolvedTier}</sl-badge>
       </div>
 
       ${

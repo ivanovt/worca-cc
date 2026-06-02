@@ -309,9 +309,15 @@ test('built-in templates do not show Set Default button', async ({ page }) => {
     await expect(builtinCard.locator('button:has-text("Duplicate")')).toBeVisible();
     await expect(builtinCard.locator('button:has-text("Set Default")')).not.toBeAttached();
 
-    // Verify the tier badge shows "builtin"
-    const tierBadge = builtinCard.locator('.template-tier-badge');
-    await expect(tierBadge).toHaveText(/builtin/i);
+    // Tier identity moved from a per-card badge to the section header.
+    // The card lives inside the Built-in section's expand panel, so
+    // verifying the wrapping section's --builtin modifier exercises
+    // the same contract.
+    await expect(
+      builtinCard.locator(
+        'xpath=ancestor::sl-details[contains(@class, "pipelines-tier-section--builtin")]',
+      ),
+    ).toBeAttached();
   } finally {
     await ctx.close();
   }
