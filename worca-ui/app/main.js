@@ -1721,6 +1721,8 @@ function _countInflightRunsForTemplate(tid) {
 }
 
 async function handleDeleteTemplate(tid, scope) {
+  // In-flight runs get their own richer confirmation (count + edit-vs-delete
+  // copy) via the template-guard dialog — keep that path.
   const count = _countInflightRunsForTemplate(tid);
   if (count > 0) {
     _templateGuard = { tid, scope, action: 'delete', count };
@@ -1730,7 +1732,24 @@ async function handleDeleteTemplate(tid, scope) {
     });
     return;
   }
-  await _executeDeleteTemplate(tid, scope);
+  // Otherwise the standard project-wide confirm dialog, same component
+  // every other destructive action uses (halt fleet, delete project, …).
+  showConfirm(
+    {
+      label: 'Delete template',
+      message: html`
+        Are you sure you want to delete
+        <code>${tid}</code> from the <strong>${scope}</strong> scope?
+        <br /><br />
+        This removes the template directory on disk; running pipelines are
+        unaffected but new runs will no longer be able to launch with this id.
+      `,
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: () => _executeDeleteTemplate(tid, scope),
+    },
+    rerender,
+  );
 }
 
 async function _executeDeleteTemplate(tid, scope) {
