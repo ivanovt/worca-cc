@@ -454,7 +454,6 @@ function _templateCard(template, defaultTemplateId, handlers) {
     tags = [],
     effectiveTier,
     tier,
-    shadows = [],
     builtin = false,
   } = template;
 
@@ -524,17 +523,6 @@ function _templateCard(template, defaultTemplateId, handlers) {
         tags && tags.length > 0
           ? html`<div class="run-card-stages">
             ${tags.map((tag) => html`<sl-tag size="small">${tag}</sl-tag>`)}
-          </div>`
-          : ''
-      }
-
-      ${
-        shadows && shadows.length > 0 && resolvedTier !== 'builtin'
-          ? html`<div class="run-card-meta">
-            <span class="run-card-meta-item">
-              <span class="meta-label">Shadows:</span>
-              <span class="meta-value">${shadows.join(', ')}</span>
-            </span>
           </div>`
           : ''
       }
