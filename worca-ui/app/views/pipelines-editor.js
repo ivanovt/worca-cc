@@ -17,13 +17,18 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
 import {
-  ArrowLeft,
+  Activity,
+  AlertTriangle,
   CircleCheck,
+  Cpu,
   iconSvg,
   RefreshCw,
+  RotateCcw,
   Save,
   Settings,
   Shield,
+  Users,
+  Workflow,
   Zap,
 } from '../utils/icons.js';
 import {
@@ -854,11 +859,8 @@ export function pipelinesEditorView(state, options) {
   if (loading) {
     return html`
       <div class="pipelines-editor">
-        <div class="editor-header">
-          <button class="icon-btn" @click=${() => cancelEdit(onCancel)}>
-            ${unsafeHTML(iconSvg(ArrowLeft, 20))}
-          </button>
-          <h1 class="editor-title">Loading template…</h1>
+        <div class="editor-subheader">
+          <h2 class="editor-subheader-title">Loading template…</h2>
         </div>
         <div class="editor-content">
           <sl-spinner></sl-spinner>
@@ -870,11 +872,8 @@ export function pipelinesEditorView(state, options) {
   if (error) {
     return html`
       <div class="pipelines-editor">
-        <div class="editor-header">
-          <button class="icon-btn" @click=${() => cancelEdit(onCancel)}>
-            ${unsafeHTML(iconSvg(ArrowLeft, 20))}
-          </button>
-          <h1 class="editor-title">Error</h1>
+        <div class="editor-subheader">
+          <h2 class="editor-subheader-title">Error</h2>
         </div>
         <div class="editor-content">
           <sl-alert variant="danger" open>
@@ -891,12 +890,9 @@ export function pipelinesEditorView(state, options) {
 
   return html`
     <div class="pipelines-editor">
-      <div class="editor-header">
-        <button class="icon-btn" @click=${onCancel || (() => {})} title="Back to list">
-          ${unsafeHTML(iconSvg(ArrowLeft, 20))}
-        </button>
-        <div class="editor-title-group">
-          <h1 class="editor-title">${templateName}</h1>
+      <div class="editor-subheader">
+        <div class="editor-subheader-title-group">
+          <h2 class="editor-subheader-title">${templateName}</h2>
           <sl-badge variant="neutral" pill>${scopeDisplay}</sl-badge>
         </div>
         <div class="editor-mode-toggle">
@@ -975,11 +971,51 @@ export function pipelinesEditorView(state, options) {
         ${
           viewMode === 'form'
             ? html`
-              ${_stagesSection(formBuffer, projectId, rerender)}
-              ${_agentsSection(formBuffer, settings, projectId, rerender)}
-              ${_loopsSection(formBuffer, projectId, rerender)}
-              ${_circuitBreakerSection(formBuffer, projectId, rerender)}
-              ${_governanceSection(formBuffer, settings, projectId, rerender)}
+              <sl-tab-group class="editor-tab-group">
+                <sl-tab slot="nav" panel="models">
+                  ${unsafeHTML(iconSvg(Cpu, 14))}
+                  Models
+                </sl-tab>
+                <sl-tab slot="nav" panel="stages">
+                  ${unsafeHTML(iconSvg(Workflow, 14))}
+                  Stages
+                </sl-tab>
+                <sl-tab slot="nav" panel="agents">
+                  ${unsafeHTML(iconSvg(Users, 14))}
+                  Agents
+                </sl-tab>
+                <sl-tab slot="nav" panel="loops">
+                  ${unsafeHTML(iconSvg(RotateCcw, 14))}
+                  Loops
+                </sl-tab>
+                <sl-tab slot="nav" panel="circuit-breaker">
+                  ${unsafeHTML(iconSvg(AlertTriangle, 14))}
+                  Circuit Breaker
+                </sl-tab>
+                <sl-tab slot="nav" panel="governance">
+                  ${unsafeHTML(iconSvg(Shield, 14))}
+                  Governance
+                </sl-tab>
+
+                <sl-tab-panel name="models">
+                  ${_modelsTab(formBuffer, settings, projectId, rerender)}
+                </sl-tab-panel>
+                <sl-tab-panel name="stages">
+                  ${_stagesSection(formBuffer, projectId, rerender)}
+                </sl-tab-panel>
+                <sl-tab-panel name="agents">
+                  ${_agentsTab(formBuffer, projectId, rerender)}
+                </sl-tab-panel>
+                <sl-tab-panel name="loops">
+                  ${_loopsSection(formBuffer, projectId, rerender)}
+                </sl-tab-panel>
+                <sl-tab-panel name="circuit-breaker">
+                  ${_circuitBreakerSection(formBuffer, projectId, rerender)}
+                </sl-tab-panel>
+                <sl-tab-panel name="governance">
+                  ${_governanceSection(formBuffer, settings, projectId, rerender)}
+                </sl-tab-panel>
+              </sl-tab-group>
             `
             : viewMode === 'json'
               ? html`${_jsonSection(projectId, rerender)}`
@@ -1013,41 +1049,53 @@ export function pipelinesEditorView(state, options) {
 }
 
 /**
- * Render the Stages configuration section.
+ * Render the Stages configuration tab.
+ *
+ * One card per stage (matching Project Settings' Pipeline tab pattern):
+ * toggle on the left/header, per-stage agent override on the right.
  */
 function _stagesSection(formBuffer, projectId, rerender) {
   const stages = formBuffer?.stages || DEFAULT_STAGES;
   const state = editorState;
 
   return html`
-    <section class="editor-section">
-      <h2 class="section-title">Stages</h2>
-      <div class="stages-list">
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Stage configuration</h3>
+      <p class="settings-section-desc">
+        Toggle stages on or off and override which agent runs each one.
+        Disabling <code>plan_review</code> / <code>learn</code> is the
+        most common customization — both are off by default in the
+        shipped defaults.
+      </p>
+      <div class="settings-cards">
         ${Object.entries(stages).map(([stageKey, stageConfig]) => {
           const isEnabled = stageConfig.enabled !== false;
           return html`
-              <div class="stage-row ${isEnabled ? 'stage-row--enabled' : 'stage-row--disabled'}">
-                <div class="stage-row-info">
-                  <sl-switch
-                    .checked=${isEnabled}
-                    size="small"
-                    @sl-change=${(e) => {
-                      editorState.formBuffer.stages[stageKey].enabled =
-                        e.target.checked;
-                      rerender();
-                    }}
-                    @sl-blur=${() => {
-                      validateConfigDebounced(
-                        projectId,
-                        editorState.formBuffer,
-                        state.viewMode,
-                        rerender,
-                      );
-                    }}
-                  ></sl-switch>
-                  <span class="stage-name">${stageKey}</span>
-                </div>
-                <div class="stage-row-agent">
+            <div class="settings-card pipeline-stage-node ${isEnabled ? 'pipeline-stage-node--enabled' : 'pipeline-stage-node--disabled'}">
+              <div class="settings-card-header">
+                <span class="settings-card-title ${isEnabled ? '' : 'pipeline-stage-name--disabled'}">${stageKey}</span>
+                <sl-switch
+                  id="stage-${stageKey}-enabled"
+                  ?checked=${isEnabled}
+                  size="small"
+                  @sl-change=${(e) => {
+                    editorState.formBuffer.stages[stageKey].enabled =
+                      e.target.checked;
+                    rerender();
+                  }}
+                  @sl-blur=${() => {
+                    validateConfigDebounced(
+                      projectId,
+                      editorState.formBuffer,
+                      state.viewMode,
+                      rerender,
+                    );
+                  }}
+                ></sl-switch>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-field">
+                  <label class="settings-label" for="stage-${stageKey}-agent">Agent</label>
                   <sl-select
                     id="stage-${stageKey}-agent"
                     .value=${stageConfig.agent || STAGE_AGENT_MAP[stageKey] || 'none'}
@@ -1073,33 +1121,50 @@ function _stagesSection(formBuffer, projectId, rerender) {
                   </sl-select>
                 </div>
               </div>
-            `;
+            </div>
+          `;
         })}
       </div>
-    </section>
+    </div>
   `;
 }
 
 /**
  * Render the Agents configuration section (matrix).
  */
-function _agentsSection(formBuffer, settings, projectId, rerender) {
+/**
+ * Models tab: per-agent model picker.
+ *
+ * Split out of the legacy `Agents` section so users can pick the model
+ * landscape first (the most consequential template-level decision)
+ * before drilling into per-agent details like max_turns and effort.
+ * The DOM ids (`agent-<name>-model`) match what `readPipelineFromDom`
+ * reads on save, so the save path is unchanged.
+ */
+function _modelsTab(formBuffer, settings, projectId, rerender) {
   const agents = formBuffer?.agents || {};
   const modelOptions = getModelOptions(settings?.worca);
   const state = editorState;
 
   return html`
-    <section class="editor-section">
-      <h2 class="section-title">Agents</h2>
-      <div class="agents-matrix">
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Model assignments</h3>
+      <p class="settings-section-desc">
+        Choose which model alias each agent uses. Aliases resolve through
+        <code>worca.models</code> in the project settings — values shown
+        here are the merged set available at the project level.
+      </p>
+      <div class="settings-cards editor-models-cards">
         ${AGENT_NAMES.map((name) => {
           const agent = agents[name] || {};
           return html`
-            <div class="agent-row">
-              <span class="agent-name">${name}</span>
-              <div class="agent-fields">
-                <div class="agent-field">
-                  <label class="field-label">Model</label>
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <span class="settings-card-title">${name}</span>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-field">
+                  <label class="settings-label" for="agent-${name}-model">Model</label>
                   <sl-select
                     id="agent-${name}-model"
                     .value=${agent.model || 'sonnet'}
@@ -1122,8 +1187,45 @@ function _agentsSection(formBuffer, settings, projectId, rerender) {
                     ${modelOptions.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
                   </sl-select>
                 </div>
-                <div class="agent-field">
-                  <label class="field-label">Max Turns</label>
+              </div>
+            </div>
+          `;
+        })}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Agents tab: per-agent max_turns + effort.
+ *
+ * Settings.json's `Agents` tab in Project Settings owns the same fields;
+ * we re-use the markup pattern (settings-cards + settings-field +
+ * settings-label) so the two surfaces look interchangeable.
+ */
+function _agentsTab(formBuffer, projectId, rerender) {
+  const agents = formBuffer?.agents || {};
+  const state = editorState;
+
+  return html`
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Agent runtime</h3>
+      <p class="settings-section-desc">
+        Per-agent execution limits and reasoning effort. Effort defaults
+        to the model's setting when left blank; <code>auto_cap</code> in
+        the project-wide <code>worca.effort</code> block applies on top.
+      </p>
+      <div class="settings-cards">
+        ${AGENT_NAMES.map((name) => {
+          const agent = agents[name] || {};
+          return html`
+            <div class="settings-card">
+              <div class="settings-card-header">
+                <span class="settings-card-title">${name}</span>
+              </div>
+              <div class="settings-card-body">
+                <div class="settings-field">
+                  <label class="settings-label" for="agent-${name}-turns">Max turns</label>
                   <sl-input
                     id="agent-${name}-turns"
                     type="number"
@@ -1145,9 +1247,10 @@ function _agentsSection(formBuffer, settings, projectId, rerender) {
                       );
                     }}
                   ></sl-input>
+                  <span class="settings-field-hint">1–200; default 30.</span>
                 </div>
-                <div class="agent-field">
-                  <label class="field-label">Effort</label>
+                <div class="settings-field">
+                  <label class="settings-label" for="effort-agent-${name}">Effort</label>
                   <sl-select
                     id="effort-agent-${name}"
                     .value=${agent.effort || ''}
@@ -1179,29 +1282,46 @@ function _agentsSection(formBuffer, settings, projectId, rerender) {
           `;
         })}
       </div>
-    </section>
+    </div>
   `;
 }
 
 /**
- * Render the Loops configuration section.
+ * Render the Loops configuration section as a Settings-style tab.
  */
 function _loopsSection(formBuffer, projectId, rerender) {
   const loops = formBuffer?.loops || DEFAULT_LOOPS;
   const state = editorState;
+  const fields = [
+    {
+      key: 'implement_test',
+      label: 'Implement ↔ Test',
+      hint: 'Max iterations of the implementer/tester back-and-forth before halt.',
+    },
+    {
+      key: 'pr_changes',
+      label: 'PR changes',
+      hint: 'Max review-revise cycles after the PR is opened.',
+    },
+    {
+      key: 'restart_planning',
+      label: 'Restart planning',
+      hint: 'Max times the pipeline may rewind to the planner before halting.',
+    },
+  ];
 
   return html`
-    <section class="editor-section">
-      <h2 class="section-title">Loop Limits</h2>
-      <div class="loops-grid">
-        ${[
-          { key: 'implement_test', label: 'Implement ↔ Test' },
-          { key: 'pr_changes', label: 'PR Changes' },
-          { key: 'restart_planning', label: 'Restart Planning' },
-        ].map(
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Loop limits</h3>
+      <p class="settings-section-desc">
+        Caps on the iterative loops inside a single run. Set to <code>0</code>
+        to disable a loop entirely.
+      </p>
+      <div class="settings-grid">
+        ${fields.map(
           (item) => html`
-            <div class="loop-field">
-              <label class="field-label">${item.label}</label>
+            <div class="settings-field">
+              <label class="settings-label" for="loop-${item.key}">${item.label}</label>
               <sl-input
                 id="loop-${item.key}"
                 type="number"
@@ -1224,11 +1344,12 @@ function _loopsSection(formBuffer, projectId, rerender) {
                   );
                 }}
               ></sl-input>
+              <span class="settings-field-hint">${item.hint}</span>
             </div>
           `,
         )}
       </div>
-    </section>
+    </div>
   `;
 }
 
@@ -1238,16 +1359,21 @@ function _loopsSection(formBuffer, projectId, rerender) {
 function _circuitBreakerSection(formBuffer, projectId, rerender) {
   const cb = formBuffer?.circuit_breaker || DEFAULT_CIRCUIT_BREAKER;
   const state = editorState;
+  const enabled = cb.enabled !== false;
 
   return html`
-    <section class="editor-section">
-      <h2 class="section-title">Circuit Breaker</h2>
-      <div class="circuit-breaker-grid">
-        <div class="cb-field">
-          <div class="cb-field-row">
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Circuit breaker</h3>
+      <p class="settings-section-desc">
+        Halt a run after a streak of consecutive errors. Useful for catching
+        runaway loops without letting them burn through retry budget.
+      </p>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <div class="settings-switch-row">
             <sl-switch
               id="cb-enabled"
-              ?checked=${cb.enabled !== false}
+              ?checked=${enabled}
               size="small"
               @sl-change=${(e) => {
                 editorState.formBuffer.circuit_breaker.enabled =
@@ -1263,13 +1389,15 @@ function _circuitBreakerSection(formBuffer, projectId, rerender) {
                 );
               }}
             >
-              Enabled
+              Enable circuit breaker
             </sl-switch>
-            <span class="field-hint">Halt pipeline after consecutive errors</span>
+            <span class="settings-switch-desc">
+              When off, the pipeline keeps retrying regardless of the failure streak.
+            </span>
           </div>
         </div>
-        <div class="cb-field">
-          <label class="field-label">Max Consecutive Failures</label>
+        <div class="settings-field">
+          <label class="settings-label" for="cb-max-failures">Max consecutive failures</label>
           <sl-input
             id="cb-max-failures"
             type="number"
@@ -1277,7 +1405,7 @@ function _circuitBreakerSection(formBuffer, projectId, rerender) {
             size="small"
             min="1"
             max="10"
-            ?disabled=${cb.enabled === false}
+            ?disabled=${!enabled}
             @sl-input=${(e) => {
               editorState.formBuffer.circuit_breaker.max_consecutive_failures =
                 parseInt(e.target.value, 10) || 3;
@@ -1292,9 +1420,10 @@ function _circuitBreakerSection(formBuffer, projectId, rerender) {
               );
             }}
           ></sl-input>
+          <span class="settings-field-hint">1–10; default 3.</span>
         </div>
       </div>
-    </section>
+    </div>
   `;
 }
 
@@ -1307,11 +1436,14 @@ function _governanceSection(formBuffer, settings, projectId, rerender) {
   const state = editorState;
 
   return html`
-    <section class="editor-section">
-      <div class="section-header">
-        <h2 class="section-title">Governance Dispatch</h2>
-        <sl-badge variant="neutral" pill>${unsafeHTML(iconSvg(Shield, 14))} Tools / Skills / Subagents</sl-badge>
-      </div>
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Governance dispatch</h3>
+      <p class="settings-section-desc">
+        Per-agent allow / deny lists for tools, skills, and subagents.
+        Templates own only the <code>dispatch</code> sub-tree; the
+        project's <code>governance.guards</code> (hook gates) remain
+        cross-template and are edited in Project Settings.
+      </p>
       <div class="governance-content">
         ${['tools', 'skills', 'subagents'].map((section) => {
           return dispatchSectionView({
@@ -1339,7 +1471,7 @@ function _governanceSection(formBuffer, settings, projectId, rerender) {
           });
         })}
       </div>
-    </section>
+    </div>
   `;
 }
 

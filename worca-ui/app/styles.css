@@ -6940,7 +6940,12 @@ sl-dialog.markdown-dialog::part(body) {
   max-height: calc(100vh - 120px);
 }
 
-.editor-header {
+/*
+ * Editor sub-header: lives below the page chrome's "Edit Template" title.
+ * Shows the template name + scope badge on the left, view-mode toggle on
+ * the right. No back button here — the page chrome already provides one.
+ */
+.editor-subheader {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -6950,6 +6955,24 @@ sl-dialog.markdown-dialog::part(body) {
   position: sticky;
   top: 0;
   z-index: 10;
+}
+
+.editor-subheader-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-subheader-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .icon-btn {
@@ -6967,22 +6990,40 @@ sl-dialog.markdown-dialog::part(body) {
   color: var(--fg);
 }
 
-.editor-title-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
-
-.editor-title {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0;
-  color: var(--fg);
-}
-
 .editor-mode-toggle {
   margin-left: auto;
+}
+
+/*
+ * Editor uses the same .settings-tab-content / .settings-section-title /
+ * .settings-cards primitives as Project Settings — define one supporting
+ * helper here (the lead-in paragraph under a section title) and a few
+ * tab-group tweaks so the editor's tab nav sits naturally inside its
+ * scroll container.
+ */
+.settings-section-desc {
+  margin: -2px 0 14px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.settings-section-desc code {
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.editor-tab-group {
+  --indicator-color: var(--accent, var(--sl-color-primary-600, #4f9eff));
+  --track-color: transparent;
+}
+.editor-tab-group::part(base) {
+  /* Hand the scroll to .editor-content so the tab nav stays sticky. */
+  height: 100%;
+}
+.editor-tab-group sl-tab-panel::part(base) {
+  padding: 16px 4px 0;
 }
 
 .editor-content {

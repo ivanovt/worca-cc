@@ -153,6 +153,11 @@ describe('workspace CSS — DAG styling', () => {
       // section — re-states the base .run-card background so the
       // clickable lift effect is suppressed when no edit handler is wired.
       '--surface',
+      // Used by the editor's `.editor-tab-group` rule to colour the
+      // active-tab indicator. Shoelace exposes its design tokens as
+      // `--sl-color-*`; we tap into the primary 600 swatch as a
+      // fallback when our own `--accent` isn't set.
+      '--sl-color-primary-600',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);
