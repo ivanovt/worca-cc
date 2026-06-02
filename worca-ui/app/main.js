@@ -544,6 +544,7 @@ let costsFetched = false;
 
 // -- Pipelines / Templates --
 let _templatesPollCleanup = null;
+let _worcaCliStatusFetching = false; // single in-flight probe guard
 // Editor state and cleanup from pipelines-editor module
 let _editorModule = null;
 let getEditorState = null;
@@ -3427,6 +3428,34 @@ function mainContentView() {
         store,
         rerender,
       );
+    }
+
+    // Fetch the worca-cc CLI compatibility status once per pipelines
+    // entry. The server caches the probe so this is essentially free.
+    // The Pipelines view degrades to read-only when ok=false; without
+    // this probe, every CRUD click would hit a 500 instead.
+    if (state.worcaCliStatus === undefined && !_worcaCliStatusFetching) {
+      _worcaCliStatusFetching = true;
+      fetch('/api/worca-cli')
+        .then((r) => r.json())
+        .then((status) => {
+          store.setState({ worcaCliStatus: status || null });
+        })
+        .catch(() => {
+          // Network/parse failure — treat as unknown rather than green.
+          // ok:false guarantees the banner renders and writes stay disabled.
+          store.setState({
+            worcaCliStatus: {
+              ok: false,
+              installed: null,
+              minimum: 'unknown',
+              message: 'Failed to probe worca-cc CLI status',
+            },
+          });
+        })
+        .finally(() => {
+          _worcaCliStatusFetching = false;
+        });
     }
 
     // /pipelines/:tid/edit → editor (load and edit template)

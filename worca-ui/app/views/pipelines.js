@@ -228,7 +228,21 @@ export function pipelinesView(state, options) {
     templates = [],
     templatesLoaded = false,
     templatesError = null,
+    worcaCliStatus = null,
   } = state;
+
+  // Read-only / degraded mode: triggered when the worca-cc CLI is
+  // missing or too old. The Pipelines list still renders (read paths
+  // use the filesystem directly), but write actions are disabled and
+  // a banner explains what to do.
+  const degraded = worcaCliStatus && worcaCliStatus.ok === false;
+  const handlers = {
+    onEdit: degraded ? null : onEdit,
+    onDuplicate: degraded ? null : onDuplicate,
+    onSetDefault: degraded ? null : onSetDefault,
+    onDelete: degraded ? null : onDelete,
+    onExport, // export is read-only — always available
+  };
 
   // Group templates by tier
   const templatesList = templates || [];
@@ -241,6 +255,7 @@ export function pipelinesView(state, options) {
     ),
     builtins: templatesList.filter(
       (t) =>
+        t.effectiveTier === 'builtin' ||
         t.effectiveTier === 'worca' ||
         t.tier === 'worca' ||
         t.tier === 'builtin',
@@ -254,6 +269,8 @@ export function pipelinesView(state, options) {
   return html`
     <div class="pipelines-view">
       <div class="pipelines-content">
+        ${_degradedBanner(worcaCliStatus)}
+
         ${
           hasError
             ? html`
@@ -271,7 +288,7 @@ export function pipelinesView(state, options) {
             : html`
               ${
                 !hasTemplates
-                  ? _emptyState(onCreate)
+                  ? _emptyState(degraded ? null : onCreate, degraded)
                   : html`
                     ${
                       grouped.builtins.length > 0
@@ -279,25 +296,18 @@ export function pipelinesView(state, options) {
                             'Built-in',
                             grouped.builtins,
                             defaultTemplate,
-                            {
-                              onEdit,
-                              onDuplicate,
-                              onSetDefault,
-                              onDelete,
-                              onExport,
-                            },
+                            handlers,
                           )
                         : ''
                     }
                     ${
                       grouped.user.length > 0
-                        ? _tierSection('User', grouped.user, defaultTemplate, {
-                            onEdit,
-                            onDuplicate,
-                            onSetDefault,
-                            onDelete,
-                            onExport,
-                          })
+                        ? _tierSection(
+                            'User',
+                            grouped.user,
+                            defaultTemplate,
+                            handlers,
+                          )
                         : ''
                     }
                     ${
@@ -306,13 +316,7 @@ export function pipelinesView(state, options) {
                             'Project',
                             grouped.project,
                             defaultTemplate,
-                            {
-                              onEdit,
-                              onDuplicate,
-                              onSetDefault,
-                              onDelete,
-                              onExport,
-                            },
+                            handlers,
                           )
                         : ''
                     }
@@ -322,6 +326,38 @@ export function pipelinesView(state, options) {
         }
       </div>
     </div>
+  `;
+}
+
+/**
+ * Render the worca-cc version-mismatch / not-installed banner.
+ *
+ * Returns nothing when the CLI is compatible (or status hasn't loaded
+ * yet — staying quiet is better than flashing a banner that vanishes
+ * once the probe lands).
+ */
+function _degradedBanner(status) {
+  if (!status || status.ok !== false) return nothing;
+  const installed = status.installed
+    ? html`<code>worca-cc ${status.installed}</code>`
+    : html`<em>worca CLI not found on PATH</em>`;
+  return html`
+    <sl-alert
+      class="pipelines-cli-banner"
+      variant="warning"
+      open
+      role="status"
+    >
+      <strong slot="header">Editing is disabled</strong>
+      <div>
+        This UI needs <code>worca-cc ${status.minimum}</code> or later for
+        template create / edit / delete / duplicate. ${installed} is installed.
+      </div>
+      <div class="pipelines-cli-banner-hint">
+        Upgrade with <code>pip install --upgrade 'worca-cc>=${status.minimum}'</code>,
+        then reload this page. List, view, and export keep working in the meantime.
+      </div>
+    </sl-alert>
   `;
 }
 
@@ -425,13 +461,23 @@ function _templateCard(template, defaultTemplateId, handlers) {
           isBuiltin
             ? html`<button
               class="action-btn action-btn--secondary"
+              ?disabled=${!onDuplicate}
               @click=${() => onDuplicate?.(id)}
-              title="Duplicate to project or user scope"
+              title=${
+                onDuplicate
+                  ? 'Duplicate to project or user scope'
+                  : 'Upgrade worca-cc to enable duplicate'
+              }
             >
               ${unsafeHTML(iconSvg(Copy, 14))}
               Duplicate
             </button>`
-            : html`<button class="action-btn action-btn--secondary" @click=${() => onEdit?.(id)} title="Edit template">
+            : html`<button
+              class="action-btn action-btn--secondary"
+              ?disabled=${!onEdit}
+              @click=${() => onEdit?.(id)}
+              title=${onEdit ? 'Edit template' : 'Upgrade worca-cc to enable edit'}
+            >
               ${unsafeHTML(iconSvg(Pencil, 14))}
               Edit
             </button>`
@@ -440,8 +486,13 @@ function _templateCard(template, defaultTemplateId, handlers) {
           !isDefault && !isBuiltin
             ? html`<button
               class="action-btn action-btn--secondary"
+              ?disabled=${!onSetDefault}
               @click=${() => onSetDefault?.(id)}
-              title="Set as default template"
+              title=${
+                onSetDefault
+                  ? 'Set as default template'
+                  : 'Upgrade worca-cc to enable Set Default'
+              }
             >
               ${unsafeHTML(iconSvg(Star, 14))}
               Set Default
@@ -460,8 +511,13 @@ function _templateCard(template, defaultTemplateId, handlers) {
           !isBuiltin
             ? html`<button
               class="action-btn action-btn--danger"
+              ?disabled=${!onDelete}
               @click=${() => onDelete?.(id, resolvedTier)}
-              title="Delete template"
+              title=${
+                onDelete
+                  ? 'Delete template'
+                  : 'Upgrade worca-cc to enable delete'
+              }
             >
               ${unsafeHTML(iconSvg(Trash2, 14))}
               Delete
@@ -475,18 +531,27 @@ function _templateCard(template, defaultTemplateId, handlers) {
 
 /**
  * Empty state for pipelines view.
+ *
+ * `onCreate` is passed `null` in degraded mode so the Create / Import
+ * buttons render disabled. Disabling rather than hiding keeps the
+ * affordance discoverable (and the banner above explains why).
  */
-function _emptyState(onCreate) {
+function _emptyState(onCreate, degraded = false) {
+  const createDisabled = !onCreate || degraded;
   return html`
     <div class="empty-state pipelines-empty">
       <div class="empty-state-icon">${unsafeHTML(iconSvg(FileText, 48))}</div>
       <h2>No templates yet</h2>
       <p>Get started by importing a template or creating one from scratch.</p>
       <div class="empty-state-actions">
-        <sl-button variant="primary" @click=${() => onCreate?.()}>
+        <sl-button
+          variant="primary"
+          ?disabled=${createDisabled}
+          @click=${() => onCreate?.()}
+        >
           ${unsafeHTML(iconSvg(Plus, 16))} Create Template
         </sl-button>
-        <sl-button variant="default">
+        <sl-button variant="default" ?disabled=${degraded}>
           ${unsafeHTML(iconSvg(Upload, 16))} Import Bundle
         </sl-button>
       </div>
