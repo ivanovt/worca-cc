@@ -500,9 +500,9 @@ function _templateCard(template, defaultTemplateId, handlers) {
         <span class="run-card-status">${unsafeHTML(iconSvg(FileText, 16))}</span>
         <div class="template-card-headings">
           <span class="run-card-title">${name || id}</span>
-          <span class="template-card-id-row">
-            <span class="template-card-id-label">ID</span>
-            <code class="template-card-id" title="Template id">${id}</code>
+          <span class="template-card-id-badge" title="Template id">
+            <span class="template-card-id-label">ID:</span>
+            <code class="template-card-id">${id}</code>
           </span>
         </div>
         ${

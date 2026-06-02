@@ -6878,23 +6878,35 @@ sl-dialog.markdown-dialog::part(body) {
   flex: 1;
   min-width: 0;
 }
-.template-card-id-row {
+/*
+ * "ID: <slug>" badge — pill-shaped with a subtle gray background to
+ * read as a handle/identifier chip rather than incidental text. Uses
+ * Settings-style tokens (--bg-secondary, --border-subtle) so it lands
+ * in the same visual family as our other chips and badges.
+ */
+.template-card-id-badge {
   display: inline-flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle, var(--border));
+  max-width: max-content;
   min-width: 0;
 }
 .template-card-id-label {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--fg-muted);
+  flex-shrink: 0;
 }
 .template-card-id {
   font-family: var(--sl-font-mono);
   font-size: 12px;
-  color: var(--fg-muted);
+  color: var(--fg);
   background: transparent;
   padding: 0;
   white-space: nowrap;
