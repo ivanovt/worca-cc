@@ -3013,6 +3013,7 @@ def run_pipeline(
                         cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
                         web_search_requests=usage.get("web_search_requests", 0),
                         web_fetch_requests=usage.get("web_fetch_requests", 0),
+                        context_final_pct=usage.get("context_final_pct"),
                     ))
                 # Running total: sum of all previously-completed stages + current
                 _prev_costs = sum(
@@ -3079,6 +3080,9 @@ def run_pipeline(
                         iter_extras["crg_tool_counts"] = _crg_tc
             if usage:
                 iter_extras["token_usage"] = usage
+                _ctx_pct = usage.get("context_final_pct")
+                if _ctx_pct is not None:
+                    iter_extras["context_final_pct"] = _ctx_pct
             iter_extras["prompt"] = rendered_prompt
             if isinstance(result, dict):
                 iter_extras["output"] = result

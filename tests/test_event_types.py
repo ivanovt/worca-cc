@@ -1164,3 +1164,45 @@ def test_template_dropped_payload_reason_values():
     for reason in ("not_found", "resolve_error", "missing_on_resume"):
         p = template_dropped_payload(template_id="tmpl", reason=reason)
         assert p["reason"] == reason
+
+
+# ---------------------------------------------------------------------------
+# context_final_pct in payload builders (Step 3 — TDD, written before impl)
+# ---------------------------------------------------------------------------
+
+def test_cost_stage_total_payload_includes_context_final_pct_when_provided():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="IMPLEMENT", iteration=1, cost_usd=0.15,
+        input_tokens=1000, output_tokens=500, model="claude-sonnet-4-6",
+        context_final_pct=53.2,
+    )
+    assert p["context_final_pct"] == 53.2
+
+
+def test_cost_stage_total_payload_omits_context_final_pct_when_none():
+    from worca.events.types import cost_stage_total_payload
+    p = cost_stage_total_payload(
+        stage="IMPLEMENT", iteration=1, cost_usd=0.15,
+        input_tokens=1000, output_tokens=500, model="claude-sonnet-4-6",
+    )
+    assert "context_final_pct" not in p
+
+
+def test_agent_completed_payload_includes_context_final_pct_when_provided():
+    from worca.events.types import agent_completed_payload
+    p = agent_completed_payload(
+        stage="IMPLEMENT", iteration=1, turns=5,
+        cost_usd=0.10, duration_ms=30000, exit_code=0,
+        context_final_pct=72.5,
+    )
+    assert p["context_final_pct"] == 72.5
+
+
+def test_agent_completed_payload_omits_context_final_pct_when_none():
+    from worca.events.types import agent_completed_payload
+    p = agent_completed_payload(
+        stage="IMPLEMENT", iteration=1, turns=5,
+        cost_usd=0.10, duration_ms=30000, exit_code=0,
+    )
+    assert "context_final_pct" not in p

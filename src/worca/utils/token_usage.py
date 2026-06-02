@@ -50,9 +50,14 @@ def extract_token_usage(
         "cache_ephemeral_1h_tokens": cache_creation.get("ephemeral_1h_input_tokens", 0) or 0,
         "cache_ephemeral_5m_tokens": cache_creation.get("ephemeral_5m_input_tokens", 0) or 0,
         "speed": usage.get("speed", "") or "",
+        "context_final_pct": None,
     }
 
     model_alias = raw_envelope.get("_model_alias")
+    final_context_pct = raw_envelope.get("_final_context_pct")
+    if final_context_pct is not None and not model_alias:
+        result["context_final_pct"] = final_context_pct
+
     if model_alias:
         result["model_alias"] = model_alias
         if settings_path:
@@ -97,6 +102,7 @@ def _empty_token_usage() -> dict:
         "cache_ephemeral_1h_tokens": 0,
         "cache_ephemeral_5m_tokens": 0,
         "speed": "",
+        "context_final_pct": None,
     }
 
 

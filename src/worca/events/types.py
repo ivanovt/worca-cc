@@ -451,8 +451,9 @@ def agent_completed_payload(
     cost_usd: float,
     duration_ms: int,
     exit_code: int,
+    context_final_pct=None,
 ) -> dict:
-    return {
+    p: dict = {
         "stage": stage,
         "iteration": iteration,
         "turns": turns,
@@ -460,6 +461,9 @@ def agent_completed_payload(
         "duration_ms": duration_ms,
         "exit_code": exit_code,
     }
+    if context_final_pct is not None:
+        p["context_final_pct"] = context_final_pct
+    return p
 
 
 # ---------------------------------------------------------------------------
@@ -709,6 +713,7 @@ def cost_stage_total_payload(
     web_fetch_requests: int = 0,
     cache_creation_input_tokens: int = 0,
     cache_read_input_tokens: int = 0,
+    context_final_pct=None,
 ) -> dict:
     p: dict = {
         "stage": stage,
@@ -726,6 +731,8 @@ def cost_stage_total_payload(
         p["cache_creation_input_tokens"] = cache_creation_input_tokens
     if cache_read_input_tokens:
         p["cache_read_input_tokens"] = cache_read_input_tokens
+    if context_final_pct is not None:
+        p["context_final_pct"] = context_final_pct
     return p
 
 
