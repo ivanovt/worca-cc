@@ -89,7 +89,7 @@ test('set as default button updates star badge on template card', async ({ page 
     createTestTemplate(ctx.dir, 'test-two', 'Test Template Two');
 
     // Navigate to pipelines page
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
 
     // Wait for templates to load - wait for the templates to be fetched and cards to appear
     const cards = page.locator('.template-card');
@@ -158,7 +158,7 @@ test('setting default template pre-selects it in new run dropdown', async ({ pag
     createTestTemplate(ctx.dir, 'gamma-template', 'Gamma Template');
 
     // Navigate to pipelines and set beta as default
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card').first()).toBeAttached({ timeout: 15000 });
     await expect(page.locator('.template-card')).toHaveCount(3, { timeout: 5000 });
 
@@ -218,7 +218,7 @@ test('switching default template from one to another updates badges correctly', 
     createTestTemplate(ctx.dir, 'second-template', 'Second Template');
 
     // Navigate to pipelines and set first as default
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card')).toHaveCount(2);
 
     let apiResponse = page.waitForResponse(
@@ -295,7 +295,7 @@ test('built-in templates do not show Set Default button', async ({ page }) => {
     // be set as default, unlike built-in)
     createTestTemplate(ctx.dir, 'project-editable', 'Project Editable Template');
 
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card').first()).toBeAttached({ timeout: 15000 });
     await expect(page.locator('.template-card')).toHaveCount(2, { timeout: 5000 });
 
@@ -326,7 +326,7 @@ test('invalid template ID shows error toast when setting default', async ({ page
     createTestTemplate(ctx.dir, 'valid-template', 'Valid Template');
 
     // Navigate to templates
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card')).toHaveCount(1);
 
     // Intercept the PUT request and modify the body to send an invalid tid.
@@ -392,7 +392,7 @@ test('new run dropdown shows star annotation for newly-set default template', as
     expect(initialText).not.toContain('★');
 
     // Now set it as default
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card')).toHaveCount(1);
     const apiResponse = page.waitForResponse(
       (res) =>

@@ -13,6 +13,7 @@
  */
 
 import { html, nothing } from 'lit-html';
+import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import {
   Copy,
@@ -395,6 +396,17 @@ function _tierSection(title, templates, defaultTemplateId, handlers) {
 
 /**
  * Render a single template card.
+ *
+ * The card body is the primary affordance for editing:
+ * - Project/User templates: clicking anywhere outside an action button
+ *   opens the editor in Edit mode.
+ * - Built-in templates: clicking opens the canonical "shadow & edit"
+ *   flow — a project-scope copy is created and the editor opens on it.
+ *   The visible Duplicate button is kept as an explicit affordance for
+ *   users who want to see what's about to happen before they click.
+ *
+ * Action buttons (Duplicate / Set Default / Export / Delete) stop
+ * propagation so they don't double-fire as a card click.
  */
 function _templateCard(template, defaultTemplateId, handlers) {
   const { onEdit, onDuplicate, onSetDefault, onDelete, onExport } =
@@ -413,12 +425,44 @@ function _templateCard(template, defaultTemplateId, handlers) {
   const resolvedTier = normalizeTier(effectiveTier || tier);
   const isDefault = id === defaultTemplateId;
   const tierVariant = TIER_VARIANT[resolvedTier] || 'neutral';
-
-  // Built-ins show "Duplicate" instead of "Edit"
   const isBuiltin = resolvedTier === 'builtin' || builtin;
 
+  // Whole-card click → Edit (or Duplicate-to-Edit for built-ins).
+  // In degraded mode `onEdit` / `onDuplicate` are null, so the card
+  // becomes inert (no cursor change, no hover, no Enter activation).
+  const cardClick = isBuiltin ? onDuplicate : onEdit;
+  const cardClickable = Boolean(cardClick);
+  const cardClass = `run-card template-card${cardClickable ? ' template-card--clickable' : ''}`;
+  const cardTitle = !cardClickable
+    ? 'Upgrade worca-cc to enable editing'
+    : isBuiltin
+      ? 'Click to duplicate into project scope and edit'
+      : 'Click to edit template';
+  const onCardActivate = cardClickable ? () => cardClick(id) : null;
+  const onCardKeydown = cardClickable
+    ? (e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          cardClick(id);
+        }
+      }
+    : null;
+  // Action buttons live inside the card; without stopPropagation each
+  // click would also trigger the card-level edit. The handler returns a
+  // closure rather than the bound action so we keep one indirection
+  // point if we ever need to log/track these events centrally.
+  const stop = (e) => e.stopPropagation();
+
   return html`
-    <div class="run-card template-card">
+    <div
+      class=${cardClass}
+      role=${ifDefined(cardClickable ? 'button' : undefined)}
+      tabindex=${ifDefined(cardClickable ? '0' : undefined)}
+      title=${cardTitle}
+      aria-disabled=${ifDefined(cardClickable ? undefined : 'true')}
+      @click=${onCardActivate}
+      @keydown=${onCardKeydown}
+    >
       <div class="run-card-top">
         <span class="run-card-status">${unsafeHTML(iconSvg(FileText, 16))}</span>
         <span class="run-card-title">${name || id}</span>
@@ -461,7 +505,7 @@ function _templateCard(template, defaultTemplateId, handlers) {
           : ''
       }
 
-      <div class="run-card-actions">
+      <div class="run-card-actions" @click=${stop}>
         ${
           isBuiltin
             ? html`<button
@@ -477,15 +521,7 @@ function _templateCard(template, defaultTemplateId, handlers) {
               ${unsafeHTML(iconSvg(Copy, 14))}
               Duplicate
             </button>`
-            : html`<button
-              class="action-btn action-btn--secondary"
-              ?disabled=${!onEdit}
-              @click=${() => onEdit?.(id)}
-              title=${onEdit ? 'Edit template' : 'Upgrade worca-cc to enable edit'}
-            >
-              ${unsafeHTML(iconSvg(Pencil, 14))}
-              Edit
-            </button>`
+            : ''
         }
         ${
           !isDefault && !isBuiltin

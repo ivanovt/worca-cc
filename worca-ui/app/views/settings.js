@@ -1008,8 +1008,8 @@ export function pipelineTab(worca, rerender) {
             Agents, Pipeline stages, Effort, and Governance dispatch are owned by the selected template
           </div>
         </div>
-        <a href="#/pipelines" class="pipelines-deep-link-btn">
-          Edit pipelines
+        <a href="#/templates" class="pipelines-deep-link-btn">
+          Edit templates
           ${unsafeHTML(iconSvg(Pencil, 14))}
         </a>
       </div>

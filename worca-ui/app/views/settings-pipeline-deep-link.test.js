@@ -55,13 +55,13 @@ describe('Settings → Pipeline tab deep-link card', () => {
       const template = pipelineTab(worca, rerender);
       const htmlString = renderToString(template);
 
-      // Should contain deep-link card
-      expect(htmlString).toContain('href="#/pipelines"');
+      // Should contain deep-link card pointing at the renamed route.
+      expect(htmlString).toContain('href="#/templates"');
       expect(htmlString).toContain('pipelines-deep-link-card');
 
-      // Should contain link text about editing pipelines
+      // Link text was updated alongside the rename.
       expect(htmlString).toMatch(/edit/i);
-      expect(htmlString).toMatch(/pipelines/i);
+      expect(htmlString).toMatch(/templates/i);
     });
 
     it('does not render TEMPLATE_DRIVEN_BANNER', () => {

@@ -42,7 +42,7 @@ test('create template from blank', async ({ page }) => {
   const ctx = await startServer();
   try {
     // Navigate to the editor with 'new' tid
-    await page.goto(`${ctx.url}/#/pipelines/new/edit`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates/new/edit`, GOTO_OPTS);
 
     // Wait for editor to load with a longer timeout
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
@@ -100,7 +100,7 @@ test('create template from blank', async ({ page }) => {
     expect(toastText).toContain('created successfully');
 
     // Verify we're redirected to pipelines list
-    await page.waitForURL(/pipelines$/, { timeout: 5000 });
+    await page.waitForURL(/templates$/, { timeout: 5000 });
   } finally {
     await ctx.close();
   }
@@ -138,7 +138,7 @@ test('edit existing template', async ({ page }) => {
     );
 
     // Navigate to editor
-    await page.goto(`${ctx.url}/#/pipelines/test-edit/edit`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates/test-edit/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
     // Verify template loaded
@@ -180,7 +180,7 @@ test('edit existing template', async ({ page }) => {
     expect(toastText).toContain('updated successfully');
 
     // Verify redirect to pipelines list
-    await page.waitForURL(/pipelines$/, { timeout: 5000 });
+    await page.waitForURL(/templates$/, { timeout: 5000 });
   } finally {
     await ctx.close();
   }
@@ -211,7 +211,7 @@ test('JSON toggle round-trip preserves edits', async ({ page }) => {
     );
 
     // Navigate to editor
-    await page.goto(`${ctx.url}/#/pipelines/round-trip/edit`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates/round-trip/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
     // Switch to JSON mode
@@ -287,7 +287,7 @@ test('Save shows validation error for invalid JSON', async ({ page }) => {
     );
 
     // Navigate to editor
-    await page.goto(`${ctx.url}/#/pipelines/invalid-json/edit`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates/invalid-json/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
     // Switch to JSON mode
@@ -337,7 +337,7 @@ test('cancel editing navigates back to pipelines list', async ({ page }) => {
     );
 
     // Navigate to editor
-    await page.goto(`${ctx.url}/#/pipelines/cancel-test/edit`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates/cancel-test/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
     // Click Cancel button
@@ -348,7 +348,7 @@ test('cancel editing navigates back to pipelines list', async ({ page }) => {
     await cancelButton.click();
 
     // Verify redirect to pipelines list
-    await page.waitForURL(/pipelines$/, { timeout: 5000 });
+    await page.waitForURL(/templates$/, { timeout: 5000 });
   } finally {
     await ctx.close();
   }
@@ -380,7 +380,7 @@ test('edit governance dispatch section', async ({ page }) => {
     );
 
     // Navigate to editor
-    await page.goto(`${ctx.url}/#/pipelines/dispatch-test/edit`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates/dispatch-test/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
     // Scroll to governance section

@@ -128,21 +128,43 @@ describe('pipelinesView — degraded mode', () => {
     );
     const cards = container.querySelectorAll('.template-card');
     expect(cards.length).toBe(2);
-    // Every write-action button on every card carries the "Upgrade worca-cc"
-    // tooltip and must be `disabled`. Iterating the cross product is more
-    // robust than chasing per-card text matches and locks the contract in
-    // one assertion.
+    // The Edit button was removed in favor of clickable cards; only the
+    // remaining write-action buttons (Duplicate on builtin, SetDefault +
+    // Delete on project/user) should carry the "Upgrade worca-cc"
+    // tooltip. All must be `disabled`.
     const upgradeBtns = container.querySelectorAll(
       'button[title^="Upgrade worca-cc"]',
     );
-    expect(upgradeBtns.length).toBeGreaterThanOrEqual(4); // Edit/Duplicate + SetDefault + Delete cover the two cards
+    // 1 (builtin Duplicate) + 2 (project SetDefault + Delete) = 3.
+    expect(upgradeBtns.length).toBe(3);
     for (const btn of upgradeBtns) {
       expect(btn.disabled).toBe(true);
     }
-    // Click handlers must not fire on disabled buttons (lit/DOM still
-    // dispatches click, but the onX = null guards in the view fall through).
+    // Click handlers must not fire on disabled buttons.
     for (const btn of upgradeBtns) {
       btn.click();
+    }
+    expect(handlers.calls).toEqual([]);
+  });
+
+  it('cards are inert (no role/tabindex, no clickable class) in degraded mode', () => {
+    const handlers = snapshotHandlers();
+    container = mount(
+      {
+        templates: SAMPLE_TEMPLATES,
+        templatesLoaded: true,
+        worcaCliStatus: DEGRADED_STATUS,
+      },
+      handlers,
+    );
+    const cards = container.querySelectorAll('.template-card');
+    for (const card of cards) {
+      expect(card.classList.contains('template-card--clickable')).toBe(false);
+      expect(card.getAttribute('role')).not.toBe('button');
+      expect(card.getAttribute('tabindex')).toBeNull();
+      expect(card.getAttribute('aria-disabled')).toBe('true');
+      // And a click on the card body must NOT navigate to the editor.
+      card.click();
     }
     expect(handlers.calls).toEqual([]);
   });
@@ -164,7 +186,11 @@ describe('pipelinesView — degraded mode', () => {
     }
   });
 
-  it('keeps Edit / Duplicate / etc. enabled when the CLI is healthy', () => {
+  it('cards are clickable + write buttons enabled when the CLI is healthy', () => {
+    // Edit moved from a button to whole-card click; surviving write
+    // actions on a project card are Set Default and Delete. All must be
+    // enabled (i.e. carry their healthy-state tooltip, not the upgrade
+    // tooltip) and the card itself must be marked clickable.
     container = mount(
       {
         templates: SAMPLE_TEMPLATES,
@@ -177,8 +203,14 @@ describe('pipelinesView — degraded mode', () => {
     const projectCard = Array.from(cards).find((c) =>
       c.textContent.includes('My Project Tpl'),
     );
-    const editBtn = projectCard.querySelector('button[title*="Edit"]');
-    expect(editBtn.disabled).toBe(false);
+    expect(projectCard).toBeDefined();
+    expect(projectCard.classList.contains('template-card--clickable')).toBe(
+      true,
+    );
+    expect(projectCard.getAttribute('role')).toBe('button');
+    expect(
+      container.querySelector('button[title^="Upgrade worca-cc"]'),
+    ).toBeNull();
   });
 
   it('disables the empty-state Create / Import buttons in degraded mode', () => {

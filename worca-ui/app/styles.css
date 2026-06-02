@@ -6782,6 +6782,26 @@ sl-dialog.markdown-dialog::part(body) {
   min-height: 140px;
 }
 
+/*
+ * Template cards inherit `cursor: pointer` and a hover lift from the
+ * base `.run-card` rule. The `--clickable` modifier is added by the
+ * view only when an edit/duplicate handler is wired up; in the degraded
+ * read-only state we strip those affordances so the card looks (and
+ * feels) inert.
+ */
+.template-card:not(.template-card--clickable) {
+  cursor: default;
+}
+.template-card:not(.template-card--clickable):hover {
+  background: var(--surface);
+  box-shadow: none;
+  transform: none;
+}
+.template-card--clickable:focus-visible {
+  outline: 2px solid var(--accent, #4f9eff);
+  outline-offset: 2px;
+}
+
 .template-default-badge {
   margin-right: 8px;
   font-weight: 600;

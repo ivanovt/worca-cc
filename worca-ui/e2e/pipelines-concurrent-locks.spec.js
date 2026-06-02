@@ -65,7 +65,7 @@ test('delete button shows guard dialog when runs are in-flight using the templat
       stages: { pr: { status: 'completed' } },
     });
 
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
     // Click the Delete button on the template card
@@ -119,7 +119,7 @@ test('confirming guard dialog on delete actually deletes the template', async ({
       stages: { plan: { status: 'in_progress' } },
     });
 
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
     const card = page.locator(
@@ -190,7 +190,7 @@ test('edit button shows guard dialog when runs are in-flight using the template'
       stages: { review: { status: 'in_progress' } },
     });
 
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
     const card = page.locator('.template-card:has(.run-card-title:has-text("Busy Template"))');
@@ -213,7 +213,7 @@ test('edit button shows guard dialog when runs are in-flight using the template'
 
     // Clicking proceed should navigate to editor
     await proceedBtn.click();
-    await page.waitForURL(/\/pipelines\/busy-template\/edit/, { timeout: 5000 });
+    await page.waitForURL(/\/templates\/busy-template\/edit/, { timeout: 5000 });
   } finally {
     await ctx.close();
   }
@@ -242,7 +242,7 @@ test('no guard dialog when template has no in-flight runs', async ({ page }) => 
       stages: { test: { status: 'failed' } },
     });
 
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card')).toBeAttached({ timeout: 10000 });
 
     const card = page.locator('.template-card:has(.run-card-title:has-text("Idle Template"))');
@@ -306,7 +306,7 @@ test('guard dialog only counts runs using the specific template', async ({ page 
       stages: { test: { status: 'in_progress' } },
     });
 
-    await page.goto(`${ctx.url}/#/pipelines`, GOTO_OPTS);
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expect(page.locator('.template-card').first()).toBeAttached({ timeout: 10000 });
 
     const card = page.locator('.template-card:has(.run-card-title:has-text("Target Template"))');

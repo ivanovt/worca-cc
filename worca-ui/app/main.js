@@ -202,6 +202,15 @@ const notificationManager = createNotificationManager({
 });
 // ─── Session-level state (not reset on project switch) ────────────────
 let route = parseHash(location.hash);
+
+// Backward-compat: the old "pipelines" route was renamed to "templates"
+// (page is now called "Pipeline Templates"). Rewrite the URL so old
+// bookmarks / external links land on the new canonical path instead of
+// silently rendering the active-runs default.
+if (route.section === 'pipelines') {
+  navigate('templates', route.runId, route.projectId, route.action);
+  route = parseHash(location.hash);
+}
 let connectionState = ws.getState();
 let autoScroll = true;
 
@@ -1538,6 +1547,14 @@ ws.onConnection((state) => {
 // --- Routing ---
 
 onHashChange((newRoute) => {
+  // Backward-compat: rewrite legacy 'pipelines' route to 'templates'
+  // here too — covers mid-session navigation (e.g. clicking a stale
+  // external link with the old hash). The redirect re-enters this
+  // handler with the canonical hash, so we just bail this pass.
+  if (newRoute.section === 'pipelines') {
+    navigate('templates', newRoute.runId, newRoute.projectId, newRoute.action);
+    return;
+  }
   const prevRunId = route.runId;
   const prevProjectId = route.projectId;
   route = newRoute;
@@ -1730,7 +1747,7 @@ function handleEditTemplate(tid) {
     });
     return;
   }
-  navigate('pipelines', tid, route.projectId, 'edit');
+  navigate('templates', tid, route.projectId, 'edit');
 }
 
 function _confirmTemplateGuard() {
@@ -1741,7 +1758,7 @@ function _confirmTemplateGuard() {
   if (guard.action === 'delete') {
     _executeDeleteTemplate(guard.tid, guard.scope);
   } else {
-    navigate('pipelines', guard.tid, route.projectId, 'edit');
+    navigate('templates', guard.tid, route.projectId, 'edit');
   }
 }
 
@@ -1763,7 +1780,7 @@ async function handleDuplicateTemplate(tid) {
       return;
     }
     const dstId = data.dst_id || tid;
-    navigate('pipelines', dstId, route.projectId, 'edit');
+    navigate('templates', dstId, route.projectId, 'edit');
   } catch (err) {
     showActionError(`Failed to duplicate template: ${err.message}`);
   }
@@ -3012,7 +3029,11 @@ function contentHeaderView() {
     } else {
       title = 'Workspaces';
     }
-  } else if (route.runId) {
+  } else if (route.runId && route.section !== 'templates') {
+    // The templates section also encodes its tid in `route.runId` (e.g.
+    // `#/templates/feature-glm-ds/edit`), so without the section guard
+    // this generic "run detail" handler would overwrite the dedicated
+    // "Edit Template" title below.
     const run = store.getRunById(route.runId);
     const raw = run?.work_request?.title || 'Pipeline Details';
     const firstLine = raw.split('\n')[0];
@@ -3181,12 +3202,12 @@ function contentHeaderView() {
   } else if (route.section === 'settings') {
     title = 'Settings';
     showBack = true;
-  } else if (route.section === 'pipelines') {
+  } else if (route.section === 'templates') {
     if (route.action === 'edit' || route.action === 'duplicate') {
-      title = 'Edit Pipeline Template';
+      title = 'Edit Template';
       showBack = true;
     } else {
-      title = 'Project Pipelines';
+      title = 'Pipeline Templates';
       showBack = false;
     }
   } else if (route.section === 'project-settings') {
@@ -3293,7 +3314,7 @@ function mainContentView() {
     route.section !== 'fleet-runs' &&
     route.section !== 'workspace-runs' &&
     route.section !== 'workspaces' &&
-    route.section !== 'pipelines'
+    route.section !== 'templates'
   ) {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
@@ -3420,7 +3441,7 @@ function mainContentView() {
     return newRunView(viewState, { rerender });
   }
 
-  if (route.section === 'pipelines') {
+  if (route.section === 'templates') {
     // Pipelines are project-scoped (the underlying CLI writes to
     // `.claude/templates/` under the resolved project root). In true
     // All-Projects mode there's no project to scope to, so show the
@@ -3502,9 +3523,9 @@ function mainContentView() {
           fetchTemplates(route.projectId || null).then((templates) => {
             store.setState({ templates });
           });
-          navigate('pipelines', null, route.projectId);
+          navigate('templates', null, route.projectId);
         },
-        onCancel: () => navigate('pipelines', null, route.projectId),
+        onCancel: () => navigate('templates', null, route.projectId),
         rerender,
       });
     }
@@ -3513,7 +3534,7 @@ function mainContentView() {
     return pipelinesView(viewState, {
       rerender,
       defaultTemplate,
-      onCreate: () => navigate('pipelines', 'new', route.projectId),
+      onCreate: () => navigate('templates', 'new', route.projectId),
       onEdit: handleEditTemplate,
       onDuplicate: handleDuplicateTemplate,
       onSetDefault: handleSetDefaultTemplate,

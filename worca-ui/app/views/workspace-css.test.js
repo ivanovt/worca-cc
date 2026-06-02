@@ -106,7 +106,13 @@ describe('workspace CSS — DAG styling', () => {
 
   it('does not introduce new CSS variables', () => {
     const dagSection = css.slice(css.indexOf('.dag-graph-node'));
-    const customProps = dagSection.match(/--[a-z][\w-]*/g) || [];
+    // Only match `var(--name)` usages so BEM-style modifier suffixes
+    // in selectors (e.g. `.template-card--clickable`) aren't picked up
+    // as CSS custom properties.
+    const customProps = Array.from(
+      dagSection.matchAll(/var\((--[a-z][\w-]*)/g),
+      (m) => m[1],
+    );
     const allowed = new Set([
       '--status-pending',
       '--status-running',
@@ -143,6 +149,10 @@ describe('workspace CSS — DAG styling', () => {
       '--changed',
       '--builtin',
       '--current',
+      // Used by the .template-card inert-hover override below the DAG
+      // section — re-states the base .run-card background so the
+      // clickable lift effect is suppressed when no edit handler is wired.
+      '--surface',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

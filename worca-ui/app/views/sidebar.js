@@ -397,11 +397,11 @@ export function sidebarView(
             <span>Project Settings</span>
           </span>
         </div>
-        <div class="sidebar-item ${route.section === 'pipelines' ? 'active' : ''}"
-             @click=${() => onNavigate('pipelines')}>
+        <div class="sidebar-item ${route.section === 'templates' ? 'active' : ''}"
+             @click=${() => onNavigate('templates')}>
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(FileText, 16))}
-            <span>Project Pipelines</span>
+            <span>Pipeline Templates</span>
           </span>
         </div>
         `
