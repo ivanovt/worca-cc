@@ -473,6 +473,18 @@ class TestTemplateResolverSave:
             resolver.save(bad_data, scope="project")
         assert exc_info.value.code == "validation_error"
 
+    def test_save_accepts_id_with_underscores(self, tmp_path):
+        """Regression: the id validator used to reject '_legacy-settings'
+        (the id `worca init --upgrade` writes for the auto-migration shim),
+        causing a 400 in the API and an inability to round-trip the id
+        through save(). Underscores must be allowed.
+        """
+        resolver = self._make_resolver(tmp_path)
+        resolver.save(self._valid_data("_legacy-settings"), scope="project")
+        assert (
+            tmp_path / "project" / "_legacy-settings" / "template.json"
+        ).is_file()
+
     def test_collects_multiple_validation_errors_in_details(self, tmp_path):
         resolver = self._make_resolver(tmp_path)
         bad_data = {

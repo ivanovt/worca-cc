@@ -446,8 +446,11 @@ class TemplateResolver:
         errors = []
 
         template_id = template_data.get("id", "")
-        if not isinstance(template_id, str) or not re.match(r"^[a-z0-9\-]{1,64}$", template_id):
-            errors.append({"field": "id", "message": f"id must match [a-z0-9-]{{1,64}}, got {template_id!r}"})
+        # Underscores allowed: worca init's auto-migrated `_legacy-settings`
+        # template (and any intentionally-private id) must round-trip
+        # through save() without tripping the validator.
+        if not isinstance(template_id, str) or not re.match(r"^[a-z0-9_\-]{1,64}$", template_id):
+            errors.append({"field": "id", "message": f"id must match [a-z0-9_-]{{1,64}}, got {template_id!r}"})
 
         name = template_data.get("name", "")
         if not isinstance(name, str) or not name or len(name) > 80:

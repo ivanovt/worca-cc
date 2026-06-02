@@ -40,8 +40,14 @@ import { Router } from 'express';
 import { atomicWriteSync } from './atomic-write.js';
 import { templatesDir } from './paths.js';
 
-/** Match template IDs: lowercase alphanumeric and hyphens, 1-64 chars */
-const TEMPLATE_RE = /^[a-z0-9-]{1,64}$/;
+/**
+ * Match template IDs: lowercase alphanumeric, hyphens, and underscores,
+ * 1-64 chars. Underscores are allowed so worca init's auto-migrated
+ * `_legacy-settings` template (and any other intentionally-private id)
+ * round-trips through the API without 400-ing. Mirrors the Python
+ * `TemplateResolver.save()` validator.
+ */
+const TEMPLATE_RE = /^[a-z0-9_-]{1,64}$/;
 export { TEMPLATE_RE };
 
 /**
@@ -466,7 +472,7 @@ export function createTemplatesRoutes() {
     if (!id || typeof id !== 'string' || !TEMPLATE_RE.test(id)) {
       return res.status(400).json({
         ok: false,
-        error: 'id is required and must match ^[a-z0-9-]{1,64}$',
+        error: 'id is required and must match ^[a-z0-9_-]{1,64}$',
       });
     }
 

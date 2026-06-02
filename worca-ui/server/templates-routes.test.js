@@ -332,6 +332,26 @@ describe('templates-routes', () => {
       expect(body.tier).toBe('builtin');
     });
 
+    it('accepts ids with underscores (e.g. worca init`s _legacy-settings)', async () => {
+      // Regression: TEMPLATE_RE used to be /^[a-z0-9-]{1,64}$/ which rejected
+      // the auto-migrated `_legacy-settings` template id with a 400, even
+      // though it exists on disk after `worca init --upgrade`.
+      const app = await createTestApp(projectRoot);
+      mkdirSync(join(templatesDir, '_legacy-settings'), { recursive: true });
+      writeFileSync(
+        join(templatesDir, '_legacy-settings', 'template.json'),
+        JSON.stringify({ id: '_legacy-settings', name: 'Legacy' }),
+      );
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/_legacy-settings',
+      );
+      expect(status).toBe(200);
+      expect(body.template.name).toBe('Legacy');
+    });
+
     it('accepts the deprecated ?tier=worca alias for ?tier=builtin', async () => {
       const app = await createTestApp(projectRoot);
 
