@@ -233,9 +233,15 @@ export function runCardView(
       `
       : nothing;
 
+  // Display tier alignment: the resolver tier is "builtin" (the long-
+  // standing Python convention) and the Pipeline Templates page uses
+  // the same word. Old `status.json` files written before we landed
+  // the rename still say "worca:<id>" on disk — translate those to
+  // "builtin:<id>" at display time so the run card matches the rest
+  // of the UI without rewriting historical run records.
   const pipelineTemplate = run.pipeline_template
-    ? run.pipeline_template.startsWith('builtin:')
-      ? `worca:${run.pipeline_template.slice('builtin:'.length)}`
+    ? run.pipeline_template.startsWith('worca:')
+      ? `builtin:${run.pipeline_template.slice('worca:'.length)}`
       : run.pipeline_template
     : null;
 

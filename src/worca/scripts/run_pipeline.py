@@ -323,10 +323,13 @@ def main():
         if _tmpl and _tmpl.agents_dir:
             _merged_worca["_template_agents_dir"] = _tmpl.agents_dir
 
-        # Format pipeline_template as "tier:id" for storage in status.json
+        # Format pipeline_template as "tier:id" for storage in status.json.
+        # We used to substitute "worca" for "builtin" here for historical
+        # display reasons; the UI maps any leftover "worca:" prefix to
+        # "builtin:" on read, so we can emit the canonical resolver tier
+        # name directly and have a single vocabulary across the surface.
         if _tmpl:
-            _tier_display = "worca" if _tmpl.tier == "builtin" else _tmpl.tier
-            _pipeline_template = f"{_tier_display}:{_template_id}"
+            _pipeline_template = f"{_tmpl.tier}:{_template_id}"
 
         _merged_settings = {**_project_settings, "worca": _merged_worca}
         _tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False)
