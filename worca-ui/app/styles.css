@@ -6849,12 +6849,18 @@ sl-dialog.markdown-dialog::part(body) {
 
 .pipelines-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 16px;
+  /* Cards 50% wider than the original 320px min — fewer per row, more
+     room for the description text and tag chips to breathe. The gap
+     scales with the new width so the grid still feels balanced. */
+  grid-template-columns: repeat(auto-fill, minmax(480px, 1fr));
+  gap: 20px;
 }
 
 .template-card {
-  min-height: 140px;
+  /* +50% on the original 140px to stay proportional with the wider
+     grid track; longer descriptions and tag rows now have headroom
+     before the card needs to grow further. */
+  min-height: 210px;
 }
 
 /*
