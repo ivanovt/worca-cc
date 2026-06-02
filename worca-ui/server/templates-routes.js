@@ -35,7 +35,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { Router } from 'express';
 import { atomicWriteSync } from './atomic-write.js';
 import { templatesDir } from './paths.js';
@@ -723,8 +723,7 @@ export function createTemplatesRoutes() {
         base.worca.default_template = tid;
       }
 
-      const settingsDir = settingsPath.replace(/\/[^/]+$/, '');
-      mkdirSync(settingsDir, { recursive: true });
+      mkdirSync(dirname(settingsPath), { recursive: true });
       atomicWriteSync(settingsPath, `${JSON.stringify(base, null, 2)}\n`);
       res.json({
         ok: true,
