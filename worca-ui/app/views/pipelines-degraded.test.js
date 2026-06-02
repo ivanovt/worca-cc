@@ -30,7 +30,6 @@ function snapshotHandlers() {
     onSetDefault: (id) => calls.push(`set-default:${id}`),
     onDelete: (id) => calls.push(`delete:${id}`),
     onExport: (id) => calls.push(`export:${id}`),
-    onRename: (id, scope) => calls.push(`rename:${id}:${scope}`),
   };
 }
 
@@ -129,17 +128,17 @@ describe('pipelinesView — degraded mode', () => {
     );
     const cards = container.querySelectorAll('.template-card');
     expect(cards.length).toBe(2);
-    // The Edit button was removed in favor of clickable cards. Duplicate
-    // now renders on every tier (project, user, built-in) so it shows
-    // up alongside the project-only write actions (Set Default,
-    // Rename, Delete). All must be `disabled`.
+    // The Edit button was removed in favor of clickable cards, and
+    // Rename was removed because the editor's inline Name/ID fields
+    // do the same job. Duplicate renders on every tier; the rest
+    // (Set Default, Delete) are project-only. All must be `disabled`.
     const upgradeBtns = container.querySelectorAll(
       'button[title^="Upgrade worca-cc"]',
     );
     // 1 (builtin Duplicate)
-    // + 4 (project Duplicate + Set Default + Rename + Delete)
-    // = 5.
-    expect(upgradeBtns.length).toBe(5);
+    // + 3 (project Duplicate + Set Default + Delete)
+    // = 4.
+    expect(upgradeBtns.length).toBe(4);
     for (const btn of upgradeBtns) {
       expect(btn.disabled).toBe(true);
     }

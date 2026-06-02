@@ -6927,18 +6927,18 @@ sl-dialog.markdown-dialog::part(body) {
 }
 
 /*
- * Top row hugs naturally: icon, name, "ID:slug" badge, and the
- * ★ Default badge all sit on one line. Without this override the
- * shared `.run-card-title { flex: 1 }` rule would soak up all the
- * horizontal space and create an awkward gap between the title and
- * the ID badge. Here we let the title stay its natural width and
- * shove the Default badge to the right edge with margin-left:auto.
+ * Top row is just icon + name + (optional) ★ Default. The shared
+ * `.run-card-title { flex: 1 }` rule does the right thing here:
+ * the title soaks up the horizontal space and pushes the Default
+ * badge to the right edge.
+ *
+ * The "ID:slug" handle lives on its own row below, left-aligned,
+ * so the title can breathe and a long name doesn't compete with
+ * the id chip for width.
  */
-.template-card .run-card-title {
-  flex: 0 0 auto;
-}
-.template-card .template-default-badge {
-  margin-left: auto;
+.template-card-id-row {
+  display: flex;
+  margin-top: 6px;
 }
 
 .template-tier-badge {

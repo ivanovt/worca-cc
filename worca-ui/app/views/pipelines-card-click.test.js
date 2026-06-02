@@ -32,7 +32,6 @@ function snapshotHandlers() {
     onSetDefault: (id) => calls.push(`set-default:${id}`),
     onDelete: (id) => calls.push(`delete:${id}`),
     onExport: (id) => calls.push(`export:${id}`),
-    onRename: (id, scope) => calls.push(`rename:${id}:${scope}`),
   };
 }
 
@@ -132,21 +131,17 @@ describe('pipelinesView — clickable cards', () => {
     }
   });
 
-  it('Rename action fires onRename with (id, scope) and only on project/user cards', () => {
-    const handlers = snapshotHandlers();
+  it('does not render a Rename action — inline Name/ID editing in the editor covers it', () => {
+    // The editor exposes Name + ID as inline editable fields, so a
+    // separate Rename button on the card is redundant. Make sure
+    // nothing rebuilt it.
     container = mount(
       { templates: TEMPLATES, templatesLoaded: true, worcaCliStatus: HEALTHY },
-      handlers,
+      snapshotHandlers(),
     );
-    // Built-in cards have no Rename button (immutable tier).
-    const builtinCard = cardForId(container, 'Minimal Pipeline');
-    expect(builtinCard.querySelector('button[title*="Rename"]')).toBeNull();
-    // Project card has a Rename button — click it.
-    const projectCard = cardForId(container, 'My Project Tpl');
-    const renameBtn = projectCard.querySelector('button[title*="Rename"]');
-    expect(renameBtn).not.toBeNull();
-    renameBtn.click();
-    expect(handlers.calls).toEqual(['rename:my-tpl:project']);
+    for (const card of container.querySelectorAll('.template-card')) {
+      expect(card.querySelector('button[title*="Rename"]')).toBeNull();
+    }
   });
 
   it('Set Default is hidden on user-tier cards', () => {

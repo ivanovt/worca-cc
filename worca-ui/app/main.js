@@ -1901,26 +1901,6 @@ function handleCreateTemplate(_projectId) {
 }
 
 /**
- * Open the Rename dialog. Same shape as Duplicate, but the underlying
- * action removes the source after writing the destination — effectively
- * a rename and/or move between project/user tiers.
- */
-function handleRenameTemplate(tid, tier) {
-  _templateActionDialog = {
-    mode: 'rename',
-    srcId: tid,
-    srcTier: tier || 'project',
-    id: tid,
-    tier: tier || 'project',
-    name: '',
-    nameDirty: false,
-    error: null,
-  };
-  rerender();
-  _focusActionDialogInput();
-}
-
-/**
  * Open the Import dialog. The user picks a `.json` bundle exported via
  * Export, plus a target tier. We parse client-side so the dialog can
  * preview which template ids are about to land.
@@ -4208,7 +4188,6 @@ function mainContentView() {
       onSetDefault: handleSetDefaultTemplate,
       onDelete: handleDeleteTemplate,
       onExport: handleExportTemplate,
-      onRename: handleRenameTemplate,
     });
   }
 

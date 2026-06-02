@@ -22,7 +22,6 @@ import {
   FileText,
   FolderOpen,
   iconSvg,
-  Pencil,
   Plus,
   Star,
   Trash2,
@@ -265,7 +264,6 @@ export function pipelinesView(state, options) {
     onSetDefault,
     onDelete,
     onExport,
-    onRename,
     defaultTemplate,
   } = options || {};
   const {
@@ -285,7 +283,6 @@ export function pipelinesView(state, options) {
     onDuplicate: degraded ? null : onDuplicate,
     onSetDefault: degraded ? null : onSetDefault,
     onDelete: degraded ? null : onDelete,
-    onRename: degraded ? null : onRename,
     onExport, // export is read-only — always available
   };
 
@@ -439,7 +436,7 @@ function _tierSection(tier, templates, defaultTemplateId, handlers) {
  * propagation so they don't double-fire as a card click.
  */
 function _templateCard(template, defaultTemplate, handlers) {
-  const { onEdit, onDuplicate, onSetDefault, onDelete, onExport, onRename } =
+  const { onEdit, onDuplicate, onSetDefault, onDelete, onExport } =
     handlers || {};
   const { id, name, description, tier, builtin = false } = template;
 
@@ -497,10 +494,6 @@ function _templateCard(template, defaultTemplate, handlers) {
       <div class="run-card-top">
         <span class="run-card-status">${unsafeHTML(iconSvg(FileText, 16))}</span>
         <span class="run-card-title">${name || id}</span>
-        <span class="template-card-id-badge" title="Template id">
-          <span class="template-card-id-label">ID:</span>
-          <code class="template-card-id">${id}</code>
-        </span>
         ${
           isDefault
             ? html`<sl-badge variant="primary" pill class="template-default-badge" title="Default template"
@@ -508,6 +501,12 @@ function _templateCard(template, defaultTemplate, handlers) {
             >`
             : ''
         }
+      </div>
+      <div class="template-card-id-row">
+        <span class="template-card-id-badge" title="Template id">
+          <span class="template-card-id-label">ID:</span>
+          <code class="template-card-id">${id}</code>
+        </span>
       </div>
 
       ${
@@ -554,29 +553,6 @@ function _templateCard(template, defaultTemplate, handlers) {
             >
               ${unsafeHTML(iconSvg(Star, 14))}
               Set Default
-            </button>`
-            : ''
-        }
-        ${
-          // Rename / move applies to project + user tiers only (built-ins
-          // are immutable; project/user can be renamed and/or moved
-          // between scopes via the same dialog).
-          !isBuiltin
-            ? html`<button
-              class="action-btn action-btn--secondary"
-              ?disabled=${!onRename}
-              @click=${(e) => {
-                e.stopPropagation();
-                onRename?.(id, resolvedTier);
-              }}
-              title=${
-                onRename
-                  ? 'Rename or move template'
-                  : 'Upgrade worca-cc to enable rename'
-              }
-            >
-              ${unsafeHTML(iconSvg(Pencil, 14))}
-              Rename
             </button>`
             : ''
         }
