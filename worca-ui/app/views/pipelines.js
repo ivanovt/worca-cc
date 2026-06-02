@@ -54,6 +54,10 @@ const TIER_SECTIONS = [
     emptyTitle: 'No project templates yet',
     emptyDesc:
       'Click New, Import a bundle, or Duplicate a built-in to create one here.',
+    // Project + User open by default — these are the writable tiers and
+    // the ones a user most often acts on. Built-ins are reference and
+    // start collapsed to keep the page short; one click expands them.
+    defaultOpen: true,
   },
   {
     key: 'user',
@@ -63,6 +67,7 @@ const TIER_SECTIONS = [
     emptyTitle: 'No user templates yet',
     emptyDesc:
       'Duplicate a template into this scope to share it across every project on this machine.',
+    defaultOpen: true,
   },
   {
     key: 'builtin',
@@ -72,6 +77,7 @@ const TIER_SECTIONS = [
     emptyTitle: 'No built-in templates found',
     emptyDesc:
       'These ship with worca-cc; run `worca init --upgrade` if you expect them and none show up.',
+    defaultOpen: false,
   },
 ];
 
@@ -384,28 +390,34 @@ function _degradedBanner(status) {
 }
 
 /**
- * Render a tier section: header (icon + title + count + description)
- * followed by either the cards grid or a tier-specific empty note.
+ * Render a tier section as a collapsible `sl-details` — the same
+ * pattern used by learnings-panel / live-output / log-viewer.
  *
- * Always renders — empty tiers stay visible with the note so the
- * structure of the page is consistent regardless of what's installed.
+ * Always rendered — empty tiers keep their header (count = 0) and
+ * show a small note in the body so the page structure is consistent
+ * regardless of what the project happens to contain. Defaults: Project
+ * + User open (writable, frequently edited); Built-in collapsed
+ * (reference, kept tucked away until the user wants to see them).
  */
 function _tierSection(tier, templates, defaultTemplateId, handlers) {
   const list = templates || [];
   const count = list.length;
 
   return html`
-    <section class="pipelines-tier-section pipelines-tier-section--${tier.key}">
-      <header class="tier-section-header">
+    <sl-details
+      class="pipelines-tier-section pipelines-tier-section--${tier.key}"
+      ?open=${tier.defaultOpen}
+    >
+      <div slot="summary" class="tier-section-header">
         <span class="tier-section-icon">
           ${unsafeHTML(iconSvg(tier.icon, 16))}
         </span>
-        <h2 class="tier-section-title">${tier.title}</h2>
+        <span class="tier-section-title">${tier.title}</span>
         <sl-badge variant="neutral" pill class="tier-section-count"
           >${count}</sl-badge
         >
-        <p class="tier-section-desc">${tier.desc}</p>
-      </header>
+        <span class="tier-section-desc">${tier.desc}</span>
+      </div>
       ${
         count > 0
           ? html`
@@ -422,7 +434,7 @@ function _tierSection(tier, templates, defaultTemplateId, handlers) {
               </div>
             `
       }
-    </section>
+    </sl-details>
   `;
 }
 

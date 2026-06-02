@@ -6759,30 +6759,35 @@ sl-dialog.markdown-dialog::part(body) {
   font-size: 32px;
 }
 
+/*
+ * Tier sections are sl-details collapsibles. The summary slot holds a
+ * 2-row grid: top row [icon | TITLE | count | spacer], bottom row a
+ * one-line description that wraps under the title. Shoelace's own
+ * chevron sits to the right of our summary content.
+ */
 .pipelines-tier-section {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  margin-bottom: 0;
+}
+.pipelines-tier-section::part(base) {
+  border: 1px solid var(--border-subtle, var(--border));
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+.pipelines-tier-section::part(header) {
+  padding: 12px 16px;
+}
+.pipelines-tier-section::part(content) {
+  padding: 12px 16px 16px;
 }
 
-/*
- * Tier-section header: icon + uppercase title + count badge + one-line
- * description. The header sits on its own row, with the description
- * wrapping to a second row below — keeps the title row scannable while
- * still giving the user enough context to tell the tiers apart.
- *
- * Layout uses a 2-row grid: top row [icon | title | count | spacer],
- * second row [description] spanning all columns under the title.
- */
+/* The summary's flex container: lay out icon + title + count + desc. */
 .tier-section-header {
   display: grid;
   grid-template-columns: auto auto auto 1fr;
   grid-template-rows: auto auto;
   align-items: center;
   gap: 4px 10px;
-  margin: 0;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--border-subtle, var(--border));
+  width: 100%;
 }
 .tier-section-icon {
   display: inline-flex;
@@ -6791,7 +6796,6 @@ sl-dialog.markdown-dialog::part(body) {
   grid-row: 1;
 }
 .tier-section-title {
-  margin: 0;
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -6802,6 +6806,7 @@ sl-dialog.markdown-dialog::part(body) {
 .tier-section-count {
   grid-row: 1;
   font-size: 11px;
+  justify-self: start;
 }
 .tier-section-desc {
   grid-row: 2;
@@ -6810,6 +6815,9 @@ sl-dialog.markdown-dialog::part(body) {
   color: var(--fg-muted);
   font-size: 13px;
   line-height: 1.4;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 /*
