@@ -73,10 +73,12 @@ const TIER_SECTIONS = [
   },
 ];
 
-// Backwards compat: alias effectiveTier to tier for old code that reads "tier"
-function normalizeTier(effectiveTier) {
-  if (!effectiveTier || effectiveTier === 'worca') return 'builtin';
-  return effectiveTier;
+// Accept the legacy 'worca' tier alias so older server snapshots /
+// cached responses still group correctly. Server's current contract
+// uses 'builtin'.
+function normalizeTier(tier) {
+  if (!tier || tier === 'worca') return 'builtin';
+  return tier;
 }
 
 /**
@@ -286,25 +288,15 @@ export function pipelinesView(state, options) {
     onExport, // export is read-only — always available
   };
 
-  // Group templates by tier
+  // Group templates by tier. The API now returns a flat list where
+  // each entry carries its own `tier` field; we just bucket by it.
   const templatesList = templates || [];
-  const grouped = {
-    project: templatesList.filter(
-      (t) => t.effectiveTier === 'project' || t.tier === 'project',
-    ),
-    user: templatesList.filter(
-      (t) => t.effectiveTier === 'user' || t.tier === 'user',
-    ),
-    builtins: templatesList.filter(
-      (t) =>
-        t.effectiveTier === 'builtin' ||
-        t.effectiveTier === 'worca' ||
-        t.tier === 'worca' ||
-        t.tier === 'builtin',
-    ),
-  };
+  const grouped = { project: [], user: [], builtin: [] };
+  for (const t of templatesList) {
+    const tier = normalizeTier(t.tier);
+    if (grouped[tier]) grouped[tier].push(t);
+  }
 
-  const hasTemplates = templatesList.length > 0;
   const isLoaded = templatesLoaded;
   const hasError = templatesError !== null;
 
@@ -334,13 +326,14 @@ export function pipelinesView(state, options) {
                 // with a short note explaining what *would* live there,
                 // so the structure of the page never depends on what the
                 // current project happens to contain.
-                TIER_SECTIONS.map((tier) => {
-                  const list =
-                    tier.key === 'builtin'
-                      ? grouped.builtins
-                      : grouped[tier.key];
-                  return _tierSection(tier, list, defaultTemplate, handlers);
-                })
+                TIER_SECTIONS.map((tier) =>
+                  _tierSection(
+                    tier,
+                    grouped[tier.key] || [],
+                    defaultTemplate,
+                    handlers,
+                  ),
+                )
               }
             `
         }
@@ -444,25 +437,26 @@ function _tierSection(tier, templates, defaultTemplateId, handlers) {
  * Action buttons (Duplicate / Set Default / Export / Delete) stop
  * propagation so they don't double-fire as a card click.
  */
-function _templateCard(template, defaultTemplateId, handlers) {
+function _templateCard(template, defaultTemplate, handlers) {
   const { onEdit, onDuplicate, onSetDefault, onDelete, onExport, onRename } =
     handlers || {};
-  const {
-    id,
-    name,
-    description,
-    effectiveTier,
-    tier,
-    builtin = false,
-  } = template;
+  const { id, name, description, tier, builtin = false } = template;
 
-  const resolvedTier = normalizeTier(effectiveTier || tier);
-  const isDefault = id === defaultTemplateId;
+  const resolvedTier = normalizeTier(tier);
+  // defaultTemplate is now `{tier, id}` (or null when unset); accept the
+  // legacy bare-string form too for backwards-compat with old caches.
+  const defaultRef =
+    typeof defaultTemplate === 'string'
+      ? { tier: null, id: defaultTemplate }
+      : defaultTemplate || {};
+  const isDefault =
+    id === defaultRef.id &&
+    (!defaultRef.tier || normalizeTier(defaultRef.tier) === resolvedTier);
   const isBuiltin = resolvedTier === 'builtin' || builtin;
 
   // Whole-card click → Edit (or Duplicate-to-Edit for built-ins).
-  // In degraded mode `onEdit` / `onDuplicate` are null, so the card
-  // becomes inert (no cursor change, no hover, no Enter activation).
+  // Both handlers now need (id, tier) so the new (tier, id) endpoints
+  // can resolve the right copy without a precedence-based fallback.
   const cardClick = isBuiltin ? onDuplicate : onEdit;
   const cardClickable = Boolean(cardClick);
   const cardClass = `run-card template-card${cardClickable ? ' template-card--clickable' : ''}`;
@@ -471,12 +465,14 @@ function _templateCard(template, defaultTemplateId, handlers) {
     : isBuiltin
       ? 'Click to duplicate into project scope and edit'
       : 'Click to edit template';
-  const onCardActivate = cardClickable ? () => cardClick(id) : null;
+  const onCardActivate = cardClickable
+    ? () => cardClick(id, resolvedTier)
+    : null;
   const onCardKeydown = cardClickable
     ? (e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          cardClick(id);
+          cardClick(id, resolvedTier);
         }
       }
     : null;
@@ -530,7 +526,7 @@ function _templateCard(template, defaultTemplateId, handlers) {
             ? html`<button
               class="action-btn action-btn--secondary"
               ?disabled=${!onDuplicate}
-              @click=${() => onDuplicate?.(id)}
+              @click=${() => onDuplicate?.(id, resolvedTier)}
               title=${
                 onDuplicate
                   ? 'Duplicate to project or user scope'
@@ -545,19 +541,14 @@ function _templateCard(template, defaultTemplateId, handlers) {
         ${
           // Set Default is a project-level setting (worca.default_template
           // in .claude/settings.json), so it only makes sense to point at
-          // a template stored in *this* project's tier:
-          //   - built-in: hidden — duplicate to project first to claim it
-          //     as the default
-          //   - user: hidden — user templates are cross-project; a single
-          //     project's default shouldn't anchor on a user-tier file
-          //   - project: shown when this is not already the default
+          // a template stored in *this* project's tier.
           !isDefault && resolvedTier === 'project'
             ? html`<button
               class="action-btn action-btn--secondary"
               ?disabled=${!onSetDefault}
               @click=${(e) => {
                 e.stopPropagation();
-                onSetDefault?.(id);
+                onSetDefault?.(id, resolvedTier);
               }}
               title=${
                 onSetDefault

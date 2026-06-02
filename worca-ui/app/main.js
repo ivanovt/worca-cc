@@ -206,14 +206,30 @@ const notificationManager = createNotificationManager({
 // ─── Session-level state (not reset on project switch) ────────────────
 let route = parseHash(location.hash);
 
-// Backward-compat: the old "pipelines" route was renamed to "templates"
-// (page is now called "Pipeline Templates"). Rewrite the URL so old
-// bookmarks / external links land on the new canonical path instead of
-// silently rendering the active-runs default.
-if (route.section === 'pipelines') {
-  navigate('templates', route.runId, route.projectId, route.action);
-  route = parseHash(location.hash);
+const TEMPLATE_TIERS = ['project', 'user', 'builtin'];
+
+/**
+ * Migrate legacy template URLs to the new (tier, id) shape:
+ *   - `#/pipelines/...` (pre-rename): redirect to the templates list.
+ *   - `#/templates/<id>/<action>` (pre tier-in-URL redesign): the tier
+ *     slot holds what was once the id; we can't safely guess the
+ *     intended tier, so redirect to the list as well.
+ *
+ * Mutates and returns the route object. Returns the same object back if
+ * no redirect was needed.
+ */
+function _migrateLegacyTemplatesRoute(r) {
+  if (r.section === 'pipelines') {
+    navigate('templates', null, r.projectId);
+    return parseHash(location.hash);
+  }
+  if (r.section === 'templates' && r.tier && !TEMPLATE_TIERS.includes(r.tier)) {
+    navigate('templates', null, r.projectId);
+    return parseHash(location.hash);
+  }
+  return r;
 }
+route = _migrateLegacyTemplatesRoute(route);
 let connectionState = ws.getState();
 let autoScroll = true;
 
@@ -1563,12 +1579,17 @@ ws.onConnection((state) => {
 // --- Routing ---
 
 onHashChange((newRoute) => {
-  // Backward-compat: rewrite legacy 'pipelines' route to 'templates'
-  // here too — covers mid-session navigation (e.g. clicking a stale
-  // external link with the old hash). The redirect re-enters this
-  // handler with the canonical hash, so we just bail this pass.
-  if (newRoute.section === 'pipelines') {
-    navigate('templates', newRoute.runId, newRoute.projectId, newRoute.action);
+  // Same legacy-templates migration as bootstrap — covers mid-session
+  // navigation (clicking a stale link with the old hash shape). The
+  // redirect re-enters this handler with the canonical hash, so we
+  // bail this pass when it fires.
+  if (
+    newRoute.section === 'pipelines' ||
+    (newRoute.section === 'templates' &&
+      newRoute.tier &&
+      !TEMPLATE_TIERS.includes(newRoute.tier))
+  ) {
+    navigate('templates', null, newRoute.projectId);
     return;
   }
   const prevRunId = route.runId;
@@ -1687,24 +1708,30 @@ function handleSaveSourceRepo(sourceRepo) {
 
 // --- Pipelines / Templates handlers ---
 
-async function handleSetDefaultTemplate(tid) {
+async function handleSetDefaultTemplate(tid, tier) {
+  // Set Default is a project-level setting; the UI only exposes the
+  // button on project-tier cards, so tier defaults to 'project' when
+  // the caller doesn't supply one.
+  const useTier = tier || 'project';
   try {
     const res = await fetch(projectUrl('/default-template'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid }),
+      body: JSON.stringify({ tier: useTier, id: tid }),
     });
     const data = await res.json();
     if (!data.ok) {
       _showToast(data.error || 'Failed to set default template', 'danger');
       return;
     }
-    // Update settings to reflect the new default
     settings = {
       ...settings,
-      worca: { ...settings.worca, default_template: tid },
+      worca: {
+        ...settings.worca,
+        default_template: { tier: useTier, id: tid },
+      },
     };
-    _showToast(`Default template set to "${tid}"`, 'success');
+    _showToast(`Default template set to "${tid}" (${useTier})`, 'success');
     rerender();
   } catch (err) {
     _showToast(`Failed to set default template: ${err.message}`, 'danger');
@@ -1720,41 +1747,39 @@ function _countInflightRunsForTemplate(tid) {
   ).length;
 }
 
-async function handleDeleteTemplate(tid, scope) {
+async function handleDeleteTemplate(tid, tier) {
   // In-flight runs get their own richer confirmation (count + edit-vs-delete
   // copy) via the template-guard dialog — keep that path.
   const count = _countInflightRunsForTemplate(tid);
   if (count > 0) {
-    _templateGuard = { tid, scope, action: 'delete', count };
+    _templateGuard = { tid, tier, action: 'delete', count };
     rerender();
     requestAnimationFrame(() => {
       document.querySelector('.template-guard-dialog')?.show();
     });
     return;
   }
-  // Otherwise the standard project-wide confirm dialog, same component
-  // every other destructive action uses (halt fleet, delete project, …).
   showConfirm(
     {
       label: 'Delete template',
       message: html`
         Are you sure you want to delete
-        <code>${tid}</code> from the <strong>${scope}</strong> scope?
+        <code>${tid}</code> from the <strong>${tier}</strong> scope?
         <br /><br />
         This removes the template directory on disk; running pipelines are
         unaffected but new runs will no longer be able to launch with this id.
       `,
       confirmLabel: 'Delete',
       confirmVariant: 'danger',
-      onConfirm: () => _executeDeleteTemplate(tid, scope),
+      onConfirm: () => _executeDeleteTemplate(tid, tier),
     },
     rerender,
   );
 }
 
-async function _executeDeleteTemplate(tid, scope) {
+async function _executeDeleteTemplate(tid, tier) {
   try {
-    const res = await fetch(projectUrl(`/templates/${tid}?scope=${scope}`), {
+    const res = await fetch(projectUrl(`/templates/${tier}/${tid}`), {
       method: 'DELETE',
     });
     const data = await res.json();
@@ -1772,17 +1797,17 @@ async function _executeDeleteTemplate(tid, scope) {
   }
 }
 
-function handleEditTemplate(tid) {
+function handleEditTemplate(tid, tier) {
   const count = _countInflightRunsForTemplate(tid);
   if (count > 0) {
-    _templateGuard = { tid, scope: null, action: 'edit', count };
+    _templateGuard = { tid, tier, action: 'edit', count };
     rerender();
     requestAnimationFrame(() => {
       document.querySelector('.template-guard-dialog')?.show();
     });
     return;
   }
-  navigate('templates', tid, route.projectId, 'edit');
+  navigate('templates', tid, route.projectId, 'edit', tier);
 }
 
 function _confirmTemplateGuard() {
@@ -1791,9 +1816,9 @@ function _confirmTemplateGuard() {
   document.querySelector('.template-guard-dialog')?.hide();
   if (!guard) return;
   if (guard.action === 'delete') {
-    _executeDeleteTemplate(guard.tid, guard.scope);
+    _executeDeleteTemplate(guard.tid, guard.tier);
   } else {
-    navigate('templates', guard.tid, route.projectId, 'edit');
+    navigate('templates', guard.tid, route.projectId, 'edit', guard.tier);
   }
 }
 
@@ -1831,15 +1856,21 @@ function _focusActionDialogInput() {
  * id (the canonical "shadow & edit" flow); the user can override both
  * the id and the target scope before confirming.
  */
-function handleDuplicateTemplate(tid) {
-  const templates = store.getState().templates || [];
-  const src = templates.find((t) => t.id === tid);
+function handleDuplicateTemplate(tid, tier) {
+  // Tier is passed directly from the card so we never have to guess
+  // by re-resolving the id against the list. Default destination tier
+  // for built-ins is 'project' (the canonical shadow flow);
+  // duplicating within project/user defaults to the same tier (so the
+  // dialog at least surfaces the no-op slot the server will reject).
+  const srcTier = tier || 'builtin';
   _templateActionDialog = {
     mode: 'duplicate',
     srcId: tid,
-    srcScope: src?.effectiveTier || 'builtin',
+    srcTier,
     id: tid,
-    scope: 'project',
+    tier: srcTier === 'builtin' ? 'project' : srcTier,
+    name: '',
+    nameDirty: false,
     error: null,
   };
   rerender();
@@ -1847,18 +1878,22 @@ function handleDuplicateTemplate(tid) {
 }
 
 /**
- * Open the New dialog — empty form, user picks an id + scope and
+ * Open the New dialog — empty form, user picks an id + tier and
  * optionally a base template to clone from. On confirm we POST a new
  * minimal template (or call duplicate when a base is selected), then
- * navigate into the editor on the new id.
+ * navigate into the editor on the new (tier, id).
  */
 function handleCreateTemplate(_projectId) {
   _templateActionDialog = {
     mode: 'create',
     id: '',
     name: '',
-    scope: 'project',
-    baseTid: '',
+    tier: 'project',
+    // baseTid holds "<tier>:<id>" so the user can pick the exact copy
+    // they want to clone from (project vs built-in for the same id).
+    baseRef: '',
+    // Auto-slug id from name until the user touches the id field.
+    idDirty: false,
     error: null,
   };
   rerender();
@@ -1868,15 +1903,17 @@ function handleCreateTemplate(_projectId) {
 /**
  * Open the Rename dialog. Same shape as Duplicate, but the underlying
  * action removes the source after writing the destination — effectively
- * a rename and/or move between project/user scopes.
+ * a rename and/or move between project/user tiers.
  */
-function handleRenameTemplate(tid, scope) {
+function handleRenameTemplate(tid, tier) {
   _templateActionDialog = {
     mode: 'rename',
     srcId: tid,
-    srcScope: scope || 'project',
+    srcTier: tier || 'project',
     id: tid,
-    scope: scope || 'project',
+    tier: tier || 'project',
+    name: '',
+    nameDirty: false,
     error: null,
   };
   rerender();
@@ -1885,7 +1922,7 @@ function handleRenameTemplate(tid, scope) {
 
 /**
  * Open the Import dialog. The user picks a `.json` bundle exported via
- * Export, plus a target scope. We parse client-side so the dialog can
+ * Export, plus a target tier. We parse client-side so the dialog can
  * preview which template ids are about to land.
  */
 function handleImportTemplate(_projectId) {
@@ -1893,7 +1930,7 @@ function handleImportTemplate(_projectId) {
     mode: 'import',
     file: null,
     parsed: null,
-    scope: 'project',
+    tier: 'project',
     error: null,
   };
   rerender();
@@ -1908,6 +1945,26 @@ function _dismissTemplateActionDialog() {
 
 const _TEMPLATE_ID_RE = /^[a-z0-9_-]{1,64}$/;
 
+/**
+ * Produce a template id from a human-friendly name. Mirrors what
+ * worca-cc accepts: lowercase letters / digits / hyphens / underscores,
+ * 1–64 chars. Used by the Create dialog and the editor's Name field
+ * to auto-fill the Id field until the user manually edits it.
+ *
+ * Strategy: lowercase, replace any run of non-alnum-underscore with a
+ * single hyphen, trim leading/trailing hyphens, cap at 64 chars.
+ */
+function _slugifyId(name) {
+  if (!name) return '';
+  const slug = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return slug;
+}
+export { _slugifyId as slugifyId };
+
 function _validateActionDialog(dlg, state) {
   if (!dlg) return null;
   if (dlg.mode === 'import') {
@@ -1918,7 +1975,8 @@ function _validateActionDialog(dlg, state) {
     return 'Id must match [a-z0-9_-], 1–64 chars.';
   }
   // Inline collision check — faster feedback than waiting for the
-  // server. The server still re-validates and is the source of truth.
+  // server. Compares against `(tier, id)` now that the API treats
+  // both as the primary key.
   if (
     dlg.mode === 'rename' ||
     dlg.mode === 'duplicate' ||
@@ -1927,16 +1985,16 @@ function _validateActionDialog(dlg, state) {
     if (
       dlg.mode === 'rename' &&
       dlg.id === dlg.srcId &&
-      dlg.scope === dlg.srcScope
+      dlg.tier === dlg.srcTier
     ) {
-      return 'Pick a new id or scope (no change selected).';
+      return 'Pick a new id or tier (no change selected).';
     }
     const templates = state.templates || [];
     const conflict = templates.find(
-      (t) => t.id === dlg.id && t.effectiveTier === dlg.scope,
+      (t) => t.id === dlg.id && t.tier === dlg.tier,
     );
     if (conflict) {
-      return `An id "${dlg.id}" already exists in the ${dlg.scope} scope.`;
+      return `An id "${dlg.id}" already exists in the ${dlg.tier} scope.`;
     }
   }
   return null;
@@ -1999,27 +2057,32 @@ function _templateActionDialogTemplate(state) {
   const validationError = _validateActionDialog(dlg, state);
   const disabled = _templateActionBusy || !!validationError;
 
-  const idScopeFields = html`
+  const idTierFields = html`
     <div class="settings-field">
-      <label class="settings-label" for="dlg-id">Template id</label>
+      <label class="settings-label" for="dlg-id">Template ID</label>
       <sl-input
         id="dlg-id"
         size="small"
         autocomplete="off"
         .value=${dlg.id || ''}
         placeholder="e.g. feature-fast"
-        @sl-input=${(e) => _updateActionDialog({ id: e.target.value.trim() })}
+        @sl-input=${(e) =>
+          _updateActionDialog({
+            id: e.target.value.trim(),
+            // Touching the id field stops the Create auto-slug behavior.
+            idDirty: dlg.mode === 'create' ? true : undefined,
+          })}
       ></sl-input>
       <span class="settings-field-hint">Lowercase letters, digits, hyphens, underscores. 1–64 chars.</span>
     </div>
     <div class="settings-field">
-      <label class="settings-label" for="dlg-scope">Storage</label>
+      <label class="settings-label" for="dlg-tier">Storage</label>
       <sl-select
-        id="dlg-scope"
+        id="dlg-tier"
         size="small"
         hoist
-        .value=${dlg.scope || 'project'}
-        @sl-change=${(e) => _updateActionDialog({ scope: e.target.value })}
+        .value=${dlg.tier || 'project'}
+        @sl-change=${(e) => _updateActionDialog({ tier: e.target.value })}
       >
         <sl-option value="project">Project (.claude/templates/)</sl-option>
         <sl-option value="user">User (~/.worca/templates/)</sl-option>
@@ -2032,17 +2095,17 @@ function _templateActionDialogTemplate(state) {
   if (dlg.mode === 'duplicate') {
     body = html`
       <p class="dialog-lead">
-        Copy <code>${dlg.srcId}</code> (${dlg.srcScope}) into a new template.
+        Copy <code>${dlg.srcId}</code> (${dlg.srcTier}) into a new template.
       </p>
-      ${idScopeFields}
+      ${idTierFields}
     `;
   } else if (dlg.mode === 'rename') {
     body = html`
       <p class="dialog-lead">
-        Renames or moves <code>${dlg.srcId}</code> (${dlg.srcScope}). The
+        Renames or moves <code>${dlg.srcId}</code> (${dlg.srcTier}). The
         original is removed after the new copy lands.
       </p>
-      ${idScopeFields}
+      ${idTierFields}
     `;
   } else if (dlg.mode === 'create') {
     const templates = state.templates || [];
@@ -2056,16 +2119,18 @@ function _templateActionDialogTemplate(state) {
           id="dlg-base"
           size="small"
           hoist
-          .value=${dlg.baseTid || ''}
-          @sl-change=${(e) => _updateActionDialog({ baseTid: e.target.value })}
+          .value=${dlg.baseRef || ''}
+          @sl-change=${(e) => _updateActionDialog({ baseRef: e.target.value })}
         >
           <sl-option value="">(start blank)</sl-option>
           ${templates.map(
             (t) =>
-              html`<sl-option value=${t.id}>${t.id} — ${t.effectiveTier}</sl-option>`,
+              html`<sl-option value=${`${t.tier}:${t.id}`}
+                >${t.id} — ${t.tier}</sl-option
+              >`,
           )}
         </sl-select>
-        <span class="settings-field-hint">When set, the new template is a copy of the chosen one.</span>
+        <span class="settings-field-hint">When set, the new template is a copy of the chosen one — exact (tier, id) source.</span>
       </div>
       <div class="settings-field">
         <label class="settings-label" for="dlg-name">Display name</label>
@@ -2075,10 +2140,18 @@ function _templateActionDialogTemplate(state) {
           autocomplete="off"
           .value=${dlg.name || ''}
           placeholder="e.g. Feature (fast)"
-          @sl-input=${(e) => _updateActionDialog({ name: e.target.value })}
+          @sl-input=${(e) => {
+            const newName = e.target.value;
+            const patch = { name: newName };
+            // Auto-slug name → id until the user manually edits id.
+            if (!dlg.idDirty) {
+              patch.id = _slugifyId(newName);
+            }
+            _updateActionDialog(patch);
+          }}
         ></sl-input>
       </div>
-      ${idScopeFields}
+      ${idTierFields}
     `;
   } else if (dlg.mode === 'import') {
     body = html`
@@ -2111,13 +2184,13 @@ function _templateActionDialogTemplate(state) {
           : ''
       }
       <div class="settings-field">
-        <label class="settings-label" for="dlg-scope">Target storage</label>
+        <label class="settings-label" for="dlg-tier">Target storage</label>
         <sl-select
-          id="dlg-scope"
+          id="dlg-tier"
           size="small"
           hoist
-          .value=${dlg.scope || 'project'}
-          @sl-change=${(e) => _updateActionDialog({ scope: e.target.value })}
+          .value=${dlg.tier || 'project'}
+          @sl-change=${(e) => _updateActionDialog({ tier: e.target.value })}
         >
           <sl-option value="project">Project (.claude/templates/)</sl-option>
           <sl-option value="user">User (~/.worca/templates/)</sl-option>
@@ -2203,11 +2276,14 @@ async function _confirmTemplateActionDialog() {
 
   try {
     if (dlg.mode === 'duplicate') {
-      const res = await fetch(projectUrl(`/templates/${dlg.srcId}/duplicate`), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dst_id: dlg.id, dst_scope: dlg.scope }),
-      });
+      const res = await fetch(
+        projectUrl(`/templates/${dlg.srcTier}/${dlg.srcId}/duplicate`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+        },
+      );
       const data = await res.json();
       if (!res.ok || !data.ok) {
         _templateActionDialog = {
@@ -2220,23 +2296,21 @@ async function _confirmTemplateActionDialog() {
       }
       _templateActionDialog = null;
       _templateActionBusy = false;
-      // Refresh list, then jump straight into editing the new copy.
       const templates = await fetchTemplates(route.projectId || null);
       store.setState({ templates });
-      navigate('templates', dlg.id, route.projectId, 'edit');
+      navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
       return;
     }
 
     if (dlg.mode === 'rename') {
-      // Rename = duplicate to new id/scope, then delete the source.
-      // The server route encapsulates both calls (best-effort atomic;
-      // see templates-routes.js).
+      // Server composes duplicate + delete; see templates-routes.js for
+      // the partial_rename failure mode.
       const res = await fetch(
-        projectUrl(`/templates/${dlg.srcId}/rename?scope=${dlg.srcScope}`),
+        projectUrl(`/templates/${dlg.srcTier}/${dlg.srcId}/rename`),
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dst_id: dlg.id, dst_scope: dlg.scope }),
+          body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
         },
       );
       const data = await res.json();
@@ -2257,20 +2331,24 @@ async function _confirmTemplateActionDialog() {
     }
 
     if (dlg.mode === 'create') {
-      // With a base: clone it. Without: POST a minimal new template.
+      // With a base: clone the exact (tier, id) source. Without: POST
+      // a minimal new template into the chosen tier.
       let res;
-      if (dlg.baseTid) {
-        res = await fetch(projectUrl(`/templates/${dlg.baseTid}/duplicate`), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dst_id: dlg.id, dst_scope: dlg.scope }),
-        });
+      if (dlg.baseRef) {
+        const [baseTier, baseId] = dlg.baseRef.split(':');
+        res = await fetch(
+          projectUrl(`/templates/${baseTier}/${baseId}/duplicate`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+          },
+        );
       } else {
-        res = await fetch(projectUrl('/templates'), {
+        res = await fetch(projectUrl(`/templates/${dlg.tier}`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            scope: dlg.scope,
             id: dlg.id,
             name: dlg.name || dlg.id,
             description: '',
@@ -2294,7 +2372,7 @@ async function _confirmTemplateActionDialog() {
       _templateActionBusy = false;
       const templates = await fetchTemplates(route.projectId || null);
       store.setState({ templates });
-      navigate('templates', dlg.id, route.projectId, 'edit');
+      navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
       return;
     }
 
@@ -2308,7 +2386,7 @@ async function _confirmTemplateActionDialog() {
       const res = await fetch(projectUrl('/templates/import'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bundle: dlg.parsed, scope: dlg.scope }),
+        body: JSON.stringify({ bundle: dlg.parsed, dst_tier: dlg.tier }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -4069,9 +4147,10 @@ function mainContentView() {
         });
     }
 
-    // /pipelines/:tid/edit → editor (load and edit template)
-    if (route.runId && route.action === 'edit') {
+    // /templates/:tier/:id/edit → editor (load and edit template)
+    if (route.runId && route.action === 'edit' && route.tier) {
       const tid = route.runId;
+      const tier = route.tier;
       // Import editor module and get state functions (without await to keep function sync)
       if (!_editorModule) {
         import('./views/pipelines-editor.js').then((mod) => {
@@ -4082,17 +4161,19 @@ function mainContentView() {
         return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading editor…</div>`;
       }
       const editorStateCurr = getEditorState();
-      // Load template on first entry
-      if (editorStateCurr.templateId !== tid) {
-        _editorModule.loadTemplate(tid, route.projectId).then(() => rerender());
+      // Load template on first entry — reload when (tier, id) changes
+      if (editorStateCurr.templateId !== tid || editorStateCurr.tier !== tier) {
+        _editorModule
+          .loadTemplate(tier, tid, route.projectId)
+          .then(() => rerender());
         return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading template…</div>`;
       }
       return pipelinesEditorView(state, {
         tid,
+        tier,
         projectId: route.projectId,
-        scope: 'project',
         onSaved: () => {
-          // Refresh templates list on save
+          // Refresh templates list on save, then back to the list view.
           fetchTemplates(route.projectId || null).then((templates) => {
             store.setState({ templates });
           });

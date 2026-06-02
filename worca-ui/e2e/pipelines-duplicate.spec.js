@@ -107,7 +107,7 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
 
     // Wait for navigation to the duplicate/edit page
     // After duplicate, the route should navigate to /templates/<new-tid>/edit
-    await page.waitForURL(/\/templates\/[^/]+\/edit/, { timeout: 5000 });
+    await page.waitForURL(/\/templates\/[^/]+\/[^/]+\/edit/, { timeout: 5000 });
 
     // Wait for the editor to load
     await expect(page.locator('.pipelines-editor')).toBeAttached();
@@ -229,7 +229,7 @@ test('duplicate with custom destination ID and scope', async ({ page }) => {
     expect(dupRes.ok()).toBe(true);
 
     // Wait for navigation to editor
-    await page.waitForURL(/\/templates\/[^/]+\/edit/, { timeout: 5000 });
+    await page.waitForURL(/\/templates\/[^/]+\/[^/]+\/edit/, { timeout: 5000 });
 
     // Verify editor loaded
     await expect(page.locator('.pipelines-editor')).toBeAttached();

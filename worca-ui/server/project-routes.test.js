@@ -454,7 +454,6 @@ describe('project-routes', () => {
       expect(t.name).toBe('My Template');
       expect(t.description).toBe('A test template');
       expect(t.tier).toBe('builtin');
-      expect(t.effectiveTier).toBe('builtin');
     });
 
     it('returns project-tier templates from .claude/templates/', async () => {

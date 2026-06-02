@@ -7097,6 +7097,54 @@ sl-dialog.markdown-dialog::part(body) {
   min-width: 0;
 }
 
+/*
+ * Inline editable Name + ID in the editor subheader. Name takes the
+ * lion's share of width; the ID badge sits flush next to it, both
+ * editable, with the same gray-pill treatment used for the read-only
+ * id on the list cards.
+ */
+.editor-name-input {
+  flex: 1 1 200px;
+  min-width: 0;
+}
+.editor-name-input::part(form-control-input) {
+  font-weight: 600;
+}
+.editor-id-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 9999px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle, var(--border));
+  flex: 0 1 240px;
+  min-width: 0;
+}
+.editor-id-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+.editor-id-input {
+  flex: 1;
+  min-width: 0;
+}
+.editor-id-input::part(form-control-input) {
+  font-family: var(--sl-font-mono);
+  font-size: 12px;
+  padding: 0 6px;
+}
+.editor-id-input::part(base) {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+  min-height: 22px;
+}
+
 .editor-subheader-title {
   font-size: 16px;
   font-weight: 600;

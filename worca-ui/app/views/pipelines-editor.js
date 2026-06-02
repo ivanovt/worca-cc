@@ -46,6 +46,14 @@ import { getModelKeys, STAGE_AGENT_MAP } from './settings.js';
 
 let editorState = {
   templateId: null,
+  tier: null, // 'project' | 'user' | 'builtin' — primary-key half along with templateId
+  // Mutable name field — separate from template.name so the user can edit
+  // it inline; id stays in templateId. `nameDirty` / `idDirty` track
+  // whether the user has manually touched a field, so the Create flow's
+  // auto-slug only fires until the user takes manual control.
+  nameDraft: '',
+  idDraft: '',
+  idDirty: false,
   template: null, // { id, name, description, tags, config, params, tier }
   builtinTemplate: null, // Built-in template config for diff view (id exists in builtin tier)
   loading: true,
@@ -77,6 +85,10 @@ const VALIDATE_DEBOUNCE_MS = 300;
 export function initEditorState() {
   editorState = {
     templateId: null,
+    tier: null,
+    nameDraft: '',
+    idDraft: '',
+    idDirty: false,
     template: null,
     builtinTemplate: null,
     loading: true,
@@ -419,20 +431,42 @@ function showToast(message, variant = 'success') {
 }
 
 /**
- * Load template from server.
+ * Slugify a name into a template id (mirrors the helper in main.js so
+ * tests can use either; same character class as the server-side
+ * validator). Used by the editor's auto-id behavior.
  */
-export async function loadTemplate(tid, projectId) {
+export function slugifyId(name) {
+  if (!name) return '';
+  return String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+}
+
+/**
+ * Load a template from the server by (tier, id).
+ *
+ * The editor is now strict about tiers — every call must specify
+ * which copy to load. Built-ins are read-only (the route lets them
+ * load; save will 405). Project / user are editable.
+ */
+export async function loadTemplate(tier, tid, projectId) {
   editorState.loading = true;
   editorState.error = null;
   editorState.templateId = tid;
+  editorState.tier = tier;
   editorState.template = null;
   editorState.builtinTemplate = null;
   editorState.diffData = null;
+  editorState.idDirty = false;
+  editorState.nameDraft = '';
+  editorState.idDraft = tid || '';
 
   try {
     const url = projectId
-      ? `/api/projects/${projectId}/templates/${tid}`
-      : `/api/templates/${tid}`;
+      ? `/api/projects/${projectId}/templates/${tier}/${tid}`
+      : `/api/templates/${tier}/${tid}`;
     const res = await fetch(url);
 
     // If template doesn't exist (404), it's a new template being created
@@ -446,6 +480,8 @@ export async function loadTemplate(tid, projectId) {
         params: {},
         config: {},
       };
+      editorState.nameDraft = 'New Template';
+      editorState.idDraft = tid === 'new' ? '' : tid;
       editorState.formBuffer = buildFormBuffer({}, { worca: {} });
       editorState.jsonBuffer = JSON.stringify({}, null, 2);
       editorState.validationIssues = [];
@@ -456,6 +492,8 @@ export async function loadTemplate(tid, projectId) {
 
       editorState.isNewTemplate = false;
       editorState.template = data.template;
+      editorState.nameDraft = data.template.name || tid;
+      editorState.idDraft = data.template.id || tid;
       editorState.formBuffer = buildFormBuffer(data.template.config, {
         worca: data.template,
       });
@@ -483,10 +521,12 @@ export async function loadTemplate(tid, projectId) {
 async function loadBuiltinTemplate(tid, projectId) {
   editorState.loadingBuiltin = true;
   try {
-    // Try fetching from the built-in tier (worca tier)
+    // Try fetching the built-in copy directly (404 is expected when the
+    // current id has no built-in counterpart — that's fine, diff just
+    // stays unavailable).
     const url = projectId
-      ? `/api/projects/${projectId}/templates/${tid}?tier=worca`
-      : `/api/templates/${tid}?tier=worca`;
+      ? `/api/projects/${projectId}/templates/builtin/${tid}`
+      : `/api/templates/builtin/${tid}`;
 
     const res = await fetch(url);
     if (res.ok) {
@@ -526,10 +566,16 @@ function computeDiff() {
 }
 
 /**
- * Save template to server.
- * Handles both create (POST) and update (PUT) operations.
+ * Save the template to the server.
+ *
+ * Three flows under (tier, id):
+ *   - NEW: POST /templates/:tier with body { id, name, … }.
+ *   - UPDATE in place (id unchanged): PUT /templates/:tier/:id.
+ *   - RENAME (id changed in the editor): POST /templates/:tier/:id/rename,
+ *     then PUT the edited body against the new (tier, id). This is two
+ *     CLI hops — same partial-rename window as the dialog-based rename.
  */
-export async function saveTemplate(tid, scope, projectId, onSaved) {
+export async function saveTemplate(tid, tier, projectId, onSaved) {
   if (editorState.saving) return;
 
   editorState.saving = true;
@@ -541,10 +587,8 @@ export async function saveTemplate(tid, scope, projectId, onSaved) {
         ? JSON.parse(editorState.jsonBuffer)
         : formBufferToConfig(editorState.formBuffer);
 
-    // Run validation immediately (non-debounced) on save
     const issues = await validateConfig(projectId, config);
     editorState.validationIssues = issues;
-
     if (issues.some((i) => i.severity === 'error')) {
       editorState.saveMessage = 'Validation failed — fix errors before saving';
       editorState.saving = false;
@@ -553,59 +597,91 @@ export async function saveTemplate(tid, scope, projectId, onSaved) {
     }
 
     const isNew = editorState.isNewTemplate || tid === 'new';
-    const effectiveTid = editorState.template?.id || tid || 'new-template';
-    const effectiveScope = scope || 'project';
+    const srcTier = editorState.tier || tier || 'project';
+    const srcId = tid;
+    // The Id field in the editor is the destination id — when it
+    // differs from srcId we need to rename before PUT.
+    const dstId = (editorState.idDraft || srcId || 'new-template').trim();
+    const dstName =
+      (editorState.nameDraft || '').trim() ||
+      editorState.template?.name ||
+      dstId;
 
     const payload = {
-      scope: effectiveScope,
-      id: effectiveTid,
-      name: editorState.template?.name || effectiveTid,
+      name: dstName,
       description: editorState.template?.description || '',
       tags: editorState.template?.tags || [],
       params: editorState.template?.params || {},
       config,
     };
 
-    let url;
-    let method;
-
+    let res;
     if (isNew) {
-      // POST /templates (create new template)
-      url = projectId
-        ? `/api/projects/${projectId}/templates`
-        : '/api/templates';
-      method = 'POST';
+      res = await fetch(
+        projectId
+          ? `/api/projects/${projectId}/templates/${srcTier}`
+          : `/api/templates/${srcTier}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: dstId, ...payload }),
+        },
+      );
     } else {
-      // PUT /templates/:tid (update existing template)
-      url = projectId
-        ? `/api/projects/${projectId}/templates/${effectiveTid}?scope=${effectiveScope}`
-        : `/api/templates/${effectiveTid}?scope=${effectiveScope}`;
-      method = 'PUT';
+      // If the id changed, atomically rename first so the PUT below
+      // can target the new (tier, id) slot.
+      if (dstId !== srcId) {
+        const renameRes = await fetch(
+          projectId
+            ? `/api/projects/${projectId}/templates/${srcTier}/${srcId}/rename`
+            : `/api/templates/${srcTier}/${srcId}/rename`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dst_tier: srcTier, dst_id: dstId }),
+          },
+        );
+        if (!renameRes.ok) {
+          const body = await renameRes.json().catch(() => ({}));
+          throw new Error(
+            body.error || `Rename failed: HTTP ${renameRes.status}`,
+          );
+        }
+      }
+      res = await fetch(
+        projectId
+          ? `/api/projects/${projectId}/templates/${srcTier}/${dstId}`
+          : `/api/templates/${srcTier}/${dstId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+      );
     }
 
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
     if (!res.ok) {
-      const body = await res.json();
+      const body = await res.json().catch(() => ({}));
       throw new Error(body.error || `HTTP ${res.status}`);
     }
 
     editorState.saveMessage = 'Template saved successfully';
     editorState.isNewTemplate = false;
+    // Reflect the post-save canonical id back into the editor.
+    editorState.templateId = dstId;
+    editorState.idDirty = false;
+    editorState.template = {
+      ...(editorState.template || {}),
+      id: dstId,
+      name: dstName,
+    };
 
-    // Show toast notification
     showToast(
       isNew
-        ? `Template "${payload.name}" created successfully`
-        : `Template "${payload.name}" updated successfully`,
+        ? `Template "${dstName}" created successfully`
+        : `Template "${dstName}" updated successfully`,
       'success',
     );
-
-    // Trigger callback for redirect to list view
     if (onSaved) onSaved();
   } catch (err) {
     editorState.saveMessage = `Failed to save: ${err.message}`;
@@ -835,8 +911,8 @@ export function logLifecycle(hook, ...args) {
 export function pipelinesEditorView(state, options) {
   const {
     tid,
+    tier = editorState.tier || 'project',
     projectId,
-    scope = 'project',
     onSaved,
     onCancel,
     rerender,
@@ -851,6 +927,9 @@ export function pipelinesEditorView(state, options) {
     saveMessage,
     validationIssues,
     viewMode,
+    nameDraft,
+    idDraft,
+    idDirty,
   } = editorState;
   const settings = state?.settings || {};
   const hasErrors = validationIssues.some((i) => i.severity === 'error');
@@ -885,15 +964,50 @@ export function pipelinesEditorView(state, options) {
     `;
   }
 
-  const templateName = template?.name || tid;
-  const scopeDisplay = scope.charAt(0).toUpperCase() + scope.slice(1);
+  const tierDisplay = tier.charAt(0).toUpperCase() + tier.slice(1);
+  // Name + Id are editable inline. Name → Id auto-slugs until the
+  // user manually touches the Id field (idDirty=true). Built-ins are
+  // read-only and route fetches succeed but PUT 405s — disable the
+  // inputs so the user knows up front.
+  const isBuiltinTier = tier === 'builtin';
+  const onNameInput = (e) => {
+    const newName = e.target.value;
+    editorState.nameDraft = newName;
+    if (!idDirty) {
+      editorState.idDraft = slugifyId(newName);
+    }
+    rerender();
+  };
+  const onIdInput = (e) => {
+    editorState.idDraft = e.target.value.trim();
+    editorState.idDirty = true;
+    rerender();
+  };
 
   return html`
     <div class="pipelines-editor">
       <div class="editor-subheader">
         <div class="editor-subheader-title-group">
-          <h2 class="editor-subheader-title">${templateName}</h2>
-          <sl-badge variant="neutral" pill>${scopeDisplay}</sl-badge>
+          <sl-input
+            class="editor-name-input"
+            size="small"
+            placeholder="Display name"
+            .value=${nameDraft || ''}
+            ?disabled=${isBuiltinTier}
+            @sl-input=${onNameInput}
+          ></sl-input>
+          <span class="editor-id-badge" title="Template ID">
+            <span class="editor-id-label">ID:</span>
+            <sl-input
+              class="editor-id-input"
+              size="small"
+              placeholder="template-id"
+              .value=${idDraft || ''}
+              ?disabled=${isBuiltinTier}
+              @sl-input=${onIdInput}
+            ></sl-input>
+          </span>
+          <sl-badge variant="neutral" pill>${tierDisplay}</sl-badge>
         </div>
         <div class="editor-mode-toggle">
           <sl-button-group>
@@ -1030,7 +1144,7 @@ export function pipelinesEditorView(state, options) {
           variant="primary"
           size="small"
           ?disabled=${saving || hasErrors}
-           @click=${() => saveTemplate(tid, scope, projectId, onSaved)}
+           @click=${() => saveTemplate(tid, tier, projectId, onSaved)}
         >
           ${saving ? html`<sl-spinner></sl-spinner>` : unsafeHTML(iconSvg(Save, 14))}
           ${saving ? 'Saving…' : 'Save Template'}

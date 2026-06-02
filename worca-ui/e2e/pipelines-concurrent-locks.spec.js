@@ -213,7 +213,7 @@ test('edit button shows guard dialog when runs are in-flight using the template'
 
     // Clicking proceed should navigate to editor
     await proceedBtn.click();
-    await page.waitForURL(/\/templates\/busy-template\/edit/, { timeout: 5000 });
+    await page.waitForURL(/\/templates\/project\/busy-template\/edit/, { timeout: 5000 });
   } finally {
     await ctx.close();
   }

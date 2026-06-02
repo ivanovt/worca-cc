@@ -283,10 +283,20 @@ def main():
     _project_worca = _project_settings.get("worca", {})
 
     # Phase 1: fall back to worca.default_template when --template wasn't passed.
+    #
+    # Schema is either the legacy bare string `"bugfix"` (pre tier-in-key
+    # redesign) or the new object `{"tier": "project", "id": "bugfix"}`.
+    # The CLI only needs the id — the runtime tier-precedence resolver
+    # (project > user > builtin) will surface the same template the
+    # editor would have, so the optional `tier` hint is informational.
     if not _template_id:
         _default = _project_worca.get("default_template")
         if isinstance(_default, str) and _default:
             _template_id = _default
+        elif isinstance(_default, dict):
+            _candidate = _default.get("id")
+            if isinstance(_candidate, str) and _candidate:
+                _template_id = _candidate
 
     if _template_id:
         import tempfile

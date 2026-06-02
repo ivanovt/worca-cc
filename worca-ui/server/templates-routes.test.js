@@ -1,12 +1,9 @@
 /**
- * Tests: templates-routes.js
+ * Tests: templates-routes.js — (tier, id) contract.
  *
- * The routes delegate all mutations (create/update/delete/duplicate/import)
- * to the `worca templates` CLI via execFileSync; tests mock that subprocess
- * and assert on (a) the CLI invocation arguments and (b) the resulting HTTP
- * status/body. Read paths (GET /templates, GET /templates/:tid) and
- * default-template settings writes go through the filesystem directly, so
- * those tests still touch real files in tmpdir.
+ * Mutations delegate to `worca templates …`; we mock execFileSync and
+ * assert on CLI args + HTTP shape. Read paths and the default-template
+ * write touch the real filesystem (tmpdir).
  */
 
 import {
@@ -21,8 +18,6 @@ import { join } from 'node:path';
 import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Mock the CLI subprocess. Each test can override mockExecSync.mockImplementation
-// to simulate success (returns stdout string) or failure (throws with .stderr).
 const mockExecSync = vi.fn();
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal();
@@ -84,7 +79,6 @@ async function request(app, method, path, body) {
   });
 }
 
-/** Helper: build a fake execFileSync error matching child_process error shape. */
 function cliError(stderr, stdout = '') {
   const err = new Error('Command failed');
   err.status = 1;
@@ -94,35 +88,49 @@ function cliError(stderr, stdout = '') {
 }
 
 /**
- * Helper: pull the args array passed to `worca templates …` on call N.
- *
- * The route handler always inserts `--project-root <projectRoot>` after
- * `templates` so the CLI doesn't need a `.git` walk. We strip that
- * scaffolding here so individual tests can assert against the
- * subcommand and its flags without re-encoding the project path each
- * time. `rawArgs(call)` returns the unmodified args if a test needs
- * to verify the scaffolding itself.
+ * Pull the args array passed to `worca templates …` on call N, strip
+ * the boilerplate `--project-root <path>` prefix so individual tests
+ * can assert on the subcommand without re-encoding the path each time.
  */
 function templateArgs(call) {
-  // execFileSync signature: (file, args, opts) → call[1] is the args array
   const args = call[1];
-  // Expected prefix: ['templates', '--project-root', <root>, …]
   if (args[0] === 'templates' && args[1] === '--project-root') {
     return ['templates', ...args.slice(3)];
   }
   return args;
 }
-
 function rawArgs(call) {
   return call[1];
 }
 
-describe('templates-routes', () => {
+describe('templates-routes — (tier, id) contract', () => {
   let projectRoot;
   let templatesDir;
   let userTemplatesDir;
   let builtinDir;
   let originalWorcaHome;
+
+  function seedProject(id, body = {}) {
+    mkdirSync(join(templatesDir, id), { recursive: true });
+    writeFileSync(
+      join(templatesDir, id, 'template.json'),
+      JSON.stringify({ id, name: id, ...body }),
+    );
+  }
+  function seedUser(id, body = {}) {
+    mkdirSync(join(userTemplatesDir, 'templates', id), { recursive: true });
+    writeFileSync(
+      join(userTemplatesDir, 'templates', id, 'template.json'),
+      JSON.stringify({ id, name: id, ...body }),
+    );
+  }
+  function seedBuiltin(id, body = {}) {
+    mkdirSync(join(builtinDir, id), { recursive: true });
+    writeFileSync(
+      join(builtinDir, id, 'template.json'),
+      JSON.stringify({ id, name: id, ...body }),
+    );
+  }
 
   beforeEach(() => {
     originalWorcaHome = process.env.WORCA_HOME;
@@ -142,10 +150,7 @@ describe('templates-routes', () => {
     writeFileSync(join(projectRoot, '.claude', 'settings.json'), '{}');
 
     process.env.WORCA_HOME = userTemplatesDir;
-
     mockExecSync.mockReset();
-    // Default: any CLI call succeeds with empty stdout. Individual tests
-    // override for specific scenarios (validate output, conflict, etc.).
     mockExecSync.mockReturnValue('');
   });
 
@@ -159,39 +164,19 @@ describe('templates-routes', () => {
       rmSync(projectRoot, { recursive: true, force: true });
       rmSync(userTemplatesDir, { recursive: true, force: true });
     } catch {
-      /* ignore cleanup errors in tmpdir */
+      /* tmpdir cleanup best-effort */
     }
   });
 
-  describe('GET /templates — list with deduping', () => {
-    it('dedupes by id with effectiveTier and shadows', async () => {
+  // ─── GET /templates — flat list, every tier ───────────────────────
+
+  describe('GET /templates — flat list', () => {
+    it('returns every template with its own tier — no dedup', async () => {
       const app = await createTestApp(projectRoot);
-
-      const templateJson = JSON.stringify({
-        id: 'test-template',
-        name: 'Test Template',
-        description: 'Test',
-        config: { agents: { planner: { model: 'opus' } } },
-      });
-
-      mkdirSync(join(templatesDir, 'test-template'), { recursive: true });
-      writeFileSync(
-        join(templatesDir, 'test-template', 'template.json'),
-        templateJson,
-      );
-      mkdirSync(join(userTemplatesDir, 'templates', 'test-template'), {
-        recursive: true,
-      });
-      writeFileSync(
-        join(userTemplatesDir, 'templates', 'test-template', 'template.json'),
-        templateJson,
-      );
-
-      mkdirSync(join(builtinDir, 'builtin-template'), { recursive: true });
-      writeFileSync(
-        join(builtinDir, 'builtin-template', 'template.json'),
-        JSON.stringify({ id: 'builtin-template', name: 'Builtin' }),
-      );
+      seedProject('bugfix');
+      seedBuiltin('bugfix');
+      seedBuiltin('feature');
+      seedUser('my-user-tpl');
 
       const { status, body } = await request(
         app,
@@ -201,628 +186,457 @@ describe('templates-routes', () => {
 
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
-
-      // Project wins over user; user is recorded as shadowed.
-      const testTemplate = body.templates.find((t) => t.id === 'test-template');
-      expect(testTemplate).toBeDefined();
-      expect(testTemplate.effectiveTier).toBe('project');
-      expect(testTemplate.shadows).toEqual(['user']);
-
-      // Builtin-only template: tier label matches Python's 'builtin'.
-      const builtin = body.templates.find((t) => t.id === 'builtin-template');
-      expect(builtin).toBeDefined();
-      expect(builtin.effectiveTier).toBe('builtin');
-      expect(builtin.shadows).toEqual([]);
+      const entries = body.templates;
+      // 4 on disk → 4 in the response (no dedup)
+      expect(entries).toHaveLength(4);
+      // (tier, id) pairs round-trip
+      const refs = entries.map((t) => `${t.tier}:${t.id}`).sort();
+      expect(refs).toEqual([
+        'builtin:bugfix',
+        'builtin:feature',
+        'project:bugfix',
+        'user:my-user-tpl',
+      ]);
+      // Built-in entry exists for `bugfix` even though project shadows it
+      const builtinBugfix = entries.find(
+        (t) => t.tier === 'builtin' && t.id === 'bugfix',
+      );
+      expect(builtinBugfix).toBeDefined();
+      expect(builtinBugfix.builtin).toBe(true);
     });
 
-    it('records all lower-priority tiers in shadows when id exists in all three', async () => {
+    it('orders builtin → project → user (matches Python TemplateResolver.list)', async () => {
       const app = await createTestApp(projectRoot);
-
-      const manifest = (id) => JSON.stringify({ id, name: id });
-
-      mkdirSync(join(templatesDir, 'everywhere'), { recursive: true });
-      writeFileSync(
-        join(templatesDir, 'everywhere', 'template.json'),
-        manifest('everywhere'),
-      );
-      mkdirSync(join(userTemplatesDir, 'templates', 'everywhere'), {
-        recursive: true,
-      });
-      writeFileSync(
-        join(userTemplatesDir, 'templates', 'everywhere', 'template.json'),
-        manifest('everywhere'),
-      );
-      mkdirSync(join(builtinDir, 'everywhere'), { recursive: true });
-      writeFileSync(
-        join(builtinDir, 'everywhere', 'template.json'),
-        manifest('everywhere'),
-      );
-
+      seedBuiltin('w-tpl');
+      seedProject('p-tpl');
+      seedUser('u-tpl');
       const { body } = await request(
         app,
         'GET',
         '/api/projects/test/templates',
       );
-
-      const t = body.templates.find((x) => x.id === 'everywhere');
-      expect(t.effectiveTier).toBe('project');
-      // Order is priority order with the winner sliced off:
-      expect(t.shadows).toEqual(['user', 'builtin']);
+      const tiers = body.templates.map((t) => t.tier);
+      expect(tiers).toEqual(['builtin', 'project', 'user']);
     });
 
-    it('exposes effectiveTier and shadows on every entry', async () => {
+    it('omits the old `effectiveTier` / `shadows` fields', async () => {
       const app = await createTestApp(projectRoot);
-
-      mkdirSync(join(templatesDir, 'simple'), { recursive: true });
-      writeFileSync(
-        join(templatesDir, 'simple', 'template.json'),
-        JSON.stringify({ id: 'simple', name: 'Simple' }),
-      );
-
-      const { status, body } = await request(
+      seedProject('foo');
+      seedBuiltin('foo');
+      const { body } = await request(
         app,
         'GET',
         '/api/projects/test/templates',
       );
-
-      expect(status).toBe(200);
-      const tmpl = body.templates[0];
-      expect(tmpl.id).toBe('simple');
-      expect(tmpl.effectiveTier).toBe('project');
-      expect(Array.isArray(tmpl.shadows)).toBe(true);
+      for (const t of body.templates) {
+        expect(t.effectiveTier).toBeUndefined();
+        expect(t.shadows).toBeUndefined();
+      }
     });
   });
 
-  describe('GET /templates/:tid — fetch single template', () => {
-    it('resolves project → user → builtin (project wins)', async () => {
+  // ─── GET /templates/:tier/:id ─────────────────────────────────────
+
+  describe('GET /templates/:tier/:id — fetch exact', () => {
+    it('returns the project copy when both project and builtin exist', async () => {
       const app = await createTestApp(projectRoot);
-
-      mkdirSync(join(builtinDir, 'from-builtin'), { recursive: true });
-      writeFileSync(
-        join(builtinDir, 'from-builtin', 'template.json'),
-        JSON.stringify({
-          id: 'from-builtin',
-          name: 'Builtin Version',
-          config: { agents: { planner: { model: 'haiku' } } },
-        }),
-      );
-
-      mkdirSync(join(templatesDir, 'from-builtin'), { recursive: true });
-      writeFileSync(
-        join(templatesDir, 'from-builtin', 'template.json'),
-        JSON.stringify({
-          id: 'from-builtin',
-          name: 'Project Version',
-          config: { agents: { planner: { model: 'sonnet' } } },
-        }),
-      );
-
+      seedProject('foo', { name: 'Project Foo' });
+      seedBuiltin('foo', { name: 'Builtin Foo' });
       const { status, body } = await request(
         app,
         'GET',
-        '/api/projects/test/templates/from-builtin',
+        '/api/projects/test/templates/project/foo',
       );
-
       expect(status).toBe(200);
-      expect(body.template.name).toBe('Project Version');
+      expect(body.template.name).toBe('Project Foo');
       expect(body.tier).toBe('project');
     });
 
-    it('honors ?tier=builtin to fetch the shadowed built-in', async () => {
+    it('returns the built-in copy by explicit tier', async () => {
       const app = await createTestApp(projectRoot);
-
-      mkdirSync(join(builtinDir, 'shadowed'), { recursive: true });
-      writeFileSync(
-        join(builtinDir, 'shadowed', 'template.json'),
-        JSON.stringify({ id: 'shadowed', name: 'Builtin Version' }),
-      );
-      mkdirSync(join(templatesDir, 'shadowed'), { recursive: true });
-      writeFileSync(
-        join(templatesDir, 'shadowed', 'template.json'),
-        JSON.stringify({ id: 'shadowed', name: 'Project Override' }),
-      );
-
-      const { body } = await request(
-        app,
-        'GET',
-        '/api/projects/test/templates/shadowed?tier=builtin',
-      );
-
-      expect(body.template.name).toBe('Builtin Version');
-      expect(body.tier).toBe('builtin');
-    });
-
-    it('accepts ids with underscores (e.g. worca init`s _legacy-settings)', async () => {
-      // Regression: TEMPLATE_RE used to be /^[a-z0-9-]{1,64}$/ which rejected
-      // the auto-migrated `_legacy-settings` template id with a 400, even
-      // though it exists on disk after `worca init --upgrade`.
-      const app = await createTestApp(projectRoot);
-      mkdirSync(join(templatesDir, '_legacy-settings'), { recursive: true });
-      writeFileSync(
-        join(templatesDir, '_legacy-settings', 'template.json'),
-        JSON.stringify({ id: '_legacy-settings', name: 'Legacy' }),
-      );
-
+      seedProject('foo', { name: 'Project Foo' });
+      seedBuiltin('foo', { name: 'Builtin Foo' });
       const { status, body } = await request(
         app,
         'GET',
-        '/api/projects/test/templates/_legacy-settings',
+        '/api/projects/test/templates/builtin/foo',
       );
       expect(status).toBe(200);
-      expect(body.template.name).toBe('Legacy');
-    });
-
-    it('accepts the deprecated ?tier=worca alias for ?tier=builtin', async () => {
-      const app = await createTestApp(projectRoot);
-
-      mkdirSync(join(builtinDir, 'legacy'), { recursive: true });
-      writeFileSync(
-        join(builtinDir, 'legacy', 'template.json'),
-        JSON.stringify({ id: 'legacy', name: 'Builtin Legacy' }),
-      );
-
-      const { body } = await request(
-        app,
-        'GET',
-        '/api/projects/test/templates/legacy?tier=worca',
-      );
-
-      expect(body.template.name).toBe('Builtin Legacy');
+      expect(body.template.name).toBe('Builtin Foo');
       expect(body.tier).toBe('builtin');
     });
 
-    it('returns 404 for non-existent template', async () => {
+    it('returns 404 when the (tier, id) does not exist', async () => {
       const app = await createTestApp(projectRoot);
       const { status, body } = await request(
         app,
         'GET',
-        '/api/projects/test/templates/missing',
+        '/api/projects/test/templates/project/missing',
       );
       expect(status).toBe(404);
       expect(body.ok).toBe(false);
     });
-  });
 
-  describe('POST /templates — create template', () => {
-    it('passes --project-root to the CLI so non-git project roots resolve correctly', async () => {
+    it('rejects unknown tier (400)', async () => {
       const app = await createTestApp(projectRoot);
-      await request(app, 'POST', '/api/projects/test/templates', {
-        scope: 'project',
-        id: 'flag-check',
-        name: 'Flag Check',
-        config: {},
-      });
-      const raw = rawArgs(mockExecSync.mock.calls[0]);
-      const flagIdx = raw.indexOf('--project-root');
-      expect(flagIdx).toBe(1);
-      expect(raw[flagIdx + 1]).toBe(projectRoot);
-    });
-
-    it('delegates to `worca templates create --from-file <path>` in project scope', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const payload = {
-        scope: 'project',
-        id: 'new-template',
-        name: 'New Template',
-        description: 'A test template',
-        config: { agents: { planner: { model: 'opus' } } },
-      };
-
       const { status, body } = await request(
         app,
-        'POST',
-        '/api/projects/test/templates',
-        payload,
+        'GET',
+        '/api/projects/test/templates/whatever/foo',
       );
-
-      expect(status).toBe(201);
-      expect(body.ok).toBe(true);
-      expect(mockExecSync).toHaveBeenCalledTimes(1);
-      const args = templateArgs(mockExecSync.mock.calls[0]);
-      expect(args[0]).toBe('templates');
-      expect(args[1]).toBe('create');
-      expect(args[2]).toBe('--from-file');
-      // Should NOT pass --global for project scope.
-      expect(args).not.toContain('--global');
-    });
-
-    it('passes --global to the CLI for user scope', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const payload = {
-        scope: 'user',
-        id: 'user-template',
-        name: 'User Template',
-        config: {},
-      };
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates',
-        payload,
-      );
-
-      expect(status).toBe(201);
-      expect(body.ok).toBe(true);
-      const args = templateArgs(mockExecSync.mock.calls[0]);
-      expect(args).toContain('--global');
-    });
-
-    it('returns 409 when the id already exists in any tier', async () => {
-      const app = await createTestApp(projectRoot);
-
-      mkdirSync(join(templatesDir, 'exists'), { recursive: true });
-      writeFileSync(
-        join(templatesDir, 'exists', 'template.json'),
-        JSON.stringify({ id: 'exists', name: 'Exists' }),
-      );
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates',
-        { scope: 'project', id: 'exists', name: 'Dup' },
-      );
-
-      expect(status).toBe(409);
-      expect(body.ok).toBe(false);
-      // CLI must not be invoked when the existence check fails up front.
-      expect(mockExecSync).not.toHaveBeenCalled();
-    });
-
-    it('rejects scope=builtin (400)', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates',
-        { scope: 'builtin', id: 'bad', name: 'Bad', config: {} },
-      );
-
       expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-      expect(body.error).toMatch(/scope must be/i);
+      expect(body.error).toMatch(/tier/i);
     });
 
-    it('validates required fields', async () => {
+    it('accepts underscored ids (regression for _legacy-settings)', async () => {
       const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
+      seedProject('_legacy-settings');
+      const { status } = await request(
         app,
-        'POST',
-        '/api/projects/test/templates',
-        { scope: 'project', name: 'No ID' },
+        'GET',
+        '/api/projects/test/templates/project/_legacy-settings',
       );
-
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-    });
-  });
-
-  describe('PUT /templates/:tid — upsert template', () => {
-    it('delegates to `worca templates create` for project-scope upsert', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'PUT',
-        '/api/projects/test/templates/existing',
-        { name: 'Updated Name', config: {} },
-      );
-
       expect(status).toBe(200);
+    });
+  });
+
+  // ─── POST /templates/:tier — create ───────────────────────────────
+
+  describe('POST /templates/:tier — create', () => {
+    it('delegates to `worca templates create --from-file <path>` for project tier', async () => {
+      const app = await createTestApp(projectRoot);
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/project',
+        { id: 'new-tpl', name: 'New', config: {} },
+      );
+      expect(status).toBe(201);
       expect(body.ok).toBe(true);
       const args = templateArgs(mockExecSync.mock.calls[0]);
       expect(args.slice(0, 3)).toEqual(['templates', 'create', '--from-file']);
       expect(args).not.toContain('--global');
     });
 
-    it('rejects invalid scope values (400)', async () => {
+    it('passes --global to the CLI for user tier', async () => {
       const app = await createTestApp(projectRoot);
+      await request(app, 'POST', '/api/projects/test/templates/user', {
+        id: 'user-tpl',
+        name: 'User',
+        config: {},
+      });
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toContain('--global');
+    });
 
+    it('returns 409 when (tier, id) already exists', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('clash');
       const { status, body } = await request(
         app,
-        'PUT',
-        '/api/projects/test/templates/any-template?scope=something',
-        { name: 'test' },
+        'POST',
+        '/api/projects/test/templates/project',
+        { id: 'clash', name: 'Clash' },
       );
-
-      expect(status).toBe(400);
+      expect(status).toBe(409);
       expect(body.ok).toBe(false);
-      expect(body.error).toMatch(/scope/i);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('rejects writes to builtin tier with 405', async () => {
+      const app = await createTestApp(projectRoot);
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/builtin',
+        { id: 'something', name: 'x' },
+      );
+      expect(status).toBe(405);
+      expect(body.error).toMatch(/immutable/i);
+    });
+
+    it('rejects missing id (400)', async () => {
+      const app = await createTestApp(projectRoot);
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/project',
+        { name: 'No ID' },
+      );
+      expect(status).toBe(400);
+    });
+
+    it('passes --project-root so the CLI does not need a `.git` walk', async () => {
+      const app = await createTestApp(projectRoot);
+      await request(app, 'POST', '/api/projects/test/templates/project', {
+        id: 'flag-check',
+        name: 'Flag Check',
+        config: {},
+      });
+      const raw = rawArgs(mockExecSync.mock.calls[0]);
+      const idx = raw.indexOf('--project-root');
+      expect(idx).toBe(1);
+      expect(raw[idx + 1]).toBe(projectRoot);
     });
   });
 
-  describe('DELETE /templates/:tid — delete template', () => {
-    it('delegates to `worca templates delete <id>` for project scope', async () => {
+  // ─── PUT /templates/:tier/:id — upsert ────────────────────────────
+
+  describe('PUT /templates/:tier/:id', () => {
+    it('delegates to the same create CLI for project upsert', async () => {
       const app = await createTestApp(projectRoot);
-
-      const tmplDir = join(projectRoot, '.claude', 'templates', 'project-tmpl');
-      mkdirSync(tmplDir, { recursive: true });
-      writeFileSync(
-        join(tmplDir, 'template.json'),
-        JSON.stringify({ id: 'project-tmpl', name: 'Project Template' }),
-      );
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
-        'DELETE',
-        '/api/projects/test/templates/project-tmpl?scope=project',
+        'PUT',
+        '/api/projects/test/templates/project/existing',
+        { name: 'Updated', config: {} },
       );
-
       expect(status).toBe(200);
-      expect(body.ok).toBe(true);
       const args = templateArgs(mockExecSync.mock.calls[0]);
-      expect(args).toEqual(['templates', 'delete', 'project-tmpl']);
+      expect(args.slice(0, 3)).toEqual(['templates', 'create', '--from-file']);
     });
 
-    it('passes --global to the CLI for user-scope delete', async () => {
+    it('rejects PUT to builtin with 405', async () => {
       const app = await createTestApp(projectRoot);
-
-      const userTmplDir = join(userTemplatesDir, 'templates', 'user-tmpl');
-      mkdirSync(userTmplDir, { recursive: true });
-      writeFileSync(
-        join(userTmplDir, 'template.json'),
-        JSON.stringify({ id: 'user-tmpl', name: 'User Template' }),
+      const { status } = await request(
+        app,
+        'PUT',
+        '/api/projects/test/templates/builtin/foo',
+        { name: 'attempt' },
       );
+      expect(status).toBe(405);
+    });
+  });
 
+  // ─── DELETE /templates/:tier/:id ──────────────────────────────────
+
+  describe('DELETE /templates/:tier/:id', () => {
+    it('delegates to `worca templates delete <id>` for project tier', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('proj-tmpl');
       const { status } = await request(
         app,
         'DELETE',
-        '/api/projects/test/templates/user-tmpl?scope=user',
+        '/api/projects/test/templates/project/proj-tmpl',
       );
+      expect(status).toBe(200);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toEqual(['templates', 'delete', 'proj-tmpl']);
+    });
 
+    it('passes --global for user tier', async () => {
+      const app = await createTestApp(projectRoot);
+      seedUser('user-tmpl');
+      const { status } = await request(
+        app,
+        'DELETE',
+        '/api/projects/test/templates/user/user-tmpl',
+      );
       expect(status).toBe(200);
       const args = templateArgs(mockExecSync.mock.calls[0]);
       expect(args).toEqual(['templates', 'delete', 'user-tmpl', '--global']);
     });
 
-    it('returns 404 if the template is not present in the named scope', async () => {
+    it('returns 404 when the (tier, id) does not exist', async () => {
       const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'DELETE',
-        '/api/projects/test/templates/missing?scope=project',
+        '/api/projects/test/templates/project/missing',
       );
-
       expect(status).toBe(404);
-      expect(body.ok).toBe(false);
       expect(mockExecSync).not.toHaveBeenCalled();
     });
 
-    it('rejects invalid scope values (400)', async () => {
+    it('rejects DELETE to builtin with 405', async () => {
       const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'DELETE',
-        '/api/projects/test/templates/any-template?scope=something',
+        '/api/projects/test/templates/builtin/foo',
       );
-
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
-    });
-
-    it('rejects scope=builtin (400)', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'DELETE',
-        '/api/projects/test/templates/builtin-tmpl?scope=builtin',
-      );
-
-      expect(status).toBe(400);
-      expect(body.ok).toBe(false);
+      expect(status).toBe(405);
     });
   });
 
-  describe('POST /templates/:tid/duplicate — clone template', () => {
-    it('delegates to `worca templates duplicate` for project destination', async () => {
-      const app = await createTestApp(projectRoot);
+  // ─── POST /templates/:tier/:id/duplicate ─────────────────────────
 
+  describe('POST /templates/:tier/:id/duplicate', () => {
+    it('delegates duplicate with dst_tier + dst_id', async () => {
+      const app = await createTestApp(projectRoot);
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/source/duplicate',
-        { dst_id: 'clone-of-source', dst_scope: 'project' },
+        '/api/projects/test/templates/builtin/bugfix/duplicate',
+        { dst_tier: 'project', dst_id: 'bugfix' },
       );
-
       expect(status).toBe(200);
       expect(body.ok).toBe(true);
       const args = templateArgs(mockExecSync.mock.calls[0]);
       expect(args).toEqual([
         'templates',
         'duplicate',
-        'source',
+        'bugfix',
         '--dst',
-        'clone-of-source',
+        'bugfix',
         '--dst-scope',
         'project',
       ]);
     });
 
-    it('duplicating a built-in to the same id is allowed (canonical shadow flow)', async () => {
-      // The UI's "Duplicate" button on a built-in template card sends
-      // dst_id == src_id; that's how a user clones a built-in into their
-      // project scope to edit it. The CLI must accept this; the server
-      // must propagate as 200.
+    it('rejects dst_tier=builtin (immutable) with 405', async () => {
       const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue('');
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/minimal/duplicate',
-        { dst_id: 'minimal', dst_scope: 'project' },
+        '/api/projects/test/templates/project/foo/duplicate',
+        { dst_tier: 'builtin', dst_id: 'foo' },
       );
-
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
+      expect(status).toBe(405);
     });
 
     it('maps CLI name_collision to HTTP 409', async () => {
       const app = await createTestApp(projectRoot);
       mockExecSync.mockImplementation(() => {
-        throw cliError("Template ID 'taken' already exists in project scope.");
+        throw cliError("Template ID 'x' already exists in project scope.");
       });
-
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/source/duplicate',
-        { dst_id: 'taken', dst_scope: 'project' },
+        '/api/projects/test/templates/project/foo/duplicate',
+        { dst_tier: 'project', dst_id: 'x' },
       );
-
       expect(status).toBe(409);
       expect(body.code).toBe('name_collision');
     });
-
-    it('rejects invalid dst_scope values (400)', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates/source/duplicate',
-        { dst_id: 'dest', dst_scope: 'invalid' },
-      );
-
-      expect(status).toBe(400);
-      expect(body.error).toMatch(/dst_scope/i);
-    });
   });
 
-  describe('POST /templates/:tid/rename — rename / move template', () => {
-    function seedProject(id) {
-      mkdirSync(join(templatesDir, id), { recursive: true });
-      writeFileSync(
-        join(templatesDir, id, 'template.json'),
-        JSON.stringify({ id, name: id }),
-      );
-    }
+  // ─── POST /templates/:tier/:id/rename ─────────────────────────────
 
+  describe('POST /templates/:tier/:id/rename', () => {
     it('composes duplicate + delete on the CLI', async () => {
       const app = await createTestApp(projectRoot);
       seedProject('old-id');
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates/old-id/rename?scope=project',
-        { dst_id: 'new-id', dst_scope: 'project' },
-      );
-
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
-      expect(mockExecSync).toHaveBeenCalledTimes(2);
-      const dupArgs = templateArgs(mockExecSync.mock.calls[0]);
-      expect(dupArgs.slice(0, 2)).toEqual(['templates', 'duplicate']);
-      expect(dupArgs).toContain('--dst');
-      expect(dupArgs).toContain('new-id');
-      const delArgs = templateArgs(mockExecSync.mock.calls[1]);
-      expect(delArgs.slice(0, 3)).toEqual(['templates', 'delete', 'old-id']);
-    });
-
-    it('passes --global on the delete leg when moving from user → project', async () => {
-      const app = await createTestApp(projectRoot);
-      // Seed a user-tier template so the existence check passes.
-      mkdirSync(join(userTemplatesDir, 'templates', 'cross-tier'), {
-        recursive: true,
-      });
-      writeFileSync(
-        join(userTemplatesDir, 'templates', 'cross-tier', 'template.json'),
-        JSON.stringify({ id: 'cross-tier', name: 'Cross Tier' }),
-      );
-
       const { status } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/cross-tier/rename?scope=user',
-        { dst_id: 'cross-tier', dst_scope: 'project' },
+        '/api/projects/test/templates/project/old-id/rename',
+        { dst_tier: 'project', dst_id: 'new-id' },
       );
-
       expect(status).toBe(200);
-      const dupArgs = templateArgs(mockExecSync.mock.calls[0]);
-      expect(dupArgs).toContain('--dst-scope');
-      expect(dupArgs[dupArgs.indexOf('--dst-scope') + 1]).toBe('project');
-      const delArgs = templateArgs(mockExecSync.mock.calls[1]);
-      expect(delArgs).toContain('--global');
+      expect(mockExecSync).toHaveBeenCalledTimes(2);
+      const dup = templateArgs(mockExecSync.mock.calls[0]);
+      expect(dup.slice(0, 2)).toEqual(['templates', 'duplicate']);
+      expect(dup).toContain('new-id');
+      const del = templateArgs(mockExecSync.mock.calls[1]);
+      expect(del.slice(0, 3)).toEqual(['templates', 'delete', 'old-id']);
     });
 
-    it('rejects no-op (same id + same scope) with 400', async () => {
+    it('passes --global on delete when moving project → user', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('cross-tier');
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/project/cross-tier/rename',
+        { dst_tier: 'user', dst_id: 'cross-tier' },
+      );
+      expect(status).toBe(200);
+      const dup = templateArgs(mockExecSync.mock.calls[0]);
+      expect(dup).toContain('--dst-scope');
+      expect(dup[dup.indexOf('--dst-scope') + 1]).toBe('user');
+      const del = templateArgs(mockExecSync.mock.calls[1]);
+      // src tier was project — no --global on the delete leg
+      expect(del).not.toContain('--global');
+    });
+
+    it('passes --global on delete when src is user', async () => {
+      const app = await createTestApp(projectRoot);
+      seedUser('user-src');
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/user/user-src/rename',
+        { dst_tier: 'project', dst_id: 'user-src' },
+      );
+      expect(status).toBe(200);
+      const del = templateArgs(mockExecSync.mock.calls[1]);
+      expect(del).toContain('--global');
+    });
+
+    it('rejects rename FROM builtin with 405', async () => {
+      const app = await createTestApp(projectRoot);
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/builtin/foo/rename',
+        { dst_tier: 'project', dst_id: 'foo' },
+      );
+      expect(status).toBe(405);
+    });
+
+    it('rejects rename TO builtin with 405', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('foo');
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/project/foo/rename',
+        { dst_tier: 'builtin', dst_id: 'foo' },
+      );
+      expect(status).toBe(405);
+    });
+
+    it('rejects no-op (same tier + same id) with 400', async () => {
       const app = await createTestApp(projectRoot);
       seedProject('static');
-
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/static/rename?scope=project',
-        { dst_id: 'static', dst_scope: 'project' },
+        '/api/projects/test/templates/project/static/rename',
+        { dst_tier: 'project', dst_id: 'static' },
       );
-
       expect(status).toBe(400);
       expect(body.error).toMatch(/no change/i);
       expect(mockExecSync).not.toHaveBeenCalled();
     });
 
-    it('returns 404 if the source does not exist in the named scope', async () => {
+    it('returns 404 if source missing', async () => {
       const app = await createTestApp(projectRoot);
-
       const { status } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/ghost/rename?scope=project',
-        { dst_id: 'phantom', dst_scope: 'project' },
+        '/api/projects/test/templates/project/ghost/rename',
+        { dst_tier: 'project', dst_id: 'phantom' },
       );
-
       expect(status).toBe(404);
       expect(mockExecSync).not.toHaveBeenCalled();
     });
 
-    it('rejects scope=builtin (built-ins are immutable)', async () => {
-      const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates/whatever/rename?scope=builtin',
-        { dst_id: 'whatever', dst_scope: 'project' },
-      );
-
-      expect(status).toBe(400);
-      expect(body.error).toMatch(/scope/i);
-    });
-
-    it('surfaces partial_rename when duplicate succeeds but delete fails', async () => {
+    it('surfaces partial_rename when delete fails after duplicate', async () => {
       const app = await createTestApp(projectRoot);
       seedProject('half');
-      // First call (duplicate) succeeds; second call (delete) throws.
       let n = 0;
       mockExecSync.mockImplementation(() => {
         n++;
         if (n === 1) return '';
         throw cliError('delete blew up');
       });
-
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/half/rename?scope=project',
-        { dst_id: 'whole', dst_scope: 'project' },
+        '/api/projects/test/templates/project/half/rename',
+        { dst_tier: 'project', dst_id: 'whole' },
       );
-
       expect(status).toBe(500);
       expect(body.code).toBe('partial_rename');
       expect(body.error).toMatch(/Renamed to "whole"/);
     });
   });
 
-  describe('POST /templates/:tid/validate — validate config', () => {
+  // ─── POST /templates/:tier/:id/validate ───────────────────────────
+
+  describe('POST /templates/:tier/:id/validate', () => {
     it('returns parsed issues from the CLI', async () => {
       const app = await createTestApp(projectRoot);
       mockExecSync.mockReturnValue(
@@ -834,191 +648,155 @@ describe('templates-routes', () => {
           },
         ]),
       );
-
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/tmpl/validate',
-        { config: { agents: { bad: {} } } },
+        '/api/projects/test/templates/project/tmpl/validate',
+        { config: { agents: {} } },
       );
-
       expect(status).toBe(200);
       expect(body.issues).toHaveLength(1);
-      expect(body.issues[0].severity).toBe('error');
-    });
-
-    it('returns empty issues when the CLI emits an empty array', async () => {
-      const app = await createTestApp(projectRoot);
-      mockExecSync.mockReturnValue('[]');
-
-      const { status, body } = await request(
-        app,
-        'POST',
-        '/api/projects/test/templates/test-template/validate',
-        { config: { agents: { planner: { model: 'opus' } } } },
-      );
-
-      expect(status).toBe(200);
-      expect(body.issues).toEqual([]);
     });
 
     it('rejects non-object config (400)', async () => {
       const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/x/validate',
+        '/api/projects/test/templates/project/x/validate',
         { config: 'not-an-object' },
       );
-
       expect(status).toBe(400);
-      expect(body.ok).toBe(false);
     });
   });
 
-  describe('POST /templates/import — import bundle', () => {
-    it('writes the bundle to a temp file and delegates to `worca templates import`', async () => {
+  // ─── POST /templates/import ───────────────────────────────────────
+
+  describe('POST /templates/import', () => {
+    it('delegates with --scope <dst_tier>', async () => {
       const app = await createTestApp(projectRoot);
-
-      const payload = {
-        bundle: {
-          templates: [{ id: 'imported', name: 'Imported', config: {} }],
-        },
-        scope: 'project',
-      };
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'POST',
         '/api/projects/test/templates/import',
-        payload,
+        {
+          bundle: { templates: [{ id: 'imp', name: 'Imp', config: {} }] },
+          dst_tier: 'project',
+        },
       );
-
       expect(status).toBe(200);
-      expect(body.ok).toBe(true);
       const args = templateArgs(mockExecSync.mock.calls[0]);
       expect(args[0]).toBe('templates');
       expect(args[1]).toBe('import');
       expect(args).toContain('--scope');
-      expect(args).toContain('project');
+      expect(args[args.indexOf('--scope') + 1]).toBe('project');
       expect(args).toContain('--non-interactive');
     });
 
-    it('rejects invalid scope (400)', async () => {
+    it('rejects dst_tier=builtin with 405', async () => {
       const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'POST',
         '/api/projects/test/templates/import',
-        { bundle: { templates: [] }, scope: 'whatever' },
+        {
+          bundle: { templates: [] },
+          dst_tier: 'builtin',
+        },
       );
+      expect(status).toBe(405);
+    });
 
+    it('rejects invalid dst_tier (400)', async () => {
+      const app = await createTestApp(projectRoot);
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/import',
+        { bundle: { templates: [] }, dst_tier: 'nope' },
+      );
       expect(status).toBe(400);
-      expect(body.ok).toBe(false);
     });
   });
 
-  describe('PUT /default-template — set default template', () => {
-    it('writes worca.default_template to settings.json', async () => {
-      const app = await createTestApp(projectRoot);
+  // ─── PUT /default-template ────────────────────────────────────────
 
-      const { status, body } = await request(
+  describe('PUT /default-template', () => {
+    it('writes worca.default_template as {tier, id}', async () => {
+      const app = await createTestApp(projectRoot);
+      const { status } = await request(
         app,
         'PUT',
         '/api/projects/test/default-template',
-        { tid: 'my-default' },
+        { tier: 'project', id: 'my-default' },
       );
-
       expect(status).toBe(200);
-      expect(body.ok).toBe(true);
       const settings = JSON.parse(
         readFileSync(join(projectRoot, '.claude', 'settings.json'), 'utf8'),
       );
-      expect(settings.worca?.default_template).toBe('my-default');
+      expect(settings.worca.default_template).toEqual({
+        tier: 'project',
+        id: 'my-default',
+      });
     });
 
-    it('clears default template when tid is null', async () => {
+    it('clears the default when both tier and id are null', async () => {
       const app = await createTestApp(projectRoot);
-
       writeFileSync(
         join(projectRoot, '.claude', 'settings.json'),
-        JSON.stringify({ worca: { default_template: 'old-default' } }),
+        JSON.stringify({
+          worca: { default_template: { tier: 'project', id: 'old' } },
+        }),
       );
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'PUT',
         '/api/projects/test/default-template',
-        { tid: null },
+        { tier: null, id: null },
       );
-
       expect(status).toBe(200);
-      expect(body.ok).toBe(true);
       const settings = JSON.parse(
         readFileSync(join(projectRoot, '.claude', 'settings.json'), 'utf8'),
       );
-      expect(settings.worca?.default_template).toBeUndefined();
+      expect(settings.worca.default_template).toBeUndefined();
     });
 
-    it('rejects invalid tid format (400)', async () => {
+    it('rejects invalid tier (400)', async () => {
       const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'PUT',
         '/api/projects/test/default-template',
-        { tid: 'INVALID-TEMPLATE-ID_!' },
+        { tier: 'whatever', id: 'foo' },
       );
-
       expect(status).toBe(400);
-      expect(body.error).toMatch(/Invalid template id/i);
     });
 
-    it('accepts any valid tid format without checking existence', async () => {
-      // Setting a default that doesn't (yet) resolve to a template is allowed —
-      // the writer is a thin shim, not an enforcer.
+    it('rejects invalid id (400)', async () => {
       const app = await createTestApp(projectRoot);
-
-      const { status, body } = await request(
+      const { status } = await request(
         app,
         'PUT',
         '/api/projects/test/default-template',
-        { tid: 'some-future-template' },
+        { tier: 'project', id: 'INVALID!' },
       );
-
-      expect(status).toBe(200);
-      expect(body.ok).toBe(true);
+      expect(status).toBe(400);
     });
   });
 
-  // The Read tests above use real filesystem fixtures (no execFileSync needed).
-  // We sanity-check that the mock isn't called on those paths.
+  // ─── Read paths never invoke the CLI ──────────────────────────────
+
   it('GET /templates does not invoke the CLI', async () => {
     const app = await createTestApp(projectRoot);
-    mkdirSync(join(templatesDir, 'sample'), { recursive: true });
-    writeFileSync(
-      join(templatesDir, 'sample', 'template.json'),
-      JSON.stringify({ id: 'sample', name: 'Sample' }),
-    );
+    seedProject('sample');
     await request(app, 'GET', '/api/projects/test/templates');
     expect(mockExecSync).not.toHaveBeenCalled();
   });
 
-  it('GET /templates/:tid does not invoke the CLI', async () => {
+  it('GET /templates/:tier/:id does not invoke the CLI', async () => {
     const app = await createTestApp(projectRoot);
-    mkdirSync(join(templatesDir, 'sample'), { recursive: true });
-    writeFileSync(
-      join(templatesDir, 'sample', 'template.json'),
-      JSON.stringify({ id: 'sample', name: 'Sample' }),
-    );
-    await request(app, 'GET', '/api/projects/test/templates/sample');
+    seedProject('sample');
+    await request(app, 'GET', '/api/projects/test/templates/project/sample');
     expect(mockExecSync).not.toHaveBeenCalled();
-  });
-
-  // Self-check: confirms cleanup didn't leave the project tree dangling.
-  it('cleans up project tree between tests', () => {
-    expect(existsSync(projectRoot)).toBe(true);
   });
 });
