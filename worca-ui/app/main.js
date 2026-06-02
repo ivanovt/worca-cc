@@ -1791,7 +1791,7 @@ async function _executeDeleteTemplate(tid, tier) {
     const templates = await fetchTemplates(
       store.getState().currentProjectId || null,
     );
-    store.setState({ templates });
+    store.setState({ templates, defaultTemplate: templates.defaultTemplate });
     rerender();
   } catch (err) {
     showActionError(`Failed to delete template: ${err.message}`);
@@ -2278,7 +2278,7 @@ async function _confirmTemplateActionDialog() {
       _templateActionDialog = null;
       _templateActionBusy = false;
       const templates = await fetchTemplates(route.projectId || null);
-      store.setState({ templates });
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
       navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
       return;
     }
@@ -2307,7 +2307,7 @@ async function _confirmTemplateActionDialog() {
       _templateActionDialog = null;
       _templateActionBusy = false;
       const templates = await fetchTemplates(route.projectId || null);
-      store.setState({ templates });
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
       return;
     }
 
@@ -2352,7 +2352,7 @@ async function _confirmTemplateActionDialog() {
       _templateActionDialog = null;
       _templateActionBusy = false;
       const templates = await fetchTemplates(route.projectId || null);
-      store.setState({ templates });
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
       navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
       return;
     }
@@ -2382,7 +2382,7 @@ async function _confirmTemplateActionDialog() {
       _templateActionDialog = null;
       _templateActionBusy = false;
       const templates = await fetchTemplates(route.projectId || null);
-      store.setState({ templates });
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
       return;
     }
   } catch (err) {
@@ -4175,7 +4175,11 @@ function mainContentView() {
         _editorTemplatesFetching = true;
         fetchTemplates(route.projectId || null)
           .then((templates) => {
-            store.setState({ templates, templatesLoaded: true });
+            store.setState({
+              templates,
+              defaultTemplate: templates.defaultTemplate,
+              templatesLoaded: true,
+            });
           })
           .finally(() => {
             _editorTemplatesFetching = false;
@@ -4188,7 +4192,10 @@ function mainContentView() {
         onSaved: () => {
           // Refresh templates list on save, then back to the list view.
           fetchTemplates(route.projectId || null).then((templates) => {
-            store.setState({ templates });
+            store.setState({
+              templates,
+              defaultTemplate: templates.defaultTemplate,
+            });
           });
           navigate('templates', null, route.projectId);
         },
@@ -4197,7 +4204,15 @@ function mainContentView() {
       });
     }
 
-    const defaultTemplate = settings.worca?.default_template || null;
+    // The default_template pointer now ships in the same /templates
+    // response as the list, so we read it from state.defaultTemplate
+    // (set by fetchTemplates) instead of waiting for the separate
+    // /settings round-trip. That way the ★ Default badge renders on
+    // the first paint, with no flicker.
+    const defaultTemplate =
+      state.defaultTemplate !== undefined
+        ? state.defaultTemplate
+        : settings.worca?.default_template || null;
     return pipelinesView(viewState, {
       rerender,
       defaultTemplate,

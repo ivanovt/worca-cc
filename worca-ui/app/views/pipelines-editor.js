@@ -366,8 +366,8 @@ function formBufferToConfig(formBuffer) {
 async function validateConfig(projectId, config, settingsPath) {
   try {
     const url = projectId
-      ? `/api/projects/${projectId}/templates/_check/validate`
-      : '/api/templates/_check/validate';
+      ? `/api/projects/${projectId}/templates/validate`
+      : '/api/templates/validate';
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

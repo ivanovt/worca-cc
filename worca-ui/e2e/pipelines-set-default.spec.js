@@ -142,7 +142,14 @@ test('set as default button updates star badge on template card', async ({ page 
     expect(existsSync(settingsPath)).toBe(true);
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(settings.worca).toBeDefined();
-    expect(settings.worca.default_template).toBe('test-one');
+    // default_template is now the object form `{tier, id}` — see
+    // server/templates-routes.js PUT /default-template. The bare
+    // string form is still accepted on read for backward compat,
+    // but writes always emit the structured shape.
+    expect(settings.worca.default_template).toEqual({
+      tier: 'project',
+      id: 'test-one',
+    });
   } finally {
     await ctx.close();
   }
@@ -354,7 +361,10 @@ test('invalid template ID shows error toast when setting default', async ({ page
         if (body) {
           try {
             const parsed = JSON.parse(body);
-            parsed.tid = 'invalid-template-id-with-$$$-chars';
+            // PUT body is now `{tier, id}` (was `{tid}`). Override
+            // `id` with an invalid value containing special chars
+            // that fail the server's TEMPLATE_RE check.
+            parsed.id = 'invalid-template-id-with-$$$-chars';
             route.continue({
               postData: JSON.stringify(parsed),
             });

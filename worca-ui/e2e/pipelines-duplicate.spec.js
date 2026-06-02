@@ -184,10 +184,14 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
     // Wait for templates to load
     await expect(page.locator('.pipelines-view')).toBeAttached({ timeout: 5000 });
 
-    // Find the duplicated template - it should now be in Project tier (editable)
-    const duplicatedCard = page.locator('.template-card').filter({
-      hasText: /Minimal/i,
-    });
+    // Find the duplicated template — narrow to the Project tier
+    // section so we don't strict-mode-violate against the
+    // identically-named built-in card that's also rendered (and is
+    // still attached in the DOM even while its sl-details is
+    // collapsed).
+    const duplicatedCard = page
+      .locator('sl-details.pipelines-tier-section--project .template-card')
+      .filter({ hasText: /Minimal/i });
     await expect(duplicatedCard).toBeAttached();
 
     // The Edit-button-per-card was replaced with clickable cards;

@@ -385,9 +385,23 @@ export function createTemplatesRoutes() {
    */
   router.get('/templates', (req, res) => {
     try {
-      const { projectRoot } = req.project;
+      const { projectRoot, settingsPath } = req.project;
       const templates = listTemplatesFlat(projectRoot);
-      res.json({ ok: true, templates });
+      // Include the project's default_template pointer in the same
+      // response so the cards don't render once without the ★ Default
+      // badge and then re-render after a second `/settings` round-trip
+      // arrives. One request, both bits of state.
+      let defaultTemplate = null;
+      try {
+        if (settingsPath && existsSync(settingsPath)) {
+          const parsed = JSON.parse(readFileSync(settingsPath, 'utf8'));
+          defaultTemplate = parsed?.worca?.default_template || null;
+        }
+      } catch (_err) {
+        // Bad settings.json shouldn't break the template list — just
+        // omit the default. The Settings tab surfaces the real error.
+      }
+      res.json({ ok: true, templates, default_template: defaultTemplate });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
@@ -443,6 +457,34 @@ export function createTemplatesRoutes() {
       res
         .status(statusForCliCode(err.cliCode))
         .json({ ok: false, error: err.message, code: err.cliCode });
+    }
+  });
+
+  /**
+   * POST /api/projects/:projectId/templates/validate
+   * Body: { config }
+   *
+   * The validator is generic — it only inspects the posted `config`
+   * against the schema; the (tier, id) of any existing template are
+   * irrelevant. Keep the path tier-free so the editor can probe
+   * arbitrary drafts without inventing a placeholder tier/id pair.
+   *
+   * Registered before `/templates/:tier` (and any other 1-segment
+   * route below) so Express doesn't try to match "validate" as a
+   * tier parameter.
+   */
+  router.post('/templates/validate', (req, res) => {
+    const { config } = req.body || {};
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'config must be a JSON object' });
+    }
+    try {
+      const { issues } = validateConfig(req.project.projectRoot, config);
+      res.json({ ok: true, issues });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 
@@ -630,27 +672,6 @@ export function createTemplatesRoutes() {
       dst_tier: dstTier,
       dst_id: dstId,
     });
-  });
-
-  /**
-   * POST /api/projects/:projectId/templates/:tier/:id/validate
-   * Body: { config }
-   */
-  router.post('/templates/:tier/:id/validate', (req, res) => {
-    const { tier, id } = req.params;
-    if (rejectInvalidTierId(res, tier, id)) return;
-    const { config } = req.body || {};
-    if (!config || typeof config !== 'object' || Array.isArray(config)) {
-      return res
-        .status(400)
-        .json({ ok: false, error: 'config must be a JSON object' });
-    }
-    try {
-      const { issues } = validateConfig(req.project.projectRoot, config);
-      res.json({ ok: true, issues });
-    } catch (err) {
-      res.status(500).json({ ok: false, error: err.message });
-    }
   });
 
   /**

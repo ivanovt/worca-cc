@@ -146,7 +146,8 @@ test('confirming guard dialog on delete actually deletes the template', async ({
     // Set up response interception before clicking
     const deleteResponse = page.waitForResponse(
       (res) =>
-        res.url().includes('/templates/deletable-tmpl') &&
+        // URL now includes the tier: /templates/project/deletable-tmpl
+        res.url().includes('/templates/project/deletable-tmpl') &&
         res.request().method() === 'DELETE',
       { timeout: 10000 },
     );
@@ -254,15 +255,27 @@ test('no guard dialog when template has no in-flight runs', async ({ page }) => 
     const card = page.locator('.template-card:has(.run-card-title:has-text("Idle Template"))');
     const deleteBtn = card.locator('button:has-text("Delete")');
 
-    // Set up response interception before clicking
+    await deleteBtn.click();
+
+    // No *guard* dialog (the in-flight-runs warning). A standard
+    // confirm dialog now always appears for delete — confirm it so
+    // the DELETE request fires. The guard dialog is template-guard-
+    // dialog (would block); the confirm dialog is global-confirm-dialog.
+    await expect(page.locator('#global-confirm-dialog')).toBeVisible({ timeout: 5000 });
+    await expect(page.locator('.template-guard-dialog')).toHaveCount(0);
+
+    // Set up response interception before confirming
     const deleteResponse = page.waitForResponse(
       (res) =>
-        res.url().includes('/templates/idle-template') &&
+        // URL now includes the tier: /templates/project/idle-template
+        res.url().includes('/templates/project/idle-template') &&
         res.request().method() === 'DELETE',
       { timeout: 10000 },
     );
 
-    await deleteBtn.click();
+    await page
+      .locator('#global-confirm-dialog sl-button[variant="danger"]')
+      .click();
 
     // No guard dialog should appear — delete goes through directly
     const dialog = page.locator('sl-dialog.template-guard-dialog');

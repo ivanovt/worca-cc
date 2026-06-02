@@ -135,6 +135,24 @@ function fetchTemplates(projectId) {
       if (data.ok) {
         templates = data.templates;
 
+        // The /templates response also carries the project's
+        // `default_template` pointer (added so the Pipeline Templates
+        // page doesn't flicker between renders). Pick it up here too
+        // so the launcher's "default" option is correctly annotated
+        // even before the separate /settings round-trip lands.
+        // Accept both the legacy bare-string form and the new
+        // `{tier, id}` object form.
+        const rawDefault = data.default_template;
+        const bundledId =
+          typeof rawDefault === 'string'
+            ? rawDefault
+            : rawDefault && typeof rawDefault === 'object'
+              ? rawDefault.id || ''
+              : '';
+        if (bundledId) {
+          defaultTemplateId = bundledId;
+        }
+
         // Auto-select the default template if it's present in the templates list
         if (defaultTemplateId) {
           const found = templates.find((t) => t.id === defaultTemplateId);
@@ -161,10 +179,15 @@ function fetchDefaultTemplate(projectId) {
   return fetch(url)
     .then((r) => r.json())
     .then((data) => {
+      // Accept both forms: legacy bare-string `"bugfix"` and the
+      // new structured `{tier: "project", id: "bugfix"}` shape.
+      const raw = data?.worca?.default_template;
       defaultTemplateId =
-        typeof data?.worca?.default_template === 'string'
-          ? data.worca.default_template
-          : '';
+        typeof raw === 'string'
+          ? raw
+          : raw && typeof raw === 'object'
+            ? raw.id || ''
+            : '';
 
       // Auto-select the default template if it's present in the templates list
       if (defaultTemplateId && templates) {

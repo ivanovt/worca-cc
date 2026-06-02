@@ -634,9 +634,13 @@ describe('templates-routes — (tier, id) contract', () => {
     });
   });
 
-  // ─── POST /templates/:tier/:id/validate ───────────────────────────
+  // ─── POST /templates/validate ─────────────────────────────────────
 
-  describe('POST /templates/:tier/:id/validate', () => {
+  describe('POST /templates/validate', () => {
+    // Moved out of `/templates/:tier/:id/validate` because the
+    // validator is generic — it inspects the posted config only,
+    // and Express was failing to match the 3-segment path when the
+    // client sent the placeholder `_check/validate` (2 segments).
     it('returns parsed issues from the CLI', async () => {
       const app = await createTestApp(projectRoot);
       mockExecSync.mockReturnValue(
@@ -651,7 +655,7 @@ describe('templates-routes — (tier, id) contract', () => {
       const { status, body } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/project/tmpl/validate',
+        '/api/projects/test/templates/validate',
         { config: { agents: {} } },
       );
       expect(status).toBe(200);
@@ -663,10 +667,25 @@ describe('templates-routes — (tier, id) contract', () => {
       const { status } = await request(
         app,
         'POST',
-        '/api/projects/test/templates/project/x/validate',
+        '/api/projects/test/templates/validate',
         { config: 'not-an-object' },
       );
       expect(status).toBe(400);
+    });
+
+    it('does not collide with `POST /templates/:tier` (creating a "validate" tier)', async () => {
+      // Guard against route-order regressions: if `/templates/:tier`
+      // is registered before `/templates/validate`, Express captures
+      // "validate" as a tier slug and the validate POST disappears.
+      const app = await createTestApp(projectRoot);
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/validate',
+        { config: { stages: {} } },
+      );
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
     });
   });
 

@@ -49,20 +49,39 @@ test('create template from blank', async ({ page }) => {
     // Name lives in the inline editable Name pill (sl-input), not a
     // static .editor-title heading. New templates default the value
     // to "New Template" via _initEditTemplate().
-    await expect(page.locator('.editor-name-input')).toHaveValue('New Template', { timeout: 5000 });
+    // `.editor-name-input` is an sl-input web component; toHaveValue()
+    // expects a native input. Read .value via evaluate and assert
+    // in JS-land instead. The longer initial-load timeout (5s) is
+    // preserved by polling for up to 5s here.
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator('.editor-name-input')
+            .evaluate((el) => el.value)
+            .catch(() => null),
+        { timeout: 5000 },
+      )
+      .toBe('New Template');
 
     // Verify the editor mode toggle is present
     const formBtn = page.locator('.editor-mode-toggle sl-button:first-child');
     await expect(formBtn).toBeAttached({ timeout: 5000 });
 
-    // Toggle a stage (e.g., disable plan_review stage)
+    // Toggle a stage (e.g., disable plan_review stage). The editor
+    // opens on the Models tab; stages live on the Stages tab — click
+    // it first so the panel is visible (sl-tab-panel is in the DOM
+    // but hidden when not active).
+    await page
+      .locator('.editor-tab-group sl-tab[panel="stages"]')
+      .click();
     // Stage cards were restructured during the editor redesign — the
     // outer node is `.pipeline-stage-node`, the name lives in
     // `.settings-card-title`, and the toggle is `sl-switch#stage-<id>-enabled`.
     const planReviewRow = page.locator(
       '.pipeline-stage-node:has(.settings-card-title:has-text("plan_review"))',
     );
-    await expect(planReviewRow).toBeAttached();
+    await expect(planReviewRow).toBeVisible();
     const planReviewSwitch = planReviewRow.locator('sl-switch');
     await planReviewSwitch.click();
 
@@ -150,9 +169,18 @@ test('edit existing template', async ({ page }) => {
     await page.goto(`${ctx.url}/#/templates/project/test-edit/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
-    // Verify template loaded — name is now in the inline editable
-    // Name pill (sl-input) rather than a static .editor-title heading.
-    await expect(page.locator('.editor-name-input')).toHaveValue('Test Edit Template');
+    // Verify template loaded — read sl-input .value via evaluate
+    // (toHaveValue() only works on native inputs).
+    await expect
+      .poll(
+        async () =>
+          page
+            .locator('.editor-name-input')
+            .evaluate((el) => el.value)
+            .catch(() => null),
+        { timeout: 5000 },
+      )
+      .toBe('Test Edit Template');
 
     // Edit planner model via Shoelace sl-select (use evaluate to set value)
     const plannerModelSelect = page.locator('#agent-planner-model');
@@ -174,9 +202,11 @@ test('edit existing template', async ({ page }) => {
     const saveButton = page.locator('.editor-footer sl-button', {
       hasText: 'Save',
     });
+    // URL now includes the tier between /templates/ and the id:
+    // /api/projects/<projectId>/templates/project/test-edit
     const apiResponse = page.waitForResponse(
       (res) =>
-        res.url().includes('/templates/test-edit') &&
+        res.url().includes('/templates/project/test-edit') &&
         res.request().method() === 'PUT',
       { timeout: 10000 },
     );
@@ -250,15 +280,19 @@ test('JSON toggle round-trip preserves edits', async ({ page }) => {
     const formBtn = page.locator('.editor-mode-toggle sl-button:first-child');
     await formBtn.click();
 
-    // Verify changes persisted to form fields
-    // Check plan_review is now enabled
+    // Verify changes persisted to form fields. Switch to the Stages
+    // tab first — sl-tab-panel contents are in the DOM but hidden
+    // until their tab is active.
+    await page
+      .locator('.editor-tab-group sl-tab[panel="stages"]')
+      .click();
     // Stage cards were restructured during the editor redesign — the
     // outer node is `.pipeline-stage-node`, the name lives in
     // `.settings-card-title`, and the toggle is `sl-switch#stage-<id>-enabled`.
     const planReviewRow = page.locator(
       '.pipeline-stage-node:has(.settings-card-title:has-text("plan_review"))',
     );
-    await expect(planReviewRow).toBeAttached();
+    await expect(planReviewRow).toBeVisible();
     const isChecked = await planReviewRow.locator('sl-switch').evaluate((el) => el.checked);
     expect(isChecked).toBe(true);
 
@@ -398,12 +432,19 @@ test('edit governance dispatch section', async ({ page }) => {
     await page.goto(`${ctx.url}/#/templates/project/dispatch-test/edit`, GOTO_OPTS);
     await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 30000 });
 
-    // Scroll to governance section
+    // Switch to the Governance tab — the section is no longer on
+    // one long scrollable page; the editor moved to a tabbed layout
+    // (Models / Stages / Agents / Loops / Circuit Breaker /
+    // Governance). The dispatch section's heading text is now
+    // "Governance dispatch" (lowercase d) and the class is
+    // `settings-section-title`, not `section-title`.
+    await page
+      .locator('.editor-tab-group sl-tab[panel="governance"]')
+      .click();
     const govSection = page.locator(
-      '.editor-section:has(.section-title:has-text("Governance Dispatch"))',
+      '.settings-tab-content:has(.settings-section-title:has-text("Governance dispatch"))',
     );
-    await expect(govSection).toBeAttached();
-    await govSection.scrollIntoViewIfNeeded();
+    await expect(govSection).toBeVisible({ timeout: 5000 });
 
     // Find the Tools dispatch section (it's a div.dispatch-section, not sl-details)
     const toolsSection = govSection.locator('.dispatch-section:has(.dispatch-section-title:has-text("Tools"))');

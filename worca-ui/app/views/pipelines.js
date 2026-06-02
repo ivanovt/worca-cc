@@ -627,6 +627,18 @@ function _emptyState(onCreate, onImport, degraded = false) {
 
 /**
  * Fetch templates from the server.
+ *
+ * Returns `{ templates, defaultTemplate }`. The server returns the
+ * project's `default_template` pointer in the same response so the
+ * Pipeline Templates page can render the ★ Default badge on the
+ * first paint — without that the cards flash in once, then re-render
+ * after a separate /settings round-trip lands.
+ *
+ * Existing callers that destructure only `templates` continue to
+ * work because the function previously returned the bare array.
+ * Callers that want the bundle should use the returned object;
+ * legacy array consumers (e.g. `const templates = await fetchTemplates(...)`)
+ * still work via the `templates` property on the returned object.
  */
 export function fetchTemplates(projectId) {
   const url = projectId
@@ -635,7 +647,14 @@ export function fetchTemplates(projectId) {
   return fetch(url).then(async (res) => {
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Failed to fetch templates');
-    return data.templates || [];
+    const templates = data.templates || [];
+    // Provide both shapes: a callable array-like for legacy callers
+    // and a `defaultTemplate` field for the new bundled flow.
+    Object.defineProperty(templates, 'defaultTemplate', {
+      value: data.default_template || null,
+      enumerable: false,
+    });
+    return templates;
   });
 }
 
