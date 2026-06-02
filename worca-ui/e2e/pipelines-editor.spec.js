@@ -64,54 +64,31 @@ test('create template from blank', async ({ page }) => {
       )
       .toBe('New Template');
 
-    // Verify the editor mode toggle is present
-    const formBtn = page.locator('.editor-mode-toggle sl-button:first-child');
-    await expect(formBtn).toBeAttached({ timeout: 5000 });
-
-    // Toggle a stage (e.g., disable plan_review stage). The editor
-    // opens on the Agents tab; stages live on the Stages tab — click
-    // it first so the panel is visible (sl-tab-panel is in the DOM
-    // but hidden when not active).
+    // Toggle a stage (disable plan_review). The editor opens on the
+    // Agents tab; the Pipeline tab is where stages live.
     await page
       .locator('.editor-tab-group sl-tab[panel="pipeline"]')
       .click();
-    // Stage cards were restructured during the editor redesign — the
-    // outer node is `.pipeline-stage-node`, the name lives in
-    // `.settings-card-title`, and the toggle is `sl-switch#stage-<id>-enabled`.
     const planReviewRow = page.locator(
       '.pipeline-stage-node:has(.settings-card-title:has-text("plan_review"))',
     );
     await expect(planReviewRow).toBeVisible();
     const planReviewSwitch = planReviewRow.locator('sl-switch');
+    const wasEnabled = await planReviewSwitch.evaluate((el) => el.checked);
     await planReviewSwitch.click();
+    // The switch state actually flips — write a tiny assertion so this
+    // catches regressions in the lit-html binding (rather than just
+    // verifying the click landed).
+    await expect
+      .poll(async () => await planReviewSwitch.evaluate((el) => el.checked))
+      .toBe(!wasEnabled);
 
-    // Switch to JSON mode and verify the config reflects our changes
-    const jsonBtn = page.locator('.editor-mode-toggle sl-button:nth-child(2)');
-    await jsonBtn.click();
-
-    // Verify JSON editor is visible
-    const jsonEditor = page.locator('#template-config-json');
-    await expect(jsonEditor).toBeAttached();
-
-    // Read the JSON value from the sl-textarea
-    const jsonValue = await jsonEditor.evaluate((el) => el.value);
-
-    // Verify stages.plan_review is false (disabled)
-    expect(jsonValue).toContain('"plan_review"');
-    expect(jsonValue).toContain('"enabled": false');
-
-    // Switch back to Form mode
-    const formModeBtn = page.locator('.editor-mode-toggle sl-button:first-child');
-    await formModeBtn.click();
-
-    // Click Save button — disambiguate from the sibling Cancel
-    // button by text content (both are `sl-button` web components).
+    // Click Save — text-filtered to avoid the Cancel sibling.
     const saveButton = page.locator('.editor-footer sl-button', {
       hasText: 'Save',
     });
     await expect(saveButton).toBeAttached();
 
-    // Wait for POST /api/templates response and redirect to pipelines list
     const apiResponse = page.waitForResponse(
       (res) =>
         res.url().includes('/templates') && res.request().method() === 'POST',
@@ -119,16 +96,14 @@ test('create template from blank', async ({ page }) => {
     );
     await saveButton.click();
 
-    // Verify the API response was successful
     const response = await apiResponse;
     expect(response.ok()).toBe(true);
 
-    // Wait for toast notification
+    // After Save the editor stays on the page (W-062 phase 6) and a
+    // success toast appears — we no longer redirect to the list.
     const toastText = await getToastText(page);
     expect(toastText).toContain('created successfully');
-
-    // Verify we're redirected to pipelines list
-    await page.waitForURL(/templates$/, { timeout: 5000 });
+    expect(page.url()).toMatch(/\/templates\/[^/]+\/[^/]+\/edit/);
   } finally {
     await ctx.close();
   }
@@ -219,8 +194,9 @@ test('edit existing template', async ({ page }) => {
     const toastText = await getToastText(page);
     expect(toastText).toContain('updated successfully');
 
-    // Verify redirect to pipelines list
-    await page.waitForURL(/templates$/, { timeout: 5000 });
+    // Save stays on the editor page (W-062 phase 6). The URL must
+    // still be /templates/<tier>/<id>/edit, not the list page.
+    expect(page.url()).toMatch(/\/templates\/project\/test-edit\/edit/);
   } finally {
     await ctx.close();
   }

@@ -174,10 +174,9 @@ test('duplicate built-in template, edit, and save', async ({ page }) => {
     const toastText = await getToastText(page);
     expect(toastText).toContain('updated successfully');
 
-    // Verify redirect back to pipelines list
-    await page.waitForURL(/templates$/, { timeout: 5000 });
-
-    // Navigate to pipelines list and verify our duplicated template is now in Project tier
+    // Save stays on the editor page (W-062 phase 6). Navigate to
+    // the list ourselves to verify the project-tier copy is there.
+    expect(page.url()).toMatch(/\/templates\/[^/]+\/[^/]+\/edit/);
     await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
     await expandAllTierSections(page);
 
@@ -285,12 +284,21 @@ test('duplicate with custom destination ID and scope', async ({ page }) => {
     const saveButton = page.locator('.editor-footer sl-button', {
       hasText: 'Save',
     });
+    const saveResponse = page.waitForResponse(
+      (res) =>
+        res.url().includes('/templates/') &&
+        res.request().method() === 'PUT',
+      { timeout: 10000 },
+    );
     await saveButton.click();
 
-    // Verify save success and redirect
-    await page.waitForURL(/templates$/, { timeout: 5000 });
+    // Save stays on the editor page (W-062 phase 6); just confirm
+    // the network round-trip plus the success toast.
+    const saveRes2 = await saveResponse;
+    expect(saveRes2.ok()).toBe(true);
     const toastText = await getToastText(page);
     expect(toastText).toContain('updated successfully');
+    expect(page.url()).toMatch(/\/templates\/[^/]+\/[^/]+\/edit/);
   } finally {
     await ctx.close();
   }
