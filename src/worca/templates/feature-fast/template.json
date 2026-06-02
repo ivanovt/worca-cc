@@ -109,6 +109,10 @@
       "plan_approval": true,
       "pr_approval": false,
       "deploy_approval": false
+    },
+    "governance": {
+      "test_gate_strikes": 2,
+      "plan_review_enforce": "auto"
     }
   }
 }

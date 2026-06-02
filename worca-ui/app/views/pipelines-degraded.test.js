@@ -116,7 +116,7 @@ describe('pipelinesView — degraded mode', () => {
     expect(container.querySelector('.pipelines-cli-banner')).toBeNull();
   });
 
-  it('disables Edit / Duplicate / Set Default / Delete buttons in degraded mode', () => {
+  it('disables Duplicate / Delete buttons in degraded mode', () => {
     const handlers = snapshotHandlers();
     container = mount(
       {
@@ -128,17 +128,17 @@ describe('pipelinesView — degraded mode', () => {
     );
     const cards = container.querySelectorAll('.template-card');
     expect(cards.length).toBe(2);
-    // The Edit button was removed in favor of clickable cards, and
+    // The Edit button was removed in favor of clickable cards,
     // Rename was removed because the editor's inline Name/ID fields
-    // do the same job. Duplicate renders on every tier; the rest
-    // (Set Default, Delete) are project-only. All must be `disabled`.
+    // do the same job, and Set Default was moved to the editor's
+    // page header (it lives there as a toggle now). Duplicate
+    // renders on every tier; Delete is project-only. All must be
+    // `disabled` here.
     const upgradeBtns = container.querySelectorAll(
       'button[title^="Upgrade worca-cc"]',
     );
-    // 1 (builtin Duplicate)
-    // + 3 (project Duplicate + Set Default + Delete)
-    // = 4.
-    expect(upgradeBtns.length).toBe(4);
+    // 1 (builtin Duplicate) + 2 (project Duplicate + Delete) = 3.
+    expect(upgradeBtns.length).toBe(3);
     for (const btn of upgradeBtns) {
       expect(btn.disabled).toBe(true);
     }

@@ -18,13 +18,9 @@ import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
 import {
-  Activity,
-  AlertTriangle,
   CircleCheck,
-  Cpu,
   iconSvg,
   RefreshCw,
-  RotateCcw,
   Save,
   Settings,
   Shield,
@@ -41,7 +37,12 @@ import {
 } from '../utils/templates.js';
 import { AGENT_NAMES } from './agent-names.js';
 import { dispatchSectionView } from './dispatch-section.js';
-import { getModelKeys, STAGE_AGENT_MAP } from './settings.js';
+import {
+  AUTO_MODES,
+  getModelKeys,
+  PLAN_REVIEW_ENFORCE_OPTIONS,
+  STAGE_AGENT_MAP,
+} from './settings.js';
 
 // --- Editor state and validation ---
 
@@ -158,7 +159,11 @@ const DEFAULT_CIRCUIT_BREAKER = {
   max_consecutive_failures: 3,
 };
 
-// Governance defaults
+// Governance defaults — `guards` keys are only here for legacy form
+// hydration; they're cross-template (project-owned) and the
+// editor never reads or writes them. test_gate_strikes,
+// plan_review_enforce, and dispatch ARE template-owned and edited
+// in this surface.
 const DEFAULT_GOVERNANCE = {
   guards: {
     block_rm_rf: true,
@@ -167,6 +172,7 @@ const DEFAULT_GOVERNANCE = {
     restrict_git_commit: true,
   },
   test_gate_strikes: 2,
+  plan_review_enforce: 'auto',
   dispatch: {
     tools: { ...DISPATCH_DEFAULTS.tools },
     skills: { ...DISPATCH_DEFAULTS.skills },
@@ -246,6 +252,15 @@ function buildFormBuffer(templateConfig, settings) {
     settings?.worca?.governance,
   );
 
+  // Approval gates — milestones is template-owned. Defaults match
+  // the server-side defaults (plan approval required, PR approval
+  // off).
+  form.milestones = {
+    plan_approval: true,
+    pr_approval: false,
+    ...(config.milestones || {}),
+  };
+
   return form;
 }
 
@@ -267,6 +282,8 @@ function deepMergeGovernance(gov, defaultGov) {
     guards,
     test_gate_strikes:
       gov?.test_gate_strikes ?? defaultGov?.test_gate_strikes ?? 2,
+    plan_review_enforce:
+      gov?.plan_review_enforce ?? defaultGov?.plan_review_enforce ?? 'auto',
     dispatch: base,
   };
 }
@@ -356,6 +373,20 @@ function formBufferToConfig(formBuffer) {
 
   // Governance
   config.governance = formBuffer.governance;
+
+  // Effort (auto_mode + auto_cap). Only persist if the buffer has
+  // either field — empty/default templates skip the key entirely so
+  // the Python loader uses its own defaults.
+  if (formBuffer.effort && Object.keys(formBuffer.effort).length > 0) {
+    config.effort = { ...formBuffer.effort };
+  }
+
+  // Milestones (approval gates). Always persist; the template's
+  // explicit choice (e.g. pr_approval: false) needs to win over any
+  // legacy project-Settings value that might still be on disk.
+  if (formBuffer.milestones) {
+    config.milestones = { ...formBuffer.milestones };
+  }
 
   return config;
 }
@@ -1143,45 +1174,44 @@ export function pipelinesEditorView(state, options) {
           viewMode === 'form'
             ? html`
               <sl-tab-group class="editor-tab-group">
-                <sl-tab slot="nav" panel="models">
-                  ${unsafeHTML(iconSvg(Cpu, 14))}
-                  Models
-                </sl-tab>
-                <sl-tab slot="nav" panel="stages">
-                  ${unsafeHTML(iconSvg(Workflow, 14))}
-                  Stages
-                </sl-tab>
+                <!--
+                  Three template-editor tabs:
+                    Agents    → effort policy (auto_mode + auto_cap)
+                                + per-agent Model / Turns / Effort
+                    Pipeline  → stages + loops + circuit_breaker
+                                (mirrors Project Settings → Pipeline)
+                    Governance → dispatch allow/deny lists
+
+                  Effort got folded into Agents because there were
+                  only two pipeline-wide knobs and the per-agent
+                  effort column already lived in Agents — two tabs
+                  for one concern was busywork. Models / Pricing /
+                  Webhooks / Graphify / Code Review Graph stay in
+                  Project Settings — they are cross-template.
+                -->
                 <sl-tab slot="nav" panel="agents">
                   ${unsafeHTML(iconSvg(Users, 14))}
                   Agents
                 </sl-tab>
-                <sl-tab slot="nav" panel="loops">
-                  ${unsafeHTML(iconSvg(RotateCcw, 14))}
-                  Loops
-                </sl-tab>
-                <sl-tab slot="nav" panel="circuit-breaker">
-                  ${unsafeHTML(iconSvg(AlertTriangle, 14))}
-                  Circuit Breaker
+                <sl-tab slot="nav" panel="pipeline">
+                  ${unsafeHTML(iconSvg(Workflow, 14))}
+                  Pipeline
                 </sl-tab>
                 <sl-tab slot="nav" panel="governance">
                   ${unsafeHTML(iconSvg(Shield, 14))}
                   Governance
                 </sl-tab>
 
-                <sl-tab-panel name="models">
-                  ${_modelsTab(formBuffer, settings, projectId, rerender)}
-                </sl-tab-panel>
-                <sl-tab-panel name="stages">
-                  ${_stagesSection(formBuffer, projectId, rerender)}
-                </sl-tab-panel>
                 <sl-tab-panel name="agents">
-                  ${_agentsTab(formBuffer, projectId, rerender)}
+                  ${_agentsTab(formBuffer, settings, projectId, rerender)}
                 </sl-tab-panel>
-                <sl-tab-panel name="loops">
-                  ${_loopsSection(formBuffer, projectId, rerender)}
-                </sl-tab-panel>
-                <sl-tab-panel name="circuit-breaker">
-                  ${_circuitBreakerSection(formBuffer, projectId, rerender)}
+                <sl-tab-panel name="pipeline">
+                  <div class="editor-pipeline-tab">
+                    ${_stagesSection(formBuffer, projectId, rerender)}
+                    ${_milestonesSection(formBuffer, projectId, rerender)}
+                    ${_loopsSection(formBuffer, projectId, rerender)}
+                    ${_circuitBreakerSection(formBuffer, projectId, rerender)}
+                  </div>
                 </sl-tab-panel>
                 <sl-tab-panel name="governance">
                   ${_governanceSection(formBuffer, settings, projectId, rerender)}
@@ -1309,31 +1339,103 @@ function _stagesSection(formBuffer, projectId, rerender) {
 }
 
 /**
- * Render the Agents configuration section (matrix).
- */
-/**
- * Models tab: per-agent model picker.
+ * Agents tab: per-agent Model / Max turns / Effort.
  *
- * Split out of the legacy `Agents` section so users can pick the model
- * landscape first (the most consequential template-level decision)
- * before drilling into per-agent details like max_turns and effort.
- * The DOM ids (`agent-<name>-model`) match what `readPipelineFromDom`
- * reads on save, so the save path is unchanged.
+ * Previously split across two tabs (Models + Agents). Both were per-
+ * agent settings, so splitting was arbitrary — collapsed into one
+ * three-column card per agent. Matches the Project Settings → Agents
+ * tab convention of "one row per agent, all runtime knobs co-located".
+ *
+ * DOM ids are preserved so `readPipelineFromDom` and any e2e selectors
+ * keep working: `agent-<name>-model`, `agent-<name>-turns`,
+ * `effort-agent-<name>`.
  */
-function _modelsTab(formBuffer, settings, projectId, rerender) {
+function _agentsTab(formBuffer, settings, projectId, rerender) {
   const agents = formBuffer?.agents || {};
   const modelOptions = getModelOptions(settings?.worca);
+  const effort = formBuffer?.effort || {};
+  const autoMode = effort.auto_mode || 'adaptive';
+  const autoCap = effort.auto_cap || 'xhigh';
   const state = editorState;
 
   return html`
     <div class="settings-tab-content">
-      <h3 class="settings-section-title">Model assignments</h3>
+      <h3 class="settings-section-title">Effort mode</h3>
       <p class="settings-section-desc">
-        Choose which model alias each agent uses. Aliases resolve through
-        <code>worca.models</code> in the project settings — values shown
-        here are the merged set available at the project level.
+        Pipeline-wide reasoning-effort policy. <code>auto_mode</code>
+        controls the per-bead starting point and loopback escalation;
+        <code>auto_cap</code> bounds any runtime-resolved level.
+        Per-agent effort overrides live in the cards below.
       </p>
-      <div class="settings-cards editor-models-cards">
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label" for="effort-auto-mode">Auto mode</label>
+          <sl-select
+            id="effort-auto-mode"
+            .value=${autoMode}
+            size="small"
+            hoist
+            @sl-change=${(e) => {
+              editorState.formBuffer.effort = {
+                ...(editorState.formBuffer.effort || {}),
+                auto_mode: e.target.value,
+              };
+              rerender();
+            }}
+            @sl-blur=${() => {
+              validateConfigDebounced(
+                projectId,
+                editorState.formBuffer,
+                state.viewMode,
+                rerender,
+              );
+            }}
+          >
+            ${AUTO_MODES.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
+          </sl-select>
+          <span class="settings-field-hint"
+            >${_AUTO_MODE_HINTS[autoMode] || ''}</span
+          >
+        </div>
+        <div class="settings-field">
+          <label class="settings-label" for="effort-auto-cap">Auto cap</label>
+          <sl-select
+            id="effort-auto-cap"
+            .value=${autoCap}
+            size="small"
+            hoist
+            @sl-change=${(e) => {
+              editorState.formBuffer.effort = {
+                ...(editorState.formBuffer.effort || {}),
+                auto_cap: e.target.value,
+              };
+              rerender();
+            }}
+            @sl-blur=${() => {
+              validateConfigDebounced(
+                projectId,
+                editorState.formBuffer,
+                state.viewMode,
+                rerender,
+              );
+            }}
+          >
+            ${EFFORT_LEVELS.map((l) => html`<sl-option value="${l}">${l}</sl-option>`)}
+          </sl-select>
+          <span class="settings-field-hint"
+            >Ceiling for runtime-resolved effort levels</span
+          >
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Agent runtime</h3>
+      <p class="settings-section-desc">
+        Per-agent model, execution limits, and reasoning effort. Model
+        aliases resolve through <code>worca.models</code> in the project
+        settings; effort defaults to the model's setting when left
+        blank and the <code>auto_cap</code> above applies on top.
+      </p>
+      <div class="settings-cards">
         ${AGENT_NAMES.map((name) => {
           const agent = agents[name] || {};
           return html`
@@ -1366,43 +1468,6 @@ function _modelsTab(formBuffer, settings, projectId, rerender) {
                     ${modelOptions.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
                   </sl-select>
                 </div>
-              </div>
-            </div>
-          `;
-        })}
-      </div>
-    </div>
-  `;
-}
-
-/**
- * Agents tab: per-agent max_turns + effort.
- *
- * Settings.json's `Agents` tab in Project Settings owns the same fields;
- * we re-use the markup pattern (settings-cards + settings-field +
- * settings-label) so the two surfaces look interchangeable.
- */
-function _agentsTab(formBuffer, projectId, rerender) {
-  const agents = formBuffer?.agents || {};
-  const state = editorState;
-
-  return html`
-    <div class="settings-tab-content">
-      <h3 class="settings-section-title">Agent runtime</h3>
-      <p class="settings-section-desc">
-        Per-agent execution limits and reasoning effort. Effort defaults
-        to the model's setting when left blank; <code>auto_cap</code> in
-        the project-wide <code>worca.effort</code> block applies on top.
-      </p>
-      <div class="settings-cards">
-        ${AGENT_NAMES.map((name) => {
-          const agent = agents[name] || {};
-          return html`
-            <div class="settings-card">
-              <div class="settings-card-header">
-                <span class="settings-card-title">${name}</span>
-              </div>
-              <div class="settings-card-body">
                 <div class="settings-field">
                   <label class="settings-label" for="agent-${name}-turns">Max turns</label>
                   <sl-input
@@ -1460,6 +1525,101 @@ function _agentsTab(formBuffer, projectId, rerender) {
             </div>
           `;
         })}
+      </div>
+    </div>
+  `;
+}
+
+const _AUTO_MODE_HINTS = {
+  disabled: 'Per-agent effort only; no runtime escalation on loopbacks.',
+  reactive:
+    'Per-agent effort as starting point; escalates on test failures and review bounces.',
+  adaptive:
+    'Coordinator classifies per-bead effort; escalates on loopbacks. Explicit per-agent values override.',
+};
+
+/**
+ * Approval Gates (milestones) — template-owned. Pipeline pauses at
+ * each enabled milestone and waits for an approve/reject event
+ * before continuing. The Plan gate is the canonical safety net
+ * (no work proceeds without a reviewed plan); PR gate is opt-in
+ * because enabling it can hang unattended runs.
+ */
+function _milestonesSection(formBuffer, projectId, rerender) {
+  const milestones = formBuffer?.milestones || {};
+  const state = editorState;
+  const planApproval = milestones.plan_approval !== false;
+  const prApproval = milestones.pr_approval === true;
+
+  function _ensureMilestones() {
+    if (!editorState.formBuffer.milestones) {
+      editorState.formBuffer.milestones = {};
+    }
+    return editorState.formBuffer.milestones;
+  }
+
+  return html`
+    <div class="settings-tab-content">
+      <h3 class="settings-section-title">Approval gates</h3>
+      <p class="settings-section-desc">
+        Pause the pipeline at each enabled milestone and wait for an
+        approve/reject control event before continuing. Each
+        template owns its own gate posture — an unattended
+        nightly-run template might disable PR approval; a regulated
+        production template should require both.
+      </p>
+      <div class="settings-switches">
+        <div class="settings-switch-row">
+          <sl-switch
+            id="milestone-plan-approval"
+            ?checked=${planApproval}
+            size="small"
+            @sl-change=${(e) => {
+              _ensureMilestones().plan_approval = e.target.checked;
+              rerender();
+            }}
+            @sl-blur=${() => {
+              validateConfigDebounced(
+                projectId,
+                editorState.formBuffer,
+                state.viewMode,
+                rerender,
+              );
+            }}
+            >Plan approval required</sl-switch
+          >
+          <span class="settings-switch-desc"
+            >Pipeline pauses after Plan stage; pause-control event
+            lets you approve or reject before Coordinate.</span
+          >
+        </div>
+        <div class="settings-switch-row">
+          <sl-switch
+            id="milestone-pr-approval"
+            ?checked=${prApproval}
+            size="small"
+            @sl-change=${(e) => {
+              const m = _ensureMilestones();
+              if (e.target.checked) m.pr_approval = true;
+              else delete m.pr_approval;
+              rerender();
+            }}
+            @sl-blur=${() => {
+              validateConfigDebounced(
+                projectId,
+                editorState.formBuffer,
+                state.viewMode,
+                rerender,
+              );
+            }}
+            >PR approval required</sl-switch
+          >
+          <span class="settings-switch-desc"
+            >When enabled, pipeline pauses before guardian creates
+            the PR; approve/reject from the run detail view. Off by
+            default to avoid hanging unattended runs.</span
+          >
+        </div>
       </div>
     </div>
   `;
@@ -1612,15 +1772,96 @@ function _circuitBreakerSection(formBuffer, projectId, rerender) {
 function _governanceSection(formBuffer, settings, projectId, rerender) {
   const gov = formBuffer?.governance || DEFAULT_GOVERNANCE;
   const dispatch = gov.dispatch || DEFAULT_GOVERNANCE.dispatch;
+  const testGateStrikes = gov.test_gate_strikes ?? 2;
+  const planReviewEnforce = gov.plan_review_enforce || 'auto';
   const state = editorState;
+
+  // Ensure governance is mutable in the form buffer before binding
+  // change handlers — DEFAULT_GOVERNANCE is shared and shouldn't be
+  // mutated in place.
+  function _ensureGovernance() {
+    if (!editorState.formBuffer.governance) {
+      editorState.formBuffer.governance = { ...DEFAULT_GOVERNANCE };
+    }
+    return editorState.formBuffer.governance;
+  }
 
   return html`
     <div class="settings-tab-content">
+      <h3 class="settings-section-title">Test gate</h3>
+      <p class="settings-section-desc">
+        Halt the pipeline after this many consecutive pytest failures.
+        Acts like a circuit breaker for test runs — a smaller number
+        catches runaway loops sooner at the cost of recovering less
+        well from flakes.
+      </p>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label" for="test-gate-strikes">Strike threshold</label>
+          <sl-input
+            id="test-gate-strikes"
+            type="number"
+            .value=${String(testGateStrikes)}
+            size="small"
+            min="1"
+            max="10"
+            @sl-input=${(e) => {
+              _ensureGovernance().test_gate_strikes =
+                parseInt(e.target.value, 10) || 2;
+              rerender();
+            }}
+            @sl-blur=${() => {
+              validateConfigDebounced(
+                projectId,
+                editorState.formBuffer,
+                state.viewMode,
+                rerender,
+              );
+            }}
+          ></sl-input>
+          <span class="settings-field-hint">1–10; default 2.</span>
+        </div>
+      </div>
+
+      <h3 class="settings-section-title">Plan review enforcement</h3>
+      <p class="settings-section-desc">
+        Controls the minimum plan review mode this template requires.
+        <code>auto</code> lets the pipeline decide;
+        <code>review_and_edit</code> forces edit capability but loses
+        independent verification of the plan.
+      </p>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label" for="governance-plan-review-enforce">Enforce mode</label>
+          <sl-select
+            id="governance-plan-review-enforce"
+            .value=${planReviewEnforce}
+            size="small"
+            hoist
+            @sl-change=${(e) => {
+              _ensureGovernance().plan_review_enforce = e.target.value;
+              rerender();
+            }}
+            @sl-blur=${() => {
+              validateConfigDebounced(
+                projectId,
+                editorState.formBuffer,
+                state.viewMode,
+                rerender,
+              );
+            }}
+          >
+            ${PLAN_REVIEW_ENFORCE_OPTIONS.map(
+              (m) => html`<sl-option value="${m}">${m}</sl-option>`,
+            )}
+          </sl-select>
+        </div>
+      </div>
+
       <h3 class="settings-section-title">Governance dispatch</h3>
       <p class="settings-section-desc">
         Per-agent allow / deny lists for tools, skills, and subagents.
-        Templates own only the <code>dispatch</code> sub-tree; the
-        project's <code>governance.guards</code> (hook gates) remain
+        The project's <code>governance.guards</code> (hook gates) remain
         cross-template and are edited in Project Settings.
       </p>
       <div class="governance-content">

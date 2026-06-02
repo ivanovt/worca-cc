@@ -23,7 +23,6 @@ import {
   FolderOpen,
   iconSvg,
   Plus,
-  Star,
   Trash2,
   Upload,
   Users,
@@ -253,7 +252,7 @@ export async function checkGistAvailability(projectId) {
 /**
  * Main pipelines list view.
  * @param {object} state - store state
- * @param {object} options - { rerender, onCreate, onEdit, onDuplicate, onSetDefault, onDelete, onExport, defaultTemplate }
+ * @param {object} options - { rerender, onCreate, onEdit, onDuplicate, onDelete, onExport, defaultTemplate }
  */
 export function pipelinesView(state, options) {
   const {
@@ -261,7 +260,6 @@ export function pipelinesView(state, options) {
     onImport,
     onEdit,
     onDuplicate,
-    onSetDefault,
     onDelete,
     onExport,
     defaultTemplate,
@@ -281,7 +279,6 @@ export function pipelinesView(state, options) {
   const handlers = {
     onEdit: degraded ? null : onEdit,
     onDuplicate: degraded ? null : onDuplicate,
-    onSetDefault: degraded ? null : onSetDefault,
     onDelete: degraded ? null : onDelete,
     onExport, // export is read-only — always available
   };
@@ -436,8 +433,7 @@ function _tierSection(tier, templates, defaultTemplateId, handlers) {
  * propagation so they don't double-fire as a card click.
  */
 function _templateCard(template, defaultTemplate, handlers) {
-  const { onEdit, onDuplicate, onSetDefault, onDelete, onExport } =
-    handlers || {};
+  const { onEdit, onDuplicate, onDelete, onExport } = handlers || {};
   const { id, name, description, tier, builtin = false } = template;
 
   const resolvedTier = normalizeTier(tier);
@@ -533,29 +529,6 @@ function _templateCard(template, defaultTemplate, handlers) {
           ${unsafeHTML(iconSvg(Copy, 14))}
           Duplicate
         </button>
-        ${
-          // Set Default is a project-level setting (worca.default_template
-          // in .claude/settings.json), so it only makes sense to point at
-          // a template stored in *this* project's tier.
-          !isDefault && resolvedTier === 'project'
-            ? html`<button
-              class="action-btn action-btn--secondary"
-              ?disabled=${!onSetDefault}
-              @click=${(e) => {
-                e.stopPropagation();
-                onSetDefault?.(id, resolvedTier);
-              }}
-              title=${
-                onSetDefault
-                  ? 'Set as default template'
-                  : 'Upgrade worca-cc to enable Set Default'
-              }
-            >
-              ${unsafeHTML(iconSvg(Star, 14))}
-              Set Default
-            </button>`
-            : ''
-        }
         <button
           class="action-btn action-btn--secondary"
           @click=${() => onExport?.(id)}

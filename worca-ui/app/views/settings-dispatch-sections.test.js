@@ -79,8 +79,13 @@ describe('settings.js dispatch sections (W-054)', () => {
     });
   });
 
-  describe('governanceTab renders three section cards', () => {
-    it('renders Tools section', async () => {
+  describe('governanceTab — dispatch sections moved to templates', () => {
+    // After the W-062 Phase 6 option-B cleanup, governance.dispatch is
+    // template-driven, so the project-Settings Governance tab no longer
+    // renders the per-section editors. Instead it shows a deep-link to
+    // the Templates page. These tests lock in that contract so we don't
+    // accidentally re-introduce the dispatch UI in project settings.
+    async function renderTab() {
       const { governanceTab } = await import('./settings.js');
       const worca = {
         governance: {
@@ -89,72 +94,22 @@ describe('settings.js dispatch sections (W-054)', () => {
           dispatch: { ...DISPATCH_DEFAULTS },
         },
       };
-      const html = renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
-      expect(html).toContain('Tools');
-    });
+      return renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
+    }
 
-    it('renders Skills section', async () => {
-      const { governanceTab } = await import('./settings.js');
-      const worca = {
-        governance: {
-          guards: {},
-          test_gate_strikes: 2,
-          dispatch: { ...DISPATCH_DEFAULTS },
-        },
-      };
-      const html = renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
-      expect(html).toContain('Skills');
-    });
-
-    it('renders Subagents section', async () => {
-      const { governanceTab } = await import('./settings.js');
-      const worca = {
-        governance: {
-          guards: {},
-          test_gate_strikes: 2,
-          dispatch: { ...DISPATCH_DEFAULTS },
-        },
-      };
-      const html = renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
-      expect(html).toContain('Subagents');
-    });
-
-    it('renders all three dispatch-section components', async () => {
-      const { governanceTab } = await import('./settings.js');
-      const worca = {
-        governance: {
-          guards: {},
-          test_gate_strikes: 2,
-          dispatch: { ...DISPATCH_DEFAULTS },
-        },
-      };
-      const html = renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
-      // Each section is wrapped in an sl-details with data-section. The
-      // inner h4.dispatch-section-title is suppressed when nested in
-      // dispatch-section-details (showTitle=false), so count the wrappers.
-      const sectionCount = (
-        html.match(/data-section="(tools|skills|subagents)"/g) || []
-      ).length;
-      expect(sectionCount).toBeGreaterThanOrEqual(3);
-    });
-
-    it('renders each dispatch section inside a collapsible sl-details', async () => {
-      const { governanceTab } = await import('./settings.js');
-      const worca = {
-        governance: {
-          guards: {},
-          test_gate_strikes: 2,
-          dispatch: { ...DISPATCH_DEFAULTS },
-        },
-      };
-      const html = renderToString(governanceTab(worca, { allow: [] }, vi.fn()));
+    it('does not render per-section dispatch editors', async () => {
+      const html = await renderTab();
       for (const section of ['tools', 'skills', 'subagents']) {
-        // The sl-details wrapper carries data-section so the e2e tests can
-        // target it. We just verify it's rendered (collapsed-by-default
-        // behavior is asserted in the e2e suite).
-        expect(html).toContain(`data-section="${section}"`);
+        expect(html).not.toContain(`data-section="${section}"`);
       }
-      expect(html).toContain('dispatch-section-details');
+      expect(html).not.toContain('dispatch-section-details');
+    });
+
+    it('renders a deep-link to the Templates page in place of the dispatch UI', async () => {
+      const html = await renderTab();
+      expect(html).toContain('pipelines-deep-link-card');
+      expect(html).toContain('href="#/templates"');
+      expect(html).toMatch(/[Dd]ispatch rules/);
     });
   });
 

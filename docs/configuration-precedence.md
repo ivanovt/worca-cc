@@ -38,7 +38,10 @@ When a template is in play at run launch (explicit `--template`, `POST /runs` bo
 - `worca.loops`
 - `worca.circuit_breaker`
 - `worca.effort`
+- `worca.milestones`
 - `worca.governance.dispatch`
+- `worca.governance.test_gate_strikes`
+- `worca.governance.plan_review_enforce`
 
 These are the keys returned by `TEMPLATE_OWNED_KEYS` in `src/worca/orchestrator/templates.py`. Everything else under `worca.*` — including `worca.models`, `worca.webhooks`, `worca.pricing`, `worca.governance.guards`, `worca.graphify`, `worca.code_review_graph`, `worca.default_template` itself, and preflight check definitions — is **cross-template**: kept in the merge base regardless of which template is selected. These are project-machine concerns (creds, infra, integrations) that should be the same for every template the project runs.
 

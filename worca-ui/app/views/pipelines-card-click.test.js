@@ -29,7 +29,6 @@ function snapshotHandlers() {
     onCreate: () => calls.push('create'),
     onEdit: (id) => calls.push(`edit:${id}`),
     onDuplicate: (id) => calls.push(`duplicate:${id}`),
-    onSetDefault: (id) => calls.push(`set-default:${id}`),
     onDelete: (id) => calls.push(`delete:${id}`),
     onExport: (id) => calls.push(`export:${id}`),
   };
@@ -144,31 +143,27 @@ describe('pipelinesView — clickable cards', () => {
     }
   });
 
-  it('Set Default is hidden on user-tier cards', () => {
-    // Set Default writes worca.default_template (a project-level
-    // setting); pointing it at a user template makes no sense.
+  it('Set Default button is no longer rendered on cards (moved to editor header)', () => {
+    // The per-card "Set Default" button was replaced with a toggle in
+    // the editor's page header so the Templates list reads as a flat
+    // grid of equally-affordant cards. The ★ Default badge still
+    // appears on the list card when the template is the project
+    // default — that's a status indicator, not an action.
     container = mount(
-      {
-        templates: [
-          {
-            id: 'my-user-tpl',
-            name: 'My User Tpl',
-            description: '',
-            tier: 'user',
-            shadows: [],
-            builtin: false,
-          },
-        ],
-        templatesLoaded: true,
-        worcaCliStatus: HEALTHY,
-      },
+      { templates: TEMPLATES, templatesLoaded: true, worcaCliStatus: HEALTHY },
       snapshotHandlers(),
     );
-    const card = cardForId(container, 'My User Tpl');
-    expect(card.querySelector('button[title*="Set as default"]')).toBeNull();
+    for (const card of container.querySelectorAll('.template-card')) {
+      expect(card.querySelector('button[title*="Set as default"]')).toBeNull();
+      // Also ensure no leftover "Set Default" or "Unset Default" labels.
+      for (const btn of card.querySelectorAll('button')) {
+        const label = (btn.textContent || '').trim();
+        expect(/Set Default|Unset Default/.test(label)).toBe(false);
+      }
+    }
   });
 
-  it('Set Default / Export / Delete clicks do not also fire a card click', () => {
+  it('Export / Delete clicks do not also fire a card click', () => {
     // Action buttons stop propagation; otherwise every click on Delete
     // would also navigate the user into the editor.
     const handlers = snapshotHandlers();
@@ -182,8 +177,8 @@ describe('pipelinesView — clickable cards', () => {
     }
     // The card click handler must NOT have fired alongside any button.
     expect(handlers.calls.filter((c) => c === 'edit:my-tpl')).toEqual([]);
-    // And each button must have fired exactly its own action.
-    expect(handlers.calls).toContain('set-default:my-tpl');
+    // And the remaining card buttons (Export, Delete, Duplicate) each
+    // fire exactly their own action.
     expect(handlers.calls).toContain('export:my-tpl');
     expect(handlers.calls).toContain('delete:my-tpl');
   });

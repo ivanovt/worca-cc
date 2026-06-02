@@ -37,16 +37,32 @@ async function getToastText(page) {
 }
 
 /**
- * Helper to find the "Set Default" button for a specific template card.
+ * Helper: navigate into the template editor for `templateName` and
+ * return the header Set/Unset Default toggle locator. Callers should
+ * `await btn.click()` to fire the PUT. The per-card Set Default
+ * button was removed in the W-062 Phase 6 cleanup — Set Default
+ * lives in the editor's page header as a toggle that alternates
+ * between "Set Default" and "Unset Default".
+ *
+ * The helper enters the editor via the whole-card click (cards are
+ * now `role="button"` and route to the editor on click). It does
+ * NOT click the toggle itself; the caller does, after wiring up a
+ * waitForResponse listener so the network assertion catches the PUT.
  */
 async function findSetDefaultButton(page, templateName) {
-  // Find the template card by title
-  const card = page.locator(`.template-card:has(.run-card-title:has-text("${templateName}"))`);
+  const card = page.locator(
+    `.template-card:has(.run-card-title:has-text("${templateName}"))`,
+  );
   await expect(card).toBeAttached();
-
-  // Find the Set Default button within this card
-  const setDefaultBtn = card.locator('button:has-text("Set Default")');
-  return setDefaultBtn;
+  await card.click();
+  await expect(page.locator('.pipelines-editor')).toBeAttached({
+    timeout: 10000,
+  });
+  const toggle = page.locator(
+    '.content-header button:has-text("Set Default"), .content-header button:has-text("Unset Default")',
+  );
+  await expect(toggle).toBeVisible({ timeout: 5000 });
+  return toggle;
 }
 
 /**
@@ -109,7 +125,9 @@ test('set as default button updates star badge on template card', async ({ page 
       { timeout: 10000 },
     );
 
-    // Find and click Set Default button for test-one
+    // Find and click the editor header's Set Default toggle for
+    // test-one (the helper navigates into the editor; the toggle is
+    // in the page header).
     const setDefaultBtn = await findSetDefaultButton(page, 'Test Template One');
     await setDefaultBtn.click();
 
@@ -121,6 +139,12 @@ test('set as default button updates star badge on template card', async ({ page 
     const response = await apiResponse;
     expect(response.ok()).toBe(true);
 
+    // Navigate back to the list to verify the card badge updated.
+    // The editor doesn't auto-navigate after the toggle — the user
+    // would click Back; the test simulates that.
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
+
     // Verify test-one now shows the default badge with star
     const testOneCard = page.locator(
       `.template-card:has(.run-card-title:has-text("Test Template One"))`,
@@ -129,13 +153,12 @@ test('set as default button updates star badge on template card', async ({ page 
     await expect(testOneBadge).toBeVisible();
     await expect(testOneBadge).toHaveText(/★ Default/i);
 
-    // Verify Set Default button is now hidden for test-one (it's already default)
-    const testOneSetDefaultBtn = testOneCard.locator('button:has-text("Set Default")');
-    await expect(testOneSetDefaultBtn).not.toBeVisible();
-
-    // Verify test-two still shows Set Default button
-    const testTwoSetDefaultBtn = await findSetDefaultButton(page, 'Test Template Two');
-    await expect(testTwoSetDefaultBtn).toBeVisible();
+    // The per-card Set Default button is gone — Set Default lives in
+    // the editor header now. The card's badge is the canonical
+    // status indicator, and the toggle is on the editor page.
+    expect(
+      await testOneCard.locator('button:has-text("Set Default")').count(),
+    ).toBe(0);
 
     // Verify settings.json was updated
     const settingsPath = join(ctx.dir, 'settings.json');
@@ -240,6 +263,10 @@ test('switching default template from one to another updates badges correctly', 
     let btn = await findSetDefaultButton(page, 'First Template');
     await btn.click();
     await apiResponse;
+    // Return to list to inspect badges (the editor stays put after
+    // the toggle — user navigates back themselves).
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
 
     // Verify first has badge
     const firstCard = page.locator(
@@ -257,6 +284,8 @@ test('switching default template from one to another updates badges correctly', 
     btn = await findSetDefaultButton(page, 'Second Template');
     await btn.click();
     await apiResponse;
+    await page.goto(`${ctx.url}/#/templates`, GOTO_OPTS);
+    await expandAllTierSections(page);
 
     // Verify second now has the badge
     const secondCard = page.locator(
@@ -267,13 +296,15 @@ test('switching default template from one to another updates badges correctly', 
     // Verify first no longer has the badge
     await expect(firstCard.locator('.template-default-badge')).not.toBeAttached();
 
-    // Verify first's Set Default button is visible again
-    const firstSetDefaultBtn = firstCard.locator('button:has-text("Set Default")');
-    await expect(firstSetDefaultBtn).toBeVisible();
-
-    // Verify second's Set Default button is hidden
-    const secondSetDefaultBtn = secondCard.locator('button:has-text("Set Default")');
-    await expect(secondSetDefaultBtn).not.toBeVisible();
+    // The per-card Set Default button is gone for both — the
+    // toggle is on the editor header now. The card badges are the
+    // only canonical "is this the default?" indicator in the list.
+    expect(
+      await firstCard.locator('button:has-text("Set Default")').count(),
+    ).toBe(0);
+    expect(
+      await secondCard.locator('button:has-text("Set Default")').count(),
+    ).toBe(0);
   } finally {
     await ctx.close();
   }
@@ -316,19 +347,38 @@ test('built-in templates do not show Set Default button', async ({ page }) => {
     );
     await expect(builtinCard).toBeAttached();
 
-    // Verify it shows "Duplicate" instead of "Set Default"
-    await expect(builtinCard.locator('button:has-text("Duplicate")')).toBeVisible();
+    // Built-in cards show Duplicate. Since Set Default moved to the
+    // editor header, no card carries it anymore — but built-ins
+    // specifically must never expose the action (default_template is
+    // project-scope; pointing at a built-in is meaningless because
+    // built-ins are the implicit fallback). Open the editor and
+    // confirm the header has NO Set Default toggle for the built-in.
     await expect(builtinCard.locator('button:has-text("Set Default")')).not.toBeAttached();
+    await expect(builtinCard.locator('button:has-text("Duplicate")')).toBeVisible();
 
     // Tier identity moved from a per-card badge to the section header.
-    // The card lives inside the Built-in section's expand panel, so
-    // verifying the wrapping section's --builtin modifier exercises
-    // the same contract.
+    // Check the wrapping sl-details now (while we're still on the
+    // list page — the next step navigates to the editor).
     await expect(
       builtinCard.locator(
         'xpath=ancestor::sl-details[contains(@class, "pipelines-tier-section--builtin")]',
       ),
     ).toBeAttached();
+
+    // Click the card title area (not a button) so we hit the card
+    // click handler rather than an embedded action button.
+    await builtinCard.locator('.run-card-title').click();
+    await expect(page.locator('.pipelines-editor')).toBeAttached({
+      timeout: 10000,
+    });
+    // No Set Default toggle in the editor header for built-ins —
+    // default_template can only point at project-scope templates.
+    await expect(
+      page.locator('.content-header button:has-text("Set Default")'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.content-header button:has-text("Unset Default")'),
+    ).toHaveCount(0);
   } finally {
     await ctx.close();
   }

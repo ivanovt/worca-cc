@@ -69,11 +69,11 @@ test('create template from blank', async ({ page }) => {
     await expect(formBtn).toBeAttached({ timeout: 5000 });
 
     // Toggle a stage (e.g., disable plan_review stage). The editor
-    // opens on the Models tab; stages live on the Stages tab — click
+    // opens on the Agents tab; stages live on the Stages tab — click
     // it first so the panel is visible (sl-tab-panel is in the DOM
     // but hidden when not active).
     await page
-      .locator('.editor-tab-group sl-tab[panel="stages"]')
+      .locator('.editor-tab-group sl-tab[panel="pipeline"]')
       .click();
     // Stage cards were restructured during the editor redesign — the
     // outer node is `.pipeline-stage-node`, the name lives in
@@ -284,7 +284,7 @@ test('JSON toggle round-trip preserves edits', async ({ page }) => {
     // tab first — sl-tab-panel contents are in the DOM but hidden
     // until their tab is active.
     await page
-      .locator('.editor-tab-group sl-tab[panel="stages"]')
+      .locator('.editor-tab-group sl-tab[panel="pipeline"]')
       .click();
     // Stage cards were restructured during the editor redesign — the
     // outer node is `.pipeline-stage-node`, the name lives in

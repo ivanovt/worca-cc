@@ -7321,6 +7321,27 @@ sl-dialog.markdown-dialog::part(body) {
 }
 
 /*
+ * Pipeline tab holds three sections (Stage configuration, Loop
+ * limits, Circuit breaker) on one panel — the same shape as the
+ * Project Settings → Pipeline tab. Each section is its own
+ * `.settings-tab-content` flex column with gap:20px between fields
+ * but no margin above the section heading, so without an explicit
+ * separator they jam right up against each other. Give the three
+ * direct children real vertical breathing room.
+ */
+.editor-pipeline-tab {
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+}
+.editor-pipeline-tab > .settings-tab-content + .settings-tab-content {
+  /* Visual separator on top of the gap so it reads as a fresh
+   * section rather than a continuation of the previous one. */
+  border-top: 1px solid var(--border-subtle, var(--border));
+  padding-top: 24px;
+}
+
+/*
  * Shared chrome for the template action dialogs (Create / Duplicate /
  * Rename / Import). Wraps the Settings-style form primitives so the
  * dialog body looks like a one-screen mini Settings tab.

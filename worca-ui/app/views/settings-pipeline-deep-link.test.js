@@ -38,74 +38,36 @@ beforeEach(() => {
   }
 });
 
-describe('Settings → Pipeline tab deep-link card', () => {
-  describe('pipelineTab — Template-driven sub-panel', () => {
-    it('renders link card pointing to #pipelines', () => {
-      const worca = {
-        stages: {},
-        loops: {},
-        milestones: {},
-        circuit_breaker: {},
-        parallel: {},
-        guide: {},
-        fleet: {},
-      };
-      const rerender = () => {};
+describe('Settings → Pipeline tab — post option-B cleanup', () => {
+  // The template-driven Pipeline-tab content (stages config, loops,
+  // circuit_breaker) moved to the Templates page. The deep-link
+  // card at the top of the tab also went away — its message was
+  // misleading once the content it was pointing to was no longer
+  // adjacent. These tests lock in the new contract.
+  function render() {
+    const worca = {
+      stages: {},
+      milestones: {},
+      parallel: {},
+      guide: {},
+      fleet: {},
+    };
+    return renderToString(pipelineTab(worca, () => {}));
+  }
 
-      const template = pipelineTab(worca, rerender);
-      const htmlString = renderToString(template);
+  it('does not render the template-driven deep-link card anymore', () => {
+    const htmlString = render();
+    expect(htmlString).not.toContain('pipelines-deep-link-card');
+    expect(htmlString).not.toContain('href="#/templates"');
+  });
 
-      // Should contain deep-link card pointing at the renamed route.
-      expect(htmlString).toContain('href="#/templates"');
-      expect(htmlString).toContain('pipelines-deep-link-card');
+  it('does not render the legacy TEMPLATE_DRIVEN_BANNER', () => {
+    const htmlString = render();
+    expect(htmlString).not.toContain('template-driven-banner');
+  });
 
-      // Link text was updated alongside the rename.
-      expect(htmlString).toMatch(/edit/i);
-      expect(htmlString).toMatch(/templates/i);
-    });
-
-    it('does not render TEMPLATE_DRIVEN_BANNER', () => {
-      const worca = {
-        stages: {},
-        loops: {},
-        milestones: {},
-        circuit_breaker: {},
-        parallel: {},
-        guide: {},
-        fleet: {},
-      };
-      const rerender = () => {};
-
-      const template = pipelineTab(worca, rerender);
-      const htmlString = renderToString(template);
-
-      // TEMPLATE_DRIVEN_BANNER should NOT be present in the main pipeline tab
-      // It should be replaced by the deep-link card
-      expect(htmlString).not.toContain('template-driven-banner');
-    });
-
-    it('renders Preflight section after deep-link card', () => {
-      const worca = {
-        stages: {},
-        loops: {},
-        milestones: {},
-        circuit_breaker: {},
-        parallel: {},
-        guide: {},
-        fleet: {},
-      };
-      const rerender = () => {};
-
-      const template = pipelineTab(worca, rerender);
-      const htmlString = renderToString(template);
-
-      // Deep-link card should appear before Preflight
-      const deepLinkIndex = htmlString.indexOf('pipelines-deep-link-card');
-      const preflightIndex = htmlString.indexOf('Preflight');
-
-      expect(deepLinkIndex).toBeGreaterThanOrEqual(0);
-      expect(preflightIndex).toBeGreaterThanOrEqual(0);
-      expect(deepLinkIndex).toBeLessThan(preflightIndex);
-    });
+  it('renders Preflight as the first section', () => {
+    const htmlString = render();
+    expect(htmlString).toMatch(/Preflight/);
   });
 });

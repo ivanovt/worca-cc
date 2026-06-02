@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Save,
   Square,
+  Star,
   Trash2,
   Upload,
 } from './utils/icons.js';
@@ -1711,28 +1712,43 @@ function handleSaveSourceRepo(sourceRepo) {
 
 async function handleSetDefaultTemplate(tid, tier) {
   // Set Default is a project-level setting; the UI only exposes the
-  // button on project-tier cards, so tier defaults to 'project' when
-  // the caller doesn't supply one.
-  const useTier = tier || 'project';
+  // toggle on project-tier templates, so tier defaults to 'project'
+  // when the caller doesn't supply one. Passing `tid: null` clears
+  // the pointer (Unset Default).
+  const clearing = tid == null;
+  const useTier = clearing ? null : tier || 'project';
   try {
     const res = await fetch(projectUrl('/default-template'), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tier: useTier, id: tid }),
+      body: JSON.stringify(
+        clearing ? { tier: null, id: null } : { tier: useTier, id: tid },
+      ),
     });
     const data = await res.json();
     if (!data.ok) {
       _showToast(data.error || 'Failed to set default template', 'danger');
       return;
     }
+    const nextDefault = clearing ? null : { tier: useTier, id: tid };
     settings = {
       ...settings,
       worca: {
         ...settings.worca,
-        default_template: { tier: useTier, id: tid },
+        default_template: nextDefault,
       },
     };
-    _showToast(`Default template set to "${tid}" (${useTier})`, 'success');
+    // Keep state.defaultTemplate (the bundled-with-templates pointer
+    // used by the list view + editor header toggle) in sync — without
+    // this, the editor header would still read the stale value until
+    // the next /templates fetch.
+    store.setState({ defaultTemplate: nextDefault });
+    _showToast(
+      clearing
+        ? 'Default template cleared'
+        : `Default template set to "${tid}" (${useTier})`,
+      'success',
+    );
     rerender();
   } catch (err) {
     _showToast(`Failed to set default template: ${err.message}`, 'danger');
@@ -2104,12 +2120,41 @@ function _templateActionDialogTemplate(state) {
           @sl-change=${(e) => _updateActionDialog({ baseRef: e.target.value })}
         >
           <sl-option value="">(start blank)</sl-option>
-          ${templates.map(
-            (t) =>
-              html`<sl-option value=${`${t.tier}:${t.id}`}
-                >${t.id} — ${t.tier}</sl-option
-              >`,
-          )}
+          ${(() => {
+            // Group by tier (USER → PROJECT → BUILT-IN) and show the
+            // human-readable name on the first line with `ID: <id>`
+            // as the description, mirroring the New Pipeline launcher.
+            // `worca` is a legacy alias for `builtin` from earlier
+            // resolver names — coerce it here so old caches don't
+            // create a phantom group.
+            const buckets = { user: [], project: [], builtin: [] };
+            for (const t of templates) {
+              const tier = t.tier === 'worca' ? 'builtin' : t.tier;
+              if (buckets[tier]) buckets[tier].push(t);
+            }
+            const groups = [
+              { tier: 'user', label: 'USER' },
+              { tier: 'project', label: 'PROJECT' },
+              { tier: 'builtin', label: 'BUILT-IN' },
+            ];
+            return groups
+              .filter(({ tier }) => buckets[tier].length > 0)
+              .map(
+                ({ tier, label }) => html`
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">${label}</small>
+                  ${buckets[tier].map(
+                    (t) => html`<sl-option
+                      class="template-grouped"
+                      value=${`${tier}:${t.id}`}
+                    >
+                      ${t.name || t.id}
+                      <span slot="suffix">ID: ${t.id}</span>
+                    </sl-option>`,
+                  )}
+                `,
+              );
+          })()}
         </sl-select>
         <span class="settings-field-hint">When set, the new template is a copy of the chosen one — exact (tier, id) source.</span>
       </div>
@@ -3828,6 +3873,45 @@ function contentHeaderView() {
           >Read-only</sl-badge
         >`;
       }
+      // Top-right Set/Unset Default toggle. Replaces the per-card
+      // "Set Default" button — one canonical surface, and the user
+      // can see whether the template they're looking at is the
+      // current default. Only meaningful for project-tier templates
+      // (default_template is a project-level setting that lives in
+      // settings.json and is shared with collaborators; pointing it
+      // at user or built-in scope doesn't make sense).
+      if (route.tier === 'project' && route.runId) {
+        const defaultRef = state.defaultTemplate;
+        const defaultId =
+          typeof defaultRef === 'string' ? defaultRef : defaultRef?.id || null;
+        const defaultTier =
+          typeof defaultRef === 'string' ? null : defaultRef?.tier || null;
+        const isThisDefault =
+          defaultId === route.runId &&
+          (!defaultTier || defaultTier === route.tier);
+        const cliOk = state.worcaCliStatus?.ok !== false;
+        actionButton = html`
+          <button
+            class="action-btn ${isThisDefault ? 'action-btn--secondary' : 'action-btn--primary'}"
+            ?disabled=${!cliOk}
+            title=${
+              isThisDefault
+                ? "Clear this project's default template"
+                : 'Pin this template as the project default'
+            }
+            @click=${() =>
+              isThisDefault
+                ? handleSetDefaultTemplate(null, null)
+                : handleSetDefaultTemplate(route.runId, route.tier)}
+          >
+            ${
+              isThisDefault
+                ? html`Unset Default`
+                : html`${unsafeHTML(iconSvg(Star, 14))} Set Default`
+            }
+          </button>
+        `;
+      }
     } else {
       title = 'Pipeline Templates';
       showBack = false;
@@ -4220,7 +4304,6 @@ function mainContentView() {
       onImport: () => handleImportTemplate(route.projectId),
       onEdit: handleEditTemplate,
       onDuplicate: handleDuplicateTemplate,
-      onSetDefault: handleSetDefaultTemplate,
       onDelete: handleDeleteTemplate,
       onExport: handleExportTemplate,
     });

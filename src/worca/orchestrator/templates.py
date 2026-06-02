@@ -32,6 +32,20 @@ TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
     # block to template-owned closes the "teammate's Settings silently flips
     # my gates" gap and makes the template's gate posture explicit.
     ("milestones",),
+    # Test-gate strike count is a per-pipeline tolerance knob (same family
+    # as circuit_breaker.max_consecutive_failures). A quick-fix template
+    # legitimately wants strikes=1 to fail fast; a feature template wants
+    # strikes=3 to recover from flakiness. Project Settings used to own
+    # it; promoted to template-owned in the W-062 Phase 6 cleanup so
+    # templates can express their own retry posture.
+    ("governance", "test_gate_strikes"),
+    # plan_review enforcement mode (auto / review / review_and_edit). Sits
+    # under governance because it tightens what the plan_review stage may
+    # do, but each template owns its own enforcement posture — a
+    # research-only "investigate" template can keep auto, an audited
+    # production template can pin review. Promoted to template-owned in
+    # the same cleanup.
+    ("governance", "plan_review_enforce"),
 ]
 
 # Nested paths that sit under a template-owned block but are themselves

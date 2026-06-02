@@ -107,6 +107,10 @@
         "enabled": false,
         "mode": "review"
       }
+    },
+    "governance": {
+      "test_gate_strikes": 2,
+      "plan_review_enforce": "auto"
     }
   }
 }
