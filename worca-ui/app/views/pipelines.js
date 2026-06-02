@@ -218,6 +218,7 @@ export async function checkGistAvailability(projectId) {
 export function pipelinesView(state, options) {
   const {
     onCreate,
+    onImport,
     onEdit,
     onDuplicate,
     onSetDefault,
@@ -291,7 +292,11 @@ export function pipelinesView(state, options) {
             : html`
               ${
                 !hasTemplates
-                  ? _emptyState(degraded ? null : onCreate, degraded)
+                  ? _emptyState(
+                      degraded ? null : onCreate,
+                      degraded ? null : onImport,
+                      degraded,
+                    )
                   : html`
                     ${
                       // Render in applicability order: project first (most
@@ -600,12 +605,14 @@ function _templateCard(template, defaultTemplateId, handlers) {
 /**
  * Empty state for pipelines view.
  *
- * `onCreate` is passed `null` in degraded mode so the Create / Import
- * buttons render disabled. Disabling rather than hiding keeps the
- * affordance discoverable (and the banner above explains why).
+ * `onCreate` / `onImport` are passed `null` in degraded mode so the
+ * Create / Import buttons render disabled. Disabling rather than
+ * hiding keeps the affordance discoverable (and the banner above
+ * explains why).
  */
-function _emptyState(onCreate, degraded = false) {
+function _emptyState(onCreate, onImport, degraded = false) {
   const createDisabled = !onCreate || degraded;
+  const importDisabled = !onImport || degraded;
   return html`
     <div class="empty-state pipelines-empty">
       <div class="empty-state-icon">${unsafeHTML(iconSvg(FileText, 48))}</div>
@@ -619,7 +626,11 @@ function _emptyState(onCreate, degraded = false) {
         >
           ${unsafeHTML(iconSvg(Plus, 16))} Create Template
         </sl-button>
-        <sl-button variant="default" ?disabled=${degraded}>
+        <sl-button
+          variant="default"
+          ?disabled=${importDisabled}
+          @click=${() => onImport?.()}
+        >
           ${unsafeHTML(iconSvg(Upload, 16))} Import Bundle
         </sl-button>
       </div>

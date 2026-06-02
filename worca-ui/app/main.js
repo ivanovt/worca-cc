@@ -9,10 +9,12 @@ import {
   AlertTriangle,
   ArrowLeft,
   CircleSlash,
+  Copy,
   Database,
   iconSvg,
   Loader,
   Pause,
+  Pencil,
   Play,
   Plus,
   RotateCcw,
@@ -1782,6 +1784,30 @@ function _dismissTemplateGuard() {
 }
 
 /**
+ * Defer focus to the first input of the action dialog after the next
+ * paint. The sl-after-show event doesn't fire reliably when the dialog
+ * is mounted via lit-html's declarative `open` attribute (vs the
+ * imperative show() flow), so we schedule the focus shift ourselves
+ * once the DOM has settled. Two RAFs let Shoelace finish hooking up
+ * its shadow DOM before we reach for the field.
+ */
+function _focusActionDialogInput() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const dialog = document.querySelector('sl-dialog.template-action-dialog');
+      if (!dialog) return;
+      const target =
+        dialog.querySelector('sl-input') ||
+        dialog.querySelector('input[type="file"]') ||
+        dialog.querySelector('sl-select');
+      if (target && typeof target.focus === 'function') {
+        target.focus();
+      }
+    });
+  });
+}
+
+/**
  * Open the Duplicate dialog. The destination id defaults to the source
  * id (the canonical "shadow & edit" flow); the user can override both
  * the id and the target scope before confirming.
@@ -1798,6 +1824,7 @@ function handleDuplicateTemplate(tid) {
     error: null,
   };
   rerender();
+  _focusActionDialogInput();
 }
 
 /**
@@ -1816,6 +1843,7 @@ function handleCreateTemplate(_projectId) {
     error: null,
   };
   rerender();
+  _focusActionDialogInput();
 }
 
 /**
@@ -1833,6 +1861,7 @@ function handleRenameTemplate(tid, scope) {
     error: null,
   };
   rerender();
+  _focusActionDialogInput();
 }
 
 /**
@@ -1849,6 +1878,7 @@ function handleImportTemplate(_projectId) {
     error: null,
   };
   rerender();
+  _focusActionDialogInput();
 }
 
 function _dismissTemplateActionDialog() {
@@ -1940,6 +1970,12 @@ function _templateActionDialogTemplate(state) {
     duplicate: 'Duplicate',
     rename: 'Apply',
     import: 'Import',
+  };
+  const confirmIcon = {
+    create: Plus,
+    duplicate: Copy,
+    rename: Pencil,
+    import: Upload,
   };
   const validationError = _validateActionDialog(dlg, state);
   const disabled = _templateActionBusy || !!validationError;
@@ -2076,6 +2112,26 @@ function _templateActionDialogTemplate(state) {
       class="template-action-dialog"
       label=${labels[dlg.mode]}
       open
+      @sl-initial-focus=${(e) => {
+        // sl-dialog's default focus lands on the close button. Pre-empt
+        // it so initial focus goes to the first form field instead —
+        // less keyboard friction (start typing immediately).
+        e.preventDefault();
+      }}
+      @sl-after-show=${(e) => {
+        // sl-after-show fires once the dialog's open-transition has
+        // settled, by which time every slotted element is reachable.
+        // For Create/Duplicate/Rename the first input is the id field;
+        // for Import it's the file picker.
+        const dialog = e.target;
+        const target =
+          dialog.querySelector('sl-input') ||
+          dialog.querySelector('input[type="file"]') ||
+          dialog.querySelector('sl-select');
+        if (target && typeof target.focus === 'function') {
+          target.focus();
+        }
+      }}
       @sl-after-hide=${_dismissTemplateActionDialog}
     >
       ${body}
@@ -2103,7 +2159,7 @@ function _templateActionDialogTemplate(state) {
       >${
         _templateActionBusy
           ? html`<sl-spinner></sl-spinner>`
-          : confirmLabel[dlg.mode]
+          : html`<span slot="prefix">${unsafeHTML(iconSvg(confirmIcon[dlg.mode], 14))}</span>${confirmLabel[dlg.mode]}`
       }</sl-button>
     </sl-dialog>
   `;
@@ -4022,6 +4078,7 @@ function mainContentView() {
       rerender,
       defaultTemplate,
       onCreate: () => handleCreateTemplate(route.projectId),
+      onImport: () => handleImportTemplate(route.projectId),
       onEdit: handleEditTemplate,
       onDuplicate: handleDuplicateTemplate,
       onSetDefault: handleSetDefaultTemplate,
