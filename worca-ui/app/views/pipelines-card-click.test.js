@@ -29,6 +29,7 @@ function snapshotHandlers() {
     onSetDefault: (id) => calls.push(`set-default:${id}`),
     onDelete: (id) => calls.push(`delete:${id}`),
     onExport: (id) => calls.push(`export:${id}`),
+    onRename: (id, scope) => calls.push(`rename:${id}:${scope}`),
   };
 }
 
@@ -120,6 +121,47 @@ describe('pipelinesView — clickable cards', () => {
       (b.textContent || '').includes('Duplicate'),
     );
     expect(dupBtn).toBeDefined();
+  });
+
+  it('Rename action fires onRename with (id, scope) and only on project/user cards', () => {
+    const handlers = snapshotHandlers();
+    container = mount(
+      { templates: TEMPLATES, templatesLoaded: true, worcaCliStatus: HEALTHY },
+      handlers,
+    );
+    // Built-in cards have no Rename button (immutable tier).
+    const builtinCard = cardForId(container, 'Minimal Pipeline');
+    expect(builtinCard.querySelector('button[title*="Rename"]')).toBeNull();
+    // Project card has a Rename button — click it.
+    const projectCard = cardForId(container, 'My Project Tpl');
+    const renameBtn = projectCard.querySelector('button[title*="Rename"]');
+    expect(renameBtn).not.toBeNull();
+    renameBtn.click();
+    expect(handlers.calls).toEqual(['rename:my-tpl:project']);
+  });
+
+  it('Set Default is hidden on user-tier cards', () => {
+    // Set Default writes worca.default_template (a project-level
+    // setting); pointing it at a user template makes no sense.
+    container = mount(
+      {
+        templates: [
+          {
+            id: 'my-user-tpl',
+            name: 'My User Tpl',
+            description: '',
+            effectiveTier: 'user',
+            shadows: [],
+            builtin: false,
+          },
+        ],
+        templatesLoaded: true,
+        worcaCliStatus: HEALTHY,
+      },
+      snapshotHandlers(),
+    );
+    const card = cardForId(container, 'My User Tpl');
+    expect(card.querySelector('button[title*="Set as default"]')).toBeNull();
   });
 
   it('Set Default / Export / Delete clicks do not also fire a card click', () => {

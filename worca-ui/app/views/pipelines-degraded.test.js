@@ -30,6 +30,7 @@ function snapshotHandlers() {
     onSetDefault: (id) => calls.push(`set-default:${id}`),
     onDelete: (id) => calls.push(`delete:${id}`),
     onExport: (id) => calls.push(`export:${id}`),
+    onRename: (id, scope) => calls.push(`rename:${id}:${scope}`),
   };
 }
 
@@ -135,8 +136,10 @@ describe('pipelinesView — degraded mode', () => {
     const upgradeBtns = container.querySelectorAll(
       'button[title^="Upgrade worca-cc"]',
     );
-    // 1 (builtin Duplicate) + 2 (project SetDefault + Delete) = 3.
-    expect(upgradeBtns.length).toBe(3);
+    // 1 (builtin Duplicate)
+    // + 3 (project Set Default + Rename + Delete)
+    // = 4.
+    expect(upgradeBtns.length).toBe(4);
     for (const btn of upgradeBtns) {
       expect(btn.disabled).toBe(true);
     }

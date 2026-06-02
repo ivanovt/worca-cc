@@ -7026,6 +7026,43 @@ sl-dialog.markdown-dialog::part(body) {
   padding: 16px 4px 0;
 }
 
+/*
+ * Shared chrome for the template action dialogs (Create / Duplicate /
+ * Rename / Import). Wraps the Settings-style form primitives so the
+ * dialog body looks like a one-screen mini Settings tab.
+ */
+.template-action-dialog::part(panel) {
+  min-width: min(520px, 100vw - 32px);
+}
+.template-action-dialog .dialog-lead {
+  margin: 0 0 14px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.template-action-dialog .dialog-lead code {
+  background: var(--bg-secondary);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+.template-action-dialog .settings-field {
+  margin-bottom: 14px;
+}
+.template-action-dialog .dialog-error {
+  margin-top: 8px;
+}
+.template-action-dialog .dialog-bundle-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+.template-action-dialog .dialog-bundle-list code {
+  font-family: var(--sl-font-mono);
+  color: var(--fg);
+}
+
 .editor-content {
   flex: 1;
   overflow-y: auto;

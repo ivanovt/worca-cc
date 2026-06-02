@@ -697,6 +697,131 @@ describe('templates-routes', () => {
     });
   });
 
+  describe('POST /templates/:tid/rename — rename / move template', () => {
+    function seedProject(id) {
+      mkdirSync(join(templatesDir, id), { recursive: true });
+      writeFileSync(
+        join(templatesDir, id, 'template.json'),
+        JSON.stringify({ id, name: id }),
+      );
+    }
+
+    it('composes duplicate + delete on the CLI', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('old-id');
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/old-id/rename?scope=project',
+        { dst_id: 'new-id', dst_scope: 'project' },
+      );
+
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(mockExecSync).toHaveBeenCalledTimes(2);
+      const dupArgs = templateArgs(mockExecSync.mock.calls[0]);
+      expect(dupArgs.slice(0, 2)).toEqual(['templates', 'duplicate']);
+      expect(dupArgs).toContain('--dst');
+      expect(dupArgs).toContain('new-id');
+      const delArgs = templateArgs(mockExecSync.mock.calls[1]);
+      expect(delArgs.slice(0, 3)).toEqual(['templates', 'delete', 'old-id']);
+    });
+
+    it('passes --global on the delete leg when moving from user → project', async () => {
+      const app = await createTestApp(projectRoot);
+      // Seed a user-tier template so the existence check passes.
+      mkdirSync(join(userTemplatesDir, 'templates', 'cross-tier'), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(userTemplatesDir, 'templates', 'cross-tier', 'template.json'),
+        JSON.stringify({ id: 'cross-tier', name: 'Cross Tier' }),
+      );
+
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/cross-tier/rename?scope=user',
+        { dst_id: 'cross-tier', dst_scope: 'project' },
+      );
+
+      expect(status).toBe(200);
+      const dupArgs = templateArgs(mockExecSync.mock.calls[0]);
+      expect(dupArgs).toContain('--dst-scope');
+      expect(dupArgs[dupArgs.indexOf('--dst-scope') + 1]).toBe('project');
+      const delArgs = templateArgs(mockExecSync.mock.calls[1]);
+      expect(delArgs).toContain('--global');
+    });
+
+    it('rejects no-op (same id + same scope) with 400', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('static');
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/static/rename?scope=project',
+        { dst_id: 'static', dst_scope: 'project' },
+      );
+
+      expect(status).toBe(400);
+      expect(body.error).toMatch(/no change/i);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('returns 404 if the source does not exist in the named scope', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/ghost/rename?scope=project',
+        { dst_id: 'phantom', dst_scope: 'project' },
+      );
+
+      expect(status).toBe(404);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('rejects scope=builtin (built-ins are immutable)', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/whatever/rename?scope=builtin',
+        { dst_id: 'whatever', dst_scope: 'project' },
+      );
+
+      expect(status).toBe(400);
+      expect(body.error).toMatch(/scope/i);
+    });
+
+    it('surfaces partial_rename when duplicate succeeds but delete fails', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('half');
+      // First call (duplicate) succeeds; second call (delete) throws.
+      let n = 0;
+      mockExecSync.mockImplementation(() => {
+        n++;
+        if (n === 1) return '';
+        throw cliError('delete blew up');
+      });
+
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/half/rename?scope=project',
+        { dst_id: 'whole', dst_scope: 'project' },
+      );
+
+      expect(status).toBe(500);
+      expect(body.code).toBe('partial_rename');
+      expect(body.error).toMatch(/Renamed to "whole"/);
+    });
+  });
+
   describe('POST /templates/:tid/validate — validate config', () => {
     it('returns parsed issues from the CLI', async () => {
       const app = await createTestApp(projectRoot);

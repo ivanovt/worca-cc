@@ -624,6 +624,102 @@ export function createTemplatesRoutes() {
   });
 
   /**
+   * POST /api/projects/:projectId/templates/:tid/rename?scope=<srcScope>
+   *
+   * Rename and/or move a template between project/user scopes. The
+   * server composes the existing duplicate + delete CLI commands —
+   * worca-cc doesn't yet ship a transactional `rename`, so this is a
+   * best-effort two-step:
+   *
+   *   1. `worca templates duplicate <srcId> --dst <dstId> --dst-scope …`
+   *   2. `worca templates delete <srcId> [--global]`
+   *
+   * If step 2 fails after step 1 succeeds, the API returns a 500 with
+   * `code: "partial_rename"` and the caller is left with both copies
+   * on disk — a recoverable state (the user can delete the source by
+   * hand) rather than a corrupted one.
+   *
+   * Body: { dst_id, dst_scope }
+   * Built-in templates are rejected because they're immutable; rename
+   * one by duplicating to a writable scope first, then renaming.
+   */
+  router.post('/templates/:tid/rename', (req, res) => {
+    const srcId = req.params.tid;
+    const srcScope = req.query.scope || 'project';
+    const { dst_id: dstId, dst_scope: dstScope } = req.body || {};
+
+    if (!srcId || !TEMPLATE_RE.test(srcId)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'Invalid source template id' });
+    }
+    if (srcScope !== 'project' && srcScope !== 'user') {
+      return res.status(400).json({
+        ok: false,
+        error: 'scope must be "project" or "user" (built-ins are immutable)',
+      });
+    }
+    if (!dstId || !TEMPLATE_RE.test(dstId)) {
+      return res.status(400).json({ ok: false, error: 'dst_id is required' });
+    }
+    if (dstScope !== 'project' && dstScope !== 'user') {
+      return res
+        .status(400)
+        .json({ ok: false, error: 'dst_scope must be "project" or "user"' });
+    }
+    if (srcId === dstId && srcScope === dstScope) {
+      return res.status(400).json({
+        ok: false,
+        error: 'No change requested (same id and scope as the source)',
+      });
+    }
+
+    const { projectRoot } = req.project;
+    // Confirm the source exists in the named scope. Without this check
+    // the CLI would surface a "not found" but with a generic 500;
+    // returning 404 up front matches the rest of the route shape.
+    const resolved = resolveTemplate(projectRoot, srcId, srcScope);
+    if (!resolved) {
+      return res.status(404).json({
+        ok: false,
+        error: `Template "${srcId}" not found in ${srcScope} scope`,
+      });
+    }
+
+    try {
+      duplicateTemplateViaCli(projectRoot, srcId, dstId, dstScope);
+    } catch (err) {
+      return res
+        .status(statusForCliCode(err.cliCode))
+        .json({ ok: false, error: err.message, code: err.cliCode });
+    }
+
+    try {
+      deleteTemplateViaCli(projectRoot, srcScope, srcId);
+    } catch (err) {
+      // Step 1 already wrote the destination. Surface the partial state
+      // so the UI can suggest a manual cleanup rather than retrying.
+      return res.status(500).json({
+        ok: false,
+        code: 'partial_rename',
+        error: `Renamed to "${dstId}" (${dstScope}) but failed to remove the source "${srcId}" (${srcScope}): ${err.message}`,
+        src_id: srcId,
+        src_scope: srcScope,
+        dst_id: dstId,
+        dst_scope: dstScope,
+      });
+    }
+
+    res.json({
+      ok: true,
+      src_id: srcId,
+      src_scope: srcScope,
+      dst_id: dstId,
+      dst_scope: dstScope,
+    });
+  });
+
+  /**
    * POST /api/projects/:projectId/templates/:tid/validate
    * Validate a template config without saving.
    * Body: { config }

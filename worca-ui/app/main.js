@@ -19,6 +19,7 @@ import {
   Save,
   Square,
   Trash2,
+  Upload,
 } from './utils/icons.js';
 import {
   mapProjectRunsResponse,
@@ -224,6 +225,19 @@ let settings = {};
 let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
 let _templateGuard = null; // null | { tid, scope, action: 'delete'|'edit', count: number }
+
+/**
+ * Open-dialog state for the New / Duplicate / Rename / Import flows.
+ * null when no dialog is open. Each dialog renders conditionally from
+ * this single source of truth so we never end up with two stacked.
+ *
+ *   { mode: 'create',    id: '',         scope: 'project', baseTid: '' }
+ *   { mode: 'duplicate', srcId, srcScope, id: srcId, scope: 'project' }
+ *   { mode: 'rename',    srcId, srcScope, id: srcId, scope: srcScope }
+ *   { mode: 'import',    file: null, parsed: null, scope: 'project', error: null }
+ */
+let _templateActionDialog = null;
+let _templateActionBusy = false;
 let restartStageKey = null;
 
 // -- Fleet views --
@@ -1767,22 +1781,472 @@ function _dismissTemplateGuard() {
   rerender();
 }
 
-async function handleDuplicateTemplate(tid) {
+/**
+ * Open the Duplicate dialog. The destination id defaults to the source
+ * id (the canonical "shadow & edit" flow); the user can override both
+ * the id and the target scope before confirming.
+ */
+function handleDuplicateTemplate(tid) {
+  const templates = store.getState().templates || [];
+  const src = templates.find((t) => t.id === tid);
+  _templateActionDialog = {
+    mode: 'duplicate',
+    srcId: tid,
+    srcScope: src?.effectiveTier || 'builtin',
+    id: tid,
+    scope: 'project',
+    error: null,
+  };
+  rerender();
+}
+
+/**
+ * Open the New dialog — empty form, user picks an id + scope and
+ * optionally a base template to clone from. On confirm we POST a new
+ * minimal template (or call duplicate when a base is selected), then
+ * navigate into the editor on the new id.
+ */
+function handleCreateTemplate(_projectId) {
+  _templateActionDialog = {
+    mode: 'create',
+    id: '',
+    name: '',
+    scope: 'project',
+    baseTid: '',
+    error: null,
+  };
+  rerender();
+}
+
+/**
+ * Open the Rename dialog. Same shape as Duplicate, but the underlying
+ * action removes the source after writing the destination — effectively
+ * a rename and/or move between project/user scopes.
+ */
+function handleRenameTemplate(tid, scope) {
+  _templateActionDialog = {
+    mode: 'rename',
+    srcId: tid,
+    srcScope: scope || 'project',
+    id: tid,
+    scope: scope || 'project',
+    error: null,
+  };
+  rerender();
+}
+
+/**
+ * Open the Import dialog. The user picks a `.json` bundle exported via
+ * Export, plus a target scope. We parse client-side so the dialog can
+ * preview which template ids are about to land.
+ */
+function handleImportTemplate(_projectId) {
+  _templateActionDialog = {
+    mode: 'import',
+    file: null,
+    parsed: null,
+    scope: 'project',
+    error: null,
+  };
+  rerender();
+}
+
+function _dismissTemplateActionDialog() {
+  _templateActionDialog = null;
+  _templateActionBusy = false;
+  rerender();
+}
+
+const _TEMPLATE_ID_RE = /^[a-z0-9_-]{1,64}$/;
+
+function _validateActionDialog(dlg, state) {
+  if (!dlg) return null;
+  if (dlg.mode === 'import') {
+    if (!dlg.parsed) return 'Choose a bundle file to import.';
+    return null;
+  }
+  if (!dlg.id || !_TEMPLATE_ID_RE.test(dlg.id)) {
+    return 'Id must match [a-z0-9_-], 1–64 chars.';
+  }
+  // Inline collision check — faster feedback than waiting for the
+  // server. The server still re-validates and is the source of truth.
+  if (
+    dlg.mode === 'rename' ||
+    dlg.mode === 'duplicate' ||
+    dlg.mode === 'create'
+  ) {
+    if (
+      dlg.mode === 'rename' &&
+      dlg.id === dlg.srcId &&
+      dlg.scope === dlg.srcScope
+    ) {
+      return 'Pick a new id or scope (no change selected).';
+    }
+    const templates = state.templates || [];
+    const conflict = templates.find(
+      (t) => t.id === dlg.id && t.effectiveTier === dlg.scope,
+    );
+    if (conflict) {
+      return `An id "${dlg.id}" already exists in the ${dlg.scope} scope.`;
+    }
+  }
+  return null;
+}
+
+function _updateActionDialog(patch) {
+  if (!_templateActionDialog) return;
+  _templateActionDialog = { ..._templateActionDialog, ...patch };
+  rerender();
+}
+
+async function _onImportFileChange(e) {
+  const file = e.target.files?.[0];
+  if (!file) {
+    _updateActionDialog({ file: null, parsed: null, error: null });
+    return;
+  }
   try {
-    const res = await fetch(projectUrl(`/templates/${tid}/duplicate`), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ dst_id: tid, dst_scope: 'project' }),
-    });
-    const data = await res.json();
-    if (!data.ok) {
-      showActionError(data.error || 'Failed to duplicate template');
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || !Array.isArray(parsed.templates)) {
+      _updateActionDialog({
+        file,
+        parsed: null,
+        error: 'Bundle must contain a "templates" array.',
+      });
       return;
     }
-    const dstId = data.dst_id || tid;
-    navigate('templates', dstId, route.projectId, 'edit');
+    _updateActionDialog({ file, parsed, error: null });
   } catch (err) {
-    showActionError(`Failed to duplicate template: ${err.message}`);
+    _updateActionDialog({
+      file,
+      parsed: null,
+      error: `Failed to parse bundle: ${err.message}`,
+    });
+  }
+}
+
+function _templateActionDialogTemplate(state) {
+  const dlg = _templateActionDialog;
+  if (!dlg) return nothing;
+  const labels = {
+    create: 'New template',
+    duplicate: 'Duplicate template',
+    rename: 'Rename or move template',
+    import: 'Import template bundle',
+  };
+  const confirmLabel = {
+    create: 'Create',
+    duplicate: 'Duplicate',
+    rename: 'Apply',
+    import: 'Import',
+  };
+  const validationError = _validateActionDialog(dlg, state);
+  const disabled = _templateActionBusy || !!validationError;
+
+  const idScopeFields = html`
+    <div class="settings-field">
+      <label class="settings-label" for="dlg-id">Template id</label>
+      <sl-input
+        id="dlg-id"
+        size="small"
+        autocomplete="off"
+        .value=${dlg.id || ''}
+        placeholder="e.g. feature-fast"
+        @sl-input=${(e) => _updateActionDialog({ id: e.target.value.trim() })}
+      ></sl-input>
+      <span class="settings-field-hint">Lowercase letters, digits, hyphens, underscores. 1–64 chars.</span>
+    </div>
+    <div class="settings-field">
+      <label class="settings-label" for="dlg-scope">Storage</label>
+      <sl-select
+        id="dlg-scope"
+        size="small"
+        hoist
+        .value=${dlg.scope || 'project'}
+        @sl-change=${(e) => _updateActionDialog({ scope: e.target.value })}
+      >
+        <sl-option value="project">Project (.claude/templates/)</sl-option>
+        <sl-option value="user">User (~/.worca/templates/)</sl-option>
+      </sl-select>
+      <span class="settings-field-hint">Project templates are versioned with the repo; user templates are shared across all your projects.</span>
+    </div>
+  `;
+
+  let body;
+  if (dlg.mode === 'duplicate') {
+    body = html`
+      <p class="dialog-lead">
+        Copy <code>${dlg.srcId}</code> (${dlg.srcScope}) into a new template.
+      </p>
+      ${idScopeFields}
+    `;
+  } else if (dlg.mode === 'rename') {
+    body = html`
+      <p class="dialog-lead">
+        Renames or moves <code>${dlg.srcId}</code> (${dlg.srcScope}). The
+        original is removed after the new copy lands.
+      </p>
+      ${idScopeFields}
+    `;
+  } else if (dlg.mode === 'create') {
+    const templates = state.templates || [];
+    body = html`
+      <p class="dialog-lead">
+        Create a new template from scratch, or pick an existing one to base it on.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-base">Base template (optional)</label>
+        <sl-select
+          id="dlg-base"
+          size="small"
+          hoist
+          .value=${dlg.baseTid || ''}
+          @sl-change=${(e) => _updateActionDialog({ baseTid: e.target.value })}
+        >
+          <sl-option value="">(start blank)</sl-option>
+          ${templates.map(
+            (t) =>
+              html`<sl-option value=${t.id}>${t.id} — ${t.effectiveTier}</sl-option>`,
+          )}
+        </sl-select>
+        <span class="settings-field-hint">When set, the new template is a copy of the chosen one.</span>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-name">Display name</label>
+        <sl-input
+          id="dlg-name"
+          size="small"
+          autocomplete="off"
+          .value=${dlg.name || ''}
+          placeholder="e.g. Feature (fast)"
+          @sl-input=${(e) => _updateActionDialog({ name: e.target.value })}
+        ></sl-input>
+      </div>
+      ${idScopeFields}
+    `;
+  } else if (dlg.mode === 'import') {
+    body = html`
+      <p class="dialog-lead">
+        Choose a bundle file exported via the Export button on any
+        template card. The bundle's <code>templates[]</code> entries land
+        in the selected scope.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-import-file">Bundle file</label>
+        <input
+          id="dlg-import-file"
+          type="file"
+          accept="application/json,.json"
+          @change=${_onImportFileChange}
+        />
+      </div>
+      ${
+        dlg.parsed
+          ? html`
+            <div class="settings-field">
+              <label class="settings-label">Templates in bundle</label>
+              <ul class="dialog-bundle-list">
+                ${dlg.parsed.templates.map(
+                  (t) => html`<li><code>${t.id}</code> — ${t.name || ''}</li>`,
+                )}
+              </ul>
+            </div>
+          `
+          : ''
+      }
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-scope">Target storage</label>
+        <sl-select
+          id="dlg-scope"
+          size="small"
+          hoist
+          .value=${dlg.scope || 'project'}
+          @sl-change=${(e) => _updateActionDialog({ scope: e.target.value })}
+        >
+          <sl-option value="project">Project (.claude/templates/)</sl-option>
+          <sl-option value="user">User (~/.worca/templates/)</sl-option>
+        </sl-select>
+      </div>
+    `;
+  }
+
+  return html`
+    <sl-dialog
+      class="template-action-dialog"
+      label=${labels[dlg.mode]}
+      open
+      @sl-after-hide=${_dismissTemplateActionDialog}
+    >
+      ${body}
+      ${
+        dlg.error
+          ? html`<sl-alert variant="danger" open class="dialog-error">${dlg.error}</sl-alert>`
+          : ''
+      }
+      ${
+        validationError
+          ? html`<sl-alert variant="warning" open class="dialog-error">${validationError}</sl-alert>`
+          : ''
+      }
+      <sl-button
+        slot="footer"
+        variant="default"
+        ?disabled=${_templateActionBusy}
+        @click=${_dismissTemplateActionDialog}
+      >Cancel</sl-button>
+      <sl-button
+        slot="footer"
+        variant="primary"
+        ?disabled=${disabled}
+        @click=${_confirmTemplateActionDialog}
+      >${
+        _templateActionBusy
+          ? html`<sl-spinner></sl-spinner>`
+          : confirmLabel[dlg.mode]
+      }</sl-button>
+    </sl-dialog>
+  `;
+}
+
+async function _confirmTemplateActionDialog() {
+  const dlg = _templateActionDialog;
+  if (!dlg || _templateActionBusy) return;
+  _templateActionBusy = true;
+  rerender();
+
+  try {
+    if (dlg.mode === 'duplicate') {
+      const res = await fetch(projectUrl(`/templates/${dlg.srcId}/duplicate`), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dst_id: dlg.id, dst_scope: dlg.scope }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to duplicate',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      // Refresh list, then jump straight into editing the new copy.
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates });
+      navigate('templates', dlg.id, route.projectId, 'edit');
+      return;
+    }
+
+    if (dlg.mode === 'rename') {
+      // Rename = duplicate to new id/scope, then delete the source.
+      // The server route encapsulates both calls (best-effort atomic;
+      // see templates-routes.js).
+      const res = await fetch(
+        projectUrl(`/templates/${dlg.srcId}/rename?scope=${dlg.srcScope}`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dst_id: dlg.id, dst_scope: dlg.scope }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to rename',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates });
+      return;
+    }
+
+    if (dlg.mode === 'create') {
+      // With a base: clone it. Without: POST a minimal new template.
+      let res;
+      if (dlg.baseTid) {
+        res = await fetch(projectUrl(`/templates/${dlg.baseTid}/duplicate`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dst_id: dlg.id, dst_scope: dlg.scope }),
+        });
+      } else {
+        res = await fetch(projectUrl('/templates'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scope: dlg.scope,
+            id: dlg.id,
+            name: dlg.name || dlg.id,
+            description: '',
+            config: {},
+            params: {},
+            tags: [],
+          }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to create',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates });
+      navigate('templates', dlg.id, route.projectId, 'edit');
+      return;
+    }
+
+    if (dlg.mode === 'import') {
+      if (!dlg.parsed) {
+        _templateActionDialog = { ...dlg, error: 'No bundle loaded' };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      const res = await fetch(projectUrl('/templates/import'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bundle: dlg.parsed, scope: dlg.scope }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to import',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates });
+      return;
+    }
+  } catch (err) {
+    _templateActionDialog = {
+      ...dlg,
+      error: `Request failed: ${err.message}`,
+    };
+    _templateActionBusy = false;
+    rerender();
   }
 }
 
@@ -3209,6 +3673,29 @@ function contentHeaderView() {
     } else {
       title = 'Pipeline Templates';
       showBack = false;
+      // Header actions, top-right: Import (left) + New (right).
+      // Disabled in degraded mode (banner already explains why).
+      const cliOk = state.worcaCliStatus?.ok !== false;
+      actionButton = html`
+        <button
+          class="action-btn action-btn--secondary"
+          ?disabled=${!cliOk}
+          title=${cliOk ? 'Import a template bundle (.json)' : 'Upgrade worca-cc to enable import'}
+          @click=${() => handleImportTemplate(route.projectId)}
+        >
+          ${unsafeHTML(iconSvg(Upload, 14))}
+          Import
+        </button>
+        <button
+          class="action-btn action-btn--primary"
+          ?disabled=${!cliOk}
+          title=${cliOk ? 'Create a new template from scratch' : 'Upgrade worca-cc to enable create'}
+          @click=${() => handleCreateTemplate(route.projectId)}
+        >
+          ${unsafeHTML(iconSvg(Plus, 14))}
+          New
+        </button>
+      `;
     }
   } else if (route.section === 'project-settings') {
     title = 'Project Settings';
@@ -3534,12 +4021,13 @@ function mainContentView() {
     return pipelinesView(viewState, {
       rerender,
       defaultTemplate,
-      onCreate: () => navigate('templates', 'new', route.projectId),
+      onCreate: () => handleCreateTemplate(route.projectId),
       onEdit: handleEditTemplate,
       onDuplicate: handleDuplicateTemplate,
       onSetDefault: handleSetDefaultTemplate,
       onDelete: handleDeleteTemplate,
       onExport: handleExportTemplate,
+      onRename: handleRenameTemplate,
     });
   }
 
@@ -3958,6 +4446,7 @@ function rerender() {
     `
         : ''
     }
+    ${_templateActionDialogTemplate(state)}
     ${confirmDialogTemplate()}
     ${batchWorcaSetupDialogTemplate(rerender)}
     ${addProjectDialogView(state, {

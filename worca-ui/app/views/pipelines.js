@@ -223,6 +223,7 @@ export function pipelinesView(state, options) {
     onSetDefault,
     onDelete,
     onExport,
+    onRename,
     defaultTemplate,
   } = options || {};
   const {
@@ -242,6 +243,7 @@ export function pipelinesView(state, options) {
     onDuplicate: degraded ? null : onDuplicate,
     onSetDefault: degraded ? null : onSetDefault,
     onDelete: degraded ? null : onDelete,
+    onRename: degraded ? null : onRename,
     onExport, // export is read-only — always available
   };
 
@@ -373,22 +375,13 @@ function _degradedBanner(status) {
 function _tierSection(title, templates, defaultTemplateId, handlers) {
   if (!templates || templates.length === 0) return nothing;
 
-  const { onEdit, onDuplicate, onSetDefault, onDelete, onExport } =
-    handlers || {};
-
+  // Pass the handlers bag through verbatim so adding a new action only
+  // requires touching the top-level view + the card.
   return html`
     <section class="pipelines-tier-section">
       <h2 class="tier-section-header">${title}</h2>
       <div class="pipelines-grid">
-        ${templates.map((t) =>
-          _templateCard(t, defaultTemplateId, {
-            onEdit,
-            onDuplicate,
-            onSetDefault,
-            onDelete,
-            onExport,
-          }),
-        )}
+        ${templates.map((t) => _templateCard(t, defaultTemplateId, handlers))}
       </div>
     </section>
   `;
@@ -409,7 +402,7 @@ function _tierSection(title, templates, defaultTemplateId, handlers) {
  * propagation so they don't double-fire as a card click.
  */
 function _templateCard(template, defaultTemplateId, handlers) {
-  const { onEdit, onDuplicate, onSetDefault, onDelete, onExport } =
+  const { onEdit, onDuplicate, onSetDefault, onDelete, onExport, onRename } =
     handlers || {};
   const {
     id,
@@ -524,11 +517,22 @@ function _templateCard(template, defaultTemplateId, handlers) {
             : ''
         }
         ${
-          !isDefault && !isBuiltin
+          // Set Default is a project-level setting (worca.default_template
+          // in .claude/settings.json), so it only makes sense to point at
+          // a template stored in *this* project's tier:
+          //   - built-in: hidden — duplicate to project first to claim it
+          //     as the default
+          //   - user: hidden — user templates are cross-project; a single
+          //     project's default shouldn't anchor on a user-tier file
+          //   - project: shown when this is not already the default
+          !isDefault && resolvedTier === 'project'
             ? html`<button
               class="action-btn action-btn--secondary"
               ?disabled=${!onSetDefault}
-              @click=${() => onSetDefault?.(id)}
+              @click=${(e) => {
+                e.stopPropagation();
+                onSetDefault?.(id);
+              }}
               title=${
                 onSetDefault
                   ? 'Set as default template'
@@ -537,6 +541,29 @@ function _templateCard(template, defaultTemplateId, handlers) {
             >
               ${unsafeHTML(iconSvg(Star, 14))}
               Set Default
+            </button>`
+            : ''
+        }
+        ${
+          // Rename / move applies to project + user tiers only (built-ins
+          // are immutable; project/user can be renamed and/or moved
+          // between scopes via the same dialog).
+          !isBuiltin
+            ? html`<button
+              class="action-btn action-btn--secondary"
+              ?disabled=${!onRename}
+              @click=${(e) => {
+                e.stopPropagation();
+                onRename?.(id, resolvedTier);
+              }}
+              title=${
+                onRename
+                  ? 'Rename or move template'
+                  : 'Upgrade worca-cc to enable rename'
+              }
+            >
+              ${unsafeHTML(iconSvg(Pencil, 14))}
+              Rename
             </button>`
             : ''
         }
