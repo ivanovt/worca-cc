@@ -7175,6 +7175,19 @@ sl-dialog.markdown-dialog::part(body) {
   text-transform: capitalize;
 }
 
+/*
+ * Visual error state on a field pill — used when the ID collides
+ * with an existing template in the same tier. The border turns
+ * warning-amber to match the inline badge that appears next to
+ * the input and the disabled Save button.
+ */
+.editor-field-pill--invalid {
+  border-color: var(--sl-color-warning-600, #d97706);
+}
+.editor-id-collision-badge {
+  flex-shrink: 0;
+}
+
 .editor-subheader-title {
   font-size: 16px;
   font-weight: 600;

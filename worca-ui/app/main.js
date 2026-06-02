@@ -586,6 +586,7 @@ let costsFetched = false;
 // -- Pipelines / Templates --
 let _templatesPollCleanup = null;
 let _worcaCliStatusFetching = false; // single in-flight probe guard
+let _editorTemplatesFetching = false; // single in-flight templates fetch for inline collision check
 // Editor state and cleanup from pipelines-editor module
 let _editorModule = null;
 let getEditorState = null;
@@ -4160,6 +4161,25 @@ function mainContentView() {
           .loadTemplate(tier, tid, route.projectId)
           .then(() => rerender());
         return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading template…</div>`;
+      }
+      // Ensure the templates list is loaded too — the editor uses it
+      // for the inline ID-collision check (same UX as the duplicate
+      // dialog). On direct navigation to /templates/<tier>/<id>/edit
+      // the templates list view never ran, so state.templates is
+      // empty; fetch it once in the background.
+      if (
+        !state.templates &&
+        !state.templatesLoaded &&
+        !_editorTemplatesFetching
+      ) {
+        _editorTemplatesFetching = true;
+        fetchTemplates(route.projectId || null)
+          .then((templates) => {
+            store.setState({ templates, templatesLoaded: true });
+          })
+          .finally(() => {
+            _editorTemplatesFetching = false;
+          });
       }
       return pipelinesEditorView(state, {
         tid,

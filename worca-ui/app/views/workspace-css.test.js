@@ -158,6 +158,11 @@ describe('workspace CSS — DAG styling', () => {
       // `--sl-color-*`; we tap into the primary 600 swatch as a
       // fallback when our own `--accent` isn't set.
       '--sl-color-primary-600',
+      // Used by the editor's `.editor-field-pill--invalid` rule (ID
+      // collision warning border). Shoelace warning swatch with a
+      // hex fallback so themes without Shoelace still render the
+      // amber edge.
+      '--sl-color-warning-600',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

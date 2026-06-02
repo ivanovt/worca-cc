@@ -974,6 +974,33 @@ export function pipelinesEditorView(state, options) {
   // editable mode.
   const isBuiltinTier = tier === 'builtin';
   const readOnly = isBuiltinTier;
+
+  // ID collision check — mirrors the duplicate/rename dialog's
+  // _validateActionDialog so the user sees the same warning here
+  // (and the Save button blocks) instead of saving and hitting an
+  // error toast from the server. The current template's own
+  // (tier, id) is excluded so we don't flag "edit in place" as a
+  // collision; only a real conflict against a sibling template
+  // counts.
+  const allTemplates = state?.templates || [];
+  const trimmedIdDraft = (idDraft || '').trim();
+  const isNewTemplate = editorState.isNewTemplate || tid === 'new';
+  // Source tier+id is the template currently on disk; for new
+  // templates there is no "self" yet.
+  const srcId = isNewTemplate ? null : tid;
+  const idCollision = !!(
+    trimmedIdDraft &&
+    allTemplates.find(
+      (t) =>
+        t.id === trimmedIdDraft &&
+        t.tier === tier &&
+        !(t.id === srcId && t.tier === tier),
+    )
+  );
+  const idHelpText = idCollision
+    ? `An id "${trimmedIdDraft}" already exists in the ${tier} scope.`
+    : '';
+
   const onNameInput = (e) => {
     const newName = e.target.value;
     editorState.nameDraft = newName;
@@ -1003,7 +1030,10 @@ export function pipelinesEditorView(state, options) {
               @sl-input=${onNameInput}
             ></sl-input>
           </span>
-          <span class="editor-field-pill editor-id-badge" title="Template ID">
+          <span
+            class="editor-field-pill editor-id-badge${idCollision ? ' editor-field-pill--invalid' : ''}"
+            title=${idCollision ? idHelpText : 'Template ID'}
+          >
             <span class="editor-field-pill-label">ID:</span>
             <sl-input
               class="editor-id-input"
@@ -1014,6 +1044,17 @@ export function pipelinesEditorView(state, options) {
               @sl-input=${onIdInput}
             ></sl-input>
           </span>
+          ${
+            idCollision
+              ? html`<sl-badge
+                  variant="warning"
+                  pill
+                  class="editor-id-collision-badge"
+                  title=${idHelpText}
+                  >ID already exists</sl-badge
+                >`
+              : ''
+          }
           <span
             class="editor-field-pill editor-storage-pill"
             title="Where this template lives (immutable)"
@@ -1162,7 +1203,7 @@ export function pipelinesEditorView(state, options) {
             : html`<sl-button
                 variant="primary"
                 size="small"
-                ?disabled=${saving || hasErrors}
+                ?disabled=${saving || hasErrors || idCollision}
                 @click=${() => saveTemplate(tid, tier, projectId, onSaved)}
               >
                 ${
