@@ -6878,6 +6878,19 @@ sl-dialog.markdown-dialog::part(body) {
   flex: 1;
   min-width: 0;
 }
+.template-card-id-row {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.template-card-id-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
 .template-card-id {
   font-family: var(--sl-font-mono);
   font-size: 12px;
