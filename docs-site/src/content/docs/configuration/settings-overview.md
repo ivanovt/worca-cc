@@ -9,12 +9,12 @@ Every project's configuration lives under a `worca` namespace in `.claude/settin
 
 ## The Settings panel
 
-Open a project's **Settings** to configure agent models and turns, stages, governance, circuit breaker, pricing, webhooks, integrations, and preflight checks. Saves are written to `.claude/settings.json` and are effective on the next run.
+Open a project's **Settings** — found in the sidebar under **Project Configuration → Project Settings**, alongside its sibling [**Pipeline Templates**](/configuration/pipeline-templates/) — to configure agent models and turns, stages, governance, circuit breaker, pricing, webhooks, integrations, and preflight checks. Both entries are hidden in global all-projects mode until you select a project. Saves are written to `.claude/settings.json` and are effective on the next run.
 
 Saves are **locked while a pipeline is running** to prevent mid-run config drift — finish or stop the run before changing settings.
 
 :::note[Screenshot — coming soon]
-The Settings panel with its subpanels (Stages, Agents, Governance, Circuit Breaker, Webhooks).
+The **Project Configuration** sidebar group with **Project Settings** open, its subpanels (Stages, Agents, Governance, Circuit Breaker, Webhooks) visible, and **Pipeline Templates** listed as its sibling entry.
 :::
 
 ## Three places config lives

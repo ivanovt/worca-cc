@@ -21,6 +21,7 @@ Expand any stage to see its individual iterations. Each iteration row shows:
 
 - the agent, its turns, cost, duration, and outcome;
 - an **effort badge** — the reasoning level the iteration ran at (see [Tuning effort](/advanced/tuning-effort/));
+- a **`Context: X%`** chip — how full the agent's context window was when the iteration ended. Appears once worca records a final context measurement at iteration close; on single-iteration stages it also appears on the collapsed stage info-strip so you don't have to expand to see it.
 - **Tools / Skills / Subagents** rows, each item badged allow (green) or deny (red) by the [governance](/concepts/governance/) rules, with a **Lockdown** chip when a section is set to `none`.
 
 The expanded **Agent Instructions** panel separates the resolved system prompt from your work-request message, so you can see exactly what the agent was told.

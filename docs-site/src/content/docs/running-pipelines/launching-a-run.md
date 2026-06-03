@@ -34,14 +34,26 @@ It reads the issue, surfaces open design decisions with a recommended option for
 
 ## Pick a template
 
-The **template** dropdown tailors the run to the kind of work — which stages run, how the agents are tuned, and the retry limits. The full set is described in [Pipeline templates](/concepts/pipeline-templates/).
+The **Pipeline** dropdown tailors the run to the kind of work — which stages run, how the agents are tuned, and the retry limits. The full set is described in [Pipeline templates](/concepts/pipeline-templates/).
 
 The first item in the dropdown reflects what runs if you don't pick a specific template:
 
 - **`No template (raw settings.json)`** — no `worca.default_template` is pinned for this project; the run uses project Settings as written.
 - **`★ Default template: <name>`** — `worca.default_template` is pinned and the dropdown will pre-select that template's behavior. Pick a different template from the list to override for just this run.
 
+The remaining options are **grouped by tier**, with section labels separating each group, in this order:
+
+1. **User** — templates from `~/.worca/templates/`.
+2. **Project** — templates from `.claude/templates/`.
+3. **Built-in** — the eight templates shipped with worca (`feature`, `feature-fast`, `feature-minor`, `bugfix`, `quick-fix`, `refactor`, `investigate`, `test-only`).
+
+The pinned default carries a **★** suffix wherever it appears in the list, so you can spot it at a glance regardless of which group it's in.
+
 Pick the template that matches your task before launching. If you're unsure and your project doesn't have a pinned default, `feature` runs the complete pipeline with every gate active.
+
+:::note[Screenshot — coming soon]
+The launcher's Pipeline dropdown open, with the **User**, **Project**, and **Built-in** group labels separating the templates and the project default suffixed **★**.
+:::
 
 ## Advanced options
 
