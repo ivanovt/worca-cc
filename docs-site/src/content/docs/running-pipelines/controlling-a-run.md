@@ -2,7 +2,7 @@
 title: Controlling a run
 description: Pause, resume, and stop a pipeline, plus the optional approval gates.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 The run-detail header carries the lifecycle controls — **pause**, **resume**, and **stop** — with a live status badge that tracks every transition.

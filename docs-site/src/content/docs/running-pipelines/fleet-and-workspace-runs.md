@@ -2,7 +2,7 @@
 title: Fleet & workspace runs
 description: Running one task across many projects — fleets in parallel, workspaces in dependency order.
 sidebar:
-  order: 5
+  order: 6
 ---
 
 A single run touches one project. For multi-project work, the **Run Pipeline** split-button (the chevron) exposes two more modes.
