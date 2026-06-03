@@ -380,6 +380,7 @@ export function sidebarView(
             <span>Webhooks</span>
           </span>
           ${(state.webhookInbox?.events?.length || 0) > 0 ? html`<sl-badge variant="warning" pill>${state.webhookInbox.events.length}</sl-badge>` : ''}
+          ${helpFor('events')}
         </div>
       </div>
 

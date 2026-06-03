@@ -446,7 +446,7 @@ export function dashboardView(
           </div>
         </div>
       `
-          : html`<div class="empty-state">No active pipelines</div>`
+          : html`<div class="empty-state">No active pipelines${helpFor('first-run')}</div>`
       }
 
       ${
