@@ -2,6 +2,7 @@ import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { effortLevelBadge } from '../utils/effort-badge.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   AlertTriangle,
   BarChart3,
@@ -222,6 +223,7 @@ function _planArtifactDialog(run, rerender) {
     iters.length > 1
       ? html`
         <div class="plan-iter-selector" role="group" aria-label="Plan revisions">
+          ${helpFor('plans-guides')}
           ${iters.map((it) => {
             const isLatest = it.n === latestN;
             const active =
@@ -912,7 +914,7 @@ function _dispatchSectionInlineView(label, sectionKey, events) {
   return html`<span
     class="dispatch-events-section"
     data-dispatch-section="${sectionKey}"
-    ><span class="meta-label">${label}</span>${body}</span
+    ><span class="meta-label">${label}</span>${body}${helpFor('dispatch')}</span
   >`;
 }
 
@@ -949,6 +951,7 @@ function _circuitBreakerBannerView(run, settings) {
     return html`
       <sl-alert class="circuit-breaker-banner" variant="danger" open>
         <strong>Circuit breaker tripped:</strong> ${cb.tripped_reason || 'Pipeline halted due to repeated errors.'}
+        ${helpFor('loops')}
       </sl-alert>
     `;
   }
@@ -958,6 +961,7 @@ function _circuitBreakerBannerView(run, settings) {
     return html`
       <sl-alert class="circuit-breaker-banner" variant="warning" open>
         <strong>Circuit breaker warning:</strong> ${String(failures)}/${String(threshold)} consecutive failures.
+        ${helpFor('loops')}
       </sl-alert>
     `;
   }
@@ -1489,6 +1493,7 @@ function _agentPromptSection(_stageKey, promptData) {
       <div slot="summary" class="agent-prompt-header">
         <span class="stage-meta-icon">${unsafeHTML(iconSvg(FileText, 12))}</span>
         Agent Instructions
+        ${helpFor('agent-prompt')}
       </div>
       ${
         agentInstructions
@@ -1580,6 +1585,7 @@ export function prApprovalPanelView(run, options = {}) {
     <sl-card class="approval-panel" data-testid="pr-approval-panel">
       <div slot="header">
         <strong>PR creation paused — approval required</strong>
+        ${helpFor('reviewing')}
       </div>
       <p>The pipeline is ready to create a pull request for this run. Approve to proceed, or reject to stop the pipeline.</p>
       <div class="approval-actions">
@@ -1689,7 +1695,11 @@ export function runDetailView(run, settings = {}, options = {}) {
 
   const overview = html`
     <div class="run-detail-overview">
-      ${stageTimelineView(stages, stageUi, run.active)}
+      ${helpFor('lifecycle')}
+      <div class="run-detail-stage-timeline-wrap">
+        ${stageTimelineView(stages, stageUi, run.active)}
+        ${helpFor('pipeline-stages')}
+      </div>
       ${_circuitBreakerBannerView(run, settings)}
       ${prVerificationBannerView(run)}
       ${guideConflictsPanelView(run.guide_conflicts, options)}

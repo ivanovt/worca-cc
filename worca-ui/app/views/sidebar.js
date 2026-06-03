@@ -1,5 +1,6 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   Activity,
   Archive,
@@ -341,6 +342,7 @@ export function sidebarView(
                 ? html`<sl-badge variant="${worktreeDiskWarning ? 'warning' : 'neutral'}" pill class="worktrees-count-badge">${worktreeCount}</sl-badge>`
                 : ''
           }
+          ${helpFor('worktrees')}
         </div>
         <div class="sidebar-item ${route.section === 'fleet-runs' ? 'active' : ''}"
              title=${collapsed ? 'Fleets' : ''}
@@ -405,6 +407,7 @@ export function sidebarView(
             <span>Webhooks</span>
           </span>
           ${(state.webhookInbox?.events?.length || 0) > 0 ? html`<sl-badge variant="warning" pill>${state.webhookInbox.events.length}</sl-badge>` : ''}
+          ${helpFor('events')}
         </div>
       </div>
 

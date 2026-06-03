@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   Activity,
   CircleAlert,
@@ -386,6 +387,7 @@ export function dashboardView(
   // attribution was unreliable when runs lacked a projectId field.
   return html`
     <div class="dashboard">
+      ${helpFor('monitoring')}
       <div class="dashboard-stats">
         <div class="stat-card stat-total">
           <div class="stat-icon-ring">${unsafeHTML(iconSvg(Zap, 20))}</div>
@@ -444,7 +446,7 @@ export function dashboardView(
           </div>
         </div>
       `
-          : html`<div class="empty-state">No active pipelines</div>`
+          : html`<div class="empty-state">No active pipelines${helpFor('first-run')}</div>`
       }
 
       ${

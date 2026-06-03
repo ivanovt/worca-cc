@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 
 // Brand SVG icons (Simple Icons, MIT license) — 24×24
 const BRAND_ICONS = {
@@ -292,6 +293,7 @@ export function integrationsTab(integrationsState, options) {
 
   return html`
     <div class="ig-page">
+      ${helpFor('chat')}
       <p class="ig-subtitle">Receive pipeline notifications in chat apps.</p>
       <div class="ig-cards">
         ${ADAPTERS.map((meta) => {

@@ -1,5 +1,6 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   ClipboardCopy,
   iconSvg,
@@ -242,6 +243,7 @@ export function webhookInboxView(
 
   return html`
     <div class="webhook-inbox">
+      ${helpFor('webhooks')}
       <div class="webhook-inbox-toolbar">
         <div class="webhook-inbox-category-chips">
           ${CATEGORIES.map(

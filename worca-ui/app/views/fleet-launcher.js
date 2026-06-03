@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import { dagGraphView } from './dag-graph.js';
 import {
   filePickerButton,
@@ -1208,6 +1209,7 @@ export function fleetLauncherView(appState, { rerender } = {}) {
           : nothing
       }
       <div class="new-run-form">
+        ${helpFor(isWorkspace ? 'workspace-runs' : 'fleet-runs')}
         ${isWorkspace ? _workspaceSelectSection(appState, { rerender }) : _projectsSection(appProjects, { rerender })}
         ${isWorkspace ? _workspaceDagSection() : nothing}
 ${

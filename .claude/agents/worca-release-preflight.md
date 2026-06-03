@@ -110,7 +110,22 @@ git log <last-tag>..HEAD -- MIGRATION.md --oneline
 
 Breaking change with no MIGRATION.md entry = `major` (surface for user to confirm; they may have decided to defer).
 
-## Step 6: Dependency drift (UI only, if @worca/ui in scope)
+## Step 6: In-app help links live on docs.worca.dev
+
+W-061 ships a registry of in-app help badges that link to `docs.worca.dev`. If `master` added a new doc page (and a matching `HELP_LINKS` entry) but `docs-live` was not fast-forwarded, the badge in the released UI will 404 for users. Catch this here before the release goes out.
+
+```bash
+python3 scripts/check-help-links-live.py
+```
+
+Exit code:
+- `0` → every `HELP_LINKS` slug returns 200 on `https://docs.worca.dev/<slug>/`. Carry on.
+- `1` → one or more 404s. **`critical`** — the fix is `/worca-docs-publish` (fast-forwards `docs-live` to master, publishing the missing pages). Re-run this step after the publish; do not proceed until it passes.
+- `2` → script could not find or parse `worca-ui/app/utils/help-links.js`. **`critical`** — surface the path the script reported.
+
+Skip this step only if `--target=worca-cc` is the explicit scope (the in-app registry ships with `@worca/ui`, not the Python package). Otherwise it always runs.
+
+## Step 7: Dependency drift (UI only, if @worca/ui in scope)
 
 ```bash
 cd worca-ui && npm outdated --json 2>/dev/null | jq 'keys'
@@ -118,7 +133,7 @@ cd worca-ui && npm outdated --json 2>/dev/null | jq 'keys'
 
 Surface outdated deps. Not a blocker, `minor` for awareness.
 
-## Step 7: Build sanity (optional, if requested)
+## Step 8: Build sanity (optional, if requested)
 
 If the user passes `--build-check`, run a dry build to catch packaging issues:
 
@@ -148,6 +163,7 @@ CHECKS:
   [✓] No tag conflict                     worca-cc-v0.7.0 does not exist
   [✗] CI status                           critical: most recent master run is "failure"
   [!] MIGRATION.md coverage               major: 2 breaking changes since worca-cc-v0.6.0, no MIGRATION.md update
+  [✗] Help links live on docs.worca.dev   critical: running-pipelines/timeline-view/ is 404 — run /worca-docs-publish
 
 BLOCKING ISSUES:
   [critical] CI is red on master — fix or revert before tagging.
