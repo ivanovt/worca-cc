@@ -17,6 +17,7 @@ import ChevronRight from 'lucide/dist/esm/icons/chevron-right';
 import Circle from 'lucide/dist/esm/icons/circle';
 import CircleAlert from 'lucide/dist/esm/icons/circle-alert';
 import CircleCheck from 'lucide/dist/esm/icons/circle-check';
+import CircleHelp from 'lucide/dist/esm/icons/circle-question-mark';
 import CircleSlash from 'lucide/dist/esm/icons/circle-slash';
 import ClipboardCopy from 'lucide/dist/esm/icons/clipboard-copy';
 import ClipboardPaste from 'lucide/dist/esm/icons/clipboard-paste';
@@ -102,6 +103,7 @@ export {
   Circle,
   CircleAlert,
   CircleCheck,
+  CircleHelp,
   CircleSlash,
   ClipboardCopy,
   ClipboardPaste,

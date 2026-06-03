@@ -8348,3 +8348,209 @@ sl-dialog.markdown-dialog::part(body) {
   color: var(--fg-muted);
   gap: 8px;
 }
+
+/* ===========================================================================
+ * Help mode (W-061 prototype, prototype/W-061-help-mode-toggle)
+ *
+ * Two concerns:
+ *   1. The right-edge "Help" tab (.help-edge-tab) — always visible.
+ *   2. Per-surface "?" badges (.help-badge) — hidden until body has the
+ *      .help-mode-active class.
+ *
+ * Visual language: muted neutral when idle, primary + gentle pulse when
+ * help mode is on. `prefers-reduced-motion` collapses the pulse to a
+ * static highlight so the badge stays discoverable but quiet.
+ * ===========================================================================
+ */
+
+/* --- Edge tab --------------------------------------------------------- */
+
+.help-edge-tab-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+.help-edge-tab {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%) translateX(0);
+  transform-origin: right center;
+  pointer-events: auto;
+
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 8px 12px;
+  border: 1px solid var(--sl-color-neutral-300, var(--border, #d1d5db));
+  border-right: none;
+  border-top-left-radius: 8px;
+  border-bottom-left-radius: 8px;
+  background: var(--sl-color-neutral-0, var(--bg, #fff));
+  color: var(--sl-color-neutral-700, var(--fg, #374151));
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.06);
+  transition: background-color 120ms ease, color 120ms ease, transform 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.help-edge-tab:hover,
+.help-edge-tab:focus-visible {
+  color: var(--sl-color-primary-700, var(--accent, #2563eb));
+  background: var(--sl-color-primary-50, rgba(37, 99, 235, 0.06));
+  transform: translateY(-50%) translateX(-2px);
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.08);
+  outline: none;
+}
+
+.help-edge-tab:focus-visible {
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.08),
+    0 0 0 2px var(--sl-color-primary-500, #3b82f6);
+}
+
+.help-edge-tab--active {
+  background: var(--sl-color-primary-600, #2563eb);
+  color: var(--sl-color-neutral-0, #fff);
+  border-color: var(--sl-color-primary-700, #1d4ed8);
+}
+
+.help-edge-tab--active:hover,
+.help-edge-tab--active:focus-visible {
+  background: var(--sl-color-primary-700, #1d4ed8);
+  color: var(--sl-color-neutral-0, #fff);
+}
+
+.help-edge-tab__inner {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Rotate the label so the tab reads bottom-to-top along the right edge,
+     matching the support-tab pattern users recognise but with explicit
+     "Help" wording + a ? kbd hint so it doesn't read as chat. */
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.help-edge-tab__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.help-edge-tab__label {
+  line-height: 1;
+}
+
+.help-edge-tab__kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid currentColor;
+  border-radius: 3px;
+  font-family: var(--sl-font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+/* --- Per-surface help badge ------------------------------------------- */
+
+/* Hidden by default. Once help-mode-active flips on the body, every badge
+   reveals at the top-right of its parent and gently pulses.
+
+   The badge is a real <a> — keyboard reachable when visible, opens the
+   doc in a new tab, never depends on JS for click handling. */
+.help-badge {
+  display: none;
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 5;
+
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--sl-color-primary-600, #2563eb);
+  color: var(--sl-color-neutral-0, #fff);
+  text-decoration: none;
+  border: 2px solid var(--sl-color-neutral-0, #fff);
+  box-shadow: 0 0 0 2px var(--sl-color-primary-600, #2563eb),
+    0 0 12px rgba(37, 99, 235, 0.55);
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+
+.help-badge svg {
+  width: 14px;
+  height: 14px;
+}
+
+body.help-mode-active .help-badge {
+  display: inline-flex;
+  animation: help-badge-pulse 1.6s ease-in-out infinite;
+}
+
+/* Auto-relative any direct parent of a badge so absolute positioning has
+   a containing block. Modern browsers (Chrome 105+, Safari 15.4+,
+   Firefox 121+) all support :has(). */
+body.help-mode-active *:has(> .help-badge) {
+  position: relative;
+}
+
+/* sl-tab / sl-tab-panel are already positioned hosts, but their internal
+   padding means the badge sits over the close-icon area. Nudge it inward
+   so it doesn't overlap the tab label content. */
+body.help-mode-active sl-tab:has(> .help-badge) > .help-badge {
+  top: -6px;
+  right: -6px;
+}
+
+.help-badge:hover,
+.help-badge:focus-visible {
+  transform: scale(1.1);
+  background: var(--sl-color-primary-700, #1d4ed8);
+  outline: none;
+}
+
+@keyframes help-badge-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px var(--sl-color-primary-600, #2563eb),
+      0 0 8px rgba(37, 99, 235, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 2px var(--sl-color-primary-500, #3b82f6),
+      0 0 18px rgba(59, 130, 246, 0.8);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body.help-mode-active .help-badge {
+    animation: none;
+    box-shadow: 0 0 0 2px var(--sl-color-primary-600, #2563eb),
+      0 0 12px rgba(37, 99, 235, 0.55);
+  }
+  .help-edge-tab {
+    transition: none;
+  }
+}
+
+/* Dark-mode tweak — Shoelace's neutral-0 flips to a dark surface, so the
+   default rules largely work. The badge's white border keeps contrast
+   against dark panel backgrounds. */
+:root[data-theme='dark'] .help-edge-tab,
+.sl-theme-dark .help-edge-tab {
+  background: var(--sl-color-neutral-100, #1f2937);
+  color: var(--sl-color-neutral-200, #e5e7eb);
+  border-color: var(--sl-color-neutral-400, #4b5563);
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.4);
+}

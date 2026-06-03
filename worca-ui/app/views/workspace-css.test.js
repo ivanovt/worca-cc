@@ -163,6 +163,20 @@ describe('workspace CSS — DAG styling', () => {
       // hex fallback so themes without Shoelace still render the
       // amber edge.
       '--sl-color-warning-600',
+      // Used by the W-061 help-mode prototype (right-edge "Help" tab +
+      // per-surface .help-badge): Shoelace's neutral and primary scales
+      // are tapped for the muted-idle / primary-active treatment and
+      // for dark-mode contrast. Each var has a hex fallback in the
+      // CSS rules so themes without Shoelace still render.
+      '--sl-color-neutral-0',
+      '--sl-color-neutral-100',
+      '--sl-color-neutral-200',
+      '--sl-color-neutral-300',
+      '--sl-color-neutral-400',
+      '--sl-color-neutral-700',
+      '--sl-color-primary-50',
+      '--sl-color-primary-500',
+      '--sl-color-primary-700',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

@@ -7,6 +7,7 @@ import {
   showConfirm,
   showInfo,
 } from '../utils/confirm-dialog.js';
+import { helpFor, helpUrl } from '../utils/help-links.js';
 import {
   Activity,
   Bell,
@@ -93,7 +94,7 @@ export const TEMPLATE_DRIVEN_BANNER = html`
     explicitly or pinned via <code>worca.default_template</code> — these
     values are <em>not</em> applied. The selected template owns them. The
     values here only take effect when no template is selected.
-    <a href="https://docs.worca.dev/configuration/precedence/" target="_blank" rel="noopener">Learn more →</a>
+    <a href=${helpUrl('configuration-precedence')} target="_blank" rel="noopener">Learn more →</a>
   </sl-alert>
 `;
 
@@ -3337,18 +3338,22 @@ export function settingsView(
         <sl-tab slot="nav" panel="projects">
           ${unsafeHTML(iconSvg(FolderOpen, 14))}
           Projects
+          ${helpFor('add-project')}
         </sl-tab>
         <sl-tab slot="nav" panel="notifications">
           ${unsafeHTML(iconSvg(Bell, 14))}
           Notifications
+          <!-- no dedicated doc page yet (W-061 prototype: skip-if-no-doc) -->
         </sl-tab>
         <sl-tab slot="nav" panel="preferences">
           ${unsafeHTML(iconSvg(Settings, 14))}
           Preferences
+          ${helpFor('settings-overview')}
         </sl-tab>
         <sl-tab slot="nav" panel="integrations">
           ${unsafeHTML(iconSvg(Zap, 14))}
           Integrations
+          ${helpFor('chat')}
         </sl-tab>
 
         <sl-tab-panel name="projects">${projectsTab(projects, { onProjectAdd, onProjectRemove, onProjectsRefresh, rerender })}</sl-tab-panel>
@@ -3401,30 +3406,37 @@ export function projectSettingsView(
         <sl-tab slot="nav" panel="models">
           ${unsafeHTML(iconSvg(Cpu, 14))}
           Models
+          ${helpFor('agents-models')}
         </sl-tab>
         <sl-tab slot="nav" panel="pipeline">
           ${unsafeHTML(iconSvg(Workflow, 14))}
           Pipeline
+          ${helpFor('stages-config')}
         </sl-tab>
         <sl-tab slot="nav" panel="governance">
           ${unsafeHTML(iconSvg(Shield, 14))}
           Governance
+          ${helpFor('governance')}
         </sl-tab>
         <sl-tab slot="nav" panel="pricing">
           ${unsafeHTML(iconSvg(Coins, 14))}
           Pricing
+          <!-- no dedicated doc page yet (W-061 prototype: skip-if-no-doc) -->
         </sl-tab>
         <sl-tab slot="nav" panel="webhooks">
           ${unsafeHTML(iconSvg(Zap, 14))}
           Webhooks
+          ${helpFor('webhooks')}
         </sl-tab>
         <sl-tab slot="nav" panel="graphify">
           ${unsafeHTML(iconSvg(Database, 14))}
           Graphify
+          ${helpFor('graphify')}
         </sl-tab>
         <sl-tab slot="nav" panel="code-review-graph">
           ${unsafeHTML(iconSvg(Search, 14))}
           Code Review Graph
+          ${helpFor('crg')}
         </sl-tab>
 
         <sl-tab-panel name="models">${modelsTab(worca, rerender)}</sl-tab-panel>

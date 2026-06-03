@@ -5,6 +5,7 @@ import { navigate, onHashChange, parseHash } from './router.js';
 import { createStore, isArchivedRunExpired } from './state.js';
 import { createArchiveActions } from './utils/archive-actions.js';
 import { confirmDialogTemplate, showConfirm } from './utils/confirm-dialog.js';
+import { bindKeyboard as bindHelpKeyboard } from './utils/help-mode.js';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -47,6 +48,7 @@ import {
   resetLauncherState,
   submitFleetLauncher,
 } from './views/fleet-launcher.js';
+import { mountHelpEdgeTab } from './views/help-edge-tab.js';
 import { buildRunMeta, learningsSectionView } from './views/learnings-panel.js';
 import {
   clearLiveTerminal,
@@ -4952,3 +4954,19 @@ setInterval(() => {
 
 rerender();
 attachStickyHeaderListener();
+
+// --- Help mode (W-061 prototype) -------------------------------------------
+// Mount the right-edge "Help" tab into its own fixed-position root outside
+// the lit-html app root so route changes don't unmount it. Bind the global
+// `?` / Escape keybindings once at bootstrap.
+(function initHelpMode() {
+  let root = document.getElementById('help-edge-tab-root');
+  if (!root) {
+    root = document.createElement('div');
+    root.id = 'help-edge-tab-root';
+    root.className = 'help-edge-tab-root';
+    document.body.appendChild(root);
+  }
+  mountHelpEdgeTab(root);
+  bindHelpKeyboard();
+})();
