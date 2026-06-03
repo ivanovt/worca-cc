@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightImageZoom from 'starlight-image-zoom';
 
 const GITHUB_REPO = 'https://github.com/SinishaDjukic/worca-cc';
 
@@ -42,6 +43,7 @@ export default defineConfig({
 	site: 'https://docs.worca.dev',
 	integrations: [
 		starlight({
+			plugins: [starlightImageZoom()],
 			title: 'worca',
 			description:
 				'Documentation for worca — an autonomous software development pipeline combining orchestration with governance enforcement.',
