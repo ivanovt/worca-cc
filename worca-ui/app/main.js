@@ -158,7 +158,34 @@ import '@shoelace-style/shoelace/dist/components/progress-bar/progress-bar.js';
 import '@shoelace-style/shoelace/dist/components/range/range.js';
 import '@shoelace-style/shoelace/dist/components/tag/tag.js';
 
-const store = createStore();
+// Sidebar collapsed state is client-local — persisted in localStorage,
+// not server-side preferences. Different browsers/tabs may want different
+// widths. Hydrate before createStore so the first render is correct.
+const SIDEBAR_COLLAPSED_KEY = 'worca.sidebar-collapsed';
+function readSidebarCollapsed() {
+  try {
+    return localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+function writeSidebarCollapsed(value) {
+  try {
+    localStorage.setItem(SIDEBAR_COLLAPSED_KEY, value ? '1' : '0');
+  } catch {
+    /* localStorage unavailable */
+  }
+}
+
+const store = createStore({
+  preferences: { sidebarCollapsed: readSidebarCollapsed() },
+});
+
+function toggleSidebarCollapsed() {
+  const next = !store.getState().preferences.sidebarCollapsed;
+  writeSidebarCollapsed(next);
+  store.setState({ preferences: { sidebarCollapsed: next } });
+}
 
 function projectUrl(path) {
   const pid = store.getState().currentProjectId;
@@ -4772,6 +4799,7 @@ function rerender() {
           store.setState({ addProjectDialogOpen: true });
           rerender();
         },
+        onToggleSidebar: toggleSidebarCollapsed,
       })}
       <main class="main-content">
         ${notificationManager.renderBanner()}
@@ -4892,6 +4920,30 @@ function attachStickyHeaderListener() {
 notificationManager.setRerender(rerender);
 store.subscribe(() => scheduleRerender());
 applyTheme(store.getState().preferences.theme);
+
+// Cmd/Ctrl+B toggles the sidebar (VS Code convention).
+// Ignore the shortcut when the user is typing in an editable element so
+// it doesn't fight with text-editing flows.
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'b' && e.key !== 'B') return;
+  if (!(e.metaKey || e.ctrlKey)) return;
+  if (e.altKey || e.shiftKey) return;
+  const target = e.target;
+  if (target) {
+    const tag = (target.tagName || '').toLowerCase();
+    if (
+      tag === 'input' ||
+      tag === 'textarea' ||
+      tag === 'sl-input' ||
+      tag === 'sl-textarea'
+    )
+      return;
+    if (target.isContentEditable) return;
+  }
+  e.preventDefault();
+  toggleSidebarCollapsed();
+});
+
 if (route.projectId) {
   store.setState({ currentProjectId: route.projectId });
 }

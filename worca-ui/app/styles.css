@@ -155,15 +155,50 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .sidebar.collapsed .sidebar-section-header,
-.sidebar.collapsed .sidebar-item span,
+/* `.sidebar-item-left > span` targets only label spans — the outer
+   `.sidebar-item-left` is itself a span and would have been swept up
+   by the broader `.sidebar-item span` selector, hiding the icon too. */
+.sidebar.collapsed .sidebar-item-left > span,
 .sidebar.collapsed .conn-label,
-.sidebar.collapsed .logo-text {
+.sidebar.collapsed .logo-text,
+.sidebar.collapsed .sidebar-project-section,
+.sidebar.collapsed .sidebar-new-run-chevron-dropdown {
   display: none;
 }
 
+/* In the collapsed rail, nav items become icon-only — center them so they
+   sit under the toggle button rather than floating against the left edge. */
+.sidebar.collapsed .sidebar-item {
+  justify-content: center;
+  margin: 2px 6px;
+  padding: 8px 6px;
+}
+.sidebar.collapsed .sidebar-item-left {
+  gap: 0;
+}
+.sidebar.collapsed .sidebar-new-run {
+  padding: 4px 6px;
+}
+.sidebar.collapsed .sidebar-new-run-split {
+  width: auto;
+}
+.sidebar.collapsed .sidebar-footer {
+  justify-content: center;
+  padding: 12px 6px;
+}
+
 .sidebar-logo {
-  padding: 20px 16px 12px;
+  padding: 16px 12px 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebar.collapsed .sidebar-logo {
+  justify-content: center;
+  padding: 16px 6px 12px;
 }
 
 .logo-text {
@@ -172,6 +207,35 @@ h1, h2, h3, h4, h5, h6 {
   font-weight: 700;
   letter-spacing: 0.08em;
   color: var(--fg);
+}
+
+.sidebar-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.sidebar-toggle-btn:hover {
+  background: var(--border);
+  color: var(--fg);
+}
+
+.sidebar-toggle-btn:focus-visible {
+  outline: none;
+  border-color: var(--accent);
 }
 
 /* --- 6. Sidebar Sections --- */
@@ -3676,6 +3740,9 @@ sl-option.template-grouped:focus::part(suffix) {
 
 .sidebar.collapsed .sidebar-new-run-btn-primary {
   padding: 8px;
+  /* Chevron half is hidden — drop the divider so the button reads as a
+     single icon control, not a button with a stray edge. */
+  border-right: 0;
 }
 
 /* Stage restart button */

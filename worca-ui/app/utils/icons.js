@@ -38,6 +38,8 @@ import List from 'lucide/dist/esm/icons/list';
 import Loader from 'lucide/dist/esm/icons/loader';
 import Lock from 'lucide/dist/esm/icons/lock';
 import Moon from 'lucide/dist/esm/icons/moon';
+import PanelLeftClose from 'lucide/dist/esm/icons/panel-left-close';
+import PanelLeftOpen from 'lucide/dist/esm/icons/panel-left-open';
 import Pause from 'lucide/dist/esm/icons/pause';
 import Pencil from 'lucide/dist/esm/icons/pencil';
 import Play from 'lucide/dist/esm/icons/play';
@@ -123,6 +125,8 @@ export {
   Loader,
   Lock,
   Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pause,
   Pencil,
   Play,
