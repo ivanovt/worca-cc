@@ -757,8 +757,20 @@ function _effortRowView(iter, graphifyEnabled, crgEnabled) {
     ? html`<sl-badge class="effort-source-chip" variant="neutral" pill>capped</sl-badge>`
     : nothing;
 
+  // Bead chip — only surface when it conveys real divergence info.
+  // Suppress when the coordinator's bead label matches the resolved
+  // effort level (no divergence) or when the run is in
+  // `mode_disabled` (the label was never going to be consulted, so
+  // showing "ignored" is noise). The chip also stays suppressed
+  // when bead_classified.applied is true (level already matches and
+  // is implied by the source chip).
   const bc = e.bead_classified;
-  const showBeadRow = bc && bc.level != null && bc.applied === false;
+  const showBeadChip =
+    bc &&
+    bc.level != null &&
+    bc.applied === false &&
+    bc.level !== e.level &&
+    bc.skip_reason !== 'mode_disabled';
   const divergenceLabel =
     bc?.skip_reason === 'explicit_override' ? 'overridden' : 'ignored';
 
@@ -769,20 +781,19 @@ function _effortRowView(iter, graphifyEnabled, crgEnabled) {
       <sl-badge class="effort-source-chip" variant="neutral" pill>${sourceLabel}</sl-badge>
       ${escalationChips}
       ${cappedChip}
-      ${gfx}
-      ${crg}
-    </div>
-    ${
-      showBeadRow
-        ? html`
-      <div class="iteration-tags-row">
+      ${
+        showBeadChip
+          ? html`
+        <span class="iteration-tags-sep">·</span>
         <span class="meta-label">Bead:</span>
         ${unsafeHTML(effortLevelBadge(bc.level))}
         <sl-badge class="effort-divergence-chip" variant="warning" pill>${divergenceLabel}</sl-badge>
-      </div>
-    `
-        : nothing
-    }
+      `
+          : nothing
+      }
+      ${gfx}
+      ${crg}
+    </div>
   `;
 }
 

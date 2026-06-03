@@ -220,19 +220,26 @@ function normalizeStageConfig(stages) {
 
 /**
  * Merge template config with built-in defaults for form editing.
+ *
+ * Exported for tests; lives here so the test surface mirrors the
+ * editor's actual entry/exit points.
  */
-function buildFormBuffer(templateConfig, settings) {
+export function buildFormBuffer(templateConfig, settings) {
   const config = templateConfig || {};
   const form = {};
 
   // Stages
   form.stages = normalizeStageConfig(config.stages);
 
-  // Agents
+  // Agents — stash the original per-agent map so unknown keys
+  // (anything beyond model/max_turns/effort) survive the
+  // round-trip. formBufferToConfig overlays edited fields on top
+  // of _original on save.
   form.agents = {};
   for (const name of AGENT_NAMES) {
     const agentConfig = config.agents?.[name] || {};
     form.agents[name] = {
+      _original: { ...agentConfig },
       model: agentConfig.model || 'sonnet',
       max_turns: agentConfig.max_turns || 30,
       effort: agentConfig.effort || null,
@@ -248,11 +255,27 @@ function buildFormBuffer(templateConfig, settings) {
     ...(config.circuit_breaker || {}),
   };
 
-  // Governance
+  // Effort (auto_mode + auto_cap). Seed from the template so the
+  // Agents tab dropdowns show the saved value rather than the
+  // generic 'adaptive' / 'xhigh' fallback — without this, opening
+  // an `auto_mode: disabled` template and touching anything in
+  // the Agents tab silently overwrites the template back to
+  // 'adaptive' on save.
+  form.effort = { ...(config.effort || {}) };
+
+  // Governance — display-time merge of project defaults so the
+  // user sees the effective dispatch. The original template
+  // dispatch is stashed under _templateOriginalDispatch and a
+  // per-section dirty flag tracks user edits; formBufferToConfig
+  // emits only template-original + dirty sections, never the
+  // project's snapshot.
   form.governance = deepMergeGovernance(
     config.governance,
     settings?.worca?.governance,
   );
+  form._templateOriginalDispatch =
+    deepClone(config.governance?.dispatch || {}) || {};
+  form._dispatchDirty = { tools: false, skills: false, subagents: false };
 
   // Approval gates — milestones is template-owned. Defaults match
   // the server-side defaults (plan approval required, PR approval
@@ -327,8 +350,12 @@ function deepMergeGovernanceTiered(dispatch, defaultDispatch) {
 
 /**
  * Convert form buffer back to template config shape.
+ *
+ * Exported for tests; the round-trip (buildFormBuffer →
+ * formBufferToConfig) is the contract the W-062 editor must
+ * preserve, so it's worth exercising directly.
  */
-function formBufferToConfig(formBuffer) {
+export function formBufferToConfig(formBuffer) {
   const config = {};
 
   // Stages
@@ -344,22 +371,26 @@ function formBufferToConfig(formBuffer) {
     }
   }
 
-  // Agents
+  // Agents — overlay edited fields on top of the original per-agent
+  // map so unknown keys (anything beyond model/max_turns/effort)
+  // survive round-trip. Without _original, any new key added to the
+  // template's agent block would be silently dropped on save.
   config.agents = {};
   for (const name of AGENT_NAMES) {
     const agent = formBuffer.agents[name] || {};
+    const merged = {
+      ...(agent._original || {}),
+      model: agent.model,
+      max_turns: agent.max_turns,
+    };
     if (agent.effort) {
-      config.agents[name] = {
-        model: agent.model,
-        max_turns: agent.max_turns,
-        effort: agent.effort,
-      };
+      merged.effort = agent.effort;
     } else {
-      config.agents[name] = {
-        model: agent.model,
-        max_turns: agent.max_turns,
-      };
+      // User explicitly cleared effort — don't carry the original
+      // value through.
+      delete merged.effort;
     }
+    config.agents[name] = merged;
   }
 
   // Loops
@@ -373,8 +404,39 @@ function formBufferToConfig(formBuffer) {
   // Circuit breaker
   config.circuit_breaker = formBuffer.circuit_breaker;
 
-  // Governance
-  config.governance = formBuffer.governance;
+  // Governance — strip cross-template keys (guards) before write so
+  // the template doesn't capture the project's hook-gate snapshot.
+  // `guards` is NOT in TEMPLATE_OWNED_KEYS (see
+  // src/worca/orchestrator/templates.py); it stays cross-template
+  // and is edited in Project Settings.
+  const { guards: _drop_guards, ...templateOwnedGov } =
+    formBuffer.governance || {};
+  config.governance = templateOwnedGov;
+
+  // Governance dispatch — write template-original entries for
+  // sections the user never touched; write the merged form buffer
+  // only for sections marked dirty. This prevents a template from
+  // silently capturing the project's dispatch snapshot just because
+  // it was opened in the editor.
+  const dirty = formBuffer._dispatchDirty || {};
+  const original = formBuffer._templateOriginalDispatch || {};
+  const mergedDispatch = formBuffer.governance?.dispatch || {};
+  const writtenDispatch = {};
+  let dispatchHasEntries = false;
+  for (const section of ['tools', 'skills', 'subagents']) {
+    if (dirty[section]) {
+      writtenDispatch[section] = mergedDispatch[section] || {};
+      dispatchHasEntries = true;
+    } else if (original[section] !== undefined) {
+      writtenDispatch[section] = original[section];
+      dispatchHasEntries = true;
+    }
+  }
+  if (dispatchHasEntries) {
+    config.governance.dispatch = writtenDispatch;
+  } else {
+    delete config.governance.dispatch;
+  }
 
   // Effort (auto_mode + auto_cap). Only persist if the buffer has
   // either field — empty/default templates skip the key entirely so
@@ -1838,9 +1900,9 @@ function _governanceSection(formBuffer, settings, projectId, rerender) {
       </p>
       <div class="settings-grid">
         <div class="settings-field">
-          <label class="settings-label" for="governance-plan-review-enforce">Enforce mode</label>
           <sl-select
             id="governance-plan-review-enforce"
+            aria-label="Plan review enforce mode"
             .value=${planReviewEnforce}
             size="small"
             hoist
@@ -1889,6 +1951,16 @@ function _governanceSection(formBuffer, settings, projectId, rerender) {
                 };
               }
               editorState.formBuffer.governance.dispatch[section] = newConfig;
+              // Mark the section dirty so formBufferToConfig writes the
+              // user-edited config rather than the template original.
+              if (!editorState.formBuffer._dispatchDirty) {
+                editorState.formBuffer._dispatchDirty = {
+                  tools: false,
+                  skills: false,
+                  subagents: false,
+                };
+              }
+              editorState.formBuffer._dispatchDirty[section] = true;
               rerender();
             },
             state: dispatchEditState[section],
