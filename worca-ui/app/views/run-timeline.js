@@ -1,5 +1,6 @@
 import { html, nothing } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import { iconSvg, RefreshCw, ZoomIn, ZoomOut } from '../utils/icons.js';
 import { STAGE_HUES } from '../utils/stage-hues.js';
 import { computeTimelineLayout } from '../utils/timeline-layout.js';
@@ -973,6 +974,7 @@ export function runTimelineView(run, _settings, options = {}) {
     @click=${handleClick}
     @keydown=${handleKeydown}
   >
+    ${helpFor('timeline-view')}
     ${buildStatsSummary(layout)}
     <div class="timeline-toolbar" role="toolbar" aria-label="Timeline zoom">
       <div class="timeline-toolbar-group">

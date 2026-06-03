@@ -38,39 +38,94 @@ Trade-off awareness (see also `.worca/analyses/issue-259.md`):
 | `app/styles.css` (appended block) | `.help-edge-tab` (rotated label, hover, active state), `.help-badge` (hidden until `body.help-mode-active`, absolute top-right of parent, glow pulse, `prefers-reduced-motion` fallback to static highlight), dark-mode tokens. |
 | `app/main.js` | Bootstrap: mount the edge tab into `<div id="help-edge-tab-root">` appended to `<body>`, bind keyboard. |
 
-## Instrumented surfaces (this prototype)
+## Instrumented surfaces — full UI sweep
 
-**Settings — 8 of 11 tabs** (3 skipped because no doc page exists yet):
+After the initial 16-surface validation pass, the prototype was extended to cover every primary teaching surface across the UI. Total: **34 surfaces** across 14 view files, all mapping to existing pages under `docs-site/src/content/docs/`. The "one `?` per primary teaching surface" discipline rule still holds — no per-button / per-field placements.
 
-| Tab | helpId |
-|---|---|
-| Global: Projects | `add-project` |
-| Global: Notifications | *(skip — no doc)* |
-| Global: Preferences | `settings-overview` |
-| Global: Integrations | `chat` |
-| Project: Models | `agents-models` |
-| Project: Pipeline | `stages-config` |
-| Project: Governance | `governance` |
-| Project: Pricing | *(skip — no doc)* |
-| Project: Webhooks | `webhooks` |
-| Project: Graphify | `graphify` |
-| Project: Code Review Graph | `crg` |
+### Settings (`settings.js`)
 
-**Run Detail — 7 panels**:
+| Surface | helpId | Doc target |
+|---|---|---|
+| Global tab: Projects | `add-project` | getting-started/add-your-project |
+| Global tab: Notifications | *(skip — no doc)* | — |
+| Global tab: Preferences | `settings-overview` | configuration/settings-overview |
+| Global tab: Integrations | `chat` | integrations/chat-integrations |
+| Project tab: Models | `agents-models` | configuration/agents-and-models |
+| Project tab: Pipeline | `stages-config` | configuration/stages |
+| Project tab: Governance | `governance` | concepts/governance |
+| Project tab: Pricing | *(skip — no doc)* | — |
+| Project tab: Webhooks | `webhooks` | integrations/webhooks |
+| Project tab: Graphify | `graphify` | advanced/knowledge-graph |
+| Project tab: Code Review Graph | `crg` | advanced/code-review-graph |
+| Inline anchor at `settings.js:96` | `configuration-precedence` (via `helpUrl`) | configuration/precedence |
 
-| Surface | helpId |
-|---|---|
-| `.run-detail-overview` (lifecycle/run header) | `lifecycle` |
-| `.stage-timeline` wrapper | `pipeline-stages` |
-| `.plan-iter-selector` (plan revisions) | `plans-guides` |
-| `.dispatch-events-section` | `dispatch` |
-| `.circuit-breaker-banner` (sl-alert) | `loops` |
-| `.agent-prompt-header` (sl-details summary) | `agent-prompt` |
-| `.approval-panel` (sl-card PR approval) | `reviewing` |
+### Run Detail (`run-detail.js`)
 
-**Other:** the inline `<a href="https://docs.worca.dev/configuration/precedence/">Learn more →</a>` at `settings.js:96` was migrated to use `helpUrl('configuration-precedence')` — keeping the inline-prose treatment but routing through the registry.
+| Surface | helpId | Doc target |
+|---|---|---|
+| `.run-detail-overview` (lifecycle/run header) | `lifecycle` | concepts/lifecycle-and-state |
+| `.stage-timeline` wrapper | `pipeline-stages` | concepts/the-pipeline-and-stages |
+| `.plan-iter-selector` (plan revisions) | `plans-guides` | concepts/plans-work-requests-and-guides |
+| `.dispatch-events-section` | `dispatch` | advanced/dispatch-governance |
+| `.circuit-breaker-banner` (sl-alert) | `loops` | configuration/loops-and-circuit-breaker |
+| `.agent-prompt-header` (sl-details summary) | `agent-prompt` | advanced/anatomy-of-an-agent-prompt |
+| `.approval-panel` (sl-card PR approval) | `reviewing` | running-pipelines/reviewing-the-result |
 
-Out of scope for this prototype (intentionally — covered after pattern validation): launchers (new-run, fleet, workspace), dashboard, sidebar, Pipeline Templates list page, Run Timeline view header.
+### Pipeline Templates (`pipelines.js`, `pipelines-editor.js`)
+
+| Surface | helpId | Doc target |
+|---|---|---|
+| Templates list page | `templates` | concepts/pipeline-templates |
+| Template editor (subheader) | `authoring-templates` | advanced/authoring-templates |
+| Editor tab: Agents | `agents-models` | configuration/agents-and-models |
+| Editor tab: Pipeline | `stages-config` | configuration/stages |
+| Editor tab: Governance | `dispatch` | advanced/dispatch-governance |
+
+### Run Timeline (`run-timeline.js`)
+
+| Surface | helpId | Doc target |
+|---|---|---|
+| Timeline view container | `timeline-view` | running-pipelines/timeline-view |
+
+### Launchers (`new-run.js`, `fleet-launcher.js`, `workspace-create.js`)
+
+| Surface | helpId | Doc target |
+|---|---|---|
+| New Run form | `launching` | running-pipelines/launching-a-run |
+| Fleet Launcher form (fleet mode) | `fleet-runs` | advanced/fleet-runs |
+| Fleet Launcher form (workspace mode) | `workspace-runs` | advanced/workspace-runs |
+| Workspace Create form | `workspace-runs` | advanced/workspace-runs |
+
+### Dashboard + sidebar + integrations (`dashboard.js`, `sidebar.js`, `integrations.js`, `webhook-inbox.js`)
+
+| Surface | helpId | Doc target |
+|---|---|---|
+| Dashboard view | `monitoring` | running-pipelines/monitoring-a-run |
+| Sidebar Worktrees item | `worktrees` | advanced/worktree-cleanup |
+| Integrations panel (settings tab body) | `chat` | integrations/chat-integrations |
+| Webhook inbox view | `webhooks` | integrations/webhooks |
+
+### Detail + edit + listing views (`fleet-detail.js`, `workspace-detail.js`, `workspace-edit.js`, `workspaces-config.js`, `worktrees.js`)
+
+| Surface | helpId | Doc target |
+|---|---|---|
+| Fleet Detail page | `fleet-runs` | advanced/fleet-runs |
+| Workspace Detail page | `workspace-runs` | advanced/workspace-runs |
+| Workspace Edit form | `workspace-runs` | advanced/workspace-runs |
+| Workspaces Config table | `workspace-runs` | advanced/workspace-runs |
+| Worktrees page | `worktrees` | advanced/worktree-cleanup |
+
+### Surfaces deliberately uninstrumented
+
+- `beads-panel.js`, `token-costs.js`, `learnings-panel.js`, `live-output.js`, `log-viewer.js` — no dedicated doc page yet; the skip-if-no-doc rule prevents `?` icons that would link to 404s or thin pages.
+- `settings-graphify.js`, `settings-code-review-graph.js` — covered transitively via the parent settings tabs.
+- `dispatch-section.js`, `stage-timeline.js` — covered transitively via `run-detail.js`.
+- `add-project-dialog.js` — dialog; help-mode activation is unlikely while modal-focused. Available as `add-project` helpId if desired later.
+- `dag-graph.js`, `fleet-card.js`, `run-card.js`, `workspace-card.js`, `run-list.js`, `group-rendering.js`, `agent-names.js`, `dispatch-tag-state.js`, `launcher-shared.js`, `stage-tab-memory.js` — utility / card / shared components; not primary teaching surfaces.
+
+### Registry coverage
+
+All 34 placements map to entries already in `HELP_LINKS` (the registry was sized for ~25 ids during the initial prototype; the full UI sweep added zero new entries). Doc pages currently in the tree but unused by any UI surface (preserved in the registry for future use): `effort`, `secrets`, `controlling`, `first-run`, `events`. Doc pages not in the registry but available as future targets: adding-models, anatomy-of-an-agent-prompt (already used), authoring-templates (already used), overriding-agent-prompts, running-from-the-cli, guides, agents-models-and-effort, fleet-and-workspace-runs, installation, prerequisites, the four introduction/* pages, the four reference/* pages, and upgrading/upgrading.
 
 ## How to evaluate
 

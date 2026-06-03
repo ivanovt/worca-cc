@@ -1,5 +1,6 @@
 import { html } from 'lit-html';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   Activity,
   Archive,
@@ -319,6 +320,7 @@ export function sidebarView(
                 ? html`<sl-badge variant="${worktreeDiskWarning ? 'warning' : 'neutral'}" pill class="worktrees-count-badge">${worktreeCount}</sl-badge>`
                 : ''
           }
+          ${helpFor('worktrees')}
         </div>
         <div class="sidebar-item ${route.section === 'fleet-runs' ? 'active' : ''}"
              @click=${() => onNavigate('fleet-runs')}>

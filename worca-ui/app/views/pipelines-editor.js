@@ -17,6 +17,7 @@ import { html, nothing } from 'lit-html';
 import { ifDefined } from 'lit-html/directives/if-defined.js';
 import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
 import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
+import { helpFor } from '../utils/help-links.js';
 import {
   CircleCheck,
   iconSvg,
@@ -1147,6 +1148,7 @@ export function pipelinesEditorView(state, options) {
   return html`
     <div class="pipelines-editor">
       <div class="editor-subheader">
+        ${helpFor('authoring-templates')}
         <div class="editor-subheader-title-group">
           <sl-tooltip content="Template name">
             <span class="editor-field-pill editor-name-pill">
@@ -1267,14 +1269,17 @@ export function pipelinesEditorView(state, options) {
           <sl-tab slot="nav" panel="agents">
             ${unsafeHTML(iconSvg(Users, 14))}
             Agents
+            ${helpFor('agents-models')}
           </sl-tab>
           <sl-tab slot="nav" panel="pipeline">
             ${unsafeHTML(iconSvg(Workflow, 14))}
             Pipeline
+            ${helpFor('stages-config')}
           </sl-tab>
           <sl-tab slot="nav" panel="governance">
             ${unsafeHTML(iconSvg(Shield, 14))}
             Governance
+            ${helpFor('dispatch')}
           </sl-tab>
 
           <sl-tab-panel name="agents">
