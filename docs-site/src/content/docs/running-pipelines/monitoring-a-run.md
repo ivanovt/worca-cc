@@ -11,9 +11,7 @@ Once a run starts, the **run detail** view streams everything over WebSocket —
 
 The run is shown as a sequence of stages. Each stage card carries its iteration count, cost, duration, and a timing bar that splits **Thinking** time from **Tools** time. Stages light up as the pipeline reaches them and loop back when work needs another pass.
 
-:::note[Screenshot — coming soon]
-Run detail: the stage pipeline with per-stage cost, turns, and the Thinking-vs-Tools timing bar.
-:::
+![Run detail: the stage pipeline with per-stage cost, turns, and the Thinking-vs-Tools timing bar.](/screenshots/monitoring-a-run/01-stage-pipeline.png)
 
 ## Drilling into a stage
 
@@ -26,9 +24,7 @@ Expand any stage to see its individual iterations. Each iteration row shows:
 
 The expanded **Agent Instructions** panel separates the resolved system prompt from your work-request message, so you can see exactly what the agent was told.
 
-:::note[Screenshot — coming soon]
-An expanded Implement stage: per-iteration metrics, the effort badge, and the dispatch allow/deny rows.
-:::
+![An expanded Implement stage: per-iteration metrics, the effort badge, and the dispatch allow/deny rows.](/screenshots/monitoring-a-run/02-implement-expanded.png)
 
 ## The timeline view
 

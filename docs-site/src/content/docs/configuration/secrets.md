@@ -11,9 +11,7 @@ Secrets — API keys, tokens, alternate-endpoint credentials — must never live
 
 The **Secrets** panel in Settings writes exclusively to `.claude/settings.local.json`. That file is gitignored (added automatically by `worca init`) and is **deep-merged over** `settings.json` at runtime — so a secret in the local file fills in or overrides the matching key without you duplicating the rest of the config.
 
-:::note[Screenshot — coming soon]
-The Secrets panel writing to settings.local.json.
-:::
+![The Secrets panel writing to settings.local.json.](/screenshots/secrets/01-models-env.png)
 
 ## Reserved keys
 

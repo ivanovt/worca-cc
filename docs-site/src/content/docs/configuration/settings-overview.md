@@ -13,9 +13,7 @@ Open a project's **Settings** — found in the sidebar under **Project Configura
 
 Saves are **locked while a pipeline is running** to prevent mid-run config drift — finish or stop the run before changing settings.
 
-:::note[Screenshot — coming soon]
-The **Project Configuration** sidebar group with **Project Settings** open, its subpanels (Stages, Agents, Governance, Circuit Breaker, Webhooks) visible, and **Pipeline Templates** listed as its sibling entry.
-:::
+![The Project Configuration sidebar group with Project Settings open, its subpanels (Stages, Agents, Governance, Circuit Breaker, Webhooks) visible, and Pipeline Templates listed as its sibling entry.](/screenshots/settings-overview/01-sidebar-group.png)
 
 ## Three places config lives
 

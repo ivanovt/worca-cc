@@ -15,9 +15,7 @@ A run needs a **work request**. The launcher accepts three sources:
 - **GitHub issue** — point at an issue; worca reads its body, and if the issue links a plan file, the Planner is skipped.
 - **Spec file** — point at a Markdown file already in the repo.
 
-:::note[Screenshot — coming soon]
-The Run Pipeline launcher: the source selector (prompt / issue / spec) and the prompt field.
-:::
+![The Run Pipeline launcher: the source selector (prompt / issue / spec) and the prompt field.](/screenshots/launching-a-run/01-launcher.png)
 
 ## Triage a GitHub issue (optional)
 
@@ -51,9 +49,7 @@ The pinned default carries a **★** suffix wherever it appears in the list, so 
 
 Pick the template that matches your task before launching. If you're unsure and your project doesn't have a pinned default, `feature` runs the complete pipeline with every gate active.
 
-:::note[Screenshot — coming soon]
-The launcher's Pipeline dropdown open, with the **User**, **Project**, and **Built-in** group labels separating the templates and the project default suffixed **★**.
-:::
+![The launcher's Pipeline dropdown open, with the User, Project, and Built-in group labels separating the templates and the project default suffixed ★.](/screenshots/launching-a-run/02-template-dropdown.png)
 
 ## Advanced options
 
@@ -65,9 +61,7 @@ The launcher exposes a few optional knobs:
 
 Leave these at their defaults for most runs.
 
-:::note[Screenshot — coming soon]
-The launcher's advanced section: size/loop multipliers, base branch, and the plan-file picker.
-:::
+![The launcher's advanced section: size/loop multipliers, base branch, and the plan-file picker.](/screenshots/launching-a-run/03-advanced.png)
 
 ## Launch
 

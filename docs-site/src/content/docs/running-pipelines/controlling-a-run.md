@@ -17,9 +17,7 @@ The run-detail header carries the lifecycle controls — **pause**, **resume**, 
 
 A paused or interrupted run keeps its worktree, so resuming loses nothing. A run you've stopped can still be resumed later, as long as its worktree hasn't been [cleaned up](/advanced/worktree-cleanup/).
 
-:::note[Screenshot — coming soon]
-The run-detail header: the status badge with pause / resume / stop buttons.
-:::
+![The run-detail header: the status badge with pause / resume / stop buttons.](/screenshots/controlling-a-run/01-header.png)
 
 ## Approval gates
 

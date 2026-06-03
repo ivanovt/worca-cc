@@ -20,13 +20,17 @@ Restart the dashboard afterwards with `worca-ui restart` so it picks up the new 
 
 ## Step 2 — refresh each project from the dashboard
 
-Open the project's **Settings**. When the installed package is newer than the project's runtime, the panel offers an **in-place upgrade** — click it and worca refreshes `.claude/worca/` for you, merges any new default settings **non-destructively** (your tuned models, webhooks, and loop counts survive), and applies any required migrations. No file copying, no terminal.
+Open **Settings → Projects** to see every registered project at a glance. Each row carries a version chip showing the worca runtime that project currently has installed — when it lags behind the package you just upgraded, the chip turns **orange** and an **Update** button appears.
 
-:::note[Screenshot — coming soon]
-The Settings panel's in-place upgrade control / migration banner offering a one-click runtime refresh.
-:::
+![The Settings → Projects list with one row per project. The orange `worca-cc: <version>` chip flags projects whose runtime is behind the installed package; clicking Update triggers an in-place upgrade for that project.](/screenshots/upgrading/02-project-list.png)
 
-If a project's settings still carry keys that have since moved (for example to the global preferences file), the same panel shows a one-click migration banner — saving any settings change applies it.
+Click **Update** — worca refreshes `.claude/worca/` for that project, merges any new default settings **non-destructively** (your tuned models, webhooks, and loop counts survive), and applies any required migrations. No file copying, no terminal.
+
+Further down the same Settings page, the **Worca Versions** card shows the installed vs latest version for both packages plus the path the dashboard is running from — useful when you want to confirm a package-level upgrade actually took effect before refreshing project runtimes.
+
+![Worca Versions card showing installed vs latest worca-cc and @worca/ui versions side by side, with a Refresh button.](/screenshots/upgrading/01-versions.png)
+
+If a project's settings still carry keys that have since moved (for example to the global preferences file), Update also writes the relocated keys — saving any settings change applies it.
 
 :::tip[Prefer the CLI?]
 The dashboard runs `worca init --upgrade` for you. You can run it yourself inside a project — `worca init --check` previews the changes first. See the [CLI reference](/reference/cli/#init).

@@ -7,11 +7,7 @@ sidebar:
 
 **Effort** is how much reasoning budget an agent spends per step — Claude Code's `low | medium | high | xhigh | max` scale, surfaced per agent and per iteration. It's orthogonal to the model and the turn budget.
 
-You set a per-agent effort level in **Settings → Agents**, right alongside its model and max-turns (see [Agents & models](/configuration/agents-and-models/)), and the pipeline-wide knobs (`auto_mode`, `auto_cap`) in **Settings → Effort**. The level each iteration actually ran at appears as a badge in the run-detail view. This page explains the model underneath those controls — how a value resolves, escalates on retries, and collapses onto a model's ladder. The `worca.effort` JSON shown below is what the Effort panel writes.
-
-:::caution[Effort is template-owned]
-Both `worca.effort` and the per-agent `effort` field under `worca.agents.*` are **template-owned** — when a template is in play (explicit at launch or via `worca.default_template`), Settings values for these keys are **stripped** before the template's config applies. The values in **Settings → Effort** and **Settings → Agents** only take effect when **no** template is selected. To change effort for a specific template, edit the template itself. See [Configuration precedence](/configuration/precedence/) for the full strip-and-merge rules.
-:::
+You set a per-agent effort level in the **Pipeline Templates** editor's **Agents** tab, right alongside the agent's model and max-turns (see [Agents & models](/configuration/agents-and-models/)). The pipeline-wide knobs (`auto_mode`, `auto_cap`) live in the same editor under **Pipeline → Effort Mode**. The level each iteration actually ran at appears as a badge in the run-detail view. This page explains the model underneath those controls — how a value resolves, escalates on retries, and collapses onto a model's ladder. The `worca.effort` JSON shown below is what the template writes.
 
 ## Modes
 

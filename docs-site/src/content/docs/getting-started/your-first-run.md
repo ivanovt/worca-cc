@@ -15,17 +15,13 @@ With your project added, you're ready to run the pipeline — all from the dashb
 4. *(Optional)* Pick a **template** — `feature`, `feature-minor`, `bugfix`, `quick-fix`, `refactor`, `investigate`, or `test-only` — to tailor the stages and rules to the kind of work.
 5. Click **Launch**.
 
-:::note[Screenshot — coming soon]
-The Run Pipeline launcher: the prompt field, the source selector (prompt / issue / spec), and the template dropdown.
-:::
+![The Run Pipeline launcher: the prompt field, the source selector (prompt / issue / spec), and the template dropdown.](/screenshots/your-first-run/01-launcher.png)
 
 ## Watch it run
 
 The run opens in the **run detail** view. Stages stream live as the pipeline moves through Plan → Coordinate → Implement → Test → Review → PR — each showing iteration counts, cost, duration, and logs. Use the **pause / resume / stop** controls in the header at any time.
 
-:::note[Screenshot — coming soon]
-Run detail: the stage pipeline with per-stage cost, turns, and timing, plus the lifecycle controls in the header.
-:::
+![Run detail: the stage pipeline with per-stage cost, turns, and timing, plus the lifecycle controls in the header.](/screenshots/your-first-run/02-run-detail.png)
 
 The run executes in its **own git worktree**, so your working tree is never touched. When the pipeline finishes, the **Guardian** agent opens a pull request with the implemented, tested, and reviewed change.
 

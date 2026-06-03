@@ -13,9 +13,7 @@ The dashboard's **Integrations** tab is where you add and manage adapters — no
 
 To add one, open **Integrations → Add**, pick the adapter (Telegram / Discord / Slack / generic webhook), set its chat target, and choose the event filter. Credentials are entered through the [Secrets](/configuration/secrets/) panel rather than typed into the config — see below. Adding or updating a project also auto-configures its outbound webhook, so events route correctly with no manual wiring.
 
-:::note[Screenshot — coming soon]
-The Integrations card catalog: Telegram connected, Discord and Slack configured.
-:::
+![The Integrations card catalog: Telegram connected, Discord and Slack configured.](/screenshots/chat-integrations/01-catalog.png)
 
 ## Secrets stay out of the config
 

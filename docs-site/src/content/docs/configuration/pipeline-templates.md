@@ -11,9 +11,7 @@ The **Pipeline Templates** page lives under **Project Configuration** in the sid
 Both **Project Settings** and **Pipeline Templates** are hidden in global all-projects mode until you select a project. Pick a project in the sidebar (or launch worca-ui with `--project /path`) and the **Project Configuration** section appears.
 :::
 
-:::note[Screenshot — coming soon]
-The sidebar's **Project Configuration** group with **Project Settings** and **Pipeline Templates** visible, the latter open showing the three tier sections.
-:::
+![The sidebar's Project Configuration group with Project Settings and Pipeline Templates visible, the latter open showing the three tier sections.](/screenshots/pipeline-templates/01-sidebar-templates.png)
 
 ## Opening the editor
 
@@ -29,9 +27,7 @@ Each section header shows a count badge. The card for the current project defaul
 
 **Cards are clickable.** Clicking anywhere on a card opens the editor — in **edit** mode for project and user templates, in read-only **View Template** mode for built-ins.
 
-:::note[Screenshot — coming soon]
-The Pipeline Templates list: three collapsible tier sections — **Project** (open), **User** (collapsed), **Built-in** (collapsed) — with the project default marked **★ Default** and the `ID: <slug>` badge row visible on every card.
-:::
+![The Pipeline Templates list: three collapsible tier sections — Project (open), User (collapsed), Built-in (collapsed) — with the project default marked ★ Default and the `ID: <slug>` badge row visible on every card.](/screenshots/pipeline-templates/02-tier-sections.png)
 
 ## Template tiers and shadowing
 
@@ -66,9 +62,7 @@ A row of "field pills" carrying the template's metadata:
 - **★ Default toggle** — flips this template as the project default. Mirrored on the card-level **Set as default** action.
 - **Description** — a longer free-text field that appears below the name on cards and as a tooltip in the launcher.
 
-:::note[Screenshot — coming soon]
-The editor subheader: **Name** / **ID** / **Storage** field pills with the inline ID-collision warning visible next to the ID field.
-:::
+![The editor subheader: Name / ID / Storage field pills with the inline ID-collision warning visible next to the ID field.](/screenshots/pipeline-templates/03-editor-subheader.png)
 
 ### Tabs
 
@@ -80,9 +74,7 @@ The editor subheader: **Name** / **ID** / **Storage** field pills with the inlin
 
 The editor only writes the delta — keys you leave blank inherit defaults, keeping templates lean and upgrade-friendly. It runs the same deep-merge simulation the pipeline uses at launch, so malformed config is caught before it hits disk.
 
-:::note[Screenshot — coming soon]
-Three editor tabs side by side — **Agents** (model / turns / effort per agent), **Pipeline** (stage toggles + loops + circuit breaker), **Governance** (dispatch allowlists).
-:::
+![Three editor tabs side by side — Agents (model / turns / effort per agent), Pipeline (stage toggles + loops + circuit breaker), Governance (dispatch allowlists).](/screenshots/pipeline-templates/04-editor-tabs.png)
 
 ## Editing a template
 
@@ -92,9 +84,7 @@ Click any project or user template card and the editor opens with current values
 
 Clicking a **built-in** card opens the editor in **View Template** mode: every field is read-only, the **Save** button is replaced by **Close**, and the only available actions are **Duplicate** and **Export**. To customize a built-in, duplicate it to your project or user scope and edit the copy.
 
-:::note[Screenshot — coming soon]
-The editor in **View Template** mode for a built-in: subheader pills disabled, no Save button, **Close** + **Duplicate** + **Export** as the only actions.
-:::
+![The editor in View Template mode for a built-in: subheader pills disabled, no Save button, Close + Duplicate + Export as the only actions.](/screenshots/pipeline-templates/05-view-mode.png)
 
 ## Duplicating a template
 

@@ -42,9 +42,7 @@ Once CRG is enabled, the **Preflight** stage automatically builds — or reuses 
 
 The tab's **Build** button is an optional convenience that pre-warms the current commit; **Clear** removes cached snapshots. **You never have to click Build for a run to use the graph.**
 
-:::note[Screenshot — coming soon]
-The Settings → Code Review Graph tab: the Off / Structural selector, detection status, install command, and Build / Clear controls.
-:::
+![The Settings → Code Review Graph tab: the Off / Structural selector, detection status, install command, and Build / Clear controls.](/screenshots/code-review-graph/01-panel.png)
 
 ## How agents use it
 

@@ -14,9 +14,7 @@ You add projects from the dashboard. Adding a project both **registers** it and 
 3. Enter the project's path. The dialog validates it and generates a name.
 4. Confirm. worca registers the project and runs its installer in the background.
 
-:::note[Screenshot — coming soon]
-The Add Project dialog: the Single project / Workspace toggle, the path field with validation, and the generated project name.
-:::
+![The Add Project dialog: Single project / Workspace toggle, project path filled in, and the project name auto-generated from the last path segment.](/screenshots/add-project/01-dialog.png)
 
 Behind the scenes the dashboard runs `worca init --upgrade` inside the project, scaffolding the pipeline into `.claude/worca/`. The project appears in the sidebar once setup finishes.
 

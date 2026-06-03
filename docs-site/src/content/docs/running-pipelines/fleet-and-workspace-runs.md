@@ -13,9 +13,7 @@ A **fleet** fans the *same* work request out to *many independent* projects in p
 
 Launch one from **Run Pipeline ▸ Run Fleet**: multi-select the target projects, enter the prompt, optionally attach a guide, and set concurrency. The dashboard groups the children under a collapsible **fleet header** with an aggregate status badge and progress (`N/M completed · K failed`).
 
-:::note[Screenshot — coming soon]
-The fleet list: one card per fleet with per-project chips and an aggregate badge.
-:::
+![The Fleets list: one card per fleet showing the prompt title, per-project chips, an aggregate status badge (e.g. running / halted), and a per-fleet failure tally.](/screenshots/fleet-and-workspace-runs/01-fleet-list.png)
 
 ## Workspace runs
 
@@ -23,9 +21,7 @@ A **workspace** carries *one* prompt across *interdependent* projects in the rig
 
 Launch one from **Run Pipeline ▸ Run Workspace**: pick a registered workspace, enter the prompt, and choose a planning strategy. The detail page shows the dependency graph with propagation arrows and a per-project run card list.
 
-:::note[Screenshot — coming soon]
-The workspace detail page: the dependency graph and per-project run cards.
-:::
+![The workspace detail page: per-project run cards ordered by their tier — tier 0 completed first, tier 1 still running, tier 2 still pending — so the dependency graph reads top-to-bottom.](/screenshots/fleet-and-workspace-runs/02-workspace-detail.png)
 
 ## Global mode is required
 
