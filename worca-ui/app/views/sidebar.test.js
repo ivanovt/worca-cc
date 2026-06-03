@@ -658,6 +658,100 @@ describe('sidebar - Workspaces nav entry', () => {
   });
 });
 
+describe('sidebar - collapse toggle', () => {
+  it('renders the toggle button with the "collapse" label when expanded', async () => {
+    // The local renderToString helper concatenates lit-html attribute
+    // values inline without re-quoting, so the rendered form is
+    // `aria-label=Collapse sidebar` rather than `aria-label="Collapse sidebar"`.
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('class="sidebar-toggle-btn"');
+    expect(output).toContain('aria-label=Collapse sidebar');
+    expect(output).toContain('aria-expanded=true');
+  });
+
+  it('renders the toggle button with the "expand" label when collapsed', async () => {
+    const state = makeState({
+      preferences: {
+        theme: 'light',
+        sidebarCollapsed: true,
+        notifications: null,
+      },
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('class="sidebar-toggle-btn"');
+    expect(output).toContain('aria-label=Expand sidebar');
+    expect(output).toContain('aria-expanded=false');
+  });
+
+  it('omits the .collapsed class on <aside> when expanded', async () => {
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    // Class binding emits "sidebar " (empty trailing token), not
+    // "sidebar collapsed".
+    expect(output).toContain('class="sidebar ');
+    expect(output).not.toContain('class="sidebar collapsed"');
+  });
+
+  it('adds the .collapsed class on <aside> when collapsed', async () => {
+    const state = makeState({
+      preferences: {
+        theme: 'light',
+        sidebarCollapsed: true,
+        notifications: null,
+      },
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('class="sidebar collapsed"');
+  });
+
+  it('hides label tooltips on nav items in expanded mode', async () => {
+    // Expanded: title attributes resolve to empty strings — the visible
+    // label already conveys the destination, so a native tooltip would
+    // be redundant noise. (Attribute is still emitted as `title=`,
+    // just empty; what matters is no label is interpolated.)
+    const state = makeState();
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).not.toContain('title=Running');
+    expect(output).not.toContain('title=History');
+    expect(output).not.toContain('title=Worktrees');
+  });
+
+  it('adds label tooltips on nav items in collapsed mode', async () => {
+    // Collapsed: label spans are hidden via CSS, so the title attribute
+    // is the only discoverability cue. It must be present on every
+    // icon-only nav row.
+    const state = makeState({
+      preferences: {
+        theme: 'light',
+        sidebarCollapsed: true,
+        notifications: null,
+      },
+    });
+    const output = renderToString(
+      sidebarView(state, route, 'open', defaultOpts()),
+    );
+    expect(output).toContain('title=Running');
+    expect(output).toContain('title=History');
+    expect(output).toContain('title=Worktrees');
+    expect(output).toContain('title=Fleets');
+    expect(output).toContain('title=Workspaces');
+    expect(output).toContain('title=Beads');
+    expect(output).toContain('title=Costs');
+    expect(output).toContain('title=Webhooks');
+  });
+});
+
 describe('sidebar - New Workspace in dropdown', () => {
   it('chevron dropdown includes New Workspace menu item', async () => {
     const state = makeState();

@@ -75,6 +75,62 @@ test.describe('sidebar — history badge count', () => {
   });
 });
 
+test.describe('sidebar — collapse toggle', () => {
+  test('toggle button collapses sidebar; persists across reload', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      await page.goto(ctx.url, GOTO_OPTS);
+
+      const sidebar = page.locator('aside.sidebar');
+      const toggle = page.locator('button.sidebar-toggle-btn');
+      await expect(toggle).toBeVisible({ timeout: 5000 });
+      await expect(sidebar).not.toHaveClass(/collapsed/);
+      await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+      await toggle.click();
+      await expect(sidebar).toHaveClass(/collapsed/);
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      // Nav labels collapse: the visible text shrinks to the toggle's own
+      // aria-label only — the "Running" label is hidden.
+      await expect(page.locator('.sidebar-item').filter({ hasText: /^Running$/ })).toHaveCount(0);
+
+      // Persisted in localStorage (client-local, not server prefs).
+      const stored = await page.evaluate(() =>
+        localStorage.getItem('worca.sidebar-collapsed'),
+      );
+      expect(stored).toBe('1');
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      await expect(page.locator('aside.sidebar')).toHaveClass(/collapsed/, {
+        timeout: 5000,
+      });
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  test('Ctrl+B keyboard shortcut toggles the sidebar', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      await page.goto(ctx.url, GOTO_OPTS);
+
+      const sidebar = page.locator('aside.sidebar');
+      await expect(sidebar).toBeVisible({ timeout: 5000 });
+      await expect(sidebar).not.toHaveClass(/collapsed/);
+
+      // Use Ctrl+B for cross-platform CI parity (mac Webkit treats it the
+      // same as Cmd+B via the metaKey||ctrlKey check in the handler).
+      await page.keyboard.press('Control+b');
+      await expect(sidebar).toHaveClass(/collapsed/, { timeout: 5000 });
+
+      await page.keyboard.press('Control+b');
+      await expect(sidebar).not.toHaveClass(/collapsed/, { timeout: 5000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+});
+
 test.describe('sidebar — navigation', () => {
   test('clicking Running navigates to active view', async ({ page }) => {
     const ctx = await startServer();
