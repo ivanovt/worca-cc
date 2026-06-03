@@ -96,13 +96,18 @@ describe('computeTimelineLayout', () => {
       expect(keys.indexOf('plan')).toBeLessThan(keys.indexOf('implement'));
     });
 
-    it('includes stageLabel as uppercased stage key', () => {
+    it('includes stageLabel as Title Case of the stage key', () => {
       const stages = {
         implement: { iterations: [iter(T(0), T(5000))] },
+        plan_review: { iterations: [iter(T(0), T(5000))] },
       };
       const layout = computeTimelineLayout(stages, T(5000));
-      const row = layout.rows.find((r) => r.stageKey === 'implement');
-      expect(row.stageLabel).toBe('IMPLEMENT');
+      expect(
+        layout.rows.find((r) => r.stageKey === 'implement').stageLabel,
+      ).toBe('Implement');
+      expect(
+        layout.rows.find((r) => r.stageKey === 'plan_review').stageLabel,
+      ).toBe('Plan Review');
     });
 
     it('maps iterations to bars with startMs relative to runStart', () => {

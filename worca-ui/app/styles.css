@@ -434,165 +434,493 @@ h1, h2, h3, h4, h5, h6 {
   flex-wrap: wrap;
 }
 
-/* --- Run Timeline --- */
+/* --- Run Timeline ---
+   Local tokens layered on the global palette. --text-strong gives a
+   WCAG-AA-safe muted color for labels (4.5:1 on white at 12-13px), avoiding
+   the very pale --muted (#94a3b8). All other colors route through brand vars
+   so dark mode and theme tweaks land for free. */
 .run-timeline {
-  padding: 8px 0;
+  --tl-text-strong: #475569;
+  --tl-row-alt-bg: rgba(15, 23, 42, 0.04);
+  --tl-row-divider: rgba(15, 23, 42, 0.08);
+  --tl-grid-line: rgba(15, 23, 42, 0.05);
+  --tl-axis-line: rgba(15, 23, 42, 0.18);
+  --tl-axis-tick: rgba(15, 23, 42, 0.28);
+  --tl-axis-label: rgba(15, 23, 42, 0.62);
+  --tl-row-label: rgba(15, 23, 42, 0.78);
+  --tl-row-label-count: rgba(15, 23, 42, 0.45);
+  --tl-loopback-default-opacity: 0.7;
+  --tl-loopback-hint: rgba(15, 23, 42, 0.4);
+  --tl-bar-stroke: rgba(15, 23, 42, 0.22);
+  --tl-bar-shadow: rgba(15, 23, 42, 0.22);
+  --timeline-gap-fill: rgba(15, 23, 42, 0.04);
+  --timeline-gap-dot: rgba(15, 23, 42, 0.32);
+
+  padding: 16px 20px 24px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
+  border-radius: 10px;
   overflow-x: auto;
+  position: relative;
 }
 
-.timeline-toolbar {
+/* worca-ui drives dark mode via [data-theme="dark"] on the html element,
+   not via prefers-color-scheme. Both selectors here so the timeline tokens
+   flip with the rest of the chrome. */
+[data-theme="dark"] .run-timeline,
+.run-timeline[data-theme="dark"] {
+  --tl-text-strong: #cbd5e1;
+  --tl-row-alt-bg: rgba(255, 255, 255, 0.04);
+  --tl-row-divider: rgba(255, 255, 255, 0.1);
+  --tl-grid-line: rgba(255, 255, 255, 0.07);
+  --tl-axis-line: rgba(255, 255, 255, 0.22);
+  --tl-axis-tick: rgba(255, 255, 255, 0.35);
+  --tl-axis-label: rgba(255, 255, 255, 0.7);
+  --tl-row-label: rgba(255, 255, 255, 0.9);
+  --tl-row-label-count: rgba(255, 255, 255, 0.55);
+  --tl-loopback-hint: rgba(255, 255, 255, 0.5);
+  --tl-bar-stroke: rgba(255, 255, 255, 0.32);
+  --tl-bar-shadow: rgba(0, 0, 0, 0.45);
+  --timeline-gap-fill: rgba(255, 255, 255, 0.06);
+  --timeline-gap-dot: rgba(255, 255, 255, 0.4);
+}
+
+/* Top stats summary */
+.timeline-summary {
   display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  padding: 0 0 6px;
+  align-items: center;
+  gap: 28px;
+  /* Right-padding reserves space for the absolutely-positioned .timeline-toolbar
+     anchored at top:16px / right:20px so the stats never run under the buttons. */
+  padding: 4px 260px 16px 0;
+  flex-wrap: wrap;
+}
+.summary-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 64px;
+}
+.summary-stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--tl-text-strong);
+  font-weight: 500;
+}
+.summary-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  font-variant-numeric: tabular-nums;
+}
+.summary-spacer {
+  flex: 1;
 }
 
+/* Toolbar — anchored to the top-right corner of the timeline box.
+   Stacks the zoom button group above the keyboard-hint text, both right-aligned. */
+.timeline-toolbar {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.timeline-toolbar-group {
+  display: inline-flex;
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg, #fff);
+}
 .timeline-zoom-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 28px;
-  height: 24px;
-  padding: 0 6px;
-  border: 1px solid var(--sl-color-neutral-300, #d1d5db);
-  border-radius: 4px;
-  background: var(--sl-color-neutral-0, #fff);
-  color: var(--sl-color-neutral-700, #374151);
-  font-size: 14px;
+  min-width: 30px;
+  height: 28px;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--tl-text-strong);
   cursor: pointer;
   user-select: none;
+  border-right: 1px solid var(--border, #e2e8f0);
 }
-
+.timeline-zoom-btn:last-child {
+  border-right: none;
+}
 .timeline-zoom-btn:hover {
-  background: var(--sl-color-neutral-100, #f3f4f6);
+  background: var(--bg-secondary, #f8fafc);
+  color: var(--fg, #0f172a);
 }
-
 .timeline-zoom-btn:active {
-  background: var(--sl-color-neutral-200, #e5e7eb);
+  background: var(--bg-tertiary, #f1f5f9);
+}
+.timeline-zoom-btn:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: -2px;
+  z-index: 1;
+}
+.timeline-toolbar-hint {
+  font-size: 11px;
+  color: var(--tl-text-strong);
+  text-align: right;
 }
 
+/* SVG wrapper */
+.timeline-svg-wrap {
+  position: relative;
+  overflow: visible;
+}
+
+/* Row backgrounds */
+.row-bg-alt {
+  fill: var(--tl-row-alt-bg);
+}
+.row-divider {
+  stroke: var(--tl-row-divider);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.grid-line {
+  stroke: var(--tl-grid-line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+/* Row labels — match the uppercase tracking used by .pipeline-stage-name so
+   timeline rows read like the stage section headers elsewhere in the UI. */
+.row-label {
+  font-size: 12px;
+  font-weight: 600;
+  fill: var(--tl-row-label);
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.row-label-count {
+  font-size: 11px;
+  font-weight: 500;
+  fill: var(--tl-row-label-count);
+  text-transform: none;
+  letter-spacing: 0;
+}
+.loopback-hint {
+  font-size: 10px;
+  fill: var(--tl-loopback-hint);
+  pointer-events: none;
+}
+
+/* Bars
+   Default: thin contrasting hairline stroke so bar edges read clearly without
+   any per-bar divider. Hover/active: lift via translateY + drop-shadow so the
+   bar "raises" off the chart. Active state persists while the iteration drawer
+   is open (driven by the .is-active class). Reduced-motion drops the lift. */
 .timeline-bar {
   cursor: pointer;
+  stroke: var(--tl-bar-stroke);
+  stroke-width: 1;
+  transition:
+    filter 130ms ease,
+    transform 130ms ease,
+    stroke-width 130ms ease;
+  /* SVG rect transforms relative to the SVG viewport origin, not the rect
+     itself — fine for translateY since we want a small vertical lift. */
 }
-
-.timeline-bar:hover {
-  filter: brightness(1.15);
+.timeline-bar:hover,
+.timeline-bar.is-active {
+  filter: drop-shadow(0 3px 6px var(--tl-bar-shadow));
+  transform: translateY(-1px);
+  stroke-width: 1.25;
 }
-
 .timeline-bar:focus-visible {
-  outline: 2px solid var(--accent, #3b82f6);
-  outline-offset: 1px;
+  /* Subtle keyboard-focus indicator — no bold ring. The raised+shadow state
+     above also kicks in on focus via :focus-visible :is() below. */
+  outline: 1.5px dashed var(--accent, #3b82f6);
+  outline-offset: 2px;
+}
+.timeline-bar:focus-visible {
+  filter: drop-shadow(0 3px 6px var(--tl-bar-shadow));
+  transform: translateY(-1px);
+}
+@media (prefers-reduced-motion: reduce) {
+  .timeline-bar,
+  .timeline-bar:hover,
+  .timeline-bar.is-active,
+  .timeline-bar:focus-visible {
+    transform: none;
+  }
+}
+.bar-label {
+  font-size: 10px;
+  font-weight: 600;
+  fill: #fff;
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
 }
 
+/* Gaps */
 .timeline-gap {
   cursor: default;
 }
-
-.timeline-gap:hover {
-  opacity: 0.75;
+.timeline-gap:focus-visible {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 1px;
+}
+.gap-bg {
+  fill: var(--timeline-gap-fill);
+}
+.gap-dot {
+  fill: var(--timeline-gap-dot);
 }
 
+/* Loopbacks */
 .loopback {
-  stroke-opacity: 0.15;
-  transition: stroke-opacity 0.1s;
+  stroke-opacity: var(--tl-loopback-default-opacity);
+  transition: stroke-opacity 120ms ease, stroke-width 120ms ease;
 }
-
 .loopback.highlight {
   stroke-opacity: 1;
+  stroke-width: 2.5;
 }
 
+/* Time axis */
+.axis-baseline {
+  stroke: var(--tl-axis-line);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.axis-tick {
+  stroke: var(--tl-axis-tick);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+.axis-label {
+  font-size: 11px;
+  fill: var(--tl-axis-label);
+  font-family: var(--sl-font-sans, system-ui, sans-serif);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Legend */
+.timeline-legend {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 14px 0 4px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
+  flex-wrap: wrap;
+}
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--tl-text-strong);
+}
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--muted);
+}
+.legend-swatch--gap {
+  background:
+    radial-gradient(circle, var(--timeline-gap-dot) 0.6px, transparent 1.2px),
+    var(--timeline-gap-fill);
+  background-size: 5px 5px;
+  border: 1px solid var(--tl-row-divider);
+}
+.legend-loopback {
+  /* Inline SVG arc + chevron; inherits color from the legend-item color, so
+     it tracks the rest of the legend chrome in both themes. */
+  color: var(--accent, #3b82f6);
+  flex-shrink: 0;
+}
+
+/* Tooltip */
 .timeline-tooltip {
   position: fixed;
   z-index: 1000;
-  background: var(--sl-color-neutral-0, #fff);
-  border: 1px solid var(--sl-color-neutral-200, #e5e7eb);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  padding: 8px 10px;
+  background: var(--bg, #fff);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12), 0 2px 6px rgba(15, 23, 42, 0.08);
+  padding: 10px 12px;
   pointer-events: none;
-  min-width: 160px;
-  max-width: 260px;
+  min-width: 200px;
+  max-width: 280px;
   font-size: 12px;
-  line-height: 1.5;
-  white-space: nowrap;
+  line-height: 1.55;
+  color: var(--fg, #0f172a);
 }
-
 .tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-weight: 600;
-  margin-bottom: 4px;
-  color: var(--fg, #1e293b);
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
 }
-
+.tooltip-hue-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.tooltip-header-sub {
+  font-weight: 400;
+  color: var(--tl-text-strong);
+  font-size: 11px;
+}
 .tooltip-row {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
-  color: var(--fg, #1e293b);
+  gap: 14px;
 }
-
 .tooltip-label {
-  color: var(--muted, #94a3b8);
+  color: var(--tl-text-strong);
+  font-weight: 500;
 }
-
 .tooltip-value {
-  font-family: var(--sl-font-mono, monospace);
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg, #0f172a);
 }
+.tooltip-status {
+  text-transform: capitalize;
+}
+.tooltip-status.status-completed { color: var(--status-completed); }
+.tooltip-status.status-running, .tooltip-status.status-in_progress { color: var(--status-running); }
+.tooltip-status.status-failed { color: var(--status-failed); }
+.tooltip-status.status-paused { color: var(--status-paused); }
+.tooltip-status.status-interrupted { color: var(--status-interrupted); }
 
-/* --- Iteration drawer (click-to-drill) --- */
+/* --- Iteration drawer --- */
 .iteration-drawer::part(panel) {
-  width: 380px;
+  width: 420px;
   max-width: 90vw;
 }
-
+.iteration-drawer::part(header) {
+  border-bottom: 1px solid var(--border-subtle, rgba(226, 232, 240, 0.6));
+}
 .drawer-body {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
   font-size: 13px;
+  color: var(--fg, #0f172a);
 }
-
-.drawer-row {
+.drawer-title {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin: 0 0 4px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--fg, #0f172a);
+  outline: none;
 }
-
+.drawer-hue-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.drawer-title-sub {
+  font-weight: 400;
+  color: var(--tl-text-strong);
+  font-size: 13px;
+}
+.drawer-status-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--bg-secondary, #f8fafc);
+  align-self: flex-start;
+}
+.drawer-status-pill {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.drawer-status-text {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.drawer-status-text.status-completed { color: var(--status-completed); }
+.drawer-status-text.status-running, .drawer-status-text.status-in_progress { color: var(--status-running); }
+.drawer-status-text.status-failed { color: var(--status-failed); }
+.drawer-fields {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 8px 18px;
+  margin: 0;
+}
 .drawer-label {
-  color: var(--muted, #94a3b8);
-  min-width: 64px;
+  color: var(--tl-text-strong);
+  font-weight: 500;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  align-self: center;
 }
-
+.drawer-value {
+  margin: 0;
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg, #0f172a);
+}
 .drawer-raw-json {
-  margin-top: 8px;
+  margin-top: 4px;
 }
-
 .drawer-raw-json summary {
   cursor: pointer;
-  color: var(--muted, #94a3b8);
+  color: var(--tl-text-strong);
   font-size: 12px;
   user-select: none;
 }
-
 .drawer-raw-json pre {
   font-size: 11px;
-  font-family: var(--sl-font-mono, monospace);
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   background: var(--bg-secondary, #f8fafc);
   border: 1px solid var(--border, #e2e8f0);
-  border-radius: 4px;
-  padding: 8px;
+  border-radius: 6px;
+  padding: 10px;
   overflow-x: auto;
   white-space: pre;
-  margin-top: 4px;
+  margin-top: 6px;
+  max-height: 280px;
 }
-
 .drawer-run-detail-link {
   color: var(--accent, #3b82f6);
   text-decoration: none;
   font-size: 13px;
+  font-weight: 500;
 }
-
 .drawer-run-detail-link:hover {
   text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .timeline-bar,
+  .loopback {
+    transition: none;
+  }
 }
 
 .action-btn:disabled:hover {
@@ -748,6 +1076,12 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* Pipeline timing bar */
+.pipeline-timing-bar-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8px;
+}
+
 .pipeline-timing-bar-container {
   margin-top: 8px;
 }

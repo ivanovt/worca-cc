@@ -61,6 +61,8 @@ import Users from 'lucide/dist/esm/icons/users';
 import Workflow from 'lucide/dist/esm/icons/workflow';
 import X from 'lucide/dist/esm/icons/x';
 import Zap from 'lucide/dist/esm/icons/zap';
+import ZoomIn from 'lucide/dist/esm/icons/zoom-in';
+import ZoomOut from 'lucide/dist/esm/icons/zoom-out';
 
 function renderChildren(nodes) {
   return nodes
@@ -144,4 +146,6 @@ export {
   Workflow,
   X,
   Zap,
+  ZoomIn,
+  ZoomOut,
 };

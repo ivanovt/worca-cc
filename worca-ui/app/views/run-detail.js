@@ -1482,7 +1482,7 @@ function _agentPromptSection(_stageKey, promptData) {
       ${
         agentInstructions
           ? html`
-        <div class="agent-prompt-block agent-prompt-block--agent">
+        <div class="agent-prompt-block">
           <div class="agent-prompt-label-row">
             <span class="agent-prompt-label">Agent Prompt (resolved)</span>
             <button class="copy-btn" @click=${(e) => _copyToClipboard(agentInstructions, e.currentTarget)}>
@@ -1497,7 +1497,7 @@ function _agentPromptSection(_stageKey, promptData) {
       ${
         userPrompt
           ? html`
-        <div class="agent-prompt-block agent-prompt-block--user">
+        <div class="agent-prompt-block">
           <div class="agent-prompt-label-row">
             <span class="agent-prompt-label">User Message (-p)</span>
             <button class="copy-btn" @click=${(e) => _copyToClipboard(userPrompt, e.currentTarget)}>
@@ -1679,16 +1679,6 @@ export function runDetailView(run, settings = {}, options = {}) {
   const overview = html`
     <div class="run-detail-overview">
       ${stageTimelineView(stages, stageUi, run.active)}
-      ${
-        options.onOpenTimeline
-          ? html`<div class="run-stage-actions">
-              <button
-                class="action-btn action-btn--ghost"
-                @click=${options.onOpenTimeline}
-              >${unsafeHTML(iconSvg(BarChart3, 14))} Timeline</button>
-            </div>`
-          : nothing
-      }
       ${_circuitBreakerBannerView(run, settings)}
       ${prVerificationBannerView(run)}
       ${guideConflictsPanelView(run.guide_conflicts, options)}
@@ -1810,6 +1800,18 @@ export function runDetailView(run, settings = {}, options = {}) {
               <div class="pipeline-cost-strip">
                 ${pipelineCost > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${pipelineCost.toFixed(2)}</span></span>` : nothing}
                 ${pipelineTurns > 0 ? html`<span class="pipeline-cost-item"><span class="meta-label">Total Turns:</span> <span class="meta-value">${pipelineTurns}</span></span>` : nothing}
+              </div>
+            `
+                : nothing
+            }
+            ${
+              options.onOpenTimeline
+                ? html`
+              <div class="pipeline-timing-bar-actions">
+                <button
+                  class="action-btn action-btn--primary"
+                  @click=${options.onOpenTimeline}
+                ><span aria-hidden="true">${unsafeHTML(iconSvg(BarChart3, 14))}</span> Timeline</button>
               </div>
             `
                 : nothing

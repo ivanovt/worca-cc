@@ -79,12 +79,6 @@ describe('runTimelineView', () => {
     expect(bars.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('renders 3px accent rects for each bar', () => {
-    const el = renderToString(runTimelineView(makeRun(), {}, {}));
-    const accents = el.querySelectorAll('.bar-accent');
-    expect(accents.length).toBeGreaterThanOrEqual(2);
-  });
-
   it('renders duration badge text when bar is wide enough', () => {
     // With 180s total and swimlaneWidth=800, implement iter 1 (60s = 1/3 * 800 = ~267px) should show label
     const el = renderToString(
@@ -94,13 +88,13 @@ describe('runTimelineView', () => {
     expect(labels.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('formats duration as "1m 0s" for 60000ms', () => {
+  it('formats duration as "1m" for 60000ms', () => {
     const el = renderToString(
       runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }),
     );
     const labels = Array.from(el.querySelectorAll('.bar-label'));
     const texts = labels.map((l) => l.textContent.trim());
-    expect(texts.some((t) => t === '1m 0s')).toBe(true);
+    expect(texts.some((t) => t === '1m')).toBe(true);
   });
 
   it('renders row labels with stage name', () => {
@@ -108,7 +102,7 @@ describe('runTimelineView', () => {
     const labelTexts = Array.from(el.querySelectorAll('.row-label')).map(
       (t) => t.textContent,
     );
-    expect(labelTexts.some((t) => t.includes('IMPLEMENT'))).toBe(true);
+    expect(labelTexts.some((t) => t.includes('Implement'))).toBe(true);
   });
 
   it('renders row label with iteration badge when count > 1', () => {
@@ -232,23 +226,35 @@ describe('runTimelineView Phase 3: toolbar and zoom state', () => {
     expect(toolbar.querySelector('[aria-label="Reset zoom"]')).not.toBeNull();
   });
 
-  it('swimlane-content <g> exists with initial scale(1, 1) transform', () => {
+  // Bars are now redrawn (with new pixel widths) on every zoom change instead of
+  // being visually scaled by an SVG transform — so zoom assertions check bar
+  // widths rather than a `scale(N, 1)` transform attribute.
+  function bar1Width(container) {
+    const bar = container.querySelector(
+      '.timeline-bar[data-stage-key="implement"][data-bar-number="1"]',
+    );
+    return bar ? parseFloat(bar.getAttribute('width')) : null;
+  }
+
+  it('swimlane-content <g> exists with translate-only transform at scale=1', () => {
     const el = renderToString(
       runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }),
     );
     const swimG = el.querySelector('.swimlane-content');
     expect(swimG).not.toBeNull();
-    expect(swimG.getAttribute('transform')).toContain('scale(1, 1)');
+    expect(swimG.getAttribute('transform')).not.toContain('scale');
+    expect(swimG.getAttribute('transform')).toContain('translate(168');
   });
 
-  it('zoom-in button doubles scale from 1 to 2', () => {
+  it('zoom-in button roughly doubles bar widths', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
 
+    const before = bar1Width(container);
     container.querySelector('[aria-label="Zoom in"]').click();
-    const swimG = container.querySelector('.swimlane-content');
-    expect(swimG.getAttribute('transform')).toContain('scale(2, 1)');
+    const after = bar1Width(container);
+    expect(after / before).toBeCloseTo(2, 1);
 
     document.body.removeChild(container);
   });
@@ -258,40 +264,45 @@ describe('runTimelineView Phase 3: toolbar and zoom state', () => {
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
 
+    const before = bar1Width(container);
     container.querySelector('[aria-label="Zoom out"]').click();
-    const swimG = container.querySelector('.swimlane-content');
-    expect(swimG.getAttribute('transform')).toContain('scale(1, 1)');
+    const after = bar1Width(container);
+    expect(after).toBe(before);
 
     document.body.removeChild(container);
   });
 
-  it('zoom-in twice then reset restores scale(1, 1)', () => {
+  it('zoom-in twice then reset restores fit-to-run bar widths', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
 
+    const initial = bar1Width(container);
     container.querySelector('[aria-label="Zoom in"]').click();
     container.querySelector('[aria-label="Zoom in"]').click();
     container.querySelector('[aria-label="Reset zoom"]').click();
-    const swimG = container.querySelector('.swimlane-content');
-    expect(swimG.getAttribute('transform')).toContain('scale(1, 1)');
+    const after = bar1Width(container);
+    expect(after).toBe(initial);
 
     document.body.removeChild(container);
   });
 
-  it('zoom-in 5 times caps at scale(32, 1)', () => {
+  it('zoom-in caps at scale=32 (bar width grows ~32x from fit-to-run)', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
 
+    const initial = bar1Width(container);
     const btn = container.querySelector('[aria-label="Zoom in"]');
     btn.click();
     btn.click();
     btn.click();
     btn.click();
     btn.click();
-    const swimG = container.querySelector('.swimlane-content');
-    expect(swimG.getAttribute('transform')).toContain('scale(32, 1)');
+    btn.click();
+    const after = bar1Width(container);
+    // 6 doublings would be 64×, but clamped to 32×.
+    expect(after / initial).toBeCloseTo(32, 0);
 
     document.body.removeChild(container);
   });
@@ -311,22 +322,38 @@ describe('runTimelineView Phase 3: adaptive axis', () => {
     expect(axisG.querySelectorAll('line').length).toBeGreaterThan(0);
   });
 
-  it('axis has more tick lines at scale=16 than at scale=1', () => {
+  it('axis tick interval gets finer as scale increases', () => {
+    // With pixel-density-based tick selection, total tick count stays roughly
+    // similar across zoom levels — what changes is the *interval*. Verify the
+    // tick-interval shrinks (in ms) as scale grows, which is what prevents
+    // label overlap regardless of zoom.
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
 
-    const axisG = container.querySelector('.axis');
-    const ticksAtScale1 = axisG.querySelectorAll('line').length;
+    function tickIntervalMs() {
+      const axisG = container.querySelector('.axis');
+      const labels = Array.from(axisG.querySelectorAll('text.axis-label'));
+      if (labels.length < 2) return Infinity;
+      // Labels are formatted m:ss or h:mm:ss — parse to seconds.
+      const toSec = (t) => {
+        const parts = t.split(':').map(Number);
+        return parts.length === 2
+          ? parts[0] * 60 + parts[1]
+          : parts[0] * 3600 + parts[1] * 60 + parts[2];
+      };
+      const secs = labels.map((l) => toSec(l.textContent.trim()));
+      return (secs[1] - secs[0]) * 1000;
+    }
 
-    // Zoom in 4 times: 1 → 2 → 4 → 8 → 16
+    const intervalAt1 = tickIntervalMs();
     const zoomIn = container.querySelector('[aria-label="Zoom in"]');
     zoomIn.click();
     zoomIn.click();
     zoomIn.click();
     zoomIn.click();
-    const ticksAtScale16 = axisG.querySelectorAll('line').length;
-    expect(ticksAtScale16).toBeGreaterThan(ticksAtScale1);
+    const intervalAt16 = tickIntervalMs();
+    expect(intervalAt16).toBeLessThan(intervalAt1);
 
     document.body.removeChild(container);
   });
@@ -337,11 +364,63 @@ describe('runTimelineView Phase 3: wheel zoom', () => {
     _resetZoomStateForTests();
   });
 
-  it('wheel event with deltaY<0 (zoom-in) doubles scale to 2', () => {
+  function bar1Width(container) {
+    const bar = container.querySelector(
+      '.timeline-bar[data-stage-key="implement"][data-bar-number="1"]',
+    );
+    return bar ? parseFloat(bar.getAttribute('width')) : null;
+  }
+
+  it('shift+wheel with deltaY<0 (zoom-in) roughly doubles bar widths', () => {
+    // Wheel default is now horizontal-pan (matches Mac trackpad two-finger
+    // swipe). Zoom requires the shift modifier.
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
 
+    const before = bar1Width(container);
+    const timeline = container.querySelector('.run-timeline');
+    timeline.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: -100,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    const after = bar1Width(container);
+    expect(after / before).toBeCloseTo(2, 1);
+
+    document.body.removeChild(container);
+  });
+
+  it('shift+wheel with deltaY>0 (zoom-out) at scale=1 stays at scale=1', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
+
+    const before = bar1Width(container);
+    const timeline = container.querySelector('.run-timeline');
+    timeline.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: 100,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    const after = bar1Width(container);
+    expect(after).toBe(before);
+
+    document.body.removeChild(container);
+  });
+
+  it('plain wheel (no shift) pans, does not change scale', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
+
+    const before = bar1Width(container);
     const timeline = container.querySelector('.run-timeline');
     timeline.dispatchEvent(
       new WheelEvent('wheel', {
@@ -350,23 +429,9 @@ describe('runTimelineView Phase 3: wheel zoom', () => {
         cancelable: true,
       }),
     );
-    const swimG = container.querySelector('.swimlane-content');
-    expect(swimG.getAttribute('transform')).toContain('scale(2, 1)');
-
-    document.body.removeChild(container);
-  });
-
-  it('wheel event with deltaY>0 (zoom-out) at scale=1 stays at scale=1', () => {
-    const container = document.createElement('div');
-    document.body.appendChild(container);
-    render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
-
-    const timeline = container.querySelector('.run-timeline');
-    timeline.dispatchEvent(
-      new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true }),
-    );
-    const swimG = container.querySelector('.swimlane-content');
-    expect(swimG.getAttribute('transform')).toContain('scale(1, 1)');
+    const after = bar1Width(container);
+    // No scale change → bar width is identical.
+    expect(after).toBe(before);
 
     document.body.removeChild(container);
   });
@@ -443,7 +508,7 @@ describe('runTimelineView Phase 4: tooltips', () => {
     );
 
     const tooltip = container.querySelector('.timeline-tooltip');
-    expect(tooltip.innerHTML).toContain('IMPLEMENT');
+    expect(tooltip.innerHTML).toContain('Implement');
     expect(tooltip.innerHTML).toContain('Iteration 1 of');
     document.body.removeChild(container);
   });
@@ -568,42 +633,53 @@ describe('runTimelineView Phase 4: tooltips', () => {
   });
 });
 
-describe('runTimelineView Phase 3: drag-to-zoom selection rect', () => {
+describe('runTimelineView Phase 3: axis-drag zoom', () => {
   beforeEach(() => {
     _resetZoomStateForTests();
   });
 
-  it('zoom-selection rect is initially hidden', () => {
-    const el = renderToString(
-      runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }),
-    );
-    const selRect = el.querySelector('.zoom-selection');
-    expect(selRect).not.toBeNull();
-    expect(selRect.getAttribute('display')).toBe('none');
-  });
-
-  it('mousedown on axis zone shows zoom-selection rect', () => {
+  it('mousedown + mousemove on the time-axis ribbon changes scale', () => {
+    // Drag-to-zoom region select was replaced by continuous axis-drag zoom:
+    // horizontal drag on the axis ribbon scales the chart in place.
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
 
+    function bar1Width() {
+      const bar = container.querySelector(
+        '.timeline-bar[data-stage-key="implement"][data-bar-number="1"]',
+      );
+      return bar ? parseFloat(bar.getAttribute('width')) : null;
+    }
+    const before = bar1Width();
+
     const timeline = container.querySelector('.run-timeline');
-    const svg = container.querySelector('svg');
+    const svg = container.querySelector('.timeline-svg-wrap svg');
     const svgH = parseFloat(svg.getAttribute('height') || '0');
 
-    // Click in the axis zone (bottom 24px of SVG)
-    // getBoundingClientRect returns {top:0, left:0} in jsdom
+    // Mousedown in the axis ribbon (bottom AXIS_HEIGHT band of the SVG)
     timeline.dispatchEvent(
       new MouseEvent('mousedown', {
         bubbles: true,
         button: 0,
         clientX: 300,
-        clientY: svgH - 5, // within axis zone
+        clientY: svgH - 5,
       }),
     );
+    // Drag right by 140px → scale grows by ~exp(140/200) ≈ 2.01×
+    timeline.dispatchEvent(
+      new MouseEvent('mousemove', {
+        bubbles: true,
+        clientX: 440,
+        clientY: svgH - 5,
+      }),
+    );
+    timeline.dispatchEvent(
+      new MouseEvent('mouseup', { bubbles: true, button: 0 }),
+    );
 
-    const selRect = container.querySelector('.zoom-selection');
-    expect(selRect.getAttribute('display')).not.toBe('none');
+    const after = bar1Width();
+    expect(after / before).toBeGreaterThan(1.5);
 
     document.body.removeChild(container);
   });
@@ -650,13 +726,13 @@ describe('runTimelineView Phase 4: click-to-drill drawer', () => {
     bar.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     const drawer = container.querySelector('sl-drawer');
-    expect(drawer.getAttribute('label')).toContain('IMPLEMENT');
+    expect(drawer.getAttribute('label')).toContain('Implement');
     expect(drawer.getAttribute('label')).toContain('Iteration 1');
 
     document.body.removeChild(container);
   });
 
-  it('drawer body contains status pip, Duration, Model, Agent rows', () => {
+  it('drawer body contains status pill, Duration, Model, Agent rows', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
     render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
@@ -667,7 +743,7 @@ describe('runTimelineView Phase 4: click-to-drill drawer', () => {
     bar.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     const drawer = container.querySelector('sl-drawer');
-    expect(drawer.innerHTML).toContain('status-pip');
+    expect(drawer.innerHTML).toContain('drawer-status-pill');
     expect(drawer.innerHTML).toContain('Duration');
     expect(drawer.innerHTML).toContain('Model');
     expect(drawer.innerHTML).toContain('Agent');
@@ -808,19 +884,53 @@ describe('runTimelineView Phase 5: loopback hide threshold', () => {
     }));
     const run = makeRun({ stages: { implement: { iterations } } });
     const el = renderToString(runTimelineView(run, {}, { swimlaneWidth: 800 }));
-    expect(el.querySelector('svg').innerHTML).toContain('loopbacks hidden');
+    expect(el.querySelector('.timeline-svg-wrap svg').innerHTML).toContain(
+      'loopbacks hidden',
+    );
   });
 });
 
 describe('runTimelineView Phase 5: accessibility', () => {
-  it('timeline bars have role="img" attribute', () => {
+  it('timeline bars have role="button" attribute', () => {
+    // Bars are interactive (Enter/Space opens the drawer). They are announced
+    // as buttons, not images, per the WAI-ARIA Button pattern.
     const el = renderToString(
       runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }),
     );
     const bars = el.querySelectorAll('.timeline-bar');
     expect(bars.length).toBeGreaterThan(0);
     for (const bar of bars) {
-      expect(bar.getAttribute('role')).toBe('img');
+      expect(bar.getAttribute('role')).toBe('button');
+    }
+  });
+
+  it('Space key on a focused bar also opens the drawer', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
+
+    const bar = container.querySelector(
+      '[data-stage-key="implement"][data-bar-number="1"]',
+    );
+    bar.dispatchEvent(
+      new KeyboardEvent('keydown', { key: ' ', bubbles: true }),
+    );
+
+    const drawer = container.querySelector('sl-drawer');
+    expect(drawer.hasAttribute('open')).toBe(true);
+
+    document.body.removeChild(container);
+  });
+
+  it('timeline gaps are focusable and carry an aria-label', () => {
+    const el = renderToString(
+      runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }),
+    );
+    const gaps = el.querySelectorAll('.timeline-gap');
+    expect(gaps.length).toBeGreaterThan(0);
+    for (const gap of gaps) {
+      expect(gap.getAttribute('tabindex')).toBe('0');
+      expect(gap.getAttribute('aria-label')).toBeTruthy();
     }
   });
 
@@ -898,7 +1008,7 @@ describe('runTimelineView Phase 5: live update for active runs', () => {
     const el = renderToString(
       runTimelineView(activeRun, {}, { swimlaneWidth: 800 }),
     );
-    const svg = el.querySelector('svg');
+    const svg = el.querySelector('.timeline-svg-wrap svg');
     expect(svg).not.toBeNull();
     const totalMs = parseFloat(svg.getAttribute('data-total-ms') || '0');
     // Without now(): totalMs = 60000 (updated_at gap). With now(): totalMs >> 60000

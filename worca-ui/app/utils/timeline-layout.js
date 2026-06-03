@@ -1,5 +1,15 @@
 import { STAGE_ORDER } from './stage-order.js';
 
+// "pr" → "PR" (acronym); "plan_review" → "Plan Review"; etc.
+const ACRONYM_KEYS = new Set(['pr']);
+function toDisplayLabel(key) {
+  if (ACRONYM_KEYS.has(key)) return key.toUpperCase();
+  return key
+    .split('_')
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : ''))
+    .join(' ');
+}
+
 /**
  * Projects run.stages into the swimlane layout model used by the timeline view.
  *
@@ -69,49 +79,51 @@ export function computeTimelineLayout(stages, runEndTime) {
   }
 
   // Build rows
-  const rows = stageEntries.map(([key, stage]) => {
-    const bars = stage.iterations
-      .filter((it) => it.started_at)
-      .map((it, idx) => {
-        const startMs = new Date(it.started_at).getTime() - runStartMs;
-        const endMs = it.completed_at
-          ? new Date(it.completed_at).getTime() - runStartMs
-          : totalMs;
-        return {
-          number: it.number ?? idx + 1,
-          startMs,
-          durMs: endMs - startMs,
-          status: it.status,
-          cost: it.cost_usd ?? 0,
-          model: it.model ?? null,
-          agent: it.agent ?? null,
-        };
-      });
+  const rows = stageEntries
+    .map(([key, stage]) => {
+      const bars = stage.iterations
+        .filter((it) => it.started_at)
+        .map((it, idx) => {
+          const startMs = new Date(it.started_at).getTime() - runStartMs;
+          const endMs = it.completed_at
+            ? new Date(it.completed_at).getTime() - runStartMs
+            : totalMs;
+          return {
+            number: it.number ?? idx + 1,
+            startMs,
+            durMs: endMs - startMs,
+            status: it.status,
+            cost: it.cost_usd ?? 0,
+            model: it.model ?? null,
+            agent: it.agent ?? null,
+          };
+        });
 
-    // Compute gaps between consecutive bars
-    const gaps = [];
-    for (let i = 0; i < bars.length - 1; i++) {
-      const gapStart = bars[i].startMs + bars[i].durMs;
-      const gapEnd = bars[i + 1].startMs;
-      if (gapEnd <= gapStart) continue;
+      // Compute gaps between consecutive bars
+      const gaps = [];
+      for (let i = 0; i < bars.length - 1; i++) {
+        const gapStart = bars[i].startMs + bars[i].durMs;
+        const gapEnd = bars[i + 1].startMs;
+        if (gapEnd <= gapStart) continue;
 
-      const inStage = findInStage(key, gapStart, gapEnd, itersByStage);
-      gaps.push({
-        afterIter: bars[i].number,
-        startMs: gapStart,
-        durMs: gapEnd - gapStart,
-        inStage,
-      });
-    }
+        const inStage = findInStage(key, gapStart, gapEnd, itersByStage);
+        gaps.push({
+          afterIter: bars[i].number,
+          startMs: gapStart,
+          durMs: gapEnd - gapStart,
+          inStage,
+        });
+      }
 
-    return {
-      stageKey: key,
-      stageLabel: key.toUpperCase(),
-      iterationCount: bars.length,
-      bars,
-      gaps,
-    };
-  });
+      return {
+        stageKey: key,
+        stageLabel: toDisplayLabel(key),
+        iterationCount: bars.length,
+        bars,
+        gaps,
+      };
+    })
+    .filter((row) => row.bars.length > 0);
 
   // Build loopbacks from gaps that have inStage — only backward arcs:
   // inStage must be later in STAGE_ORDER than the row's stage, meaning a downstream

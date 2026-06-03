@@ -60,18 +60,18 @@ describe('header button pending-state scoping', () => {
 describe('Timeline button in run-detail overview', () => {
   const baseRun = { run_id: 'run-1', stages: {}, active: false };
 
-  it('renders Timeline button after stage strip when onOpenTimeline is provided', () => {
+  it('renders Timeline button above the pipeline timing bar when onOpenTimeline is provided', () => {
     const onOpenTimeline = vi.fn();
     const out = renderToString(
       runDetailView(baseRun, {}, { onOpenTimeline }).overview,
     );
-    expect(out).toContain('run-stage-actions');
+    expect(out).toContain('pipeline-timing-bar-actions');
     expect(out).toContain('Timeline');
   });
 
   it('does not render Timeline button when onOpenTimeline is absent', () => {
     const out = renderToString(runDetailView(baseRun, {}).overview);
-    expect(out).not.toContain('run-stage-actions');
+    expect(out).not.toContain('pipeline-timing-bar-actions');
   });
 
   it('onOpenTimeline callback routes to timeline sub-view', () => {
