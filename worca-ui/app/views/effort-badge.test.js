@@ -174,8 +174,8 @@ describe('effort source qualifier chip', () => {
   });
 });
 
-describe('effort bead classified row', () => {
-  it('renders bead row when bead_classified exists and applied is false', () => {
+describe('effort bead classified chip (inline on Effort row)', () => {
+  it('renders bead chip when bead level diverges from effort level (explicit_override)', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -197,7 +197,7 @@ describe('effort bead classified row', () => {
     expect(html).toContain('overridden');
   });
 
-  it('renders ignored divergence chip for mode_reactive skip_reason', () => {
+  it('renders ignored divergence chip for mode_reactive when levels differ', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -217,7 +217,7 @@ describe('effort bead classified row', () => {
     expect(html).toMatch(/variant="warning"/);
   });
 
-  it('renders ignored divergence chip for mode_disabled skip_reason', () => {
+  it('SUPPRESSES bead chip for mode_disabled even when levels differ (label was never going to be consulted)', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -232,11 +232,49 @@ describe('effort bead classified row', () => {
         }),
       ),
     );
-    expect(html).toContain('Bead:');
-    expect(html).toContain('ignored');
+    expect(html).not.toContain('Bead:');
+    expect(html).not.toContain('ignored');
   });
 
-  it('does not render bead row when bead_classified is absent', () => {
+  it('SUPPRESSES bead chip when bead level matches effort level (no divergence to show)', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          level: 'medium',
+          source: 'disabled',
+          base: 'medium',
+          bead_classified: {
+            level: 'medium',
+            applied: false,
+            skip_reason: 'explicit_override',
+          },
+        }),
+      ),
+    );
+    expect(html).not.toContain('Bead:');
+    expect(html).not.toContain('overridden');
+  });
+
+  it('SUPPRESSES bead chip when bead level matches effort level under mode_reactive', () => {
+    const html = renderToString(
+      runDetailView(
+        makeRun({
+          level: 'high',
+          source: 'reactive',
+          base: 'high',
+          bead_classified: {
+            level: 'high',
+            applied: false,
+            skip_reason: 'mode_reactive',
+          },
+        }),
+      ),
+    );
+    expect(html).not.toContain('Bead:');
+    expect(html).not.toContain('ignored');
+  });
+
+  it('does not render bead chip when bead_classified is absent', () => {
     const html = renderToString(
       runDetailView(
         makeRun({ level: 'high', source: 'explicit', base: 'high' }),
@@ -245,7 +283,7 @@ describe('effort bead classified row', () => {
     expect(html).not.toContain('Bead:');
   });
 
-  it('does not render bead row when applied is true and levels match', () => {
+  it('does not render bead chip when applied is true and levels match', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -260,12 +298,11 @@ describe('effort bead classified row', () => {
         }),
       ),
     );
-    // When applied=true and level matches, no divergence to show
     expect(html).not.toContain('overridden');
     expect(html).not.toContain('ignored');
   });
 
-  it('does not render bead row when bead_classified level is null', () => {
+  it('does not render bead chip when bead_classified level is null', () => {
     const html = renderToString(
       runDetailView(
         makeRun({
@@ -281,6 +318,35 @@ describe('effort bead classified row', () => {
       ),
     );
     expect(html).not.toContain('Bead:');
+  });
+
+  it('renders bead chip on the SAME iteration-tags-row as the Effort label', () => {
+    // The bead chip merged into the Effort row in the W-273 fix —
+    // no second iteration-tags-row should appear for the bead.
+    const result = runDetailView(
+      makeRun({
+        level: 'high',
+        source: 'explicit',
+        base: 'high',
+        bead_classified: {
+          level: 'medium',
+          applied: false,
+          skip_reason: 'explicit_override',
+        },
+      }),
+    );
+    const html = renderToString(result);
+    // The effort + bead section should sit in ONE row (the second
+    // row is now suppressed). Effort and Bead labels appear in the
+    // same row so an iteration-tags-row containing Effort also
+    // contains Bead.
+    const effortIdx = html.indexOf('Effort:');
+    const beadIdx = html.indexOf('Bead:');
+    expect(effortIdx).toBeGreaterThan(-1);
+    expect(beadIdx).toBeGreaterThan(effortIdx);
+    // No new iteration-tags-row introduced between them.
+    const between = html.slice(effortIdx, beadIdx);
+    expect(between).not.toContain('iteration-tags-row');
   });
 });
 
