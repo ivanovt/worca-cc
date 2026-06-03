@@ -96,6 +96,8 @@ export function computeTimelineLayout(stages, runEndTime) {
             cost: it.cost_usd ?? 0,
             model: it.model ?? null,
             agent: it.agent ?? null,
+            beadId: it.bead_id ?? null,
+            beadTitle: it.bead_title ?? null,
           };
         });
 

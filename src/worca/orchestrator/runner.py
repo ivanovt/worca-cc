@@ -2571,6 +2571,15 @@ def run_pipeline(
             # old runs and plain-model configs unchanged on disk.
             if stage_config.get("model_alias"):
                 _iter_kwargs["model_alias"] = stage_config["model_alias"]
+            # Bead linkage on implement iterations only — _assigned_bead is
+            # resolved above (claimed bead, or beads_ids[0] fallback). Title is
+            # cached when the bead is claimed via _query_ready_bead; absent on
+            # the beads_ids[0] fallback, which keeps it null on disk.
+            if current_stage == Stage.IMPLEMENT and _assigned_bead:
+                _iter_kwargs["bead_id"] = _assigned_bead
+                _bead_title = prompt_builder.get_context("assigned_bead_title")
+                if _bead_title:
+                    _iter_kwargs["bead_title"] = _bead_title
             iter_record = start_iteration(
                 status, current_stage.value,
                 **_iter_kwargs,

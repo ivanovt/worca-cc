@@ -783,6 +783,21 @@ h1, h2, h3, h4, h5, h6 {
   color: var(--tl-text-strong);
   font-size: 11px;
 }
+.tooltip-bead-sub {
+  font-size: 11px;
+  color: var(--tl-text-strong);
+  margin-top: -2px;
+  margin-bottom: 4px;
+  line-height: 1.35;
+}
+.tooltip-bead-id {
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  background: var(--tl-row-alt, rgba(148, 163, 184, 0.12));
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
+}
 .tooltip-row {
   display: flex;
   justify-content: space-between;
@@ -884,6 +899,20 @@ h1, h2, h3, h4, h5, h6 {
   font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
   font-variant-numeric: tabular-nums;
   color: var(--fg, #0f172a);
+}
+.drawer-bead {
+  font-family: inherit;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.drawer-bead-id {
+  font-family: var(--sl-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  background: var(--tl-row-alt, rgba(148, 163, 184, 0.12));
+  padding: 1px 6px;
+  border-radius: 3px;
 }
 .drawer-raw-json {
   margin-top: 4px;

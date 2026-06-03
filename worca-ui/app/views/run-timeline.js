@@ -309,7 +309,7 @@ function buildSwimlaneLayerHtml(layout, swimlaneWidth, scale, panMs) {
         _activeBar.stageKey === row.stageKey &&
         _activeBar.number === bar.number;
       const ariaLabel = `${row.stageLabel} iteration ${bar.number} of ${row.iterationCount}, ${formatDuration(bar.durMs)}, ${bar.status}`;
-      barsStr += `<rect class="timeline-bar${isActive ? ' is-active' : ''}" role="button" aria-label="${esc(ariaLabel)}" tabindex="0" x="${rawX}" y="${barY}" width="${barW}" height="${barH}" fill="${fill}" data-stage-key="${esc(row.stageKey)}" data-bar-number="${esc(bar.number)}" data-stage-label="${esc(row.stageLabel)}" data-iter-total="${esc(row.iterationCount)}" data-start-ms="${esc(bar.startMs)}" data-dur-ms="${esc(bar.durMs)}" data-model="${esc(bar.model ?? '')}" data-status="${esc(bar.status)}" data-cost="${esc(bar.cost ?? 0)}"/>`;
+      barsStr += `<rect class="timeline-bar${isActive ? ' is-active' : ''}" role="button" aria-label="${esc(ariaLabel)}" tabindex="0" x="${rawX}" y="${barY}" width="${barW}" height="${barH}" fill="${fill}" data-stage-key="${esc(row.stageKey)}" data-bar-number="${esc(bar.number)}" data-stage-label="${esc(row.stageLabel)}" data-iter-total="${esc(row.iterationCount)}" data-start-ms="${esc(bar.startMs)}" data-dur-ms="${esc(bar.durMs)}" data-model="${esc(bar.model ?? '')}" data-status="${esc(bar.status)}" data-cost="${esc(bar.cost ?? 0)}" data-bead-id="${esc(bar.beadId ?? '')}" data-bead-title="${esc(bar.beadTitle ?? '')}"/>`;
 
       // Center label over the VISIBLE portion of the bar so a bar that's
       // clipped on the left keeps a readable label inside its on-screen area.
@@ -478,11 +478,18 @@ function buildBarTooltipHtml(target) {
   const status = target.getAttribute('data-status') || '—';
   const stageKey = target.getAttribute('data-stage-key') || '';
   const cost = parseFloat(target.getAttribute('data-cost') || '0');
+  const beadId = target.getAttribute('data-bead-id') || '';
+  const beadTitle = target.getAttribute('data-bead-title') || '';
   const endMs = startMs + durMs;
   const hue = STAGE_HUES[stageKey] || 'var(--muted)';
 
+  const beadSubHeader = beadId
+    ? `<div class="tooltip-bead-sub"><code class="tooltip-bead-id">${esc(beadId)}</code>${beadTitle ? ` ${esc(beadTitle)}` : ''}</div>`
+    : '';
+
   return (
     `<div class="tooltip-header"><span class="tooltip-hue-dot" style="background:${esc(hue)}"></span>${esc(stageLabel)} <span class="tooltip-header-sub">Iteration ${esc(iterNum)} of ${esc(iterTotal)}</span></div>` +
+    beadSubHeader +
     `<div class="tooltip-row"><span class="tooltip-label">Duration</span><span class="tooltip-value">${esc(formatDuration(durMs))}</span></div>` +
     `<div class="tooltip-row"><span class="tooltip-label">Started</span><span class="tooltip-value">${esc(formatTimestamp(startMs))}</span></div>` +
     `<div class="tooltip-row"><span class="tooltip-label">Ended</span><span class="tooltip-value">${esc(formatTimestamp(endMs))}</span></div>` +
@@ -555,6 +562,8 @@ function buildDrawerContent(run, stageKey, barNum, options) {
   const inputTokens = iteration?.input_tokens ?? null;
   const outputTokens = iteration?.output_tokens ?? null;
   const cacheTokens = iteration?.cache_read_input_tokens ?? null;
+  const beadId = iteration?.bead_id ?? null;
+  const beadTitle = iteration?.bead_title ?? null;
   const hue = STAGE_HUES[stageKey] || 'var(--muted)';
   const stageLabelTitle = stageKey
     .split('_')
@@ -577,6 +586,9 @@ function buildDrawerContent(run, stageKey, barNum, options) {
   }
   if (agent) {
     body += `<dt class="drawer-label">Agent</dt><dd class="drawer-value">${esc(agent)}</dd>`;
+  }
+  if (beadId) {
+    body += `<dt class="drawer-label">Bead</dt><dd class="drawer-value drawer-bead"><code class="drawer-bead-id">${esc(beadId)}</code>${beadTitle ? ` ${esc(beadTitle)}` : ''}</dd>`;
   }
   if (effort) {
     body += `<dt class="drawer-label">Effort</dt><dd class="drawer-value">${esc(effort)}</dd>`;

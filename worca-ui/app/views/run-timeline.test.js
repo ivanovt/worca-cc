@@ -532,6 +532,46 @@ describe('runTimelineView Phase 4: tooltips', () => {
     document.body.removeChild(container);
   });
 
+  it('bar tooltip includes bead id + title sub-header when iteration has a bead', () => {
+    const runWithBead = makeRun();
+    runWithBead.stages.implement.iterations[0].bead_id = 'bd-abc123';
+    runWithBead.stages.implement.iterations[0].bead_title = 'Add user auth';
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(runTimelineView(runWithBead, {}, { swimlaneWidth: 800 }), container);
+
+    const bar = container.querySelector(
+      '[data-stage-key="implement"][data-bar-number="1"]',
+    );
+    bar.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: 300, clientY: 50 }),
+    );
+
+    const html = container.querySelector('.timeline-tooltip').innerHTML;
+    expect(html).toContain('tooltip-bead-sub');
+    expect(html).toContain('bd-abc123');
+    expect(html).toContain('Add user auth');
+    document.body.removeChild(container);
+  });
+
+  it('bar tooltip omits the bead sub-header when iteration has no bead', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
+
+    const bar = container.querySelector(
+      '[data-stage-key="implement"][data-bar-number="1"]',
+    );
+    bar.dispatchEvent(
+      new MouseEvent('mousemove', { bubbles: true, clientX: 300, clientY: 50 }),
+    );
+
+    const html = container.querySelector('.timeline-tooltip').innerHTML;
+    expect(html).not.toContain('tooltip-bead-sub');
+    document.body.removeChild(container);
+  });
+
   it('mousemove over a gap shows tooltip with "Gap on" header', () => {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -748,6 +788,42 @@ describe('runTimelineView Phase 4: click-to-drill drawer', () => {
     expect(drawer.innerHTML).toContain('Model');
     expect(drawer.innerHTML).toContain('Agent');
 
+    document.body.removeChild(container);
+  });
+
+  it('drawer body contains Bead row when iteration has bead_id', () => {
+    const runWithBead = makeRun();
+    runWithBead.stages.implement.iterations[0].bead_id = 'bd-abc123';
+    runWithBead.stages.implement.iterations[0].bead_title = 'Add user auth';
+
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(runTimelineView(runWithBead, {}, { swimlaneWidth: 800 }), container);
+
+    const bar = container.querySelector(
+      '[data-stage-key="implement"][data-bar-number="1"]',
+    );
+    bar.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    const drawer = container.querySelector('sl-drawer');
+    expect(drawer.innerHTML).toContain('drawer-bead-id');
+    expect(drawer.innerHTML).toContain('bd-abc123');
+    expect(drawer.innerHTML).toContain('Add user auth');
+    document.body.removeChild(container);
+  });
+
+  it('drawer body omits Bead row when iteration has no bead_id', () => {
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    render(runTimelineView(makeRun(), {}, { swimlaneWidth: 800 }), container);
+
+    const bar = container.querySelector(
+      '[data-stage-key="implement"][data-bar-number="1"]',
+    );
+    bar.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+
+    const drawer = container.querySelector('sl-drawer');
+    expect(drawer.innerHTML).not.toContain('drawer-bead-id');
     document.body.removeChild(container);
   });
 

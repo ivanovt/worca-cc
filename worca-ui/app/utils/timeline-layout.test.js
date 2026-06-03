@@ -11,6 +11,8 @@ function iter(startedAt, completedAt, opts = {}) {
     model: opts.model ?? 'sonnet',
     agent: opts.agent ?? 'implementer',
     number: opts.number ?? 1,
+    bead_id: opts.bead_id,
+    bead_title: opts.bead_title,
     duration_ms:
       opts.duration_ms ??
       (completedAt ? new Date(completedAt) - new Date(startedAt) : null),
@@ -143,6 +145,33 @@ describe('computeTimelineLayout', () => {
       expect(bar.cost).toBe(1.23);
       expect(bar.model).toBe('opus');
       expect(bar.agent).toBe('implementer');
+    });
+
+    it('bar carries beadId and beadTitle when set on the iteration', () => {
+      const stages = {
+        implement: {
+          iterations: [
+            iter(T(0), T(5000), {
+              bead_id: 'bd-abc123',
+              bead_title: 'Add user auth',
+            }),
+          ],
+        },
+      };
+      const layout = computeTimelineLayout(stages, T(5000));
+      const bar = layout.rows[0].bars[0];
+      expect(bar.beadId).toBe('bd-abc123');
+      expect(bar.beadTitle).toBe('Add user auth');
+    });
+
+    it('bar beadId and beadTitle are null when absent on the iteration', () => {
+      const stages = {
+        implement: { iterations: [iter(T(0), T(5000))] },
+      };
+      const layout = computeTimelineLayout(stages, T(5000));
+      const bar = layout.rows[0].bars[0];
+      expect(bar.beadId).toBeNull();
+      expect(bar.beadTitle).toBeNull();
     });
 
     it('iterationCount equals the number of bars', () => {
