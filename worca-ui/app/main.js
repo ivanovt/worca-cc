@@ -89,6 +89,7 @@ import {
   runDetailView,
 } from './views/run-detail.js';
 import { runListView } from './views/run-list.js';
+import { runTimelineView } from './views/run-timeline.js';
 import {
   loadSettings,
   projectSettingsView,
@@ -2973,6 +2974,83 @@ function handleCancelRun(runId) {
   );
 }
 
+// --- Shared run-page header helper ---
+
+function runPageHeaderParts(runId) {
+  const run = store.getRunById(runId);
+  const raw = run?.work_request?.title || 'Pipeline Details';
+  const firstLine = raw.split('\n')[0];
+  const title =
+    firstLine.length > 80 ? `${firstLine.slice(0, 80)}…` : firstLine;
+  let badge = null;
+  let actionButton = null;
+  if (run) {
+    const ps = run.pipeline_status || (run.active ? 'running' : 'completed');
+    const variantMap = {
+      running: 'primary',
+      paused: 'warning',
+      completed: 'success',
+      failed: 'danger',
+      cancelled: 'neutral',
+      interrupted: 'warning',
+    };
+    const variant = variantMap[ps] || 'neutral';
+    const label = ps.charAt(0).toUpperCase() + ps.slice(1);
+    badge = html`<sl-badge variant="${variant}" pill>
+      ${unsafeHTML(statusIcon(ps, 12))}
+      ${label}
+    </sl-badge>`;
+    const pending =
+      _controlPending?.runId === runId ? _controlPending.action : null;
+    if (pending === 'stop') {
+      actionButton = html`
+        <button class="action-btn action-btn--danger" disabled>
+          ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+          Stopping…
+        </button>`;
+    } else if (pending === 'pause') {
+      actionButton = html`
+        <button class="action-btn action-btn--amber" disabled>
+          ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+          Pausing…
+        </button>`;
+    } else if (pending === 'resume') {
+      actionButton = html`
+        <button class="action-btn action-btn--primary" disabled>
+          ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
+          Resuming…
+        </button>`;
+    } else {
+      const pauseBtn = actionAllowed('pause', ps)
+        ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseRun(runId)}>
+            ${unsafeHTML(iconSvg(Pause, 14))} Pause
+          </button>`
+        : nothing;
+      const stopBtn = actionAllowed('stop', ps)
+        ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopRun(runId)}>
+            ${unsafeHTML(iconSvg(Square, 14))} Stop
+          </button>`
+        : nothing;
+      const resumeBtn = actionAllowed('resume', ps)
+        ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeRun(runId)}>
+            ${unsafeHTML(iconSvg(Play, 14))} Resume
+          </button>`
+        : nothing;
+      const cancelBtn =
+        stopBtn === nothing && actionAllowed('cancel', ps)
+          ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(runId)}>
+              ${unsafeHTML(iconSvg(Square, 14))} Cancel
+            </button>`
+          : nothing;
+      const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
+        (b) => b !== nothing,
+      );
+      if (btns.length) actionButton = html`${btns}`;
+    }
+  }
+  return { title, badge, actionButton };
+}
+
 // --- PR Approval ---
 
 async function handleApprovePR(runId) {
@@ -3227,7 +3305,9 @@ async function handleConfirmRestartStage() {
 }
 
 function handleBack() {
-  if (route.runId) {
+  if (route.action === 'timeline' && route.runId) {
+    navigate(route.section, route.runId, route.projectId, null);
+  } else if (route.runId) {
     navigate(route.section, null, route.projectId);
   } else if (route.section && route.section !== 'dashboard') {
     navigate('dashboard', null, route.projectId);
@@ -3690,82 +3770,16 @@ function contentHeaderView() {
     } else {
       title = 'Workspaces';
     }
+  } else if (route.action === 'timeline' && route.runId) {
+    showBack = true;
+    ({ title, badge, actionButton } = runPageHeaderParts(route.runId));
   } else if (route.runId && route.section !== 'templates') {
     // The templates section also encodes its tid in `route.runId` (e.g.
     // `#/templates/feature-glm-ds/edit`), so without the section guard
     // this generic "run detail" handler would overwrite the dedicated
     // "Edit Template" title below.
-    const run = store.getRunById(route.runId);
-    const raw = run?.work_request?.title || 'Pipeline Details';
-    const firstLine = raw.split('\n')[0];
-    title =
-      firstLine.length > 80 ? `${firstLine.slice(0, 80)}\u2026` : firstLine;
     showBack = true;
-    if (run) {
-      const ps = run.pipeline_status || (run.active ? 'running' : 'completed');
-      const variantMap = {
-        running: 'primary',
-        paused: 'warning',
-        completed: 'success',
-        failed: 'danger',
-        cancelled: 'neutral',
-        interrupted: 'warning',
-      };
-      const variant = variantMap[ps] || 'neutral';
-      const label = ps.charAt(0).toUpperCase() + ps.slice(1);
-      badge = html`<sl-badge variant="${variant}" pill>
-        ${unsafeHTML(statusIcon(ps, 12))}
-        ${label}
-      </sl-badge>`;
-
-      const pending =
-        _controlPending?.runId === route.runId ? _controlPending.action : null;
-      if (pending === 'stop') {
-        actionButton = html`
-          <button class="action-btn action-btn--danger" disabled>
-            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
-            Stopping\u2026
-          </button>`;
-      } else if (pending === 'pause') {
-        actionButton = html`
-          <button class="action-btn action-btn--amber" disabled>
-            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
-            Pausing\u2026
-          </button>`;
-      } else if (pending === 'resume') {
-        actionButton = html`
-          <button class="action-btn action-btn--primary" disabled>
-            ${unsafeHTML(iconSvg(Loader, 14, 'icon-spin'))}
-            Resuming\u2026
-          </button>`;
-      } else {
-        const pauseBtn = actionAllowed('pause', ps)
-          ? html`<button class="action-btn action-btn--amber" @click=${() => handlePauseRun(route.runId)}>
-              ${unsafeHTML(iconSvg(Pause, 14))} Pause
-            </button>`
-          : nothing;
-        const stopBtn = actionAllowed('stop', ps)
-          ? html`<button class="action-btn action-btn--danger" @click=${() => handleStopRun(route.runId)}>
-              ${unsafeHTML(iconSvg(Square, 14))} Stop
-            </button>`
-          : nothing;
-        const resumeBtn = actionAllowed('resume', ps)
-          ? html`<button class="action-btn action-btn--primary" @click=${() => handleResumeRun(route.runId)}>
-              ${unsafeHTML(iconSvg(Play, 14))} Resume
-            </button>`
-          : nothing;
-        const cancelBtn =
-          stopBtn === nothing && actionAllowed('cancel', ps)
-            ? html`<button class="action-btn action-btn--danger" @click=${() => handleCancelRun(run.id)}>
-                ${unsafeHTML(iconSvg(Square, 14))} Cancel
-              </button>`
-            : nothing;
-        const btns = [pauseBtn, stopBtn, resumeBtn, cancelBtn].filter(
-          (b) => b !== nothing,
-        );
-        if (btns.length) actionButton = html`${btns}`;
-      }
-    }
+    ({ title, badge, actionButton } = runPageHeaderParts(route.runId));
   } else if (route.section === 'active') {
     title = 'Running Pipelines';
     showBack = true;
@@ -4055,6 +4069,42 @@ function mainContentView() {
     });
   }
 
+  // Timeline sub-view for a run: short-circuit to runTimelineView.
+  if (route.action === 'timeline' && route.runId) {
+    const run = store.getRunById(route.runId);
+    if (!run) {
+      if (
+        state.runsLoaded &&
+        currentProjectId &&
+        (state.projects || []).length > 1
+      ) {
+        navigate(route.section, null, route.projectId);
+        return html``;
+      }
+      if (state.runsLoaded) {
+        return html`
+          <div class="run-detail run-detail-layout">
+            <div class="run-detail-layout__overview">
+              <sl-alert variant="warning" open>
+                <strong>Run not found.</strong>
+                No <code>status.json</code> exists for
+                <code>${route.runId}</code> — it may have been an orphan worktree
+                whose pipeline died before writing run state. Clean it up from the
+                <a href="#/worktrees" @click=${() => navigate('worktrees')}>Worktrees</a> view.
+              </sl-alert>
+            </div>
+          </div>
+        `;
+      }
+      return html``;
+    }
+    return runTimelineView(run, settings, {
+      section: route.section,
+      runId: route.runId,
+      projectId: route.projectId,
+    });
+  }
+
   // The runId catch-all renders the per-run pipeline detail view. Exclude
   // sections that own their own :id sub-route (fleet-runs, workspace-runs,
   // workspaces — the create-definition flow, pipelines for template editing).
@@ -4119,6 +4169,8 @@ function mainContentView() {
       onRestartStage: handleRestartStage,
       stageIterationTab,
       onStageTabChange: handleStageTabChange,
+      onOpenTimeline: () =>
+        navigate(route.section, route.runId, route.projectId, 'timeline'),
       // Plan-stage View plan dialog needs to redraw when the modal
       // toggles open/closed and when the lazy plan fetch resolves.
       rerender,

@@ -4,6 +4,7 @@ import { elapsed, formatDuration, formatTimestamp } from '../utils/duration.js';
 import { effortLevelBadge } from '../utils/effort-badge.js';
 import {
   AlertTriangle,
+  BarChart3,
   CircleCheck,
   ClipboardCopy,
   Clock,
@@ -1481,7 +1482,7 @@ function _agentPromptSection(_stageKey, promptData) {
       ${
         agentInstructions
           ? html`
-        <div class="agent-prompt-block">
+        <div class="agent-prompt-block agent-prompt-block--agent">
           <div class="agent-prompt-label-row">
             <span class="agent-prompt-label">Agent Prompt (resolved)</span>
             <button class="copy-btn" @click=${(e) => _copyToClipboard(agentInstructions, e.currentTarget)}>
@@ -1496,7 +1497,7 @@ function _agentPromptSection(_stageKey, promptData) {
       ${
         userPrompt
           ? html`
-        <div class="agent-prompt-block">
+        <div class="agent-prompt-block agent-prompt-block--user">
           <div class="agent-prompt-label-row">
             <span class="agent-prompt-label">User Message (-p)</span>
             <button class="copy-btn" @click=${(e) => _copyToClipboard(userPrompt, e.currentTarget)}>
@@ -1678,6 +1679,16 @@ export function runDetailView(run, settings = {}, options = {}) {
   const overview = html`
     <div class="run-detail-overview">
       ${stageTimelineView(stages, stageUi, run.active)}
+      ${
+        options.onOpenTimeline
+          ? html`<div class="run-stage-actions">
+              <button
+                class="action-btn action-btn--ghost"
+                @click=${options.onOpenTimeline}
+              >${unsafeHTML(iconSvg(BarChart3, 14))} Timeline</button>
+            </div>`
+          : nothing
+      }
       ${_circuitBreakerBannerView(run, settings)}
       ${prVerificationBannerView(run)}
       ${guideConflictsPanelView(run.guide_conflicts, options)}
