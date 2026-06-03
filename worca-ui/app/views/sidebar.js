@@ -6,6 +6,7 @@ import {
   Boxes,
   ChevronDown,
   Coins,
+  FileText,
   GitBranch,
   iconSvg,
   List,
@@ -381,11 +382,11 @@ export function sidebarView(
       </div>
 
       <div class="sidebar-section">
-        <div class="sidebar-section-header">Configuration</div>
+        <div class="sidebar-section-header">Project Configuration</div>
         ${
-          // Hide Project Settings only in true All-Projects mode (multi-project
+          // Hide project-scoped entries in true All-Projects mode (multi-project
           // with no selection). In single-project mode (projects empty, server
-          // has worcaDir), the un-scoped settings endpoint works fine.
+          // has worcaDir), the un-scoped endpoints work fine.
           (projects || []).length > 1 && !currentProjectId
             ? ''
             : html`
@@ -394,6 +395,13 @@ export function sidebarView(
           <span class="sidebar-item-left">
             ${unsafeHTML(iconSvg(SlidersHorizontal, 16))}
             <span>Project Settings</span>
+          </span>
+        </div>
+        <div class="sidebar-item ${route.section === 'templates' ? 'active' : ''}"
+             @click=${() => onNavigate('templates')}>
+          <span class="sidebar-item-left">
+            ${unsafeHTML(iconSvg(FileText, 16))}
+            <span>Pipeline Templates</span>
           </span>
         </div>
         `

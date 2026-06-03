@@ -5,7 +5,11 @@ import {
   readPipelineFromDom,
 } from './settings.js';
 
-describe('Form round-trip: pr_approval stays absent on no-op Save', () => {
+describe('Form round-trip: Project Settings Pipeline tab no longer owns milestones', () => {
+  // worca.milestones (approval gates) is template-owned per
+  // TEMPLATE_OWNED_KEYS — moved to the template editor's Pipeline
+  // tab in the W-062 Phase 6 cleanup. readPipelineFromDom in
+  // Project Settings no longer reads or emits the field.
   let origDocument;
   let origFetch;
 
@@ -23,44 +27,9 @@ describe('Form round-trip: pr_approval stays absent on no-op Save', () => {
     globalThis.fetch = origFetch;
   });
 
-  it('load clean project -> readPipelineFromDom -> no pr_approval key', async () => {
-    const serverResponse = {
-      worca: {
-        milestones: {
-          plan_approval: true,
-        },
-      },
-    };
-
-    globalThis.fetch = vi.fn().mockImplementation((url) => {
-      if (url.includes('/api/subagents')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ ok: true, subagents: [] }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve(serverResponse),
-      });
-    });
-
-    await loadSettings('test-project');
-
-    const elements = {
-      'milestone-plan-approval': { checked: true },
-      'milestone-pr-approval': { checked: false },
-      'cb-enabled': { checked: true },
-      'cb-max-failures': { value: '3' },
-      'parallel-worktree-base-dir': { value: '.worktrees' },
-      'parallel-default-base-branch': { value: 'main' },
-    };
-    globalThis.document.getElementById = (id) => elements[id] || null;
-
+  it('readPipelineFromDom does not return a milestones key', () => {
     const result = readPipelineFromDom();
-
-    expect(result.milestones.plan_approval).toBe(true);
-    expect(result.milestones).not.toHaveProperty('pr_approval');
+    expect(result).not.toHaveProperty('milestones');
   });
 });
 

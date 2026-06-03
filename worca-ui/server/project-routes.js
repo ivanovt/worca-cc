@@ -29,7 +29,7 @@ import { getDefaultBranch } from './git-helpers.js';
 import { extractAndStripGlobalKeys } from './global-keys.js';
 import { LaunchLock } from './launch-lock.js';
 import { createModelEnvRouter } from './model-env-routes.js';
-import { preferencesPath, templatesDir } from './paths.js';
+import { preferencesPath } from './paths.js';
 import { readPreferences } from './preferences.js';
 import { ProcessManager } from './process-manager.js';
 import { countRunningPipelinesAcrossProjects } from './process-registry.js';
@@ -50,6 +50,7 @@ import {
 } from './settings-merge.js';
 import { readGlobalSettings, writeGlobalSettings } from './settings-reader.js';
 import { validateSettingsPayload } from './settings-validator.js';
+import { createTemplatesRoutes } from './templates-routes.js';
 import { isVersionBehind } from './version-check.js';
 import { getVersionInfo } from './versions.js';
 import { discoverRuns } from './watcher.js';
@@ -457,6 +458,9 @@ export function createProjectScopedRoutes({
 
   // --- Model env endpoints (writes wholesale to settings.local.json) ---
   router.use('/settings/model-env', createModelEnvRouter());
+
+  // --- Template CRUD endpoints (templates-routes.js) ---
+  router.use(createTemplatesRoutes());
 
   // --- Project-scoped settings endpoints ---
 
@@ -1633,44 +1637,8 @@ export function createProjectScopedRoutes({
   // overlays worktree pipelines via pipelines.d/, so the same /runs/:id/*
   // family handles both local and worktree-hosted runs.
 
-  // GET /api/projects/:projectId/templates — list available pipeline templates
-  router.get('/templates', (req, res) => {
-    const root = req.project.projectRoot;
-    const tiers = [
-      { tier: 'user', dir: templatesDir() },
-      { tier: 'project', dir: join(root, '.claude', 'templates') },
-      { tier: 'worca', dir: join(root, '.claude', 'worca', 'templates') },
-    ];
-
-    const templates = [];
-    for (const { tier, dir } of tiers) {
-      if (!existsSync(dir)) continue;
-      let entries;
-      try {
-        entries = readdirSync(dir, { withFileTypes: true });
-      } catch {
-        continue;
-      }
-      for (const entry of entries) {
-        if (!entry.isDirectory()) continue;
-        const manifestPath = join(dir, entry.name, 'template.json');
-        if (!existsSync(manifestPath)) continue;
-        try {
-          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-          templates.push({
-            id: manifest.id || entry.name,
-            name: manifest.name || entry.name,
-            description: manifest.description || '',
-            tier,
-          });
-        } catch {
-          /* skip malformed manifests */
-        }
-      }
-    }
-
-    res.json({ ok: true, templates });
-  });
+  // NOTE: GET /templates and all template CRUD routes moved to
+  // templates-routes.js (now mounted at /).
 
   // GET /api/projects/:projectId/worca-status — check worca installation state.
   // `outdated` is true when the project's installed worca-cc version is

@@ -325,13 +325,19 @@ function _sortedEntries(stages) {
 
 /**
  * Format a pipeline_template value for display.
- * Maps "builtin:xxx" to "worca:xxx" for legacy compatibility.
+ *
+ * Maps the legacy "worca:<id>" prefix produced by older worca-cc
+ * versions to "builtin:<id>" so historical runs render with the same
+ * tier vocabulary the rest of the UI uses (page header, dialogs,
+ * API, URLs). Current worca-cc emits "builtin:<id>" directly; this
+ * translation only fires on run records written before the rename.
+ *
  * Returns null for empty/null/undefined input.
  */
 export function formatPipelineTemplate(value) {
   if (!value) return null;
-  if (value.startsWith('builtin:'))
-    return `worca:${value.slice('builtin:'.length)}`;
+  if (value.startsWith('worca:'))
+    return `builtin:${value.slice('worca:'.length)}`;
   return value;
 }
 

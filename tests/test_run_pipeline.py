@@ -788,8 +788,13 @@ class TestPipelineTemplateFormatting:
         return str(p)
 
     @patch("worca.scripts.run_pipeline.run_pipeline")
-    def test_builtin_template_formatted_as_worca_colon_id(self, mock_run_pipeline, tmp_path):
-        """Builtin tier template is formatted as 'worca:{id}'."""
+    def test_builtin_template_formatted_as_builtin_colon_id(self, mock_run_pipeline, tmp_path):
+        """Builtin tier template is formatted as 'builtin:{id}'.
+
+        The prefix used to be 'worca:' but was aligned with the tier name
+        ('builtin') in the PipelineTemplates UI redesign so the run card,
+        the resolver, and the Pipelines page all read the same word.
+        """
         from worca.scripts.run_pipeline import main
 
         settings_path = self._make_settings(tmp_path)
@@ -815,7 +820,7 @@ class TestPipelineTemplateFormatting:
                     main()
 
         call_kwargs = mock_run_pipeline.call_args[1]
-        assert call_kwargs["pipeline_template"] == "worca:bugfix"
+        assert call_kwargs["pipeline_template"] == "builtin:bugfix"
 
     @patch("worca.scripts.run_pipeline.run_pipeline")
     def test_project_template_formatted_as_project_colon_id(self, mock_run_pipeline, tmp_path):
@@ -945,7 +950,10 @@ class TestResumeRestoresPipelineTemplate:
                 main()
 
         call_kwargs = mock_run_pipeline.call_args[1]
-        assert call_kwargs.get("pipeline_template") == "worca:bugfix"
+        # status.json on disk used the legacy "worca:" prefix; the run loop
+        # parses the bare id ("bugfix") off it and re-formats with the
+        # current "<tier>:<id>" convention, which is "builtin:bugfix".
+        assert call_kwargs.get("pipeline_template") == "builtin:bugfix"
 
     @patch("worca.scripts.run_pipeline.run_pipeline")
     def test_resume_explicit_template_overrides_status_with_force(self, mock_run_pipeline, tmp_path):
@@ -992,7 +1000,9 @@ class TestResumeRestoresPipelineTemplate:
                 main()
 
         call_kwargs = mock_run_pipeline.call_args[1]
-        assert call_kwargs.get("pipeline_template") == "worca:hotfix"
+        # See note in test_resume_restores_template_from_status — the new
+        # prefix is "builtin:" regardless of what was on disk.
+        assert call_kwargs.get("pipeline_template") == "builtin:hotfix"
 
     def test_resume_conflicting_template_exits_2(self, tmp_path, capsys):
         """Resuming with --template that conflicts with persisted template exits 2."""

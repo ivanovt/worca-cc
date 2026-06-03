@@ -40,15 +40,17 @@ describe('formatPipelineTemplate', () => {
     expect(formatPipelineTemplate('')).toBeNull();
   });
 
-  it('passes through worca:xxx values unchanged', () => {
-    expect(formatPipelineTemplate('worca:default')).toBe('worca:default');
-    expect(formatPipelineTemplate('worca:fast-track')).toBe('worca:fast-track');
+  it('passes through builtin:xxx values unchanged (canonical)', () => {
+    expect(formatPipelineTemplate('builtin:default')).toBe('builtin:default');
+    expect(formatPipelineTemplate('builtin:fast-track')).toBe(
+      'builtin:fast-track',
+    );
   });
 
-  it('converts builtin:xxx to worca:xxx', () => {
-    expect(formatPipelineTemplate('builtin:default')).toBe('worca:default');
-    expect(formatPipelineTemplate('builtin:fast-track')).toBe(
-      'worca:fast-track',
+  it('converts legacy worca:xxx to builtin:xxx', () => {
+    expect(formatPipelineTemplate('worca:default')).toBe('builtin:default');
+    expect(formatPipelineTemplate('worca:fast-track')).toBe(
+      'builtin:fast-track',
     );
   });
 
@@ -80,11 +82,11 @@ describe('runDetailView — pipeline_template display', () => {
   };
 
   it('renders .run-template div when pipeline_template is set', () => {
-    const run = { ...baseRun, pipeline_template: 'worca:default' };
+    const run = { ...baseRun, pipeline_template: 'builtin:default' };
     const html = renderToString(runDetailView(run));
     expect(html).toContain('run-template');
     expect(html).toContain('Pipeline Template:');
-    expect(html).toContain('worca:default');
+    expect(html).toContain('builtin:default');
   });
 
   it('does not render .run-template when pipeline_template is absent', () => {
@@ -110,7 +112,7 @@ describe('runDetailView — pipeline_template display', () => {
     const run = {
       ...baseRun,
       branch: 'feature/my-branch',
-      pipeline_template: 'worca:fast-track',
+      pipeline_template: 'builtin:fast-track',
     };
     const html = renderToString(runDetailView(run));
     const branchIdx = html.indexOf('run-branch');
@@ -119,11 +121,14 @@ describe('runDetailView — pipeline_template display', () => {
     expect(templateIdx).toBeGreaterThan(branchIdx);
   });
 
-  it('converts builtin:xxx to worca:xxx in display', () => {
-    const run = { ...baseRun, pipeline_template: 'builtin:default' };
+  it('converts legacy worca:xxx to builtin:xxx in display', () => {
+    // Old `status.json` files (pre-rename) still say "worca:" on disk;
+    // the UI should translate those for display so the run card matches
+    // the page's tier vocabulary.
+    const run = { ...baseRun, pipeline_template: 'worca:default' };
     const html = renderToString(runDetailView(run));
-    expect(html).toContain('worca:default');
-    expect(html).not.toContain('builtin:default');
+    expect(html).toContain('builtin:default');
+    expect(html).not.toContain('worca:default');
   });
 });
 
@@ -138,10 +143,18 @@ describe('runCardView — pipeline_template badge', () => {
     started_at: '2024-01-01T00:00:00Z',
   };
 
-  it('shows pipeline_template badge when set', () => {
+  it('shows pipeline_template badge when set (builtin: prefix verbatim)', () => {
+    const run = { ...baseRun, pipeline_template: 'builtin:fast-track' };
+    const html = renderToString(runCardView(run));
+    expect(html).toContain('builtin:fast-track');
+  });
+
+  it('translates legacy worca: prefix to builtin: on the card', () => {
+    // Older runs on disk still say "worca:" — UI normalizes for display.
     const run = { ...baseRun, pipeline_template: 'worca:fast-track' };
     const html = renderToString(runCardView(run));
-    expect(html).toContain('worca:fast-track');
+    expect(html).toContain('builtin:fast-track');
+    expect(html).not.toContain('worca:fast-track');
   });
 
   it('does not show template badge when pipeline_template is absent', () => {

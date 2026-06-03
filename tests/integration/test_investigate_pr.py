@@ -65,7 +65,7 @@ class TestInvestigatePipelineFlow:
             )
 
     def test_investigate_pipeline_template_field(self, pipeline_env):
-        """status.pipeline_template is set to 'worca:investigate'."""
+        """status.pipeline_template is set to 'builtin:investigate'."""
         result = pipeline_env.run(
             _ALL_SUCCEED,
             prompt="Analyze authentication flow",
@@ -73,8 +73,8 @@ class TestInvestigatePipelineFlow:
             timeout=60,
         )
 
-        assert result.status.get("pipeline_template") == "worca:investigate", (
-            f"Expected 'worca:investigate', got: {result.status.get('pipeline_template')}"
+        assert result.status.get("pipeline_template") == "builtin:investigate", (
+            f"Expected 'builtin:investigate', got: {result.status.get('pipeline_template')}"
         )
 
     def test_investigate_planner_fails_no_pr(self, pipeline_env):

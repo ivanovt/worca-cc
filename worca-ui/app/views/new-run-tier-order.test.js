@@ -1,6 +1,6 @@
 /**
  * Tests: new-run.js template tier ordering in dropdown.
- * Tier groups must render USER → PROJECT → WORCA (resolution precedence).
+ * Tier groups must render USER → PROJECT → BUILT-IN (resolution precedence).
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -78,9 +78,11 @@ describe('new-run — template tier order', () => {
     vi.restoreAllMocks();
   });
 
-  it('renders tier groups in USER → PROJECT → WORCA order', async () => {
+  it('renders tier groups in USER → PROJECT → BUILT-IN order', async () => {
+    // Tier name is `builtin` (was `worca` in an earlier iteration).
+    // The group label rendered in the launcher is "BUILT-IN".
     const templates = [
-      { id: 'w-tpl', name: 'Worca Tpl', tier: 'worca' },
+      { id: 'w-tpl', name: 'Built-in Tpl', tier: 'builtin' },
       { id: 'p-tpl', name: 'Project Tpl', tier: 'project' },
       { id: 'u-tpl', name: 'User Tpl', tier: 'user' },
     ];
@@ -114,16 +116,16 @@ describe('new-run — template tier order', () => {
 
     const userIdx = html.indexOf('template-group-label">USER');
     const projectIdx = html.indexOf('template-group-label">PROJECT');
-    const worcaIdx = html.indexOf('template-group-label">WORCA');
+    const builtinIdx = html.indexOf('template-group-label">BUILT-IN');
 
     expect(userIdx).toBeGreaterThan(-1);
     expect(projectIdx).toBeGreaterThan(-1);
-    expect(worcaIdx).toBeGreaterThan(-1);
+    expect(builtinIdx).toBeGreaterThan(-1);
     expect(userIdx).toBeLessThan(projectIdx);
-    expect(projectIdx).toBeLessThan(worcaIdx);
+    expect(projectIdx).toBeLessThan(builtinIdx);
   });
 
-  it('hint text lists tiers in user, project, worca order', async () => {
+  it('hint text lists tiers in user, project, built-in order', async () => {
     globalThis.fetch = vi.fn(() =>
       Promise.resolve({
         ok: true,
@@ -138,6 +140,6 @@ describe('new-run — template tier order', () => {
     );
     const html = renderToString(tpl);
 
-    expect(html).toContain('Groups: user, project, worca');
+    expect(html).toContain('Groups: user, project, built-in');
   });
 });

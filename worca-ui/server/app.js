@@ -670,6 +670,23 @@ export function createApp(options = {}) {
     }
   });
 
+  // GET /api/worca-cli — focused worca-cc compatibility probe.
+  //
+  // Returns the cached `checkWorcaVersion()` result populated at server
+  // boot (see index.js). The UI uses this to gate destructive Pipelines
+  // actions: when `ok` is false, the editor surfaces a banner and hides
+  // the Edit / Duplicate / Set Default / Delete / Create / Import
+  // buttons. Read paths (list, view, export) keep working.
+  //
+  // `?force=1` re-runs the probe. Without `force`, the response is
+  // served from the cache and costs essentially nothing.
+  app.get('/api/worca-cli', async (req, res) => {
+    if (req.query.force === '1' || !app.locals.worcaVersion) {
+      app.locals.worcaVersion = await checkWorcaVersion();
+    }
+    res.json(app.locals.worcaVersion);
+  });
+
   // ─── Multi-project routes ──────────────────────────────────────────────
   if (prefsDir) {
     app.use('/api/preferences', createPreferencesRouter({ prefsDir }));

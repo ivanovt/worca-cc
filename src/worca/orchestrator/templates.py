@@ -1,5 +1,7 @@
 """Template resolver and utility functions for pipeline templates."""
 
+from __future__ import annotations
+
 import copy
 import json
 import re
@@ -30,6 +32,20 @@ TEMPLATE_OWNED_KEYS: list[tuple[str, ...]] = [
     # block to template-owned closes the "teammate's Settings silently flips
     # my gates" gap and makes the template's gate posture explicit.
     ("milestones",),
+    # Test-gate strike count is a per-pipeline tolerance knob (same family
+    # as circuit_breaker.max_consecutive_failures). A quick-fix template
+    # legitimately wants strikes=1 to fail fast; a feature template wants
+    # strikes=3 to recover from flakiness. Project Settings used to own
+    # it; promoted to template-owned in the W-062 Phase 6 cleanup so
+    # templates can express their own retry posture.
+    ("governance", "test_gate_strikes"),
+    # plan_review enforcement mode (auto / review / review_and_edit). Sits
+    # under governance because it tightens what the plan_review stage may
+    # do, but each template owns its own enforcement posture — a
+    # research-only "investigate" template can keep auto, an audited
+    # production template can pin review. Promoted to template-owned in
+    # the same cleanup.
+    ("governance", "plan_review_enforce"),
 ]
 
 # Nested paths that sit under a template-owned block but are themselves
@@ -164,6 +180,113 @@ def deep_merge_config(base: dict, overlay: dict) -> dict:
             else:
                 result[key] = value
     return result
+
+
+VALID_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
+
+
+def validate_merged_config(merged: dict) -> list[dict]:
+    """Run validation rules against an already-merged worca config.
+
+    Single source of truth for the validation ruleset. Used by both
+    `TemplateResolver.validate` (template + base settings → merge → check)
+    and the CLI's `worca templates validate --config <json>` (caller has
+    pre-merged config in hand).
+
+    Returns a list of issues:
+        {"field": <dot.path>, "severity": "error" | "warning", "message": <str>}
+
+    "error" means a run with this config would break; "warning" is suspicious
+    but legal (e.g. model alias falls back via `_DEFAULT_MODEL_MAP`).
+    """
+    from worca.orchestrator.stages import ALL_AGENTS
+    from worca.utils.settings import _DEFAULT_MODEL_MAP
+
+    issues: list[dict] = []
+    if not isinstance(merged, dict):
+        issues.append({
+            "field": "",
+            "severity": "error",
+            "message": "config must be a JSON object",
+        })
+        return issues
+
+    known_agents = {v for v in ALL_AGENTS if v is not None}
+    agents_config = merged.get("agents", {}) if isinstance(merged.get("agents"), dict) else {}
+    models_config = merged.get("models", {}) if isinstance(merged.get("models"), dict) else {}
+
+    for agent_key in agents_config:
+        if agent_key not in known_agents:
+            issues.append({
+                "field": f"agents.{agent_key}",
+                "severity": "error",
+                "message": (
+                    f"Unknown agent '{agent_key}'. "
+                    f"Must be one of: {sorted(known_agents)}"
+                ),
+            })
+
+    for agent_name in known_agents:
+        agent_data = agents_config.get(agent_name, {})
+        if not isinstance(agent_data, dict):
+            continue
+
+        model = agent_data.get("model")
+        if (
+            model
+            and isinstance(model, str)
+            and model not in models_config
+            and model not in ("opa", "oha")
+            and model not in _DEFAULT_MODEL_MAP
+        ):
+            issues.append({
+                "field": f"agents.{agent_name}.model",
+                "severity": "warning",
+                "message": (
+                    f"Model alias '{model}' is not defined in worca.models "
+                    "and not in default map (may be treated as a raw model ID)"
+                ),
+            })
+
+        agent_effort = agent_data.get("effort")
+        if agent_effort and agent_effort not in VALID_EFFORT_LEVELS:
+            issues.append({
+                "field": f"agents.{agent_name}.effort",
+                "severity": "error",
+                "message": (
+                    f"Invalid effort level for {agent_name}: '{agent_effort}'. "
+                    f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                ),
+            })
+
+    effort_config = merged.get("effort", {})
+    if isinstance(effort_config, dict):
+        auto_cap = effort_config.get("auto_cap")
+        if auto_cap and auto_cap not in VALID_EFFORT_LEVELS:
+            issues.append({
+                "field": "effort.auto_cap",
+                "severity": "error",
+                "message": (
+                    f"Invalid effort level for auto_cap: '{auto_cap}'. "
+                    f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                ),
+            })
+
+        for agent_name, agent_effort in effort_config.items():
+            if agent_name == "auto_cap" or not isinstance(agent_effort, dict):
+                continue
+            effort_level = agent_effort.get("effort")
+            if effort_level and effort_level not in VALID_EFFORT_LEVELS:
+                issues.append({
+                    "field": f"effort.{agent_name}.effort",
+                    "severity": "error",
+                    "message": (
+                        f"Invalid effort level for {agent_name}: '{effort_level}'. "
+                        f"Must be one of: {sorted(VALID_EFFORT_LEVELS)}"
+                    ),
+                })
+
+    return issues
 
 
 class TemplateResolver:
@@ -321,20 +444,27 @@ class TemplateResolver:
         (dest / "resolved-params.json").write_text(json.dumps(resolved_params, indent=2), encoding="utf-8")
 
     def save(self, template_data: dict, scope: str = "project") -> "Template":
-        """Save a new template. scope is 'project' or 'user'.
+        """Save (upsert) a template. scope is 'project' or 'user'.
+
+        Saving a template whose id matches a built-in is explicitly allowed:
+        the project/user copy shadows the built-in, which is the canonical
+        editing flow. scope is restricted to 'project'|'user' so there is
+        no path by which save() can overwrite a built-in on disk.
 
         Validates all fields. Raises TemplateError(validation_error) with a
-        details list if any field is invalid. Raises TemplateError(builtin_conflict)
-        if the id matches a built-in template. Creates {scope_dir}/{id}/ and writes
-        template.json with builtin=false and created_at set to now.
+        details list if any field is invalid. Creates {scope_dir}/{id}/ and
+        writes template.json with builtin=false and created_at set to now.
         """
         scope_dir = self._user_dir if scope == "user" else self._project_dir
 
         errors = []
 
         template_id = template_data.get("id", "")
-        if not isinstance(template_id, str) or not re.match(r"^[a-z0-9\-]{1,64}$", template_id):
-            errors.append({"field": "id", "message": f"id must match [a-z0-9-]{{1,64}}, got {template_id!r}"})
+        # Underscores allowed: worca init's auto-migrated `_legacy-settings`
+        # template (and any intentionally-private id) must round-trip
+        # through save() without tripping the validator.
+        if not isinstance(template_id, str) or not re.match(r"^[a-z0-9_\-]{1,64}$", template_id):
+            errors.append({"field": "id", "message": f"id must match [a-z0-9_-]{{1,64}}, got {template_id!r}"})
 
         name = template_data.get("name", "")
         if not isinstance(name, str) or not name or len(name) > 80:
@@ -359,14 +489,6 @@ class TemplateResolver:
                 "Template validation failed.",
                 code="validation_error",
                 details=errors,
-            )
-
-        # Check for builtin ID conflict
-        if self._builtin_dir is not None and (self._builtin_dir / template_id).is_dir():
-            raise TemplateError(
-                f"Cannot save template with built-in ID '{template_id}'.",
-                code="builtin_conflict",
-                details={"template_id": template_id},
             )
 
         scope_path = Path(scope_dir)
@@ -404,18 +526,15 @@ class TemplateResolver:
         )
 
     def delete(self, template_id: str, scope: str = "project") -> bool:
-        """Delete a template directory. Cannot delete built-ins.
+        """Delete a template directory from project or user scope.
 
-        Raises TemplateError(builtin) if template_id matches a built-in.
+        Deleting a project/user template whose id matches a built-in is
+        explicitly allowed: it un-shadows the built-in, which is the
+        symmetric inverse of `save()`'s shadow-create. scope is restricted
+        to 'project'|'user' so this never touches the built-in tier.
+
         Raises TemplateError(not_found) if not found in the given scope.
         """
-        if self._builtin_dir is not None and (self._builtin_dir / template_id).is_dir():
-            raise TemplateError(
-                f"Cannot delete built-in template '{template_id}'.",
-                code="builtin",
-                details={"template_id": template_id},
-            )
-
         scope_dir = self._user_dir if scope == "user" else self._project_dir
         if scope_dir is None:
             raise TemplateError(
@@ -451,6 +570,144 @@ class TemplateResolver:
             )
         rendered_config = _render_params_in_dict(template.config, params or {}, template.params)
         return deep_merge_config(current_worca, rendered_config)
+
+    def validate(
+        self, template_id: str, base_settings: dict, params: dict | None = None
+    ) -> list[dict]:
+        """Simulate apply() over base_settings (or {}); return a list of validation issues.
+
+        Renders params, deep-merges the template config with base settings,
+        then runs `validate_merged_config` on the merged result. Use
+        `validate_merged_config` directly when the caller already has a
+        merged config in hand (e.g. the CLI's interactive `--config` mode).
+
+        Issue schema:
+            {"field": <dot.path>, "severity": "error" | "warning", "message": <str>}
+        """
+        template = self.get(template_id)
+        if template is None:
+            raise TemplateError(
+                f"Template '{template_id}' not found.",
+                code="not_found",
+                details={"template_id": template_id},
+            )
+
+        rendered_config = _render_params_in_dict(template.config, params or {}, template.params)
+        merged = deep_merge_config(base_settings or {}, rendered_config)
+        return validate_merged_config(merged)
+
+    def duplicate(self, src_id: str, dst_id: str, dst_scope: str = "project") -> "Template":
+        """Resolve src_id from any tier, write a copy to dst_scope as dst_id.
+
+        Duplicating a built-in to project/user scope with the SAME id is
+        the canonical "shadow a built-in to edit it" UX path — that is
+        explicitly supported. `dst_scope` is already restricted to
+        'project' or 'user', so there is no path by which `duplicate`
+        can overwrite a built-in on disk.
+
+        Args:
+            src_id: Template id to copy from (resolves from any tier: project → user → builtin)
+            dst_id: Id to assign to the copy in the destination scope
+            dst_scope: "project" or "user" (builtin is not a valid destination)
+
+        Returns:
+            Template instance representing the copied template
+
+        Raises:
+            TemplateError(name_collision): if dst_id already exists in dst_scope
+            TemplateError(not_found): if src_id not found
+            TemplateError(validation_error): if dst_scope is invalid or unavailable
+        """
+        # Validate destination scope
+        if dst_scope not in ("project", "user"):
+            raise TemplateError(
+                f"dst_scope must be 'project' or 'user', got {dst_scope!r}",
+                code="validation_error",
+                details={"dst_scope": dst_scope},
+            )
+
+        # Determine destination directory
+        scope_dir = self._user_dir if dst_scope == "user" else self._project_dir
+        if scope_dir is None:
+            raise TemplateError(
+                f"Destination scope '{dst_scope}' is not available.",
+                code="validation_error",
+                details={"dst_scope": dst_scope},
+            )
+
+        scope_path = Path(scope_dir)
+        tmpl_dir = scope_path / dst_id
+
+        # Check for name collision in target scope
+        if tmpl_dir.is_dir():
+            raise TemplateError(
+                f"Template ID '{dst_id}' already exists in {dst_scope} scope.",
+                code="name_collision",
+                details={"template_id": dst_id, "scope": dst_scope},
+            )
+
+        # Load source template using existing get() method (resolves by priority)
+        src_template = self.get(src_id)
+        if src_template is None:
+            raise TemplateError(
+                f"Template '{src_id}' not found.",
+                code="not_found",
+                details={"template_id": src_id},
+            )
+
+        # Create destination directory
+        scope_path.mkdir(parents=True, exist_ok=True)
+        tmpl_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prepare destination template data - preserve all fields from source
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        dst_data = {
+            "id": dst_id,
+            "name": src_template.name,
+            "description": src_template.description,
+            "builtin": False,  # Duplicates are never built-in
+            "created_at": now,
+            "tags": list(src_template.tags),  # Copy tags
+            "params": copy.deepcopy(src_template.params),  # Deep copy params
+            "config": copy.deepcopy(src_template.config),  # Deep copy config
+        }
+
+        # Read the source template.json to preserve any custom fields
+        source_manifest = Path(src_template.source_dir) / "template.json"
+        if source_manifest.is_file():
+            source_data = json.loads(source_manifest.read_text(encoding="utf-8"))
+            # Preserve any additional fields not in our base set
+            for key, value in source_data.items():
+                if key not in ["id", "name", "description", "builtin", "created_at", "tags", "params", "config"]:
+                    dst_data[key] = value
+
+        # Write template.json
+        (tmpl_dir / "template.json").write_text(json.dumps(dst_data, indent=2), encoding="utf-8")
+
+        # Copy agents directory if present
+        if src_template.agents_dir and Path(src_template.agents_dir).is_dir():
+            src_agents_dir = Path(src_template.agents_dir)
+            dest_agents_dir = tmpl_dir / "agents"
+            if dest_agents_dir.is_dir():
+                shutil.rmtree(dest_agents_dir)
+            shutil.copytree(src_agents_dir, dest_agents_dir)
+
+        # Return new Template instance
+        tier = "user" if dst_scope == "user" else "project"
+        agents_path = tmpl_dir / "agents"
+        return Template(
+            id=dst_id,
+            name=dst_data["name"],
+            description=dst_data["description"],
+            builtin=False,
+            created_at=now,
+            tags=dst_data["tags"],
+            params=dst_data["params"],
+            config=dst_data["config"],
+            agents_dir=str(agents_path) if agents_path.is_dir() else None,
+            source_dir=str(tmpl_dir),
+            tier=tier,
+        )
 
 
 def _render_params_in_dict(obj, params: dict, param_defs: dict):

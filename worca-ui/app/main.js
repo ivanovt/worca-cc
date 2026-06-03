@@ -9,16 +9,20 @@ import {
   AlertTriangle,
   ArrowLeft,
   CircleSlash,
+  Copy,
   Database,
   iconSvg,
   Loader,
   Pause,
+  Pencil,
   Play,
   Plus,
   RotateCcw,
   Save,
   Square,
+  Star,
   Trash2,
+  Upload,
 } from './utils/icons.js';
 import {
   mapProjectRunsResponse,
@@ -65,10 +69,19 @@ import {
 import {
   getEffectiveProjectId,
   getNewRunSubmitState,
+  invalidateTemplateCache,
   isAtCapacity,
   newRunView,
   submitNewRun,
 } from './views/new-run.js';
+import {
+  copyGistUrl,
+  exportTemplate,
+  fetchTemplates,
+  pipelinesView,
+  setupTemplatePolling,
+} from './views/pipelines.js';
+import { pipelinesEditorView } from './views/pipelines-editor.js';
 import { runCardView } from './views/run-card.js';
 import {
   prApprovalPanelView,
@@ -193,6 +206,31 @@ const notificationManager = createNotificationManager({
 });
 // ─── Session-level state (not reset on project switch) ────────────────
 let route = parseHash(location.hash);
+
+const TEMPLATE_TIERS = ['project', 'user', 'builtin'];
+
+/**
+ * Migrate legacy template URLs to the new (tier, id) shape:
+ *   - `#/pipelines/...` (pre-rename): redirect to the templates list.
+ *   - `#/templates/<id>/<action>` (pre tier-in-URL redesign): the tier
+ *     slot holds what was once the id; we can't safely guess the
+ *     intended tier, so redirect to the list as well.
+ *
+ * Mutates and returns the route object. Returns the same object back if
+ * no redirect was needed.
+ */
+function _migrateLegacyTemplatesRoute(r) {
+  if (r.section === 'pipelines') {
+    navigate('templates', null, r.projectId);
+    return parseHash(location.hash);
+  }
+  if (r.section === 'templates' && r.tier && !TEMPLATE_TIERS.includes(r.tier)) {
+    navigate('templates', null, r.projectId);
+    return parseHash(location.hash);
+  }
+  return r;
+}
+route = _migrateLegacyTemplatesRoute(route);
 let connectionState = ws.getState();
 let autoScroll = true;
 
@@ -205,6 +243,20 @@ let autoScroll = true;
 let settings = {};
 let _controlPending = null; // null | { action: 'pause'|'resume'|'stop', runId: string }
 let actionError = null; // null | string (error message, auto-clears)
+let _templateGuard = null; // null | { tid, scope, action: 'delete'|'edit', count: number }
+
+/**
+ * Open-dialog state for the New / Duplicate / Rename / Import flows.
+ * null when no dialog is open. Each dialog renders conditionally from
+ * this single source of truth so we never end up with two stacked.
+ *
+ *   { mode: 'create',    id: '',         scope: 'project', baseTid: '' }
+ *   { mode: 'duplicate', srcId, srcScope, id: srcId, scope: 'project' }
+ *   { mode: 'rename',    srcId, srcScope, id: srcId, scope: srcScope }
+ *   { mode: 'import',    file: null, parsed: null, scope: 'project', error: null }
+ */
+let _templateActionDialog = null;
+let _templateActionBusy = false;
 let restartStageKey = null;
 
 // -- Fleet views --
@@ -532,6 +584,14 @@ let costsTokenData = {}; // { runId: { stage: [ { inputTokens, outputTokens, ...
 let costsExpanded = null; // runId or null
 let costsFetched = false;
 
+// -- Pipelines / Templates --
+let _templatesPollCleanup = null;
+let _worcaCliStatusFetching = false; // single in-flight probe guard
+let _editorTemplatesFetching = false; // single in-flight templates fetch for inline collision check
+// Editor state and cleanup from pipelines-editor module
+let _editorModule = null;
+let getEditorState = null;
+
 // ── Integrations state ──────────────────────────────────────────────────
 let integrationsStatus = null;
 let integrationsConfig = null;
@@ -778,6 +838,11 @@ function resetProjectState() {
   costsTokenData = {};
   costsExpanded = null;
   costsFetched = false;
+  // Pipelines / Templates
+  if (_templatesPollCleanup) {
+    _templatesPollCleanup();
+    _templatesPollCleanup = null;
+  }
   // Webhook UI
   webhookSelectedId = null;
   webhookCategoryFilter = 'all';
@@ -1516,6 +1581,19 @@ ws.onConnection((state) => {
 // --- Routing ---
 
 onHashChange((newRoute) => {
+  // Same legacy-templates migration as bootstrap — covers mid-session
+  // navigation (clicking a stale link with the old hash shape). The
+  // redirect re-enters this handler with the canonical hash, so we
+  // bail this pass when it fires.
+  if (
+    newRoute.section === 'pipelines' ||
+    (newRoute.section === 'templates' &&
+      newRoute.tier &&
+      !TEMPLATE_TIERS.includes(newRoute.tier))
+  ) {
+    navigate('templates', null, newRoute.projectId);
+    return;
+  }
   const prevRunId = route.runId;
   const prevProjectId = route.projectId;
   route = newRoute;
@@ -1574,6 +1652,10 @@ onHashChange((newRoute) => {
     }
   }
 
+  if (route.section === 'new-run') {
+    invalidateTemplateCache();
+  }
+
   if (route.section === 'costs') {
     costsFetched = false;
     fetchCostsData();
@@ -1626,6 +1708,762 @@ function handleSaveSourceRepo(sourceRepo) {
   store.setState({ preferences: { source_repo: sourceRepo } });
 }
 
+// --- Pipelines / Templates handlers ---
+
+async function handleSetDefaultTemplate(tid, tier) {
+  // Set Default is a project-level setting; the UI only exposes the
+  // toggle on project-tier templates, so tier defaults to 'project'
+  // when the caller doesn't supply one. Passing `tid: null` clears
+  // the pointer (Unset Default).
+  const clearing = tid == null;
+  const useTier = clearing ? null : tier || 'project';
+  try {
+    const res = await fetch(projectUrl('/default-template'), {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(
+        clearing ? { tier: null, id: null } : { tier: useTier, id: tid },
+      ),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      _showToast(data.error || 'Failed to set default template', 'danger');
+      return;
+    }
+    const nextDefault = clearing ? null : { tier: useTier, id: tid };
+    settings = {
+      ...settings,
+      worca: {
+        ...settings.worca,
+        default_template: nextDefault,
+      },
+    };
+    // Keep state.defaultTemplate (the bundled-with-templates pointer
+    // used by the list view + editor header toggle) in sync — without
+    // this, the editor header would still read the stale value until
+    // the next /templates fetch.
+    store.setState({ defaultTemplate: nextDefault });
+    _showToast(
+      clearing
+        ? 'Default template cleared'
+        : `Default template set to "${tid}" (${useTier})`,
+      'success',
+    );
+    rerender();
+  } catch (err) {
+    _showToast(`Failed to set default template: ${err.message}`, 'danger');
+  }
+}
+
+function _countInflightRunsForTemplate(tid) {
+  const runs = store.getState().runs || {};
+  return Object.values(runs).filter(
+    (r) =>
+      r.pipeline_template === tid &&
+      (r.pipeline_status === 'running' || r.pipeline_status === 'paused'),
+  ).length;
+}
+
+async function handleDeleteTemplate(tid, tier) {
+  // In-flight runs get their own richer confirmation (count + edit-vs-delete
+  // copy) via the template-guard dialog — keep that path.
+  const count = _countInflightRunsForTemplate(tid);
+  if (count > 0) {
+    _templateGuard = { tid, tier, action: 'delete', count };
+    rerender();
+    requestAnimationFrame(() => {
+      document.querySelector('.template-guard-dialog')?.show();
+    });
+    return;
+  }
+  showConfirm(
+    {
+      label: 'Delete template',
+      message: html`
+        Are you sure you want to delete
+        <code>${tid}</code> from the <strong>${tier}</strong> scope?
+        <br /><br />
+        This removes the template directory on disk; running pipelines are
+        unaffected but new runs will no longer be able to launch with this id.
+      `,
+      confirmLabel: 'Delete',
+      confirmVariant: 'danger',
+      onConfirm: () => _executeDeleteTemplate(tid, tier),
+    },
+    rerender,
+  );
+}
+
+async function _executeDeleteTemplate(tid, tier) {
+  try {
+    const res = await fetch(projectUrl(`/templates/${tier}/${tid}`), {
+      method: 'DELETE',
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      showActionError(data.error || 'Failed to delete template');
+      return;
+    }
+    const templates = await fetchTemplates(
+      store.getState().currentProjectId || null,
+    );
+    store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+    rerender();
+  } catch (err) {
+    showActionError(`Failed to delete template: ${err.message}`);
+  }
+}
+
+function handleEditTemplate(tid, tier) {
+  const count = _countInflightRunsForTemplate(tid);
+  if (count > 0) {
+    _templateGuard = { tid, tier, action: 'edit', count };
+    rerender();
+    requestAnimationFrame(() => {
+      document.querySelector('.template-guard-dialog')?.show();
+    });
+    return;
+  }
+  navigate('templates', tid, route.projectId, 'edit', tier);
+}
+
+function _confirmTemplateGuard() {
+  const guard = _templateGuard;
+  _templateGuard = null;
+  document.querySelector('.template-guard-dialog')?.hide();
+  if (!guard) return;
+  if (guard.action === 'delete') {
+    _executeDeleteTemplate(guard.tid, guard.tier);
+  } else {
+    navigate('templates', guard.tid, route.projectId, 'edit', guard.tier);
+  }
+}
+
+function _dismissTemplateGuard() {
+  _templateGuard = null;
+  rerender();
+}
+
+/**
+ * Defer focus to the first input of the action dialog after the next
+ * paint. The sl-after-show event doesn't fire reliably when the dialog
+ * is mounted via lit-html's declarative `open` attribute (vs the
+ * imperative show() flow), so we schedule the focus shift ourselves
+ * once the DOM has settled. Two RAFs let Shoelace finish hooking up
+ * its shadow DOM before we reach for the field.
+ */
+function _focusActionDialogInput() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      const dialog = document.querySelector('sl-dialog.template-action-dialog');
+      if (!dialog) return;
+      const target =
+        dialog.querySelector('sl-input') ||
+        dialog.querySelector('input[type="file"]') ||
+        dialog.querySelector('sl-select');
+      if (target && typeof target.focus === 'function') {
+        target.focus();
+      }
+    });
+  });
+}
+
+/**
+ * Open the Duplicate dialog. The destination id defaults to the source
+ * id (the canonical "shadow & edit" flow); the user can override both
+ * the id and the target scope before confirming.
+ */
+function handleDuplicateTemplate(tid, tier) {
+  // Tier is passed directly from the card so we never have to guess
+  // by re-resolving the id against the list. Default destination tier
+  // for built-ins is 'project' (the canonical shadow flow);
+  // duplicating within project/user defaults to the same tier (so the
+  // dialog at least surfaces the no-op slot the server will reject).
+  const srcTier = tier || 'builtin';
+  _templateActionDialog = {
+    mode: 'duplicate',
+    srcId: tid,
+    srcTier,
+    id: tid,
+    tier: srcTier === 'builtin' ? 'project' : srcTier,
+    name: '',
+    nameDirty: false,
+    error: null,
+  };
+  rerender();
+  _focusActionDialogInput();
+}
+
+/**
+ * Open the New dialog — empty form, user picks an id + tier and
+ * optionally a base template to clone from. On confirm we POST a new
+ * minimal template (or call duplicate when a base is selected), then
+ * navigate into the editor on the new (tier, id).
+ */
+function handleCreateTemplate(_projectId) {
+  _templateActionDialog = {
+    mode: 'create',
+    id: '',
+    name: '',
+    tier: 'project',
+    // baseTid holds "<tier>:<id>" so the user can pick the exact copy
+    // they want to clone from (project vs built-in for the same id).
+    baseRef: '',
+    // Auto-slug id from name until the user touches the id field.
+    idDirty: false,
+    error: null,
+  };
+  rerender();
+  _focusActionDialogInput();
+}
+
+/**
+ * Open the Import dialog. The user picks a `.json` bundle exported via
+ * Export, plus a target tier. We parse client-side so the dialog can
+ * preview which template ids are about to land.
+ */
+function handleImportTemplate(_projectId) {
+  _templateActionDialog = {
+    mode: 'import',
+    file: null,
+    parsed: null,
+    tier: 'project',
+    error: null,
+  };
+  rerender();
+  _focusActionDialogInput();
+}
+
+function _dismissTemplateActionDialog() {
+  _templateActionDialog = null;
+  _templateActionBusy = false;
+  rerender();
+}
+
+const _TEMPLATE_ID_RE = /^[a-z0-9_-]{1,64}$/;
+
+/**
+ * Produce a template id from a human-friendly name. Mirrors what
+ * worca-cc accepts: lowercase letters / digits / hyphens / underscores,
+ * 1–64 chars. Used by the Create dialog and the editor's Name field
+ * to auto-fill the Id field until the user manually edits it.
+ *
+ * Strategy: lowercase, replace any run of non-alnum-underscore with a
+ * single hyphen, trim leading/trailing hyphens, cap at 64 chars.
+ */
+function _slugifyId(name) {
+  if (!name) return '';
+  const slug = String(name)
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+  return slug;
+}
+export { _slugifyId as slugifyId };
+
+function _validateActionDialog(dlg, state) {
+  if (!dlg) return null;
+  if (dlg.mode === 'import') {
+    if (!dlg.parsed) return 'Choose a bundle file to import.';
+    return null;
+  }
+  if (!dlg.id || !_TEMPLATE_ID_RE.test(dlg.id)) {
+    return 'Id must match [a-z0-9_-], 1–64 chars.';
+  }
+  // Inline collision check — faster feedback than waiting for the
+  // server. Compares against `(tier, id)` now that the API treats
+  // both as the primary key.
+  if (
+    dlg.mode === 'rename' ||
+    dlg.mode === 'duplicate' ||
+    dlg.mode === 'create'
+  ) {
+    if (
+      dlg.mode === 'rename' &&
+      dlg.id === dlg.srcId &&
+      dlg.tier === dlg.srcTier
+    ) {
+      return 'Pick a new id or tier (no change selected).';
+    }
+    const templates = state.templates || [];
+    const conflict = templates.find(
+      (t) => t.id === dlg.id && t.tier === dlg.tier,
+    );
+    if (conflict) {
+      return `An id "${dlg.id}" already exists in the ${dlg.tier} scope.`;
+    }
+  }
+  return null;
+}
+
+function _updateActionDialog(patch) {
+  if (!_templateActionDialog) return;
+  _templateActionDialog = { ..._templateActionDialog, ...patch };
+  rerender();
+}
+
+async function _onImportFileChange(e) {
+  const file = e.target.files?.[0];
+  if (!file) {
+    _updateActionDialog({ file: null, parsed: null, error: null });
+    return;
+  }
+  try {
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if (!parsed || !Array.isArray(parsed.templates)) {
+      _updateActionDialog({
+        file,
+        parsed: null,
+        error: 'Bundle must contain a "templates" array.',
+      });
+      return;
+    }
+    _updateActionDialog({ file, parsed, error: null });
+  } catch (err) {
+    _updateActionDialog({
+      file,
+      parsed: null,
+      error: `Failed to parse bundle: ${err.message}`,
+    });
+  }
+}
+
+function _templateActionDialogTemplate(state) {
+  const dlg = _templateActionDialog;
+  if (!dlg) return nothing;
+  const labels = {
+    create: 'New template',
+    duplicate: 'Duplicate template',
+    rename: 'Rename or move template',
+    import: 'Import template bundle',
+  };
+  const confirmLabel = {
+    create: 'Create',
+    duplicate: 'Duplicate',
+    rename: 'Apply',
+    import: 'Import',
+  };
+  const confirmIcon = {
+    create: Plus,
+    duplicate: Copy,
+    rename: Pencil,
+    import: Upload,
+  };
+  const validationError = _validateActionDialog(dlg, state);
+  const disabled = _templateActionBusy || !!validationError;
+
+  const idTierFields = html`
+    <div class="settings-field">
+      <label class="settings-label" for="dlg-id">Template ID</label>
+      <sl-input
+        id="dlg-id"
+        size="small"
+        autocomplete="off"
+        .value=${dlg.id || ''}
+        placeholder="e.g. feature-fast"
+        @sl-input=${(e) =>
+          _updateActionDialog({
+            id: e.target.value.trim(),
+            // Touching the id field stops the Create auto-slug behavior.
+            idDirty: dlg.mode === 'create' ? true : undefined,
+          })}
+      ></sl-input>
+      <span class="settings-field-hint">Lowercase letters, digits, hyphens, underscores. 1–64 chars.</span>
+    </div>
+    <div class="settings-field">
+      <label class="settings-label" for="dlg-tier">Storage</label>
+      <sl-select
+        id="dlg-tier"
+        size="small"
+        hoist
+        .value=${dlg.tier || 'project'}
+        @sl-change=${(e) => _updateActionDialog({ tier: e.target.value })}
+      >
+        <sl-option value="project">Project (.claude/templates/)</sl-option>
+        <sl-option value="user">User (~/.worca/templates/)</sl-option>
+      </sl-select>
+      <span class="settings-field-hint">Project templates are versioned with the repo; user templates are shared across all your projects.</span>
+    </div>
+  `;
+
+  let body;
+  if (dlg.mode === 'duplicate') {
+    body = html`
+      <p class="dialog-lead">
+        Copy <code>${dlg.srcId}</code> (${dlg.srcTier}) into a new template.
+      </p>
+      ${idTierFields}
+    `;
+  } else if (dlg.mode === 'rename') {
+    body = html`
+      <p class="dialog-lead">
+        Renames or moves <code>${dlg.srcId}</code> (${dlg.srcTier}). The
+        original is removed after the new copy lands.
+      </p>
+      ${idTierFields}
+    `;
+  } else if (dlg.mode === 'create') {
+    const templates = state.templates || [];
+    body = html`
+      <p class="dialog-lead">
+        Create a new template from scratch, or pick an existing one to base it on.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-base">Base template (optional)</label>
+        <sl-select
+          id="dlg-base"
+          size="small"
+          hoist
+          .value=${dlg.baseRef || ''}
+          @sl-change=${(e) => _updateActionDialog({ baseRef: e.target.value })}
+        >
+          <sl-option value="">(start blank)</sl-option>
+          ${(() => {
+            // Group by tier (USER → PROJECT → BUILT-IN) and show the
+            // human-readable name on the first line with `ID: <id>`
+            // as the description, mirroring the New Pipeline launcher.
+            // `worca` is a legacy alias for `builtin` from earlier
+            // resolver names — coerce it here so old caches don't
+            // create a phantom group.
+            const buckets = { user: [], project: [], builtin: [] };
+            for (const t of templates) {
+              const tier = t.tier === 'worca' ? 'builtin' : t.tier;
+              if (buckets[tier]) buckets[tier].push(t);
+            }
+            const groups = [
+              { tier: 'user', label: 'USER' },
+              { tier: 'project', label: 'PROJECT' },
+              { tier: 'builtin', label: 'BUILT-IN' },
+            ];
+            return groups
+              .filter(({ tier }) => buckets[tier].length > 0)
+              .map(
+                ({ tier, label }) => html`
+                  <sl-divider></sl-divider>
+                  <small class="template-group-label">${label}</small>
+                  ${buckets[tier].map(
+                    (t) => html`<sl-option
+                      class="template-grouped"
+                      value=${`${tier}:${t.id}`}
+                    >
+                      ${t.name || t.id}
+                      <span slot="suffix">ID: ${t.id}</span>
+                    </sl-option>`,
+                  )}
+                `,
+              );
+          })()}
+        </sl-select>
+        <span class="settings-field-hint">When set, the new template is a copy of the chosen one — exact (tier, id) source.</span>
+      </div>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-name">Display name</label>
+        <sl-input
+          id="dlg-name"
+          size="small"
+          autocomplete="off"
+          .value=${dlg.name || ''}
+          placeholder="e.g. Feature (fast)"
+          @sl-input=${(e) => {
+            const newName = e.target.value;
+            const patch = { name: newName };
+            // Auto-slug name → id until the user manually edits id.
+            if (!dlg.idDirty) {
+              patch.id = _slugifyId(newName);
+            }
+            _updateActionDialog(patch);
+          }}
+        ></sl-input>
+      </div>
+      ${idTierFields}
+    `;
+  } else if (dlg.mode === 'import') {
+    body = html`
+      <p class="dialog-lead">
+        Choose a bundle file exported via the Export button on any
+        template card. The bundle's <code>templates[]</code> entries land
+        in the selected scope.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-import-file">Bundle file</label>
+        <input
+          id="dlg-import-file"
+          type="file"
+          accept="application/json,.json"
+          @change=${_onImportFileChange}
+        />
+      </div>
+      ${
+        dlg.parsed
+          ? html`
+            <div class="settings-field">
+              <label class="settings-label">Templates in bundle</label>
+              <ul class="dialog-bundle-list">
+                ${dlg.parsed.templates.map(
+                  (t) => html`<li><code>${t.id}</code> — ${t.name || ''}</li>`,
+                )}
+              </ul>
+            </div>
+          `
+          : ''
+      }
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-tier">Target storage</label>
+        <sl-select
+          id="dlg-tier"
+          size="small"
+          hoist
+          .value=${dlg.tier || 'project'}
+          @sl-change=${(e) => _updateActionDialog({ tier: e.target.value })}
+        >
+          <sl-option value="project">Project (.claude/templates/)</sl-option>
+          <sl-option value="user">User (~/.worca/templates/)</sl-option>
+        </sl-select>
+      </div>
+    `;
+  }
+
+  return html`
+    <sl-dialog
+      class="template-action-dialog"
+      label=${labels[dlg.mode]}
+      open
+      @sl-initial-focus=${(e) => {
+        // sl-dialog's default focus lands on the close button. Pre-empt
+        // it so initial focus goes to the first form field instead —
+        // less keyboard friction (start typing immediately). Only
+        // intercept the dialog's own initial-focus event; bubbled
+        // events from children (e.g. sl-select) reach this listener
+        // too and must be ignored.
+        if (e.target !== e.currentTarget) return;
+        e.preventDefault();
+      }}
+      @sl-after-show=${(e) => {
+        // Same bubbling guard: sl-select / sl-tab-group inside the
+        // dialog fire their own sl-after-show events. Only the
+        // dialog's own settle matters for our focus shift.
+        if (e.target !== e.currentTarget) return;
+        const dialog = e.target;
+        const target =
+          dialog.querySelector('sl-input') ||
+          dialog.querySelector('input[type="file"]') ||
+          dialog.querySelector('sl-select');
+        if (target && typeof target.focus === 'function') {
+          target.focus();
+        }
+      }}
+      @sl-after-hide=${(e) => {
+        // Critical: sl-select's dropdown close fires sl-after-hide too,
+        // and the event bubbles up to this listener. Without this
+        // guard, changing the Storage dropdown would close the
+        // entire dialog as if the user had clicked Cancel.
+        if (e.target !== e.currentTarget) return;
+        _dismissTemplateActionDialog();
+      }}
+    >
+      ${body}
+      ${
+        dlg.error
+          ? html`<sl-alert variant="danger" open class="dialog-error">${dlg.error}</sl-alert>`
+          : ''
+      }
+      ${
+        validationError
+          ? html`<sl-alert variant="warning" open class="dialog-error">${validationError}</sl-alert>`
+          : ''
+      }
+      <sl-button
+        slot="footer"
+        variant="default"
+        ?disabled=${_templateActionBusy}
+        @click=${_dismissTemplateActionDialog}
+      >Cancel</sl-button>
+      <sl-button
+        slot="footer"
+        variant="primary"
+        ?disabled=${disabled}
+        @click=${_confirmTemplateActionDialog}
+      >${
+        _templateActionBusy
+          ? html`<sl-spinner></sl-spinner>`
+          : html`<span slot="prefix">${unsafeHTML(iconSvg(confirmIcon[dlg.mode], 14))}</span>${confirmLabel[dlg.mode]}`
+      }</sl-button>
+    </sl-dialog>
+  `;
+}
+
+async function _confirmTemplateActionDialog() {
+  const dlg = _templateActionDialog;
+  if (!dlg || _templateActionBusy) return;
+  _templateActionBusy = true;
+  rerender();
+
+  try {
+    if (dlg.mode === 'duplicate') {
+      const res = await fetch(
+        projectUrl(`/templates/${dlg.srcTier}/${dlg.srcId}/duplicate`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to duplicate',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
+      return;
+    }
+
+    if (dlg.mode === 'rename') {
+      // Server composes duplicate + delete; see templates-routes.js for
+      // the partial_rename failure mode.
+      const res = await fetch(
+        projectUrl(`/templates/${dlg.srcTier}/${dlg.srcId}/rename`),
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+        },
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to rename',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      return;
+    }
+
+    if (dlg.mode === 'create') {
+      // With a base: clone the exact (tier, id) source. Without: POST
+      // a minimal new template into the chosen tier.
+      let res;
+      if (dlg.baseRef) {
+        const [baseTier, baseId] = dlg.baseRef.split(':');
+        res = await fetch(
+          projectUrl(`/templates/${baseTier}/${baseId}/duplicate`),
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ dst_tier: dlg.tier, dst_id: dlg.id }),
+          },
+        );
+      } else {
+        res = await fetch(projectUrl(`/templates/${dlg.tier}`), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: dlg.id,
+            name: dlg.name || dlg.id,
+            description: '',
+            config: {},
+            params: {},
+            tags: [],
+          }),
+        });
+      }
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to create',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      navigate('templates', dlg.id, route.projectId, 'edit', dlg.tier);
+      return;
+    }
+
+    if (dlg.mode === 'import') {
+      if (!dlg.parsed) {
+        _templateActionDialog = { ...dlg, error: 'No bundle loaded' };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      const res = await fetch(projectUrl('/templates/import'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bundle: dlg.parsed, dst_tier: dlg.tier }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        _templateActionDialog = {
+          ...dlg,
+          error: data.error || 'Failed to import',
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      const templates = await fetchTemplates(route.projectId || null);
+      store.setState({ templates, defaultTemplate: templates.defaultTemplate });
+      return;
+    }
+  } catch (err) {
+    _templateActionDialog = {
+      ...dlg,
+      error: `Request failed: ${err.message}`,
+    };
+    _templateActionBusy = false;
+    rerender();
+  }
+}
+
+function handleExportTemplate(tid, tier) {
+  const projectId = store.getState().currentProjectId || null;
+  // The cards pass tier alongside id — find the template by both so
+  // we get the right name (and don't accidentally pick up a same-id
+  // sibling from a different tier).
+  const template = (store.getState().templates || []).find(
+    (t) => t.id === tid && (!tier || t.tier === tier),
+  );
+  exportTemplate(projectId, tid, tier || template?.tier, template?.name || tid);
+}
+
+async function handleCopyGistUrl(tid, tier) {
+  const projectId = store.getState().currentProjectId || null;
+  const template = (store.getState().templates || []).find(
+    (t) => t.id === tid && (!tier || t.tier === tier),
+  );
+  await copyGistUrl(
+    projectId,
+    tid,
+    tier || template?.tier,
+    template?.name || tid,
+  );
+}
+
 function handleStageFilter(stage) {
   logFilter = stage;
   // Auto-select last iteration when a stage is chosen
@@ -1672,6 +2510,27 @@ function handleToggleAutoScroll() {
   autoScroll = !autoScroll;
   rerender();
 }
+
+function _showToast(message, variant = 'success') {
+  const alert = Object.assign(document.createElement('sl-alert'), {
+    variant,
+    closable: true,
+    duration: 4000,
+  });
+  alert.textContent = String(message);
+  document.body.append(alert);
+  requestAnimationFrame(() => alert.toast());
+}
+
+// Single listener on `document` handles every `worca:toast` event —
+// because the dispatched CustomEvent has `bubbles: true`, both
+// document-target and document.dispatchEvent forms reach this. The
+// previous code also registered a `window` listener, which fired a
+// second time for any bubbled event (every Save = two toasts).
+document.addEventListener('worca:toast', (e) => {
+  const { message, variant } = e.detail || {};
+  if (message) _showToast(message, variant || 'success');
+});
 
 function showActionError(msg) {
   actionError = msg;
@@ -2831,7 +3690,11 @@ function contentHeaderView() {
     } else {
       title = 'Workspaces';
     }
-  } else if (route.runId) {
+  } else if (route.runId && route.section !== 'templates') {
+    // The templates section also encodes its tid in `route.runId` (e.g.
+    // `#/templates/feature-glm-ds/edit`), so without the section guard
+    // this generic "run detail" handler would overwrite the dedicated
+    // "Edit Template" title below.
     const run = store.getRunById(route.runId);
     const raw = run?.work_request?.title || 'Pipeline Details';
     const firstLine = raw.split('\n')[0];
@@ -3000,6 +3863,102 @@ function contentHeaderView() {
   } else if (route.section === 'settings') {
     title = 'Settings';
     showBack = true;
+  } else if (route.section === 'templates') {
+    if (route.action === 'edit' || route.action === 'duplicate') {
+      // Built-ins open as a read-only inspector — title and badge
+      // make that explicit in the page header (no Save in the
+      // editor footer for these). Project/user templates stay as
+      // a normal "Edit Template" surface.
+      const builtinView = route.tier === 'builtin';
+      title = builtinView ? 'View Template' : 'Edit Template';
+      showBack = true;
+      if (builtinView) {
+        badge = html`<sl-badge
+          variant="warning"
+          pill
+          title="Built-in templates can't be modified. Use Duplicate to fork into project or user scope."
+          >Read-only</sl-badge
+        >`;
+      }
+      // Top-right Set/Unset Default toggle. Replaces the per-card
+      // "Set Default" button — one canonical surface, and the user
+      // can see whether the template they're looking at is the
+      // current default. Only meaningful for project-tier templates
+      // (default_template is a project-level setting that lives in
+      // settings.json and is shared with collaborators; pointing it
+      // at user or built-in scope doesn't make sense).
+      if (route.tier === 'project' && route.runId) {
+        const defaultRef = state.defaultTemplate;
+        const defaultId =
+          typeof defaultRef === 'string' ? defaultRef : defaultRef?.id || null;
+        const defaultTier =
+          typeof defaultRef === 'string' ? null : defaultRef?.tier || null;
+        const isThisDefault =
+          defaultId === route.runId &&
+          (!defaultTier || defaultTier === route.tier);
+        // When this template is the project default, show a "★
+        // Default" badge inline next to the title so the user can
+        // tell at a glance which template is pinned. Mirrors the
+        // ★ Default badge that the list card carries.
+        if (isThisDefault) {
+          badge = html`<sl-badge
+            variant="primary"
+            pill
+            class="template-default-badge"
+            title="This template is the project's default"
+            >★ Default</sl-badge
+          >`;
+        }
+        const cliOk = state.worcaCliStatus?.ok !== false;
+        actionButton = html`
+          <button
+            class="action-btn ${isThisDefault ? 'action-btn--secondary' : 'action-btn--primary'}"
+            ?disabled=${!cliOk}
+            title=${
+              isThisDefault
+                ? "Clear this project's default template"
+                : 'Pin this template as the project default'
+            }
+            @click=${() =>
+              isThisDefault
+                ? handleSetDefaultTemplate(null, null)
+                : handleSetDefaultTemplate(route.runId, route.tier)}
+          >
+            ${
+              isThisDefault
+                ? html`Unset Default`
+                : html`${unsafeHTML(iconSvg(Star, 14))} Set Default`
+            }
+          </button>
+        `;
+      }
+    } else {
+      title = 'Pipeline Templates';
+      showBack = false;
+      // Header actions, top-right: Import (left) + New (right).
+      // Disabled in degraded mode (banner already explains why).
+      const cliOk = state.worcaCliStatus?.ok !== false;
+      actionButton = html`
+        <button
+          class="action-btn action-btn--secondary"
+          ?disabled=${!cliOk}
+          title=${cliOk ? 'Import a template bundle (.json)' : 'Upgrade worca-cc to enable import'}
+          @click=${() => handleImportTemplate(route.projectId)}
+        >
+          ${unsafeHTML(iconSvg(Upload, 14))}
+          Import
+        </button>
+        <button
+          class="action-btn action-btn--primary"
+          ?disabled=${!cliOk}
+          title=${cliOk ? 'Create a new template from scratch' : 'Upgrade worca-cc to enable create'}
+          @click=${() => handleCreateTemplate(route.projectId)}
+        >
+          ${unsafeHTML(iconSvg(Plus, 14))}
+          New
+        </button>
+      `;
+    }
   } else if (route.section === 'project-settings') {
     title = 'Project Settings';
     showBack = true;
@@ -3025,8 +3984,8 @@ function contentHeaderView() {
       `
           : ''
       }
-      ${badge || ''}
       <h1 class="content-header-title">${title}</h1>
+      ${badge || ''}
       ${
         actionButton
           ? html`<div class="content-header-actions">
@@ -3098,12 +4057,13 @@ function mainContentView() {
 
   // The runId catch-all renders the per-run pipeline detail view. Exclude
   // sections that own their own :id sub-route (fleet-runs, workspace-runs,
-  // workspaces — the create-definition flow).
+  // workspaces — the create-definition flow, pipelines for template editing).
   if (
     route.runId &&
     route.section !== 'fleet-runs' &&
     route.section !== 'workspace-runs' &&
-    route.section !== 'workspaces'
+    route.section !== 'workspaces' &&
+    route.section !== 'templates'
   ) {
     const run = store.getRunById(route.runId);
     // If the run doesn't belong to the current project (e.g. after a project
@@ -3228,6 +4188,160 @@ function mainContentView() {
 
   if (route.section === 'new-run') {
     return newRunView(viewState, { rerender });
+  }
+
+  if (route.section === 'templates') {
+    // Pipelines are project-scoped (the underlying CLI writes to
+    // `.claude/templates/` under the resolved project root). In true
+    // All-Projects mode there's no project to scope to, so show the
+    // same "select a project first" empty state used by Project Settings.
+    const isAllProjects =
+      (state.projects || []).length > 1 && !state.currentProjectId;
+    if (isAllProjects) {
+      return html`
+        <div class="empty-state pipelines-empty">
+          <p>Select a project from the sidebar to view its pipeline templates.</p>
+          <sl-button variant="primary" @click=${() => navigate('dashboard', null, null)}>
+            Back to Dashboard
+          </sl-button>
+        </div>
+      `;
+    }
+
+    // Set up template polling on first entry
+    if (!_templatesPollCleanup) {
+      _templatesPollCleanup = setupTemplatePolling(
+        { currentProjectId: route.projectId },
+        store,
+        rerender,
+      );
+    }
+
+    // Fetch the worca-cc CLI compatibility status once per pipelines
+    // entry. The server caches the probe so this is essentially free.
+    // The Pipelines view degrades to read-only when ok=false; without
+    // this probe, every CRUD click would hit a 500 instead.
+    if (state.worcaCliStatus === undefined && !_worcaCliStatusFetching) {
+      _worcaCliStatusFetching = true;
+      fetch('/api/worca-cli')
+        .then((r) => r.json())
+        .then((status) => {
+          store.setState({ worcaCliStatus: status || null });
+        })
+        .catch(() => {
+          // Network/parse failure — treat as unknown rather than green.
+          // ok:false guarantees the banner renders and writes stay disabled.
+          store.setState({
+            worcaCliStatus: {
+              ok: false,
+              installed: null,
+              minimum: 'unknown',
+              message: 'Failed to probe worca-cc CLI status',
+            },
+          });
+        })
+        .finally(() => {
+          _worcaCliStatusFetching = false;
+        });
+    }
+
+    // /templates/:tier/:id/edit → editor (load and edit template)
+    if (route.runId && route.action === 'edit' && route.tier) {
+      const tid = route.runId;
+      const tier = route.tier;
+      // Import editor module and get state functions (without await to keep function sync)
+      if (!_editorModule) {
+        import('./views/pipelines-editor.js').then((mod) => {
+          _editorModule = mod;
+          ({ getEditorState } = mod);
+          rerender();
+        });
+        return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading editor…</div>`;
+      }
+      const editorStateCurr = getEditorState();
+      // Load template on first entry — reload when (tier, id) changes
+      if (editorStateCurr.templateId !== tid || editorStateCurr.tier !== tier) {
+        _editorModule
+          .loadTemplate(tier, tid, route.projectId)
+          .then(() => rerender());
+        return html`<div class="editor-loading"><sl-spinner id="editor-spinner"></sl-spinner> Loading template…</div>`;
+      }
+      // Ensure the templates list is loaded too — the editor uses it
+      // for the inline ID-collision check (same UX as the duplicate
+      // dialog). On direct navigation to /templates/<tier>/<id>/edit
+      // the templates list view never ran, so state.templates is
+      // empty; fetch it once in the background.
+      if (
+        !state.templates &&
+        !state.templatesLoaded &&
+        !_editorTemplatesFetching
+      ) {
+        _editorTemplatesFetching = true;
+        fetchTemplates(route.projectId || null)
+          .then((templates) => {
+            store.setState({
+              templates,
+              defaultTemplate: templates.defaultTemplate,
+              templatesLoaded: true,
+            });
+          })
+          .finally(() => {
+            _editorTemplatesFetching = false;
+          });
+      }
+      return pipelinesEditorView(state, {
+        tid,
+        tier,
+        projectId: route.projectId,
+        onSaved: ({ newId, newTier } = {}) => {
+          // Stay on the editor page after Save — consistent with the
+          // Project Settings tabs (toast + same page), and lets the
+          // user keep editing without losing the tab they're on.
+          // Just refresh the templates list in the background so the
+          // ★ Default badge and other list-derived state stay fresh.
+          fetchTemplates(route.projectId || null).then((templates) => {
+            store.setState({
+              templates,
+              defaultTemplate: templates.defaultTemplate,
+            });
+          });
+          // If the save renamed the template (id changed), update the
+          // URL in place so the next reload / link works — without
+          // this the editor would 404 on refresh.
+          if (newId && (newId !== tid || newTier !== tier)) {
+            navigate(
+              'templates',
+              newId,
+              route.projectId,
+              'edit',
+              newTier || tier,
+            );
+          }
+        },
+        onCancel: () => navigate('templates', null, route.projectId),
+        rerender,
+      });
+    }
+
+    // The default_template pointer now ships in the same /templates
+    // response as the list, so we read it from state.defaultTemplate
+    // (set by fetchTemplates) instead of waiting for the separate
+    // /settings round-trip. That way the ★ Default badge renders on
+    // the first paint, with no flicker.
+    const defaultTemplate =
+      state.defaultTemplate !== undefined
+        ? state.defaultTemplate
+        : settings.worca?.default_template || null;
+    return pipelinesView(viewState, {
+      rerender,
+      defaultTemplate,
+      onCreate: () => handleCreateTemplate(route.projectId),
+      onImport: () => handleImportTemplate(route.projectId),
+      onEdit: handleEditTemplate,
+      onDuplicate: handleDuplicateTemplate,
+      onDelete: handleDeleteTemplate,
+      onExport: handleExportTemplate,
+    });
   }
 
   if (route.section === 'fleet-runs') {
@@ -3627,6 +4741,25 @@ function rerender() {
     `
         : ''
     }
+    ${
+      _templateGuard
+        ? html`
+      <sl-dialog class="template-guard-dialog" label="Template In Use" @sl-after-hide=${_dismissTemplateGuard}>
+        <p>${_templateGuard.count} ${_templateGuard.count === 1 ? 'run' : 'runs'} in flight ${_templateGuard.count === 1 ? 'is' : 'are'} currently using this template.</p>
+        <p>${
+          _templateGuard.action === 'delete'
+            ? 'Deleting it will not affect running pipelines, but new runs will no longer find this template.'
+            : 'Editing it will not affect running pipelines, but changes will apply to future runs.'
+        }</p>
+        <sl-button slot="footer" variant="default" @click=${() => {
+          document.querySelector('.template-guard-dialog')?.hide();
+        }}>Cancel</sl-button>
+        <sl-button slot="footer" variant=${_templateGuard.action === 'delete' ? 'danger' : 'warning'} @click=${_confirmTemplateGuard}>${_templateGuard.action === 'delete' ? 'Delete Anyway' : 'Edit Anyway'}</sl-button>
+      </sl-dialog>
+    `
+        : ''
+    }
+    ${_templateActionDialogTemplate(state)}
     ${confirmDialogTemplate()}
     ${batchWorcaSetupDialogTemplate(rerender)}
     ${addProjectDialogView(state, {

@@ -106,7 +106,13 @@ describe('workspace CSS — DAG styling', () => {
 
   it('does not introduce new CSS variables', () => {
     const dagSection = css.slice(css.indexOf('.dag-graph-node'));
-    const customProps = dagSection.match(/--[a-z][\w-]*/g) || [];
+    // Only match `var(--name)` usages so BEM-style modifier suffixes
+    // in selectors (e.g. `.template-card--clickable`) aren't picked up
+    // as CSS custom properties.
+    const customProps = Array.from(
+      dagSection.matchAll(/var\((--[a-z][\w-]*)/g),
+      (m) => m[1],
+    );
     const allowed = new Set([
       '--status-pending',
       '--status-running',
@@ -134,6 +140,29 @@ describe('workspace CSS — DAG styling', () => {
       '--status-planning',
       '--status-integration-testing',
       '--status-integration-failed',
+      '--fg-muted',
+      '--fg-active',
+      '--radius-lg',
+      '--sl-font-mono',
+      '--json',
+      '--disabled',
+      '--changed',
+      '--builtin',
+      '--current',
+      // Used by the .template-card inert-hover override below the DAG
+      // section — re-states the base .run-card background so the
+      // clickable lift effect is suppressed when no edit handler is wired.
+      '--surface',
+      // Used by the editor's `.editor-tab-group` rule to colour the
+      // active-tab indicator. Shoelace exposes its design tokens as
+      // `--sl-color-*`; we tap into the primary 600 swatch as a
+      // fallback when our own `--accent` isn't set.
+      '--sl-color-primary-600',
+      // Used by the editor's `.editor-field-pill--invalid` rule (ID
+      // collision warning border). Shoelace warning swatch with a
+      // hex fallback so themes without Shoelace still render the
+      // amber edge.
+      '--sl-color-warning-600',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

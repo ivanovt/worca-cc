@@ -29,46 +29,95 @@ from worca.orchestrator.bundle import (
     redact_bundle,
     validate_bundle,
 )
-from worca.orchestrator.templates import TemplateResolver
+from worca.orchestrator.templates import (
+    TemplateError,
+    TemplateResolver,
+)
 from worca.utils.env import filter_model_env
 from worca.utils.settings import deep_merge
 
 
-def _resolve_dirs():
+def _resolve_dirs(project_root: str | None = None):
     """Return (builtin_dir, project_dir, user_dir) for TemplateResolver.
 
-    builtin_dir: .claude/worca/templates/ (runtime copy) when inside a project,
-                 or src/worca/templates/ from the installed package outside a project
-    project_dir: .claude/templates/ relative to git root (or None if not in a repo)
-    user_dir:    ~/.worca/templates/
+    Project-root resolution:
+      1. explicit `project_root` arg (from `--project-root`, used by
+         worca-ui's templates-routes shim against non-git tmpdirs)
+      2. nearest ancestor of cwd that contains `.git/`
+      3. cwd itself — so the CLI is usable against plain directories
+         (worca-ui supports non-git projects; the CLI must match)
+
+    Once a project root is resolved (explicit OR via `.git` walk):
+      - `builtin_dir` = `<root>/.claude/worca/templates/` (the runtime
+        copy created by `worca init`; non-existent is fine — scan_tier
+        is_dir-checks before iterating).
+      - `project_dir` = `<root>/.claude/templates/`.
+
+    When we fall back to plain cwd (no `--project-root`, no `.git`):
+      - `builtin_dir` falls back to the installed package's
+        `src/worca/templates/`, so `worca templates list` outside any
+        project still shows the shipped templates.
+      - `project_dir` = `<cwd>/.claude/templates/`, so duplicate /
+        create still work and write under cwd.
+
+    `user_dir` is always `~/.worca/templates/`.
     """
-    # Walk up to find git root
+    explicit_root = bool(project_root)
     git_root = None
     cwd = Path.cwd().resolve()
-    for parent in [cwd, *cwd.parents]:
-        if (parent / ".git").exists():
-            git_root = parent
-            break
+    if explicit_root:
+        resolved_root = Path(project_root).resolve()
+    else:
+        resolved_root = cwd
+        for parent in [cwd, *cwd.parents]:
+            if (parent / ".git").exists():
+                git_root = parent
+                resolved_root = parent
+                break
 
-    if git_root is not None:
-        builtin_dir = git_root / ".claude" / "worca" / "templates"
-        project_dir = git_root / ".claude" / "templates"
+    if explicit_root or git_root is not None:
+        builtin_dir = resolved_root / ".claude" / "worca" / "templates"
     else:
         builtin_dir = Path(__file__).parent.parent / "templates"
-        project_dir = None
+    project_dir = resolved_root / ".claude" / "templates"
 
     user_dir = Path.home() / ".worca" / "templates"
     return builtin_dir, project_dir, user_dir
 
 
-def _make_resolver():
-    builtin_dir, project_dir, user_dir = _resolve_dirs()
+def _make_resolver(project_root: str | None = None):
+    builtin_dir, project_dir, user_dir = _resolve_dirs(project_root)
     return TemplateResolver(builtin_dir, project_dir, user_dir)
+
+
+def _print_validation_details(details):
+    """Print TemplateError.details to stderr in a stable format.
+
+    `details` is either a list of `{field, message}` dicts (returned by
+    `TemplateResolver.save` validation) or a single dict of metadata
+    (e.g. `{"dst_scope": ...}` from `TemplateResolver.duplicate`). The
+    list form gets the bulleted field/message rendering; the dict form
+    is printed as `key: value` lines so the underlying problem is still
+    visible to the caller.
+    """
+    if isinstance(details, list):
+        for detail in details:
+            if isinstance(detail, dict):
+                field = detail.get("field", "?")
+                message = detail.get("message", "")
+                print(f"  - {field}: {message}", file=sys.stderr)
+            else:
+                print(f"  - {detail}", file=sys.stderr)
+    elif isinstance(details, dict):
+        for key, value in details.items():
+            print(f"  - {key}: {value}", file=sys.stderr)
+    else:
+        print(f"  - {details}", file=sys.stderr)
 
 
 def cmd_templates_list(args):
     """worca templates list — tabular output, or JSON when --json is passed."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     templates = resolver.list()
 
     if getattr(args, "json", False):
@@ -107,7 +156,7 @@ def cmd_templates_list(args):
 
 def cmd_templates_show(args):
     """worca templates show <id> — pretty-print template.json."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     template = resolver.get(args.template_id)
     if template is None:
         print(
@@ -124,6 +173,16 @@ def cmd_templates_show(args):
 def register_subcommand(sub):
     """Register `worca templates` with its sub-subcommands into the given subparser group."""
     templates_parser = sub.add_parser("templates", help="Manage pipeline templates")
+    templates_parser.add_argument(
+        "--project-root",
+        dest="project_root",
+        default=None,
+        help=(
+            "Project root directory. Overrides the default `.git`-walk and "
+            "cwd-fallback resolution. Used by non-git callers (e.g. worca-ui's "
+            "templates-routes shim) to pin the project tier explicitly."
+        ),
+    )
     templates_sub = templates_parser.add_subparsers(dest="templates_command")
 
     # list
@@ -237,6 +296,31 @@ def register_subcommand(sub):
         help="Skip collision prompts; auto-skip all collisions",
     )
 
+    # validate
+    validate_parser = templates_sub.add_parser(
+        "validate", help="Validate a template config without saving"
+    )
+    validate_parser.add_argument(
+        "--config",
+        required=True,
+        help="JSON config object to validate",
+    )
+
+    # duplicate
+    duplicate_parser = templates_sub.add_parser(
+        "duplicate", help="Clone a template from any tier to a project or user scope"
+    )
+    duplicate_parser.add_argument("src_id", help="Source template ID to copy from")
+    duplicate_parser.add_argument(
+        "--dst", required=True, help="Destination template ID for the copy"
+    )
+    duplicate_parser.add_argument(
+        "--dst-scope",
+        choices=["project", "user"],
+        default="project",
+        help="Destination scope (default: project)",
+    )
+
     return templates_parser
 
 
@@ -258,7 +342,7 @@ def _load_current_worca_config() -> dict:
 
 def cmd_templates_save(args):
     """worca templates save <id> — snapshot current settings as template."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     scope = "user" if args.global_ else "project"
     template_id = args.template_id
     description = args.description or ""
@@ -299,7 +383,7 @@ def cmd_templates_create(args):
         print(f"error: failed to read template JSON: {e}", file=sys.stderr)
         raise SystemExit(1)
 
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     scope = "user" if args.global_ else "project"
 
     try:
@@ -307,8 +391,7 @@ def cmd_templates_create(args):
     except TemplateError as e:
         if e.code == "validation_error" and e.details:
             print("error: template validation failed:", file=sys.stderr)
-            for detail in e.details:
-                print(f"  - {detail['field']}: {detail['message']}", file=sys.stderr)
+            _print_validation_details(e.details)
         else:
             print(f"error: {e}", file=sys.stderr)
         raise SystemExit(1)
@@ -486,7 +569,7 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
 
 def cmd_templates_export(args):
     """worca templates export --to <path|gist> — export templates as a bundle."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     worca_config = _load_current_worca_config()
 
     if args.templates_filter:
@@ -580,7 +663,7 @@ def cmd_templates_import(args):
     bundle_models = manifest.get("models")
     bundle_pricing = manifest.get("pricing")
 
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     _, project_dir, user_dir = _resolve_dirs()
     target_dir = user_dir if scope == "user" else project_dir
     if target_dir is None:
@@ -910,7 +993,7 @@ def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:
 
 def cmd_templates_delete(args):
     """worca templates delete <id> — remove a project or user template."""
-    resolver = _make_resolver()
+    resolver = _make_resolver(getattr(args, "project_root", None))
     scope = "user" if args.global_ else "project"
     template_id = args.template_id
 
@@ -925,10 +1008,82 @@ def cmd_templates_delete(args):
     print(f"deleted {tier_label} template '{template_id}'")
 
 
+def cmd_templates_validate(args):
+    """worca templates validate --config <json> — validate template config without saving.
+
+    Validates a template config by simulating the merge with current settings and
+    running validation rules. Returns a JSON array of validation issues.
+
+    Output format:
+    [
+      {
+        "field": "agents.planner.model",
+        "severity": "error" | "warning",
+        "message": "error description"
+      },
+      ...
+    ]
+    """
+    config = args.config
+    if config is None:
+        print("error: --config is required", file=sys.stderr)
+        raise SystemExit(1)
+
+    try:
+        merged_config = json.loads(config) if isinstance(config, str) else json.loads(str(config))
+    except json.JSONDecodeError as e:
+        print(f"error: invalid JSON in --config: {e}", file=sys.stderr)
+        raise SystemExit(1) from e
+
+    # Delegate to the shared validator so the rules stay in one place.
+    from worca.orchestrator.templates import validate_merged_config
+
+    issues = validate_merged_config(merged_config)
+    print(json.dumps(issues, indent=2))
+
+
+def cmd_templates_duplicate(args):
+    """worca templates duplicate <src_id> --dst <dst_id> --dst-scope <scope>
+
+    Clone a template from any tier to a project or user scope.
+
+    Args:
+        src_id: Template ID to copy from (resolves from any tier: project → user → builtin)
+        --dst: Destination template ID
+        --dst-scope: Destination scope (project or user)
+
+    Raises:
+        TemplateError(builtin_conflict): if dst_id matches a built-in template
+        TemplateError(name_collision): if dst_id exists in dst_scope
+        TemplateError(not_found): if src_id not found
+    """
+    src_id = args.src_id
+    dst_id = args.dst
+    dst_scope = args.dst_scope
+
+    resolver = _make_resolver(getattr(args, "project_root", None))
+
+    try:
+        resolver.duplicate(src_id, dst_id, dst_scope)
+        tier_label = (
+            "user (~/.worca/templates/)"
+            if dst_scope == "user"
+            else "project (.claude/templates/)"
+        )
+        print(f"duplicated '{src_id}' -> '{dst_id}' in {tier_label}")
+    except TemplateError as e:
+        if e.code == "validation_error" and e.details:
+            print("error: template validation failed:", file=sys.stderr)
+            _print_validation_details(e.details)
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+
 def cmd_templates(args):
     """Dispatch worca templates subcommand."""
     if not args.templates_command:
-        print("error: specify a templates subcommand: list, show, save, create, delete, export, import", file=sys.stderr)
+        print("error: specify a templates subcommand: list, show, save, create, delete, export, import, validate, duplicate", file=sys.stderr)
         raise SystemExit(1)
     if args.templates_command == "list":
         cmd_templates_list(args)
@@ -944,6 +1099,10 @@ def cmd_templates(args):
         cmd_templates_export(args)
     elif args.templates_command == "import":
         cmd_templates_import(args)
+    elif args.templates_command == "validate":
+        cmd_templates_validate(args)
+    elif args.templates_command == "duplicate":
+        cmd_templates_duplicate(args)
     else:
         print(f"error: unknown templates subcommand {args.templates_command!r}", file=sys.stderr)
         raise SystemExit(1)

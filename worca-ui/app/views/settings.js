@@ -679,11 +679,11 @@ function readAgentsFromDom() {
 }
 
 export function readPipelineFromDom() {
-  const loops = {};
-  for (const key of ['implement_test', 'pr_changes', 'restart_planning']) {
-    const el = document.getElementById(`loop-${key}`);
-    loops[key] = parseInt(el?.value, 10) || 0;
-  }
+  // Note: loops, circuit_breaker, AND milestones (approval gates)
+  // were removed from the Project Settings Pipeline tab in the
+  // W-062 Phase 6 option-B cleanup. All three are template-driven
+  // and edited via the Templates page. This function reads only
+  // the cross-template knobs that remain.
   const planPathEl = document.getElementById('plan-path-template');
   const plan_path_template = planPathEl?.value?.trim() || '';
   const msizeEl = document.getElementById('defaults-msize');
@@ -691,22 +691,6 @@ export function readPipelineFromDom() {
   const defaults = {
     msize: parseInt(msizeEl?.value, 10) || 1,
     mloops: parseInt(mloopsEl?.value, 10) || 1,
-  };
-
-  const milestones = {
-    plan_approval:
-      document.getElementById('milestone-plan-approval')?.checked ?? true,
-  };
-  const prApprovalToggled =
-    document.getElementById('milestone-pr-approval')?.checked === true;
-  if (prApprovalToggled) {
-    milestones.pr_approval = true;
-  }
-
-  const circuit_breaker = {
-    enabled: document.getElementById('cb-enabled')?.checked ?? true,
-    max_consecutive_failures:
-      parseInt(document.getElementById('cb-max-failures')?.value, 10) || 3,
   };
 
   const parallel = {
@@ -732,11 +716,8 @@ export function readPipelineFromDom() {
   };
 
   return {
-    loops,
     plan_path_template,
     defaults,
-    milestones,
-    circuit_breaker,
     parallel,
     guide,
     fleet,
@@ -779,21 +760,17 @@ function readPreflightFromDom() {
 }
 
 export function readGovernanceFromDom() {
+  // Project-Settings Governance owns only `guards` + permissions after
+  // the W-062 Phase 6 cleanup. `dispatch`, `test_gate_strikes`, and
+  // `plan_review_enforce` were all promoted to template-owned keys
+  // (see TEMPLATE_OWNED_KEYS in src/worca/orchestrator/templates.py)
+  // and edited via the Templates page.
   const guards = {};
   for (const rule of GUARD_RULES) {
     const el = document.getElementById(`guard-${rule.key}`);
     guards[rule.key] = el?.checked ?? true;
   }
-  const strikeEl = document.getElementById('test-gate-strikes');
-  const test_gate_strikes = parseInt(strikeEl?.value, 10) || 2;
-
-  const enforceEl = document.getElementById('governance-plan-review-enforce');
-  const plan_review_enforce = enforceEl?.value || 'auto';
-
-  const dispatch =
-    settingsData?.worca?.governance?.dispatch || DEFAULT_GOVERNANCE.dispatch;
-
-  return { guards, test_gate_strikes, plan_review_enforce, dispatch };
+  return { guards };
 }
 
 export function formatDiskThreshold(bytes) {
@@ -981,10 +958,7 @@ function agentsTab(worca, rerender) {
 }
 
 export function pipelineTab(worca, rerender) {
-  const loops = worca.loops || {};
   const stages = worca.stages || DEFAULT_STAGES;
-  const milestones = worca.milestones || {};
-  const cb = worca.circuit_breaker || {};
   const parallel = worca.parallel || {};
   const guide = worca.guide || {};
   const fleet = worca.fleet || {};
@@ -995,9 +969,15 @@ export function pipelineTab(worca, rerender) {
     require: [],
   };
 
+  // Pipeline tab now holds only cross-template knobs (preflight,
+  // plan path, run defaults, milestones, parallel, fleet & guide).
+  // The template-driven keys (agents, stages config, loops,
+  // circuit_breaker, effort, governance.dispatch) live on the
+  // Templates page — no banner needed here because the dropped
+  // content is no longer adjacent to where it used to live.
+
   return html`
     <div class="settings-tab-content">
-      ${TEMPLATE_DRIVEN_BANNER}
       <h3 class="settings-section-title">Preflight</h3>
       <div class="settings-grid">
         <div class="settings-field">
@@ -1015,75 +995,6 @@ export function pipelineTab(worca, rerender) {
           <sl-input id="preflight-require" value="${(preflight.require || []).join(', ')}" size="small" placeholder="e.g. git_clean, branch_exists"></sl-input>
           <span class="settings-field-hint">Comma-separated list of checks that must pass</span>
         </div>
-      </div>
-
-      <h3 class="settings-section-title">Stage Configuration</h3>
-      <div class="settings-cards">
-        ${CONFIGURABLE_STAGES.map((stage) => {
-          const stageConfig = stages[stage] || DEFAULT_STAGES[stage];
-          const enabled = stageConfig.enabled !== false;
-          return html`
-            <div class="settings-card pipeline-stage-node ${enabled ? 'pipeline-stage-node--enabled' : 'pipeline-stage-node--disabled'}">
-              <div class="settings-card-header">
-                <span class="settings-card-title ${enabled ? '' : 'pipeline-stage-name--disabled'}">${stage}</span>
-                <sl-switch id="stage-${stage}-enabled" ?checked=${enabled} size="small"
-                  @sl-change=${(e) => {
-                    const node = e.target.closest('.pipeline-stage-node');
-                    if (e.target.checked) {
-                      node.classList.remove('pipeline-stage-node--disabled');
-                      node.classList.add('pipeline-stage-node--enabled');
-                      node
-                        .querySelector('.settings-card-title')
-                        .classList.remove('pipeline-stage-name--disabled');
-                    } else {
-                      node.classList.remove('pipeline-stage-node--enabled');
-                      node.classList.add('pipeline-stage-node--disabled');
-                      node
-                        .querySelector('.settings-card-title')
-                        .classList.add('pipeline-stage-name--disabled');
-                    }
-                  }}></sl-switch>
-              </div>
-              <div class="settings-card-body">
-                <div class="settings-field">
-                  <label class="settings-label">Agent</label>
-                  <sl-select id="stage-${stage}-agent" .value="${stageConfig.agent || STAGE_AGENT_MAP[stage]}" size="small" hoist>
-                    ${AGENT_NAMES.map((a) => html`<sl-option value="${a}">${a}</sl-option>`)}
-                  </sl-select>
-                </div>
-                ${
-                  stage === 'plan_review'
-                    ? html`
-                <div class="settings-field">
-                  <label class="settings-label">Mode</label>
-                  <sl-select id="stage-plan_review-mode" .value="${stageConfig.mode || 'review'}" size="small" hoist>
-                    ${PLAN_REVIEW_MODES.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
-                  </sl-select>
-                  <span class="settings-field-hint">review_and_edit allows the reviewer to directly edit the plan, trading independent verification for faster convergence.</span>
-                </div>
-                `
-                    : nothing
-                }
-              </div>
-            </div>
-          `;
-        })}
-      </div>
-
-      <h3 class="settings-section-title">Loop Limits</h3>
-      <div class="settings-grid">
-        ${[
-          { key: 'implement_test', label: 'Implement \u2194 Test' },
-          { key: 'pr_changes', label: 'PR Changes' },
-          { key: 'restart_planning', label: 'Restart Planning' },
-        ].map(
-          (item) => html`
-          <div class="settings-field">
-            <label class="settings-label">${item.label}</label>
-            <sl-input id="loop-${item.key}" type="number" value="${loops[item.key] || 0}" size="small" min="0" max="50"></sl-input>
-          </div>
-        `,
-        )}
       </div>
 
       <h3 class="settings-section-title">Plan Path Template</h3>
@@ -1106,33 +1017,6 @@ export function pipelineTab(worca, rerender) {
           <label class="settings-label">Loop Multiplier (mloops)</label>
           <sl-input id="defaults-mloops" type="number" value="${worca.defaults?.mloops || 1}" size="small" min="1" max="10"></sl-input>
           <span class="settings-field-hint">Scales max loop iterations</span>
-        </div>
-      </div>
-
-      <h3 class="settings-section-title">Approval Gates</h3>
-      <div class="settings-switches">
-        <div class="settings-switch-row">
-          <sl-switch id="milestone-plan-approval" ?checked=${milestones.plan_approval !== false} size="small">Plan approval required</sl-switch>
-          <span class="settings-switch-desc">Pipeline pauses after Plan stage; pause-control event lets you approve or reject before Coordinate.</span>
-        </div>
-        <div class="settings-switch-row">
-          <sl-switch id="milestone-pr-approval" ?checked=${milestones.pr_approval === true} size="small">PR approval required</sl-switch>
-          <span class="settings-switch-desc">When enabled, pipeline pauses before guardian creates the PR; approve/reject from the run detail view. Off by default to avoid hanging unattended runs.</span>
-        </div>
-      </div>
-
-      <h3 class="settings-section-title">Circuit Breaker</h3>
-      <div class="settings-grid">
-        <div class="settings-field">
-          <div class="settings-switch-row">
-            <sl-switch id="cb-enabled" ?checked=${cb.enabled !== false} size="small">Enabled</sl-switch>
-            <span class="settings-switch-desc">Halt the pipeline after consecutive errors of the same kind</span>
-          </div>
-        </div>
-        <div class="settings-field">
-          <label class="settings-label">Max Consecutive Failures</label>
-          <sl-input id="cb-max-failures" type="number" value="${cb.max_consecutive_failures ?? 3}" size="small" min="1" max="10"></sl-input>
-          <span class="settings-field-hint">Stop after N consecutive errors of the same kind.</span>
         </div>
       </div>
 
@@ -1171,26 +1055,19 @@ export function pipelineTab(worca, rerender) {
 
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
-          const {
-            loops,
-            plan_path_template,
-            defaults,
-            milestones,
-            circuit_breaker,
-            parallel,
-            guide,
-            fleet,
-          } = readPipelineFromDom();
-          const stages = readStagesFromDom();
-          stages.preflight = readPreflightFromDom();
+          const { plan_path_template, defaults, parallel, guide, fleet } =
+            readPipelineFromDom();
+          // Only preflight survives from the old `worca.stages` write
+          // path — the per-stage config (agent + enabled + mode) is
+          // template-driven now. Keep the rest of the stages payload
+          // a minimal `{preflight}` so we don't accidentally clear
+          // someone's stages config that exists in legacy settings.
+          const stages = { preflight: readPreflightFromDom() };
           const payload = {
             worca: {
-              loops,
               stages,
               plan_path_template,
               defaults,
-              milestones,
-              circuit_breaker,
               parallel,
               guide,
               fleet,
@@ -1213,30 +1090,8 @@ export function pipelineTab(worca, rerender) {
 export function governanceTab(worca, permissions, rerender) {
   const governance = worca.governance || DEFAULT_GOVERNANCE;
   const guards = governance.guards || DEFAULT_GOVERNANCE.guards;
-  const dispatch = governance.dispatch || DEFAULT_GOVERNANCE.dispatch;
   if (!permissions.allow) permissions.allow = [];
   const permList = permissions.allow;
-
-  function handleDispatchChange(section, newConfig) {
-    if (!worca?.governance?.dispatch) return;
-    worca.governance.dispatch[section] = newConfig;
-    rerender();
-  }
-
-  const knownTools = _knownTools || [];
-  const knownSkills = _knownSkills || [];
-  const knownSubagents = _discoveredKnownTypes || KNOWN_TYPES;
-
-  const legacyDispatchBanner = _legacyDispatchDetected
-    ? html`
-        <sl-alert variant="warning" open class="migration-banner">
-          <strong>Legacy <code>governance.dispatch</code> shape detected.</strong>
-          Values have been migrated into the new
-          <code>dispatch.subagents.per_agent_allow</code> structure in memory.
-          Click <strong>Save</strong> to persist the migration.
-        </sl-alert>
-      `
-    : nothing;
 
   return html`
     <div class="settings-tab-content">
@@ -1254,70 +1109,35 @@ export function governanceTab(worca, permissions, rerender) {
         )}
       </div>
 
-      <h3 class="settings-section-title">Test Gate</h3>
-      <div class="settings-grid">
-        <div class="settings-field">
-          <label class="settings-label">Strike Threshold</label>
-          <sl-input id="test-gate-strikes" type="number" value="${governance.test_gate_strikes || 2}" size="small" min="1" max="10"></sl-input>
-          <span class="settings-field-hint">Consecutive test failures before blocking</span>
-        </div>
-      </div>
-
-      <h3 class="settings-section-title">Plan Review Enforcement</h3>
-      <div class="settings-grid">
-        <div class="settings-field">
-          <label class="settings-label">Enforce Mode</label>
-          <sl-select id="governance-plan-review-enforce" .value="${governance.plan_review_enforce || 'auto'}" size="small" hoist>
-            ${PLAN_REVIEW_ENFORCE_OPTIONS.map((m) => html`<sl-option value="${m}">${m}</sl-option>`)}
-          </sl-select>
-          <span class="settings-field-hint">Controls the minimum plan review mode. "auto" lets the pipeline decide; "review_and_edit" forces edit capability but loses independent verification of the plan.</span>
-        </div>
-      </div>
-
-      <h3 class="settings-section-title">Dispatch Rules</h3>
-      ${TEMPLATE_DRIVEN_BANNER}
-      ${legacyDispatchBanner}
-      ${[
-        { section: 'tools', knownItems: knownTools },
-        { section: 'skills', knownItems: knownSkills },
-        { section: 'subagents', knownItems: knownSubagents },
-      ].map(({ section, knownItems }) => {
-        const expanded = _dispatchSectionExpanded[section];
-        const summary = _dispatchSectionSummary(section, dispatch);
-        return html`
-          <sl-details
-            class="dispatch-section-details"
-            data-section="${section}"
-            ?open=${expanded}
-            @sl-show=${(e) => {
-              if (e.target.matches('sl-details.dispatch-section-details')) {
-                _toggleDispatchSection(section, true, rerender);
-              }
-            }}
-            @sl-hide=${(e) => {
-              if (e.target.matches('sl-details.dispatch-section-details')) {
-                _toggleDispatchSection(section, false, rerender);
-              }
-            }}
-          >
-            <div slot="summary" class="dispatch-section-details-summary">
-              <span class="settings-label">${_DISPATCH_SECTION_LABELS[section]}</span>
-              <span class="settings-muted-small">${summary}</span>
+      <div class="pipelines-deep-link-card">
+        <div class="pipelines-deep-link-content">
+          <div class="pipelines-deep-link-icon">
+            ${unsafeHTML(iconSvg(Shield, 20))}
+          </div>
+          <div class="pipelines-deep-link-text">
+            <div class="pipelines-deep-link-title">Template-driven governance</div>
+            <div class="pipelines-deep-link-desc">
+              Dispatch rules (tool / skill / subagent allow / deny lists),
+              the test-gate strike threshold, and the plan-review enforcement
+              mode are template-driven — each template owns its own retry +
+              review posture. Edit them on the Templates page. Guard rules
+              above stay here because they're hook gates (project-machine
+              concerns) that templates intentionally can't reach.
             </div>
-            ${dispatchSectionView({
-              section,
-              config: dispatch[section] || DISPATCH_DEFAULTS[section],
-              knownItems,
-              agentRoles: AGENT_NAMES,
-              defaults: DISPATCH_DEFAULTS[section],
-              onChange: (cfg) => handleDispatchChange(section, cfg),
-              state: _dispatchEditState[section],
-              rerender,
-              showTitle: false,
-            })}
-          </sl-details>
-        `;
-      })}
+          </div>
+          <a
+            href="${
+              _settingsProjectId
+                ? `#/project/${_settingsProjectId}/templates`
+                : '#/templates'
+            }"
+            class="pipelines-deep-link-btn"
+          >
+            Edit templates
+            ${unsafeHTML(iconSvg(Pencil, 14))}
+          </a>
+        </div>
+      </div>
 
       <h3 class="settings-section-title">Permissions</h3>
       <div class="settings-permissions" id="permissions-list">
@@ -2778,9 +2598,29 @@ function pricingTab(worca, rerender) {
   const models = pricing.models || {};
   const serverTools = pricing.server_tools || {};
   const pricingModels = getModelKeys(worca);
+  // Budget moved here from the Webhooks tab — Max Cost is a
+  // pipeline-halt threshold (a cost circuit breaker), and Warning
+  // Threshold emits a `cost.budget_warning` event at that
+  // percentage of max. Both are project cost policy and belong
+  // next to per-model pricing rather than under webhook config.
+  const budget = worca.budget || {};
 
   return html`
     <div class="settings-tab-content">
+      <h3 class="settings-section-title">Budget</h3>
+      <div class="settings-grid">
+        <div class="settings-field">
+          <label class="settings-label">Max Cost (USD)</label>
+          <sl-input id="budget-max-cost" type="number" step="0.01" min="0.01" value="${budget.max_cost_usd || ''}" size="small" placeholder="e.g. 10.00"></sl-input>
+          <span class="settings-field-hint">Hard limit — pipeline aborts when total cost exceeds this</span>
+        </div>
+        <div class="settings-field">
+          <label class="settings-label">Warning Threshold (%)</label>
+          <sl-input id="budget-warning-pct" type="number" min="0" max="100" value="${budget.warning_pct ?? 80}" size="small"></sl-input>
+          <span class="settings-field-hint">Emit cost.budget_warning at this percentage of max cost</span>
+        </div>
+      </div>
+
       <h3 class="settings-section-title">Pricing</h3>
       <div class="pricing-table-wrap">
         <table class="pricing-table">
@@ -2878,7 +2718,11 @@ function pricingTab(worca, rerender) {
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
           const pricingData = readPricingFromDom();
-          saveSettings({ worca: { pricing: pricingData } }, rerender);
+          const budgetData = readBudgetFromDom();
+          saveSettings(
+            { worca: { pricing: pricingData, budget: budgetData } },
+            rerender,
+          );
         }}>
           ${unsafeHTML(iconSvg(Save, 14))}
           Save
@@ -3186,7 +3030,6 @@ function webhooksTab(worca, rerender) {
     hook_events: true,
     rate_limit_ms: 1000,
   };
-  const budget = worca.budget || {};
   const webhooks = worca.webhooks || [];
 
   return html`
@@ -3211,20 +3054,6 @@ function webhooksTab(worca, rerender) {
           <label class="settings-label">Rate Limit (ms)</label>
           <sl-input id="events-rate-limit-ms" type="number" value="${events.rate_limit_ms ?? 1000}" size="small" min="0"></sl-input>
           <span class="settings-field-hint">Minimum interval between same event type per webhook (0 = unlimited)</span>
-        </div>
-      </div>
-
-      <h3 class="settings-section-title">Budget</h3>
-      <div class="settings-grid">
-        <div class="settings-field">
-          <label class="settings-label">Max Cost (USD)</label>
-          <sl-input id="budget-max-cost" type="number" step="0.01" min="0.01" value="${budget.max_cost_usd || ''}" size="small" placeholder="e.g. 10.00"></sl-input>
-          <span class="settings-field-hint">Hard limit — pipeline aborts when total cost exceeds this</span>
-        </div>
-        <div class="settings-field">
-          <label class="settings-label">Warning Threshold (%)</label>
-          <sl-input id="budget-warning-pct" type="number" min="0" max="100" value="${budget.warning_pct ?? 80}" size="small"></sl-input>
-          <span class="settings-field-hint">Emit cost.budget_warning at this percentage of max cost</span>
         </div>
       </div>
 
@@ -3255,13 +3084,11 @@ function webhooksTab(worca, rerender) {
       <div class="settings-tab-actions">
         <sl-button variant="primary" size="small" @click=${() => {
           const eventsConfig = readEventsFromDom();
-          const budgetConfig = readBudgetFromDom();
           const webhooksConfig = readWebhooksFromDom();
           saveSettings(
             {
               worca: {
                 events: eventsConfig,
-                budget: budgetConfig,
                 webhooks: webhooksConfig,
               },
             },
@@ -3560,17 +3387,20 @@ export function projectSettingsView(
     ${confirmDialogTemplate()}
     <div class="settings-page">
       <sl-tab-group>
-        <sl-tab slot="nav" panel="agents">
-          ${unsafeHTML(iconSvg(Users, 14))}
-          Agents
-        </sl-tab>
+        <!--
+          Tab structure after W-062 Phase 6 option-B cleanup:
+          template-driven keys (agents, effort, the stages/loops/
+          circuit_breaker portions of pipeline, governance.dispatch)
+          moved out of Project Settings entirely — they're owned by
+          the selected template now, edited via the Templates page.
+          The Agents and Effort tabs are gone; Pipeline keeps only
+          its cross-template content (preflight, milestones, parallel,
+          guide, fleet, defaults); Governance keeps only its hook
+          guards (dispatch was the template-driven half).
+        -->
         <sl-tab slot="nav" panel="models">
           ${unsafeHTML(iconSvg(Cpu, 14))}
           Models
-        </sl-tab>
-        <sl-tab slot="nav" panel="effort">
-          ${unsafeHTML(iconSvg(Activity, 14))}
-          Effort
         </sl-tab>
         <sl-tab slot="nav" panel="pipeline">
           ${unsafeHTML(iconSvg(Workflow, 14))}
@@ -3597,9 +3427,7 @@ export function projectSettingsView(
           Code Review Graph
         </sl-tab>
 
-        <sl-tab-panel name="agents">${agentsTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="models">${modelsTab(worca, rerender)}</sl-tab-panel>
-        <sl-tab-panel name="effort">${effortTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pipeline">${pipelineTab(worca, rerender)}</sl-tab-panel>
         <sl-tab-panel name="governance">${governanceTab(worca, permissions, rerender)}</sl-tab-panel>
         <sl-tab-panel name="pricing">${pricingTab(worca, rerender)}</sl-tab-panel>

@@ -825,6 +825,11 @@ W-059: Plan review `review_and_edit` mode — optional in-place plan editing by 
 - **`stages.preflight` cross-template carve-out.** Even though `stages` is template-owned, `stages.preflight` is preserved across the strip — templates can still deep-merge over it (e.g. a template could explicitly opt out of preflight), but if a template doesn't touch preflight, your project's preflight check definitions keep flowing through. Codified in `CROSS_TEMPLATE_CARVEOUTS` in `src/worca/orchestrator/templates.py`.
 - **Pipeline Template dropdown relabel** (worca-ui). The launcher's "Project Default (settings.json)" option now reflects what will actually run: when `worca.default_template` is set, it reads `★ Default template: <name>`; when the pinned id can't be resolved, `★ Default template: <id> (missing)`; when unset, the honest `No template (raw settings.json)`.
 
+### 0.46.x → 0.47.0
+
+- **Pipeline editor UI** (W-062). A new top-level **Pipelines** section in worca-ui provides full CRUD over project and user templates — create, edit, duplicate, delete, validate, set-as-default — backed by `worca-ui/server/templates-routes.js`. The Settings → Pipeline "Template-driven" sub-panel now deep-links into this editor.
+- **`GET /api/projects/:id/templates` response shape changed.** The list endpoint now deduplicates templates by id (project > user > built-in, matching `TemplateResolver.list()`) and returns two new fields per entry: `effectiveTier` (the tier that actually applies) and `shadows` (array of lower-priority tiers hidden by the winner, e.g. `["user", "builtin"]`). Previously the endpoint returned one entry per tier per id with no dedup, so the same template could appear up to three times. **External tooling that consumes this endpoint** should update to use `effectiveTier` instead of `tier` and handle the deduplicated shape. The old per-tier `tier` field is removed.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

@@ -326,32 +326,24 @@ class TestTemplatesSave:
         assert data["id"] == "my-tmpl"
         assert data["description"] == "Test desc"
 
-    def test_save_rejects_builtin_id(self, capsys, tmp_path):
+    def test_save_with_builtin_id_creates_project_shadow(self, capsys, tmp_path):
+        """Saving with an id that matches a built-in writes a project-tier
+        shadow — the canonical 'clone built-in to edit it' UX path. The
+        original built-in is preserved.
+        """
         builtin_dir = tmp_path / "builtin"
         _write_template(builtin_dir / "bugfix", _minimal("bugfix"))
         project_dir = tmp_path / "project"
-        with pytest.raises(SystemExit) as exc_info:
-            self._run_save(
-                ["bugfix", "--description", "test"],
-                builtin_dir,
-                project_dir,
-                tmp_path / "user",
-            )
-        assert exc_info.value.code != 0
-
-    def test_save_rejects_builtin_id_prints_error(self, capsys, tmp_path):
-        builtin_dir = tmp_path / "builtin"
-        _write_template(builtin_dir / "bugfix", _minimal("bugfix"))
-        project_dir = tmp_path / "project"
-        with pytest.raises(SystemExit):
-            self._run_save(
-                ["bugfix", "--description", "test"],
-                builtin_dir,
-                project_dir,
-                tmp_path / "user",
-            )
-        err = capsys.readouterr().err
-        assert "bugfix" in err or "built-in" in err.lower()
+        self._run_save(
+            ["bugfix", "--description", "shadow"],
+            builtin_dir,
+            project_dir,
+            tmp_path / "user",
+        )
+        # Project shadow exists
+        assert (project_dir / "bugfix" / "template.json").is_file()
+        # Built-in is untouched
+        assert (builtin_dir / "bugfix" / "template.json").is_file()
 
     def test_save_prints_success_message(self, capsys, tmp_path):
         builtin_dir = tmp_path / "builtin"
@@ -499,11 +491,27 @@ class TestResolveDirs:
         _, project_dir, _ = _resolve_dirs()
         assert project_dir == tmp_path / ".claude" / "templates"
 
-    def test_project_dir_is_none_outside_project(self, tmp_path, monkeypatch):
-        """project_dir is None when not inside a git repo."""
+    def test_project_dir_falls_back_to_cwd_outside_git_repo(self, tmp_path, monkeypatch):
+        """When not inside a git repo, project_dir falls back to <cwd>/.claude/templates.
+
+        worca-ui supports running against non-git project directories
+        (e2e Playwright fixtures, plain user workspaces). The CLI must
+        match: project-scope operations need a writable target even
+        outside a repo. Pre-fix, project_dir was None here and every
+        project-scope duplicate/create failed with "Destination scope
+        'project' is not available."
+        """
         monkeypatch.chdir(tmp_path)
         _, project_dir, _ = _resolve_dirs()
-        assert project_dir is None
+        assert project_dir == tmp_path / ".claude" / "templates"
+
+    def test_project_dir_uses_explicit_project_root(self, tmp_path, monkeypatch):
+        """The --project-root flag overrides both `.git` walk and cwd."""
+        monkeypatch.chdir(tmp_path)
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        _, project_dir, _ = _resolve_dirs(project_root=str(other))
+        assert project_dir == other / ".claude" / "templates"
 
 
 # ---------------------------------------------------------------------------
@@ -696,9 +704,14 @@ class TestTemplatesCreate:
         assert "id" in err.lower()
         assert "config" in err.lower()
 
-    # --- builtin conflict ---
+    # --- shadowing a built-in is allowed ---
 
-    def test_create_rejects_builtin_id(self, capsys, tmp_path):
+    def test_create_with_builtin_id_creates_project_shadow(self, capsys, tmp_path):
+        """`worca templates create --from-file …` with an id that matches a
+        built-in lands the override in project scope and leaves the built-in
+        intact. This is how the worca-ui editor's PUT path saves edits to a
+        duplicated-from-builtin template.
+        """
         builtin_dir = tmp_path / "builtin"
         _write_template(builtin_dir / "bugfix", _minimal("bugfix"))
         project_dir = tmp_path / "project"
@@ -706,14 +719,13 @@ class TestTemplatesCreate:
         payload_file.write_text(json.dumps(
             self._valid_payload(id="bugfix", name="Bugfix Override")
         ))
-        with pytest.raises(SystemExit) as exc_info:
-            self._run_create(
-                ["--from-file", str(payload_file)],
-                capsys, builtin_dir, project_dir, tmp_path / "user",
-            )
-        assert exc_info.value.code != 0
-        err = capsys.readouterr().err
-        assert "bugfix" in err or "built-in" in err.lower()
+        self._run_create(
+            ["--from-file", str(payload_file)],
+            capsys, builtin_dir, project_dir, tmp_path / "user",
+        )
+        assert (project_dir / "bugfix" / "template.json").is_file()
+        # Built-in remains untouched
+        assert (builtin_dir / "bugfix" / "template.json").is_file()
 
     # --- stdin support ---
 

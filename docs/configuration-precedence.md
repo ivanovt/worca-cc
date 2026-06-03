@@ -38,7 +38,10 @@ When a template is in play at run launch (explicit `--template`, `POST /runs` bo
 - `worca.loops`
 - `worca.circuit_breaker`
 - `worca.effort`
+- `worca.milestones`
 - `worca.governance.dispatch`
+- `worca.governance.test_gate_strikes`
+- `worca.governance.plan_review_enforce`
 
 These are the keys returned by `TEMPLATE_OWNED_KEYS` in `src/worca/orchestrator/templates.py`. Everything else under `worca.*` — including `worca.models`, `worca.webhooks`, `worca.pricing`, `worca.governance.guards`, `worca.graphify`, `worca.code_review_graph`, `worca.default_template` itself, and preflight check definitions — is **cross-template**: kept in the merge base regardless of which template is selected. These are project-machine concerns (creds, infra, integrations) that should be the same for every template the project runs.
 
@@ -73,6 +76,10 @@ Anything else you put in `~/.worca/settings.json` (e.g., `worca.agents.implement
 - **Models have only two real tiers in the visible dict** (user, project). There's no built-in tier in the dict — `opus` / `sonnet` / `haiku` only have a silent code fallback in `resolve_model()` (`_DEFAULT_MODEL_MAP`). To customize their `env` block (alt-endpoint routing), list them explicitly in user or project settings.
 - **`.local.json` deep-merges into its sibling `.json`** per tier at load time. That's how the W-051 split keeps `id` in `settings.json` and `env` in `settings.local.json` while presenting a unified `worca.models` to the rest of the pipeline. The merge applies to the project pair; for the user pair, only the code paths that call `load_settings()` (not the ones that `json.load()` global directly) honor `~/.worca/settings.local.json`.
 - **CLI/API overrides aren't a free-form override layer** — each flag targets specific keys (`--mloops` → `loops.*`, `--msize` → effort sizing, `--template` → template id, `--param` → template params). There is no "override anything from the CLI" path.
+
+## Managing templates in the UI
+
+The **Pipelines** section in the dashboard lets you browse, create, edit, duplicate, and delete templates without touching the CLI or editing JSON by hand. It also surfaces the dedup/shadowing relationships described above and marks the current default template. See the [Pipelines editor walkthrough](https://docs.worca.dev/configuration/pipelines-editor/) on the docs site.
 
 ## Code references
 

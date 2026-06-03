@@ -6,25 +6,25 @@ import { getDefaults } from './settings.js';
 import { projectStatus } from './sidebar.js';
 
 // Module-level state
-let sourceType = 'none';
-let submitStatus = null; // null | 'submitting' | 'error'
-let submitError = '';
-let planFiles = null; // cached response
-let planFilter = '';
-let planDropdownOpen = false;
-let selectedPlan = '';
-let branches = null; // null = not fetched, [] = fetched but empty
-let selectedBranch = ''; // empty = new branch
-let templates = null; // null = not fetched
-let selectedTemplate = 'default'; // 'default' = worca.default_template (if set) or raw settings.json
-let defaultTemplateId = ''; // worca.default_template from project settings ('' = unset)
-let prBaseBranch = '';
-let prBaseBranchError = '';
-let selectedProject = null; // project picked in All Projects mode
-let projectEditable = false; // Change link toggles read-only → editable
+export let sourceType = 'none';
+export let submitStatus = null; // null | 'submitting' | 'error'
+export let submitError = '';
+export let planFiles = null; // cached response
+export let planFilter = '';
+export let planDropdownOpen = false;
+export let selectedPlan = '';
+export let branches = null; // null = not fetched, [] = fetched but empty
+export let selectedBranch = ''; // empty = new branch
+export let templates = null; // null = not fetched
+export let selectedTemplate = 'default'; // 'default' = worca.default_template (if set) or raw settings.json
+export let defaultTemplateId = ''; // worca.default_template from project settings ('' = unset)
+export let prBaseBranch = '';
+export let prBaseBranchError = '';
+export let selectedProject = null; // project picked in All Projects mode
+export let projectEditable = false; // Change link toggles read-only → editable
 
 // Dismissable worktree info banner — persisted via localStorage
-let bannerDismissed = (() => {
+export let bannerDismissed = (() => {
   try {
     return localStorage.getItem('worca.worktree-banner-dismissed') === '1';
   } catch {
@@ -35,6 +35,11 @@ let bannerDismissed = (() => {
 /**
  * Reset module state for testing or re-initialization.
  */
+export function invalidateTemplateCache() {
+  templates = null;
+  defaultTemplateId = '';
+}
+
 export function resetNewRunState(overrides = {}) {
   sourceType = overrides.sourceType ?? 'none';
   submitStatus = null;
@@ -51,6 +56,9 @@ export function resetNewRunState(overrides = {}) {
   projectEditable = overrides.projectEditable ?? false;
   if ('bannerDismissed' in overrides)
     bannerDismissed = overrides.bannerDismissed;
+  if ('planDropdownOpen' in overrides)
+    planDropdownOpen = overrides.planDropdownOpen;
+  if ('branches' in overrides) branches = overrides.branches;
 }
 
 function sourceLabel(type) {
@@ -124,7 +132,35 @@ function fetchTemplates(projectId) {
   return fetch(url)
     .then((r) => r.json())
     .then((data) => {
-      if (data.ok) templates = data.templates;
+      if (data.ok) {
+        templates = data.templates;
+
+        // The /templates response also carries the project's
+        // `default_template` pointer (added so the Pipeline Templates
+        // page doesn't flicker between renders). Pick it up here too
+        // so the launcher's "default" option is correctly annotated
+        // even before the separate /settings round-trip lands.
+        // Accept both the legacy bare-string form and the new
+        // `{tier, id}` object form.
+        const rawDefault = data.default_template;
+        const bundledId =
+          typeof rawDefault === 'string'
+            ? rawDefault
+            : rawDefault && typeof rawDefault === 'object'
+              ? rawDefault.id || ''
+              : '';
+        if (bundledId) {
+          defaultTemplateId = bundledId;
+        }
+
+        // Auto-select the default template if it's present in the templates list
+        if (defaultTemplateId) {
+          const found = templates.find((t) => t.id === defaultTemplateId);
+          if (found && selectedTemplate === 'default') {
+            selectedTemplate = defaultTemplateId;
+          }
+        }
+      }
       return templates || [];
     })
     .catch(() => {
@@ -137,17 +173,30 @@ function fetchTemplates(projectId) {
 // in the dropdown can name what will actually run when no explicit template
 // is picked at launch.
 function fetchDefaultTemplate(projectId) {
-  if (!projectId) {
-    defaultTemplateId = '';
-    return Promise.resolve('');
-  }
-  return fetch(`/api/projects/${projectId}/settings`)
+  const url = projectId
+    ? `/api/projects/${projectId}/settings`
+    : '/api/settings';
+  return fetch(url)
     .then((r) => r.json())
     .then((data) => {
+      // Accept both forms: legacy bare-string `"bugfix"` and the
+      // new structured `{tier: "project", id: "bugfix"}` shape.
+      const raw = data?.worca?.default_template;
       defaultTemplateId =
-        typeof data?.worca?.default_template === 'string'
-          ? data.worca.default_template
-          : '';
+        typeof raw === 'string'
+          ? raw
+          : raw && typeof raw === 'object'
+            ? raw.id || ''
+            : '';
+
+      // Auto-select the default template if it's present in the templates list
+      if (defaultTemplateId && templates) {
+        const found = templates.find((t) => t.id === defaultTemplateId);
+        if (found && selectedTemplate === 'default') {
+          selectedTemplate = defaultTemplateId;
+        }
+      }
+
       return defaultTemplateId;
     })
     .catch(() => {
@@ -170,9 +219,13 @@ export function defaultOptionLabel() {
 }
 
 function templatesByTier() {
-  const result = { worca: [], project: [], user: [] };
+  // Tier names are `project`, `user`, `builtin` (was `worca` in an
+  // earlier iteration of the resolver; the bucket name was never
+  // updated, so anything with `tier: "builtin"` was silently dropped
+  // and the "Built-in" group never rendered in the launcher).
+  const result = { builtin: [], project: [], user: [] };
   for (const t of templates || []) {
-    const tier = t.tier;
+    const tier = t.tier === 'worca' ? 'builtin' : t.tier;
     if (result[tier]) result[tier].push(t);
   }
   return result;
@@ -600,7 +653,7 @@ export function newRunView(_state, { rerender }) {
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
-                    ${t.name}
+                    ${t.name}${t.id === defaultTemplateId ? html` ★` : nothing}
                     ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
                   </sl-option>`,
                   )}
@@ -616,7 +669,7 @@ export function newRunView(_state, { rerender }) {
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
-                    ${t.name}
+                    ${t.name}${t.id === defaultTemplateId ? html` ★` : nothing}
                     ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
                   </sl-option>`,
                   )}
@@ -624,15 +677,15 @@ export function newRunView(_state, { rerender }) {
                     : nothing
                 }
                 ${
-                  tiers.worca.length > 0
+                  tiers.builtin.length > 0
                     ? html`
                   <sl-divider></sl-divider>
-                  <small class="template-group-label">WORCA</small>
-                  ${tiers.worca.map(
+                  <small class="template-group-label">BUILT-IN</small>
+                  ${tiers.builtin.map(
                     (
                       t,
                     ) => html`<sl-option class="template-grouped" value=${t.id}>
-                    ${t.name}
+                    ${t.name}${t.id === defaultTemplateId ? html` ★` : nothing}
                     ${t.description ? html`<span slot="suffix">${t.description}</span>` : nothing}
                   </sl-option>`,
                   )}
@@ -640,7 +693,7 @@ export function newRunView(_state, { rerender }) {
                     : nothing
                 }
               </sl-select>
-              <span class="settings-field-hint">Customize stages and agent behavior. Groups: user, project, worca (built-in).</span>
+              <span class="settings-field-hint">Customize stages and agent behavior. Groups: user, project, built-in.</span>
               ${(() => {
                 const sel = (templates || []).find(
                   (t) => t.id === selectedTemplate,

@@ -450,11 +450,19 @@ class TestTemplateResolverSave:
         resolver.save(self._valid_data(), scope="project")
         assert (project_dir / "my-template" / "template.json").is_file()
 
-    def test_raises_builtin_conflict_for_builtin_id(self, tmp_path):
+    def test_saves_with_builtin_id_creates_shadow_in_project_scope(self, tmp_path):
+        """Saving with an id that matches a built-in is the canonical
+        shadow-and-edit path. It must land in project scope, leave the
+        built-in untouched, and override resolution on subsequent gets.
+        """
         resolver = self._make_resolver(tmp_path)
-        with pytest.raises(TemplateError) as exc_info:
-            resolver.save(self._valid_data("bugfix"), scope="project")
-        assert exc_info.value.code == "builtin_conflict"
+        resolver.save(self._valid_data("bugfix"), scope="project")
+        # Shadow lives in project tier
+        assert (tmp_path / "project" / "bugfix" / "template.json").is_file()
+        # Built-in is unchanged
+        assert (tmp_path / "builtin" / "bugfix" / "template.json").is_file()
+        # Resolution now returns the project shadow
+        assert resolver.get("bugfix").tier == "project"
 
     def test_raises_validation_error_for_invalid_fields(self, tmp_path):
         resolver = self._make_resolver(tmp_path)
@@ -464,6 +472,18 @@ class TestTemplateResolverSave:
         with pytest.raises(TemplateError) as exc_info:
             resolver.save(bad_data, scope="project")
         assert exc_info.value.code == "validation_error"
+
+    def test_save_accepts_id_with_underscores(self, tmp_path):
+        """Regression: the id validator used to reject '_legacy-settings'
+        (the id `worca init --upgrade` writes for the auto-migration shim),
+        causing a 400 in the API and an inability to round-trip the id
+        through save(). Underscores must be allowed.
+        """
+        resolver = self._make_resolver(tmp_path)
+        resolver.save(self._valid_data("_legacy-settings"), scope="project")
+        assert (
+            tmp_path / "project" / "_legacy-settings" / "template.json"
+        ).is_file()
 
     def test_collects_multiple_validation_errors_in_details(self, tmp_path):
         resolver = self._make_resolver(tmp_path)
@@ -505,11 +525,29 @@ class TestTemplateResolverDelete:
             resolver.delete("nonexistent", scope="project")
         assert exc_info.value.code == "not_found"
 
-    def test_raises_builtin_for_builtin_template(self, tmp_path):
+    def test_delete_with_builtin_id_un_shadows_project_copy(self, tmp_path):
+        """When a project template shadows a built-in, deleting from
+        project scope removes the shadow and leaves the built-in. The id
+        is then resolved back to the built-in tier.
+        """
+        resolver = self._make_resolver(tmp_path)
+        _write_template(tmp_path / "project" / "bugfix", _minimal("bugfix", "project"))
+        resolver.delete("bugfix", scope="project")
+        # Built-in is untouched
+        assert (tmp_path / "builtin" / "bugfix" / "template.json").is_file()
+        # Project shadow is gone
+        assert not (tmp_path / "project" / "bugfix").exists()
+        # Resolution falls back to built-in tier
+        assert resolver.get("bugfix").tier == "builtin"
+
+    def test_delete_returns_not_found_if_no_shadow_in_named_scope(self, tmp_path):
+        """Trying to delete from project scope when only the built-in
+        exists is a 'not_found' — not a 'cannot delete built-in'.
+        """
         resolver = self._make_resolver(tmp_path)
         with pytest.raises(TemplateError) as exc_info:
             resolver.delete("bugfix", scope="project")
-        assert exc_info.value.code == "builtin"
+        assert exc_info.value.code == "not_found"
 
 
 # ---------------------------------------------------------------------------
