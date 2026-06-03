@@ -11,6 +11,7 @@ import ArrowLeft from 'lucide/dist/esm/icons/arrow-left';
 import ArrowRight from 'lucide/dist/esm/icons/arrow-right';
 import Bell from 'lucide/dist/esm/icons/bell';
 import Boxes from 'lucide/dist/esm/icons/boxes';
+import BarChart3 from 'lucide/dist/esm/icons/chart-bar';
 import ChevronDown from 'lucide/dist/esm/icons/chevron-down';
 import ChevronRight from 'lucide/dist/esm/icons/chevron-right';
 import Circle from 'lucide/dist/esm/icons/circle';
@@ -60,6 +61,8 @@ import Users from 'lucide/dist/esm/icons/users';
 import Workflow from 'lucide/dist/esm/icons/workflow';
 import X from 'lucide/dist/esm/icons/x';
 import Zap from 'lucide/dist/esm/icons/zap';
+import ZoomIn from 'lucide/dist/esm/icons/zoom-in';
+import ZoomOut from 'lucide/dist/esm/icons/zoom-out';
 
 function renderChildren(nodes) {
   return nodes
@@ -89,6 +92,7 @@ export {
   Activity,
   Archive,
   ArrowLeft,
+  BarChart3,
   ArrowRight,
   ArrowDown,
   Bell,
@@ -142,4 +146,6 @@ export {
   Workflow,
   X,
   Zap,
+  ZoomIn,
+  ZoomOut,
 };

@@ -142,6 +142,29 @@ describe('router', () => {
     });
   });
 
+  it('parseHash handles timeline sub-view action', () => {
+    expect(parseHash('#/runs/abc123/timeline')).toEqual({
+      section: 'runs',
+      runId: 'abc123',
+      action: 'timeline',
+      projectId: null,
+      tier: null,
+    });
+  });
+
+  it('buildHash round-trips timeline sub-view', () => {
+    const hash = buildHash('runs', 'abc123', null, 'timeline');
+    expect(hash).toBe('#/runs/abc123/timeline');
+    const parsed = parseHash(hash);
+    expect(parsed).toEqual({
+      section: 'runs',
+      runId: 'abc123',
+      action: 'timeline',
+      projectId: null,
+      tier: null,
+    });
+  });
+
   it('buildHash includes action as 3rd segment when supplied', () => {
     expect(buildHash('workspaces', 'my-ws', null, 'edit')).toBe(
       '#/workspaces/my-ws/edit',
