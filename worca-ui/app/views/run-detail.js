@@ -1439,6 +1439,7 @@ function _iterationDetailView(
         ${iter.duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iter.duration_api_ms)}${iter.started_at && iter.completed_at ? ` (${Math.round((iter.duration_api_ms / elapsed(iter.started_at, iter.completed_at)) * 100)}%)` : ''}</span></span>` : nothing}
         ${iter.cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iter.cost_usd).toFixed(2)}</span></span>` : nothing}
         ${iterDur ? html`<span class="stage-info-item"><span class="meta-label">Duration:</span> <span class="meta-value">${iterDur}</span></span>` : nothing}
+        ${iter.context_final_pct != null ? html`<span class="stage-info-item"><sl-tooltip content="Context consumed at completion"><span class="meta-label">Context:</span> <span class="meta-value">${iter.context_final_pct}%</span></sl-tooltip></span>` : nothing}
       </div>
       ${
         iter.trigger || iter.outcome
@@ -1993,6 +1994,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                         ${iterations.length === 1 && iterations[0].turns ? html`<span class="stage-info-item"><span class="meta-label">Turns:</span> <span class="meta-value">${iterations[0].turns}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].duration_api_ms ? html`<span class="stage-info-item"><span class="meta-label">API:</span> <span class="meta-value">${formatDuration(iterations[0].duration_api_ms)}${stageMs > 0 ? ` (${Math.round((iterations[0].duration_api_ms / stageMs) * 100)}%)` : ''}</span></span>` : nothing}
                         ${iterations.length === 1 && iterations[0].cost_usd != null ? html`<span class="stage-info-item"><span class="meta-label">Cost:</span> <span class="meta-value">$${Number(iterations[0].cost_usd).toFixed(2)}</span></span>` : nothing}
+                        ${iterations.length === 1 && iterations[0].context_final_pct != null ? html`<span class="stage-info-item"><sl-tooltip content="Context consumed at completion"><span class="meta-label">Context:</span> <span class="meta-value">${iterations[0].context_final_pct}%</span></sl-tooltip></span>` : nothing}
                       </div>
                       ${
                         iterations.length === 1 &&

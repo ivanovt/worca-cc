@@ -453,3 +453,43 @@ def test_get_model_pricing_haiku():
     result = get_model_pricing("claude-haiku-4-5-20251001", pricing)
     assert result is not None
     assert result["input_per_mtok"] == 0.80
+
+
+# ---------------------------------------------------------------------------
+# context_final_pct — trust gate (Step 2, W-065)
+# ---------------------------------------------------------------------------
+
+
+def test_extract_context_final_pct_present_when_trusted():
+    envelope = {"_final_context_pct": 53.2}
+    result = extract_token_usage(envelope)
+    assert result["context_final_pct"] == 53.2
+
+
+def test_extract_context_final_pct_suppressed_for_alt_endpoint():
+    envelope = {"_final_context_pct": 53.2, "_model_alias": "glm-ds"}
+    result = extract_token_usage(envelope)
+    assert "context_final_pct" not in result or result["context_final_pct"] is None
+
+
+def test_extract_context_final_pct_absent_when_not_in_envelope():
+    envelope = {}
+    result = extract_token_usage(envelope)
+    assert result.get("context_final_pct") is None
+
+
+def test_empty_token_usage_has_context_final_pct_none():
+    assert _empty_token_usage()["context_final_pct"] is None
+
+
+def test_context_final_pct_not_in_summable_fields():
+    assert "context_final_pct" not in _SUMMABLE_FIELDS
+
+
+def test_aggregate_token_usage_excludes_context_final_pct():
+    usages = [
+        {**_empty_token_usage(), "context_final_pct": 50.0},
+        {**_empty_token_usage(), "context_final_pct": 80.0},
+    ]
+    result = aggregate_token_usage(usages)
+    assert "context_final_pct" not in result or result.get("context_final_pct") is None

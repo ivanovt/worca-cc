@@ -346,7 +346,11 @@ def _format_log_line(event: dict) -> Optional[str]:
         cost = event.get("total_cost_usd", 0)
         turns = event.get("num_turns", 0)
         duration = event.get("duration_ms", 0)
-        return f"[done] turns={turns} cost=${cost:.3f} duration={duration / 1000:.1f}s"
+        line = f"[done] turns={turns} cost=${cost:.3f} duration={duration / 1000:.1f}s"
+        ctx_pct = event.get("_final_context_pct")
+        if ctx_pct is not None:
+            line += f" ctx_final={ctx_pct}%"
+        return line
 
     return None
 
@@ -407,6 +411,7 @@ def process_stream(
     _accum_num_turns = 0
     _accum_usage: dict = {}
     _result_count = 0
+    _last_assistant_usage = None
 
     for raw_line in stdout:
         line = raw_line.strip()
@@ -427,6 +432,30 @@ def process_stream(
         # Capture model from system.init event
         if event.get("type") == "system" and event.get("subtype") == "init":
             resolved_model = event.get("model")
+
+        # Track last assistant turn's token usage for context-window percentage
+        if event.get("type") == "assistant":
+            msg_usage = event.get("message", {}).get("usage")
+            if isinstance(msg_usage, dict):
+                _last_assistant_usage = msg_usage
+
+        # Enrich result event with _final_context_pct before formatting
+        if event.get("type") == "result" and _last_assistant_usage is not None:
+            model_usage = event.get("modelUsage", {})
+            ctx_win = None
+            if resolved_model and isinstance(model_usage.get(resolved_model), dict):
+                ctx_win = model_usage[resolved_model].get("contextWindow")
+            elif model_usage:
+                first = next(iter(model_usage.values()))
+                if isinstance(first, dict):
+                    ctx_win = first.get("contextWindow")
+            if ctx_win:
+                _final_used = (
+                    _last_assistant_usage.get("input_tokens", 0)
+                    + _last_assistant_usage.get("cache_read_input_tokens", 0)
+                    + _last_assistant_usage.get("cache_creation_input_tokens", 0)
+                )
+                event["_final_context_pct"] = round(_final_used / ctx_win * 100, 1)
 
         # Write human-readable summary to log
         if log_file:
