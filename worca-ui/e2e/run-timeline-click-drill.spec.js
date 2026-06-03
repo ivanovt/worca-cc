@@ -48,7 +48,7 @@ test.describe('run timeline click drill', () => {
       seedDrillRun(ctx.worcaDir, runId);
 
       await page.goto(`${ctx.url}/#/history/${runId}/timeline`, GOTO_OPTS);
-      await expect(page.locator('.run-timeline svg')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible({ timeout: 8000 });
 
       const bar = page.locator('.timeline-bar').first();
       await expect(bar).toBeAttached({ timeout: 5000 });

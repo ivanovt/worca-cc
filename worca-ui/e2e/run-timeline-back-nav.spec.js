@@ -43,7 +43,7 @@ test.describe('run timeline back navigation', () => {
       seedTimelineRun(ctx.worcaDir, runId);
 
       await page.goto(`${ctx.url}/#/history/${runId}/timeline`, GOTO_OPTS);
-      await expect(page.locator('.run-timeline svg')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible({ timeout: 8000 });
 
       await page.locator('.content-header-back').click();
 

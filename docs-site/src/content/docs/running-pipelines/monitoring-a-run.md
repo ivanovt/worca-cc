@@ -29,6 +29,24 @@ The expanded **Agent Instructions** panel separates the resolved system prompt f
 An expanded Implement stage: per-iteration metrics, the effort badge, and the dispatch allow/deny rows.
 :::
 
+## The timeline view
+
+The stage pipeline answers "where is the run now?" The **timeline view** answers "how did it get here?" A **Timeline** button on the pipeline timing bar opens a Gantt-style swimlane chart: one row per stage, one bar per iteration, laid out along a shared time axis. Loopbacks — the moments when a downstream stage sent work back upstream — are drawn as arrows that connect the iteration that *caused* the loopback to the iteration that *resumed* it.
+
+:::note[Screenshot — coming soon]
+The timeline view: stage swimlanes with per-iteration bars, gap bands, and loopback arrows.
+:::
+
+The bars are color-coded per stage (the same hues used elsewhere in the UI) and their **fill darkness reflects the iteration's status** — success bars are saturated, failed bars are washed out, in-progress bars carry the active hue. **Gap bands** between iterations show where time was spent in *another* stage (with a tooltip naming that stage), so you can see at a glance which loopbacks bled into which downstream waits. For active runs, the view streams over the same WebSocket as the rest of the page — new bars and arrows appear as the pipeline advances.
+
+### Interacting with the timeline
+
+- **Zoom** — `+` / `−` / reset in the top-right toolbar; shift-wheel anywhere over the chart; or drag-select a window directly on the time axis at the bottom.
+- **Hover** — bars surface a tooltip with stage, iteration N of total, duration, started/ended, model, status, and cost. Gap bands surface the stage that owned the gap and how long it lasted.
+- **Click** — clicking a bar opens a drawer with the iteration's status pill, key metrics, and a collapsed **Raw JSON** block for full inspection. A footer link jumps to that iteration on the run-detail page.
+- **Keyboard** — bars and gaps are focusable; **Enter** or **Space** on a focused bar opens the same drawer.
+- **Dense rows** — when a single stage has more than 30 iterations, loopback arrows are suppressed and a hint appears so the row stays readable.
+
 ## The log viewer
 
 The log viewer streams real-time agent output with per-stage filtering — follow the Implementer's reasoning, the Tester's command output, or the Reviewer's verdict as it happens. Agent prompts, guides, context artifacts, and bead tooltips render as sanitized Markdown.

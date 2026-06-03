@@ -77,7 +77,7 @@ test.describe('run timeline active run updates', () => {
       seedActiveRun(ctx.worcaDir, runId);
 
       await page.goto(`${ctx.url}/#/history/${runId}/timeline`, GOTO_OPTS);
-      await expect(page.locator('.run-timeline svg')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible({ timeout: 8000 });
 
       // Read initial bar count to confirm SVG rendered
       const initialBarCount = await page.locator('.timeline-bar').count();
@@ -88,7 +88,7 @@ test.describe('run timeline active run updates', () => {
 
       // Active runs skip the WeakMap cache so SVG re-renders on each WS refresh.
       // After the update, the SVG should still be visible and have bars.
-      await expect(page.locator('.run-timeline svg')).toBeVisible({ timeout: 5000 });
+      await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible({ timeout: 5000 });
       await expect(page.locator('.timeline-bar').first()).toBeAttached({ timeout: 5000 });
 
       // The rightmost bar (implement iter 1) should still be present after update

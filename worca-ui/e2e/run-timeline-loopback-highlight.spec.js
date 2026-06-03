@@ -60,7 +60,7 @@ test.describe('run timeline loopback highlight', () => {
       seedLoopbackRun(ctx.worcaDir, runId);
 
       await page.goto(`${ctx.url}/#/history/${runId}/timeline`, GOTO_OPTS);
-      await expect(page.locator('.run-timeline svg')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible({ timeout: 8000 });
 
       // Find implement iteration 2 bar
       const implementBars = page.locator('.timeline-bar[data-stage-key="implement"]');
@@ -93,7 +93,7 @@ test.describe('run timeline loopback highlight', () => {
         // No loopbacks rendered — still verify the bar is present and hoverable
         await iter2Bar.hover();
         // Just confirm no errors occurred
-        await expect(page.locator('.run-timeline svg')).toBeVisible();
+        await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible();
       }
     } finally {
       await ctx.close();

@@ -43,7 +43,7 @@ test.describe('run timeline zoom controls', () => {
       seedZoomRun(ctx.worcaDir, runId);
 
       await page.goto(`${ctx.url}/#/history/${runId}/timeline`, GOTO_OPTS);
-      await expect(page.locator('.run-timeline svg')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible({ timeout: 8000 });
 
       const bar = page.locator('.timeline-bar').first();
       await expect(bar).toBeAttached({ timeout: 5000 });
@@ -56,20 +56,23 @@ test.describe('run timeline zoom controls', () => {
       await expect(zoomInBtn).toBeVisible({ timeout: 3000 });
       await zoomInBtn.click();
 
-      // The swimlane-content transform scale changes — verify via transform attribute
-      const swimlane = page.locator('.swimlane-content');
-      const transformAfterZoom = await swimlane.getAttribute('transform');
-      expect(transformAfterZoom).toMatch(/scale\(2/);
+      // Zoom redraws bars at the new pxPerMs (no SVG-level scale transform),
+      // so the first bar's width attribute should ~double.
+      const widthAfterZoom = await page
+        .locator('.timeline-bar')
+        .first()
+        .evaluate((el) => parseFloat(el.getAttribute('width') || '0'));
+      expect(widthAfterZoom / widthBefore).toBeCloseTo(2, 1);
 
       // Click reset button
       const resetBtn = page.locator('button[aria-label="Reset zoom"]');
       await resetBtn.click();
 
-      const transformAfterReset = await swimlane.getAttribute('transform');
-      expect(transformAfterReset).toMatch(/scale\(1/);
-
-      // Bar width is stored in SVG attribute — should still be the original value
-      const widthAfterReset = await bar.evaluate((el) => parseFloat(el.getAttribute('width') || '0'));
+      // After reset, bar width returns to the fit-to-run baseline.
+      const widthAfterReset = await page
+        .locator('.timeline-bar')
+        .first()
+        .evaluate((el) => parseFloat(el.getAttribute('width') || '0'));
       expect(widthAfterReset).toBeCloseTo(widthBefore, 1);
     } finally {
       await ctx.close();

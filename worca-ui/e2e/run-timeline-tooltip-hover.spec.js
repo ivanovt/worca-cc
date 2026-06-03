@@ -45,7 +45,7 @@ test.describe('run timeline tooltip hover', () => {
       seedTooltipRun(ctx.worcaDir, runId);
 
       await page.goto(`${ctx.url}/#/history/${runId}/timeline`, GOTO_OPTS);
-      await expect(page.locator('.run-timeline svg')).toBeVisible({ timeout: 8000 });
+      await expect(page.locator('.timeline-svg-wrap > svg')).toBeVisible({ timeout: 8000 });
 
       // Hover the first timeline bar
       const bar = page.locator('.timeline-bar').first();
