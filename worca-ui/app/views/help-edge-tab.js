@@ -38,14 +38,13 @@ export function mountHelpEdgeTab(root) {
           type="button"
           class="help-edge-tab ${active ? 'help-edge-tab--active' : ''}"
           aria-pressed=${active ? 'true' : 'false'}
-          aria-label=${active ? 'Close help mode' : 'Open help mode (shortcut: ?)'}
-          title=${active ? 'Close help mode (Esc)' : 'Show help badges (?)'}
+          aria-label=${active ? 'Close docs mode' : 'Open docs mode (shortcut: ?)'}
+          title=${active ? 'Close docs mode (Esc)' : 'Show doc badges (?)'}
           @click=${() => toggle()}
         >
           <span class="help-edge-tab__inner">
-            <span class="help-edge-tab__icon">${unsafeHTML(iconSvg(CircleHelp, 16))}</span>
-            <span class="help-edge-tab__label">Help</span>
-            <kbd class="help-edge-tab__kbd">?</kbd>
+            <span class="help-edge-tab__icon">${unsafeHTML(iconSvg(CircleHelp, 20))}</span>
+            <span class="help-edge-tab__label">Docs</span>
           </span>
         </button>
       `,

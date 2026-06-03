@@ -29,8 +29,6 @@
  */
 
 import { html } from 'lit-html';
-import { unsafeHTML } from 'lit-html/directives/unsafe-html.js';
-import { CircleHelp, iconSvg } from './icons.js';
 
 // Build-time override (see worca-ui/scripts/build-frontend.js). Defaults to
 // production docs. esbuild's `define` substitutes the literal at build time;
@@ -188,6 +186,11 @@ export function helpFor(id) {
     return null;
   }
   const url = `${DOCS_BASE}/${entry.slug}/`;
+  // The "?" glyph is plain text rather than a lucide SVG so we don't get
+  // the container artifact baked into every lucide help-icon variant
+  // (circle-question-mark, badge-question-mark, etc. all draw their own
+  // outline shape around the ?). With text we have just the glyph, sized
+  // and weighted via the .help-badge__glyph CSS rule.
   return html`<a
     class="help-badge"
     href=${url}
@@ -196,5 +199,5 @@ export function helpFor(id) {
     title="Help: ${entry.title}"
     aria-label="Open help: ${entry.title}"
     data-help-id=${id}
-  >${unsafeHTML(iconSvg(CircleHelp, 14))}</a>`;
+  ><span class="help-badge__glyph" aria-hidden="true">?</span></a>`;
 }
