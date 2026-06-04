@@ -391,6 +391,50 @@ def test_run_agent_model_env_none_is_safe():
     assert result["ok"] is True
 
 
+def test_run_agent_stamps_stage_and_iteration_env_vars():
+    """stage and iteration parameters are exported as WORCA_STAGE and WORCA_ITERATION."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage="plan", iteration=2,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert env["WORCA_STAGE"] == "plan"
+    assert env["WORCA_ITERATION"] == "2"
+
+
+def test_run_agent_omits_stage_and_iteration_when_not_provided():
+    """When stage and iteration are None, they are not set in the env."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage=None, iteration=None,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert "WORCA_STAGE" not in env
+    assert "WORCA_ITERATION" not in env
+
+
+def test_run_agent_sets_worca_agent_always():
+    """WORCA_AGENT is always set, regardless of stage/iteration."""
+    result_event = {"ok": True}
+    mock_proc = _make_mock_popen(result_event)
+    with patch("worca.utils.claude_cli.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        run_agent(
+            "prompt", agent="planner",
+            stage="plan", iteration=2,
+            settings={},
+        )
+    env = mock_popen.call_args[1]["env"]
+    assert env["WORCA_AGENT"] == "planner"
+
+
 @_DARWIN_CI_SKIP
 def test_run_agent_handles_wait_timeout_after_stream_failure():
     """If proc.wait times out (subprocess is wedged after stream failure),

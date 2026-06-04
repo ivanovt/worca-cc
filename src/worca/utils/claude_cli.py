@@ -530,6 +530,7 @@ def run_agent(
     run_dir: Optional[str] = None,
     stage: Optional[str] = None,
     iteration: Optional[int] = None,
+    bead_id: Optional[str] = None,
 ) -> dict:
     """Run a claude agent via the CLI and return parsed JSON output.
 
@@ -548,6 +549,9 @@ def run_agent(
             snapshot (graphify >=0.8.16 honors it for reads). The runner passes
             the resolved ``<snapshot>/graphify`` dir when the preflight graph is
             ready; None leaves the env untouched.
+        stage: When set, exported as ``WORCA_STAGE`` in the agent subprocess.
+        iteration: When set, exported as ``WORCA_ITERATION`` in the agent subprocess.
+        bead_id: When set, exported as ``WORCA_BEAD_ID`` in the agent subprocess.
 
     Raises RuntimeError on subprocess failure or missing result.
     """
@@ -574,6 +578,12 @@ def run_agent(
         )
 
     agent_env = get_env(WORCA_AGENT=agent_name, **safe_env)
+    if stage is not None:
+        agent_env["WORCA_STAGE"] = stage
+    if iteration is not None:
+        agent_env["WORCA_ITERATION"] = str(iteration)
+    if bead_id is not None:
+        agent_env["WORCA_BEAD_ID"] = bead_id
     if graphify_out:
         # Set outside filter_model_env so it's never stripped (GRAPHIFY_OUT is
         # not a reserved key). graphify honors it for reads, so the agent's

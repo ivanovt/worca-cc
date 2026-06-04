@@ -33,6 +33,11 @@
       "milestones": {
         "plan_approval": true,
         "pr_approval": false
+      },
+      "telemetry": {
+        "file_access": {
+          "enabled": true
+        }
       }
     }
   }
