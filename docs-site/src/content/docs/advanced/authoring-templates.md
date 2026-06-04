@@ -49,19 +49,19 @@ When you ask to share or export, the skill walks you through four choices and ru
 1. **Which templates to include.** Lists every project- and user-tier template (built-ins are excluded by default since they ship with worca). You multi-select.
 2. **Models and pricing opt-in.** Asks whether to include your `worca.models` and/or `worca.pricing` from `settings.json`. Both default to **No**. When you opt in, the skill explains exactly what's carried and what's redacted (see [What's in a bundle](#whats-in-a-bundle-the-safety-model) below).
 3. **Destination.** Three choices:
-   - **Local file** — write to a path you specify (e.g. `./team-bundle.json`). Best for committing to a separate repo or attaching to an issue.
-   - **GitHub gist (secret)** — unlisted, shareable via URL but not search-indexed. Best for sharing with a small group.
-   - **GitHub gist (public)** — search-indexed, visible to everyone. Best for open-sourcing a template.
-4. **Run the export and report results.** Surfaces the `_redacted` list (per-value secret replacements), the `_stripped` list (config subtrees removed wholesale), and the output location. Reminds you to inspect the bundle before sharing publicly.
+   - **Local file** — write to a path you specify. The format is chosen automatically: `.zip` when the template has overlay files in `agents/`, `.json` for config-only templates. Best for committing to a separate repo or attaching to an issue.
+   - **GitHub gist (secret)** — unlisted, shareable via URL but not search-indexed. *JSON-only*: templates with prompt overlays must be downloaded as a `.zip` file and shared via file attachment — gist export is rejected with a clear error.
+   - **GitHub gist (public)** — search-indexed, visible to everyone. Same JSON-only restriction applies.
+4. **Run the export and report results.** Surfaces the `_redacted` list (per-value secret replacements), the `_stripped` list (config subtrees removed wholesale), and the output location (including the format chosen for each template). Reminds you to inspect the bundle before sharing publicly.
 
-### Import flow
+### Import flow (zip bundles supported)
 
 When you ask to import or load a bundle, the skill walks you through three steps and handles every collision interactively:
 
 1. **Source.** Three forms:
-   - **Local file** — path to a `.json` bundle.
-   - **HTTPS URL** — 1 MiB cap, redirects blocked, private/loopback/link-local hosts refused.
-   - **GitHub gist** — gist URL or bare gist ID.
+   - **Local file** — path to a `.json` or `.zip` bundle. The format is detected automatically (magic bytes, then file extension). A zip bundle imports the template config **and** all prompt overlays (`agents/*.md`) atomically; the summary after import lists every overlay file that landed.
+   - **HTTPS URL** — 1 MiB cap, redirects blocked, private/loopback/link-local hosts refused. Zip bundles are accepted at URLs (detected by `Content-Type`, then magic bytes, then `.zip` extension).
+   - **GitHub gist** — gist URL or bare gist ID. Gist sources are JSON-only; zip bundles cannot be fetched from gists.
 
    Before fetching, the skill reminds you that bundles are config-as-data and warns about the [trust boundary](#trust-boundary).
 
@@ -75,6 +75,51 @@ When you ask to import or load a bundle, the skill walks you through three steps
 ### Why the skill is the recommended path
 
 The minimal-delta authoring keeps your template forward-compatible; the interactive collision UI and placeholder follow-up keep imports safe; the destination/source pickers cover the cases you'd otherwise have to remember CLI flags for. CLI is still there when you need it — for CI, scripts, or one-shot operations — but the skill is the default.
+
+## Sharing templates with overlays (zip bundles)
+
+Templates can carry **prompt overlay files** alongside their config — `.md` files in an `agents/` directory that replace or augment the default system prompts for each pipeline stage. When a template has overlays, the bundle format changes from JSON to **zip** automatically.
+
+### Format auto-selection
+
+The export command picks the format based on what's in the template:
+
+| Condition | Format | Extension |
+|---|---|---|
+| Template has files under `agents/*.md` | Zip bundle | `.zip` |
+| Config-only (no `agents/` dir, or empty) | JSON bundle | `.json` |
+
+You don't pick the format — the CLI tells you on stderr which format was chosen for each template. Multi-template export emits one file per template; each is independently `.zip` or `.json`.
+
+### Zip layout
+
+A single-template zip bundle has this structure:
+
+```
+<id>-bundle.zip
+  template.json         # required — the template config (same schema as the on-disk file)
+  agents/               # optional — present only when overlays exist
+    planner.md
+    coordinator.md
+    plan.block.md
+    …any other *.md or *.block.md files
+```
+
+One template per zip. There is no multi-template zip — if you export multiple templates, only those with overlays become `.zip`; the rest stay `.json`.
+
+### Gist limitation
+
+Gist export supports **JSON bundles only**. If you try to export a template with overlays to a gist, the CLI exits with:
+
+```
+gist export only supports JSON bundles; download the .zip and share via file
+```
+
+Share zip bundles as file attachments (issue comments, shared drives, direct messages) or host them at an HTTPS URL.
+
+### Viewing overlays in the UI
+
+After importing a zip bundle — or after duplicating a built-in that has overlays — the Pipelines editor shows an **Overlays** tab on that template. The tab is read-only and groups overlays by pipeline stage, with sub-tabs for the agent system prompt and the user-injected block prompt. Overlays acquired via *any* path (import, duplicate, or filesystem drop) appear there.
 
 ## Direct CLI
 
@@ -103,15 +148,22 @@ worca templates list
 worca templates show my-workflow
 worca templates delete my-workflow
 worca templates create --from-file ./my-template.json   # or '-' for stdin
+
+# Rename — atomic: duplicate → pointer rewrite → delete source
+worca templates rename --src-id old-name --src-scope project \
+                       --dst-id new-name --dst-scope project
 ```
 
 `worca templates list --json` emits a machine-readable array (id, name, description, tier, tags, builtin, created_at). Templates resolve in tiers — **project > user > built-in** — so a project template shadows a user one of the same name.
 
+**Rename and the default-template pointer.** When you rename a template that is set as the project default (`worca.default_template` in `.claude/settings.json`), the pointer is automatically updated to the new `{tier, id}` — no manual reset needed. The rename is a single CLI call that carries any `agents/` overlay files through unchanged. If the duplicate step succeeds but the delete fails, both copies remain and the CLI exits with `code: "partial_rename"` — the recovery action is to manually delete one side.
+
 ### Export to a bundle
 
 ```bash
-# All non-builtin templates, to a local file:
-worca templates export --to ./team-bundle.json
+# All non-builtin templates, to local files:
+# (format is auto-selected per template — .zip if overlays, .json otherwise)
+worca templates export --to ./
 
 # Specific templates, plus model aliases:
 worca templates export --to ./bundle.json \
@@ -119,6 +171,8 @@ worca templates export --to ./bundle.json \
   --include-models
 
 # Direct to a secret (unlisted) GitHub gist — prints the URL:
+# Note: gist export is JSON-only. Templates with overlays (agents/*.md) must
+# be exported to a local file and shared as a file attachment instead.
 worca templates export --to gist
 
 # Public, search-indexed gist:
@@ -137,13 +191,16 @@ Flags:
 ### Import from a bundle
 
 ```bash
-# From a local file:
+# From a local JSON bundle:
 worca templates import --from ./team-bundle.json
 
-# From an HTTPS URL (hardened — see Trust boundary below):
+# From a local zip bundle (carries config + overlays):
+worca templates import --from ./bugfix-bundle.zip
+
+# From an HTTPS URL (JSON or zip — hardened, see Trust boundary below):
 worca templates import --from https://example.com/bundles/team.json
 
-# From a GitHub gist (URL or bare ID):
+# From a GitHub gist (URL or bare ID — JSON-only; zip not accepted from gists):
 worca templates import --from https://gist.github.com/alice/abc123def456...
 
 # Into the user scope instead of project:
@@ -217,6 +274,21 @@ Put the real values in `settings.local.json` (via the **Secrets** panel in Setti
 Bundles are **config as data**. On import they get merged into your `settings.json` and used to drive subsequent pipeline runs — so only import bundles from sources you trust.
 
 worca hardens HTTPS fetches against the obvious slip-ups: redirects are blocked (the URL you typed *is* the bundle), and DNS resolution rejects private, loopback, link-local, reserved, and multicast addresses (no `http://169.254.169.254/`, no `https://localhost/`, no internal CIDRs). The size cap is 1 MiB. None of this defends against a hostile upstream — treat a bundle URL with the same care you'd treat a `curl | sh` URL.
+
+**Zip bundles add a second layer of host-level protection** before any file is extracted:
+
+| Rule | Cap |
+|---|---|
+| Compressed size | ≤ 1 MiB |
+| Uncompressed total | ≤ 4 MiB |
+| Per-file uncompressed | ≤ 256 KiB |
+| Member count | ≤ 64 files |
+| Compression ratio per file | ≤ 100× (zip-bomb backstop) |
+| Path traversal, symlinks, absolute paths, drive letters | Rejected outright |
+
+All rules are checked against the zip central directory metadata before any extraction begins — no bytes are written to disk until every member passes. Overlay content (the `.md` files under `agents/`) goes through the same secret-redaction scan as the JSON config.
+
+The trust boundary is unchanged: overlays are inert markdown files that only activate at pipeline runtime, when a pipeline run loads the template and mounts the overlay into an agent system prompt. **Only import zip bundles from sources you trust** — a crafted overlay could instruct agents to behave in unintended ways, just as a malicious settings blob could.
 
 ### Rollback and atomicity
 

@@ -9,6 +9,8 @@ Subcommands:
   worca templates delete <id>       — remove a project or user template
   worca templates export --to <path|gist>    — export templates as a bundle
   worca templates import --from <path|url>   — import templates from a bundle
+  worca templates rename --src-id <id> --src-scope <scope> --dst-id <id> --dst-scope <scope>
+                                    — rename a template, rewriting any default-template pointer
 """
 
 import json
@@ -23,6 +25,8 @@ from pathlib import Path
 from worca.orchestrator.bundle import (
     ID_RE,
     SECRET_PLACEHOLDER,
+    _OVERLAY_NAME_RE,
+    _write_zip,
     build_export_manifest,
     collect_referenced_model_aliases,
     fetch_bundle,
@@ -321,6 +325,28 @@ def register_subcommand(sub):
         help="Destination scope (default: project)",
     )
 
+    # rename
+    rename_parser = templates_sub.add_parser(
+        "rename",
+        help="Rename a template, rewriting any worca.default_template pointer that references it",
+    )
+    rename_parser.add_argument("--src-id", required=True, dest="src_id", help="Source template ID")
+    rename_parser.add_argument(
+        "--src-scope",
+        required=True,
+        dest="src_scope",
+        choices=["project", "user"],
+        help="Source scope",
+    )
+    rename_parser.add_argument("--dst-id", required=True, dest="dst_id", help="Destination template ID")
+    rename_parser.add_argument(
+        "--dst-scope",
+        required=True,
+        dest="dst_scope",
+        choices=["project", "user"],
+        help="Destination scope",
+    )
+
     return templates_parser
 
 
@@ -478,6 +504,14 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
             (staged_dir / "template.json").write_text(
                 json.dumps(tmpl_data, indent=2), encoding="utf-8"
             )
+            overlay_map = tmpl_data.get("_overlays") or {}
+            if overlay_map:
+                agents_dir = staged_dir / "agents"
+                agents_dir.mkdir(parents=True, exist_ok=True)
+                for fname, content in overlay_map.items():
+                    if not _OVERLAY_NAME_RE.match(fname):
+                        raise ValueError(f"invalid overlay filename: {fname!r}")
+                    (agents_dir / fname).write_text(content, encoding="utf-8")
 
         # Serialize the patched settings now (early failure on JSON errors)
         # but defer the file write to the commit phase so it lands in the
@@ -567,8 +601,31 @@ def _atomic_import(templates, settings_patch, target_dir, settings_path):
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _read_template_overlays(tmpl) -> dict:
+    """Return ``{filename: content}`` for every ``*.md`` in *tmpl.agents_dir*."""
+    if not tmpl.agents_dir:
+        return {}
+    agents_path = Path(tmpl.agents_dir)
+    if not agents_path.is_dir():
+        return {}
+    return {
+        f.name: f.read_text(encoding="utf-8")
+        for f in sorted(agents_path.glob("*.md"))
+    }
+
+
 def cmd_templates_export(args):
-    """worca templates export --to <path|gist> — export templates as a bundle."""
+    """worca templates export --to <path|gist> — export templates as a bundle.
+
+    Format auto-selection:
+      - Single template with overlays (agents/*.md) → ``.zip``
+      - Single template without overlays → ``.json`` (unchanged)
+      - Multiple templates → one file per template in the parent dir of ``--to``;
+        each file uses ``.zip`` or ``.json`` based on its own overlay presence.
+      - ``--to gist`` with any overlay → error (gist only supports JSON bundles).
+
+    Summary of all written paths is printed to stderr for multi-template exports.
+    """
     resolver = _make_resolver(getattr(args, "project_root", None))
     worca_config = _load_current_worca_config()
 
@@ -578,7 +635,9 @@ def cmd_templates_export(args):
         all_templates = resolver.list()
         template_ids = [t.id for t in all_templates if t.tier != "builtin"]
 
-    templates = []
+    # Resolve Template objects and build entries (including overlays).
+    tmpl_objects = []
+    template_entries = []
     for tid in template_ids:
         tmpl = resolver.get(tid)
         if tmpl is None:
@@ -593,32 +652,40 @@ def cmd_templates_export(args):
         }
         if tmpl.params:
             entry["params"] = tmpl.params
-        templates.append(entry)
+        overlays = _read_template_overlays(tmpl)
+        if overlays:
+            entry["_overlays"] = overlays
+        tmpl_objects.append(tmpl)
+        template_entries.append(entry)
 
-    all_models = worca_config.get("models") or {}
-    referenced_aliases = collect_referenced_model_aliases(templates, all_models)
-
-    models = None
-    if args.include_models:
-        models, _ = _filter_models_by_aliases(
-            all_models, referenced_aliases, direction="export"
-        )
-
-    pricing = None
-    if args.include_pricing:
-        pricing, _ = _filter_pricing_by_aliases(
-            worca_config.get("pricing") or {}, referenced_aliases, direction="export"
-        )
-
-    manifest = build_export_manifest(templates, models=models, pricing=pricing)
-    redacted, redacted_paths = redact_bundle(manifest)
-
-    if redacted_paths:
-        for rp in redacted_paths:
-            print(f"info: redacted {rp}", file=sys.stderr)
+    any_overlays = any("_overlays" in e for e in template_entries)
 
     dest = args.to
     if dest in ("gist", "gist:public"):
+        if any_overlays:
+            print(
+                "error: gist export only supports JSON bundles; "
+                "templates with prompt overlays must be shared as a downloaded .zip file",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+        # Gist path: single merged manifest (existing behaviour).
+        all_models = worca_config.get("models") or {}
+        referenced_aliases = collect_referenced_model_aliases(template_entries, all_models)
+        models = None
+        if args.include_models:
+            models, _ = _filter_models_by_aliases(all_models, referenced_aliases, direction="export")
+        pricing = None
+        if args.include_pricing:
+            pricing, _ = _filter_pricing_by_aliases(
+                worca_config.get("pricing") or {}, referenced_aliases, direction="export"
+            )
+        manifest = build_export_manifest(template_entries, models=models, pricing=pricing)
+        redacted, redacted_paths = redact_bundle(manifest)
+        if redacted_paths:
+            for rp in redacted_paths:
+                print(f"info: redacted {rp}", file=sys.stderr)
         cmd = ["gh", "gist", "create", "--filename", "bundle.json", "-"]
         if dest == "gist:public":
             cmd.append("--public")
@@ -633,9 +700,62 @@ def cmd_templates_export(args):
             print(f"error: gh gist create failed: {result.stderr.strip()}", file=sys.stderr)
             raise SystemExit(1)
         print(result.stdout.strip())
-    else:
-        Path(dest).write_text(json.dumps(redacted, indent=2), encoding="utf-8")
-        print(f"exported {len(templates)} template(s) to {dest}")
+        return
+
+    # File output path.
+    multi = len(template_entries) > 1
+    out_dir = Path(dest).parent if multi else None
+
+    all_models = worca_config.get("models") or {}
+    referenced_aliases = collect_referenced_model_aliases(template_entries, all_models)
+
+    models = None
+    if args.include_models:
+        models, _ = _filter_models_by_aliases(all_models, referenced_aliases, direction="export")
+
+    pricing = None
+    if args.include_pricing:
+        pricing, _ = _filter_pricing_by_aliases(
+            worca_config.get("pricing") or {}, referenced_aliases, direction="export"
+        )
+
+    written_paths = []
+    for entry in template_entries:
+        has_overlays = bool(entry.get("_overlays"))
+
+        # Build and redact a per-template manifest so redaction paths reference
+        # the single-template index (templates[0].*) consistently.
+        per_manifest = build_export_manifest(
+            [entry],
+            models=models if not has_overlays else None,
+            pricing=pricing if not has_overlays else None,
+        )
+        redacted_manifest, redacted_paths = redact_bundle(per_manifest)
+        if redacted_paths:
+            for rp in redacted_paths:
+                print(f"info: redacted {rp}", file=sys.stderr)
+
+        redacted_entry = redacted_manifest["templates"][0]
+
+        if multi:
+            ext = ".zip" if has_overlays else ".json"
+            out_path = str(out_dir / f"{entry['id']}-bundle{ext}")
+        else:
+            out_path = dest
+
+        if has_overlays:
+            _write_zip(redacted_entry, out_path)
+        else:
+            Path(out_path).write_text(
+                json.dumps(redacted_manifest, indent=2), encoding="utf-8"
+            )
+
+        written_paths.append(out_path)
+
+    if multi:
+        for p in written_paths:
+            print(f"  wrote {p}", file=sys.stderr)
+    print(f"exported {len(template_entries)} template(s)")
 
 
 def cmd_templates_import(args):
@@ -991,6 +1111,58 @@ def _collect_placeholder_paths(obj, path: str, out: list[str]) -> None:
             _collect_placeholder_paths(item, f"{path}[{i}]", out)
 
 
+def _atomic_write_json(path: str, data: dict) -> None:
+    """Atomically write JSON to path via tempfile + os.replace."""
+    directory = os.path.dirname(path) or "."
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".tmp-", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _maybe_rewrite_default_pointer(
+    settings_path: str | None,
+    old_tier: str,
+    old_id: str,
+    new_tier: str,
+    new_id: str,
+) -> bool:
+    """Rewrite worca.default_template if it points at (old_tier, old_id).
+
+    No-op when the file is missing, the key is absent, or the pointer
+    doesn't match (old_tier, old_id). Returns True if rewritten.
+    """
+    if not settings_path:
+        return False
+    sp = Path(settings_path)
+    if not sp.exists():
+        return False
+    try:
+        data = json.loads(sp.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    worca = data.get("worca")
+    if not isinstance(worca, dict):
+        return False
+    default_tpl = worca.get("default_template")
+    if not isinstance(default_tpl, dict):
+        return False
+    if default_tpl.get("tier") != old_tier or default_tpl.get("id") != old_id:
+        return False
+    data["worca"]["default_template"] = {"tier": new_tier, "id": new_id}
+    _atomic_write_json(str(sp), data)
+    return True
+
+
 def cmd_templates_delete(args):
     """worca templates delete <id> — remove a project or user template."""
     resolver = _make_resolver(getattr(args, "project_root", None))
@@ -1080,10 +1252,62 @@ def cmd_templates_duplicate(args):
         raise SystemExit(1)
 
 
+def cmd_templates_rename(args):
+    """worca templates rename — move a template to a new id/scope, rewriting any default-template pointer.
+
+    Internally: duplicate → rewrite pointer → delete. If delete fails after
+    duplicate succeeds, exits with code 3 and prints a `partial_rename`
+    message to stderr so the server can surface the structured error.
+    """
+    src_id = args.src_id
+    src_scope = args.src_scope
+    dst_id = args.dst_id
+    dst_scope = args.dst_scope
+    project_root = getattr(args, "project_root", None)
+
+    resolver = _make_resolver(project_root)
+
+    try:
+        resolver.duplicate(src_id, dst_id, dst_scope)
+    except TemplateError as e:
+        if e.code == "validation_error" and e.details:
+            print("error: template validation failed:", file=sys.stderr)
+            _print_validation_details(e.details)
+        else:
+            print(f"error: {e}", file=sys.stderr)
+        raise SystemExit(1)
+
+    # Rewrite pointer in both project and user settings so cross-tier renames
+    # and either-side placements are handled without knowing which file holds it.
+    project_settings = _find_settings_path("project")
+    user_settings = _find_settings_path("user")
+    for sp in [project_settings, user_settings]:
+        _maybe_rewrite_default_pointer(sp, src_scope, src_id, dst_scope, dst_id)
+
+    try:
+        resolver.delete(src_id, src_scope)
+    except TemplateError as e:
+        msg = (
+            f"partial_rename: Renamed to '{dst_id}' ({dst_scope}) but failed to remove "
+            f"the source '{src_id}' ({src_scope}): {e}"
+        )
+        print(f"error: {msg}", file=sys.stderr)
+        raise SystemExit(3)
+
+    tier_labels = {
+        "project": "project (.claude/templates/)",
+        "user": "user (~/.worca/templates/)",
+    }
+    print(
+        f"renamed '{src_id}' ({tier_labels.get(src_scope, src_scope)}) -> "
+        f"'{dst_id}' ({tier_labels.get(dst_scope, dst_scope)})"
+    )
+
+
 def cmd_templates(args):
     """Dispatch worca templates subcommand."""
     if not args.templates_command:
-        print("error: specify a templates subcommand: list, show, save, create, delete, export, import, validate, duplicate", file=sys.stderr)
+        print("error: specify a templates subcommand: list, show, save, create, delete, export, import, validate, duplicate, rename", file=sys.stderr)
         raise SystemExit(1)
     if args.templates_command == "list":
         cmd_templates_list(args)
@@ -1103,6 +1327,8 @@ def cmd_templates(args):
         cmd_templates_validate(args)
     elif args.templates_command == "duplicate":
         cmd_templates_duplicate(args)
+    elif args.templates_command == "rename":
+        cmd_templates_rename(args)
     else:
         print(f"error: unknown templates subcommand {args.templates_command!r}", file=sys.stderr)
         raise SystemExit(1)

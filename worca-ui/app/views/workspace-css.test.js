@@ -177,6 +177,17 @@ describe('workspace CSS — DAG styling', () => {
       '--sl-color-primary-50',
       '--sl-color-primary-500',
       '--sl-color-primary-700',
+      // Used by the overlays tab (pipelines-editor-overlays) — spacing,
+      // border-radius, color, and typography tokens from Shoelace.
+      '--sl-spacing-x-small',
+      '--sl-spacing-small',
+      '--sl-spacing-medium',
+      '--sl-border-radius-medium',
+      '--sl-color-neutral-500',
+      '--sl-color-neutral-600',
+      '--sl-font-size-small',
+      '--sl-font-size-x-small',
+      '--sl-font-weight-semibold',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

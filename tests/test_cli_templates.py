@@ -9,6 +9,7 @@ import pytest
 
 from worca.cli.main import create_parser, main
 from worca.cli.templates import _resolve_dirs
+from worca.orchestrator.templates import TemplateError
 
 
 def _write_template(directory: Path, data: dict):
@@ -917,30 +918,30 @@ class TestTemplatesExport:
         return capsys.readouterr()
 
     def test_export_writes_file_with_templates(self, capsys, tmp_path):
+        # Multi-template export now emits one file per template.
         builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
-        out_file = tmp_path / "bundle.json"
+        out_anchor = tmp_path / "bundle.json"  # parent dir is used for per-file output
         self._run_export(
-            ["--to", str(out_file)],
+            ["--to", str(out_anchor)],
             capsys, builtin_dir, project_dir, user_dir,
         )
-        assert out_file.exists()
-        bundle = json.loads(out_file.read_text())
-        assert bundle["worca_bundle_version"] == 1
-        assert "exported_at" in bundle
-        ids = {t["id"] for t in bundle["templates"]}
-        assert "proj-tmpl" in ids
-        assert "user-tmpl" in ids
+        proj_file = tmp_path / "proj-tmpl-bundle.json"
+        user_file = tmp_path / "user-tmpl-bundle.json"
+        assert proj_file.exists()
+        assert user_file.exists()
+        proj_bundle = json.loads(proj_file.read_text())
+        assert proj_bundle["worca_bundle_version"] == 1
+        assert "exported_at" in proj_bundle
+        assert proj_bundle["templates"][0]["id"] == "proj-tmpl"
 
     def test_export_excludes_builtins_by_default(self, capsys, tmp_path):
         builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
-        out_file = tmp_path / "bundle.json"
+        out_anchor = tmp_path / "bundle.json"
         self._run_export(
-            ["--to", str(out_file)],
+            ["--to", str(out_anchor)],
             capsys, builtin_dir, project_dir, user_dir,
         )
-        bundle = json.loads(out_file.read_text())
-        ids = {t["id"] for t in bundle["templates"]}
-        assert "builtin-tmpl" not in ids
+        assert not (tmp_path / "builtin-tmpl-bundle.json").exists()
 
     def test_export_templates_filter(self, capsys, tmp_path):
         builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
@@ -949,6 +950,8 @@ class TestTemplatesExport:
             ["--to", str(out_file), "--templates", "proj-tmpl"],
             capsys, builtin_dir, project_dir, user_dir,
         )
+        # Single template: writes to exact --to path
+        assert out_file.exists()
         bundle = json.loads(out_file.read_text())
         assert len(bundle["templates"]) == 1
         assert bundle["templates"][0]["id"] == "proj-tmpl"
@@ -974,11 +977,15 @@ class TestTemplatesExport:
         assert bundle["models"] == {"opus": "claude-opus-4-6"}
 
     def test_export_include_pricing(self, capsys, tmp_path):
-        builtin_dir, project_dir, user_dir = self._setup_templates(tmp_path)
+        # Single-template export with --include-pricing still lands pricing in JSON.
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "proj-tmpl", _minimal("proj-tmpl", tier="project"))
         out_file = tmp_path / "bundle.json"
         settings = {"pricing": {"currency": "USD"}}
         self._run_export(
-            ["--to", str(out_file), "--include-pricing"],
+            ["--to", str(out_file), "--include-pricing", "--templates", "proj-tmpl"],
             capsys, builtin_dir, project_dir, user_dir, settings=settings,
         )
         bundle = json.loads(out_file.read_text())
@@ -1031,6 +1038,133 @@ class TestTemplatesExport:
             )
         call_args = mock_run.call_args
         assert "--public" in call_args[0][0]
+
+    # --- Phase 3: zip auto-pick, gist guard, round-trip ---
+
+    def _setup_template_with_overlays(self, tmp_path, tmpl_id="bugfix", overlay_content="# Bugfix planner\nFocus on the fix."):
+        """Create a template directory with an agents/ overlay."""
+        project_dir = tmp_path / "project"
+        tmpl_dir = project_dir / tmpl_id
+        _write_template(tmpl_dir, _minimal(tmpl_id, tier="project"))
+        (tmpl_dir / "agents").mkdir()
+        (tmpl_dir / "agents" / "planner.md").write_text(overlay_content)
+        return tmp_path / "builtin", project_dir, tmp_path / "user"
+
+    def test_export_emits_zip_when_overlays_present(self, capsys, tmp_path):
+        """Single template with agents/ → zip output with template.json + agents/planner.md."""
+        import zipfile as _zipfile
+        builtin_dir, project_dir, user_dir = self._setup_template_with_overlays(tmp_path)
+        out_file = tmp_path / "bugfix-bundle.zip"
+        self._run_export(
+            ["--to", str(out_file), "--templates", "bugfix"],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        assert out_file.exists()
+        with _zipfile.ZipFile(out_file) as zf:
+            names = set(zf.namelist())
+            assert "template.json" in names
+            assert "agents/planner.md" in names
+            data = json.loads(zf.read("template.json"))
+            assert data["id"] == "bugfix"
+            overlay = zf.read("agents/planner.md").decode()
+            assert "Bugfix planner" in overlay
+
+    def test_export_zip_overlay_not_in_template_json(self, capsys, tmp_path):
+        """Overlay content does not leak into template.json inside the zip."""
+        import zipfile as _zipfile
+        builtin_dir, project_dir, user_dir = self._setup_template_with_overlays(tmp_path)
+        out_file = tmp_path / "bugfix-bundle.zip"
+        self._run_export(
+            ["--to", str(out_file), "--templates", "bugfix"],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        with _zipfile.ZipFile(out_file) as zf:
+            data = json.loads(zf.read("template.json"))
+            assert "_overlays" not in data
+
+    def test_export_emits_json_when_no_overlays(self, capsys, tmp_path):
+        """Single template without agents/ → JSON output, unchanged bundle shape."""
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        _write_template(project_dir / "plain", _minimal("plain", tier="project"))
+        out_file = tmp_path / "plain-bundle.json"
+        self._run_export(
+            ["--to", str(out_file), "--templates", "plain"],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        assert out_file.exists()
+        bundle = json.loads(out_file.read_text())
+        assert bundle["worca_bundle_version"] == 1
+        assert bundle["templates"][0]["id"] == "plain"
+
+    def test_export_gist_rejects_overlays(self, capsys, tmp_path):
+        """--to gist with an overlay template → non-zero exit + explanatory message."""
+        builtin_dir, project_dir, user_dir = self._setup_template_with_overlays(tmp_path)
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_export(
+                ["--to", "gist", "--templates", "bugfix"],
+                capsys, builtin_dir, project_dir, user_dir,
+            )
+        assert exc_info.value.code != 0
+        err = capsys.readouterr().err
+        assert "gist" in err.lower()
+        assert "overlay" in err.lower() or "zip" in err.lower()
+
+    def test_export_multi_template_emits_per_file(self, capsys, tmp_path):
+        """Multi-template export: one file per template, summary to stderr."""
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        # tmpl-a has overlays; tmpl-b does not
+        tmpl_a = project_dir / "tmpl-a"
+        _write_template(tmpl_a, _minimal("tmpl-a", tier="project"))
+        (tmpl_a / "agents").mkdir()
+        (tmpl_a / "agents" / "planner.md").write_text("# A planner")
+        _write_template(project_dir / "tmpl-b", _minimal("tmpl-b", tier="project"))
+        out_anchor = tmp_path / "export.json"
+        captured = self._run_export(
+            ["--to", str(out_anchor), "--templates", "tmpl-a,tmpl-b"],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        import zipfile as _zipfile
+        zip_file = tmp_path / "tmpl-a-bundle.zip"
+        json_file = tmp_path / "tmpl-b-bundle.json"
+        assert zip_file.exists(), "tmpl-a should be exported as zip (has overlays)"
+        assert json_file.exists(), "tmpl-b should be exported as json (no overlays)"
+        # zip contains correct layout
+        with _zipfile.ZipFile(zip_file) as zf:
+            assert "template.json" in zf.namelist()
+            assert "agents/planner.md" in zf.namelist()
+        # summary printed to stderr
+        assert "tmpl-a" in captured.err
+        assert "tmpl-b" in captured.err
+
+    def test_round_trip_with_overlays(self, capsys, tmp_path):
+        """Export zip → import → agents/ directory recreated with correct content."""
+        builtin_dir, project_dir, user_dir = self._setup_template_with_overlays(
+            tmp_path, overlay_content="# Custom planner\nDo the thing."
+        )
+        out_file = tmp_path / "bugfix-bundle.zip"
+        self._run_export(
+            ["--to", str(out_file), "--templates", "bugfix"],
+            capsys, builtin_dir, project_dir, user_dir,
+        )
+        assert out_file.exists()
+
+        import_user_dir = tmp_path / "import-user"
+        with patch(
+            "worca.cli.templates._resolve_dirs",
+            return_value=(builtin_dir, project_dir, import_user_dir),
+        ), patch(
+            "worca.cli.templates._find_settings_path",
+            return_value=str(tmp_path / ".claude" / "settings.json"),
+        ):
+            main(["templates", "import", "--from", str(out_file), "--scope", "user", "--non-interactive"])
+
+        imported_agents = import_user_dir / "bugfix" / "agents" / "planner.md"
+        assert imported_agents.exists(), "agents/planner.md must be materialized after import"
+        assert "Custom planner" in imported_agents.read_text()
 
 
 # ---------------------------------------------------------------------------
@@ -2184,3 +2318,390 @@ class TestImportAliasCollision:
         assert written["worca"]["models"]["sonnet"] == "claude-sonnet-4-6"
         err = capsys.readouterr().err
         assert "would overwrite" not in err
+
+
+# ---------------------------------------------------------------------------
+# _atomic_import overlay materialization (W-064 Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestAtomicImportOverlays:
+    """_atomic_import writes _overlays into agents/ during staging; rollback is clean."""
+
+    def _run_import(self, tmp_path, templates, settings_patch=None, settings_path=None):
+        from worca.cli.templates import _atomic_import
+        target_dir = tmp_path / "templates"
+        target_dir.mkdir()
+        _atomic_import(templates, settings_patch or {}, target_dir, settings_path)
+        return target_dir
+
+    def test_overlays_land_in_agents_dir(self, tmp_path):
+        """_overlays map → agents/ files exist with correct content post-commit."""
+        target_dir = self._run_import(
+            tmp_path,
+            templates={
+                "mytempl": {
+                    "id": "mytempl",
+                    "name": "My Template",
+                    "description": "",
+                    "tags": [],
+                    "config": {},
+                    "_overlays": {
+                        "planner.md": "# Custom Planner\nDo things differently.",
+                        "plan.block.md": "block content here",
+                    },
+                }
+            },
+        )
+        agents_dir = target_dir / "mytempl" / "agents"
+        assert agents_dir.is_dir()
+        assert (agents_dir / "planner.md").read_text(encoding="utf-8") == (
+            "# Custom Planner\nDo things differently."
+        )
+        assert (agents_dir / "plan.block.md").read_text(encoding="utf-8") == "block content here"
+
+    def test_template_without_overlays_has_no_agents_dir(self, tmp_path):
+        """Template entry with no _overlays key produces no agents/ directory."""
+        target_dir = self._run_import(
+            tmp_path,
+            templates={
+                "plain": {
+                    "id": "plain",
+                    "name": "Plain",
+                    "description": "",
+                    "tags": [],
+                    "config": {},
+                }
+            },
+        )
+        assert not (target_dir / "plain" / "agents").exists()
+
+    def test_invalid_overlay_filename_raises_value_error(self, tmp_path):
+        """Overlay filename failing _OVERLAY_NAME_RE raises ValueError; nothing lands in target."""
+        target_dir = tmp_path / "templates"
+        target_dir.mkdir()
+        from worca.cli.templates import _atomic_import
+        with pytest.raises(ValueError, match="invalid overlay filename"):
+            _atomic_import(
+                {
+                    "mytempl": {
+                        "id": "mytempl",
+                        "name": "My Template",
+                        "config": {},
+                        "_overlays": {
+                            "EVIL NAME!.md": "bad filename",
+                        },
+                    }
+                },
+                {},
+                target_dir,
+                None,
+            )
+        assert not (target_dir / "mytempl").exists()
+
+    def test_no_partial_overlay_after_staging_failure(self, tmp_path):
+        """Mid-staging ValueError leaves target_dir entirely clean."""
+        target_dir = tmp_path / "templates"
+        target_dir.mkdir()
+        from worca.cli.templates import _atomic_import
+        with pytest.raises(ValueError):
+            _atomic_import(
+                {
+                    "t1": {
+                        "id": "t1",
+                        "name": "T1",
+                        "config": {},
+                        "_overlays": {"INVALID!.md": "content"},
+                    }
+                },
+                {},
+                target_dir,
+                None,
+            )
+        # Staging tmpdir is cleaned up; target is untouched
+        assert not (target_dir / "t1").exists()
+        # No staging artefacts leaked into tmp_path root either
+        leaked = list(tmp_path.glob("worca-import-*"))
+        assert leaked == []
+
+
+# ---------------------------------------------------------------------------
+# _maybe_rewrite_default_pointer unit tests
+# ---------------------------------------------------------------------------
+
+
+class TestMaybeRewriteDefaultPointer:
+    """Unit tests for _maybe_rewrite_default_pointer."""
+
+    def test_rewrites_matching_pointer(self, tmp_path):
+        sp = tmp_path / "settings.json"
+        sp.write_text(json.dumps({
+            "worca": {"default_template": {"tier": "project", "id": "old-id"}}
+        }))
+        from worca.cli.templates import _maybe_rewrite_default_pointer
+        result = _maybe_rewrite_default_pointer(str(sp), "project", "old-id", "user", "new-id")
+        assert result is True
+        data = json.loads(sp.read_text())
+        assert data["worca"]["default_template"] == {"tier": "user", "id": "new-id"}
+
+    def test_noop_when_pointer_does_not_match_id(self, tmp_path):
+        sp = tmp_path / "settings.json"
+        original = {"worca": {"default_template": {"tier": "project", "id": "other-id"}}}
+        sp.write_text(json.dumps(original))
+        from worca.cli.templates import _maybe_rewrite_default_pointer
+        result = _maybe_rewrite_default_pointer(str(sp), "project", "old-id", "project", "new-id")
+        assert result is False
+        data = json.loads(sp.read_text())
+        assert data["worca"]["default_template"] == {"tier": "project", "id": "other-id"}
+
+    def test_noop_when_pointer_does_not_match_tier(self, tmp_path):
+        sp = tmp_path / "settings.json"
+        sp.write_text(json.dumps({
+            "worca": {"default_template": {"tier": "user", "id": "my-id"}}
+        }))
+        from worca.cli.templates import _maybe_rewrite_default_pointer
+        result = _maybe_rewrite_default_pointer(str(sp), "project", "my-id", "project", "new-id")
+        assert result is False
+
+    def test_tolerates_missing_file(self, tmp_path):
+        from worca.cli.templates import _maybe_rewrite_default_pointer
+        result = _maybe_rewrite_default_pointer(
+            str(tmp_path / "nonexistent.json"), "project", "old-id", "project", "new-id"
+        )
+        assert result is False
+
+    def test_tolerates_missing_default_template_key(self, tmp_path):
+        sp = tmp_path / "settings.json"
+        sp.write_text(json.dumps({"worca": {}}))
+        from worca.cli.templates import _maybe_rewrite_default_pointer
+        result = _maybe_rewrite_default_pointer(str(sp), "project", "old-id", "project", "new-id")
+        assert result is False
+
+    def test_tolerates_none_settings_path(self):
+        from worca.cli.templates import _maybe_rewrite_default_pointer
+        result = _maybe_rewrite_default_pointer(None, "project", "old-id", "project", "new-id")
+        assert result is False
+
+    def test_preserves_other_worca_keys(self, tmp_path):
+        sp = tmp_path / "settings.json"
+        sp.write_text(json.dumps({
+            "worca": {
+                "default_template": {"tier": "project", "id": "my-tpl"},
+                "loops": {"plan": 3},
+            }
+        }))
+        from worca.cli.templates import _maybe_rewrite_default_pointer
+        _maybe_rewrite_default_pointer(str(sp), "project", "my-tpl", "user", "my-tpl")
+        data = json.loads(sp.read_text())
+        assert data["worca"]["loops"] == {"plan": 3}
+        assert data["worca"]["default_template"] == {"tier": "user", "id": "my-tpl"}
+
+
+# ---------------------------------------------------------------------------
+# worca templates rename
+# ---------------------------------------------------------------------------
+
+
+class TestTemplatesRename:
+    """Tests for cmd_templates_rename — pointer rewrite, overlay carry-through, partial failure."""
+
+    def _seed_template(self, directory, tmpl_id, overlays=None):
+        tmpl_dir = directory / tmpl_id
+        tmpl_dir.mkdir(parents=True, exist_ok=True)
+        (tmpl_dir / "template.json").write_text(json.dumps({
+            "id": tmpl_id,
+            "name": tmpl_id,
+            "description": "",
+            "tags": [],
+            "config": {},
+            "builtin": False,
+            "created_at": "2026-01-01T00:00:00Z",
+        }))
+        if overlays:
+            agents_dir = tmpl_dir / "agents"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            for fname, content in overlays.items():
+                (agents_dir / fname).write_text(content)
+        return tmpl_dir
+
+    def _run_rename(self, src_id, src_scope, dst_id, dst_scope,
+                    builtin_dir, project_dir, user_dir,
+                    project_settings=None, user_settings=None):
+        def fake_find_settings(scope):
+            if scope == "project":
+                return str(project_settings) if project_settings else None
+            return str(user_settings) if user_settings else None
+
+        with patch("worca.cli.templates._resolve_dirs", return_value=(builtin_dir, project_dir, user_dir)), \
+             patch("worca.cli.templates._find_settings_path", side_effect=fake_find_settings):
+            main([
+                "templates", "rename",
+                "--src-id", src_id, "--src-scope", src_scope,
+                "--dst-id", dst_id, "--dst-scope", dst_scope,
+            ])
+
+    def test_rename_rewrites_default_pointer(self, tmp_path):
+        """Rename when default_template matches (src_scope, src_id) → pointer updated."""
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        builtin_dir = tmp_path / "builtin"
+        self._seed_template(project_dir, "old-id")
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({
+            "worca": {"default_template": {"tier": "project", "id": "old-id"}}
+        }))
+
+        self._run_rename(
+            "old-id", "project", "new-id", "project",
+            builtin_dir, project_dir, user_dir,
+            project_settings=settings_file,
+        )
+
+        data = json.loads(settings_file.read_text())
+        assert data["worca"]["default_template"] == {"tier": "project", "id": "new-id"}
+        assert (project_dir / "new-id" / "template.json").exists()
+        assert not (project_dir / "old-id").exists()
+
+    def test_rename_does_not_rewrite_unrelated_pointer(self, tmp_path):
+        """Pointer unchanged when renamed template isn't the current default."""
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        builtin_dir = tmp_path / "builtin"
+        self._seed_template(project_dir, "my-tmpl")
+
+        settings_file = tmp_path / "settings.json"
+        settings_file.write_text(json.dumps({
+            "worca": {"default_template": {"tier": "project", "id": "other-tmpl"}}
+        }))
+
+        self._run_rename(
+            "my-tmpl", "project", "renamed-tmpl", "project",
+            builtin_dir, project_dir, user_dir,
+            project_settings=settings_file,
+        )
+
+        data = json.loads(settings_file.read_text())
+        assert data["worca"]["default_template"] == {"tier": "project", "id": "other-tmpl"}
+
+    def test_rename_cross_tier_rewrites_pointer_in_whichever_file_holds_it(self, tmp_path):
+        """Cross-tier rename rewrites whichever settings file (project or user) holds the pointer."""
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        builtin_dir = tmp_path / "builtin"
+        self._seed_template(project_dir, "src-tmpl")
+
+        # Pointer lives in user settings, not project settings
+        project_settings = tmp_path / "proj-settings.json"
+        project_settings.write_text(json.dumps({"worca": {}}))
+        user_settings = tmp_path / "user-settings.json"
+        user_settings.write_text(json.dumps({
+            "worca": {"default_template": {"tier": "project", "id": "src-tmpl"}}
+        }))
+
+        self._run_rename(
+            "src-tmpl", "project", "dst-tmpl", "user",
+            builtin_dir, project_dir, user_dir,
+            project_settings=project_settings,
+            user_settings=user_settings,
+        )
+
+        assert json.loads(project_settings.read_text())["worca"] == {}
+        data = json.loads(user_settings.read_text())
+        assert data["worca"]["default_template"] == {"tier": "user", "id": "dst-tmpl"}
+
+    def test_rename_carries_overlays(self, tmp_path):
+        """Rename of overlay-bearing template carries agents/ to the new id."""
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        builtin_dir = tmp_path / "builtin"
+        self._seed_template(
+            project_dir, "old-ovl",
+            overlays={"planner.md": "# Custom Planner\nDo the thing."},
+        )
+
+        self._run_rename(
+            "old-ovl", "project", "new-ovl", "project",
+            builtin_dir, project_dir, user_dir,
+        )
+
+        new_overlay = project_dir / "new-ovl" / "agents" / "planner.md"
+        assert new_overlay.exists(), "agents/planner.md must be carried through rename"
+        assert "Custom Planner" in new_overlay.read_text()
+        assert not (project_dir / "old-ovl").exists()
+
+    def test_rename_tolerates_missing_settings_file(self, tmp_path):
+        """No-op pointer rewrite + clean exit when settings file doesn't exist."""
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        builtin_dir = tmp_path / "builtin"
+        self._seed_template(project_dir, "tmpl-a")
+
+        missing = str(tmp_path / "nonexistent-settings.json")
+
+        def fake_find_settings(scope):
+            return missing
+
+        with patch("worca.cli.templates._resolve_dirs", return_value=(builtin_dir, project_dir, user_dir)), \
+             patch("worca.cli.templates._find_settings_path", side_effect=fake_find_settings):
+            main(["templates", "rename", "--src-id", "tmpl-a", "--src-scope", "project",
+                  "--dst-id", "tmpl-b", "--dst-scope", "project"])
+
+        assert (project_dir / "tmpl-b" / "template.json").exists()
+        assert not (project_dir / "tmpl-a").exists()
+
+    def test_rename_partial_failure_surfaces_partial_rename(self, tmp_path, capsys):
+        """Duplicate success + delete failure → exit code 3 with partial_rename in stderr."""
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+        builtin_dir = tmp_path / "builtin"
+        self._seed_template(project_dir, "half-id")
+
+        with patch("worca.cli.templates._resolve_dirs", return_value=(builtin_dir, project_dir, user_dir)), \
+             patch("worca.cli.templates._find_settings_path", return_value=None), \
+             patch("worca.orchestrator.templates.TemplateResolver.delete",
+                   side_effect=TemplateError("simulated delete failure", code="not_found")):
+            with pytest.raises(SystemExit) as exc_info:
+                main(["templates", "rename", "--src-id", "half-id", "--src-scope", "project",
+                      "--dst-id", "new-half", "--dst-scope", "project"])
+
+        assert exc_info.value.code == 3
+        err = capsys.readouterr().err
+        assert "partial_rename" in err
+        # Duplicate landed — new copy should exist
+        assert (project_dir / "new-half" / "template.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# Regression: duplicate builtin with overlays carries agents_dir
+# ---------------------------------------------------------------------------
+
+
+class TestDuplicateBuiltinWithOverlays:
+    """Regression: duplicate a builtin with overlays → agents_dir populated on the copy."""
+
+    def test_duplicate_builtin_with_overlays_carries_agents_dir(self, tmp_path):
+        builtin_dir = tmp_path / "builtin"
+        project_dir = tmp_path / "project"
+        user_dir = tmp_path / "user"
+
+        b_tmpl = builtin_dir / "my-builtin"
+        b_tmpl.mkdir(parents=True)
+        (b_tmpl / "template.json").write_text(json.dumps({
+            "id": "my-builtin",
+            "name": "My Builtin",
+            "description": "",
+            "tags": [],
+            "config": {},
+            "builtin": True,
+            "created_at": "2026-01-01T00:00:00Z",
+        }))
+        agents_dir = b_tmpl / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "planner.md").write_text("# Builtin Planner override")
+
+        with patch("worca.cli.templates._resolve_dirs", return_value=(builtin_dir, project_dir, user_dir)):
+            main(["templates", "duplicate", "my-builtin", "--dst", "my-copy"])
+
+        copied = project_dir / "my-copy" / "agents" / "planner.md"
+        assert copied.exists(), "agents/ must be copied to project-scope duplicate"
+        assert "Builtin Planner" in copied.read_text()

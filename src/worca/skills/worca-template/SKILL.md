@@ -175,9 +175,9 @@ Guides the user through exporting one or more templates as a portable bundle JSO
    - Only `settings.json` is read; `settings.local.json` is never opened.
 
 3. **Destination** — Ask via `AskUserQuestion`:
-   - **Local file** — write to a file path (e.g. `./my-templates.json`)
-   - **GitHub gist (secret)** — unlisted gist, shareable via URL
-   - **GitHub gist (public)** — search-indexed, visible to everyone
+   - **Local file** — write to a file path. The format is chosen automatically: `.zip` when the template has any overlay files under `agents/`, `.json` for config-only templates. The CLI prints the output path and chosen format to stderr for each template.
+   - **GitHub gist (secret)** — unlisted gist, shareable via URL. *JSON-only*: templates with prompt overlays (`agents/*.md`) must be shared as a downloaded `.zip` file — gist export is rejected with a clear error message.
+   - **GitHub gist (public)** — search-indexed, visible to everyone. Same JSON-only restriction applies.
 
 4. **Run the export:**
 
@@ -185,7 +185,7 @@ Guides the user through exporting one or more templates as a portable bundle JSO
    worca templates export --to <dest> [--include-models] [--include-pricing] --templates <id1>,<id2>,...
    ```
 
-   For gist destinations, use `--to gist` (secret) or `--to gist:public`.
+   For gist destinations, use `--to gist` (secret) or `--to gist:public`. When exporting multiple templates, each becomes its own file — `.zip` or `.json` independently based on overlay presence.
 
 5. **Report results** — Show the user:
    - The `_redacted` list (per-value secret matches, replaced with `<YOUR-SECRET-HERE>`)
@@ -199,11 +199,11 @@ Guides the user through exporting one or more templates as a portable bundle JSO
 Guides the user through importing templates (and optionally models/pricing) from a bundle file, URL, or GitHub gist.
 
 1. **Source selection** — Ask via `AskUserQuestion`:
-   - **Local file** — path to a `.json` bundle file
-   - **URL** — HTTPS URL to a hosted bundle (1 MiB size cap; redirects blocked; private/loopback/link-local hosts refused)
-   - **GitHub gist** — gist URL or bare gist ID
+   - **Local file** — path to a `.json` or `.zip` bundle file. The format is detected automatically (magic bytes, then file extension). A zip bundle imports the template config **and** all prompt overlays (`agents/*.md`) atomically; the post-import summary lists the overlay filenames that landed and any paths where secrets were redacted.
+   - **URL** — HTTPS URL to a hosted bundle (1 MiB size cap; redirects blocked; private/loopback/link-local hosts refused). Zip bundles are accepted at URLs too — detected by `Content-Type` header, then magic bytes, then `.zip` extension.
+   - **GitHub gist** — gist URL or bare gist ID. Gist sources deliver JSON-only; zip bundles are not accepted there.
 
-   ⚠️ Imported bundles are config-as-data: they get merged into `settings.json` and drive subsequent pipeline runs. **Only import bundles from sources you trust** — the HTTPS hardening covers obvious SSRF cases but cannot defend against a malicious upstream.
+   ⚠️ Imported bundles are config-as-data: they get merged into `settings.json` and drive subsequent pipeline runs. **Only import bundles from sources you trust** — the HTTPS hardening covers obvious SSRF cases but cannot defend against a malicious upstream. Zip bundles additionally carry prompt overlay files that are injected into agent system prompts at pipeline runtime.
 
 2. **Target scope** — Ask via `AskUserQuestion`:
    - **Project** (default) — writes templates to `.claude/templates/`, merges models/pricing into the project `.claude/settings.json`
@@ -238,14 +238,27 @@ Guides the user through importing templates (and optionally models/pricing) from
 
    Show the user the updated template list, highlighting the newly imported entries.
 
+## Renaming templates
+
+When a template is set as the project default (`worca.default_template` in `.claude/settings.json`) and you rename it, the `worca.default_template` pointer is **automatically updated** — no manual reset needed.
+
+Rename via CLI:
+
+```bash
+worca templates rename --src-id old-name --src-scope project \
+                       --dst-id new-name --dst-scope project
+```
+
+Or via the Pipelines UI: click **Rename** on a template card. The ★ Default badge follows automatically.
+
+The rename is a single atomic operation: duplicate → pointer rewrite → delete source. Any `agents/` overlay files travel with the template. If the delete fails after a successful duplicate, both copies remain and the CLI exits with `code: "partial_rename"` — the recovery action is to manually delete one side.
+
 ## Out of Scope (v1)
 
 These are explicitly deferred to follow-up work:
 
-- **Agent-prompt overrides** — `agents/<agent>.md` / `.block.md` overlays exist in the template system (`src/worca/orchestrator/overlay.py`) but authoring them via this skill is deferred.
+- **Agent-prompt overlay authoring** — `agents/<agent>.md` / `.block.md` overlays exist in the template system and ship via zip bundles, but *authoring* them via this skill is deferred. View overlays in the UI's read-only Overlays tab; edit them directly on disk.
 - **UI-based template creation** — the UI stays list/select only.
-- **UI-based import/export** — import/export is CLI + skill only; no UI integration.
-- **Editing or cloning existing templates** — this skill creates new templates only. Use `worca templates delete` + re-create to replace.
 - **Approval gate configuration** — `milestones.plan_approval`, `pr_approval`, `deploy_approval` are configurable in the config delta but not surfaced as a separate interview question in v1. Users who need them can specify via the "other" path or edit the composed JSON.
 - **Loop limit tuning** — `loops.implement_test`, `loops.pr_changes`, etc. are settable in the config delta but not individually interviewed. The rigor level sets sensible defaults.
 - **Encrypted bundles / signing** — the redaction approach prevents accidental secret leakage; intentional secret sharing requires a different mechanism.

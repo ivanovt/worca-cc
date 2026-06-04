@@ -20,6 +20,7 @@ import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
 import { helpFor } from '../utils/help-links.js';
 import {
   CircleCheck,
+  FileText,
   iconSvg,
   RefreshCw,
   Save,
@@ -38,6 +39,7 @@ import {
 } from '../utils/templates.js';
 import { AGENT_NAMES } from './agent-names.js';
 import { dispatchSectionView } from './dispatch-section.js';
+import { overlaysTabView } from './pipelines-editor-overlays.js';
 import {
   AUTO_MODES,
   getModelKeys,
@@ -76,7 +78,15 @@ let editorState = {
   loadingBuiltin: false,
   // Track if this is a new template (create) or existing (update)
   isNewTemplate: false,
+  // Overlays: fetched once on tab activation; null = not yet loaded
+  overlays: null,
+  overlaysLoaded: false,
+  overlaysLoading: false,
 };
+
+// Stored rerender callback from pipelinesEditorView — used by async background
+// operations (overlay probe, builtin diff) that complete after loadTemplate.
+let _rerenderFn = null;
 
 // Debounce timer for validation
 let validateDebounceTimer = null;
@@ -107,6 +117,9 @@ export function initEditorState() {
     diffData: null,
     loadingBuiltin: false,
     isNewTemplate: false,
+    overlays: null,
+    overlaysLoaded: false,
+    overlaysLoading: false,
   };
   dispatchEditState = { tools: {}, skills: {}, subagents: {} };
   return editorState;
@@ -560,6 +573,9 @@ export async function loadTemplate(tier, tid, projectId) {
   editorState.template = null;
   editorState.builtinTemplate = null;
   editorState.diffData = null;
+  editorState.overlays = null;
+  editorState.overlaysLoaded = false;
+  editorState.overlaysLoading = false;
   editorState.idDirty = false;
   editorState.nameDraft = '';
   editorState.descriptionDraft = '';
@@ -609,13 +625,70 @@ export async function loadTemplate(tier, tid, projectId) {
       editorState.validationIssues = [];
 
       // Load built-in template for diff if this template shadows a built-in
-      if (shadowsBuiltin(data.template || {}));
-      await loadBuiltinTemplate(tid, projectId);
+      if (shadowsBuiltin(data.template || {}))
+        await loadBuiltinTemplate(tid, projectId);
+
+      // Eagerly probe overlays so the Overlays tab appears when ≥1 file exists.
+      // Fire-and-forget — result populates editorState.overlays after template
+      // load completes; the caller's rerender callback is not available here so
+      // the outer loadOverlays rerender will be called separately when needed.
+      _probeOverlays(tier, tid, projectId);
     }
   } catch (err) {
     editorState.error = err.message;
   } finally {
     editorState.loading = false;
+  }
+}
+
+/**
+ * Probe overlays during template load (no rerender callback available yet).
+ * Stores result in editorState so the Overlays tab can appear on next render.
+ */
+async function _probeOverlays(tier, tid, projectId) {
+  if (editorState.overlaysLoaded || editorState.overlaysLoading) return;
+  editorState.overlaysLoading = true;
+  try {
+    const url = projectId
+      ? `/api/projects/${projectId}/templates/${tier}/${tid}/overlays`
+      : `/api/templates/${tier}/${tid}/overlays`;
+    const res = await fetch(url);
+    editorState.overlays = res.ok ? (await res.json()).overlays || {} : {};
+  } catch {
+    editorState.overlays = {};
+  } finally {
+    editorState.overlaysLoaded = true;
+    editorState.overlaysLoading = false;
+    _rerenderFn?.();
+  }
+}
+
+/**
+ * Fetch overlays for a template on first Overlays-tab activation.
+ * Result cached in editorState.overlays; subsequent calls are no-ops.
+ */
+export async function loadOverlays(tier, tid, projectId, rerender) {
+  if (editorState.overlaysLoaded || editorState.overlaysLoading) return;
+  editorState.overlaysLoading = true;
+  rerender?.();
+  try {
+    const url = projectId
+      ? `/api/projects/${projectId}/templates/${tier}/${tid}/overlays`
+      : `/api/templates/${tier}/${tid}/overlays`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      editorState.overlays = data.overlays || {};
+    } else {
+      editorState.overlays = {};
+    }
+  } catch (err) {
+    console.warn('Failed to load overlays:', err);
+    editorState.overlays = {};
+  } finally {
+    editorState.overlaysLoaded = true;
+    editorState.overlaysLoading = false;
+    rerender?.();
   }
 }
 
@@ -1034,6 +1107,9 @@ export function pipelinesEditorView(state, options) {
     rerender,
   } = options || {};
 
+  // Store rerender for async background tasks (overlay probe, builtin diff).
+  if (rerender) _rerenderFn = rerender;
+
   const {
     formBuffer,
     template,
@@ -1250,21 +1326,25 @@ export function pipelinesEditorView(state, options) {
           ></sl-textarea>
         </div>
 
-        <sl-tab-group class="editor-tab-group">
+        <sl-tab-group class="editor-tab-group" @sl-tab-show=${(e) => {
+          if (e.detail?.name === 'overlays' && !editorState.overlaysLoaded) {
+            loadOverlays(
+              editorState.tier,
+              editorState.templateId,
+              projectId,
+              rerender,
+            );
+          }
+        }}>
           <!--
-            Three template-editor tabs:
+            Template-editor tabs:
               Agents    → effort policy (auto_mode + auto_cap)
                           + per-agent Model / Turns / Effort
               Pipeline  → stages + loops + circuit_breaker
                           (mirrors Project Settings → Pipeline)
               Governance → dispatch allow/deny lists
-
-            Effort got folded into Agents because there were only
-            two pipeline-wide knobs and the per-agent effort column
-            already lived in Agents — two tabs for one concern was
-            busywork. Models / Pricing / Webhooks / Graphify / Code
-            Review Graph stay in Project Settings — they are
-            cross-template.
+              Overlays  → read-only view of agents/*.md overlays
+                          (only shown when ≥1 overlay file exists)
           -->
           <sl-tab slot="nav" panel="agents">
             ${unsafeHTML(iconSvg(Users, 14))}
@@ -1281,6 +1361,16 @@ export function pipelinesEditorView(state, options) {
             Governance
             ${helpFor('dispatch')}
           </sl-tab>
+          ${
+            !editorState.isNewTemplate &&
+            editorState.overlaysLoaded &&
+            Object.keys(editorState.overlays || {}).length > 0
+              ? html`<sl-tab slot="nav" panel="overlays">
+                  ${unsafeHTML(iconSvg(FileText, 14))}
+                  Overlays
+                </sl-tab>`
+              : nothing
+          }
 
           <sl-tab-panel name="agents">
             ${_agentsTab(formBuffer, settings, projectId, rerender)}
@@ -1296,6 +1386,19 @@ export function pipelinesEditorView(state, options) {
           <sl-tab-panel name="governance">
             ${_governanceSection(formBuffer, settings, projectId, rerender)}
           </sl-tab-panel>
+          ${
+            !editorState.isNewTemplate &&
+            editorState.overlaysLoaded &&
+            Object.keys(editorState.overlays || {}).length > 0
+              ? html`<sl-tab-panel name="overlays">
+                  ${
+                    editorState.overlaysLoading
+                      ? html`<div class="settings-tab-content"><sl-spinner></sl-spinner></div>`
+                      : overlaysTabView(editorState.overlays || {})
+                  }
+                </sl-tab-panel>`
+              : nothing
+          }
         </sl-tab-group>
       </div>
 
