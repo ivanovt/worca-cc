@@ -29,6 +29,7 @@ from worca.orchestrator.control import read_control, delete_control
 from worca.orchestrator.overlay import OverlayResolver, resolve_agent
 from worca.orchestrator.prompt_builder import PromptBuilder
 from worca.orchestrator.effort import resolve_effort, escalation_iter_num, EFFORT_LEVELS
+from worca.orchestrator.file_access_aggregation import aggregate_iteration_file_access
 from worca.orchestrator.stages import (
     Stage, get_stage_config, get_enabled_stages, STAGE_AGENT_MAP,
     is_learn_enabled, resolve_plan_review_mode,
@@ -71,9 +72,9 @@ from worca.events.types import (
     STAGE_STARTED, STAGE_COMPLETED, STAGE_FAILED, STAGE_INTERRUPTED,
     stage_started_payload, stage_completed_payload,
     stage_failed_payload, stage_interrupted_payload,
-    AGENT_SPAWNED, AGENT_TOOL_USE, AGENT_TOOL_RESULT, AGENT_TEXT, AGENT_COMPLETED,
+    AGENT_SPAWNED, AGENT_TOOL_USE, AGENT_TOOL_RESULT, AGENT_TEXT, AGENT_COMPLETED, ITERATION_ACCESS,
     agent_spawned_payload, agent_tool_use_payload, agent_tool_result_payload,
-    agent_text_payload, agent_completed_payload,
+    agent_text_payload, agent_completed_payload, iteration_access_payload,
     BEAD_ASSIGNED, BEAD_COMPLETED, BEAD_FAILED, BEAD_LABELED, BEAD_NEXT,
     bead_assigned_payload, bead_completed_payload, bead_failed_payload,
     bead_labeled_payload, bead_next_payload,
@@ -1110,6 +1111,48 @@ def _is_agent_telemetry_enabled(settings_path: str) -> bool:
         return True
 
 
+def _is_file_access_telemetry_enabled(settings_path: str) -> bool:
+    """Check worca.telemetry.file_access.enabled setting (defaults to True)."""
+    try:
+        settings = load_settings(settings_path)
+        return settings.get("worca", {}).get("telemetry", {}).get("file_access", {}).get("enabled", True)
+    except Exception:
+        return True
+
+
+def _emit_iteration_access_event(ctx: Optional[EventContext], status: dict, stage: str,
+                                 run_id: str) -> None:
+    """Emit pipeline.iteration.access event after aggregation.
+
+    Extracts agent and file_access from the current iteration in status,
+    then emits the event. Does nothing if file_access is not present.
+    """
+    if not ctx:
+        return
+    try:
+        iterations = status.get("stages", {}).get(stage, {}).get("iterations")
+        if not iterations:
+            return
+        iteration = iterations[-1]
+        file_access = iteration.get("file_access")
+        if not file_access:
+            return
+        agent = iteration.get("agent", "unknown")
+        iteration_num = iteration.get("number", len(iterations))
+        bead_id = iteration.get("bead_id", "")
+        emit_event(ctx, ITERATION_ACCESS, iteration_access_payload(
+            run_id=run_id,
+            stage=stage,
+            agent=agent,
+            iteration=iteration_num,
+            bead_id=bead_id,
+            file_access=file_access,
+        ))
+    except Exception:
+        # Gracefully skip event emission on any error
+        pass
+
+
 _GRAPHIFY_READ_VERBS = frozenset({"query", "explain", "path", "affected", "diagnose"})
 
 
@@ -1252,6 +1295,7 @@ def run_stage(
     env_overrides: Optional[dict] = None,
     graphify_out: Optional[str] = None,
     crg_data_dir: Optional[str] = None,
+    bead_id: Optional[str] = None,
 ) -> tuple[dict, dict]:
     """Run a single pipeline stage.
 
@@ -1360,6 +1404,7 @@ def run_stage(
         run_dir=run_dir,
         stage=stage.value,
         iteration=iteration,
+        bead_id=bead_id,
     )
     _gfx = _gfx_metrics["graphify_invocations"]
     _crg = _gfx_metrics["crg_invocations"]
@@ -2843,6 +2888,7 @@ def run_pipeline(
                         env_overrides=_effort_env_overrides,
                         graphify_out=_graphify_out,
                         crg_data_dir=_crg_data_dir,
+                        bead_id=_assigned_bead,
                     )
             except InterruptedError:
                 stage_completed = datetime.now(timezone.utc).isoformat()
@@ -3211,6 +3257,17 @@ def run_pipeline(
 
             # Milestone gate after PLAN
             elif current_stage == Stage.PLAN:
+                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
+                if _is_file_access_telemetry_enabled(settings_path):
+                    try:
+                        file_access = aggregate_iteration_file_access(
+                            status["run_id"], current_stage.value, iter_num, os.getcwd()
+                        )
+                        if file_access:
+                            iter_extras["file_access"] = file_access
+                    except Exception:
+                        pass  # Graceful degradation on aggregation failure
+
                 # Plan approval is a webhook-controlled gate, not a planner
                 # self-assessment. Default to approved; the webhook (when
                 # plan_approval is enabled and a subscriber is connected) can
@@ -3218,6 +3275,7 @@ def run_pipeline(
                 approved = True
                 iter_extras["outcome"] = "success" if approved else "rejected"
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                 update_stage(status, current_stage.value, **stage_extras)
                 set_milestone(status, "plan_approved", approved)
                 if ctx:
@@ -3517,8 +3575,20 @@ def run_pipeline(
 
             # Handle coordinate results
             elif current_stage == Stage.COORDINATE:
+                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
+                if _is_file_access_telemetry_enabled(settings_path):
+                    try:
+                        file_access = aggregate_iteration_file_access(
+                            status["run_id"], current_stage.value, iter_num, os.getcwd()
+                        )
+                        if file_access:
+                            iter_extras["file_access"] = file_access
+                    except Exception:
+                        pass  # Graceful degradation on aggregation failure
+
                 iter_extras["outcome"] = "success"
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                 update_stage(status, current_stage.value, **stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:
@@ -3584,7 +3654,18 @@ def run_pipeline(
             # Handle implement results — batch-then-test flow
             elif current_stage == Stage.IMPLEMENT:
                 iter_extras["outcome"] = "success"
+                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
+                if _is_file_access_telemetry_enabled(settings_path):
+                    try:
+                        file_access = aggregate_iteration_file_access(
+                            status["run_id"], current_stage.value, iter_num, os.getcwd()
+                        )
+                        if file_access:
+                            iter_extras["file_access"] = file_access
+                    except Exception:
+                        pass  # Graceful degradation on aggregation failure
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
 
                 # Thread implement outputs into PromptBuilder
                 new_files = result.get("files_changed", [])
@@ -3715,6 +3796,17 @@ def run_pipeline(
 
             # Handle test results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.TEST:
+                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
+                if _is_file_access_telemetry_enabled(settings_path):
+                    try:
+                        file_access = aggregate_iteration_file_access(
+                            status["run_id"], current_stage.value, iter_num, os.getcwd()
+                        )
+                        if file_access:
+                            iter_extras["file_access"] = file_access
+                    except Exception:
+                        pass  # Graceful degradation on aggregation failure
+
                 passed = result.get("passed", False)
                 _emit_guide_conflicts(ctx, "test", result)
                 # Thread test outputs into PromptBuilder
@@ -3732,6 +3824,7 @@ def run_pipeline(
                     prompt_builder.update_context("review_history", None)
                     iter_extras["outcome"] = "test_failure"
                     complete_iteration(status, current_stage.value, **iter_extras)
+                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                     update_stage(status, current_stage.value, **stage_extras)
                     save_status(status, actual_status_path)
                     if ctx:
@@ -3800,6 +3893,7 @@ def run_pipeline(
                 else:
                     iter_extras["outcome"] = "success"
                     complete_iteration(status, current_stage.value, **iter_extras)
+                    _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                     update_stage(status, current_stage.value, **stage_extras)
                     save_status(status, actual_status_path)
                     if ctx:
@@ -3826,6 +3920,17 @@ def run_pipeline(
 
             # Handle review results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.REVIEW:
+                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
+                if _is_file_access_telemetry_enabled(settings_path):
+                    try:
+                        file_access = aggregate_iteration_file_access(
+                            status["run_id"], current_stage.value, iter_num, os.getcwd()
+                        )
+                        if file_access:
+                            iter_extras["file_access"] = file_access
+                    except Exception:
+                        pass  # Graceful degradation on aggregation failure
+
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")
                 _emit_guide_conflicts(ctx, "review", result)
@@ -3842,6 +3947,7 @@ def run_pipeline(
                     ))
                 iter_extras["outcome"] = outcome
                 complete_iteration(status, current_stage.value, **iter_extras)
+                _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
                 update_stage(status, current_stage.value, **stage_extras)
                 save_status(status, actual_status_path)
                 if ctx:

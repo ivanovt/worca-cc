@@ -44,12 +44,13 @@ PIPELINE_CONSTANTS = [
     ("STAGE_COMPLETED",   "pipeline.stage.completed"),
     ("STAGE_FAILED",      "pipeline.stage.failed"),
     ("STAGE_INTERRUPTED", "pipeline.stage.interrupted"),
-    # Agent telemetry (5)
-    ("AGENT_SPAWNED",     "pipeline.agent.spawned"),
-    ("AGENT_TOOL_USE",    "pipeline.agent.tool_use"),
-    ("AGENT_TOOL_RESULT", "pipeline.agent.tool_result"),
-    ("AGENT_TEXT",        "pipeline.agent.text"),
-    ("AGENT_COMPLETED",   "pipeline.agent.completed"),
+    # Agent telemetry (6)
+    ("AGENT_SPAWNED",        "pipeline.agent.spawned"),
+    ("AGENT_TOOL_USE",       "pipeline.agent.tool_use"),
+    ("AGENT_TOOL_RESULT",    "pipeline.agent.tool_result"),
+    ("AGENT_TEXT",           "pipeline.agent.text"),
+    ("AGENT_COMPLETED",      "pipeline.agent.completed"),
+    ("ITERATION_ACCESS",     "pipeline.iteration.access"),
     # Bead lifecycle (6)
     ("BEAD_CREATED",      "pipeline.bead.created"),
     ("BEAD_ASSIGNED",     "pipeline.bead.assigned"),
@@ -137,19 +138,19 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 55 pipeline.* outbound constants.
+    """There must be exactly 56 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
     + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED
-    + 2 template lifecycle events = 55.
+    + 2 template lifecycle events + 1 ITERATION_ACCESS = 56.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 55, (
-        f"Expected 55 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 56, (
+        f"Expected 56 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -188,6 +189,7 @@ EXPECTED_BUILDERS = [
     "agent_tool_result_payload",
     "agent_text_payload",
     "agent_completed_payload",
+    "iteration_access_payload",
     # pipeline.bead.*
     "bead_created_payload",
     "bead_assigned_payload",
@@ -479,6 +481,32 @@ def test_agent_completed_payload_required_fields():
     assert p["cost_usd"] == 0.25
     assert p["duration_ms"] == 45000
     assert p["exit_code"] == 0
+
+
+def test_iteration_access_payload_required_fields():
+    from worca.events.types import iteration_access_payload
+    file_access = {
+        "reads": {"src/main.py": 3},
+        "writes": {"src/main.py": 1},
+        "searches": [],
+        "totals": {"distinct_read": 1, "total_read": 3},
+        "capture": {"hook_writes": 1, "git_writes": 1, "leakage_pct": 0.0},
+    }
+    p = iteration_access_payload(
+        run_id="run123",
+        stage="IMPLEMENT",
+        agent="implementer",
+        iteration=1,
+        bead_id="bead-001",
+        file_access=file_access,
+    )
+    assert p["run_id"] == "run123"
+    assert p["stage"] == "IMPLEMENT"
+    assert p["agent"] == "implementer"
+    assert p["iteration"] == 1
+    assert p["bead_id"] == "bead-001"
+    assert p["file_access"] == file_access
+    assert isinstance(p, dict)
 
 
 def test_bead_created_payload_required_fields():
@@ -942,6 +970,10 @@ def test_all_builders_return_dicts():
         "agent_completed_payload": dict(
             stage="PLAN", iteration=1, turns=1,
             cost_usd=0.0, duration_ms=1, exit_code=0,
+        ),
+        "iteration_access_payload": dict(
+            run_id="r", stage="PLAN", agent="planner", iteration=1,
+            bead_id="b", file_access={"reads": {}, "writes": {}, "searches": [], "totals": {}, "capture": {}},
         ),
         "bead_created_payload": dict(bead_id="b", title="t"),
         "bead_assigned_payload": dict(bead_id="b", title="t", iteration=1),

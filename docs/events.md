@@ -79,6 +79,12 @@ High-volume — subscribers should filter these unless you need deep observabili
 | `pipeline.agent.text` | `AGENT_TEXT` |
 | `pipeline.agent.completed` | `AGENT_COMPLETED` |
 
+### `pipeline.iteration.*` — iteration-level analytics
+
+| Type | Constant |
+|---|---|
+| `pipeline.iteration.access` | `ITERATION_ACCESS` |
+
 ### `pipeline.bead.*` — beads tracker integration
 
 | Type | Constant |

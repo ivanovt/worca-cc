@@ -29,14 +29,15 @@ STAGE_FAILED      = "pipeline.stage.failed"
 STAGE_INTERRUPTED = "pipeline.stage.interrupted"
 
 # ---------------------------------------------------------------------------
-# Agent telemetry (5 events)
+# Agent telemetry (6 events)
 # ---------------------------------------------------------------------------
 
-AGENT_SPAWNED     = "pipeline.agent.spawned"
-AGENT_TOOL_USE    = "pipeline.agent.tool_use"
-AGENT_TOOL_RESULT = "pipeline.agent.tool_result"
-AGENT_TEXT        = "pipeline.agent.text"
-AGENT_COMPLETED   = "pipeline.agent.completed"
+AGENT_SPAWNED        = "pipeline.agent.spawned"
+AGENT_TOOL_USE       = "pipeline.agent.tool_use"
+AGENT_TOOL_RESULT    = "pipeline.agent.tool_result"
+AGENT_TEXT           = "pipeline.agent.text"
+AGENT_COMPLETED      = "pipeline.agent.completed"
+ITERATION_ACCESS     = "pipeline.iteration.access"
 
 # ---------------------------------------------------------------------------
 # Bead lifecycle (6 events)
@@ -464,6 +465,24 @@ def agent_completed_payload(
     if context_final_pct is not None:
         p["context_final_pct"] = context_final_pct
     return p
+
+
+def iteration_access_payload(
+    run_id: str,
+    stage: str,
+    agent: str,
+    iteration: int,
+    bead_id: str,
+    file_access: dict,
+) -> dict:
+    return {
+        "run_id": run_id,
+        "stage": stage,
+        "agent": agent,
+        "iteration": iteration,
+        "bead_id": bead_id,
+        "file_access": file_access,
+    }
 
 
 # ---------------------------------------------------------------------------
