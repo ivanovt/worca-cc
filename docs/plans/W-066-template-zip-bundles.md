@@ -1,4 +1,4 @@
-# W-064: Template zip bundles — ship overlays end-to-end
+# W-066: Template zip bundles — ship overlays end-to-end
 
 **Status:** Draft
 **Priority:** P2
@@ -464,7 +464,7 @@ These are doc-only deltas; tests are not required.
 
 ### Phase 9: Docs + skill
 
-**Files:** `src/worca/skills/worca-template/SKILL.md`, `docs/configuration/pipeline-templates.md`, `docs-site/src/content/docs/configuration/pipeline-templates.md`, `CLAUDE.md` (add a one-line pointer to W-064 if `## Plans & Roadmap` warrants it)
+**Files:** `src/worca/skills/worca-template/SKILL.md`, `docs/configuration/pipeline-templates.md`, `docs-site/src/content/docs/configuration/pipeline-templates.md`, `CLAUDE.md` (add a one-line pointer to W-066 if `## Plans & Roadmap` warrants it)
 
 **Tasks:**
 1. Document the dual-format behavior with examples.
@@ -538,8 +538,8 @@ Windows degradations: the Python CLI runs cleanly under WSL2 and native Python (
 - **Overlay file with no marker (`<!-- append -->` / `<!-- replace -->`):** today the overlay system treats no-marker as "replace entirely" — this is preserved; we don't enforce marker presence at import time (overlay validity is the runtime's concern, not bundle's).
 - **Duplicate overlay filenames within a zip:** impossible — `zipfile` uses the last entry's bytes when extracting by name, but our explicit `infolist()` iteration would catch duplicates and reject. Implementation note in Phase 1.
 - **Importing a template ID that collides with an existing one in the destination tier:** existing `TemplateResolver.save` behavior applies (409 / re-prompt). Overlay materialization happens only after `save` succeeds.
-- **Duplicate of a built-in with overlays — pre-W-064 behavior was already correct, only the visibility was missing.** `TemplateResolver.duplicate` (`templates.py:687-693`) deep-copies `agents/`. So users who duplicated `bugfix` last year are already running the overlay-augmented planner; W-064's Overlays tab simply makes that visible. No data migration needed.
-- **`partial_rename` failure with overlays.** Same failure shape as today (HTTP 500 + `code: "partial_rename"`), but the on-disk leak now includes the overlay files under the source path. The recovery action is unchanged — manually delete one side. Worth noting in the user-facing error message; the W-064 rename CLI surfaces the full file list in the structured payload so the UI can render it inline rather than make the user guess.
+- **Duplicate of a built-in with overlays — pre-W-066 behavior was already correct, only the visibility was missing.** `TemplateResolver.duplicate` (`templates.py:687-693`) deep-copies `agents/`. So users who duplicated `bugfix` last year are already running the overlay-augmented planner; W-066's Overlays tab simply makes that visible. No data migration needed.
+- **`partial_rename` failure with overlays.** Same failure shape as today (HTTP 500 + `code: "partial_rename"`), but the on-disk leak now includes the overlay files under the source path. The recovery action is unchanged — manually delete one side. Worth noting in the user-facing error message; the W-066 rename CLI surfaces the full file list in the structured payload so the UI can render it inline rather than make the user guess.
 - **Rename when the renamed template is NOT the default.** `_maybe_rewrite_default_pointer` no-ops. Verified by unit test in Phase 8.
 - **Rename where the user-tier `settings.json` doesn't exist.** Pointer rewrite tolerates missing file — common for fresh worca installs that haven't pinned a user-global default. The function returns without error.
 - **Cross-tier rename when the same template id is the default in BOTH project and user settings.** Both files are checked and rewritten. This is an unusual configuration but legal.
@@ -621,5 +621,5 @@ See "Files Changed Summary" table above.
 
 ### Explicitly IN scope (and why)
 
-- **Default-template pointer rewrite on rename** (§11 + Phase 8). Pre-existing bug, but rename is the same edit-flow surface the rest of this plan touches and the fix is a few lines. Folding it in closes a related papercut users will hit while exercising the new overlay flow. Alternative — file separately as a `bug` issue — was rejected because the test setup and CLI surface are identical to W-064's other changes; splitting it would duplicate work without adding clarity.
+- **Default-template pointer rewrite on rename** (§11 + Phase 8). Pre-existing bug, but rename is the same edit-flow surface the rest of this plan touches and the fix is a few lines. Folding it in closes a related papercut users will hit while exercising the new overlay flow. Alternative — file separately as a `bug` issue — was rejected because the test setup and CLI surface are identical to W-066's other changes; splitting it would duplicate work without adding clarity.
 - **Single-call `worca templates rename` subcommand** (Phase 8). Even without the pointer rewrite, collapsing the server's two-leg composition into one Python invocation tightens the `partial_rename` reporting surface; pairs naturally with the new rename behavior.
