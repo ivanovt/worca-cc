@@ -1120,6 +1120,30 @@ def _is_file_access_telemetry_enabled(settings_path: str) -> bool:
         return True
 
 
+def _aggregate_file_access_into_extras(iter_extras: dict, settings_path: str, status: dict,
+                                       stage: str, iter_num: int,
+                                       bead_id: Optional[str] = None) -> None:
+    """Aggregate the iteration's file-access JSONL into ``iter_extras["file_access"]``.
+
+    Reads the JSONL fragment the PostToolUse hook wrote for this
+    (stage, iteration, bead) and stores the aggregated dict. ``bead_id`` MUST
+    match what was stamped into the agent subprocess env (WORCA_BEAD_ID) — for
+    IMPLEMENT that is the assigned bead, so the reader filename mirrors the
+    writer filename. Telemetry never breaks the pipeline: disabled-by-setting
+    and any aggregation error are swallowed silently.
+    """
+    if not _is_file_access_telemetry_enabled(settings_path):
+        return
+    try:
+        file_access = aggregate_iteration_file_access(
+            status["run_id"], stage, iter_num, os.getcwd(), bead_id=bead_id
+        )
+        if file_access:
+            iter_extras["file_access"] = file_access
+    except Exception:
+        pass  # Graceful degradation on aggregation failure
+
+
 def _emit_iteration_access_event(ctx: Optional[EventContext], status: dict, stage: str,
                                  run_id: str) -> None:
     """Emit pipeline.iteration.access event after aggregation.
@@ -3257,16 +3281,10 @@ def run_pipeline(
 
             # Milestone gate after PLAN
             elif current_stage == Stage.PLAN:
-                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
-                if _is_file_access_telemetry_enabled(settings_path):
-                    try:
-                        file_access = aggregate_iteration_file_access(
-                            status["run_id"], current_stage.value, iter_num, os.getcwd()
-                        )
-                        if file_access:
-                            iter_extras["file_access"] = file_access
-                    except Exception:
-                        pass  # Graceful degradation on aggregation failure
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
 
                 # Plan approval is a webhook-controlled gate, not a planner
                 # self-assessment. Default to approved; the webhook (when
@@ -3575,16 +3593,10 @@ def run_pipeline(
 
             # Handle coordinate results
             elif current_stage == Stage.COORDINATE:
-                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
-                if _is_file_access_telemetry_enabled(settings_path):
-                    try:
-                        file_access = aggregate_iteration_file_access(
-                            status["run_id"], current_stage.value, iter_num, os.getcwd()
-                        )
-                        if file_access:
-                            iter_extras["file_access"] = file_access
-                    except Exception:
-                        pass  # Graceful degradation on aggregation failure
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
 
                 iter_extras["outcome"] = "success"
                 complete_iteration(status, current_stage.value, **iter_extras)
@@ -3654,16 +3666,10 @@ def run_pipeline(
             # Handle implement results — batch-then-test flow
             elif current_stage == Stage.IMPLEMENT:
                 iter_extras["outcome"] = "success"
-                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
-                if _is_file_access_telemetry_enabled(settings_path):
-                    try:
-                        file_access = aggregate_iteration_file_access(
-                            status["run_id"], current_stage.value, iter_num, os.getcwd()
-                        )
-                        if file_access:
-                            iter_extras["file_access"] = file_access
-                    except Exception:
-                        pass  # Graceful degradation on aggregation failure
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
                 complete_iteration(status, current_stage.value, **iter_extras)
                 _emit_iteration_access_event(ctx, status, current_stage.value, status["run_id"])
 
@@ -3796,16 +3802,10 @@ def run_pipeline(
 
             # Handle test results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.TEST:
-                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
-                if _is_file_access_telemetry_enabled(settings_path):
-                    try:
-                        file_access = aggregate_iteration_file_access(
-                            status["run_id"], current_stage.value, iter_num, os.getcwd()
-                        )
-                        if file_access:
-                            iter_extras["file_access"] = file_access
-                    except Exception:
-                        pass  # Graceful degradation on aggregation failure
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
 
                 passed = result.get("passed", False)
                 _emit_guide_conflicts(ctx, "test", result)
@@ -3920,16 +3920,10 @@ def run_pipeline(
 
             # Handle review results — simplified (flat counter, no per-bead logic)
             elif current_stage == Stage.REVIEW:
-                # Aggregate file access telemetry (wrap in try/except to not break on git failure)
-                if _is_file_access_telemetry_enabled(settings_path):
-                    try:
-                        file_access = aggregate_iteration_file_access(
-                            status["run_id"], current_stage.value, iter_num, os.getcwd()
-                        )
-                        if file_access:
-                            iter_extras["file_access"] = file_access
-                    except Exception:
-                        pass  # Graceful degradation on aggregation failure
+                _aggregate_file_access_into_extras(
+                    iter_extras, settings_path, status, current_stage.value, iter_num,
+                    bead_id=_assigned_bead,
+                )
 
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")

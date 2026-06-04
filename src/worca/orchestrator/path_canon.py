@@ -99,6 +99,7 @@ class GitPathOracle:
                 cwd=self.repo_root,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=5,
             )
             if result.returncode != 0:
@@ -127,6 +128,7 @@ class GitPathOracle:
                 cwd=self.repo_root,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
                 timeout=5,
             )
             if result.returncode != 0:
