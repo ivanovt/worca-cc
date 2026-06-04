@@ -25,6 +25,7 @@ Fallback strategies (plan §5) are attached to each failing gate result.
 import json
 import os
 import re
+import select
 import shutil
 import subprocess
 import time
@@ -97,11 +98,30 @@ def _mcp_request(method: str, params: Optional[dict] = None, req_id: Optional[in
     return f"Content-Length: {len(body)}\r\n\r\n{body}".encode()
 
 
+def _wait_readable(stream, max_wait: float) -> bool:
+    """Block up to ``max_wait`` seconds for ``stream`` to be readable.
+
+    Why: ``read(1)`` on a subprocess pipe blocks indefinitely when the child
+    is silent — the surrounding deadline loop only checks between reads. On
+    POSIX, ``select`` enforces the wait. On Windows (no select-on-pipes),
+    fall back to letting the blocking read proceed.
+    """
+    if max_wait <= 0:
+        return False
+    try:
+        ready, _, _ = select.select([stream], [], [], max_wait)
+    except (OSError, ValueError):
+        return True
+    return bool(ready)
+
+
 def _read_mcp_response(proc, timeout: float = 10.0) -> Optional[dict]:
     """Read one JSON-RPC response from an MCP stdio server."""
     deadline = time.monotonic() + timeout
     header = b""
     while time.monotonic() < deadline:
+        if not _wait_readable(proc.stdout, deadline - time.monotonic()):
+            return None
         ch = proc.stdout.read(1)
         if not ch:
             return None
@@ -121,10 +141,15 @@ def _read_mcp_response(proc, timeout: float = 10.0) -> Optional[dict]:
 
     body = b""
     while len(body) < content_length and time.monotonic() < deadline:
+        if not _wait_readable(proc.stdout, deadline - time.monotonic()):
+            return None
         chunk = proc.stdout.read(content_length - len(body))
         if not chunk:
             return None
         body += chunk
+
+    if len(body) < content_length:
+        return None
 
     return json.loads(body.decode())
 
