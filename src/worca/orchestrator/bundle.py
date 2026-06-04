@@ -339,6 +339,11 @@ def _parse_zip_bundle(raw_bytes: bytes, staging: Path) -> dict:
         total_uncompressed = 0
 
         for info in members:
+            # On Windows, ZipFile._RealGetContents normalizes os.sep -> "/"
+            # in info.filename, which would silently neuter the backslash
+            # defense. orig_filename preserves the raw central-directory
+            # value on every platform, so safety checks must use it.
+            raw_name = info.orig_filename
             name = info.filename
 
             if name.endswith("/"):
@@ -359,8 +364,10 @@ def _parse_zip_bundle(raw_bytes: bytes, staging: Path) -> dict:
                     details={"member": name, "rule": "symlink"},
                 )
 
-            # Path safety: absolute, drive letter, backslash, traversal
-            _safe_member_path(staging, name)
+            # Path safety: absolute, drive letter, backslash, traversal.
+            # Check raw_name so backslashes from Windows-authored zips
+            # are caught even when reading on Windows.
+            _safe_member_path(staging, raw_name)
 
             if info.file_size > _MAX_ZIP_FILE_SIZE:
                 raise BundleLayoutError(
