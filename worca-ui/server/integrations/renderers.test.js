@@ -27,8 +27,8 @@ function bodyText(msg) {
 }
 
 describe('TIER1_EVENTS', () => {
-  it('exports exactly 27 event type strings (14 pipeline + 3 fleet + 10 workspace defaults — workspace.launched is opt-in)', () => {
-    expect(TIER1_EVENTS).toHaveLength(27);
+  it('exports exactly 28 event type strings (15 pipeline + 3 fleet + 10 workspace defaults — workspace.launched is opt-in)', () => {
+    expect(TIER1_EVENTS).toHaveLength(28);
     expect(TIER1_EVENTS).toContain('pipeline.run.started');
     expect(TIER1_EVENTS).toContain('pipeline.run.completed');
     expect(TIER1_EVENTS).toContain('pipeline.run.failed');
@@ -40,6 +40,7 @@ describe('TIER1_EVENTS', () => {
     expect(TIER1_EVENTS).toContain('pipeline.stage.completed');
     expect(TIER1_EVENTS).toContain('pipeline.stage.interrupted');
     expect(TIER1_EVENTS).toContain('pipeline.git.pr_created');
+    expect(TIER1_EVENTS).toContain('pipeline.git.pr_deferred');
     expect(TIER1_EVENTS).toContain('pipeline.git.pr_merged');
     expect(TIER1_EVENTS).toContain('pipeline.circuit_breaker.tripped');
     expect(TIER1_EVENTS).toContain('pipeline.cost.budget_warning');
@@ -262,6 +263,55 @@ describe('renderEvent', () => {
       const msg = renderEvent(envelope('pipeline.git.pr_merged', payload));
       expect(bodyText(msg)).toContain('https://github.com/org/repo/pull/193');
       expect(bodyText(msg)).toContain('[#193]');
+    });
+  });
+
+  describe('pipeline.git.pr_deferred', () => {
+    const payload = {
+      pr_title: 'Add user auth',
+      base_branch: 'main',
+      head_branch: 'worca/w-065-add-auth',
+      commit_sha: 'abc1234',
+    };
+
+    it('produces a valid NormalizedMessage', () => {
+      const msg = renderEvent(envelope('pipeline.git.pr_deferred', payload));
+      expect(isValidMessage(msg)).toBe(true);
+    });
+
+    it('severity is warning (attention required)', () => {
+      const msg = renderEvent(envelope('pipeline.git.pr_deferred', payload));
+      expect(msg.severity).toBe('warning');
+    });
+
+    it('body includes run_id', () => {
+      const msg = renderEvent(envelope('pipeline.git.pr_deferred', payload));
+      expect(bodyText(msg)).toContain('run-abc123');
+    });
+
+    it('body includes head_branch', () => {
+      const msg = renderEvent(envelope('pipeline.git.pr_deferred', payload));
+      expect(bodyText(msg)).toContain('worca/w-065-add-auth');
+    });
+
+    it('body includes Create PR instruction', () => {
+      const msg = renderEvent(envelope('pipeline.git.pr_deferred', payload));
+      expect(bodyText(msg)).toContain('Create PR');
+    });
+
+    it('body includes pr_title when present', () => {
+      const msg = renderEvent(envelope('pipeline.git.pr_deferred', payload));
+      expect(bodyText(msg)).toContain('Add user auth');
+    });
+
+    it('works without optional commit_sha', () => {
+      const p = {
+        pr_title: 'Fix bug',
+        base_branch: 'main',
+        head_branch: 'fix/bug',
+      };
+      const msg = renderEvent(envelope('pipeline.git.pr_deferred', p));
+      expect(isValidMessage(msg)).toBe(true);
     });
   });
 

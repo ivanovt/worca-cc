@@ -318,6 +318,61 @@ def test_guardian_fleet_id_short_extraction():
 
 
 # ---------------------------------------------------------------------------
+# guardian.md — Step 2/3 restructure (W-065)
+# ---------------------------------------------------------------------------
+
+
+def test_guardian_has_shared_step2_compose_section():
+    """W-065 §3: guardian.md must have a shared Step 2 that composes PR title/body
+    before the defer_pr conditional, so both branches derive the same metadata."""
+    content = _read("guardian.md")
+    assert "Step 2" in content
+    assert "Compose" in content
+
+
+def test_guardian_deferred_branch_includes_pr_title_return_field():
+    """W-065 §3: the defer_pr branch's Step 3 must instruct the agent to return
+    pr_title in its structured output."""
+    rendered = _render_guardian({"WORCA_DEFER_PR": "1"})
+    assert "pr_title" in rendered
+
+
+def test_guardian_deferred_branch_includes_pr_body_return_field():
+    """W-065 §3: the defer_pr branch's Step 3 must instruct the agent to return
+    pr_body in its structured output."""
+    rendered = _render_guardian({"WORCA_DEFER_PR": "1"})
+    assert "pr_body" in rendered
+
+
+def test_guardian_deferred_branch_includes_base_branch_return_field():
+    """W-065 §3: the defer_pr branch's Step 3 must instruct the agent to return
+    base_branch in its structured output."""
+    rendered = _render_guardian({"WORCA_DEFER_PR": "1"})
+    assert "base_branch" in rendered
+
+
+def test_guardian_deferred_branch_does_not_call_gh_pr_create():
+    """W-065 §3: the defer_pr branch must not contain a gh pr create run command.
+    The prohibition phrase ('Do not call gh pr create') is expected; a bare run
+    instruction with flags (gh pr create --base ...) must not appear."""
+    rendered = _render_guardian({"WORCA_DEFER_PR": "1"})
+    assert "gh pr create --base" not in rendered
+
+
+def test_guardian_non_deferred_branch_calls_gh_pr_create():
+    """W-065 §3: the non-deferred branch must still run gh pr create."""
+    rendered = _render_guardian({})
+    assert "gh pr create" in rendered
+
+
+def test_guardian_non_deferred_branch_step3_opens_pr():
+    """W-065 §3: the non-deferred Step 3 is the PR-open step (not stash)."""
+    rendered = _render_guardian({})
+    assert "Step 3" in rendered
+    assert "Open" in rendered or "open" in rendered
+
+
+# ---------------------------------------------------------------------------
 # reviewer.md
 # ---------------------------------------------------------------------------
 

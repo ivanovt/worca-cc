@@ -191,6 +191,50 @@ export function createApp(options = {}) {
   // /api/projects/:id/runs could both pass the cap check and start.
   const launchLock = new LaunchLock();
 
+  // In-process mutex for deferred PR creation — keyed by `${project}/${runId}`.
+  // Handles double-click races: a second POST while the first is in-flight gets 409.
+  const inFlightPrCreation = new Map();
+
+  // Spawner for `worca pr create` — overridable via options._spawnPrCreate for tests.
+  const prSpawn =
+    options._spawnPrCreate ||
+    ((runId, projectPath) =>
+      new Promise((resolve, reject) => {
+        const child = spawn(
+          'python3',
+          [
+            '-m',
+            'worca.cli.main',
+            'pr',
+            'create',
+            '--project',
+            projectPath,
+            '--',
+            runId,
+          ],
+          { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env } },
+        );
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', (chunk) => {
+          stdout += chunk.toString();
+        });
+        child.stderr.on('data', (chunk) => {
+          stderr += chunk.toString();
+        });
+        child.on('error', reject);
+        child.on('exit', (code) => {
+          if (code === 0) resolve({ stdout, stderr });
+          else
+            reject(
+              Object.assign(
+                new Error(`worca pr create failed: ${stderr.trim()}`),
+                { stderr },
+              ),
+            );
+        });
+      }));
+
   // ─── Legacy single-project API ─────────────────────────────────────────
   // Mounts the shared project-scoped routes at /api with a middleware that
   // injects req.project from the closure options, so /api/runs, /api/settings,
@@ -816,6 +860,48 @@ export function createApp(options = {}) {
     app.use('/api/workspaces', workspaceRouters.workspaces);
     app.use('/api/workspace-runs', workspaceRouters.workspaceRuns);
   }
+
+  // POST /api/projects/:project/runs/:runId/pr — trigger deferred PR creation.
+  // The in-process mutex (inFlightPrCreation) prevents double-click races: a
+  // second request while the first is still in-flight returns 409 immediately.
+  // The CLI's own status.json lock covers concurrent-process races.
+  app.post('/api/projects/:project/runs/:runId/pr', async (req, res) => {
+    const { project, runId } = req.params;
+
+    if (!/^[A-Za-z0-9_.-]+$/.test(runId) || runId.startsWith('-')) {
+      return res.status(400).json({ error: 'invalid_run_id' });
+    }
+
+    const key = `${project}/${runId}`;
+
+    if (inFlightPrCreation.has(key)) {
+      return res.status(409).json({ error: 'pr_creation_in_progress' });
+    }
+
+    // Resolve the project path: use req.project if set by projectResolver
+    // (global mode), otherwise fall back to projectRoot or cwd.
+    const projectPath = req.project?.path ?? projectRoot ?? process.cwd();
+
+    const work = (async () => {
+      const { stdout } = await prSpawn(runId, projectPath);
+      const prUrlMatch = stdout.match(
+        /https:\/\/github\.com\/[^\s]+\/pull\/\d+/,
+      );
+      if (prUrlMatch) return { pr_url: prUrlMatch[0] };
+      return {};
+    })();
+
+    inFlightPrCreation.set(key, work);
+
+    try {
+      const result = await work;
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    } finally {
+      inFlightPrCreation.delete(key);
+    }
+  });
 
   // POST /api/integrations/telegram/detect — find chat IDs from recent messages.
   // If the Telegram adapter is running, temporarily pauses its poll loop so

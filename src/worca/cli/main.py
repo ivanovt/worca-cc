@@ -250,6 +250,10 @@ def create_parser() -> argparse.ArgumentParser:
     from worca.cli.crg_cmd import register_subcommand as register_crg
     register_crg(sub)
 
+    # pr (PR lifecycle)
+    from worca.cli.pr import register_subcommand as register_pr
+    register_pr(sub)
+
     return parser
 
 
@@ -306,6 +310,9 @@ def main(argv=None):
     elif args.command == "crg":
         from worca.cli.crg_cmd import cmd_crg
         cmd_crg(args)
+    elif args.command == "pr":
+        from worca.cli.pr import cmd_pr
+        cmd_pr(args)
     else:
         print(f"error: unknown command {args.command!r}", file=sys.stderr)
         raise SystemExit(1)

@@ -2,6 +2,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   prApprovalPanelView,
+  prDeferredSectionView,
   runBeadsSectionView,
   runDetailView,
 } from './run-detail.js';
@@ -595,5 +596,131 @@ describe('runDetailView — agent prompt markdown rendering', () => {
     const out = render(runDetailView(run, {}, options));
     expect(out).toContain('markdown-body');
     expect(out).not.toContain('<pre class="agent-prompt-content">');
+  });
+});
+
+// ─── prDeferredSectionView ────────────────────────────────────────────────────
+
+describe('prDeferredSectionView - idle state', () => {
+  function render(template) {
+    return renderToString(template);
+  }
+
+  const deferredRun = {
+    id: 'run-deferred-1',
+    pr_deferred: true,
+  };
+
+  it('shows warning-variant deferred badge when pr_deferred and no pr_url', () => {
+    const out = render(prDeferredSectionView(deferredRun));
+    expect(out).toContain('pr-deferred-badge');
+    expect(out).toContain('warning');
+    expect(out).toContain('deferred');
+  });
+
+  it('shows Create PR button with action-btn primary classes', () => {
+    const out = render(prDeferredSectionView(deferredRun));
+    expect(out).toContain('action-btn');
+    expect(out).toContain('action-btn--primary');
+    expect(out).toContain('Create PR');
+  });
+
+  it('returns empty when pr_url is set on run.pr.url', () => {
+    const run = {
+      ...deferredRun,
+      pr: { url: 'https://github.com/org/repo/pull/1' },
+    };
+    const out = render(prDeferredSectionView(run));
+    expect(out).not.toContain('pr-deferred-badge');
+    expect(out).not.toContain('Create PR');
+  });
+
+  it('returns empty when pr_url is set on run.pr_url', () => {
+    const run = {
+      ...deferredRun,
+      pr_url: 'https://github.com/org/repo/pull/2',
+    };
+    const out = render(prDeferredSectionView(run));
+    expect(out).not.toContain('pr-deferred-badge');
+  });
+
+  it('returns empty when pr_deferred is false', () => {
+    const run = { id: 'run-not-deferred', pr_deferred: false };
+    const out = render(prDeferredSectionView(run));
+    expect(out).not.toContain('pr-deferred-badge');
+    expect(out).not.toContain('Create PR');
+  });
+
+  it('returns empty when pr_deferred is absent', () => {
+    const run = { id: 'run-no-deferred' };
+    const out = render(prDeferredSectionView(run));
+    expect(out).not.toContain('pr-deferred-badge');
+  });
+});
+
+describe('prDeferredSectionView - in_progress state', () => {
+  function render(template) {
+    return renderToString(template);
+  }
+
+  it('shows disabled Creating PR button when pr_creation.state is in_progress', () => {
+    const run = {
+      id: 'run-inprogress-1',
+      pr_deferred: true,
+      pr_creation: { state: 'in_progress', started_at: '2026-06-04T10:00:00Z' },
+    };
+    const out = render(prDeferredSectionView(run));
+    expect(out).toContain('Creating PR');
+    expect(out).toContain('disabled');
+  });
+
+  it('still shows deferred badge in in_progress state', () => {
+    const run = {
+      id: 'run-inprogress-2',
+      pr_deferred: true,
+      pr_creation: { state: 'in_progress', started_at: '2026-06-04T10:00:00Z' },
+    };
+    const out = render(prDeferredSectionView(run));
+    expect(out).toContain('pr-deferred-badge');
+    expect(out).toContain('warning');
+  });
+});
+
+describe('prDeferredSectionView - failed state', () => {
+  function render(template) {
+    return renderToString(template);
+  }
+
+  it('shows Retry button when pr_creation.state is failed', () => {
+    const run = {
+      id: 'run-failed-1',
+      pr_deferred: true,
+      pr_creation: { state: 'failed', error: 'gh: command not found' },
+    };
+    const out = render(prDeferredSectionView(run));
+    expect(out).toContain('Retry');
+    expect(out).toContain('action-btn--primary');
+  });
+
+  it('shows error message when pr_creation.state is failed', () => {
+    const run = {
+      id: 'run-failed-2',
+      pr_deferred: true,
+      pr_creation: { state: 'failed', error: 'gh: command not found' },
+    };
+    const out = render(prDeferredSectionView(run));
+    expect(out).toContain('gh: command not found');
+    expect(out).toContain('pr-deferred-error');
+  });
+
+  it('still shows deferred badge in failed state', () => {
+    const run = {
+      id: 'run-failed-3',
+      pr_deferred: true,
+      pr_creation: { state: 'failed', error: 'some error' },
+    };
+    const out = render(prDeferredSectionView(run));
+    expect(out).toContain('pr-deferred-badge');
+    expect(out).toContain('warning');
   });
 });

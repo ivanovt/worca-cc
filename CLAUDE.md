@@ -31,6 +31,8 @@ python .claude/scripts/run_worktree.py --prompt "Add user auth" [--branch main] 
 
 Plan Review and Learn are disabled by default; enable via `worca.stages.plan_review.enabled` / `worca.stages.learn.enabled` in settings.json.
 
+PR creation can be deferred to an operator (e.g. promoted from the UI) via `worca.stages.pr.defer: true` in settings.json (default `false`). This is a template-driven key — templates own it when in play. The workspace DAG executor also sets `WORCA_DEFER_PR=1` in child runs; the two producers compose monotonically (either can defer, neither can un-defer). When deferred, the guardian stage emits `pipeline.git.pr_deferred` instead of creating a PR.
+
 All governance enforced via Python hooks in `src/worca/claude_hooks/`.
 
 The rationale behind major architectural choices — UI stack, state model, governance, modularity, webhooks — is consolidated in [`docs/design-principles.md`](./docs/design-principles.md). Read it before proposing structural changes.

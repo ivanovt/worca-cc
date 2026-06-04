@@ -57,6 +57,7 @@ BEAD_NEXT      = "pipeline.bead.next"
 GIT_BRANCH_CREATED = "pipeline.git.branch_created"
 GIT_COMMIT         = "pipeline.git.commit"
 GIT_PR_CREATED     = "pipeline.git.pr_created"
+GIT_PR_DEFERRED    = "pipeline.git.pr_deferred"
 GIT_PR_MERGED      = "pipeline.git.pr_merged"
 
 # ---------------------------------------------------------------------------
@@ -571,6 +572,20 @@ def git_pr_created_payload(
         "source_branch": source_branch,
         "target_branch": target_branch,
         "provider": provider,
+    }
+
+
+def git_pr_deferred_payload(
+    pr_title: str,
+    base_branch: str,
+    head_branch: str,
+    commit_sha: str = None,
+) -> dict:
+    return {
+        "pr_title": pr_title,
+        "base_branch": base_branch,
+        "head_branch": head_branch,
+        "commit_sha": commit_sha,
     }
 
 
