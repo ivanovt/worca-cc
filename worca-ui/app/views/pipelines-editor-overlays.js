@@ -106,7 +106,6 @@ function _fileContent(file) {
  * Each present file becomes a tab; missing files are disabled tabs.
  */
 function _stageTabs(stage, overlays) {
-  const { agentFiles, blockFiles } = stageOverlayFiles(stage, overlays);
   const allAgentFiles = stage.agentFiles.map((name) => ({
     name,
     content: overlays[name] ?? null,

@@ -748,10 +748,14 @@ export function createTemplatesRoutes() {
     try {
       runWorcaTemplates(projectRoot, [
         'rename',
-        '--src-id', srcId,
-        '--src-scope', srcTier,
-        '--dst-id', dstId,
-        '--dst-scope', dstTier,
+        '--src-id',
+        srcId,
+        '--src-scope',
+        srcTier,
+        '--dst-id',
+        dstId,
+        '--dst-scope',
+        dstTier,
       ]);
     } catch (err) {
       if (err.cliCode === 'partial_rename') {

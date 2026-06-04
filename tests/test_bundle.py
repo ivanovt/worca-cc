@@ -785,7 +785,11 @@ class TestFetchBundleZip:
             fetch_bundle(str(zp))
 
     def test_rejects_backslash(self, tmp_path):
-        info = zipfile.ZipInfo("agents\\planner.md")
+        # ZipInfo.__init__ rewrites os.sep to "/", which neuters this test on
+        # Windows where os.sep == "\\". Assign filename after construction so
+        # the literal backslash survives into the central directory.
+        info = zipfile.ZipInfo("placeholder.md")
+        info.filename = "agents\\planner.md"
         raw = _make_zip_bytes([(info, b"content")])
         zp = tmp_path / "bad.zip"
         zp.write_bytes(raw)

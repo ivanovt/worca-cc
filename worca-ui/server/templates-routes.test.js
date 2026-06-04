@@ -649,7 +649,9 @@ describe('templates-routes — (tier, id) contract', () => {
       seedProject('half');
       // Single rename call fails with partial_rename in stderr
       mockExecSync.mockImplementation(() => {
-        throw cliError("error: partial_rename: Renamed to 'whole' but failed to remove 'half'");
+        throw cliError(
+          "error: partial_rename: Renamed to 'whole' but failed to remove 'half'",
+        );
       });
       const { status, body } = await request(
         app,
