@@ -14,6 +14,7 @@ import shutil
 
 import pytest
 
+import worca.scripts.crg_validation_spike as crg_spike
 from worca.scripts.crg_validation_spike import (
     MUTATING_TOOLS,
     READ_TOOLS,
@@ -29,6 +30,17 @@ requires_crg = pytest.mark.skipif(
     shutil.which("code-review-graph") is None,
     reason="code-review-graph not installed",
 )
+
+
+@pytest.fixture
+def crg_not_installed(monkeypatch):
+    """Force the skip path regardless of whether CRG is locally installed.
+
+    Without this, the "skip" tests below silently spawn ``code-review-graph
+    serve`` on dev machines that happen to have CRG installed, then hang on
+    the MCP read until pytest-timeout fires.
+    """
+    monkeypatch.setattr(crg_spike, "_crg_available", lambda: False)
 
 
 # ── is_dml classification ──────────────────────────────────────────
@@ -142,15 +154,15 @@ class TestValidationResult:
 # ── Gate 1: read tools no DML (unit, mocked) ───────────────────────
 
 class TestValidateReadToolsNoDml:
-    def test_returns_skip_when_crg_not_importable(self, tmp_path):
+    def test_returns_skip_when_crg_not_importable(self, tmp_path, crg_not_installed):
         db = tmp_path / "graph.db"
         db.touch()
         result = validate_read_tools_no_dml(str(db), str(tmp_path))
-        if shutil.which("code-review-graph") is None:
-            assert result.passed is True
-            assert "skip" in result.details.lower() or "not installed" in result.details.lower()
+        assert result.passed is True
+        assert "skip" in result.details.lower() or "not installed" in result.details.lower()
 
     @requires_crg
+    @pytest.mark.timeout(15)
     def test_real_read_tools_emit_no_dml(self, tmp_path):
         """When CRG is installed, build a graph and verify read tools emit no DML."""
         import os
@@ -182,13 +194,13 @@ class TestValidateReadToolsNoDml:
 # ── Gate 2: serve honors env vars (unit, mocked) ───────────────────
 
 class TestValidateEnvVarHonor:
-    def test_returns_skip_when_crg_not_installed(self, tmp_path):
+    def test_returns_skip_when_crg_not_installed(self, tmp_path, crg_not_installed):
         result = validate_env_var_honor(str(tmp_path), str(tmp_path))
-        if shutil.which("code-review-graph") is None:
-            assert result.passed is True
-            assert "skip" in result.details.lower() or "not installed" in result.details.lower()
+        assert result.passed is True
+        assert "skip" in result.details.lower() or "not installed" in result.details.lower()
 
     @requires_crg
+    @pytest.mark.timeout(15)
     def test_serve_reads_from_env_var_location(self, tmp_path):
         """When CRG installed, verify serve reads from CRG_DATA_DIR, not project default."""
         import os
@@ -219,13 +231,13 @@ class TestValidateEnvVarHonor:
 # ── Gate 3: startup latency (unit, mocked) ─────────────────────────
 
 class TestMeasureServeStartupLatency:
-    def test_returns_skip_when_crg_not_installed(self, tmp_path):
+    def test_returns_skip_when_crg_not_installed(self, tmp_path, crg_not_installed):
         result = measure_serve_startup_latency(str(tmp_path), str(tmp_path))
-        if shutil.which("code-review-graph") is None:
-            assert result.passed is True
-            assert "skip" in result.details.lower() or "not installed" in result.details.lower()
+        assert result.passed is True
+        assert "skip" in result.details.lower() or "not installed" in result.details.lower()
 
     @requires_crg
+    @pytest.mark.timeout(15)
     def test_measures_latency(self, tmp_path):
         """When CRG installed, startup latency should be under 10s (generous threshold)."""
         import os
@@ -268,8 +280,6 @@ class TestRunAllGates:
         gates = {r.gate for r in results}
         assert gates == {"read_tools_no_dml", "env_var_honor", "startup_latency"}
 
-    def test_when_crg_missing_all_skip_as_passed(self, tmp_path):
-        if shutil.which("code-review-graph") is not None:
-            pytest.skip("CRG is installed — skip-path not exercised")
+    def test_when_crg_missing_all_skip_as_passed(self, tmp_path, crg_not_installed):
         results = run_all_gates(str(tmp_path), str(tmp_path))
         assert all(r.passed for r in results)
