@@ -1,7 +1,9 @@
 """Tests for the bundle redaction engine, validator, and fetch hardening."""
 
 import copy
+import io
 import json
+import zipfile
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,12 +12,48 @@ from worca.orchestrator.bundle import (
     CONFIG_ALLOWLIST,
     ID_RE,
     SECRET_PLACEHOLDER,
+    BundleLayoutError,
     build_export_manifest,
     collect_referenced_model_aliases,
     fetch_bundle,
     redact_bundle,
     validate_bundle,
 )
+
+
+# ---------------------------------------------------------------------------
+# Zip test helpers
+# ---------------------------------------------------------------------------
+
+_TMPL_JSON = {
+    "id": "basic",
+    "name": "Basic",
+    "description": "A basic template",
+    "tags": [],
+    "config": {},
+    "params": {},
+}
+
+
+def _make_zip_bytes(
+    extra_entries: list,
+    template_data: dict | None = _TMPL_JSON,
+) -> bytes:
+    """Build a zip archive in memory.
+
+    *template_data*: written as ``template.json`` when not None.
+    *extra_entries*: list of ``(name_or_ZipInfo, content_bytes_or_str)``.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        if template_data is not None:
+            zf.writestr("template.json", json.dumps(template_data))
+        for item in extra_entries:
+            name_or_info, content = item
+            if isinstance(content, str):
+                content = content.encode()
+            zf.writestr(name_or_info, content)
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -368,13 +406,20 @@ class TestNonSecretPreservation:
 class TestValidateBundle:
 
     def test_rejects_unknown_major_version(self):
-        manifest = _minimal_manifest(worca_bundle_version=2)
+        # v3 is still unsupported; v2 is now accepted (zip bundles).
+        manifest = _minimal_manifest(worca_bundle_version=3)
         errors, _ = validate_bundle(manifest)
         assert len(errors) == 1
         assert errors[0]["field"] == "worca_bundle_version"
 
-    def test_rejects_string_major_two(self):
-        manifest = _minimal_manifest(worca_bundle_version="2.0")
+    def test_accepts_version_two(self):
+        # v2 is the synthesised version for zip-sourced bundles.
+        manifest = _minimal_manifest(worca_bundle_version=2)
+        errors, _ = validate_bundle(manifest)
+        assert not errors
+
+    def test_rejects_string_major_three(self):
+        manifest = _minimal_manifest(worca_bundle_version="3.0")
         errors, _ = validate_bundle(manifest)
         assert any(e["field"] == "worca_bundle_version" for e in errors)
 
@@ -671,3 +716,245 @@ class TestCollectReferencedModelAliases:
             {"id": "ok4", "config": {"agents": {"planner": {"model": 123}}}},  # non-string model
         ]
         assert collect_referenced_model_aliases(templates, {"opus": "x"}) == set()
+
+
+# ---------------------------------------------------------------------------
+# Zip bundle: layout validation and extraction (W-064 Phase 1)
+# ---------------------------------------------------------------------------
+
+class TestFetchBundleZip:
+    """fetch_bundle zip path — validation rules and happy-path extraction."""
+
+    # --- Round-trip (happy path) ---
+
+    def test_round_trip(self, tmp_path):
+        """Build zip in-memory → fetch_bundle → manifest contains _overlays."""
+        raw = _make_zip_bytes([
+            ("agents/planner.md", "# planner\nHello"),
+            ("agents/plan.block.md", "block content"),
+        ])
+        zp = tmp_path / "basic-bundle.zip"
+        zp.write_bytes(raw)
+
+        result = fetch_bundle(str(zp))
+
+        assert result["worca_bundle_version"] == 2
+        assert len(result["templates"]) == 1
+        entry = result["templates"][0]
+        assert entry["id"] == "basic"
+        assert "_overlays" in entry
+        assert entry["_overlays"]["planner.md"] == "# planner\nHello"
+        assert entry["_overlays"]["plan.block.md"] == "block content"
+
+    def test_round_trip_no_overlays(self, tmp_path):
+        """Zip with only template.json → valid manifest, no _overlays key."""
+        raw = _make_zip_bytes([])
+        zp = tmp_path / "basic-bundle.zip"
+        zp.write_bytes(raw)
+
+        result = fetch_bundle(str(zp))
+
+        assert result["worca_bundle_version"] == 2
+        entry = result["templates"][0]
+        assert "_overlays" not in entry
+
+    # --- Rejection: path traversal ---
+
+    def test_rejects_traversal(self, tmp_path):
+        info = zipfile.ZipInfo("../etc/passwd")
+        raw = _make_zip_bytes([(info, b"evil")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="traversal|absolute"):
+            fetch_bundle(str(zp))
+
+    def test_rejects_absolute_path(self, tmp_path):
+        info = zipfile.ZipInfo("/etc/passwd")
+        raw = _make_zip_bytes([(info, b"evil")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="absolute path"):
+            fetch_bundle(str(zp))
+
+    def test_rejects_drive_letter(self, tmp_path):
+        info = zipfile.ZipInfo("C:\\foo\\bar.md")
+        raw = _make_zip_bytes([(info, b"evil")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="absolute path"):
+            fetch_bundle(str(zp))
+
+    def test_rejects_backslash(self, tmp_path):
+        # ZipInfo.__init__ rewrites os.sep to "/", which neuters this test on
+        # Windows where os.sep == "\\". Assign filename after construction so
+        # the literal backslash survives into the central directory.
+        info = zipfile.ZipInfo("placeholder.md")
+        info.filename = "agents\\planner.md"
+        raw = _make_zip_bytes([(info, b"content")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="absolute path"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: symlink ---
+
+    def test_rejects_symlink(self, tmp_path):
+        info = zipfile.ZipInfo("agents/evil.md")
+        info.external_attr = (0o120755 << 16)  # Unix symlink mode
+        raw = _make_zip_bytes([(info, b"../../etc/passwd")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="symlink"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: zip bomb ---
+
+    def test_rejects_bomb_ratio(self, tmp_path):
+        # 50 KB of zeros compresses to ~50 bytes → ratio >> 100
+        content = b"\x00" * 50_000
+        raw = _make_zip_bytes([("agents/planner.md", content)])
+        zp = tmp_path / "bomb.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="compression ratio"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: oversized total ---
+
+    def test_rejects_oversized_total(self, tmp_path):
+        # 17 files × 250 KB = 4.25 MiB > 4 MiB; each file < 256 KiB per-file limit.
+        # Use ZIP_STORED so compress ratio = 1 and the ratio check doesn't fire first.
+        content = bytes(range(256)) * (250_000 // 256)  # 249,856 bytes, low compressibility
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_STORED) as zf:
+            zf.writestr("template.json", json.dumps(_TMPL_JSON))
+            for i in range(17):
+                zf.writestr(f"agents/ovr{i:02d}.md", content)
+        zp = tmp_path / "big.zip"
+        zp.write_bytes(buf.getvalue())
+        with pytest.raises(BundleLayoutError, match="4 MiB"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: oversized single file ---
+
+    def test_rejects_oversized_single(self, tmp_path):
+        content = b"\x41" * (256 * 1024 + 1)  # 256 KiB + 1 byte
+        raw = _make_zip_bytes([("agents/big.md", content)])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="256 KiB"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: too many entries ---
+
+    def test_rejects_too_many_entries(self, tmp_path):
+        # 64 agent files + template.json = 65 total > 64 limit
+        entries = [(f"agents/o{i:03d}.md", b"x") for i in range(64)]
+        raw = _make_zip_bytes(entries)
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="too many entries"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: missing template.json ---
+
+    def test_rejects_missing_template_json(self, tmp_path):
+        raw = _make_zip_bytes([("agents/planner.md", b"x")], template_data=None)
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="missing template.json"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: unexpected entries ---
+
+    def test_rejects_unexpected_entries(self, tmp_path):
+        raw = _make_zip_bytes([("secrets.txt", b"oops")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="unexpected entry"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: invalid overlay name ---
+
+    def test_rejects_invalid_overlay_name(self, tmp_path):
+        raw = _make_zip_bytes([("agents/EVIL!.md", b"x")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError, match="unexpected entry"):
+            fetch_bundle(str(zp))
+
+    # --- Rejection: duplicate members ---
+
+    def test_rejects_duplicate_members(self, tmp_path):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("template.json", json.dumps(_TMPL_JSON))
+            zf.writestr("agents/planner.md", "first")
+            zf.writestr("agents/planner.md", "second")
+        zp = tmp_path / "dup.zip"
+        zp.write_bytes(buf.getvalue())
+        with pytest.raises(BundleLayoutError, match="duplicate"):
+            fetch_bundle(str(zp))
+
+    # --- details attribute ---
+
+    def test_layout_error_carries_details(self, tmp_path):
+        """BundleLayoutError.details has {member, rule} keys."""
+        raw = _make_zip_bytes([("secrets.txt", b"x")])
+        zp = tmp_path / "bad.zip"
+        zp.write_bytes(raw)
+        with pytest.raises(BundleLayoutError) as exc_info:
+            fetch_bundle(str(zp))
+        err = exc_info.value
+        assert "member" in err.details
+        assert "rule" in err.details
+
+
+# ---------------------------------------------------------------------------
+# Overlay redaction — _walk_and_redact reaches into _overlays (W-064 Phase 2)
+# ---------------------------------------------------------------------------
+
+class TestRedactBundleOverlays:
+    """redact_bundle walks into templates[*]._overlays for secret-value scanning."""
+
+    def test_secret_in_overlay_gets_redacted_with_correct_path(self):
+        """Secret value in an overlay string is redacted; path is templates[N]._overlays.<fname>."""
+        manifest = {
+            "worca_bundle_version": 2,
+            "exported_at": "2026-06-04T00:00:00Z",
+            "templates": [{
+                "id": "basic",
+                "name": "Basic",
+                "description": "",
+                "tags": [],
+                "config": {},
+                "params": {},
+                "_overlays": {
+                    "planner.md": "sk-ant-api03-" + "x" * 30,
+                    "coordinator.md": "# Safe coordinator content",
+                },
+            }],
+        }
+        redacted, paths = redact_bundle(manifest)
+        overlay = redacted["templates"][0]["_overlays"]
+        assert overlay["planner.md"] == SECRET_PLACEHOLDER
+        assert "templates[0]._overlays.planner.md" in paths
+        assert overlay["coordinator.md"] == "# Safe coordinator content"
+        assert "templates[0]._overlays.coordinator.md" not in paths
+
+    def test_non_secret_overlay_preserved_intact(self):
+        """Overlay content with no secrets passes through unchanged, no redaction record."""
+        manifest = {
+            "worca_bundle_version": 2,
+            "exported_at": "2026-06-04T00:00:00Z",
+            "templates": [{
+                "id": "t1",
+                "name": "T1",
+                "description": "",
+                "tags": [],
+                "config": {},
+                "_overlays": {"planner.md": "# Normal prompt\nNo secrets here."},
+            }],
+        }
+        redacted, paths = redact_bundle(manifest)
+        assert redacted["templates"][0]["_overlays"]["planner.md"] == "# Normal prompt\nNo secrets here."
+        assert paths == []

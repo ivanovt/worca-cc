@@ -79,6 +79,35 @@ async function request(app, method, path, body) {
   });
 }
 
+async function requestBinary(app, method, path, body, contentType) {
+  const { createServer } = await import('node:http');
+  const server = createServer(app);
+  return new Promise((resolve, reject) => {
+    server.listen(0, '127.0.0.1', async () => {
+      const { port } = server.address();
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+          method,
+          headers: { 'Content-Type': contentType },
+          body,
+        });
+        const text = await res.text();
+        let json;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          json = { raw: text };
+        }
+        resolve({ status: res.status, body: json });
+      } catch (err) {
+        reject(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+}
+
 function cliError(stderr, stdout = '') {
   const err = new Error('Command failed');
   err.status = 1;
@@ -514,7 +543,7 @@ describe('templates-routes — (tier, id) contract', () => {
   // ─── POST /templates/:tier/:id/rename ─────────────────────────────
 
   describe('POST /templates/:tier/:id/rename', () => {
-    it('composes duplicate + delete on the CLI', async () => {
+    it('uses a single rename CLI invocation', async () => {
       const app = await createTestApp(projectRoot);
       seedProject('old-id');
       const { status } = await request(
@@ -524,15 +553,17 @@ describe('templates-routes — (tier, id) contract', () => {
         { dst_tier: 'project', dst_id: 'new-id' },
       );
       expect(status).toBe(200);
-      expect(mockExecSync).toHaveBeenCalledTimes(2);
-      const dup = templateArgs(mockExecSync.mock.calls[0]);
-      expect(dup.slice(0, 2)).toEqual(['templates', 'duplicate']);
-      expect(dup).toContain('new-id');
-      const del = templateArgs(mockExecSync.mock.calls[1]);
-      expect(del.slice(0, 3)).toEqual(['templates', 'delete', 'old-id']);
+      // Single call — no longer two separate duplicate + delete calls
+      expect(mockExecSync).toHaveBeenCalledTimes(1);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args.slice(0, 2)).toEqual(['templates', 'rename']);
+      expect(args).toContain('--src-id');
+      expect(args[args.indexOf('--src-id') + 1]).toBe('old-id');
+      expect(args).toContain('--dst-id');
+      expect(args[args.indexOf('--dst-id') + 1]).toBe('new-id');
     });
 
-    it('passes --global on delete when moving project → user', async () => {
+    it('passes --src-scope and --dst-scope on cross-tier rename', async () => {
       const app = await createTestApp(projectRoot);
       seedProject('cross-tier');
       const { status } = await request(
@@ -542,15 +573,14 @@ describe('templates-routes — (tier, id) contract', () => {
         { dst_tier: 'user', dst_id: 'cross-tier' },
       );
       expect(status).toBe(200);
-      const dup = templateArgs(mockExecSync.mock.calls[0]);
-      expect(dup).toContain('--dst-scope');
-      expect(dup[dup.indexOf('--dst-scope') + 1]).toBe('user');
-      const del = templateArgs(mockExecSync.mock.calls[1]);
-      // src tier was project — no --global on the delete leg
-      expect(del).not.toContain('--global');
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toContain('--src-scope');
+      expect(args[args.indexOf('--src-scope') + 1]).toBe('project');
+      expect(args).toContain('--dst-scope');
+      expect(args[args.indexOf('--dst-scope') + 1]).toBe('user');
     });
 
-    it('passes --global on delete when src is user', async () => {
+    it('passes --src-scope user when src is user tier', async () => {
       const app = await createTestApp(projectRoot);
       seedUser('user-src');
       const { status } = await request(
@@ -560,8 +590,9 @@ describe('templates-routes — (tier, id) contract', () => {
         { dst_tier: 'project', dst_id: 'user-src' },
       );
       expect(status).toBe(200);
-      const del = templateArgs(mockExecSync.mock.calls[1]);
-      expect(del).toContain('--global');
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toContain('--src-scope');
+      expect(args[args.indexOf('--src-scope') + 1]).toBe('user');
     });
 
     it('rejects rename FROM builtin with 405', async () => {
@@ -613,14 +644,14 @@ describe('templates-routes — (tier, id) contract', () => {
       expect(mockExecSync).not.toHaveBeenCalled();
     });
 
-    it('surfaces partial_rename when delete fails after duplicate', async () => {
+    it('surfaces partial_rename response shape when CLI reports partial failure', async () => {
       const app = await createTestApp(projectRoot);
       seedProject('half');
-      let n = 0;
+      // Single rename call fails with partial_rename in stderr
       mockExecSync.mockImplementation(() => {
-        n++;
-        if (n === 1) return '';
-        throw cliError('delete blew up');
+        throw cliError(
+          "error: partial_rename: Renamed to 'whole' but failed to remove 'half'",
+        );
       });
       const { status, body } = await request(
         app,
@@ -631,6 +662,10 @@ describe('templates-routes — (tier, id) contract', () => {
       expect(status).toBe(500);
       expect(body.code).toBe('partial_rename');
       expect(body.error).toMatch(/Renamed to "whole"/);
+      expect(body.src_tier).toBe('project');
+      expect(body.src_id).toBe('half');
+      expect(body.dst_tier).toBe('project');
+      expect(body.dst_id).toBe('whole');
     });
   });
 
@@ -817,5 +852,245 @@ describe('templates-routes — (tier, id) contract', () => {
     seedProject('sample');
     await request(app, 'GET', '/api/projects/test/templates/project/sample');
     expect(mockExecSync).not.toHaveBeenCalled();
+  });
+
+  // ─── POST /templates/import — zip binary path ──────────────────────
+
+  describe('POST /templates/import — zip binary path', () => {
+    // Minimal valid empty-zip sentinel (empty central directory)
+    const EMPTY_ZIP = Buffer.from([
+      0x50,
+      0x4b,
+      0x05,
+      0x06, // End of central directory signature
+      0x00,
+      0x00, // disk number
+      0x00,
+      0x00, // start disk
+      0x00,
+      0x00, // entries on disk
+      0x00,
+      0x00, // total entries
+      0x00,
+      0x00,
+      0x00,
+      0x00, // central directory size
+      0x00,
+      0x00,
+      0x00,
+      0x00, // central directory offset
+      0x00,
+      0x00, // comment length
+    ]);
+
+    it('happy-path zip import returns 200 with structured summary', async () => {
+      const app = await createTestApp(projectRoot);
+      mockExecSync.mockReturnValue('');
+
+      const { status, body } = await requestBinary(
+        app,
+        'POST',
+        '/api/projects/test/templates/import?dst_tier=project',
+        EMPTY_ZIP,
+        'application/zip',
+      );
+
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args[0]).toBe('templates');
+      expect(args[1]).toBe('import');
+      expect(args).toContain('--from');
+      // Verify it passes scope
+      expect(args).toContain('--scope');
+      expect(args[args.indexOf('--scope') + 1]).toBe('project');
+      expect(args).toContain('--non-interactive');
+      // The --from path must point to a .zip file
+      const fromPath = args[args.indexOf('--from') + 1];
+      expect(fromPath).toMatch(/\.zip$/);
+    });
+
+    it('rejects oversized zip body (>1 MiB) at middleware layer', async () => {
+      const app = await createTestApp(projectRoot);
+
+      // 1.1 MiB — exceeds the 1mb limit on expressRaw
+      const bigBuffer = Buffer.alloc(Math.ceil(1.1 * 1024 * 1024), 0x50);
+
+      const { status } = await requestBinary(
+        app,
+        'POST',
+        '/api/projects/test/templates/import?dst_tier=project',
+        bigBuffer,
+        'application/zip',
+      );
+
+      // Express raw middleware sends 413 when the body exceeds limit
+      expect(status).toBe(413);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('malformed zip → CLI exits non-zero → 400', async () => {
+      const app = await createTestApp(projectRoot);
+      mockExecSync.mockImplementation(() => {
+        throw cliError('invalid zip: not a valid zip archive');
+      });
+
+      const { status, body } = await requestBinary(
+        app,
+        'POST',
+        '/api/projects/test/templates/import?dst_tier=project',
+        EMPTY_ZIP,
+        'application/zip',
+      );
+
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(body.error).toBeTruthy();
+      expect(body.code).toBe('validation_error');
+    });
+
+    it('rejects dst_tier=builtin via zip path with 405', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status } = await requestBinary(
+        app,
+        'POST',
+        '/api/projects/test/templates/import?dst_tier=builtin',
+        EMPTY_ZIP,
+        'application/zip',
+      );
+
+      expect(status).toBe(405);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid dst_tier via zip path with 400', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status } = await requestBinary(
+        app,
+        'POST',
+        '/api/projects/test/templates/import?dst_tier=nope',
+        EMPTY_ZIP,
+        'application/zip',
+      );
+
+      expect(status).toBe(400);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── GET /templates/:tier/:id/overlays ─────────────────────────────
+
+  describe('GET /templates/:tier/:id/overlays', () => {
+    it('returns md files from agents/ directory', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('tpl-overlays');
+      const agentsDir = join(templatesDir, 'tpl-overlays', 'agents');
+      mkdirSync(agentsDir, { recursive: true });
+      writeFileSync(join(agentsDir, 'planner.md'), '# Planner overlay');
+      writeFileSync(join(agentsDir, 'plan.block.md'), '# Block content');
+      // Non-md file that must be excluded
+      writeFileSync(join(agentsDir, 'ignored.txt'), 'not overlay');
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/project/tpl-overlays/overlays',
+      );
+
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(Object.keys(body.overlays).sort()).toEqual([
+        'plan.block.md',
+        'planner.md',
+      ]);
+      expect(body.overlays['planner.md']).toBe('# Planner overlay');
+      expect(body.overlays['plan.block.md']).toBe('# Block content');
+    });
+
+    it('returns empty overlays object when no agents/ directory', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('no-overlays');
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/project/no-overlays/overlays',
+      );
+
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.overlays).toEqual({});
+    });
+
+    it('returns 404 for unknown template', async () => {
+      const app = await createTestApp(projectRoot);
+
+      const { status } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/project/missing/overlays',
+      );
+
+      expect(status).toBe(404);
+    });
+
+    it('does not invoke the CLI', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('no-cli-tpl');
+
+      await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/project/no-cli-tpl/overlays',
+      );
+
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+  });
+
+  // ─── has_overlays in GET /templates list ───────────────────────────
+
+  describe('GET /templates list — has_overlays field', () => {
+    it('includes has_overlays boolean for each template', async () => {
+      const app = await createTestApp(projectRoot);
+
+      seedProject('plain');
+      seedProject('with-overlays');
+      const agentsDir = join(templatesDir, 'with-overlays', 'agents');
+      mkdirSync(agentsDir, { recursive: true });
+      writeFileSync(join(agentsDir, 'planner.md'), '# Planner');
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates',
+      );
+
+      expect(status).toBe(200);
+      const plain = body.templates.find((t) => t.id === 'plain');
+      const withOverlays = body.templates.find((t) => t.id === 'with-overlays');
+      expect(plain.has_overlays).toBe(false);
+      expect(withOverlays.has_overlays).toBe(true);
+    });
+
+    it('has_overlays is false when agents/ exists but has no md files', async () => {
+      const app = await createTestApp(projectRoot);
+      seedProject('empty-agents');
+      const agentsDir = join(templatesDir, 'empty-agents', 'agents');
+      mkdirSync(agentsDir, { recursive: true });
+      writeFileSync(join(agentsDir, 'readme.txt'), 'not an overlay');
+
+      const { status, body } = await request(
+        app,
+        'GET',
+        '/api/projects/test/templates',
+      );
+
+      expect(status).toBe(200);
+      const t = body.templates.find((t) => t.id === 'empty-agents');
+      expect(t.has_overlays).toBe(false);
+    });
   });
 });

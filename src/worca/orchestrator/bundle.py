@@ -13,13 +13,17 @@ Trust boundary (READ THIS BEFORE TOUCHING fetch_bundle):
 from __future__ import annotations
 
 import copy
+import io
 import ipaddress
 import json
 import re
+import shutil
 import socket
 import subprocess
+import tempfile
+import zipfile
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from urllib.request import (
     HTTPRedirectHandler,
@@ -225,33 +229,267 @@ def redact_bundle(manifest: dict) -> tuple[dict, list[str]]:
 
 _MAX_BUNDLE_BYTES = 1024 * 1024  # 1 MiB
 
+# ---------------------------------------------------------------------------
+# Zip bundle constants and error types (W-064 Phase 1)
+# ---------------------------------------------------------------------------
+
+# Magic bytes for ZIP local file header (empty-archive and spanned variants).
+_ZIP_MAGIC = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+
+_MAX_ZIP_UNCOMPRESSED_TOTAL = 4 * 1024 * 1024  # 4 MiB total uncompressed
+_MAX_ZIP_FILE_SIZE = 256 * 1024                 # 256 KiB per file
+_MAX_ZIP_ENTRIES = 64                           # max members in archive
+_MAX_ZIP_RATIO = 100                            # max expansion ratio (zip bomb guard)
+
+# Allowed overlay filenames: e.g. planner.md, plan.block.md, plan_reviewer.md
+_OVERLAY_NAME_RE = re.compile(r"^[a-z0-9._-]{1,64}\.(md|block\.md)$")
+
+
+class BundleError(ValueError):
+    """Base class for bundle processing errors."""
+
+
+class BundleLayoutError(BundleError):
+    """Raised when a zip bundle fails layout or safety validation."""
+
+    def __init__(self, message: str, *, details: dict | None = None) -> None:
+        super().__init__(message)
+        self.details: dict = details or {}
+
+
+def _safe_member_path(staging: Path, name: str) -> Path:
+    """Return the resolved path of a zip member anchored under *staging*.
+
+    Raises BundleLayoutError for backslashes, drive letters, absolute paths,
+    parent-traversal components (`..`), or any path that escapes the staging root.
+    """
+    if "\\" in name:
+        raise BundleLayoutError(
+            f"absolute path not allowed: {name}",
+            details={"member": name, "rule": "absolute_path"},
+        )
+    if ":" in name:
+        raise BundleLayoutError(
+            f"absolute path not allowed: {name}",
+            details={"member": name, "rule": "absolute_path"},
+        )
+    p = PurePosixPath(name)
+    if p.is_absolute():
+        raise BundleLayoutError(
+            f"absolute path not allowed: {name}",
+            details={"member": name, "rule": "absolute_path"},
+        )
+    if any(part == ".." for part in p.parts):
+        raise BundleLayoutError(
+            f"parent traversal not allowed: {name}",
+            details={"member": name, "rule": "parent_traversal"},
+        )
+    candidate = (staging / p).resolve()
+    try:
+        candidate.relative_to(staging.resolve())
+    except ValueError:
+        raise BundleLayoutError(
+            f"path traversal: {name}",
+            details={"member": name, "rule": "path_traversal"},
+        ) from None
+    return candidate
+
+
+def _is_zip(raw: bytes, source: str) -> bool:
+    """Return True when *raw* starts with a ZIP magic header or *source* ends in .zip."""
+    magic = raw[:4] if len(raw) >= 4 else b""
+    return any(magic == m[:4] for m in _ZIP_MAGIC) or source.lower().endswith(".zip")
+
+
+def _manifest_from_zip(raw_bytes: bytes) -> dict:
+    """Parse and harden a zip bundle; return a synthesized v2 manifest dict.
+
+    Validates every member's metadata against the W-064 rule table before
+    reading any content. Overlays are extracted into in-memory strings —
+    no files are written to disk.
+    """
+    staging = Path(tempfile.mkdtemp(prefix="worca-zip-import-"))
+    try:
+        return _parse_zip_bundle(raw_bytes, staging)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def _parse_zip_bundle(raw_bytes: bytes, staging: Path) -> dict:
+    try:
+        zf_handle = zipfile.ZipFile(io.BytesIO(raw_bytes))
+    except zipfile.BadZipFile as exc:
+        raise BundleLayoutError(
+            f"not a valid zip archive: {exc}",
+            details={"rule": "bad_zip"},
+        ) from exc
+
+    with zf_handle as zf:
+        members = zf.infolist()
+
+        if len(members) > _MAX_ZIP_ENTRIES:
+            raise BundleLayoutError(
+                f"too many entries (max {_MAX_ZIP_ENTRIES})",
+                details={"rule": "too_many_entries"},
+            )
+
+        seen: set[str] = set()
+        template_info: zipfile.ZipInfo | None = None
+        overlay_infos: dict[str, zipfile.ZipInfo] = {}
+        total_uncompressed = 0
+
+        for info in members:
+            # On Windows, ZipFile._RealGetContents normalizes os.sep -> "/"
+            # in info.filename, which would silently neuter the backslash
+            # defense. orig_filename preserves the raw central-directory
+            # value on every platform, so safety checks must use it.
+            raw_name = info.orig_filename
+            name = info.filename
+
+            if name.endswith("/"):
+                continue  # skip directory entries
+
+            if name in seen:
+                raise BundleLayoutError(
+                    f"duplicate member: {name}",
+                    details={"member": name, "rule": "duplicate_member"},
+                )
+            seen.add(name)
+
+            # Symlink detection: Unix mode bits live in external_attr >> 16
+            unix_mode = (info.external_attr >> 16) & 0xFFFF
+            if unix_mode and (unix_mode & 0o170000) == 0o120000:
+                raise BundleLayoutError(
+                    f"symlink not allowed: {name}",
+                    details={"member": name, "rule": "symlink"},
+                )
+
+            # Path safety: absolute, drive letter, backslash, traversal.
+            # Check raw_name so backslashes from Windows-authored zips
+            # are caught even when reading on Windows.
+            _safe_member_path(staging, raw_name)
+
+            if info.file_size > _MAX_ZIP_FILE_SIZE:
+                raise BundleLayoutError(
+                    f"file exceeds 256 KiB: {name}",
+                    details={"member": name, "rule": "oversized_single"},
+                )
+
+            if info.compress_size > 0 and info.file_size > 0:
+                if info.file_size / info.compress_size > _MAX_ZIP_RATIO:
+                    raise BundleLayoutError(
+                        f"suspicious compression ratio: {name}",
+                        details={"member": name, "rule": "bomb_ratio"},
+                    )
+
+            total_uncompressed += info.file_size
+
+            if name == "template.json":
+                template_info = info
+            else:
+                p = PurePosixPath(name)
+                parts = p.parts
+                if (
+                    len(parts) == 2
+                    and parts[0] == "agents"
+                    and _OVERLAY_NAME_RE.match(parts[1])
+                ):
+                    overlay_infos[parts[1]] = info
+                else:
+                    raise BundleLayoutError(
+                        f"unexpected entry: {name}",
+                        details={"member": name, "rule": "unexpected_entry"},
+                    )
+
+        if total_uncompressed > _MAX_ZIP_UNCOMPRESSED_TOTAL:
+            raise BundleLayoutError(
+                "bundle exceeds 4 MiB uncompressed",
+                details={"rule": "oversized_total"},
+            )
+
+        if template_info is None:
+            raise BundleLayoutError(
+                "missing template.json",
+                details={"rule": "missing_template_json"},
+            )
+
+        with zf.open(template_info) as fh:
+            tmpl_data: dict = json.loads(fh.read(_MAX_ZIP_FILE_SIZE + 1))
+
+        overlays: dict[str, str] = {}
+        for fname, ov_info in overlay_infos.items():
+            with zf.open(ov_info) as fh:
+                raw = fh.read(_MAX_ZIP_FILE_SIZE + 1)
+                if len(raw) > _MAX_ZIP_FILE_SIZE:
+                    raise BundleLayoutError(
+                        f"file exceeds 256 KiB: {fname}",
+                        details={"member": fname, "rule": "oversized_single"},
+                    )
+                overlays[fname] = raw.decode("utf-8")
+
+        if overlays:
+            tmpl_data["_overlays"] = overlays
+
+        return {
+            "worca_bundle_version": 2,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "templates": [tmpl_data],
+        }
+
+
+def _write_zip(tmpl_entry: dict, dest: str) -> None:
+    """Write a single-template zip bundle to *dest*.
+
+    *tmpl_entry* is a (redacted) template dict that may carry
+    ``_overlays: {filename: content}``.  The zip layout is::
+
+        template.json        — template data (without _overlays key)
+        agents/<fname>       — one file per entry in _overlays
+
+    This mirrors the layout expected by ``_parse_zip_bundle`` so a zip
+    produced here can be round-tripped through ``fetch_bundle``.
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        json_entry = {k: v for k, v in tmpl_entry.items() if k != "_overlays"}
+        zf.writestr("template.json", json.dumps(json_entry, indent=2))
+        for fname, content in (tmpl_entry.get("_overlays") or {}).items():
+            zf.writestr(f"agents/{fname}", content)
+    Path(dest).write_bytes(buf.getvalue())
+
+
 _GIST_RE = re.compile(r"^[a-f0-9]{20,}$")
 _GIST_URL_RE = re.compile(r"^https://gist\.github\.com/[^/]+/([a-f0-9]{20,})$")
 
 
 def fetch_bundle(source: str) -> dict:
-    """Load a bundle JSON from a local file, HTTPS URL, or GitHub gist ID/URL.
+    """Load a bundle from a local file, HTTPS URL, or GitHub gist ID/URL.
 
-    HTTPS sources are hardened against the obvious SSRF cases:
-      * non-public hosts (private/loopback/link-local/reserved) are refused
-        before connect, based on DNS resolution
-      * HTTP redirects are blocked (the bundle URL you paste IS the bundle)
-      * response is capped at 1 MiB
+    The payload is sniffed after fetch:
+    - ZIP magic bytes or a ``.zip`` extension route to the hardened zip
+      extraction path (validates layout, path safety, compression ratios).
+    - Everything else is parsed as JSON (original behaviour, unchanged).
 
-    These mitigations close common cases but cannot defend against a
-    malicious upstream — see the module docstring's trust-boundary note.
+    Gist sources are always JSON — zip is not supported for gist targets.
+
+    HTTPS sources are hardened against SSRF, redirect following, and a 1 MiB
+    size cap (unchanged from the JSON-only path).
     """
     gist_match = _GIST_URL_RE.match(source)
     if gist_match:
         return _fetch_gist(gist_match.group(1))
 
-    if source.startswith("https://"):
-        return _fetch_url(source)
-
     if _GIST_RE.match(source):
         return _fetch_gist(source)
 
-    return json.loads(Path(source).read_text(encoding="utf-8"))
+    if source.startswith("https://"):
+        raw = _fetch_url_bytes(source)
+    else:
+        raw = Path(source).read_bytes()
+
+    if _is_zip(raw, source):
+        return _manifest_from_zip(raw)
+    return json.loads(raw.decode("utf-8"))
 
 
 class _NoRedirectHandler(HTTPRedirectHandler):
@@ -301,7 +539,8 @@ def _check_public_host(url: str) -> None:
             )
 
 
-def _fetch_url(url: str) -> dict:
+def _fetch_url_bytes(url: str) -> bytes:
+    """Fetch *url* over HTTPS; return raw bytes capped at 1 MiB."""
     _check_public_host(url)
     opener = build_opener(_NoRedirectHandler(), HTTPSHandler())
     req = Request(url)  # noqa: S310 — vetted by _check_public_host above
@@ -309,7 +548,11 @@ def _fetch_url(url: str) -> dict:
         data = resp.read(_MAX_BUNDLE_BYTES + 1)
         if len(data) > _MAX_BUNDLE_BYTES:
             raise ValueError(f"bundle at {url} exceeds 1 MiB size limit")
-        return json.loads(data)
+        return data
+
+
+def _fetch_url(url: str) -> dict:
+    return json.loads(_fetch_url_bytes(url))
 
 
 def _fetch_gist(gist_id: str) -> dict:
@@ -334,6 +577,19 @@ _KNOWN_TOP_KEYS = {
     "_stripped",
 }
 
+# Expected top-level keys for each entry in `templates[]`. `_overlays` sits
+# here (not under `config`) so it bypasses CONFIG_ALLOWLIST but still goes
+# through `_walk_and_redact` for value-level secret scanning.
+_TEMPLATE_TOPLEVEL_KEYS = frozenset({
+    "id",
+    "name",
+    "description",
+    "tags",
+    "config",
+    "params",
+    "_overlays",
+})
+
 
 def _parse_bundle_version(v: object) -> tuple[int, int] | None:
     """Parse a worca_bundle_version into (major, minor) or return None if
@@ -354,39 +610,40 @@ def _parse_bundle_version(v: object) -> tuple[int, int] | None:
     return None
 
 
-# Major version this code understands. Future major bumps require a code change
-# to the redactor/validator and explicit handling here.
-SUPPORTED_BUNDLE_MAJOR = 1
+# Major versions this code understands.
+# v1 = JSON-only bundles; v2 = zip-sourced bundles with optional _overlays.
+SUPPORTED_BUNDLE_MAJOR = 2
+_SUPPORTED_BUNDLE_MAJORS = frozenset({1, 2})
 
 
 def validate_bundle(manifest: dict) -> tuple[list[dict], list[str]]:
-    """Validate a bundle manifest against the v1 schema.
+    """Validate a bundle manifest against the v1/v2 schema.
 
     Returns (errors, warnings). errors is a list of
     {"field": ..., "message": ...} dicts; warnings is a list of strings.
 
-    Forward-compat: accepts any minor revision of the supported major
-    (1.0, 1.1, ...) with a warning when the minor differs from the major's
-    canonical (.0); rejects other majors.
+    Forward-compat: accepts any minor revision of a supported major
+    (1.0, 1.1, 2.0, 2.1, ...) with a warning when the minor differs from
+    the major's canonical (.0); rejects unrecognised majors.
     """
     errors: list[dict] = []
     warnings: list[str] = []
 
     version_raw = manifest.get("worca_bundle_version")
     parsed = _parse_bundle_version(version_raw)
-    if parsed is None or parsed[0] != SUPPORTED_BUNDLE_MAJOR:
+    if parsed is None or parsed[0] not in _SUPPORTED_BUNDLE_MAJORS:
         errors.append({
             "field": "worca_bundle_version",
             "message": (
                 f"unsupported bundle version {version_raw!r}, "
-                f"expected major version {SUPPORTED_BUNDLE_MAJOR}"
+                f"expected major version in {sorted(_SUPPORTED_BUNDLE_MAJORS)}"
             ),
         })
         return errors, warnings
     if parsed[1] != 0:
         warnings.append(
             f"worca_bundle_version is {version_raw!r} (minor {parsed[1]}); "
-            f"this importer is {SUPPORTED_BUNDLE_MAJOR}.0 — proceeding with "
+            f"this importer understands {sorted(_SUPPORTED_BUNDLE_MAJORS)} — proceeding with "
             "forward-compat (unknown additive fields preserved)"
         )
 

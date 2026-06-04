@@ -71,6 +71,7 @@ A row of "field pills" carrying the template's metadata:
 | **Agents** | Per-agent **model**, **max turns**, and **effort**; pipeline-level **auto mode** and **auto cap** for adaptive effort escalation. | `worca.agents.*`, `worca.effort` |
 | **Pipeline** | Per-stage on/off toggles and agent picker; **approval gates** (plan / PR); **retry loops** (implement/test, review, plan-review); **circuit breaker** (enable + max consecutive failures). | `worca.stages`, `worca.loops`, `worca.circuit_breaker`, `worca.milestones` |
 | **Governance** | Per-agent allowlists for **tools**, **skills**, and **subagents**. | `worca.governance.dispatch` |
+| **Overlays** | Read-only view of the prompt overlay files (`agents/*.md`) attached to this template, grouped by stage with sub-tabs for agent prompt and user prompt. Visible only when at least one overlay file is present. Overlays arrive via import, duplicate, or a filesystem drop — the tab surfaces them regardless of origin. | `agents/` directory |
 
 The editor only writes the delta — keys you leave blank inherit defaults, keeping templates lean and upgrade-friendly. It runs the same deep-merge simulation the pipeline uses at launch, so malformed config is caught before it hits disk.
 
@@ -98,14 +99,22 @@ Either flip the **★ Default** toggle inside the editor, or click **Set as defa
 
 The **★ Default** badge moves to the newly selected card. To clear the default (so runs use raw project settings with no template), use **Clear default** or remove the `worca.default_template` key from Settings.
 
+:::tip[Renaming a default template]
+Renaming a template that is set as the project default automatically updates the `worca.default_template` pointer to the new name — no manual reset needed. The ★ Default badge follows the rename in the list view.
+:::
+
 :::caution[Template-owned keys are stripped when a default is set]
 Once a default template is in play, project settings for `agents`, `stages`, `loops`, `circuit_breaker`, `effort`, and `governance.dispatch` are stripped from the merge base — the template owns those keys outright. Cross-template keys (models, webhooks, pricing, etc.) are unaffected. See [Template-driven keys](/configuration/precedence/#template-driven-keys).
 :::
 
 ## Exporting and importing
 
-- **Export** — click **Export** on any card (or inside the editor). The bundle is a JSON file with secrets redacted, safe to share or commit. Export works on every tier, including built-ins.
-- **Import** — click **Import** in the list view to upload a bundle file. If the imported id collides with an existing template in the target scope, the editor surfaces the same inline collision warning and prompts you to rename before saving.
+- **Export** — click **Export** on any card (or inside the editor). The format is chosen automatically: `.zip` when the template has prompt overlay files (`agents/*.md`), `.json` for config-only templates. Secrets are redacted in either format, safe to share or commit. Export works on every tier, including built-ins.
+- **Import** — click **Import** in the list view to upload a `.json` or `.zip` bundle file. Zip bundles carry the template config and all overlay files; the post-import dialog lists the overlays that landed. If the imported id collides with an existing template in the target scope, the editor surfaces the same inline collision warning and prompts you to rename before saving.
+
+:::note[Gist sharing — JSON bundles only]
+The "Copy gist URL" action is available only on templates without prompt overlays. Templates with overlays must be shared as a downloaded `.zip` file attachment.
+:::
 
 For the full export/import workflow including CLI commands, see [Authoring, sharing & importing templates](/advanced/authoring-templates/).
 

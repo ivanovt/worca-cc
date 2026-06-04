@@ -1996,6 +1996,7 @@ export { _slugifyId as slugifyId };
 function _validateActionDialog(dlg, state) {
   if (!dlg) return null;
   if (dlg.mode === 'import') {
+    if (dlg.importResult) return null;
     if (!dlg.parsed) return 'Choose a bundle file to import.';
     return null;
   }
@@ -2040,6 +2041,24 @@ async function _onImportFileChange(e) {
     _updateActionDialog({ file: null, parsed: null, error: null });
     return;
   }
+
+  // Sniff first 4 bytes for ZIP magic (PK\x03\x04, PK\x05\x06, PK\x07\x08).
+  const headBytes = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+  const isZipMagic =
+    headBytes[0] === 0x50 &&
+    headBytes[1] === 0x4b &&
+    (headBytes[2] === 0x03 || headBytes[2] === 0x05 || headBytes[2] === 0x07);
+  const isZipExt = /\.zip$/i.test(file.name);
+
+  if (isZipMagic || isZipExt) {
+    _updateActionDialog({
+      file,
+      parsed: { _kind: 'zip', name: file.name, size: file.size },
+      error: null,
+    });
+    return;
+  }
+
   try {
     const text = await file.text();
     const parsed = JSON.parse(text);
@@ -2074,7 +2093,7 @@ function _templateActionDialogTemplate(state) {
     create: 'Create',
     duplicate: 'Duplicate',
     rename: 'Apply',
-    import: 'Import',
+    import: dlg.importResult ? 'Done' : 'Import',
   };
   const confirmIcon = {
     create: Plus,
@@ -2211,6 +2230,7 @@ function _templateActionDialogTemplate(state) {
       ${idTierFields}
     `;
   } else if (dlg.mode === 'import') {
+    const isZip = dlg.parsed?._kind === 'zip';
     body = html`
       <p class="dialog-lead">
         Choose a bundle file exported via the Export button on any
@@ -2222,20 +2242,56 @@ function _templateActionDialogTemplate(state) {
         <input
           id="dlg-import-file"
           type="file"
-          accept="application/json,.json"
+          accept="application/json,.json,application/zip,.zip"
           @change=${_onImportFileChange}
         />
       </div>
       ${
-        dlg.parsed
+        isZip
           ? html`
-            <div class="settings-field">
-              <label class="settings-label">Templates in bundle</label>
-              <ul class="dialog-bundle-list">
-                ${dlg.parsed.templates.map(
-                  (t) => html`<li><code>${t.id}</code> — ${t.name || ''}</li>`,
-                )}
-              </ul>
+            <div class="settings-field dialog-zip-hint">
+              <sl-badge variant="neutral">Bundle contains prompt overlays</sl-badge>
+              <span class="settings-field-hint">
+                This zip bundle may include agent prompt overlays for one or more stages.
+                They will be written to the template's <code>agents/</code> directory on import.
+              </span>
+            </div>
+          `
+          : dlg.parsed
+            ? html`
+              <div class="settings-field">
+                <label class="settings-label">Templates in bundle</label>
+                <ul class="dialog-bundle-list">
+                  ${dlg.parsed.templates.map(
+                    (t) =>
+                      html`<li><code>${t.id}</code> — ${t.name || ''}</li>`,
+                  )}
+                </ul>
+              </div>
+            `
+            : ''
+      }
+      ${
+        dlg.importResult
+          ? html`
+            <div class="settings-field dialog-import-result">
+              <sl-badge variant="success">Import complete</sl-badge>
+              ${
+                dlg.importResult.overlaysByTemplate &&
+                Object.keys(dlg.importResult.overlaysByTemplate).length > 0
+                  ? html`
+                    <ul class="dialog-bundle-list">
+                      ${Object.entries(dlg.importResult.overlaysByTemplate).map(
+                        ([id, files]) =>
+                          html`<li>
+                            <code>${id}</code> — overlays:
+                            ${files.map((f) => html`<code>${f}</code> `)}
+                          </li>`,
+                      )}
+                    </ul>
+                  `
+                  : ''
+              }
             </div>
           `
           : ''
@@ -2434,12 +2490,68 @@ async function _confirmTemplateActionDialog() {
     }
 
     if (dlg.mode === 'import') {
+      // "Done" button after a successful import result — just close.
+      if (dlg.importResult) {
+        _templateActionDialog = null;
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+
       if (!dlg.parsed) {
         _templateActionDialog = { ...dlg, error: 'No bundle loaded' };
         _templateActionBusy = false;
         rerender();
         return;
       }
+
+      if (dlg.parsed._kind === 'zip') {
+        // Binary POST: raw zip bytes + dst_tier as query param.
+        const importUrl = `${projectUrl('/templates/import')}?dst_tier=${encodeURIComponent(dlg.tier || 'project')}`;
+        const res = await fetch(importUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/zip' },
+          body: dlg.file,
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          _templateActionDialog = {
+            ...dlg,
+            error: data.error || 'Failed to import',
+          };
+          _templateActionBusy = false;
+          rerender();
+          return;
+        }
+        // Fetch overlays for each imported template to show in the result view.
+        const overlaysByTemplate = {};
+        for (const { id, tier } of data.imported || []) {
+          try {
+            const oRes = await fetch(
+              projectUrl(`/templates/${tier}/${id}/overlays`),
+            );
+            const oData = await oRes.json();
+            if (oData.ok && oData.overlays) {
+              overlaysByTemplate[id] = Object.keys(oData.overlays);
+            }
+          } catch {
+            // best-effort; missing overlays don't fail the import
+          }
+        }
+        const templates = await fetchTemplates(route.projectId || null);
+        store.setState({
+          templates,
+          defaultTemplate: templates.defaultTemplate,
+        });
+        _templateActionDialog = {
+          ...dlg,
+          importResult: { imported: data.imported || [], overlaysByTemplate },
+        };
+        _templateActionBusy = false;
+        rerender();
+        return;
+      }
+
       const res = await fetch(projectUrl('/templates/import'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4423,6 +4535,7 @@ function mainContentView() {
       onDuplicate: handleDuplicateTemplate,
       onDelete: handleDeleteTemplate,
       onExport: handleExportTemplate,
+      onGist: handleCopyGistUrl,
     });
   }
 

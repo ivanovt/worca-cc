@@ -107,19 +107,19 @@ export async function exportTemplate(
     // the caller didn't supply a tier — most card actions know it.
     const tierSlug = tier || 'project';
     const response = await fetch(`${baseUrl}/${tierSlug}/${templateId}/bundle`);
-    const data = await response.json();
 
-    if (!data.ok) {
-      throw new Error(data.error || 'Failed to export template');
+    if (!response.ok) {
+      throw new Error(`Failed to export template (HTTP ${response.status})`);
     }
 
-    // Create a blob from the bundle data
-    const blob = new Blob([JSON.stringify(data.bundle, null, 2)], {
-      type: 'application/json',
-    });
+    const blob = await response.blob();
 
-    // Generate filename with template name or ID
-    const filename = `${templateName || templateId}-bundle.json`;
+    // Prefer server-supplied filename from Content-Disposition header
+    const cd = response.headers.get('Content-Disposition') || '';
+    const cdMatch = cd.match(/filename="?([^";\s]+)"?/);
+    const filename = cdMatch
+      ? cdMatch[1]
+      : `${templateName || templateId}-bundle.json`;
 
     // Create download link and trigger click
     const url = URL.createObjectURL(blob);
@@ -274,6 +274,7 @@ export function pipelinesView(state, options) {
     onDuplicate,
     onDelete,
     onExport,
+    onGist,
     defaultTemplate,
   } = options || {};
   const {
@@ -293,6 +294,7 @@ export function pipelinesView(state, options) {
     onDuplicate: degraded ? null : onDuplicate,
     onDelete: degraded ? null : onDelete,
     onExport, // export is read-only — always available
+    onGist, // gist is read-only — always available; card guards against has_overlays
   };
 
   // Group templates by tier. The API now returns a flat list where
@@ -446,8 +448,15 @@ function _tierSection(tier, templates, defaultTemplateId, handlers) {
  * propagation so they don't double-fire as a card click.
  */
 function _templateCard(template, defaultTemplate, handlers) {
-  const { onEdit, onDuplicate, onDelete, onExport } = handlers || {};
-  const { id, name, description, tier, builtin = false } = template;
+  const { onEdit, onDuplicate, onDelete, onExport, onGist } = handlers || {};
+  const {
+    id,
+    name,
+    description,
+    tier,
+    builtin = false,
+    has_overlays = false,
+  } = template;
 
   const resolvedTier = normalizeTier(tier);
   // defaultTemplate is now `{tier, id}` (or null when unset); accept the
@@ -550,6 +559,20 @@ function _templateCard(template, defaultTemplate, handlers) {
           ${unsafeHTML(iconSvg(Download, 14))}
           Export
         </button>
+        ${
+          has_overlays
+            ? html`<span class="template-gist-overlay-note"
+                >Templates with prompt overlays must be shared as a downloaded .zip file</span
+              >`
+            : html`<button
+                class="action-btn action-btn--secondary"
+                @click=${() => onGist?.(id, resolvedTier)}
+                title="Copy gist URL"
+              >
+                ${unsafeHTML(iconSvg(Copy, 14))}
+                Copy gist URL
+              </button>`
+        }
         ${
           !isBuiltin
             ? html`<button

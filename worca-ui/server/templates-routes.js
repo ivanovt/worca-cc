@@ -39,7 +39,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { Router } from 'express';
+import { raw as expressRaw, Router } from 'express';
 import { atomicWriteSync } from './atomic-write.js';
 import { templatesDir } from './paths.js';
 
@@ -52,6 +52,7 @@ import { templatesDir } from './paths.js';
 const TEMPLATE_RE = /^[a-z0-9_-]{1,64}$/;
 const TIERS = ['project', 'user', 'builtin'];
 const MUTABLE_TIERS = ['project', 'user'];
+const _OVERLAY_NAME_RE = /^[a-z0-9._-]{1,64}\.(md|block\.md)$/;
 export { TEMPLATE_RE, TIERS };
 
 function isValidTier(tier) {
@@ -59,6 +60,16 @@ function isValidTier(tier) {
 }
 function isMutableTier(tier) {
   return MUTABLE_TIERS.includes(tier);
+}
+
+function hasOverlays(tmplDir) {
+  const agentsDir = join(tmplDir, 'agents');
+  if (!existsSync(agentsDir)) return false;
+  try {
+    return readdirSync(agentsDir).some((f) => _OVERLAY_NAME_RE.test(f));
+  } catch {
+    return false;
+  }
 }
 
 function readTemplateJson(dirPath) {
@@ -112,6 +123,7 @@ function listTemplatesFlat(projectRoot) {
       const manifest = readTemplateJson(join(dir, entry.name));
       if (!manifest) continue;
       const id = manifest.id || entry.name;
+      const tmplDir = join(dir, entry.name);
       out.push({
         tier,
         id,
@@ -122,6 +134,7 @@ function listTemplatesFlat(projectRoot) {
         tags: manifest.tags || [],
         created_at: manifest.created_at,
         builtin: manifest.builtin === true || tier === 'builtin',
+        has_overlays: hasOverlays(tmplDir),
       });
     }
   }
@@ -190,6 +203,8 @@ function runWorcaTemplates(projectRoot, args, opts = {}) {
       combined.includes('invalid')
     ) {
       code = 'validation_error';
+    } else if (combined.includes('partial_rename')) {
+      code = 'partial_rename';
     }
     const e = new Error(stderr.trim() || err.message || 'worca CLI failed');
     e.cliCode = code;
@@ -281,10 +296,37 @@ function duplicateTemplateViaCli(projectRoot, srcId, dstId, dstTier) {
   ]);
 }
 
-function exportBundle(projectRoot, id) {
+/**
+ * Export a template bundle. Returns `{ json, data }` where `json` is
+ * true for JSON bundles (data is parsed object) and false for zip bundles
+ * (data is raw Buffer with filename in `filename`).
+ */
+function exportBundle(projectRoot, tier, id) {
+  const tierDir = dirForTier(projectRoot, tier);
+  const tmplDir = tierDir ? join(tierDir, id) : null;
+  const useZip = tmplDir && hasOverlays(tmplDir);
+
   const dir = mkdtempSync(join(tmpdir(), 'worca-bundle-'));
-  const bundlePath = join(dir, `${id}.json`);
   try {
+    if (useZip) {
+      const bundlePath = join(dir, `${id}-bundle.zip`);
+      runWorcaTemplates(projectRoot, [
+        'export',
+        '--to',
+        bundlePath,
+        '--templates',
+        id,
+      ]);
+      if (existsSync(bundlePath)) {
+        return {
+          json: false,
+          filename: `${id}-bundle.zip`,
+          data: readFileSync(bundlePath),
+        };
+      }
+    }
+
+    const bundlePath = join(dir, `${id}.json`);
     runWorcaTemplates(projectRoot, [
       'export',
       '--to',
@@ -293,11 +335,77 @@ function exportBundle(projectRoot, id) {
       id,
     ]);
     if (existsSync(bundlePath)) {
-      return JSON.parse(readFileSync(bundlePath, 'utf8'));
+      return { json: true, data: JSON.parse(readFileSync(bundlePath, 'utf8')) };
     }
-    return { templates: [{ id }] };
+    return { json: true, data: { templates: [{ id }] } };
   } finally {
     cleanupTemp(dir);
+  }
+}
+
+function handleZipImport(req, res) {
+  const dstTier = req.query.dst_tier;
+  if (!isValidTier(dstTier)) {
+    return res.status(400).json({
+      ok: false,
+      error: `dst_tier must be one of: ${TIERS.join(', ')}`,
+    });
+  }
+  if (rejectBuiltinWrite(res, dstTier, 'import to')) return;
+
+  const zipBuffer = req.body;
+  const tmpPath = join(
+    tmpdir(),
+    `worca-import-${Math.random().toString(36).slice(2)}.zip`,
+  );
+  try {
+    writeFileSync(tmpPath, zipBuffer);
+    const stdout = runWorcaTemplates(
+      req.project.projectRoot,
+      ['import', '--from', tmpPath, '--scope', dstTier, '--non-interactive'],
+      { timeout: 60000 },
+    );
+    // Best-effort summary: the CLI may print imported template ids to stdout
+    const imported = [];
+    for (const line of (stdout || '').split('\n')) {
+      const m = line.match(/imported[:\s]+([a-z0-9_-]+)/i);
+      if (m) imported.push({ id: m[1], tier: dstTier });
+    }
+    res.json({ ok: true, count: imported.length || 1, imported });
+  } catch (err) {
+    res
+      .status(statusForCliCode(err.cliCode))
+      .json({ ok: false, error: err.message, code: err.cliCode });
+  } finally {
+    try {
+      rmSync(tmpPath, { force: true });
+    } catch {
+      /* ignore cleanup errors */
+    }
+  }
+}
+
+function handleJsonImport(req, res) {
+  const { bundle, dst_tier: dstTier } = req.body || {};
+  if (!bundle || typeof bundle !== 'object') {
+    return res
+      .status(400)
+      .json({ ok: false, error: 'bundle must be a JSON object' });
+  }
+  if (!isValidTier(dstTier)) {
+    return res.status(400).json({
+      ok: false,
+      error: `dst_tier must be one of: ${TIERS.join(', ')}`,
+    });
+  }
+  if (rejectBuiltinWrite(res, dstTier, 'import to')) return;
+  try {
+    const result = importBundle(req.project.projectRoot, bundle, dstTier);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res
+      .status(statusForCliCode(err.cliCode))
+      .json({ ok: false, error: err.message, code: err.cliCode });
   }
 }
 
@@ -434,31 +542,21 @@ export function createTemplatesRoutes() {
    * doesn't match the literal "import" path segment as a tier
    * parameter (which would 400 with "tier must be one of …").
    *
-   * Body: { bundle: {templates: [...]}, dst_tier }
+   * Accepts two content types:
+   *   application/zip  — raw zip bytes; dst_tier as query param
+   *   application/json — { bundle: {templates: [...]}, dst_tier }
    */
-  router.post('/templates/import', (req, res) => {
-    const { bundle, dst_tier: dstTier } = req.body || {};
-    if (!bundle || typeof bundle !== 'object') {
-      return res
-        .status(400)
-        .json({ ok: false, error: 'bundle must be a JSON object' });
-    }
-    if (!isValidTier(dstTier)) {
-      return res.status(400).json({
-        ok: false,
-        error: `dst_tier must be one of: ${TIERS.join(', ')}`,
-      });
-    }
-    if (rejectBuiltinWrite(res, dstTier, 'import to')) return;
-    try {
-      const result = importBundle(req.project.projectRoot, bundle, dstTier);
-      res.json({ ok: true, ...result });
-    } catch (err) {
-      res
-        .status(statusForCliCode(err.cliCode))
-        .json({ ok: false, error: err.message, code: err.cliCode });
-    }
-  });
+  router.post(
+    '/templates/import',
+    expressRaw({ type: 'application/zip', limit: '1mb' }),
+    (req, res) => {
+      const ctype = req.headers['content-type'] || '';
+      if (ctype.startsWith('application/zip')) {
+        return handleZipImport(req, res);
+      }
+      return handleJsonImport(req, res);
+    },
+  );
 
   /**
    * POST /api/projects/:projectId/templates/validate
@@ -611,9 +709,11 @@ export function createTemplatesRoutes() {
    * POST /api/projects/:projectId/templates/:tier/:id/rename
    * Body: { dst_tier, dst_id }
    *
-   * Same best-effort composition as before — duplicate then delete.
-   * partial_rename (500) when the second leg fails after the first
-   * lands on disk.
+   * Delegates to `worca templates rename` — a single CLI call that runs
+   * duplicate → pointer-rewrite → delete atomically in one process.
+   * partial_rename (500) is surfaced when the CLI reports that duplicate
+   * succeeded but delete failed (exit code 3, stderr contains
+   * "partial_rename").
    */
   router.post('/templates/:tier/:id/rename', (req, res) => {
     const { tier: srcTier, id: srcId } = req.params;
@@ -646,24 +746,32 @@ export function createTemplatesRoutes() {
     }
 
     try {
-      duplicateTemplateViaCli(projectRoot, srcId, dstId, dstTier);
+      runWorcaTemplates(projectRoot, [
+        'rename',
+        '--src-id',
+        srcId,
+        '--src-scope',
+        srcTier,
+        '--dst-id',
+        dstId,
+        '--dst-scope',
+        dstTier,
+      ]);
     } catch (err) {
+      if (err.cliCode === 'partial_rename') {
+        return res.status(500).json({
+          ok: false,
+          code: 'partial_rename',
+          error: `Renamed to "${dstId}" (${dstTier}) but failed to remove the source "${srcId}" (${srcTier}): ${err.message}`,
+          src_tier: srcTier,
+          src_id: srcId,
+          dst_tier: dstTier,
+          dst_id: dstId,
+        });
+      }
       return res
         .status(statusForCliCode(err.cliCode))
         .json({ ok: false, error: err.message, code: err.cliCode });
-    }
-    try {
-      deleteTemplateViaCli(projectRoot, srcTier, srcId);
-    } catch (err) {
-      return res.status(500).json({
-        ok: false,
-        code: 'partial_rename',
-        error: `Renamed to "${dstId}" (${dstTier}) but failed to remove the source "${srcId}" (${srcTier}): ${err.message}`,
-        src_tier: srcTier,
-        src_id: srcId,
-        dst_tier: dstTier,
-        dst_id: dstId,
-      });
     }
     res.json({
       ok: true,
@@ -676,17 +784,65 @@ export function createTemplatesRoutes() {
 
   /**
    * GET /api/projects/:projectId/templates/:tier/:id/bundle
+   *
+   * Auto-detects format: zip when the template has overlays, JSON otherwise.
+   * Optional ?format=zip forces zip output.
    */
   router.get('/templates/:tier/:id/bundle', (req, res) => {
     const { tier, id } = req.params;
     if (rejectInvalidTierId(res, tier, id)) return;
     try {
-      const bundle = exportBundle(req.project.projectRoot, id);
-      res.json({ ok: true, bundle });
+      const result = exportBundle(req.project.projectRoot, tier, id);
+      if (!result.json) {
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${result.filename}"`,
+        );
+        res.send(result.data);
+      } else {
+        res.json({ ok: true, bundle: result.data });
+      }
     } catch (err) {
       res
         .status(statusForCliCode(err.cliCode))
         .json({ ok: false, error: err.message, code: err.cliCode });
+    }
+  });
+
+  /**
+   * GET /api/projects/:projectId/templates/:tier/:id/overlays
+   *
+   * Returns every overlay .md file from <tmpl>/agents/, keyed by filename.
+   */
+  router.get('/templates/:tier/:id/overlays', (req, res) => {
+    const { tier, id } = req.params;
+    if (rejectInvalidTierId(res, tier, id)) return;
+    const { projectRoot } = req.project;
+    const tierDir = dirForTier(projectRoot, tier);
+    const tmplDir = join(tierDir, id);
+    if (!existsSync(join(tmplDir, 'template.json'))) {
+      return res.status(404).json({
+        ok: false,
+        error: `Template "${id}" not found in ${tier} scope`,
+      });
+    }
+    try {
+      const agentsDir = join(tmplDir, 'agents');
+      const overlays = {};
+      if (existsSync(agentsDir)) {
+        for (const f of readdirSync(agentsDir)) {
+          if (!_OVERLAY_NAME_RE.test(f)) continue;
+          try {
+            overlays[f] = readFileSync(join(agentsDir, f), 'utf8');
+          } catch {
+            /* skip unreadable files */
+          }
+        }
+      }
+      res.json({ ok: true, overlays });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 

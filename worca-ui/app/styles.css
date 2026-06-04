@@ -8681,3 +8681,53 @@ body.help-mode-active sl-tab {
   background: rgba(124, 58, 237, 0.35);
   color: #f5f3ff;
 }
+
+/* ── Overlays tab (pipelines-editor) ────────────────────────────────────── */
+
+.overlay-stages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sl-spacing-small);
+  padding: var(--sl-spacing-medium);
+}
+
+.overlay-stage-card {
+  border-radius: var(--sl-border-radius-medium);
+}
+
+.overlay-stage-card--disabled {
+  padding: var(--sl-spacing-small) var(--sl-spacing-medium);
+  border: 1px solid var(--sl-color-neutral-200);
+  border-radius: var(--sl-border-radius-medium);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.overlay-stage-label {
+  font-size: var(--sl-font-size-small);
+  color: var(--sl-color-neutral-600);
+  font-weight: var(--sl-font-weight-semibold);
+}
+
+.overlay-file-label {
+  font-size: var(--sl-font-size-x-small);
+  color: var(--sl-color-neutral-500);
+  margin-left: var(--sl-spacing-x-small);
+}
+
+.overlay-stage-tabs {
+  --track-color: transparent;
+}
+
+.overlay-file-content.markdown-body {
+  padding: var(--sl-spacing-medium);
+  max-height: 480px;
+  overflow-y: auto;
+  font-size: var(--sl-font-size-small);
+}
+
+.overlay-empty {
+  color: var(--sl-color-neutral-500);
+  font-size: var(--sl-font-size-small);
+  padding: var(--sl-spacing-medium);
+}
