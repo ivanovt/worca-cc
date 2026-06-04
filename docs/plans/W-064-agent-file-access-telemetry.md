@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Priority:** P2
-**Area:** cc (with a UI phase)
+**Area:** cc
 **Date:** 2026-06-04
 **Depends on:** None
 
@@ -14,11 +14,11 @@ worca has no record of what files each agent iteration actually **reads, writes,
 2. **Are agent prompts efficient?** Re-reads (context thrashing), write-churn, and whole-repo greps (orientation deficit) are invisible today.
 3. **Does graphify pay off?** The `graphify_nudge` hook (`src/worca/hooks/graphify_nudge.py`) suggests `graphify query` over broad searches, but we have no way to measure whether it reduces blind grepping.
 
-The data needed to answer all three is already flowing through the `PreToolUse`/`PostToolUse` hooks (`src/worca/claude_hooks/post_tool_use.py:58-69`) — we simply never record it.
+The data needed to answer all three is already flowing through the `PostToolUse` hook (`src/worca/claude_hooks/post_tool_use.py:58-69`) — we simply never record it.
 
 ## Proposal
 
-Capture, per agent iteration, the set of files read/written and the searches performed, via the existing `PostToolUse` hook; aggregate and canonicalize at iteration completion in the runner; persist into the iteration record and emit one `pipeline.iteration.access` event. Then add a worca-ui section that visualizes the per-run file matrix, cross-run collision frequency, a search tree-region heatmap, and an efficiency profile. Zero behavior change; data accrues passively from every run. Records are structured so a future disjointness-scheduler can be validated offline against them.
+Capture, per agent iteration, the set of files read/written and the searches performed, via the existing `PostToolUse` hook; aggregate and canonicalize at iteration completion in the runner; persist into the iteration record and emit one `pipeline.iteration.access` event. Zero behavior change; data accrues passively from every run. The records are structured so that downstream analysis — visualization, and eventually a disjointness-scheduler — can consume them offline. **This plan is capture/record only; visualization is explicitly out of scope** (a future, separate `area:ui` plan).
 
 ## Design
 
@@ -56,7 +56,7 @@ One file per (stage, iteration, bead). Each concurrent writer owns its own file 
 
 ### 3. Path canonicalization (runner-side, OS-critical)
 
-This repo has a documented history of Windows path bugs (`2eb9767` "fix Windows path bug … source-grep test", `efb3f48` "preserve literal case in UI"). The matrix keys on file paths, so cross-OS runs **must** produce identical keys or aggregation silently double-counts. New module: `src/worca/orchestrator/path_canon.py`. Two layers with different jobs.
+This repo has a documented history of Windows path bugs (`2eb9767` "fix Windows path bug … source-grep test", `efb3f48` "preserve literal case in UI"). The records key on file paths, so cross-OS runs **must** produce identical keys or aggregation silently double-counts. New module: `src/worca/orchestrator/path_canon.py`. Two layers with different jobs.
 
 **Layer 1 — `canonicalize(raw, root) -> str | None`** (pure path math, deterministic, no git):
 ```python
@@ -96,7 +96,7 @@ Reads use the `ls-files` oracle; writes use the `status` oracle. Search scopes u
 
 ### 5. Search scope normalization
 
-Each search normalized to a repo-relative **directory** for the tree-region rollup:
+Each search normalized to a repo-relative **directory** for the future tree-region rollup:
 - **Grep:** `path` arg → repo-relative; if a file, take its parent; **absent → repo root (`.`)**.
 - **Glob:** static prefix before the first wildcard — `src/**/*.py` → `src/`; fully-wildcarded → root.
 - **Filter dimension:** Grep `glob`/`type` (`*.py`, `type=js`) recorded separately from the tree scope.
@@ -120,39 +120,21 @@ file_access: {
 }
 ```
 
-**Event:** `pipeline.iteration.access`, scaffolded via `/worca-event-add`. **Tier 2/3 — NOT chat-notifiable, no `renderers.js` entry.** Flows to the WS/UI and opt-in analytics webhooks; never to chat. Payload = the aggregate above plus `run_id/stage/agent/iteration/bead_id`.
+**Event:** `pipeline.iteration.access`, scaffolded via `/worca-event-add`. **Tier 2/3 — NOT chat-notifiable, no `renderers.js` entry.** Flows to the WS/UI stream and opt-in analytics webhooks; never to chat. Payload = the aggregate above plus `run_id/stage/agent/iteration/bead_id`.
 
 **Robustness:** git failure must **never** break telemetry — degrade to Layer-1 form, set `oracle: "degraded"`, continue. Cache `ls-files` once per run; `status` per iteration-end. Resume rebuilds the oracle from live git state (no persisted path state).
 
-### 7. Phase 2 — visualization (`area:ui`)
-
-New section via `/worca-ui-add-page`; a server aggregation endpoint reads `status.json` across runs (the data already lives in the iteration records — **no new persistence**). Four views:
-
-1. **Per-run file matrix** — bead/iteration × file, **count-weighted heatmap intensity**; read / write / both; cross-bead write-write rendered as **danger**. The "did the coordinator partition cleanly?" picture.
-2. **Cross-run aggregate** — hot files, collision frequency, overlap distribution. The go/no-go view.
-3. **Search tree-region heatmap** — directory rollup of search scopes; root-scoped searches prominent (orientation deficit).
-4. **Efficiency profile** — per-iteration `{search, read, write}` fingerprint, re-read leaders, write-churn, and search volume correlated against the `token_usage`/`cost_usd` already in each iteration record.
-
-Badge colors per `worca-ui/docs/badge-color-language.md` (write = caution/orange, read = active/blue, write-write collision = danger). Run `worca-ui-design-reviewer` and the `npm pack --dry-run` allowlist check for new `app/`/`server/` paths.
-
 ## Implementation Plan
 
-### Phase 1: Capture → attribute → record → event (`area:cc`)
 **Files:** `src/worca/claude_hooks/post_tool_use.py`, `src/worca/orchestrator/runner.py`, `src/worca/orchestrator/path_canon.py` (new), `src/worca/events/types.py`, `tests/`
+
 **Tasks:**
 1. Add the `WORCA_STAGE`/`WORCA_ITERATION`/`WORCA_BEAD_ID` env stamping in `run_stage` (`runner.py:1243-1396`).
 2. Add the three-category recorder to `post_tool_use.py` — raw per-call append to the per-iteration JSONL.
 3. Write `path_canon.py` — `canonicalize()` + `GitPathOracle` (`respell_read`/`respell_write`).
 4. Add the aggregation step at the `complete_iteration` call site in the runner — read JSONL, canonicalize/re-spell/filter/count, stamp `file_access`, compute run-level `leakage_pct`.
 5. Add `pipeline.iteration.access` via `/worca-event-add` (constant + payload builder + test; **no renderer**).
-6. Add `worca.telemetry.file_access.enabled` (default **on**) gate.
-
-### Phase 2: Visualization (`area:ui`)
-**Files:** `worca-ui/server/` (aggregation endpoint), `worca-ui/app/views/` (new section + 4 views), routing wire-ups, `tests/`
-**Tasks:**
-1. Server endpoint aggregating `status.json` `file_access` across runs (per-run matrix + cross-run hot-files + search tree + efficiency).
-2. New section via `/worca-ui-add-page` (all 5 wire-up points).
-3. The four views; badge-color compliance; `npm pack` allowlist check.
+6. Add the `worca.telemetry.file_access.enabled` (default **on**) gate.
 
 ### Files Changed Summary
 
@@ -163,8 +145,6 @@ Badge colors per `worca-ui/docs/badge-color-language.md` (write = caution/orange
 | `src/worca/orchestrator/runner.py` | Env stamping in `run_stage`; aggregation at `complete_iteration` |
 | `src/worca/events/types.py` (+ payload builder) | `pipeline.iteration.access` event |
 | `src/worca/.../settings` | `worca.telemetry.file_access.enabled` default on |
-| `worca-ui/server/*` | Cross-run aggregation endpoint |
-| `worca-ui/app/views/*` | New section + 4 views + routing |
 
 ## Considerations
 
@@ -189,9 +169,8 @@ Badge colors per `worca-ui/docs/badge-color-language.md` (write = caution/orange
 | Python | `test_recorder_categories_and_counts` | MultiEdit=1 write; NotebookEdit `notebook_path`; Grep ≠ read |
 | Python | `test_event_payload_pipeline_iteration_access` | payload shape; not chat-notifiable |
 
-### Integration / E2E Tests
+### Integration Tests
 - Mock-claude pipeline run produces per-iteration `access/*.jsonl`, `file_access` in `status.json`, and `pipeline.iteration.access` events; `leakage_pct` computed at run end.
-- (Phase 2) Playwright: the new section renders the matrix and search heatmap from a seeded multi-run fixture.
 
 ### Existing Tests to Update
 - Any iteration-record assertions that snapshot the full dict (now includes `file_access`).
@@ -208,12 +187,11 @@ Badge colors per `worca-ui/docs/badge-color-language.md` (write = caution/orange
 | `tests/test_path_canon.py` | Create | Layer-1/2 unit tests |
 | `tests/test_file_access_recorder.py` | Create | Recorder/aggregation tests |
 | `tests/test_event_types.py` | Modify | New event coverage |
-| `worca-ui/server/*` | Create/Modify | Aggregation endpoint |
-| `worca-ui/app/views/*` | Create/Modify | Section + 4 views + routing |
 
 ## Out of Scope
 
-- **The disjointness scheduler** (predicting bead file-sets, conflict-graph independent-set dispatch) — deferred. Records are designed so it is replayable **offline** against collected data.
+- **Visualization / UI** — the entire `worca-ui` surface (file matrix, cross-run aggregate, search tree-region heatmap, efficiency profile). Deferred to a future, separate `area:ui` plan that consumes the records and event this plan produces.
+- **The disjointness scheduler** (predicting bead file-sets, conflict-graph independent-set dispatch). Records are designed so it is replayable **offline** against collected data.
 - **Runtime write leases / PreToolUse enforcement** ("retry in 10s").
 - **Parallel implementers themselves** (worktree/scratch isolation, merge-back, reconciliation iterations).
 - **Coordinator-declared per-bead file scope** — a prerequisite of the scheduler, not of this telemetry.
