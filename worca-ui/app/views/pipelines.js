@@ -549,26 +549,24 @@ function _templateCard(template, defaultTemplate, handlers) {
           title="Export template bundle"
         >
           ${unsafeHTML(iconSvg(Download, 14))}
-          Export
+          ${has_overlays ? 'Export (zip)' : 'Export (json)'}
         </button>
         ${
           has_overlays
-            ? html`<span class="template-gist-overlay-note"
-                >Templates with prompt overlays must be shared as a downloaded .zip file</span
-              >`
+            ? ''
             : html`<button
                 class="action-btn action-btn--secondary"
                 @click=${() => onGist?.(id, resolvedTier)}
-                title="Copy gist URL"
+                title="Export as a GitHub gist and copy the URL"
               >
                 ${unsafeHTML(iconSvg(Copy, 14))}
-                Copy gist URL
+                Export (gist)
               </button>`
         }
         ${
           !isBuiltin
             ? html`<button
-              class="action-btn action-btn--danger"
+              class="action-btn action-btn--danger template-card-delete-push"
               ?disabled=${!onDelete}
               @click=${() => onDelete?.(id, resolvedTier)}
               title=${

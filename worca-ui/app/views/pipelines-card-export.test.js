@@ -2,8 +2,9 @@
  * Tests: export action and gist guard for template cards (W-064 Phase 6).
  *
  * Covers:
- * - "Copy gist URL" button visible when has_overlays: false
- * - "Copy gist URL" button hidden + overlay note shown when has_overlays: true
+ * - "Export (gist)" button visible when has_overlays: false
+ * - "Export (gist)" button hidden + overlay note shown when has_overlays: true
+ * - Export button label is "Export (json)" / "Export (zip)" per has_overlays
  * - exportTemplate uses response.blob() for both zip and JSON responses
  * - exportTemplate parses filename from Content-Disposition header
  *
@@ -72,7 +73,7 @@ describe('pipelinesView — gist guard (has_overlays)', () => {
     container = null;
   });
 
-  it('shows "Copy gist URL" button when has_overlays is false', () => {
+  it('shows "Export (gist)" button when has_overlays is false', () => {
     container = mount(
       {
         templates: [TPL_NO_OVERLAYS],
@@ -84,12 +85,12 @@ describe('pipelinesView — gist guard (has_overlays)', () => {
     const card = cardForId(container, 'simple-tpl');
     expect(card).toBeDefined();
     const gistBtn = Array.from(card.querySelectorAll('button')).find((b) =>
-      (b.textContent || '').includes('Copy gist URL'),
+      (b.textContent || '').includes('Export (gist)'),
     );
     expect(gistBtn).toBeDefined();
   });
 
-  it('hides "Copy gist URL" button when has_overlays is true', () => {
+  it('hides "Export (gist)" button when has_overlays is true', () => {
     container = mount(
       {
         templates: [TPL_WITH_OVERLAYS],
@@ -101,12 +102,33 @@ describe('pipelinesView — gist guard (has_overlays)', () => {
     const card = cardForId(container, 'overlay-tpl');
     expect(card).toBeDefined();
     const gistBtn = Array.from(card.querySelectorAll('button')).find((b) =>
-      (b.textContent || '').includes('Copy gist URL'),
+      (b.textContent || '').includes('Export (gist)'),
     );
     expect(gistBtn).toBeUndefined();
   });
 
-  it('shows overlay note when has_overlays is true', () => {
+  it('labels the export button "Export (json)" when has_overlays is false', () => {
+    container = mount(
+      {
+        templates: [TPL_NO_OVERLAYS],
+        templatesLoaded: true,
+        worcaCliStatus: HEALTHY,
+      },
+      baseHandlers,
+    );
+    const card = cardForId(container, 'simple-tpl');
+    expect(card).toBeDefined();
+    const exportBtn = Array.from(card.querySelectorAll('button')).find((b) =>
+      (b.textContent || '').includes('Export (json)'),
+    );
+    expect(exportBtn).toBeDefined();
+    const zipBtn = Array.from(card.querySelectorAll('button')).find((b) =>
+      (b.textContent || '').includes('Export (zip)'),
+    );
+    expect(zipBtn).toBeUndefined();
+  });
+
+  it('labels the export button "Export (zip)" when has_overlays is true', () => {
     container = mount(
       {
         templates: [TPL_WITH_OVERLAYS],
@@ -117,7 +139,31 @@ describe('pipelinesView — gist guard (has_overlays)', () => {
     );
     const card = cardForId(container, 'overlay-tpl');
     expect(card).toBeDefined();
-    expect(card.textContent).toContain(
+    const exportBtn = Array.from(card.querySelectorAll('button')).find((b) =>
+      (b.textContent || '').includes('Export (zip)'),
+    );
+    expect(exportBtn).toBeDefined();
+    const jsonBtn = Array.from(card.querySelectorAll('button')).find((b) =>
+      (b.textContent || '').includes('Export (json)'),
+    );
+    expect(jsonBtn).toBeUndefined();
+  });
+
+  it('does not show the legacy overlay note when has_overlays is true', () => {
+    // The "must be shared as a downloaded .zip file" note was removed — the
+    // dynamic "Export (zip)" label already conveys the format, and no gist
+    // button renders for overlay templates.
+    container = mount(
+      {
+        templates: [TPL_WITH_OVERLAYS],
+        templatesLoaded: true,
+        worcaCliStatus: HEALTHY,
+      },
+      baseHandlers,
+    );
+    const card = cardForId(container, 'overlay-tpl');
+    expect(card).toBeDefined();
+    expect(card.textContent).not.toContain(
       'Templates with prompt overlays must be shared as a downloaded .zip file',
     );
   });

@@ -7601,6 +7601,25 @@ sl-dialog.markdown-dialog::part(body) {
  */
 .template-card .run-card-actions {
   margin-top: auto;
+  /*
+   * Left-align the action cluster (Duplicate + Export buttons) and push
+   * Delete to the far right via `margin-left:auto` on the button itself
+   * (see .template-card-delete-push). Scoped to template cards so run cards
+   * keep the global flex-end alignment. nowrap keeps Delete on the same row
+   * as the other buttons instead of wrapping it to its own line.
+   */
+  justify-content: flex-start;
+  flex-wrap: nowrap;
+}
+
+/*
+ * Delete is always pinned to the far right of the template card's
+ * action row, regardless of how many left-cluster buttons precede it
+ * (count varies with has_overlays / builtin). `margin-left:auto`
+ * absorbs the free space so it never relies on :last-child.
+ */
+.template-card .run-card-actions .template-card-delete-push {
+  margin-left: auto;
 }
 
 .template-tier-badge {
