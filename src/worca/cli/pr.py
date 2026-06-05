@@ -206,6 +206,29 @@ def _run_pr_create(
 
     # 6. Write success
     completed_at = _now_iso()
+
+    # Provider parsed from the PR URL (github / gitlab / bitbucket / other).
+    from worca.utils.pr_url import parse_pr_url
+
+    provider = parse_pr_url(pr_url).get("provider")
+
+    # Commit SHA: prefer the value the deferred stage recorded; otherwise read
+    # the head branch tip from the worktree. The production deferred write does
+    # not persist commit_sha to stages.pr, so the git fallback is the common
+    # path here. Best-effort — an empty SHA just omits the Commit chip.
+    commit_sha = pr_stage.get("commit_sha")
+    if not commit_sha:
+        try:
+            r = subprocess.run(
+                ["git", "-C", worktree_path, "rev-parse", head_branch],
+                capture_output=True,
+                text=True,
+            )
+            if r.returncode == 0:
+                commit_sha = r.stdout.strip() or None
+        except OSError:
+            commit_sha = None
+
     status["pr_creation"] = {
         "state": "done",
         "started_at": started_at,
@@ -213,6 +236,20 @@ def _run_pr_create(
         "pr_url": pr_url,
     }
     status["pr_url"] = pr_url
+    # Populate the rich pr object the UI's run-detail strip reads (run.pr.*),
+    # mirroring the normal guardian path in runner.py. Without this a deferred
+    # PR created here renders a sparse 'PR' link with no number / provider /
+    # commit / branch metadata. review_status is None — a freshly created PR
+    # has no review yet (matches the normal path at creation time).
+    status["pr"] = {
+        "url": pr_url,
+        "number": pr_number,
+        "commit_sha": commit_sha,
+        "source_branch": head_branch,
+        "target_branch": base_branch,
+        "provider": provider,
+        "review_status": None,
+    }
     _save_status(status, status_path)
 
     print(f"PR created: {pr_url}")
@@ -221,9 +258,7 @@ def _run_pr_create(
     try:
         from worca.events.types import GIT_PR_CREATED, git_pr_created_payload
         from worca.events.emitter import EventContext, emit_event
-        from worca.utils.pr_url import parse_pr_url
 
-        parsed = parse_pr_url(pr_url)
         ctx = EventContext(
             run_id=run_id,
             log_path=os.path.join(worktree_path, ".worca", "events.jsonl"),
@@ -236,9 +271,10 @@ def _run_pr_create(
                 pr_url=pr_url,
                 pr_number=pr_number or 0,
                 title=pr_title,
+                commit_sha=commit_sha,
                 source_branch=head_branch,
                 target_branch=base_branch,
-                provider=parsed.get("provider"),
+                provider=provider,
             ),
         )
     except Exception:

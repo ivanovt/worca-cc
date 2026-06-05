@@ -333,6 +333,122 @@ class TestReconcileExistingPR:
         assert pr_creation.get("pr_url") == "https://github.com/owner/repo/pull/55"
 
 
+class TestPopulatesRichPrObject:
+    """worca pr create must write status['pr'] (the rich object the UI strip
+    reads), not just the flat pr_url — otherwise a deferred+manual PR renders
+    a sparse 'PR' link with no number/provider/commit/branch metadata.
+    """
+
+    def _create_run(self, cmd, **kwargs):
+        m = MagicMock()
+        if "pr" in cmd and "list" in cmd:
+            m.returncode = 0
+            m.stdout = "[]"
+        elif "pr" in cmd and "create" in cmd:
+            m.returncode = 0
+            m.stdout = "https://github.com/owner/repo/pull/99\n"
+            m.stderr = ""
+        elif "rev-parse" in cmd:
+            m.returncode = 0
+            m.stdout = "deadbeefcafef00d\n"
+            m.stderr = ""
+        else:
+            m.returncode = 0
+            m.stdout = ""
+            m.stderr = ""
+        return m
+
+    def test_create_path_writes_rich_pr_object(self, tmp_path):
+        from worca.cli.pr import _run_pr_create
+
+        status_path = tmp_path / "status.json"
+        worktree = str(tmp_path)
+        status = _make_status()
+        status_path.write_text(json.dumps(status))
+
+        with patch("worca.cli.pr.get_pipeline") as mock_get, \
+             patch("subprocess.run", side_effect=self._create_run):
+            mock_get.return_value = {"worktree_path": worktree}
+            _run_pr_create(
+                run_id="20260604-151817-268-abc",
+                project=str(tmp_path),
+                dry_run=False,
+                status_path=str(status_path),
+            )
+
+        pr = json.loads(status_path.read_text()).get("pr")
+        assert pr is not None, "status['pr'] must be populated for the UI strip"
+        assert pr.get("url") == "https://github.com/owner/repo/pull/99"
+        assert pr.get("number") == 99
+        assert pr.get("provider") == "github"
+        assert pr.get("source_branch") == "worca/my-feature-20260604"
+        assert pr.get("target_branch") == "main"
+        # commit_sha from the deferred stage takes precedence over git rev-parse.
+        assert pr.get("commit_sha") == "abc1234"
+
+    def test_create_path_falls_back_to_git_head_for_commit(self, tmp_path):
+        from worca.cli.pr import _run_pr_create
+
+        status_path = tmp_path / "status.json"
+        worktree = str(tmp_path)
+        status = _make_status()
+        # Production deferred write doesn't persist commit_sha to stages.pr.
+        del status["stages"]["pr"]["commit_sha"]
+        status_path.write_text(json.dumps(status))
+
+        with patch("worca.cli.pr.get_pipeline") as mock_get, \
+             patch("subprocess.run", side_effect=self._create_run):
+            mock_get.return_value = {"worktree_path": worktree}
+            _run_pr_create(
+                run_id="20260604-151817-268-abc",
+                project=str(tmp_path),
+                dry_run=False,
+                status_path=str(status_path),
+            )
+
+        pr = json.loads(status_path.read_text()).get("pr")
+        assert pr.get("commit_sha") == "deadbeefcafef00d"
+
+    def test_reconcile_path_writes_rich_pr_object(self, tmp_path):
+        from worca.cli.pr import _run_pr_create
+
+        status_path = tmp_path / "status.json"
+        worktree = str(tmp_path)
+        status = _make_status()
+        status_path.write_text(json.dumps(status))
+
+        existing_pr = [{"number": 55, "url": "https://github.com/owner/repo/pull/55"}]
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            if "pr" in cmd and "list" in cmd:
+                m.returncode = 0
+                m.stdout = json.dumps(existing_pr)
+            elif "rev-parse" in cmd:
+                m.returncode = 0
+                m.stdout = "deadbeefcafef00d\n"
+            else:
+                raise AssertionError(f"unexpected call: {cmd}")
+            return m
+
+        with patch("worca.cli.pr.get_pipeline") as mock_get, \
+             patch("subprocess.run", side_effect=fake_run):
+            mock_get.return_value = {"worktree_path": worktree}
+            _run_pr_create(
+                run_id="20260604-151817-268-abc",
+                project=str(tmp_path),
+                dry_run=False,
+                status_path=str(status_path),
+            )
+
+        pr = json.loads(status_path.read_text()).get("pr")
+        assert pr is not None
+        assert pr.get("number") == 55
+        assert pr.get("provider") == "github"
+        assert pr.get("source_branch") == "worca/my-feature-20260604"
+        assert pr.get("target_branch") == "main"
+
+
 class TestDryRun:
     """--dry-run prints what would happen without executing gh commands."""
 
