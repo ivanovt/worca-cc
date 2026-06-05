@@ -134,6 +134,16 @@ function renderGitPrCreated(envelope) {
   return mdMsg(parts.join('\n'), 'info');
 }
 
+function renderGitPrDeferred(envelope) {
+  const p = envelope.payload;
+  const parts = [`\u{1F7E1} **Run:** \`${runId(envelope)}\``];
+  parts.push(
+    `   **PR deferred:** branch \`${p.head_branch}\` pushed — open the run and click **Create PR** to publish.`,
+  );
+  if (p.pr_title) parts.push(`   **Title:** ${p.pr_title}`);
+  return mdMsg(parts.join('\n'), 'warning');
+}
+
 function renderGitPrMerged(envelope) {
   const p = envelope.payload;
   const parts = [`\u2705 **PR merged:** [#${p.pr_number}](${p.pr_url})`];
@@ -560,6 +570,7 @@ const EVENT_RENDERERS = {
   'pipeline.stage.completed': renderStageCompleted,
   'pipeline.stage.interrupted': renderStageInterrupted,
   'pipeline.git.pr_created': renderGitPrCreated,
+  'pipeline.git.pr_deferred': renderGitPrDeferred,
   'pipeline.git.pr_merged': renderGitPrMerged,
   'pipeline.circuit_breaker.tripped': renderCbTripped,
   'pipeline.cost.budget_warning': renderCostBudgetWarning,

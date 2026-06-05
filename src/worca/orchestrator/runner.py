@@ -16,9 +16,9 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Mapping, Optional
 
-from worca.orchestrator.guardian_context import build_guardian_context, compute_defer_pr
+from worca.orchestrator.guardian_context import build_guardian_context
 from worca.orchestrator.error_classifier import (
     classify_error, record_failure, record_success,
     should_halt, get_retry_delay, get_circuit_breaker_state,
@@ -94,8 +94,8 @@ from worca.events.types import (
     cb_failure_recorded_payload, cb_retry_payload, cb_tripped_payload, cb_reset_payload,
     COST_STAGE_TOTAL, COST_RUNNING_TOTAL, COST_BUDGET_WARNING,
     cost_stage_total_payload, cost_running_total_payload, cost_budget_warning_payload,
-    GIT_BRANCH_CREATED, GIT_PR_CREATED,
-    git_branch_created_payload, git_pr_created_payload,
+    GIT_BRANCH_CREATED, GIT_PR_CREATED, GIT_PR_DEFERRED,
+    git_branch_created_payload, git_pr_created_payload, git_pr_deferred_payload,
     PREFLIGHT_COMPLETED, PREFLIGHT_SKIPPED,
     preflight_completed_payload, preflight_skipped_payload,
     LEARN_COMPLETED, LEARN_FAILED,
@@ -1313,6 +1313,46 @@ def _make_agent_event_handler(
     return handler
 
 
+def _apply_defer_pr_from_config(worca_config: dict, subprocess_env: dict) -> None:
+    """Translate worca.stages.pr.defer config to WORCA_DEFER_PR env var.
+
+    Mutates subprocess_env in place. Only adds the var; never removes it.
+    The workspace dag_executor sets WORCA_DEFER_PR=1 in child os.environ —
+    the guard ensures stages.pr.defer:false in a child template does not undo
+    that (the two producers compose monotonically: either can defer, neither
+    can un-defer).
+    """
+    pr_cfg = worca_config.get("stages", {}).get("pr", {})
+    if pr_cfg.get("defer") is True and not subprocess_env.get("WORCA_DEFER_PR"):
+        subprocess_env["WORCA_DEFER_PR"] = "1"
+
+
+def _pr_stage_is_deferred(settings_path: str, env: Optional[Mapping[str, str]] = None) -> bool:
+    """Resolve whether the PR stage defers, the SAME way the guardian prompt does.
+
+    The guardian *prompt* is rendered in run_pipeline from an env copy that folds
+    the worca.stages.pr.defer config toggle in via _apply_defer_pr_from_config and
+    then runs through build_guardian_context (which also honors revise-PR
+    precedence). The PR-stage *schema* selection must use that identical
+    resolution — otherwise a config-only defer (no WORCA_DEFER_PR in os.environ)
+    renders the deferred prompt ("stash, do not open a PR") while the schema stays
+    pr.json (which demands pr_number/pr_url), and the agent's output can't satisfy
+    both. Reusing the same two functions keeps schema and prompt from ever
+    disagreeing.
+    """
+    resolved_env = dict(os.environ if env is None else env)
+    _apply_defer_pr_from_config(
+        load_settings(settings_path).get("worca", {}), resolved_env
+    )
+    return bool(build_guardian_context(resolved_env)["defer_pr"])
+
+
+def _lift_pr_deferred_to_status(result: dict, status: dict) -> None:
+    """When the PR stage output has deferred:True, mark status.pr_deferred=True."""
+    if isinstance(result, dict) and result.get("deferred") is True:
+        status["pr_deferred"] = True
+
+
 def run_stage(
     stage: Stage,
     context: dict,
@@ -1354,11 +1394,15 @@ def run_stage(
     is the full claude CLI JSON response for logging.
     """
     config = get_stage_config(stage, settings_path=settings_path)
-    # PR stage uses a different schema when the run defers PR creation to a
-    # parent orchestrator (workspace child). Two schemas instead of one
-    # conditional schema keeps each flat — the Claude API rejects custom
-    # tools whose input_schema has top-level allOf/oneOf/anyOf.
-    if stage == Stage.PR and compute_defer_pr(os.environ):
+    # PR stage uses a different schema when the run defers PR creation — either a
+    # workspace child (WORCA_DEFER_PR=1, set by dag_executor) or a project that
+    # set worca.stages.pr.defer:true. _pr_stage_is_deferred resolves this the
+    # SAME way the guardian prompt is resolved in run_pipeline, so a config-only
+    # defer still selects pr-deferred.json (otherwise the agent is told to stash
+    # the PR while the schema still demands pr_number/pr_url). Two flat schemas
+    # instead of one conditional schema keeps each flat — the Claude API rejects
+    # custom tools whose input_schema has top-level allOf/oneOf/anyOf.
+    if stage == Stage.PR and _pr_stage_is_deferred(settings_path):
         config = {**config, "schema": "pr-deferred.json"}
     max_turns = config["max_turns"] * msize
     raw_prompt = context.get("prompt", "")
@@ -2548,12 +2592,26 @@ def run_pipeline(
         prompt_builder.update_context("title", work_request.title)
         if work_request.review_comments:
             prompt_builder.update_context("review_comments", work_request.review_comments)
+        # Translate worca.stages.pr.defer config to WORCA_DEFER_PR so the
+        # {{#if defer_pr}} block in guardian.md resolves correctly. We work on
+        # a per-run copy of the environment rather than mutating the live
+        # os.environ: the toggle is monotonic (never un-defers), so mutating
+        # the process env would leak the flag into subsequent in-process runs.
+        # The workspace dag_executor already sets WORCA_DEFER_PR=1 in child
+        # env; copying os.environ preserves that value — the two producers
+        # compose monotonically.
+        guardian_env = dict(os.environ)
+        _apply_defer_pr_from_config(
+            load_settings(settings_path).get("worca", {}),
+            guardian_env,
+        )
         # Guardian template variables (issue #165): derived once here so the
         # dispatch-time resolve_agent call resolves {{pr_title_prefix}},
         # {{pr_footer}}, and {{#if defer_pr}} in guardian.md. Computed from
-        # the current process env, which carries the fleet/workspace child
-        # WORCA_* vars set by run_fleet.py / dag_executor.py.
-        for key, value in build_guardian_context(os.environ).items():
+        # the per-run env copy, which carries the fleet/workspace child
+        # WORCA_* vars set by run_fleet.py / dag_executor.py plus the
+        # config-derived WORCA_DEFER_PR above.
+        for key, value in build_guardian_context(guardian_env).items():
             prompt_builder.update_context(key, value)
         if status.get("run_id"):
             os.environ["WORCA_RUN_ID"] = status["run_id"]
@@ -4245,6 +4303,31 @@ def run_pipeline(
                             stage=Stage.PR.value,
                         ))
                 if isinstance(result, dict):
+                    _lift_pr_deferred_to_status(result, status)
+                    if result.get("deferred") is True:
+                        # Lift deferred fields to stages.pr so worca pr create
+                        # can read them without traversing iterations.
+                        update_stage(status, Stage.PR.value,
+                            deferred=True,
+                            pr_title=result.get("pr_title", ""),
+                            pr_body=result.get("pr_body", ""),
+                            base_branch=(
+                                result.get("base_branch")
+                                or result.get("target_branch") or ""
+                            ),
+                            source_branch=(
+                                result.get("source_branch")
+                                or status.get("branch") or ""
+                            ),
+                        )
+                        save_status(status, actual_status_path)
+                        if ctx:
+                            emit_event(ctx, GIT_PR_DEFERRED, git_pr_deferred_payload(
+                                pr_title=result.get("pr_title", ""),
+                                base_branch=result.get("base_branch") or result.get("target_branch") or "",
+                                head_branch=result.get("source_branch") or status.get("branch") or "",
+                                commit_sha=result.get("commit_sha"),
+                            ))
                     _pr_url = result.get("pr_url")
                     _pr_number = result.get("pr_number")
                     # In revise mode, if the agent's prose fallback didn't carry

@@ -408,16 +408,21 @@ function _cleanSectionForWrite(section, cfg) {
 export function formBufferToConfig(formBuffer) {
   const config = {};
 
-  // Stages
+  // Stages — spread the buffered stage config first so unknown keys
+  // (template-owned stage knobs beyond enabled/agent, e.g. pr.defer)
+  // survive the round-trip, then overlay the edited enabled/agent. Without
+  // the spread, any such key would be silently dropped on save — the same
+  // failure mode the agents block below guards against with _original.
   config.stages = {};
   for (const [stage, stageConfig] of Object.entries(formBuffer.stages || {})) {
     config.stages[stage] = {
+      ...stageConfig,
       enabled: stageConfig.enabled,
       agent: stageConfig.agent,
     };
     // Skip mode for plan_review unless it's set (matches Python-side handling)
-    if (stage === 'plan_review' && stageConfig.mode) {
-      config.stages[stage].mode = stageConfig.mode;
+    if (stage === 'plan_review' && !stageConfig.mode) {
+      delete config.stages[stage].mode;
     }
   }
 
@@ -1541,6 +1546,42 @@ function _stagesSection(formBuffer, projectId, rerender) {
                     <sl-option value="none">None</sl-option>
                   </sl-select>
                 </div>
+                ${
+                  stageKey === 'pr'
+                    ? html`
+                  <div class="settings-field">
+                    <label class="settings-label" for="stage-pr-defer">
+                      Defer PR creation
+                      <sl-tooltip content="When on, the guardian stage stashes the PR title/body/base instead of opening a PR. Promote it later with 'worca pr create' or the Create PR button on the run.">
+                        <sl-icon name="question-circle"></sl-icon>
+                      </sl-tooltip>
+                    </label>
+                    <sl-switch
+                      id="stage-pr-defer"
+                      ?checked=${stageConfig.defer === true}
+                      size="small"
+                      ?disabled=${!isEnabled}
+                      @sl-change=${(e) => {
+                        if (e.target.checked) {
+                          editorState.formBuffer.stages[stageKey].defer = true;
+                        } else {
+                          delete editorState.formBuffer.stages[stageKey].defer;
+                        }
+                        rerender();
+                      }}
+                      @sl-blur=${() => {
+                        validateConfigDebounced(
+                          projectId,
+                          editorState.formBuffer,
+                          state.viewMode,
+                          rerender,
+                        );
+                      }}
+                    ></sl-switch>
+                  </div>
+                `
+                    : nothing
+                }
               </div>
             </div>
           `;

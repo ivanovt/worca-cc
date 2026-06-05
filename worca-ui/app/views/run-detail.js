@@ -40,6 +40,9 @@ import { prCommentsView } from './run-detail-pr-comments.js';
 import { resolveIterationTab } from './stage-tab-memory.js';
 import { stageTimelineView } from './stage-timeline.js';
 
+// ── deferred PR creation: client-side in-flight tracking ─────────────────
+const _prCreationState = new Map(); // run.id -> { inFlight: bool, error: string|null }
+
 // ── plan artifact: lazy fetch + dialog state ─────────────────────────────
 // The PLAN stage's plan_file (or {worktree}/MASTER_PLAN.md) is fetched from
 // GET /api/projects/:project/runs/:run_id/plan on first dialog open and
@@ -1574,6 +1577,86 @@ export function guideConflictsPanelView(conflicts, options = {}) {
   `;
 }
 
+function _createPrClickHandler(run, rerender, options) {
+  return async () => {
+    _prCreationState.set(run.id, { inFlight: true, error: null });
+    rerender?.();
+    try {
+      const r = await fetch(`${_runApiBase(run)}/pr`, { method: 'POST' });
+      if (r.ok) {
+        const data = await r.json().catch(() => ({}));
+        _prCreationState.set(run.id, { inFlight: false, error: null });
+        options?.onCreatePr?.(run.id, data.pr_url);
+      } else {
+        const err = await r.json().catch(() => ({}));
+        _prCreationState.set(run.id, {
+          inFlight: false,
+          error: err.error || `Server error ${r.status}`,
+        });
+      }
+    } catch (err) {
+      _prCreationState.set(run.id, {
+        inFlight: false,
+        error: err.message || 'Network error',
+      });
+    }
+    rerender?.();
+  };
+}
+
+export function prDeferredSectionView(run, rerender, options) {
+  const prUrl = run?.pr?.url || run?.pr_url;
+  if (prUrl) return nothing;
+  if (!run?.pr_deferred) return nothing;
+
+  const clientState = _prCreationState.get(run?.id);
+  const serverState = run?.pr_creation?.state;
+
+  const isInFlight = clientState?.inFlight || serverState === 'in_progress';
+  const isFailed =
+    !isInFlight && (clientState?.error || serverState === 'failed');
+  const errorMsg = clientState?.error || run?.pr_creation?.error;
+
+  if (isInFlight) {
+    const startedAt = run?.pr_creation?.started_at;
+    const elapsedStr = startedAt
+      ? ` (${formatDuration(elapsed(startedAt, null))})`
+      : '';
+    return html`
+      <div class="pr-deferred-section">
+        <sl-badge class="pr-deferred-badge" variant="warning" pill>deferred</sl-badge>
+        <button class="action-btn action-btn--primary" disabled>
+          <sl-spinner style="--track-width: 2px; font-size: 0.75rem"></sl-spinner>
+          Creating PR…${elapsedStr}
+        </button>
+      </div>
+    `;
+  }
+
+  if (isFailed) {
+    return html`
+      <div class="pr-deferred-section">
+        <sl-badge class="pr-deferred-badge" variant="warning" pill>deferred</sl-badge>
+        ${errorMsg ? html`<div class="pr-deferred-error">${errorMsg}</div>` : nothing}
+        <button
+          class="action-btn action-btn--primary"
+          @click=${_createPrClickHandler(run, rerender, options)}
+        >Retry</button>
+      </div>
+    `;
+  }
+
+  return html`
+    <div class="pr-deferred-section">
+      <sl-badge class="pr-deferred-badge" variant="warning" pill>deferred</sl-badge>
+      <button
+        class="action-btn action-btn--primary"
+        @click=${_createPrClickHandler(run, rerender, options)}
+      >Create PR</button>
+    </div>
+  `;
+}
+
 export function prApprovalPanelView(run, options = {}) {
   if (
     !(
@@ -2019,6 +2102,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' ? prDeferredSectionView(run, options.rerender, options) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
@@ -2076,6 +2160,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
                       ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' ? prDeferredSectionView(run, options.rerender, options) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${_planIterationButton(key, iterations[0], run, options.rerender)}

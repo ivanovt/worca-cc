@@ -58,10 +58,11 @@ PIPELINE_CONSTANTS = [
     ("BEAD_FAILED",       "pipeline.bead.failed"),
     ("BEAD_LABELED",      "pipeline.bead.labeled"),
     ("BEAD_NEXT",         "pipeline.bead.next"),
-    # Git operations (4)
+    # Git operations (5)
     ("GIT_BRANCH_CREATED", "pipeline.git.branch_created"),
     ("GIT_COMMIT",         "pipeline.git.commit"),
     ("GIT_PR_CREATED",     "pipeline.git.pr_created"),
+    ("GIT_PR_DEFERRED",    "pipeline.git.pr_deferred"),
     ("GIT_PR_MERGED",      "pipeline.git.pr_merged"),
     # Test detail (4)
     ("TEST_SUITE_STARTED", "pipeline.test.suite_started"),
@@ -138,19 +139,19 @@ def test_pipeline_constant_values_unique():
 
 
 def test_total_pipeline_constants():
-    """There must be exactly 56 pipeline.* outbound constants.
+    """There must be exactly 57 pipeline.* outbound constants.
 
     48 original + 2 dedicated learn events (pipeline.learn.completed/failed)
     + 1 dispatch_allowed hook event + 1 RUN_CANCELLED + 1 PLAN_EDITED
-    + 2 template lifecycle events + 1 ITERATION_ACCESS = 56.
+    + 2 template lifecycle events + 1 ITERATION_ACCESS + 1 GIT_PR_DEFERRED = 57.
     """
     import worca.events.types as T
     pipeline_vals = [
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 56, (
-        f"Expected 56 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 57, (
+        f"Expected 57 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -201,6 +202,7 @@ EXPECTED_BUILDERS = [
     "git_branch_created_payload",
     "git_commit_payload",
     "git_pr_created_payload",
+    "git_pr_deferred_payload",
     "git_pr_merged_payload",
     # pipeline.test.*
     "test_suite_started_payload",
@@ -622,6 +624,22 @@ def test_git_pr_merged_payload_required_fields():
     assert p["pr_number"] == 42
 
 
+def test_event_pr_deferred_payload():
+    from worca.events.types import git_pr_deferred_payload
+    p = git_pr_deferred_payload(
+        pr_title="Add deferrable PR creation",
+        base_branch="master",
+        head_branch="worca/w-065-feature",
+        commit_sha="abc1234567",
+    )
+    assert p["pr_title"] == "Add deferrable PR creation"
+    assert p["base_branch"] == "master"
+    assert p["head_branch"] == "worca/w-065-feature"
+    assert p["commit_sha"] == "abc1234567"
+    assert "pr_url" not in p
+    assert "pr_number" not in p
+
+
 def test_test_suite_started_payload_required_fields():
     from worca.events.types import test_suite_started_payload
     p = test_suite_started_payload(stage="TEST", iteration=1, trigger="initial")
@@ -984,6 +1002,7 @@ def test_all_builders_return_dicts():
         "git_branch_created_payload": dict(branch="b"),
         "git_commit_payload": dict(stage="GUARDIAN", commit_hash="abc1234", message_summary="m"),
         "git_pr_created_payload": dict(pr_url="u", pr_number=1, title="t"),
+        "git_pr_deferred_payload": dict(pr_title="t", base_branch="master", head_branch="feat"),
         "git_pr_merged_payload": dict(pr_url="u", pr_number=1),
         "test_suite_started_payload": dict(stage="TEST", iteration=1, trigger="initial"),
         "test_suite_passed_payload": dict(iteration=1),

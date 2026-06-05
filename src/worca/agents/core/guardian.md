@@ -33,29 +33,13 @@ Capture the commit SHA you just pushed (`git rev-parse HEAD`) and return this st
 
 The orchestrator re-reads the existing PR to fill in `pr_url`, so you do not need to emit it. If the push failed, return `outcome: "reject"` with a descriptive reason.
 {{else}}
-{{#if defer_pr}}
-### Step 2 — PR creation is deferred
-
-PR creation for this run is handled by a parent orchestrator after downstream gates complete. **Do not** call `gh pr create` (or any host equivalent).
-
-Once the commit and push have landed, return this structured output:
-
-- `outcome: "success"`
-- `deferred: true` — discriminator; tells the orchestrator to skip pr_number/pr_url verification because no PR was created by this run.
-- `commit_sha: "<short or full SHA of the commit you made>"` — required so the orchestrator can verify HEAD actually moved.
-- Do NOT include `pr_number` or `pr_url`. The parent orchestrator creates the PR later and fills those in centrally.
-
-If the commit or push failed, return `outcome: "reject"` with a descriptive reason.
-{{else}}
-### Step 2 — Open the PR
+### Step 2 — Compose PR title, body, and resolve base branch
 
 Derive the PR title from the work request. Prepend the orchestrator-provided prefix verbatim, with a single space between the prefix and the derived title. If the prefix is empty, use the derived title alone.
 
 - **Prefix:** `{{pr_title_prefix}}`
 
-Read `target_branch` from `status.json`. If set, pass it as `--base`. Otherwise fall back to the default base branch from project settings.
-
-Build the PR body from the work request and approach summary. If the orchestrator provided a footer block below, append it verbatim (the leading `---` and trailing newline are already included). If the footer block below is empty, append nothing.
+Build the PR body from the work request and approach summary. If the footer block below is non-empty, append it verbatim to the PR body (the leading `---` and trailing newline are already included). If the footer block below is empty, append nothing.
 
 - **Footer:**
 
@@ -63,7 +47,27 @@ Build the PR body from the work request and approach summary. If the orchestrato
 {{pr_footer}}
 ```
 
-Then run the host CLI from CLAUDE.md to open the PR. With `gh`, that is:
+Read `target_branch` from `status.json` and use it as the base branch. If unset, fall back to the project's default base branch from settings.
+
+{{#if defer_pr}}
+### Step 3 — Stash, do not open PR
+
+PR creation for this run is deferred. **Do not** call `gh pr create` (or any host equivalent).
+
+Return this structured output:
+
+- `outcome: "success"`
+- `deferred: true` — discriminator; tells the orchestrator to skip pr_number/pr_url verification.
+- `commit_sha: "<short or full SHA of the commit you made>"`
+- `pr_title: "<the composed title from Step 2>"`
+- `pr_body: "<the composed body from Step 2>"`
+- `base_branch: "<the resolved base branch from Step 2>"`
+
+If the commit or push failed, return `outcome: "reject"` with a descriptive reason.
+{{else}}
+### Step 3 — Open the PR
+
+Run the host CLI from CLAUDE.md to open the PR. With `gh`, that is:
 
 `gh pr create --base <base_branch> --head <head_branch> --title "<prefixed_title>" --body "<body>"`
 {{/if}}
