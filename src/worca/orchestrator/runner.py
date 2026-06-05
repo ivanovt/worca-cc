@@ -41,7 +41,12 @@ from worca.state.status import (
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
-from worca.utils.gh_pr import current_repo_nwo, post_revision_summary, reply_to_thread
+from worca.utils.gh_pr import (
+    WORCA_COMMENT_MARKER,
+    current_repo_nwo,
+    post_revision_summary,
+    reply_to_thread,
+)
 from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
 from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
@@ -1446,6 +1451,9 @@ def _revise_pr_writeback(pr_number, commit_sha, review_feedback) -> None:
     formatting GraphQL by hand. Both helpers are error-suppressed and
     WORCA_NO_GITHUB-gated; failures here never fail the pipeline.
 
+    Every comment posted here starts with WORCA_COMMENT_MARKER so a later
+    revise run recognises and skips worca's own writeback (L1).
+
     - Summary: one top-level comment on the PR (D1 — update in place).
     - Replies: one reply per ingested thread that carries a thread_id (D3 —
       reply only, never resolve). Review-summary items have no thread_id and
@@ -1459,7 +1467,7 @@ def _revise_pr_writeback(pr_number, commit_sha, review_feedback) -> None:
     if nwo:
         n_threads = sum(1 for c in (review_feedback or []) if c.get("thread_id"))
         summary = (
-            f"worca addressed {n_threads} review "
+            f"{WORCA_COMMENT_MARKER} · addressed {n_threads} review "
             f"{'comment' if n_threads == 1 else 'comments'}{sha_phrase}."
         )
         post_revision_summary(nwo, pr_number, summary)
@@ -1470,7 +1478,7 @@ def _revise_pr_writeback(pr_number, commit_sha, review_feedback) -> None:
         if not thread_id or thread_id in seen_threads:
             continue
         seen_threads.add(thread_id)
-        reply_to_thread(nwo, thread_id, f"Addressed{sha_phrase}.")
+        reply_to_thread(nwo, thread_id, f"{WORCA_COMMENT_MARKER} · addressed{sha_phrase}.")
 
 
 def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> Optional[PRVerification]:

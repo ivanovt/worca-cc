@@ -39,7 +39,7 @@ Add a new source scheme `gh:pr:N` (and full PR URL) that:
 
 | Landmine | Failure mode | Mitigation |
 |----------|--------------|------------|
-| **L1 — self-comment loop** | worca tries to "address" its own summary/reply comments, looping forever | Filter ingested threads to **human authors**, exclude the bot account that posts worca's comments. |
+| **L1 — self-comment loop** | worca tries to "address" its own summary/reply comments, looping forever | Every comment worca posts starts with a content marker (`WORCA_COMMENT_MARKER`, `🤖 worca`); ingestion skips any comment whose body begins with it. Content-based, so it needs no dedicated bot account/token and never false-excludes human reviewers who share worca's login. |
 | **L2 — head-branch-name drift** | recreating the head under a new name pushes to a *different* branch → spawns a **duplicate PR** instead of updating | Preserve the exact head branch name end-to-end; guardian pushes to it, never `gh pr create` in revise mode. |
 | **L3 — concurrent checkout** | the PR head branch may still be checked out in the original run's live worktree; a branch can only be checked out once | Fetch the head from remote into a **fresh** worktree (`gh pr checkout N`), never assume the original worktree is gone. |
 
@@ -76,7 +76,7 @@ class WorkRequest:
 - **Obstacle:** the REST `/pulls/N/comments` endpoint does **not** expose thread resolution state. Resolution + thread grouping requires GraphQL `reviewThreads`. (This is a *different* GraphQL field than the classic-Projects `projectCards` one that's broken in this repo per CLAUDE.md — `reviewThreads` is safe.)
 - **Resolution:** `gh_pr.py:fetch_review_feedback(nwo, pr_number)` runs a GraphQL query for `reviewThreads { isResolved, isOutdated, comments(first:N) { author { login }, path, line, originalLine, diffHunk, body, createdAt } }`, plus top-level `comments` and `reviews`. Then filter:
   1. **Unresolved** threads only (`isResolved == false`).
-  2. **Human authors only** — exclude the worca bot login (**L1**). Bot login resolved from config (`worca.pr_revision.bot_login`) or `gh api user` of the token; default heuristic = author of worca's own summary comments.
+  2. **Not worca's own** — exclude any comment whose body begins with `WORCA_COMMENT_MARKER` (`🤖 worca`) (**L1**). Content-based, so no dedicated bot account/token is needed and human reviewers sharing worca's login are never false-excluded.
   3. Drop empty/whitespace bodies.
 
   Normalized comment shape (also the JSON stored in status — §5):
@@ -155,7 +155,7 @@ ASCII flow:
 
 ```
 gh:pr:N / URL
-   │  normalize_github_pr()  +  gh_pr.py (GraphQL: unresolved, human-only)   [L1]
+   │  normalize_github_pr()  +  gh_pr.py (GraphQL: unresolved, non-worca)    [L1]
    ▼
 WorkRequest{ description = body + "## Review Feedback to Address",
              pr_head_branch, pr_base_branch, review_comments[] }
@@ -178,7 +178,7 @@ status.json{ source_type, revises_pr, review_feedback[] } ─► UI badge + comm
 **Tasks:**
 1. Add `gh:pr:N` + PR-URL parsing in `normalize()` (`:343-372`); GitHub-only guard for other providers.
 2. `normalize_github_pr()` — fetch PR metadata; extend `WorkRequest` (`:98-108`) with PR fields.
-3. `gh_pr.py:fetch_review_feedback()` — GraphQL `reviewThreads`, filter unresolved + human-only (**L1**), normalize to the §2 schema.
+3. `gh_pr.py:fetch_review_feedback()` — GraphQL `reviewThreads`, filter unresolved + drop worca's own marker-prefixed comments (**L1**), normalize to the §2 schema.
 4. Synthesize the "## Review Feedback to Address" description.
 
 ### Phase 2 — Worktree checkout-existing-head
@@ -253,7 +253,7 @@ status.json{ source_type, revises_pr, review_feedback[] } ─► UI badge + comm
 | Python | `test_normalize_github_pr_builds_work_request` | `gh:pr:N` → WorkRequest with head/base/comments |
 | Python | `test_pr_url_resolves_to_number` | full PR URL → PR number (GitHub) |
 | Python | `test_fetch_review_feedback_filters_resolved` | resolved threads dropped |
-| Python | `test_fetch_review_feedback_excludes_bot` | **L1** — worca's own comments excluded |
+| Python | `test_fetch_review_feedback_excludes_worca_marker` | **L1** — worca's own marker-prefixed comments excluded |
 | Python | `test_review_feedback_description_synthesis` | "## Review Feedback to Address" formatting + anchors |
 | Python | `test_worktree_pr_source_rejects_branch_flag` | `--branch` rejected for `gh:pr:N` |
 | Python | `test_worktree_pr_target_branch_from_base` | `target_branch == baseRefName` |

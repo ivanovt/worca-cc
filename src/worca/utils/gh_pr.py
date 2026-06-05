@@ -26,6 +26,19 @@ def _github_disabled() -> bool:
     return os.environ.get("WORCA_NO_GITHUB", "") == "1"
 
 
+# Every PR comment worca posts (revision summary + per-thread replies) starts
+# with this marker. Ingestion skips any comment whose body begins with it, so
+# worca's own writeback is never re-ingested as feedback to address (L1
+# self-comment loop) — without depending on a bot identity/token. The same
+# constant MUST be used to post and to match so the two never drift.
+WORCA_COMMENT_MARKER = "🤖 worca"
+
+
+def is_worca_comment(body: str) -> bool:
+    """True if *body* is one of worca's own marker-prefixed PR comments."""
+    return bool(body) and body.lstrip().startswith(WORCA_COMMENT_MARKER)
+
+
 _GRAPHQL_QUERY = """
 query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
@@ -92,47 +105,18 @@ def current_repo_nwo(cwd: Optional[str] = None) -> str:
     return result.stdout.strip()
 
 
-def resolve_bot_login() -> Optional[str]:
-    """Resolve the login worca posts comments as (the authenticated gh token).
-
-    Excluding this login from ingestion is the L1 self-comment-loop guard:
-    worca's own summary/thread-reply comments must never be re-ingested as
-    feedback to address.  Returns None on any error (no filtering applied).
-    """
-    try:
-        result = subprocess.run(
-            ["gh", "api", "user", "--jq", ".login"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except Exception as e:
-        print(f"Warning: resolve_bot_login failed: {e}", file=sys.stderr)
-        return None
-    if result.returncode != 0:
-        print(f"Warning: resolve_bot_login gh error: {result.stderr}", file=sys.stderr)
-        return None
-    login = result.stdout.strip()
-    return login or None
-
-
-def fetch_review_feedback(
-    nwo: str,
-    pr_number: int,
-    *,
-    bot_login: Optional[str] = None,
-) -> list[dict]:
-    """Fetch unresolved human-authored review feedback for a PR.
+def fetch_review_feedback(nwo: str, pr_number: int) -> list[dict]:
+    """Fetch unresolved, non-worca review feedback for a PR.
 
     Ingests two sources: unresolved inline review-thread comments and
-    change-requesting / commenting review summary bodies.
+    change-requesting / commenting review summary bodies. worca's own
+    marker-prefixed comments (see WORCA_COMMENT_MARKER) are excluded so its
+    writeback is never re-ingested (L1 self-comment loop).
 
     Args:
         nwo: "owner/repo" string — must be the *base* repo (where the PR lives),
             not a fork's head repo. Use current_repo_nwo() to resolve it.
         pr_number: PR number.
-        bot_login: GitHub login to exclude (worca's bot account, L1). If None,
-            no bot filtering is applied.
 
     Returns:
         List of comment dicts matching the §2 schema:
@@ -178,11 +162,10 @@ def fetch_review_feedback(
         for node in thread.get("comments", {}).get("nodes", []):
             author_login = (node.get("author") or {}).get("login", "")
 
-            if bot_login and author_login == bot_login:
-                continue
-
             body = node.get("body", "")
             if not body or not body.strip():
+                continue
+            if is_worca_comment(body):
                 continue
 
             line = node.get("line") or node.get("originalLine")
@@ -206,10 +189,10 @@ def fetch_review_feedback(
         if review.get("state") not in _FEEDBACK_REVIEW_STATES:
             continue
         author_login = (review.get("author") or {}).get("login", "")
-        if bot_login and author_login == bot_login:
-            continue
         body = review.get("body", "")
         if not body or not body.strip():
+            continue
+        if is_worca_comment(body):
             continue
         comments.append(
             {

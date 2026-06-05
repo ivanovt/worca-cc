@@ -5,11 +5,12 @@ from unittest.mock import MagicMock, patch
 
 
 from worca.utils.gh_pr import (
+    WORCA_COMMENT_MARKER,
     current_repo_nwo,
     fetch_review_feedback,
+    is_worca_comment,
     post_revision_summary,
     reply_to_thread,
-    resolve_bot_login,
 )
 
 
@@ -62,12 +63,14 @@ GRAPHQL_RESPONSE = {
                             "comments": {
                                 "nodes": [
                                     {
-                                        "author": {"login": "worca-bot"},
+                                        # worca's own marker-prefixed reply — excluded by
+                                        # content, regardless of which login posted it.
+                                        "author": {"login": "alice"},
                                         "path": "src/baz.py",
                                         "line": 5,
                                         "originalLine": 5,
                                         "diffHunk": "@@ -3,4 +3,6 @@",
-                                        "body": "bot comment should be excluded",
+                                        "body": "🤖 worca · addressed in commit `abc1234`.",
                                         "createdAt": "2026-06-03T11:00:00Z",
                                     }
                                 ]
@@ -93,7 +96,7 @@ def test_fetch_review_feedback_filters_resolved():
     """Only unresolved threads are returned."""
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = _make_gh_result(GRAPHQL_RESPONSE)
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
 
     thread_ids = {c["thread_id"] for c in comments}
     # PRRT_bbb is resolved → excluded
@@ -102,14 +105,15 @@ def test_fetch_review_feedback_filters_resolved():
     assert "PRRT_aaa" in thread_ids
 
 
-def test_fetch_review_feedback_excludes_bot():
-    """Bot-authored threads are excluded even when unresolved."""
+def test_fetch_review_feedback_excludes_worca_marker():
+    """worca's own marker-prefixed comments are excluded by content (L1),
+    regardless of which login posted them."""
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = _make_gh_result(GRAPHQL_RESPONSE)
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
 
     thread_ids = {c["thread_id"] for c in comments}
-    # PRRT_ccc is unresolved but bot-authored → excluded
+    # PRRT_ccc is unresolved but its body starts with WORCA_COMMENT_MARKER → excluded
     assert "PRRT_ccc" not in thread_ids
 
 
@@ -117,7 +121,7 @@ def test_fetch_review_feedback_schema():
     """Returned items match the §2 schema."""
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = _make_gh_result(GRAPHQL_RESPONSE)
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
 
     assert len(comments) == 1
     c = comments[0]
@@ -165,7 +169,7 @@ def test_fetch_review_feedback_drops_empty_body():
     }
     with patch("subprocess.run") as mock_run:
         mock_run.return_value = _make_gh_result(response)
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
 
     assert comments == []
 
@@ -177,7 +181,7 @@ def test_fetch_review_feedback_gh_error_returns_empty(capsys):
     result.stdout = ""
     result.stderr = "authentication error"
     with patch("subprocess.run", return_value=result):
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
 
     assert comments == []
     captured = capsys.readouterr()
@@ -347,36 +351,29 @@ def test_current_repo_nwo_exception_returns_empty(capsys):
 
 
 # ---------------------------------------------------------------------------
-# resolve_bot_login()
+# is_worca_comment() — content-marker self-comment detection (L1)
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_bot_login_success():
-    result = MagicMock()
-    result.returncode = 0
-    result.stdout = "worca-bot\n"
-    result.stderr = ""
-    with patch("subprocess.run", return_value=result):
-        assert resolve_bot_login() == "worca-bot"
+def test_is_worca_comment_true_for_marker_prefix():
+    assert is_worca_comment(f"{WORCA_COMMENT_MARKER} · addressed in commit `abc`.")
 
 
-def test_resolve_bot_login_empty_login_returns_none():
-    result = MagicMock()
-    result.returncode = 0
-    result.stdout = "\n"
-    result.stderr = ""
-    with patch("subprocess.run", return_value=result):
-        assert resolve_bot_login() is None
+def test_is_worca_comment_tolerates_leading_whitespace():
+    assert is_worca_comment(f"  \n{WORCA_COMMENT_MARKER} · addressed.")
 
 
-def test_resolve_bot_login_gh_error_returns_none(capsys):
-    result = MagicMock()
-    result.returncode = 1
-    result.stdout = ""
-    result.stderr = "auth"
-    with patch("subprocess.run", return_value=result):
-        assert resolve_bot_login() is None
-    assert "Warning" in capsys.readouterr().err
+def test_is_worca_comment_false_for_human_text():
+    assert not is_worca_comment("this leaks a file handle")
+
+
+def test_is_worca_comment_false_when_marker_not_at_start():
+    # A human quoting worca's reply mid-comment is NOT treated as worca's own.
+    assert not is_worca_comment(f"see earlier: {WORCA_COMMENT_MARKER} · addressed.")
+
+
+def test_is_worca_comment_false_for_empty():
+    assert not is_worca_comment("")
 
 
 # ---------------------------------------------------------------------------
@@ -404,8 +401,9 @@ _RESPONSE_WITH_REVIEWS = {
                             "submittedAt": "2026-06-03T10:00:00Z",
                         },
                         {
-                            "author": {"login": "worca-bot"},
-                            "body": "worca summary — should be excluded",
+                            # worca's own marker-prefixed review body → excluded by content
+                            "author": {"login": "alice"},
+                            "body": "🤖 worca · addressed 2 review comments in commit `abc`.",
                             "state": "COMMENTED",
                             "submittedAt": "2026-06-03T11:00:00Z",
                         },
@@ -426,7 +424,7 @@ _RESPONSE_WITH_REVIEWS = {
 def test_fetch_review_feedback_includes_review_summaries():
     """CHANGES_REQUESTED / COMMENTED review bodies become PR-level items."""
     with patch("subprocess.run", return_value=_make_gh_result(_RESPONSE_WITH_REVIEWS)):
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
 
     summaries = [c for c in comments if c["kind"] == "review_summary"]
     assert len(summaries) == 1
@@ -438,18 +436,19 @@ def test_fetch_review_feedback_includes_review_summaries():
     assert s["line"] is None
 
 
-def test_fetch_review_feedback_excludes_approved_and_bot_reviews():
+def test_fetch_review_feedback_excludes_approved_and_worca_reviews():
     with patch("subprocess.run", return_value=_make_gh_result(_RESPONSE_WITH_REVIEWS)):
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
 
     bodies = {c["body"] for c in comments}
     assert "looks good to me" not in bodies  # APPROVED skipped
-    assert "worca summary — should be excluded" not in bodies  # bot skipped
+    # worca's own marker-prefixed review body skipped (L1)
+    assert not any(b.startswith(WORCA_COMMENT_MARKER) for b in bodies)
 
 
 def test_fetch_review_feedback_handles_missing_reviews_key():
     """Older mock shape without a 'reviews' key must not crash."""
     with patch("subprocess.run", return_value=_make_gh_result(GRAPHQL_RESPONSE)):
-        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+        comments = fetch_review_feedback("owner/repo", 1)
     # Only the single unresolved human inline thread, no review summaries.
     assert all(c["kind"] == "inline" for c in comments)

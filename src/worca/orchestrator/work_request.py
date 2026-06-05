@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from worca.utils.env import get_env, filter_model_env
-from worca.utils.gh_pr import current_repo_nwo, fetch_review_feedback, resolve_bot_login
+from worca.utils.gh_pr import current_repo_nwo, fetch_review_feedback
 from worca.utils.settings import load_settings, resolve_model
 
 _DEFAULT_PLAN_PATH_TEMPLATE = "docs/plans/{timestamp}-{title_slug}.md"
@@ -418,20 +418,11 @@ def normalize_github_pr(source_value: str) -> WorkRequest:
     # The PR and its review threads live in the *base* repo — resolve the
     # owner/repo from the current repo (gh's default-repo logic), NOT from the
     # PR's headRepository (which for a fork PR is the wrong repo, and which
-    # `gh pr view` does not even expose a nameWithOwner for).
+    # `gh pr view` does not even expose a nameWithOwner for). fetch_review_feedback
+    # filters out worca's own marker-prefixed comments (L1) on its own.
     nwo = current_repo_nwo()
 
-    # L1 self-comment-loop guard: exclude worca's own bot comments. Prefer an
-    # explicit config override, else fall back to the authenticated gh token.
-    settings = load_settings(".claude/settings.json")
-    bot_login = (
-        settings.get("worca", {}).get("pr_revision", {}).get("bot_login")
-        or resolve_bot_login()
-    )
-
-    review_comments = (
-        fetch_review_feedback(nwo, pr_number, bot_login=bot_login) if nwo else []
-    )
+    review_comments = fetch_review_feedback(nwo, pr_number) if nwo else []
 
     return WorkRequest(
         source_type="github_pr",

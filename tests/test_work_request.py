@@ -1040,18 +1040,12 @@ class TestNormalizeGithubPr:
 
     @pytest.fixture(autouse=True)
     def _patch_pr_helpers(self):
-        """nwo + bot-login are resolved via subprocess (gh) in gh_pr; stub them
-        so normalize_github_pr never shells out during unit tests. nwo comes
-        from the base repo (current_repo_nwo), NOT the PR's headRepository."""
+        """nwo is resolved via subprocess (gh) in gh_pr; stub it so
+        normalize_github_pr never shells out during unit tests. nwo comes from
+        the base repo (current_repo_nwo), NOT the PR's headRepository."""
         with patch(
             "worca.orchestrator.work_request.current_repo_nwo",
             return_value="owner/repo",
-        ), patch(
-            "worca.orchestrator.work_request.resolve_bot_login",
-            return_value="worca-bot",
-        ), patch(
-            "worca.orchestrator.work_request.load_settings",
-            return_value={},
         ):
             yield
 
@@ -1100,7 +1094,7 @@ class TestNormalizeGithubPr:
         assert wr.pr_is_cross_repo is False
         assert wr.source_ref == "gh:pr:42"
         assert wr.review_comments == [self._REVIEW_COMMENT]
-        mock_fetch.assert_called_once_with("owner/repo", 42, bot_login="worca-bot")
+        mock_fetch.assert_called_once_with("owner/repo", 42)
 
     @patch("worca.orchestrator.work_request.fetch_review_feedback")
     @patch("worca.orchestrator.work_request.subprocess")
@@ -1176,22 +1170,6 @@ class TestNormalizeGithubPr:
 
     @patch("worca.orchestrator.work_request.fetch_review_feedback")
     @patch("worca.orchestrator.work_request.subprocess")
-    def test_config_bot_login_overrides_token(self, mock_subprocess, mock_fetch):
-        """worca.pr_revision.bot_login (config) takes precedence over the token."""
-        self._mock_gh(mock_subprocess)
-        mock_fetch.return_value = []
-        with patch(
-            "worca.orchestrator.work_request.load_settings",
-            return_value={"worca": {"pr_revision": {"bot_login": "configured-bot"}}},
-        ), patch(
-            "worca.orchestrator.work_request.resolve_bot_login",
-            return_value="token-bot",
-        ):
-            normalize_github_pr("gh:pr:42")
-        assert mock_fetch.call_args.kwargs["bot_login"] == "configured-bot"
-
-    @patch("worca.orchestrator.work_request.fetch_review_feedback")
-    @patch("worca.orchestrator.work_request.subprocess")
     def test_pr_level_feedback_synthesized_without_anchor(
         self, mock_subprocess, mock_fetch
     ):
@@ -1256,12 +1234,6 @@ class TestNormalizeGithubPrDispatch:
         with patch(
             "worca.orchestrator.work_request.current_repo_nwo",
             return_value="owner/repo",
-        ), patch(
-            "worca.orchestrator.work_request.resolve_bot_login",
-            return_value=None,
-        ), patch(
-            "worca.orchestrator.work_request.load_settings",
-            return_value={},
         ):
             yield
 

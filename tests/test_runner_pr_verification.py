@@ -511,6 +511,18 @@ class TestRevisePrWriteback:
         for call in mock_reply.call_args_list:
             assert "deadbee" in call.args[2]
 
+    def test_writeback_text_carries_worca_marker(self):
+        """Summary + every reply start with WORCA_COMMENT_MARKER so a later
+        revise run recognises and skips worca's own writeback (L1)."""
+        from worca.utils.gh_pr import WORCA_COMMENT_MARKER
+
+        p_nwo, p_sum, p_reply = self._patches()
+        with p_nwo, p_sum as mock_sum, p_reply as mock_reply:
+            _revise_pr_writeback(7, "abc1234", self._FEEDBACK)
+        assert mock_sum.call_args[0][2].startswith(WORCA_COMMENT_MARKER)
+        for call in mock_reply.call_args_list:
+            assert call.args[2].startswith(WORCA_COMMENT_MARKER)
+
     def test_dedups_repeated_thread_ids(self):
         feedback = [
             {"thread_id": "PRRT_a", "body": "first"},
