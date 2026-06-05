@@ -62,9 +62,14 @@ def test_plan_block_has_plan_review_history():
     assert "{{#if plan_review_history_formatted}}" in content
 
 
-def test_plan_block_has_claude_md_conditional():
+def test_plan_block_does_not_inline_claude_md():
+    # CLAUDE.md is auto-loaded by the claude CLI into every session, so the
+    # planner prompt no longer inlines it (the {{claude_md}} block was removed
+    # to avoid duplicating ~9.5K tokens per planner run).
     content = _read("plan.block.md")
-    assert "{{#if claude_md}}" in content
+    assert "{{#if claude_md}}" not in content
+    assert "{{claude_md}}" not in content
+    assert "Project Context (from CLAUDE.md)" not in content
 
 
 # ---------------------------------------------------------------------------

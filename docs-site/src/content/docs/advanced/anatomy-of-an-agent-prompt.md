@@ -100,7 +100,6 @@ Available to every stage's block:
 
 | Variable | Type | What feeds it |
 |---|---|---|
-| `claude_md` | text | `CLAUDE.md` content, surfaced into the planner's message *in addition to* the ambient auto-load (the planner reasons hardest about conventions). |
 | `plan_revision_mode` | bool | True when looping back from Plan Review — switches the block into revision mode. |
 | `plan_content` | text | The current `MASTER_PLAN.md` (revision mode only). |
 | `plan_review_issues_formatted` | text | Plan Reviewer issues to address (revision mode). |

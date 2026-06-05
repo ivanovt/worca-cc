@@ -110,7 +110,7 @@ class TestPromptBuilderPlanFile:
     def test_plan_context_uses_plan_file_from_context(self):
         """build_context('plan') passes plan_file through to the context dict."""
         from worca.orchestrator.prompt_builder import PromptBuilder
-        pb = PromptBuilder("Test title", "Test desc", claude_md_path="/nonexistent")
+        pb = PromptBuilder("Test title", "Test desc")
         pb.update_context("plan_file", "/run/plan-001.md")
         ctx = pb.build_context("plan")
         assert ctx.get("plan_file") == "/run/plan-001.md"
@@ -118,6 +118,6 @@ class TestPromptBuilderPlanFile:
     def test_plan_context_has_work_request(self):
         """build_context('plan') includes work_request key."""
         from worca.orchestrator.prompt_builder import PromptBuilder
-        pb = PromptBuilder("Test title", "Test desc", claude_md_path="/nonexistent")
+        pb = PromptBuilder("Test title", "Test desc")
         ctx = pb.build_context("plan")
         assert "Test title" in ctx.get("work_request", "")

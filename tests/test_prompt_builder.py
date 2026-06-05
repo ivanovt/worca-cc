@@ -279,18 +279,13 @@ def test_build_context_plan_contains_work_request():
     assert "Implement authentication" in ctx["work_request"]
 
 
-def test_build_context_plan_contains_claude_md(tmp_path):
-    claude_md = tmp_path / "CLAUDE.md"
-    claude_md.write_text("# My Project\n\nUses Python + pytest")
-    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(claude_md))
+def test_build_context_plan_no_longer_injects_claude_md():
+    # CLAUDE.md is auto-loaded by the claude CLI into every session (verified
+    # for headless `-p --agent`), so the planner prompt no longer inlines it —
+    # the old {{claude_md}} duplication is gone.
+    pb = PromptBuilder("Add auth", "Desc")
     ctx = pb.build_context("plan")
-    assert ctx.get("claude_md") == "# My Project\n\nUses Python + pytest"
-
-
-def test_build_context_plan_no_claude_md(tmp_path):
-    pb = PromptBuilder("Add auth", "Desc", claude_md_path=str(tmp_path / "nonexistent.md"))
-    ctx = pb.build_context("plan")
-    assert ctx.get("claude_md") == ""
+    assert "claude_md" not in ctx
 
 
 def test_build_context_plan_revision_mode_sets_plan_content(tmp_path):

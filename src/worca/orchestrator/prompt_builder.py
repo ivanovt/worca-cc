@@ -36,7 +36,7 @@ class PromptBuilder:
     _MAX_STATUS_JSON_LEN = 50_000  # truncate serialised status beyond this
 
     def __init__(self, work_request_title: str, work_request_description: str = "",
-                 claude_md_path: str = "CLAUDE.md", context_path: str = None,
+                 context_path: str = None,
                  master_plan_path: str = "MASTER_PLAN.md",
                  resolver=None, core_dir: str = None,
                  template_agents_dir: str = None, run_dir: str = None,
@@ -48,23 +48,11 @@ class PromptBuilder:
         self._crg_available = False
         self._context: dict = {}
         self._context_path = context_path
-        self._claude_md_content = self._read_claude_md(claude_md_path)
         self._master_plan_path = master_plan_path
         self._resolver = resolver
         self._core_dir = core_dir
         self._template_agents_dir = template_agents_dir
         self._run_dir = run_dir
-
-    @staticmethod
-    def _read_claude_md(path: str) -> str:
-        """Read CLAUDE.md content if it exists, return empty string otherwise."""
-        try:
-            if os.path.exists(path):
-                with open(path, encoding="utf-8") as f:
-                    return f.read().strip()
-        except OSError:
-            pass
-        return ""
 
     def set_graphify_available(self, available: bool) -> None:
         """Flag whether a queryable code knowledge graph is available this run.
@@ -215,7 +203,6 @@ class PromptBuilder:
             ctx: Context dict to mutate in place.
         """
         if stage == "plan":
-            ctx["claude_md"] = self._claude_md_content
             ctx["has_review_comments"] = bool(ctx.get("review_comments"))
             if ctx.get("plan_revision_mode"):
                 # Prefer the plan content threaded by the runner at the revise

@@ -84,9 +84,4 @@ _A code knowledge graph is preloaded — **orient with `graphify query "<questio
 _A code-review-graph MCP server is attached — **use its tools to orient (structure, context, impact) before Glob/Grep or file reads** (see the Code graph section of your role)._
 
 {{/if}}
-{{#if claude_md}}
-## Project Context (from CLAUDE.md)
-
-{{claude_md}}
-{{/if}}
 {{/if}}
