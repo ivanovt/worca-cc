@@ -580,7 +580,7 @@ export function newRunView(_state, { rerender }) {
           <div class="settings-field">
             <label class="settings-label">Source Type</label>
             <sl-select id="new-run-source-type" value=${sourceType} @sl-change=${handleSourceTypeChange}>
-              <sl-option value="none">None</sl-option>
+              <sl-option value="none">Prompt</sl-option>
               <sl-option value="source">GitHub Issue</sl-option>
               <sl-option value="spec">Spec File</sl-option>
               <sl-option value="pr">GitHub PR</sl-option>
