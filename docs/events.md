@@ -169,6 +169,9 @@ Emitted by the guardian stage when `worca.stages.pr.defer` is `true` (or `WORCA_
 | `pipeline.hook.test_gate` | `HOOK_TEST_GATE` |
 | `pipeline.hook.dispatch_blocked` | `HOOK_DISPATCH_BLOCKED` |
 | `pipeline.hook.dispatch_allowed` | `HOOK_DISPATCH_ALLOWED` |
+| `pipeline.hook.graph_query` | `HOOK_GRAPH_QUERY` |
+
+`pipeline.hook.graph_query` is emitted live by the `post_tool_use` hook on every knowledge-graph query (graphify CLI read or CRG MCP tool); payload `{engine, op, agent?}`. The UI server (`graph-query-aggregator.js`) folds these into live `graphify_invocations` / `crg_invocations` / `crg_tool_counts` for the still-running iteration so the graphify/CRG badges update during the run, mirroring how `dispatch_{allowed,blocked}` feed the skills/subagents badges. The runner's completion-time tally remains authoritative. Like the dispatch events, it is high-frequency telemetry and is **not** chat-notifiable (no Tier 1 renderer).
 
 ### `pipeline.plan_review.*` — plan review detail
 

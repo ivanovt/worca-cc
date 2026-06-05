@@ -6,21 +6,36 @@ import {
   assignEventsToIterations,
   readDispatchEventsFromJsonl,
 } from './dispatch-events-aggregator.js';
+import {
+  assignGraphQueryCountsToIterations,
+  readGraphQueryEventsFromJsonl,
+} from './graph-query-aggregator.js';
 import { readPipelineOverlay } from './run-dir-resolver.js';
 import { safeWatch } from './safe-watch.js';
 
 /**
- * Enrich a status object with dispatch events read from events.jsonl in the
- * same run directory. Mutates `status.stages` by adding `dispatch_events` to
- * matching iterations. No-op when events.jsonl is missing (e.g. a run that
- * started before the emit was wired, or a run with no dispatches).
+ * Enrich a status object from events.jsonl in the same run directory:
+ *  - dispatch events → `dispatch_events` per iteration (skills/subagents badges)
+ *  - graph-query events → live graphify_invocations / crg_invocations /
+ *    crg_tool_counts for the still-running iteration (graphify/CRG badges),
+ *    without clobbering the runner's authoritative completion-time counts.
+ * No-op when events.jsonl is missing (e.g. a run started before the emit was
+ * wired, or one with no dispatches / graph queries).
  */
 function enrichWithDispatchEvents(status, runDir) {
   if (!status?.stages) return status;
   const eventsPath = join(runDir, 'events.jsonl');
-  const events = readDispatchEventsFromJsonl(eventsPath);
-  if (events.length === 0) return status;
-  status.stages = assignEventsToIterations(events, status.stages);
+  const dispatchEvents = readDispatchEventsFromJsonl(eventsPath);
+  if (dispatchEvents.length > 0) {
+    status.stages = assignEventsToIterations(dispatchEvents, status.stages);
+  }
+  const graphEvents = readGraphQueryEventsFromJsonl(eventsPath);
+  if (graphEvents.length > 0) {
+    status.stages = assignGraphQueryCountsToIterations(
+      graphEvents,
+      status.stages,
+    );
+  }
   return status;
 }
 

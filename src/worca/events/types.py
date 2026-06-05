@@ -103,13 +103,14 @@ LOOP_TRIGGERED   = "pipeline.loop.triggered"
 LOOP_EXHAUSTED   = "pipeline.loop.exhausted"
 
 # ---------------------------------------------------------------------------
-# Hook & governance events (3 events)
+# Hook & governance events (5 events)
 # ---------------------------------------------------------------------------
 
 HOOK_BLOCKED          = "pipeline.hook.blocked"
 HOOK_TEST_GATE        = "pipeline.hook.test_gate"
 HOOK_DISPATCH_BLOCKED = "pipeline.hook.dispatch_blocked"
 HOOK_DISPATCH_ALLOWED = "pipeline.hook.dispatch_allowed"
+HOOK_GRAPH_QUERY      = "pipeline.hook.graph_query"
 
 # ---------------------------------------------------------------------------
 # Preflight events (2 events)
@@ -887,6 +888,27 @@ def hook_dispatch_allowed_payload(
     p: dict = {"agent": agent, "section": section, "candidate": candidate}
     if via is not None:
         p["via"] = via
+    return p
+
+
+def hook_graph_query_payload(
+    engine: str,
+    op: str,
+    *,
+    agent: str | None = None,
+) -> dict:
+    """Payload builder for pipeline.hook.graph_query.
+
+    Emitted live by the post_tool_use hook each time an agent issues a
+    knowledge-graph query (graphify CLI read or a CRG MCP tool). Mirrors the
+    dispatch_{allowed,blocked} live-event pattern so the run-detail graphify/CRG
+    badges can count queries *during* the run instead of waiting for the
+    stage-completion envelope. ``engine`` is "graphify" or "crg"; ``op`` is the
+    graphify subcommand / CRG tool name (feeds the CRG per-tool tooltip).
+    """
+    p: dict = {"engine": engine, "op": op}
+    if agent is not None:
+        p["agent"] = agent
     return p
 
 

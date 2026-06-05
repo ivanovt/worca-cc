@@ -86,11 +86,12 @@ PIPELINE_CONSTANTS = [
     ("MILESTONE_SET",       "pipeline.milestone.set"),
     ("LOOP_TRIGGERED",      "pipeline.loop.triggered"),
     ("LOOP_EXHAUSTED",      "pipeline.loop.exhausted"),
-    # Hook & governance (4)
+    # Hook & governance (5)
     ("HOOK_BLOCKED",          "pipeline.hook.blocked"),
     ("HOOK_TEST_GATE",        "pipeline.hook.test_gate"),
     ("HOOK_DISPATCH_BLOCKED", "pipeline.hook.dispatch_blocked"),
     ("HOOK_DISPATCH_ALLOWED", "pipeline.hook.dispatch_allowed"),
+    ("HOOK_GRAPH_QUERY",      "pipeline.hook.graph_query"),
     # Preflight (2)
     ("PREFLIGHT_COMPLETED", "pipeline.preflight.completed"),
     ("PREFLIGHT_SKIPPED",   "pipeline.preflight.skipped"),
@@ -150,8 +151,8 @@ def test_total_pipeline_constants():
         v for k, v in vars(T).items()
         if k.isupper() and isinstance(v, str) and v.startswith("pipeline.")
     ]
-    assert len(pipeline_vals) == 57, (
-        f"Expected 57 pipeline.* constants, found {len(pipeline_vals)}"
+    assert len(pipeline_vals) == 58, (
+        f"Expected 58 pipeline.* constants, found {len(pipeline_vals)}"
     )
 
 
@@ -231,6 +232,7 @@ EXPECTED_BUILDERS = [
     "hook_test_gate_payload",
     "hook_dispatch_blocked_payload",
     "hook_dispatch_allowed_payload",
+    "hook_graph_query_payload",
     # pipeline.preflight.*
     "preflight_completed_payload",
     "preflight_skipped_payload",
@@ -895,6 +897,22 @@ def test_hook_dispatch_allowed_payload_with_via():
     assert p["section"] == "subagents"
     assert p["candidate"] == "Explore"
     assert p["via"] == "explicit"
+
+
+def test_hook_graph_query_payload_required_fields():
+    from worca.events.types import hook_graph_query_payload
+    p = hook_graph_query_payload(engine="crg", op="query_graph_tool")
+    assert p["engine"] == "crg"
+    assert p["op"] == "query_graph_tool"
+    assert "agent" not in p
+
+
+def test_hook_graph_query_payload_with_agent():
+    from worca.events.types import hook_graph_query_payload
+    p = hook_graph_query_payload(engine="graphify", op="query", agent="planner")
+    assert p["engine"] == "graphify"
+    assert p["op"] == "query"
+    assert p["agent"] == "planner"
 
 
 def test_preflight_completed_payload_required_fields():

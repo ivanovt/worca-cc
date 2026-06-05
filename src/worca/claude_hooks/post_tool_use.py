@@ -249,6 +249,22 @@ def _record_file_access(tool_name, tool_input, tool_response):
     except Exception:
         pass
 
+    # Emit a live event for graph queries so the run-detail graphify/CRG badges
+    # can count them during the run, mirroring the dispatch_{allowed,blocked}
+    # live-event pattern. The completion-time count (graphify_invocations /
+    # crg_invocations, tallied by the runner from the tool-use stream) remains
+    # authoritative; the UI server uses these events only to populate a live
+    # count for the still-running iteration.
+    if graph_query is not None and emit_from_hook:
+        try:
+            emit_from_hook("pipeline.hook.graph_query", {
+                "engine": graph_query["engine"],
+                "op": graph_query["op"],
+                "agent": os.environ.get("WORCA_AGENT"),
+            })
+        except Exception:
+            pass
+
 
 def _link_bd_create_to_run(tool_name, tool_input, tool_response):
     """After a successful bd create, add a run label to link it to the current run.
