@@ -161,7 +161,9 @@ def _is_file_write_via_bash(command: str) -> bool:
 
     # Shell redirection: > or >> to a file
     # Match: cat > file, echo > file, printf > file, etc.
-    if re.search(r'(?<!\|)\s*>\s*[^\s|&;]', command):
+    # Exclude /dev/null redirections (2>/dev/null, >/dev/null) — output suppression, not file writes.
+    stripped = re.sub(r'\d*>\s*/dev/null', '', command)
+    if re.search(r'(?<!\|)\s*>\s*[^\s|&;]', stripped):
         return True
 
     # Heredoc writes: << 'EOF' or <<EOF combined with > or cat >
