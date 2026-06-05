@@ -505,7 +505,10 @@ test('Export Card button GETs /templates/:tier/:id/bundle (tier in URL)', async 
     const card = page
       .locator('.template-card')
       .filter({ hasText: 'Exportable' });
-    const exportBtn = card.locator('button:has-text("Export")');
+    // Target the bundle-download button by its unique title — "Export (gist)"
+    // also matches has-text("Export") now that the label is dynamic
+    // ("Export (json)" / "Export (zip)").
+    const exportBtn = card.locator('button[title="Export template bundle"]');
     await expect(exportBtn).toBeVisible();
 
     const bundleRes = page.waitForResponse(
