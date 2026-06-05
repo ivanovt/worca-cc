@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import {
+  _createPrClickHandler,
+  _prCreationState,
   prApprovalPanelView,
   prDeferredSectionView,
   runBeadsSectionView,
@@ -655,6 +657,73 @@ describe('prDeferredSectionView - idle state', () => {
     const run = { id: 'run-no-deferred' };
     const out = render(prDeferredSectionView(run));
     expect(out).not.toContain('pr-deferred-badge');
+  });
+});
+
+describe('prDeferredSectionView - after a successful create (stale run)', () => {
+  function render(template) {
+    return renderToString(template);
+  }
+
+  it('hides the Create PR button once created client-side, even with a stale run', () => {
+    const run = { id: 'run-created-1', pr_deferred: true };
+    _prCreationState.set(run.id, {
+      inFlight: false,
+      error: null,
+      created: true,
+      createdPrUrl: 'https://github.com/org/repo/pull/7',
+    });
+    const out = render(prDeferredSectionView(run));
+    // The button must NOT come back — repeat clicks would open a duplicate PR.
+    expect(out).not.toContain('Create PR');
+    expect(out).toContain('PR created');
+    expect(out).toContain('https://github.com/org/repo/pull/7');
+    expect(out).toContain('View PR');
+    _prCreationState.delete(run.id);
+  });
+
+  it('hides the button when created even if the PR url could not be parsed', () => {
+    const run = { id: 'run-created-2', pr_deferred: true };
+    _prCreationState.set(run.id, {
+      inFlight: false,
+      error: null,
+      created: true,
+      createdPrUrl: '',
+    });
+    const out = render(prDeferredSectionView(run));
+    expect(out).not.toContain('Create PR');
+    expect(out).toContain('PR created');
+    _prCreationState.delete(run.id);
+  });
+
+  it('server-refreshed pr_url takes over and the section steps aside', () => {
+    const run = {
+      id: 'run-created-3',
+      pr_deferred: true,
+      pr_url: 'https://github.com/org/repo/pull/8',
+    };
+    _prCreationState.set(run.id, { inFlight: false, created: true });
+    const out = render(prDeferredSectionView(run));
+    // Authoritative pr_url present → whole section returns nothing.
+    expect(out).not.toContain('PR created');
+    expect(out).not.toContain('Create PR');
+    _prCreationState.delete(run.id);
+  });
+
+  it('click handler marks created on a successful POST', async () => {
+    const run = { id: 'run-created-4', pr_deferred: true };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ pr_url: 'https://github.com/org/repo/pull/9' }),
+    });
+    const handler = _createPrClickHandler(run, () => {}, {});
+    await handler();
+    const state = _prCreationState.get(run.id);
+    expect(state.created).toBe(true);
+    expect(state.inFlight).toBe(false);
+    expect(state.createdPrUrl).toBe('https://github.com/org/repo/pull/9');
+    fetchSpy.mockRestore();
+    _prCreationState.delete(run.id);
   });
 });
 

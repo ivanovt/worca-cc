@@ -102,6 +102,54 @@ test.describe('run-detail deferred PR creation flow', () => {
     }
   });
 
+  test('Create PR button does NOT reappear after success before the status refresh (no duplicate PR)', async ({
+    page,
+  }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-deferred-no-dup';
+      seedDeferredRun(ctx.worcaDir, runId);
+
+      let postCount = 0;
+      await page.route(`**/runs/${runId}/pr`, async (route) => {
+        if (route.request().method() !== 'POST') {
+          await route.continue();
+          return;
+        }
+        postCount += 1;
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ pr_url: PR_URL }),
+        });
+      });
+
+      const panel = await openPrPanel(page, ctx.url, runId);
+
+      // Click Create PR. Deliberately do NOT seed pr_url into status.json, so
+      // the run object the view holds stays stale (the exact gap that used to
+      // let the button reappear and fire a second PR creation).
+      await panel.locator('button.action-btn--primary').click();
+
+      // The button must be gone — replaced by a "PR created" success badge.
+      await expect(
+        panel.locator('sl-badge.pr-deferred-badge', { hasText: 'PR created' }),
+      ).toBeVisible({ timeout: 5000 });
+      await expect(
+        panel.locator('button', { hasText: 'Create PR' }),
+      ).toHaveCount(0);
+      // Optimistic View PR link is shown even before the status refresh.
+      await expect(
+        panel.locator(`a.run-pr-link[href="${PR_URL}"]`),
+      ).toBeVisible({ timeout: 5000 });
+
+      // Exactly one POST fired — no path to a duplicate PR from the UI.
+      expect(postCount).toBe(1);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('Create PR button shows inline error and Retry button on 500 response', async ({ page }) => {
     const ctx = await startServer();
     try {

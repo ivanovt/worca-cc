@@ -41,7 +41,7 @@ import { resolveIterationTab } from './stage-tab-memory.js';
 import { stageTimelineView } from './stage-timeline.js';
 
 // ── deferred PR creation: client-side in-flight tracking ─────────────────
-const _prCreationState = new Map(); // run.id -> { inFlight: bool, error: string|null }
+export const _prCreationState = new Map(); // run.id -> { inFlight, error, created?, createdPrUrl? }
 
 // ── plan artifact: lazy fetch + dialog state ─────────────────────────────
 // The PLAN stage's plan_file (or {worktree}/MASTER_PLAN.md) is fetched from
@@ -1592,7 +1592,7 @@ export function guideConflictsPanelView(conflicts, options = {}) {
   `;
 }
 
-function _createPrClickHandler(run, rerender, options) {
+export function _createPrClickHandler(run, rerender, options) {
   return async () => {
     _prCreationState.set(run.id, { inFlight: true, error: null });
     rerender?.();
@@ -1600,7 +1600,16 @@ function _createPrClickHandler(run, rerender, options) {
       const r = await fetch(`${_runApiBase(run)}/pr`, { method: 'POST' });
       if (r.ok) {
         const data = await r.json().catch(() => ({}));
-        _prCreationState.set(run.id, { inFlight: false, error: null });
+        // Mark created so the button can't reappear (and fire a duplicate PR)
+        // while the local run object is still stale — the server-side pr_url
+        // won't be on `run` until the next status refresh. Carry the parsed
+        // pr_url so we can show "View PR" optimistically in the meantime.
+        _prCreationState.set(run.id, {
+          inFlight: false,
+          error: null,
+          created: true,
+          createdPrUrl: data.pr_url || '',
+        });
         options?.onCreatePr?.(run.id, data.pr_url);
       } else {
         const err = await r.json().catch(() => ({}));
@@ -1657,6 +1666,25 @@ export function prDeferredSectionView(run, rerender, options) {
           class="action-btn action-btn--primary"
           @click=${_createPrClickHandler(run, rerender, options)}
         >Retry</button>
+      </div>
+    `;
+  }
+
+  // PR was just created client-side but the server-refreshed pr_url hasn't
+  // reached this `run` yet. Show a success line (with the link if we parsed
+  // one) INSTEAD of the create button, so a second click can't open a
+  // duplicate PR. Once the status refresh lands run.pr_url, the early
+  // `if (prUrl) return nothing` above takes over and the normal PR line shows.
+  if (clientState?.created) {
+    const createdUrl = clientState.createdPrUrl;
+    return html`
+      <div class="pr-deferred-section">
+        <sl-badge class="pr-deferred-badge" variant="success" pill>PR created</sl-badge>
+        ${
+          createdUrl
+            ? html`<a class="run-pr-link" href="${createdUrl}" target="_blank">View PR</a>`
+            : nothing
+        }
       </div>
     `;
   }
