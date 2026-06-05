@@ -16,7 +16,7 @@ export function createBroadcaster({ wss, getSubs }) {
    */
   function sendToClient(ws, baseMsg, sourceProjectId) {
     const s = getSubs(ws);
-    const project = sourceProjectId || (s && s.projectId) || null;
+    const project = sourceProjectId || s?.projectId || null;
     if (s && s.protocolVersion >= 2 && project) {
       ws.send(JSON.stringify({ ...baseMsg, project }));
     } else {

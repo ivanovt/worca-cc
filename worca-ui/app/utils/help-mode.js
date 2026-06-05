@@ -33,7 +33,7 @@ export function setActive(next) {
   const v = Boolean(next);
   if (v === _active) return;
   _active = v;
-  if (typeof document !== 'undefined' && document.body) {
+  if (document?.body) {
     document.body.classList.toggle('help-mode-active', _active);
   }
   for (const cb of _listeners) {
@@ -117,7 +117,7 @@ export function _resetForTests() {
   _active = false;
   _listeners.clear();
   _bound = false;
-  if (typeof document !== 'undefined' && document.body) {
+  if (document?.body) {
     document.body.classList.remove('help-mode-active');
   }
 }

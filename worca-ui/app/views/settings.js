@@ -9,7 +9,6 @@ import {
 } from '../utils/confirm-dialog.js';
 import { helpFor, helpUrl } from '../utils/help-links.js';
 import {
-  Activity,
   Bell,
   ClipboardCopy,
   ClipboardPaste,
@@ -27,7 +26,6 @@ import {
   Settings,
   Shield,
   Trash2,
-  Users,
   Workflow,
   X,
   Zap,
@@ -39,8 +37,7 @@ import {
 import { STAGE_ORDER } from '../utils/stage-order.js';
 import { isVersionBehind } from '../utils/version-compare.js';
 import { AGENT_NAMES } from './agent-names.js';
-import { dispatchSectionView, resetSectionConfig } from './dispatch-section.js';
-import { KNOWN_TYPES } from './dispatch-tag-state.js';
+import { resetSectionConfig } from './dispatch-section.js';
 import { integrationsTab } from './integrations.js';
 import { crgTab } from './settings-code-review-graph.js';
 import { graphifyTab } from './settings-graphify.js';
@@ -911,7 +908,7 @@ export function getDefaults() {
 
 // --- Tab views ---
 
-function agentsTab(worca, rerender) {
+function _agentsTab(worca, rerender) {
   const agents = worca.agents || {};
   const modelOptions = getModelKeys(worca);
   return html`

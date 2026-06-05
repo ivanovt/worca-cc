@@ -12,7 +12,7 @@
  * - Error handling and validation display
  */
 
-import { afterEach, beforeEach, describe, expect, it, jest, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, vi } from 'vitest';
 
 // Mock fetch API
 global.fetch = vi.fn();
@@ -21,9 +21,9 @@ global.fetch = vi.fn();
 // For now, we'll structure tests for the saveFlow we're about to implement
 
 describe('pipelines-editor save flow', () => {
-  let editorModule;
-  let validateFn;
-  let saveTemplateFn;
+  let _editorModule;
+  let _validateFn;
+  let _saveTemplateFn;
 
   beforeEach(async () => {
     // Clear state before each test

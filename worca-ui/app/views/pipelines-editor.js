@@ -24,11 +24,9 @@ import {
   iconSvg,
   RefreshCw,
   Save,
-  Settings,
   Shield,
   Users,
   Workflow,
-  Zap,
 } from '../utils/icons.js';
 import {
   diffSummary,
@@ -146,7 +144,7 @@ export function cleanupEditorState() {
 }
 
 // Default values for form fields
-const DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
+const _DEFAULT_MODEL_KEYS = ['opus', 'sonnet', 'haiku'];
 export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 // Stage configuration defaults
@@ -472,7 +470,7 @@ export function formBufferToConfig(formBuffer) {
 /**
  * Validate config against server.
  */
-async function validateConfig(projectId, config, settingsPath) {
+async function validateConfig(projectId, config, _settingsPath) {
   try {
     const url = projectId
       ? `/api/projects/${projectId}/templates/validate`
@@ -900,7 +898,7 @@ export function cancelEdit(onCancel) {
 /**
  * Switch between form, JSON, and diff view mode.
  */
-function switchViewMode(mode, rerender) {
+function _switchViewMode(mode, rerender) {
   if (editorState.viewMode === mode) return;
 
   if (mode === 'json') {
@@ -918,7 +916,7 @@ function switchViewMode(mode, rerender) {
       editorState.formBuffer = buildFormBuffer(config, {
         worca: currentTemplate,
       });
-    } catch (err) {
+    } catch (_err) {
       editorState.saveMessage =
         'Invalid JSON — fix before switching to form view';
       return;
@@ -1079,7 +1077,7 @@ let dispatchEditState = {
   subagents: {},
 };
 
-function resetDispatchEditState() {
+function _resetDispatchEditState() {
   dispatchEditState = { tools: {}, skills: {}, subagents: {} };
 }
 
@@ -1112,13 +1110,10 @@ export function pipelinesEditorView(state, options) {
 
   const {
     formBuffer,
-    template,
     loading,
     error,
     saving,
-    saveMessage,
     validationIssues,
-    viewMode,
     nameDraft,
     descriptionDraft,
     idDraft,
@@ -1945,7 +1940,7 @@ function _circuitBreakerSection(formBuffer, projectId, rerender) {
 /**
  * Render the Governance dispatch section.
  */
-function _governanceSection(formBuffer, settings, projectId, rerender) {
+function _governanceSection(formBuffer, _settings, projectId, rerender) {
   const gov = formBuffer?.governance || DEFAULT_GOVERNANCE;
   const dispatch = gov.dispatch || DEFAULT_GOVERNANCE.dispatch;
   const testGateStrikes = gov.test_gate_strikes ?? 2;

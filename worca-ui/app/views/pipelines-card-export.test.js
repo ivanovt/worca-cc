@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { render } from 'lit-html';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { exportTemplate, pipelinesView } from './pipelines.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -187,7 +187,7 @@ describe('exportTemplate — blob download path', () => {
 
     const createdUrls = [];
     const revokedUrls = [];
-    global.URL.createObjectURL = vi.fn((b) => {
+    global.URL.createObjectURL = vi.fn((_b) => {
       const u = `blob:fake/${createdUrls.length}`;
       createdUrls.push(u);
       return u;

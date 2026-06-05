@@ -436,7 +436,7 @@ describe('new-run — preselect default template when worca.default_template is 
   });
 
   it('shows ★ annotation beside the default template option in dropdown', async () => {
-    const renderedHtml = '';
+    const _renderedHtml = '';
     const mockRerender = () => {};
 
     globalThis.fetch = vi.fn((url) => {

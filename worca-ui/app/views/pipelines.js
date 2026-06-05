@@ -169,7 +169,7 @@ export async function exportTemplate(
  * @param {string} templateId - Template ID to gist
  * @param {string} templateName - Optional template name for toast message
  */
-export async function copyGistUrl(projectId, templateId, tier, templateName) {
+export async function copyGistUrl(projectId, templateId, tier, _templateName) {
   try {
     const baseUrl = projectId
       ? `/api/projects/${projectId}/templates`
@@ -267,16 +267,8 @@ export async function checkGistAvailability(projectId) {
  * @param {object} options - { rerender, onCreate, onEdit, onDuplicate, onDelete, onExport, defaultTemplate }
  */
 export function pipelinesView(state, options) {
-  const {
-    onCreate,
-    onImport,
-    onEdit,
-    onDuplicate,
-    onDelete,
-    onExport,
-    onGist,
-    defaultTemplate,
-  } = options || {};
+  const { onEdit, onDuplicate, onDelete, onExport, onGist, defaultTemplate } =
+    options || {};
   const {
     templates = [],
     templatesLoaded = false,

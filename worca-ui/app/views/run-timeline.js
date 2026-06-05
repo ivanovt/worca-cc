@@ -758,10 +758,9 @@ export function runTimelineView(run, _settings, options = {}) {
   // Pick a swimlane width that fits typical desktop content area (sidebar + padding
   // ≈ 320px). Falls back to 800 in non-browser test environments. Tests pass an
   // explicit value to stay deterministic.
-  const defaultSwimlaneWidth =
-    typeof window !== 'undefined' && window.innerWidth
-      ? Math.max(600, window.innerWidth - LABEL_WIDTH - 320)
-      : 800;
+  const defaultSwimlaneWidth = window?.innerWidth
+    ? Math.max(600, window.innerWidth - LABEL_WIDTH - 320)
+    : 800;
   const swimlaneWidth = options.swimlaneWidth || defaultSwimlaneWidth;
   const { totalMs } = layout;
   const contentHeight = ROW_HEIGHT * layout.rows.length;
@@ -867,13 +866,10 @@ export function runTimelineView(run, _settings, options = {}) {
       const tooltip = container.querySelector('.timeline-tooltip');
       if (tooltip) {
         const target = e.target;
-        if (target.classList && target.classList.contains('timeline-bar')) {
+        if (target.classList?.contains('timeline-bar')) {
           tooltip.innerHTML = buildBarTooltipHtml(target);
           positionTooltip(tooltip, e);
-        } else if (
-          target.classList &&
-          target.classList.contains('timeline-gap')
-        ) {
+        } else if (target.classList?.contains('timeline-gap')) {
           tooltip.innerHTML = buildGapTooltipHtml(target);
           positionTooltip(tooltip, e);
         } else {

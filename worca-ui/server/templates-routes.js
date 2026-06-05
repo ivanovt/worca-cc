@@ -58,7 +58,7 @@ export { TEMPLATE_RE, TIERS };
 function isValidTier(tier) {
   return TIERS.includes(tier);
 }
-function isMutableTier(tier) {
+function _isMutableTier(tier) {
   return MUTABLE_TIERS.includes(tier);
 }
 
