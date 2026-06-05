@@ -41,6 +41,7 @@ from worca.state.status import (
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
+from worca.utils.gh_pr import current_repo_nwo, post_revision_summary, reply_to_thread
 from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
 from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
@@ -1435,6 +1436,41 @@ def _fetch_pr_url_via_gh(pr_number: int, timeout: int = 10) -> Optional[str]:
     except json.JSONDecodeError:
         return None
     return data.get("url") or None
+
+
+def _revise_pr_writeback(pr_number, commit_sha, review_feedback) -> None:
+    """Post the revision summary + per-thread replies for a revise-mode run.
+
+    Runner-side writeback (like gh_issues.py) — NOT an agent tool call — so it
+    bypasses the pre_tool_use governance hook and never depends on the guardian
+    formatting GraphQL by hand. Both helpers are error-suppressed and
+    WORCA_NO_GITHUB-gated; failures here never fail the pipeline.
+
+    - Summary: one top-level comment on the PR (D1 — update in place).
+    - Replies: one reply per ingested thread that carries a thread_id (D3 —
+      reply only, never resolve). Review-summary items have no thread_id and
+      are skipped. In a revision run every ingested unresolved thread is in
+      scope, so all of them are replied to with the addressing commit.
+    """
+    nwo = current_repo_nwo()
+    sha = (commit_sha or "").strip()
+    sha_phrase = f" in commit `{sha}`" if sha else ""
+
+    if nwo:
+        n_threads = sum(1 for c in (review_feedback or []) if c.get("thread_id"))
+        summary = (
+            f"worca addressed {n_threads} review "
+            f"{'comment' if n_threads == 1 else 'comments'}{sha_phrase}."
+        )
+        post_revision_summary(nwo, pr_number, summary)
+
+    seen_threads = set()
+    for comment in review_feedback or []:
+        thread_id = comment.get("thread_id")
+        if not thread_id or thread_id in seen_threads:
+            continue
+        seen_threads.add(thread_id)
+        reply_to_thread(nwo, thread_id, f"Addressed{sha_phrase}.")
 
 
 def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> Optional[PRVerification]:
@@ -4155,6 +4191,18 @@ def run_pipeline(
                                 target_branch=_target_branch,
                                 provider=_provider,
                             ))
+
+                        # Revise mode: worca owns the PR writeback (summary
+                        # comment + per-thread replies). The guardian only
+                        # pushes the head branch; doing the writeback here keeps
+                        # it off the agent tool path and reliable (D3 — replies
+                        # only, never resolve).
+                        if _revises_pr is not None:
+                            _revise_pr_writeback(
+                                _pr_number,
+                                _commit_sha,
+                                status.get("review_feedback", []),
+                            )
 
                     _maybe_graphify_post_guardian(
                         settings_path=settings_path,

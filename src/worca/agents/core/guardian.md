@@ -19,41 +19,19 @@ Run `git add -A`, commit with a scoped conventional message (see CLAUDE.md for t
 {{#if revise_pr}}
 ### Step 2 — Update the existing PR (#{{revise_pr}})
 
-This run is revising PR #{{revise_pr}}. The PR already exists — **do not** call `gh pr create` (or any host equivalent). Pushing the same head branch is sufficient to auto-update the PR (**L2** — head branch name preserved verbatim).
+This run is revising PR #{{revise_pr}}. The PR already exists — **do not** call `gh pr create` (or any host equivalent). Pushing the same head branch in Step 1 is sufficient to auto-update the PR (**L2** — head branch name preserved verbatim).
 
 **W-065 compose note:** `revise_pr` and `defer_pr` are mutually exclusive. When this run is in revision mode the PR already exists, so deferred-PR creation is a no-op.
 
-1. Capture the commit SHA just pushed in Step 1:
-   `git rev-parse HEAD`
+**Writeback is automatic — do not post comments yourself.** The orchestrator posts the summary comment and per-thread replies (reply-only, never resolve — D3) after you return, reading `review_feedback` from `status.json`. Your only job here is the push from Step 1.
 
-2. Get the repository `owner/repo` identifier:
-   `gh repo view --json nameWithOwner --jq .nameWithOwner`
+Capture the commit SHA you just pushed (`git rev-parse HEAD`) and return this structured output:
 
-3. Post a summary comment on PR #{{revise_pr}} (error-suppressed — continue if it fails):
-   ```
-   gh api --method POST /repos/<nwo>/issues/{{revise_pr}}/comments \
-     -f body="Addressed review comments in commit \`<commit_sha>\`."
-   ```
-
-4. Reply to each addressed thread — **never resolve threads, reply only (D3)**:
-   Read `review_feedback` from `status.json` (field `review_feedback`, a list). For each entry with a `thread_id`, run:
-   ```
-   gh api graphql \
-     -f query='mutation($t:ID!,$b:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$t,body:$b}){comment{id}}}' \
-     -f t="<thread_id>" \
-     -f b="Addressed in commit \`<commit_sha>\`."
-   ```
-   If `review_feedback` is absent or empty, skip this step. Treat individual reply failures as non-fatal — log and continue.
-
-5. Re-read the existing PR to populate the structured output:
-   `gh pr view {{revise_pr}} --json number,url,state`
-
-Return this structured output:
 - `outcome: "success"`
 - `pr_number: {{revise_pr}}`
-- `pr_url: <url from gh pr view>`
+- `commit_sha: "<short or full SHA of the commit you made>"` — used by the orchestrator in the summary/reply text and to verify HEAD moved.
 
-If the push or summary comment fails, return `outcome: "reject"` with a descriptive reason.
+The orchestrator re-reads the existing PR to fill in `pr_url`, so you do not need to emit it. If the push failed, return `outcome: "reject"` with a descriptive reason.
 {{else}}
 {{#if defer_pr}}
 ### Step 2 — PR creation is deferred

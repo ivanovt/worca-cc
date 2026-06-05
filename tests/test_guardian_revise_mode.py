@@ -59,12 +59,12 @@ class TestGuardianReviseModeRendering:
         assert "git push" in result
 
     def test_summary_comment_instruction_in_revise_mode(self):
-        """Guardian must post a summary comment on PR #N."""
+        """The revise branch documents the summary-comment writeback (D1)."""
         result = _render(_base_context(revise_pr=42))
         assert "summary" in result.lower() or "comment" in result.lower()
 
     def test_thread_reply_instruction_in_revise_mode(self):
-        """Guardian must reply to addressed threads (D3 — never resolve)."""
+        """The revise branch documents per-thread replies (D3 — never resolve)."""
         result = _render(_base_context(revise_pr=42))
         assert "thread" in result.lower() or "reply" in result.lower()
 
@@ -75,9 +75,22 @@ class TestGuardianReviseModeRendering:
         assert "never resolve" in lower or "do not resolve" in lower or "resolve" in lower
 
     def test_verify_existing_pr_instruction(self):
-        """Guardian must re-read the existing PR so status.json.pr still populates."""
+        """The orchestrator re-reads the existing PR so status.json.pr populates."""
         result = _render(_base_context(revise_pr=42))
         assert "pr view" in result.lower() or "verify" in result.lower() or "existing" in result.lower()
+
+    def test_writeback_is_runner_side_not_hand_rolled_graphql(self):
+        """Writeback moved off the agent tool path into the runner — the guardian
+        no longer hand-rolls the GraphQL reply mutation or the comments REST call
+        (avoids the pre_tool_use governance question; replies stay reliable)."""
+        result = _render(_base_context(revise_pr=42))
+        assert "addPullRequestReviewThreadReply" not in result
+        assert "/issues/" not in result
+
+    def test_revise_mode_requests_commit_sha_output(self):
+        """The runner needs the commit SHA for the summary/reply text."""
+        result = _render(_base_context(revise_pr=42))
+        assert "commit_sha" in result
 
     def test_defer_pr_branch_absent_in_revise_mode(self):
         """revise_pr takes precedence: defer branch must not appear.

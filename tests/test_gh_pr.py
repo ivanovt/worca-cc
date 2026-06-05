@@ -4,7 +4,13 @@ import json
 from unittest.mock import MagicMock, patch
 
 
-from worca.utils.gh_pr import fetch_review_feedback, reply_to_thread, post_revision_summary
+from worca.utils.gh_pr import (
+    current_repo_nwo,
+    fetch_review_feedback,
+    post_revision_summary,
+    reply_to_thread,
+    resolve_bot_login,
+)
 
 
 GRAPHQL_RESPONSE = {
@@ -308,3 +314,142 @@ def test_post_revision_summary_exception_suppressed(monkeypatch, capsys):
     assert result is False
     captured = capsys.readouterr()
     assert "Warning" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# current_repo_nwo()
+# ---------------------------------------------------------------------------
+
+
+def test_current_repo_nwo_success():
+    result = MagicMock()
+    result.returncode = 0
+    result.stdout = "owner/repo\n"
+    result.stderr = ""
+    with patch("subprocess.run", return_value=result):
+        assert current_repo_nwo() == "owner/repo"
+
+
+def test_current_repo_nwo_gh_error_returns_empty(capsys):
+    result = MagicMock()
+    result.returncode = 1
+    result.stdout = ""
+    result.stderr = "not a repo"
+    with patch("subprocess.run", return_value=result):
+        assert current_repo_nwo() == ""
+    assert "Warning" in capsys.readouterr().err
+
+
+def test_current_repo_nwo_exception_returns_empty(capsys):
+    with patch("subprocess.run", side_effect=OSError("gh not found")):
+        assert current_repo_nwo() == ""
+    assert "Warning" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# resolve_bot_login()
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_bot_login_success():
+    result = MagicMock()
+    result.returncode = 0
+    result.stdout = "worca-bot\n"
+    result.stderr = ""
+    with patch("subprocess.run", return_value=result):
+        assert resolve_bot_login() == "worca-bot"
+
+
+def test_resolve_bot_login_empty_login_returns_none():
+    result = MagicMock()
+    result.returncode = 0
+    result.stdout = "\n"
+    result.stderr = ""
+    with patch("subprocess.run", return_value=result):
+        assert resolve_bot_login() is None
+
+
+def test_resolve_bot_login_gh_error_returns_none(capsys):
+    result = MagicMock()
+    result.returncode = 1
+    result.stdout = ""
+    result.stderr = "auth"
+    with patch("subprocess.run", return_value=result):
+        assert resolve_bot_login() is None
+    assert "Warning" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# fetch_review_feedback() — review summary (PR-level) ingestion
+# ---------------------------------------------------------------------------
+
+
+_RESPONSE_WITH_REVIEWS = {
+    "data": {
+        "repository": {
+            "pullRequest": {
+                "reviewThreads": {"nodes": []},
+                "reviews": {
+                    "nodes": [
+                        {
+                            "author": {"login": "alice"},
+                            "body": "add a test for the empty case",
+                            "state": "CHANGES_REQUESTED",
+                            "submittedAt": "2026-06-03T09:00:00Z",
+                        },
+                        {
+                            "author": {"login": "alice"},
+                            "body": "looks good to me",
+                            "state": "APPROVED",
+                            "submittedAt": "2026-06-03T10:00:00Z",
+                        },
+                        {
+                            "author": {"login": "worca-bot"},
+                            "body": "worca summary — should be excluded",
+                            "state": "COMMENTED",
+                            "submittedAt": "2026-06-03T11:00:00Z",
+                        },
+                        {
+                            "author": {"login": "bob"},
+                            "body": "   ",
+                            "state": "COMMENTED",
+                            "submittedAt": "2026-06-03T12:00:00Z",
+                        },
+                    ]
+                },
+            }
+        }
+    }
+}
+
+
+def test_fetch_review_feedback_includes_review_summaries():
+    """CHANGES_REQUESTED / COMMENTED review bodies become PR-level items."""
+    with patch("subprocess.run", return_value=_make_gh_result(_RESPONSE_WITH_REVIEWS)):
+        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+
+    summaries = [c for c in comments if c["kind"] == "review_summary"]
+    assert len(summaries) == 1
+    s = summaries[0]
+    assert s["author"] == "alice"
+    assert s["body"] == "add a test for the empty case"
+    assert s["thread_id"] == ""
+    assert s["path"] == ""
+    assert s["line"] is None
+
+
+def test_fetch_review_feedback_excludes_approved_and_bot_reviews():
+    with patch("subprocess.run", return_value=_make_gh_result(_RESPONSE_WITH_REVIEWS)):
+        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+
+    bodies = {c["body"] for c in comments}
+    assert "looks good to me" not in bodies  # APPROVED skipped
+    assert "worca summary — should be excluded" not in bodies  # bot skipped
+
+
+def test_fetch_review_feedback_handles_missing_reviews_key():
+    """Older mock shape without a 'reviews' key must not crash."""
+    with patch("subprocess.run", return_value=_make_gh_result(GRAPHQL_RESPONSE)):
+        comments = fetch_review_feedback("owner/repo", 1, bot_login="worca-bot")
+    # Only the single unresolved human inline thread, no review summaries.
+    assert all(c["kind"] == "inline" for c in comments)

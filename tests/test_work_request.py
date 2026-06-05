@@ -1023,7 +1023,6 @@ class TestNormalizeGithubPr:
         "body": "This PR fixes the memory leak described in #42.",
         "baseRefName": "main",
         "headRefName": "worca/fix-leak-abc123",
-        "headRepository": {"nameWithOwner": "owner/repo"},
         "isCrossRepository": False,
         "author": {"login": "alice"},
     }
@@ -1038,6 +1037,23 @@ class TestNormalizeGithubPr:
         "kind": "inline",
         "created_at": "2026-06-03T12:00:00Z",
     }
+
+    @pytest.fixture(autouse=True)
+    def _patch_pr_helpers(self):
+        """nwo + bot-login are resolved via subprocess (gh) in gh_pr; stub them
+        so normalize_github_pr never shells out during unit tests. nwo comes
+        from the base repo (current_repo_nwo), NOT the PR's headRepository."""
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo",
+            return_value="owner/repo",
+        ), patch(
+            "worca.orchestrator.work_request.resolve_bot_login",
+            return_value="worca-bot",
+        ), patch(
+            "worca.orchestrator.work_request.load_settings",
+            return_value={},
+        ):
+            yield
 
     def _mock_gh(self, mock_subprocess, response=None):
         mock_result = MagicMock()
@@ -1084,7 +1100,7 @@ class TestNormalizeGithubPr:
         assert wr.pr_is_cross_repo is False
         assert wr.source_ref == "gh:pr:42"
         assert wr.review_comments == [self._REVIEW_COMMENT]
-        mock_fetch.assert_called_once_with("owner/repo", 42)
+        mock_fetch.assert_called_once_with("owner/repo", 42, bot_login="worca-bot")
 
     @patch("worca.orchestrator.work_request.fetch_review_feedback")
     @patch("worca.orchestrator.work_request.subprocess")
@@ -1128,6 +1144,76 @@ class TestNormalizeGithubPr:
         with pytest.raises(RuntimeError, match="Failed to fetch PR"):
             normalize_github_pr("gh:pr:99")
 
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_nwo_resolved_from_base_repo_not_head_repository(
+        self, mock_subprocess, mock_fetch
+    ):
+        """Regression: nwo must come from current_repo_nwo() (the base repo),
+        never from the PR's headRepository — gh pr view does not expose a
+        nameWithOwner there, so the old path silently fetched nothing."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = []
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo",
+            return_value="base-owner/base-repo",
+        ):
+            normalize_github_pr("gh:pr:42")
+        nwo_arg = mock_fetch.call_args[0][0]
+        assert nwo_arg == "base-owner/base-repo"
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_empty_nwo_skips_fetch(self, mock_subprocess, mock_fetch):
+        """If the base repo can't be resolved, ingestion is skipped, not crashed."""
+        self._mock_gh(mock_subprocess)
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo", return_value=""
+        ):
+            wr = normalize_github_pr("gh:pr:42")
+        mock_fetch.assert_not_called()
+        assert wr.review_comments == []
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_config_bot_login_overrides_token(self, mock_subprocess, mock_fetch):
+        """worca.pr_revision.bot_login (config) takes precedence over the token."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = []
+        with patch(
+            "worca.orchestrator.work_request.load_settings",
+            return_value={"worca": {"pr_revision": {"bot_login": "configured-bot"}}},
+        ), patch(
+            "worca.orchestrator.work_request.resolve_bot_login",
+            return_value="token-bot",
+        ):
+            normalize_github_pr("gh:pr:42")
+        assert mock_fetch.call_args.kwargs["bot_login"] == "configured-bot"
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_pr_level_feedback_synthesized_without_anchor(
+        self, mock_subprocess, mock_fetch
+    ):
+        """A review_summary item (no path / thread_id) renders as [PR-level]
+        with no trailing (thread: …) suffix."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = [
+            {
+                "thread_id": "",
+                "path": "",
+                "line": None,
+                "diff_hunk": "",
+                "author": "carol",
+                "body": "add a test for the empty case",
+                "kind": "review_summary",
+                "created_at": "2026-06-03T12:00:00Z",
+            }
+        ]
+        wr = normalize_github_pr("gh:pr:42")
+        assert "[PR-level] @carol:" in wr.description
+        assert "(thread:" not in wr.description
+
 
 # --- parse_pr_url number extraction ---
 
@@ -1159,13 +1245,26 @@ _DISPATCH_PR_RESPONSE = {
     "body": "",
     "baseRefName": "main",
     "headRefName": "feature/x",
-    "headRepository": {"nameWithOwner": "owner/repo"},
     "isCrossRepository": False,
     "author": {"login": "alice"},
 }
 
 
 class TestNormalizeGithubPrDispatch:
+    @pytest.fixture(autouse=True)
+    def _patch_pr_helpers(self):
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo",
+            return_value="owner/repo",
+        ), patch(
+            "worca.orchestrator.work_request.resolve_bot_login",
+            return_value=None,
+        ), patch(
+            "worca.orchestrator.work_request.load_settings",
+            return_value={},
+        ):
+            yield
+
     @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
     @patch("worca.orchestrator.work_request.subprocess")
     def test_normalize_dispatches_gh_pr_scheme(self, mock_subprocess, mock_fetch):

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from worca.utils.env import get_env, filter_model_env
-from worca.utils.gh_pr import fetch_review_feedback
+from worca.utils.gh_pr import current_repo_nwo, fetch_review_feedback, resolve_bot_login
 from worca.utils.settings import load_settings, resolve_model
 
 _DEFAULT_PLAN_PATH_TEMPLATE = "docs/plans/{timestamp}-{title_slug}.md"
@@ -367,11 +367,15 @@ def _synthesize_pr_description(body: str, review_comments: list) -> str:
         for c in review_comments:
             path = c.get("path", "")
             line = c.get("line")
-            loc = f"{path}:{line}" if line is not None else path
+            if path:
+                loc = f"{path}:{line}" if line is not None else path
+            else:
+                loc = "PR-level"
             author = c.get("author", "")
             text = c.get("body", "")
             thread_id = c.get("thread_id", "")
-            lines.append(f'- [{loc}] @{author}: "{text}" (thread: {thread_id})')
+            suffix = f" (thread: {thread_id})" if thread_id else ""
+            lines.append(f'- [{loc}] @{author}: "{text}"{suffix}')
         parts.append("\n## Review Feedback to Address\n")
         parts.extend(lines)
     return "\n".join(parts)
@@ -395,7 +399,7 @@ def normalize_github_pr(source_value: str) -> WorkRequest:
     result = subprocess.run(
         [
             "gh", "pr", "view", str(pr_number), "--json",
-            "title,body,baseRefName,headRefName,headRepository,isCrossRepository,author",
+            "title,body,baseRefName,headRefName,isCrossRepository,author",
         ],
         capture_output=True,
         text=True,
@@ -410,9 +414,24 @@ def normalize_github_pr(source_value: str) -> WorkRequest:
     base_branch = data.get("baseRefName", "")
     head_branch = data.get("headRefName", "")
     is_cross_repo = data.get("isCrossRepository", False)
-    nwo = (data.get("headRepository") or {}).get("nameWithOwner", "")
 
-    review_comments = fetch_review_feedback(nwo, pr_number) if nwo else []
+    # The PR and its review threads live in the *base* repo — resolve the
+    # owner/repo from the current repo (gh's default-repo logic), NOT from the
+    # PR's headRepository (which for a fork PR is the wrong repo, and which
+    # `gh pr view` does not even expose a nameWithOwner for).
+    nwo = current_repo_nwo()
+
+    # L1 self-comment-loop guard: exclude worca's own bot comments. Prefer an
+    # explicit config override, else fall back to the authenticated gh token.
+    settings = load_settings(".claude/settings.json")
+    bot_login = (
+        settings.get("worca", {}).get("pr_revision", {}).get("bot_login")
+        or resolve_bot_login()
+    )
+
+    review_comments = (
+        fetch_review_feedback(nwo, pr_number, bot_login=bot_login) if nwo else []
+    )
 
     return WorkRequest(
         source_type="github_pr",
