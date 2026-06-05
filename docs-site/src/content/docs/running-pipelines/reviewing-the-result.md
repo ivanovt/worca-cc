@@ -2,7 +2,7 @@
 title: Reviewing the result
 description: The pull request, test proof, beads, and learnings a finished run leaves behind.
 sidebar:
-  order: 5
+  order: 6
 ---
 
 When a run finishes, the Guardian agent opens a pull request with the implemented, tested, and reviewed change. Everything you need to judge that PR is surfaced in the dashboard.
