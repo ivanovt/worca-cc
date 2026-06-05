@@ -103,50 +103,48 @@ function _fileContent(file) {
 
 /**
  * Render sub-tabs for a stage that has overlays.
- * Each present file becomes a tab; missing files are disabled tabs.
+ *
+ * Only overlay files that actually exist become tabs. A stage declares both an
+ * agent-prompt and a user-prompt (.block) slot, but most templates define only
+ * some — rendering the absent ones as disabled, non-clickable placeholder tabs
+ * is confusing, so they're omitted entirely.
  */
 function _stageTabs(stage, overlays) {
-  const allAgentFiles = stage.agentFiles.map((name) => ({
-    name,
-    content: overlays[name] ?? null,
-  }));
-  const allBlockFiles = stage.blockFiles.map((name) => ({
-    name,
-    content: overlays[name] ?? null,
-  }));
+  const presentAgentFiles = stage.agentFiles
+    .filter((name) => overlays[name] != null)
+    .map((name) => ({ name, content: overlays[name] }));
+  const presentBlockFiles = stage.blockFiles
+    .filter((name) => overlays[name] != null)
+    .map((name) => ({ name, content: overlays[name] }));
 
   const tabs = [];
   const panels = [];
 
-  for (const f of allAgentFiles) {
+  for (const f of presentAgentFiles) {
     const panelId = `overlay-${stage.key}-${f.name.replace(/\./g, '-')}`;
     const label = f.name.replace(/\.md$/, '');
     tabs.push(html`
-      <sl-tab slot="nav" panel=${panelId} ?disabled=${f.content === null}>
+      <sl-tab slot="nav" panel=${panelId}>
         Agent prompt
         <span class="overlay-file-label">(${label})</span>
       </sl-tab>
     `);
     panels.push(html`
-      <sl-tab-panel name=${panelId}>
-        ${f.content !== null ? _fileContent(f) : nothing}
-      </sl-tab-panel>
+      <sl-tab-panel name=${panelId}>${_fileContent(f)}</sl-tab-panel>
     `);
   }
 
-  for (const f of allBlockFiles) {
+  for (const f of presentBlockFiles) {
     const panelId = `overlay-${stage.key}-${f.name.replace(/\./g, '-')}`;
     const label = f.name.replace(/\.md$/, '');
     tabs.push(html`
-      <sl-tab slot="nav" panel=${panelId} ?disabled=${f.content === null}>
+      <sl-tab slot="nav" panel=${panelId}>
         User prompt
         <span class="overlay-file-label">(${label})</span>
       </sl-tab>
     `);
     panels.push(html`
-      <sl-tab-panel name=${panelId}>
-        ${f.content !== null ? _fileContent(f) : nothing}
-      </sl-tab-panel>
+      <sl-tab-panel name=${panelId}>${_fileContent(f)}</sl-tab-panel>
     `);
   }
 

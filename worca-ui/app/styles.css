@@ -7939,6 +7939,16 @@ sl-dialog.markdown-dialog::part(body) {
 .editor-content--readonly .editor-section--json * {
   cursor: default !important;
 }
+/*
+ * Exception: the Overlays tab is a viewer, not an editor. Expanding a stage's
+ * <sl-details> and switching between overlay-file tabs are read actions, so
+ * re-enable pointer events for the overlays surface even in read-only mode —
+ * otherwise built-in templates can't inspect their prompt overlays at all
+ * (the panel-wide pointer-events:none above swallows the summary clicks).
+ */
+.editor-content--readonly sl-tab-panel .overlay-stages {
+  pointer-events: auto;
+}
 
 /*
  * Editor uses the same .settings-tab-content / .settings-section-title /

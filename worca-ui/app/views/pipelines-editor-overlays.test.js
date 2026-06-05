@@ -140,6 +140,30 @@ describe('stageHasOverlays disabled states', () => {
     expect(planReviewerPresent).toBe(false);
     expect(planEditorPresent).toBe(true);
   });
+
+  it('omits the tab for an absent overlay file (no disabled placeholder)', () => {
+    // coordinate declares coordinator.md (agent) + coordinate.block.md (user);
+    // here only the agent file exists, so the "User prompt" tab must not render.
+    const container = mount({ 'coordinator.md': '# Coordinator' });
+    const tabs = Array.from(container.querySelectorAll('sl-tab'));
+    const labels = tabs.map((t) => t.textContent.replace(/\s+/g, ' ').trim());
+    expect(labels.some((l) => l.startsWith('Agent prompt'))).toBe(true);
+    expect(labels.some((l) => l.startsWith('User prompt'))).toBe(false);
+    // And nothing renders as a disabled, non-clickable tab.
+    expect(tabs.every((t) => !t.hasAttribute('disabled'))).toBe(true);
+  });
+
+  it('renders both Agent and User prompt tabs when both files exist', () => {
+    const container = mount({
+      'coordinator.md': '# Coordinator',
+      'coordinate.block.md': '## User block',
+    });
+    const labels = Array.from(container.querySelectorAll('sl-tab')).map((t) =>
+      t.textContent.replace(/\s+/g, ' ').trim(),
+    );
+    expect(labels.some((l) => l.startsWith('Agent prompt'))).toBe(true);
+    expect(labels.some((l) => l.startsWith('User prompt'))).toBe(true);
+  });
 });
 
 // ─── 3. Renders markdown ─────────────────────────────────────────────────────
