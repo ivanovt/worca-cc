@@ -694,6 +694,75 @@ class TestPostToolUseMatcherWidening:
         assert self._worca_post_matcher(migrated) == template_matcher
 
 
+# ── §11a2: permissions.allow native Glob/Grep grant ────────────────
+
+
+class TestPermissionsAllowGlobGrep:
+    """The worca-owned permissions.allow list must grant native Glob/Grep.
+
+    The allowlist carries the Bash equivalents + Read(*) but omitted the native
+    Glob/Grep tools. Subagents (which don't inherit the parent's
+    --dangerously-skip-permissions) are bound by permissions.allow, so their
+    Glob/Grep calls are denied. _deep_merge preserves the existing allow LIST
+    verbatim on upgrade, so the migration must inject the tools explicitly.
+    """
+
+    def _allow(self, settings):
+        return settings.get("permissions", {}).get("allow")
+
+    def _stale_settings(self):
+        return {
+            "permissions": {
+                "allow": ["Read(*)", "Bash(grep:*)", "Bash(find:*)"]
+            }
+        }
+
+    def test_adds_native_glob_and_grep(self):
+        migrated, changes = _migrate_settings_paths(self._stale_settings())
+        allow = self._allow(migrated)
+        assert "Glob" in allow
+        assert "Grep" in allow
+        # Existing entries are preserved.
+        assert "Read(*)" in allow
+        assert "Bash(grep:*)" in allow
+        assert any("permissions.allow" in c and "Glob" in c for c in changes)
+        assert any("permissions.allow" in c and "Grep" in c for c in changes)
+
+    def test_noop_when_already_present(self):
+        settings = {
+            "permissions": {"allow": ["Read(*)", "Glob", "Grep"]}
+        }
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("permissions.allow" in c for c in changes)
+
+    def test_idempotent_rerun(self):
+        first, _ = _migrate_settings_paths(self._stale_settings())
+        _second, second_changes = _migrate_settings_paths(first)
+        assert not any("permissions.allow" in c for c in second_changes)
+
+    def test_skipped_when_no_permissions_block(self):
+        """A project without a permissions block is left untouched (no allowlist
+        means no allowlist enforcement to repair)."""
+        _migrated, changes = _migrate_settings_paths({"hooks": {}})
+        assert not any("permissions.allow" in c for c in changes)
+
+    def test_skipped_when_allow_not_a_list(self):
+        settings = {"permissions": {"allow": "not-a-list"}}
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("permissions.allow" in c for c in changes)
+
+    def test_matches_shipped_template(self):
+        """After migration a stale project's allowlist contains the same native
+        search tools the shipped template grants."""
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path, encoding="utf-8") as f:
+            shipped_allow = json.load(f)["permissions"]["allow"]
+        assert "Glob" in shipped_allow and "Grep" in shipped_allow
+        migrated, _ = _migrate_settings_paths(self._stale_settings())
+        allow = self._allow(migrated)
+        assert "Glob" in allow and "Grep" in allow
+
+
 # ── §11b: _migrate_global_keys_to_preferences ──────────────────────
 
 

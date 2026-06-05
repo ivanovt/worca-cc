@@ -387,6 +387,25 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
                 f"{canonical_matcher!r} (W-064 file-access + CRG graph-query capture)"
             )
 
+    # Grant the native Glob/Grep tools in permissions.allow. The shipped
+    # allowlist has always carried the Bash equivalents (Bash(grep:*),
+    # Bash(rg:*), Bash(find:*)) and Read(*) but omitted the native Glob/Grep
+    # tools. Top-level agents run with --dangerously-skip-permissions so they
+    # never hit it, but dispatched subagents do NOT inherit that bypass — they
+    # are bound by permissions.allow, so their Glob/Grep calls are denied while
+    # Read + Bash(grep/find) still work. The result: a planner that delegates
+    # codebase research to a subagent watches it limp (Glob/Grep denied) and
+    # thrashes. _deep_merge preserves the existing allow LIST verbatim on
+    # upgrade, so this never self-heals without an explicit migration (same
+    # list-preservation trap as the W-064 matcher above).
+    perms = migrated.get("permissions")
+    if isinstance(perms, dict) and isinstance(perms.get("allow"), list):
+        allow = perms["allow"]
+        for tool in ("Glob", "Grep"):
+            if tool not in allow:
+                allow.append(tool)
+                changes.append(f"  permissions.allow: added {tool!r} (native search tool)")
+
     return migrated, changes
 
 
