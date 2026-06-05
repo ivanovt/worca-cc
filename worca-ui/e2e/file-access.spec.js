@@ -95,9 +95,9 @@ test.describe('file access view — treetable', () => {
       // Treetable renders
       await expect(page.locator('.access-treetable')).toBeVisible({ timeout: 10000 });
 
-      // R, W, or RW badge present
+      // read or write op pill present
       await expect(
-        page.locator('.access-badge--rw, .access-badge--read, .access-badge--write').first(),
+        page.locator('.access-badge--read, .access-badge--write').first(),
       ).toBeVisible({ timeout: 5000 });
     } finally {
       await ctx.close();
@@ -171,8 +171,10 @@ test.describe('file access view — stage group collapse', () => {
       // Click to collapse
       await stageHeader.click();
 
-      // Group should gain collapsed class
-      await expect(page.locator('.access-stage-group--collapsed')).toBeVisible({ timeout: 3000 });
+      // Header should gain the collapsed class (columns fold to a single Σ)
+      await expect(
+        page.locator('.access-stage-group-header--collapsed'),
+      ).toBeVisible({ timeout: 3000 });
     } finally {
       await ctx.close();
     }

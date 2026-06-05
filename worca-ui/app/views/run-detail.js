@@ -1831,19 +1831,19 @@ export function runDetailView(run, settings = {}, options = {}) {
                 ? html`
               <div class="pipeline-timing-bar-actions">
                 ${
-                  options.onOpenTimeline
-                    ? html`<button
-                  class="action-btn action-btn--primary"
-                  @click=${options.onOpenTimeline}
-                ><span aria-hidden="true">${unsafeHTML(iconSvg(BarChart3, 14))}</span> Timeline</button>`
-                    : nothing
-                }
-                ${
                   options.onOpenAccess
                     ? html`<button
                   class="action-btn action-btn--primary"
                   @click=${options.onOpenAccess}
                 ><span aria-hidden="true">${unsafeHTML(iconSvg(FolderTree, 14))}</span> Access</button>`
+                    : nothing
+                }
+                ${
+                  options.onOpenTimeline
+                    ? html`<button
+                  class="action-btn action-btn--primary"
+                  @click=${options.onOpenTimeline}
+                ><span aria-hidden="true">${unsafeHTML(iconSvg(BarChart3, 14))}</span> Timeline</button>`
                     : nothing
                 }
               </div>

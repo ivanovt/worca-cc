@@ -15,6 +15,10 @@
  *
  * Searches: flat list of per-event search records with broad/zero_hit flags.
  *
+ * GraphQueries: flat list of per-event knowledge-graph queries (graphify / CRG)
+ * with engine, op, target, and zero_hit flags. Empty unless the run used a
+ * graph engine.
+ *
  * Summary: global aggregates. oracle:"degraded" if ANY event was degraded.
  *
  * Pattern: mirrors dispatch-events-aggregator.js.
@@ -84,6 +88,7 @@ export function buildFileAccessModel(eventsPath) {
   const fileData = new Map();
 
   const searches = [];
+  const graphQueries = [];
   let oracleDegraded = false;
 
   const summary = {
@@ -97,6 +102,9 @@ export function buildFileAccessModel(eventsPath) {
     glob: 0,
     zero_result: 0,
     root_scoped: 0,
+    graph_queries: 0,
+    graphify: 0,
+    crg: 0,
     leakage_pct_max: 0,
     oracle: 'ok',
   };
@@ -146,6 +154,26 @@ export function buildFileAccessModel(eventsPath) {
       if (s.result_count === 0) summary.zero_result++;
       if (s.scope === '.' || s.scope === '') summary.root_scoped++;
     }
+
+    // Knowledge-graph queries (graphify / CRG) — structural/semantic lookups
+    // recorded alongside the lexical searches above. We only surface fields we
+    // can reliably capture from both engines: the engine, the op (graphify
+    // subcommand / CRG MCP tool name), and the verbatim query/args. Result
+    // counts and a separate "target" are op-dependent and not reliably
+    // available, so they are intentionally not collected.
+    for (const g of fa.graph_queries || []) {
+      graphQueries.push({
+        colKey: ck,
+        stage: p.stage,
+        iteration: p.iteration,
+        engine: g.engine,
+        op: g.op,
+        query: g.query,
+      });
+      summary.graph_queries++;
+      if (g.engine === 'graphify') summary.graphify++;
+      if (g.engine === 'crg') summary.crg++;
+    }
   }
 
   // Compute global file-level aggregates from the folded fileData.
@@ -174,7 +202,7 @@ export function buildFileAccessModel(eventsPath) {
   // ------------------------------------------------------------------
   const tree = buildTree(fileData);
 
-  return { enabled: true, columns, tree, searches, summary };
+  return { enabled: true, columns, tree, searches, graphQueries, summary };
 }
 
 // ---------------------------------------------------------------------------

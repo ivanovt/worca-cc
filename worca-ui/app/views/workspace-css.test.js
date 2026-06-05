@@ -194,6 +194,7 @@ describe('workspace CSS — DAG styling', () => {
       '--fa-file-col-width',
       '--fa-cell-width',
       '--fa-cell-height',
+      '--fa-grid',
       '--depth',
       '--heat',
       // File Access drawer panels (file-history / cell-detail overlays)

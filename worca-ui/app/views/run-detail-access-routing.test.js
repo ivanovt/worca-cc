@@ -65,7 +65,7 @@ describe('run-detail Access button', () => {
     expect(html).toContain('Access');
   });
 
-  it('Access button appears after Timeline button in DOM order', () => {
+  it('Access button appears before Timeline button in DOM order', () => {
     const onOpenTimeline = vi.fn();
     const onOpenAccess = vi.fn();
     const result = runDetailView(BASE_RUN, BASE_SETTINGS, {
@@ -75,7 +75,7 @@ describe('run-detail Access button', () => {
     const html = renderToString(result);
     const timelineIdx = html.indexOf('Timeline');
     const accessIdx = html.indexOf('Access');
-    expect(timelineIdx).toBeGreaterThan(-1);
-    expect(accessIdx).toBeGreaterThan(timelineIdx);
+    expect(accessIdx).toBeGreaterThan(-1);
+    expect(timelineIdx).toBeGreaterThan(accessIdx);
   });
 });

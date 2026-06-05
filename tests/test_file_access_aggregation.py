@@ -121,6 +121,61 @@ class TestAggregateFileAccess:
         assert result["totals"]["grep"] == 1
         assert result["totals"]["glob"] == 1
 
+    def test_aggregates_graph_query_records(self, tmp_path):
+        """graph_query records (graphify / CRG) should fold into graph_queries."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        (repo_root / ".git").mkdir()
+
+        access_dir = tmp_path / "access"
+        access_dir.mkdir()
+        jsonl_file = access_dir / "plan-1.jsonl"
+
+        records = [
+            {
+                "op": "graph_query",
+                "engine": "graphify",
+                "graph_op": "query",
+                "query": "what depends on TaskService?",
+                "ts": "2026-01-01T00:00:00Z",
+            },
+            {
+                "op": "graph_query",
+                "engine": "crg",
+                "graph_op": "get_impact_radius",
+                "query": '{"symbol":"TaskService.create"}',
+                "ts": "2026-01-01T00:00:01Z",
+            },
+            # Unknown engine is dropped.
+            {
+                "op": "graph_query",
+                "engine": "bogus",
+                "graph_op": "x",
+                "query": "y",
+                "ts": "2026-01-01T00:00:02Z",
+            },
+        ]
+        jsonl_file.write_text("\n".join(json.dumps(r) for r in records))
+
+        result = aggregate_file_access(str(jsonl_file), str(repo_root))
+
+        assert len(result["graph_queries"]) == 2
+        assert result["graph_queries"][0] == {
+            "engine": "graphify",
+            "op": "query",
+            "query": "what depends on TaskService?",
+        }
+        assert result["graph_queries"][1]["engine"] == "crg"
+        assert result["graph_queries"][1]["op"] == "get_impact_radius"
+
+    def test_graph_queries_empty_by_default(self, tmp_path):
+        """Runs with no graph queries still expose an empty graph_queries list."""
+        repo_root = tmp_path / "repo"
+        repo_root.mkdir()
+        (repo_root / ".git").mkdir()
+        result = aggregate_file_access(str(tmp_path / "missing.jsonl"), str(repo_root))
+        assert result["graph_queries"] == []
+
     def test_handles_missing_jsonl_file(self, tmp_path):
         """Missing JSONL file should return empty aggregates without error."""
         repo_root = tmp_path / "repo"

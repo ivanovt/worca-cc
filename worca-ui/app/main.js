@@ -4274,7 +4274,6 @@ function mainContentView() {
       runId: route.runId,
       projectId: route.projectId,
       model: runAccessModels.get(route.runId),
-      onBack: () => navigate(route.section, route.runId, route.projectId),
       onOpenTimeline: () =>
         navigate(route.section, route.runId, route.projectId, 'timeline'),
       onRerender: rerender,

@@ -718,3 +718,52 @@ describe('summary', () => {
     expect(summary.leakage_pct_max).toBe(3.2);
   });
 });
+
+describe('graphQueries', () => {
+  it('folds graph_queries with engine/op/query and summary counts', () => {
+    const path = join(root, 'events.jsonl');
+    writeJsonl(path, [
+      makeAccessEvent('plan', 1, null, {
+        reads: {},
+        writes: {},
+        searches: [],
+        graph_queries: [
+          { engine: 'graphify', op: 'query', query: 'what depends on X?' },
+          { engine: 'crg', op: 'get_impact_radius', query: '{"symbol":"X"}' },
+        ],
+        totals: {},
+        capture: defaultCapture(),
+      }),
+    ]);
+    const { graphQueries, summary } = buildFileAccessModel(path);
+    expect(graphQueries).toHaveLength(2);
+    expect(graphQueries[0]).toMatchObject({
+      colKey: 'plan:1',
+      stage: 'plan',
+      iteration: 1,
+      engine: 'graphify',
+      op: 'query',
+      query: 'what depends on X?',
+    });
+    expect(graphQueries[1].engine).toBe('crg');
+    expect(summary.graph_queries).toBe(2);
+    expect(summary.graphify).toBe(1);
+    expect(summary.crg).toBe(1);
+  });
+
+  it('defaults to an empty list and zero counts when no graph queries present', () => {
+    const path = join(root, 'events.jsonl');
+    writeJsonl(path, [
+      makeAccessEvent('plan', 1, null, {
+        reads: { 'a.py': 1 },
+        writes: {},
+        searches: [],
+        totals: {},
+        capture: defaultCapture(),
+      }),
+    ]);
+    const { graphQueries, summary } = buildFileAccessModel(path);
+    expect(graphQueries).toEqual([]);
+    expect(summary.graph_queries).toBe(0);
+  });
+});

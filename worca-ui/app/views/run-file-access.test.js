@@ -242,8 +242,10 @@ describe('runFileAccessView', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
-    const groups = el.querySelectorAll('.access-stage-group');
-    const stageNames = [...groups].map((g) => g.getAttribute('data-stage'));
+    const headers = el.querySelectorAll('.access-stage-group-header');
+    const stageNames = [...headers].map((h) =>
+      h.querySelector('.access-stage-name')?.textContent?.trim(),
+    );
     expect(stageNames).toContain('plan');
     expect(stageNames).toContain('implement');
   });
@@ -286,12 +288,21 @@ describe('runFileAccessView', () => {
     expect(writeBadges.length).toBeGreaterThan(0);
   });
 
-  it('renders RW badge when cell has both read and write', () => {
+  it('renders separate read and write pills when a cell has both', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
-    const rwBadges = el.querySelectorAll('.access-badge--rw');
-    expect(rwBadges.length).toBeGreaterThan(0);
+    // runner.py's implement:1:w-001 cell has read:1 + write:3 → two pills, no
+    // combined RW badge.
+    const runnerRow = [...el.querySelectorAll('.access-row--file')].find(
+      (r) =>
+        r.querySelector('.access-file-name')?.textContent?.trim() ===
+        'runner.py',
+    );
+    expect(runnerRow).toBeTruthy();
+    expect(runnerRow.querySelector('.access-badge--read')).not.toBeNull();
+    expect(runnerRow.querySelector('.access-badge--write')).not.toBeNull();
+    expect(el.querySelector('.access-badge--rw')).toBeNull();
   });
 
   it('renders dot for untouched cells', () => {
@@ -303,13 +314,20 @@ describe('runFileAccessView', () => {
     expect(dots.length).toBeGreaterThan(0);
   });
 
-  it('renders op-count superscript when count > 1', () => {
+  it('shows the numeric op count inside pills (including the exact count)', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
-    // runner.py plan:1 read=2, implement:1:w-001 write=3
-    const sups = el.querySelectorAll('.access-op-count');
-    expect(sups.length).toBeGreaterThan(0);
+    // runner.py plan:1 read=2 → a read pill whose text is "2".
+    const readTexts = [...el.querySelectorAll('.access-badge--read')].map((b) =>
+      b.textContent.trim(),
+    );
+    expect(readTexts).toContain('2');
+    // runner.py implement:1:w-001 write=3 → a write pill whose text is "3".
+    const writeTexts = [...el.querySelectorAll('.access-badge--write')].map(
+      (b) => b.textContent.trim(),
+    );
+    expect(writeTexts).toContain('3');
   });
 
   // --- File category colors ---
@@ -385,7 +403,9 @@ describe('runFileAccessView', () => {
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
     // All individual column headers visible → no collapsed class on groups
-    const collapsed = el.querySelectorAll('.access-stage-group--collapsed');
+    const collapsed = el.querySelectorAll(
+      '.access-stage-group-header--collapsed',
+    );
     expect(collapsed.length).toBe(0);
   });
 
@@ -401,7 +421,9 @@ describe('runFileAccessView', () => {
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
       el,
     );
-    const collapsed = el.querySelectorAll('.access-stage-group--collapsed');
+    const collapsed = el.querySelectorAll(
+      '.access-stage-group-header--collapsed',
+    );
     expect(collapsed.length).toBeGreaterThan(0);
   });
 
@@ -422,7 +444,9 @@ describe('runFileAccessView', () => {
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
       el,
     );
-    const collapsed = el.querySelectorAll('.access-stage-group--collapsed');
+    const collapsed = el.querySelectorAll(
+      '.access-stage-group-header--collapsed',
+    );
     expect(collapsed.length).toBe(0);
   });
 
@@ -543,10 +567,12 @@ describe('runFileAccessView', () => {
     expect(collapsed.length).toBe(0);
   });
 
-  it('clicking a dir row header toggles its children visibility', () => {
+  it('clicking a dir row toggle folds its children out of the DOM', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
+    // src starts expanded → its file rows are present.
+    expect(el.querySelectorAll('.access-row--file').length).toBeGreaterThan(0);
     const dirToggle = el.querySelector('.access-dir-toggle');
     expect(dirToggle).not.toBeNull();
     dirToggle.click();
@@ -554,26 +580,21 @@ describe('runFileAccessView', () => {
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
       el,
     );
-    const hiddenChildren = el.querySelectorAll('.access-row--hidden');
-    expect(hiddenChildren.length).toBeGreaterThan(0);
+    // Children are removed; the dir row stays, now marked collapsed (with its
+    // server-side rollup totals still shown).
+    expect(el.querySelectorAll('.access-row--file').length).toBe(0);
+    expect(el.querySelector('.access-row--dir-collapsed')).not.toBeNull();
   });
 
   // --- Back navigation ---
 
-  it('calls onBack when back button is clicked', () => {
-    let called = false;
+  it('renders no in-view back button (relies on the shared header arrow)', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, {
         model: makeModel(),
-        onBack: () => {
-          called = true;
-        },
       }),
     );
-    const backBtn = el.querySelector('.access-back-btn');
-    expect(backBtn).not.toBeNull();
-    backBtn.click();
-    expect(called).toBe(true);
+    expect(el.querySelector('.access-back-btn')).toBeNull();
   });
 });
 
@@ -602,13 +623,14 @@ describe('Interactive controls', () => {
     expect(el.querySelector('.access-heatmap-toggle')).not.toBeNull();
   });
 
-  it('renders category chips for reads, writes, and searches', () => {
+  it('renders category chips for reads and writes', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
     expect(el.querySelector('.access-chip--reads')).not.toBeNull();
     expect(el.querySelector('.access-chip--writes')).not.toBeNull();
-    expect(el.querySelector('.access-chip--searches')).not.toBeNull();
+    // Searches is no longer a chip — the searches lane is always shown.
+    expect(el.querySelector('.access-chip--searches')).toBeNull();
   });
 
   it('renders path filter input', () => {
@@ -633,16 +655,33 @@ describe('Interactive controls', () => {
 
   // --- Heatmap ---
 
-  it('treetable does not have heatmap class by default', () => {
+  it('treetable has the heatmap class by default', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    expect(el.querySelector('.access-treetable--heatmap')).not.toBeNull();
+  });
+
+  it('clicking heatmap toggle removes the heatmap class (default on)', () => {
+    const el = mount(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    el.querySelector('.access-heatmap-toggle').click();
+    render(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+      el,
     );
     expect(el.querySelector('.access-treetable--heatmap')).toBeNull();
   });
 
-  it('clicking heatmap toggle adds heatmap class to treetable', () => {
+  it('clicking heatmap toggle twice restores the heatmap-on state', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+    );
+    el.querySelector('.access-heatmap-toggle').click();
+    render(
+      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
+      el,
     );
     el.querySelector('.access-heatmap-toggle').click();
     render(
@@ -650,23 +689,6 @@ describe('Interactive controls', () => {
       el,
     );
     expect(el.querySelector('.access-treetable--heatmap')).not.toBeNull();
-  });
-
-  it('clicking heatmap toggle twice restores no-heatmap state', () => {
-    const el = mount(
-      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
-    );
-    el.querySelector('.access-heatmap-toggle').click();
-    render(
-      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
-      el,
-    );
-    el.querySelector('.access-heatmap-toggle').click();
-    render(
-      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
-      el,
-    );
-    expect(el.querySelector('.access-treetable--heatmap')).toBeNull();
   });
 
   it('heatmap toggle has active class when heatmap is on', () => {
@@ -694,7 +716,7 @@ describe('Interactive controls', () => {
 
   // --- Category chips ---
 
-  it('all chips are active by default', () => {
+  it('reads and writes chips are active by default', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
@@ -706,11 +728,6 @@ describe('Interactive controls', () => {
     expect(
       el
         .querySelector('.access-chip--writes')
-        .classList.contains('access-chip--active'),
-    ).toBe(true);
-    expect(
-      el
-        .querySelector('.access-chip--searches')
         .classList.contains('access-chip--active'),
     ).toBe(true);
   });
@@ -768,32 +785,11 @@ describe('Interactive controls', () => {
     expect(paths).toContain('src/util.py');
   });
 
-  it('clicking searches chip hides the searches lane', () => {
+  it('always renders the searches lane (no Searches toggle)', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
     );
-    el.querySelector('.access-chip--searches').click();
-    render(
-      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
-      el,
-    );
-    expect(el.querySelector('.access-searches')).toBeNull();
-  });
-
-  it('re-clicking searches chip shows searches lane again', () => {
-    const el = mount(
-      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
-    );
-    el.querySelector('.access-chip--searches').click();
-    render(
-      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
-      el,
-    );
-    el.querySelector('.access-chip--searches').click();
-    render(
-      runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, { model: makeModel() }),
-      el,
-    );
+    expect(el.querySelector('.access-chip--searches')).toBeNull();
     expect(el.querySelector('.access-searches')).not.toBeNull();
   });
 

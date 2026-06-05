@@ -1172,6 +1172,7 @@ h1, h2, h3, h4, h5, h6 {
 .pipeline-timing-bar-actions {
   display: flex;
   justify-content: flex-end;
+  gap: 8px;
   margin-bottom: 8px;
 }
 
@@ -8765,29 +8766,6 @@ body.help-mode-active sl-tab {
   color: var(--text-muted, #94a3b8);
 }
 
-/* ── Back button ────────────────────────────────────────────────────────── */
-
-.access-back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px;
-  border: 1px solid var(--border, #e2e8f0);
-  border-radius: var(--radius, 6px);
-  background: transparent;
-  color: var(--text-muted, #94a3b8);
-  font-size: 13px;
-  cursor: pointer;
-  align-self: flex-start;
-  transition: color var(--transition-fast, 150ms ease),
-    border-color var(--transition-fast, 150ms ease);
-}
-
-.access-back-btn:hover {
-  color: var(--fg, #0f172a);
-  border-color: var(--fg, #0f172a);
-}
-
 /* ── KPI strip ──────────────────────────────────────────────────────────── */
 
 .access-kpi-strip {
@@ -8810,6 +8788,25 @@ body.help-mode-active sl-tab {
 .access-kpi-card--amber {
   border-color: #f59e0b;
   background: rgba(245, 158, 11, 0.06);
+}
+
+/* Read = green, Written = blue — same semantics as the matrix op pills. */
+.access-kpi-card--read {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.06);
+}
+
+.access-kpi-card--read .access-kpi-label {
+  color: #15803d;
+}
+
+.access-kpi-card--write {
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.06);
+}
+
+.access-kpi-card--write .access-kpi-label {
+  color: #1d4ed8;
 }
 
 .access-kpi-label {
@@ -8861,9 +8858,9 @@ body.help-mode-active sl-tab {
 }
 
 .access-heatmap-toggle--active {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: #3b82f6;
-  color: #3b82f6;
+  background: rgba(249, 115, 22, 0.12);
+  border-color: #f97316;
+  color: #c2410c;
 }
 
 .access-chips {
@@ -8888,21 +8885,15 @@ body.help-mode-active sl-tab {
 }
 
 .access-chip--active.access-chip--reads {
-  background: rgba(59, 130, 246, 0.1);
-  border-color: #3b82f6;
-  color: #3b82f6;
+  background: rgba(34, 197, 94, 0.1);
+  border-color: #22c55e;
+  color: #15803d;
 }
 
 .access-chip--active.access-chip--writes {
-  background: rgba(34, 197, 94, 0.1);
-  border-color: #22c55e;
-  color: #22c55e;
-}
-
-.access-chip--active.access-chip--searches {
-  background: rgba(168, 85, 247, 0.1);
-  border-color: #a855f7;
-  color: #a855f7;
+  background: rgba(59, 130, 246, 0.1);
+  border-color: #3b82f6;
+  color: #3b82f6;
 }
 
 .access-path-filter {
@@ -8955,34 +8946,31 @@ body.help-mode-active sl-tab {
   border-bottom: 1px solid var(--border, #e2e8f0);
 }
 
-/* Stage group label row — padding-left aligns groups with the data columns,
-   leaving the file column area blank (the sticky file header covers it below). */
+/* Stage group label row — a grid that shares the table's column template so
+   each stage label spans exactly its data columns. Empty spacers hold the
+   file and Σ tracks. */
 .access-stage-groups {
-  display: flex;
-  padding-left: var(--fa-file-col-width, 220px);
+  display: grid;
+  grid-template-columns: var(--fa-grid);
+  width: max-content;
   border-bottom: 1px solid var(--border, #e2e8f0);
 }
 
-/* Each stage group: column header on top + per-col sub-headers below */
-.access-stage-group {
-  display: flex;
-  flex-wrap: wrap;
-  border-right: 1px solid var(--border, #e2e8f0);
-}
-
-.access-stage-group:last-child {
-  border-right: none;
+/* Empty spacer cells over the file and Σ columns of the stage-label row. */
+.access-stage-spacer {
+  min-height: 0;
 }
 
 .access-stage-group-header {
-  flex: 0 0 100%;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  min-width: 0;
   padding: 4px 8px;
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--border, #e2e8f0);
+  border-right: 1px solid var(--border, #e2e8f0);
   color: var(--fg, #0f172a);
   font-size: 11px;
   font-weight: 600;
@@ -8990,31 +8978,32 @@ body.help-mode-active sl-tab {
   letter-spacing: 0.04em;
   cursor: pointer;
   white-space: nowrap;
-  text-align: left;
+  overflow: hidden;
+}
+
+.access-stage-group-header .access-stage-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .access-stage-group-header:hover {
   background: var(--border, #e2e8f0);
 }
 
-.access-stage-group--collapsed .access-stage-group-header {
-  border-bottom: none;
+.access-stage-group-header--collapsed {
+  background: rgba(59, 130, 246, 0.06);
+  color: #3b82f6;
 }
 
-.access-stage-agg {
-  color: var(--text-muted, #94a3b8);
-  font-weight: 400;
-  font-size: 11px;
-}
-
-/* Column headers row */
+/* Column headers row — same grid template as the stage-label and body rows. */
 .access-col-headers {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--fa-grid);
+  width: max-content;
 }
 
 .access-col-header {
-  flex-shrink: 0;
-  width: var(--fa-cell-width, 80px);
+  min-width: 0;
   min-height: var(--fa-cell-height, 32px);
   padding: 4px 6px;
   display: flex;
@@ -9025,6 +9014,12 @@ body.help-mode-active sl-tab {
   color: var(--text-muted, #94a3b8);
   border-right: 1px solid rgba(226, 232, 240, 0.5);
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.access-col-agent {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -9058,14 +9053,6 @@ body.help-mode-active sl-tab {
   background: var(--bg-secondary, #f8fafc);
 }
 
-.access-col-bead {
-  font-size: 10px;
-  font-weight: 600;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .access-col-iter {
   font-size: 10px;
   color: var(--text-muted, #94a3b8);
@@ -9076,10 +9063,15 @@ body.help-mode-active sl-tab {
 .access-table-body {
   display: flex;
   flex-direction: column;
+  width: max-content;
 }
 
+/* Each row is its own grid sharing the table column template, so cells line up
+   with the header columns exactly (no per-stage width drift). */
 .access-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--fa-grid);
+  width: max-content;
   align-items: stretch;
   min-height: var(--fa-cell-height, 32px);
   border-bottom: 1px solid rgba(226, 232, 240, 0.5);
@@ -9102,25 +9094,22 @@ body.help-mode-active sl-tab {
   background: rgba(59, 130, 246, 0.04);
 }
 
-/* display:none hides the wrapper div and all children when dir is collapsed */
-.access-row--hidden {
-  display: none;
-}
-
-.access-children {
-  display: contents;
-}
-
 /* ── Cells ──────────────────────────────────────────────────────────────── */
 
 .access-cell {
-  flex-shrink: 0;
-  width: var(--fa-cell-width, 80px);
+  min-width: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 3px 6px;
   border-right: 1px solid rgba(226, 232, 240, 0.5);
+}
+
+/* Aggregated Σ cell shown for a collapsed stage — holds the same op pills. */
+.access-cell--stage-agg {
+  flex-wrap: wrap;
+  gap: 3px;
+  background: rgba(59, 130, 246, 0.04);
 }
 
 .access-cell:last-child {
@@ -9136,7 +9125,10 @@ body.help-mode-active sl-tab {
   justify-content: flex-start;
   gap: 6px;
   padding: 3px 8px;
-  padding-left: calc(8px + var(--depth, 0) * 16px);
+  /* One indent step == a dir's [chevron 18px + gap 6px], so a child's content
+     (file name, or sub-folder chevron) starts exactly under its parent's
+     folder icon. */
+  padding-left: calc(8px + var(--depth, 0) * 24px);
   background: inherit;
   border-right: 2px solid var(--border, #e2e8f0);
 }
@@ -9170,9 +9162,8 @@ body.help-mode-active sl-tab {
 }
 
 .access-cell--sigma {
-  flex-direction: column;
-  font-size: 11px;
-  gap: 2px;
+  flex-wrap: wrap;
+  gap: 3px;
   background: var(--bg-secondary, #f8fafc);
 }
 
@@ -9235,8 +9226,9 @@ body.help-mode-active sl-tab {
 
 /* When heatmap mode is active, shade non-empty data cells by op-count density.
    --heat (0..1) is set per-cell by the view when _heatmap is true. */
-.access-treetable--heatmap .access-cell:not(.access-cell--empty):not(.access-cell--file):not(.access-cell--sigma) {
-  background-color: rgba(59, 130, 246, calc(var(--heat, 0) * 0.28));
+.access-treetable--heatmap
+  .access-cell:not(.access-cell--empty):not(.access-cell--file):not(.access-cell--sigma):not(.access-cell--stage-agg) {
+  background-color: rgba(249, 115, 22, calc(var(--heat, 0) * 0.28));
 }
 
 /* ── Operation badges (R / W / RW) ─────────────────────────────────────── */
@@ -9244,8 +9236,8 @@ body.help-mode-active sl-tab {
 .access-badge {
   display: inline-flex;
   align-items: center;
-  gap: 1px;
-  padding: 1px 5px;
+  gap: 2px;
+  padding: 1px 6px;
   border-radius: 4px;
   font-size: 10px;
   font-weight: 700;
@@ -9253,27 +9245,21 @@ body.help-mode-active sl-tab {
   line-height: 1.4;
   white-space: nowrap;
   border: 1px solid transparent;
+  font-variant-numeric: tabular-nums;
 }
 
-/* R = blue (read) */
+/* R = green (read) */
 .access-badge--read {
-  background: rgba(59, 130, 246, 0.12);
-  color: #1d4ed8;
-  border-color: rgba(59, 130, 246, 0.3);
-}
-
-/* W = green (write) */
-.access-badge--write {
   background: rgba(34, 197, 94, 0.12);
   color: #15803d;
   border-color: rgba(34, 197, 94, 0.3);
 }
 
-/* RW = violet (both read + write) */
-.access-badge--rw {
-  background: rgba(139, 92, 246, 0.12);
-  color: #6d28d9;
-  border-color: rgba(139, 92, 246, 0.3);
+/* W = blue (write) */
+.access-badge--write {
+  background: rgba(59, 130, 246, 0.12);
+  color: #1d4ed8;
+  border-color: rgba(59, 130, 246, 0.3);
 }
 
 /* broad scan — amber caution */
@@ -9337,6 +9323,42 @@ body.help-mode-active sl-tab {
   width: 100%;
   border-collapse: collapse;
   font-size: 12px;
+  /* Fixed layout + explicit column widths so the per-stage grouped tables all
+     line up with each other (and with the ungrouped table). Pattern is the one
+     unsized column, so it absorbs the remaining width. */
+  table-layout: fixed;
+}
+
+.access-searches-table th:nth-child(1),
+.access-searches-table td:nth-child(1) {
+  width: 130px;
+}
+
+.access-searches-table th:nth-child(2),
+.access-searches-table td:nth-child(2) {
+  width: 90px;
+}
+
+.access-searches-table th:nth-child(4),
+.access-searches-table td:nth-child(4) {
+  width: 200px;
+}
+
+.access-searches-table th:nth-child(5),
+.access-searches-table td:nth-child(5) {
+  width: 70px;
+}
+
+.access-searches-table th:nth-child(6),
+.access-searches-table td:nth-child(6) {
+  width: 150px;
+}
+
+/* Long scope paths shouldn't break the fixed columns. */
+.access-searches-table td:nth-child(4) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .access-searches-table th {
@@ -9364,10 +9386,50 @@ body.help-mode-active sl-tab {
   font-family: var(--sl-font-mono, monospace);
   font-size: 11px;
   color: var(--fg, #0f172a);
-  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ── Graph-queries lane (graphify / CRG) ────────────────────────────────── */
+
+.access-graph-lane {
+  margin-top: 18px;
+}
+
+/* Graph table columns: Stage · Engine · Op · Query(flex). Only fields both
+   engines reliably expose. Override the searches widths (higher specificity
+   via the doubled class). */
+.access-searches-table.access-graph-table td:nth-child(3),
+.access-searches-table.access-graph-table th:nth-child(3) {
+  width: 120px;
+}
+
+.access-searches-table.access-graph-table td:nth-child(4),
+.access-searches-table.access-graph-table th:nth-child(4) {
+  width: auto;
+}
+
+.access-engine-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.access-engine-badge--graphify {
+  background: rgba(8, 145, 178, 0.12);
+  color: #0e7490;
+  border-color: rgba(8, 145, 178, 0.3);
+}
+
+.access-engine-badge--crg {
+  background: rgba(99, 102, 241, 0.12);
+  color: #4338ca;
+  border-color: rgba(99, 102, 241, 0.3);
 }
 
 .access-searches-header {
@@ -9387,9 +9449,9 @@ body.help-mode-active sl-tab {
 }
 
 .access-searches-group-toggle--active {
-  background: rgba(124, 58, 237, 0.1);
-  border-color: rgba(124, 58, 237, 0.3);
-  color: #5b21b6;
+  background: rgba(234, 179, 8, 0.12);
+  border-color: rgba(234, 179, 8, 0.4);
+  color: #854d0e;
 }
 
 .access-searches-groups {
@@ -9415,14 +9477,14 @@ body.help-mode-active sl-tab {
   border-radius: 4px;
 }
 
-/* ── Scope-dot: violet hint on dir rows that appear as a search scope ──── */
+/* ── Scope-dot: yellow hint on dir rows that appear as a search scope ──── */
 
 .access-scope-dot {
   display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: #7c3aed;
+  background: #eab308;
   margin-left: 4px;
   flex-shrink: 0;
   vertical-align: middle;
@@ -9492,9 +9554,9 @@ body.help-mode-active sl-tab {
 }
 
 [data-theme="dark"] .access-badge--rw {
-  background: rgba(139, 92, 246, 0.2);
-  color: #c4b5fd;
-  border-color: rgba(139, 92, 246, 0.4);
+  background: rgba(20, 184, 166, 0.2);
+  color: #5eead4;
+  border-color: rgba(20, 184, 166, 0.4);
 }
 
 [data-theme="dark"] .access-sigma-read {
@@ -9519,11 +9581,6 @@ body.help-mode-active sl-tab {
   color: inherit;
 }
 
-/* ── Badge label (text inside R / W / RW badges) ────────────────────────── */
-
-.access-badge-label {
-  display: inline;
-}
 
 /* ── Drawer panels (file-history / cell-detail) ─────────────────────────── */
 

@@ -13,13 +13,13 @@ const _collapsedStages = new Map(); // stage → boolean
 const _collapsedDirs = new Set(); // dir path
 
 // Module-level state for interactive controls
-let _heatmap = false;
+let _heatmap = true;
 let _showReads = true;
 let _showWrites = true;
-let _showSearches = true;
 let _pathFilter = '';
 let _sortMode = 'tree'; // 'tree' | 'most-read' | 'most-written' | 'churn'
 let _groupSearchesByStage = false;
+let _groupGraphByStage = false;
 
 // Drawer state — null = closed; { type: 'file'|'cell', filePath, colKey } = open
 let _openDrawer = null; // { type, filePath, colKey? }
@@ -35,13 +35,13 @@ function _rerender() {
 export function _resetAccessStateForTests() {
   _collapsedStages.clear();
   _collapsedDirs.clear();
-  _heatmap = false;
+  _heatmap = true;
   _showReads = true;
   _showWrites = true;
-  _showSearches = true;
   _pathFilter = '';
   _sortMode = 'tree';
   _groupSearchesByStage = false;
+  _groupGraphByStage = false;
   _openDrawer = null;
   _rerenderFn = () => {};
 }
@@ -50,7 +50,6 @@ export function _setControlsForTests({
   heatmap,
   showReads,
   showWrites,
-  showSearches,
   pathFilter,
   sortMode,
   groupByStage,
@@ -58,7 +57,6 @@ export function _setControlsForTests({
   if (heatmap !== undefined) _heatmap = heatmap;
   if (showReads !== undefined) _showReads = showReads;
   if (showWrites !== undefined) _showWrites = showWrites;
-  if (showSearches !== undefined) _showSearches = showSearches;
   if (pathFilter !== undefined) _pathFilter = pathFilter;
   if (sortMode !== undefined) _sortMode = sortMode;
   if (groupByStage !== undefined) _groupSearchesByStage = groupByStage;
@@ -69,7 +67,7 @@ export function _setControlsForTests({
 // ---------------------------------------------------------------------------
 
 export function runFileAccessView(_run, _settings, options = {}) {
-  const { model, onBack, onOpenTimeline, onRerender } = options;
+  const { model, onOpenTimeline, onRerender } = options;
   _rerenderFn = onRerender || (() => {});
 
   if (!model) {
@@ -80,7 +78,6 @@ export function runFileAccessView(_run, _settings, options = {}) {
 
   if (!model.enabled) {
     return html`<div class="run-file-access">
-      ${_backButton(onBack)}
       <div class="access-empty-state">
         <p>No file access data available for this run.</p>
         <p class="access-empty-hint">File access telemetry requires worca ≥ W-064 with
@@ -89,31 +86,26 @@ export function runFileAccessView(_run, _settings, options = {}) {
     </div>`;
   }
 
-  const { columns = [], tree = [], searches = [], summary = {} } = model;
+  const {
+    columns = [],
+    tree = [],
+    searches = [],
+    graphQueries = [],
+    summary = {},
+  } = model;
 
   // Group columns by stage
   const stageGroups = _buildStageGroups(columns);
 
   return html`<div class="run-file-access">
-    ${_backButton(onBack)}
     ${_kpiStrip(summary)}
     ${_controlsBar()}
     ${_treetable(tree, columns, stageGroups, searches)}
-    ${_showSearches ? _searchesLane(searches) : nothing}
+    ${_searchesLane(searches)}
+    ${_graphQueriesLane(graphQueries)}
     ${_captureStrip(summary)}
     ${_drawerOverlay(model, columns, onOpenTimeline)}
   </div>`;
-}
-
-// ---------------------------------------------------------------------------
-// Back button
-// ---------------------------------------------------------------------------
-
-function _backButton(onBack) {
-  if (!onBack) return nothing;
-  return html`<button class="access-back-btn" type="button" @click=${onBack}>
-    ← Back
-  </button>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,14 +141,6 @@ function _controlsBar() {
           _rerender();
         }}
       ><span aria-hidden="true">▣</span> Writes</button>
-      <button
-        class="access-chip access-chip--searches${_showSearches ? ' access-chip--active' : ''}"
-        type="button"
-        @click=${() => {
-          _showSearches = !_showSearches;
-          _rerender();
-        }}
-      ><span aria-hidden="true">▣</span> Searches</button>
     </div>
 
     <input
@@ -183,7 +167,7 @@ function _controlsBar() {
       <option value="tree">Tree</option>
       <option value="most-read">Most read</option>
       <option value="most-written">Most written</option>
-      <option value="churn">Churn</option>
+      <option value="churn">Most touched</option>
     </select>
   </div>`;
 }
@@ -200,36 +184,78 @@ function _kpiStrip(summary) {
   const captureAmber = leakAmber || oracleAmber;
 
   return html`<div class="access-kpi-strip">
-    ${_kpiCard('Files touched', summary.files_touched ?? 0, false)}
+    ${_kpiCard('Files touched', summary.files_touched ?? 0, false, {
+      tooltip:
+        'Distinct files read or written by any agent across every stage of this run.',
+    })}
     ${_kpiCard(
       'Read',
       html`${summary.distinct_read ?? 0} files · ${summary.total_read ?? 0} ops`,
       false,
+      {
+        kind: 'read',
+        tooltip:
+          'Files the agents read (Read tool), and the total number of read operations across all stages.',
+      },
     )}
     ${_kpiCard(
       'Written',
       html`${summary.distinct_write ?? 0} files · ${summary.total_write ?? 0} ops`,
       false,
+      {
+        kind: 'write',
+        tooltip:
+          'Files the agents wrote (Write/Edit), and the total number of write operations across all stages.',
+      },
     )}
     ${_kpiCard(
       'Searches',
       html`${summary.searches ?? 0} (${summary.zero_result ?? 0} zero-hit)`,
       zeroAmber,
+      {
+        tooltip:
+          'Grep/Glob searches the agents ran. “zero-hit” searches returned no matches — often a sign of a wrong guess or missing context.',
+      },
     )}
-    ${_kpiCard('Broad scans', summary.root_scoped ?? 0, broadAmber)}
+    ${_kpiCard('Broad scans', summary.root_scoped ?? 0, broadAmber, {
+      tooltip:
+        'Searches scoped to the repo root (“.”) instead of a specific subdirectory. Broad scans read far more of the tree and can indicate the agent was unsure where to look.',
+    })}
     ${_kpiCard(
       'Capture',
       html`${(summary.leakage_pct_max ?? 0).toFixed(1)}% leak · ${summary.oracle === 'degraded' ? html`<span class="access-oracle-degraded">${unsafeHTML(iconSvg(AlertTriangle, 12))} degraded</span>` : 'ok'}`,
       captureAmber,
+      {
+        tooltip:
+          'Capture integrity — how reliably worca’s telemetry attributed this run’s file access. “leak” is the share of writes it could not tie to a specific stage/agent (e.g. writes made outside tracked tool calls, like a shell redirect). “degraded” means path canonicalization failed for some events, so the counts are approximate rather than exact. Lower leak and an “ok” oracle mean the matrix above is trustworthy.',
+      },
     )}
+    ${
+      // Graph queries sits with Capture as the trailing "telemetry-quality"
+      // pair, sharing the amber style. Only shown when a graph engine was used.
+      (summary.graph_queries ?? 0) > 0
+        ? _kpiCard(
+            'Graph queries',
+            html`${summary.graph_queries} (${summary.graphify ?? 0} graphify · ${summary.crg ?? 0} CRG)`,
+            true,
+            {
+              tooltip:
+                'Structural/semantic queries the agents ran against a code knowledge graph (graphify or the code-review-graph engine) — e.g. “what depends on X?”, call paths, impact of a change. Complements the lexical Grep/Glob searches above. Only shown when a graph engine was used.',
+            },
+          )
+        : nothing
+    }
   </div>`;
 }
 
-function _kpiCard(label, value, amber) {
-  return html`<div class="access-kpi-card${amber ? ' access-kpi-card--amber' : ''}">
+function _kpiCard(label, value, amber, { kind, tooltip } = {}) {
+  const card = html`<div class="access-kpi-card${amber ? ' access-kpi-card--amber' : ''}${kind ? ` access-kpi-card--${kind}` : ''}">
     <span class="access-kpi-label">${label}</span>
     <span class="access-kpi-value">${value}</span>
   </div>`;
+  return tooltip
+    ? html`<sl-tooltip class="access-kpi-tooltip" content=${tooltip} hoist>${card}</sl-tooltip>`
+    : card;
 }
 
 // ---------------------------------------------------------------------------
@@ -321,23 +347,54 @@ function _sortFiles(files) {
   return sorted;
 }
 
-function _treetable(tree, columns, stageGroups, searches) {
+// A "visible column" is what the grid actually renders per data column, in
+// order. An expanded stage contributes one {type:'col'} per iteration column
+// (labelled "Iter N" by position within the stage, matching the stages UI). A
+// collapsed stage contributes a single {type:'sigma'} aggregate column.
+function _buildVisibleColumns(stageGroups) {
+  const visible = [];
+  for (const [stage, cols] of stageGroups) {
+    if (_collapsedStages.get(stage)) {
+      visible.push({ type: 'sigma', stage, cols });
+    } else {
+      cols.forEach((col, i) => {
+        visible.push({ type: 'col', stage, col, iterLabel: `Iter ${i + 1}` });
+      });
+    }
+  }
+  return visible;
+}
+
+// Shared CSS grid track list — file column + one track per visible data column
+// + the trailing Σ total column. Header rows and every body row use the same
+// template (set as --fa-grid on the table) so all columns line up exactly.
+function _gridTemplate(visible) {
+  return `var(--fa-file-col-width, 220px) repeat(${visible.length}, var(--fa-cell-width, 80px)) var(--fa-cell-width, 80px)`;
+}
+
+function _treetable(tree, _columns, stageGroups, searches) {
   const maxOps = _heatmap ? _computeMaxOps(tree) : 0;
   const scopePaths = _buildScopePaths(searches);
+  const visible = _buildVisibleColumns(stageGroups);
 
   let bodyContent;
   if (_sortMode === 'tree') {
     const filtered = _filterTree(tree);
-    bodyContent = filtered.map((node) =>
-      _treeNode(node, columns, 0, maxOps, scopePaths),
+    bodyContent = filtered.flatMap((node) =>
+      _treeRows(node, visible, 0, maxOps, scopePaths),
     );
   } else {
     const files = _sortFiles(_collectFiles(tree));
-    bodyContent = files.map((node) => _fileRow(node, columns, 0, maxOps));
+    bodyContent = files.map((node) => _fileRow(node, visible, 0, maxOps));
   }
 
-  return html`<div class="access-treetable${_heatmap ? ' access-treetable--heatmap' : ''}" role="treegrid" aria-label="File access map">
-    ${_tableHeader(columns, stageGroups)}
+  return html`<div
+    class="access-treetable${_heatmap ? ' access-treetable--heatmap' : ''}"
+    role="treegrid"
+    aria-label="File access map"
+    style="--fa-grid:${_gridTemplate(visible)}"
+  >
+    ${_tableHeader(stageGroups, visible)}
     <div class="access-table-body">${bodyContent}</div>
   </div>`;
 }
@@ -350,66 +407,61 @@ function _buildScopePaths(searches) {
   return paths;
 }
 
-function _tableHeader(_columns, stageGroups) {
-  // Stage group row + column header row
-  const stageGroupCells = [];
+function _tableHeader(stageGroups, visible) {
+  // Row 1 — stage labels, each spanning its visible columns. A collapsed stage
+  // spans a single column (its Σ). Empty spacers hold the file and Σ tracks.
+  const stageGroupCells = [
+    html`<div class="access-stage-spacer access-col-file-header" role="presentation"></div>`,
+  ];
+  for (const [stage, cols] of stageGroups) {
+    const collapsed = _collapsedStages.get(stage) || false;
+    const span = collapsed ? 1 : cols.length;
+    stageGroupCells.push(html`<button
+      class="access-stage-group-header${collapsed ? ' access-stage-group-header--collapsed' : ''}"
+      type="button"
+      style="grid-column:span ${span}"
+      title=${stage}
+      aria-expanded=${!collapsed}
+      aria-label="${collapsed ? 'Expand' : 'Collapse'} ${stage}"
+      @click=${() => {
+        _collapsedStages.set(stage, !collapsed);
+        _rerender();
+      }}
+    >
+      <span aria-hidden="true">${unsafeHTML(iconSvg(collapsed ? ChevronRight : ChevronDown, 12))}</span>
+      <span class="access-stage-name">${stage}</span>
+    </button>`);
+  }
+  stageGroupCells.push(
+    html`<div class="access-stage-spacer access-sigma-header" role="presentation"></div>`,
+  );
+
+  // Row 2 — per-column headers ("Iter N" over agent), or Σ for collapsed stage.
   const colHeaderCells = [
     html`<div class="access-col-header access-col-file-header" role="columnheader">File</div>`,
   ];
-
-  for (const [stage, cols] of stageGroups) {
-    const collapsed = _collapsedStages.get(stage) || false;
-    stageGroupCells.push(html`<div
-      class="access-stage-group${collapsed ? ' access-stage-group--collapsed' : ''}"
-      data-stage=${stage}
-    >
-      <button
-        class="access-stage-group-header"
-        type="button"
-        aria-expanded=${!collapsed}
-        aria-label="${collapsed ? 'Expand' : 'Collapse'} ${stage}"
-        @click=${() => {
-          _collapsedStages.set(stage, !collapsed);
-          _rerender();
-        }}
-      >
-        <span aria-hidden="true">${unsafeHTML(iconSvg(collapsed ? ChevronRight : ChevronDown, 12))}</span>
-        ${stage}
-        ${collapsed ? html`<span class="access-stage-agg">(${cols.length})</span>` : nothing}
-      </button>
-      ${
-        collapsed
-          ? nothing
-          : cols.map(
-              (col) =>
-                html`<div class="access-col-header" data-col-key=${col.key}>
-                ${
-                  col.bead_id
-                    ? html`<span class="access-col-bead">${col.bead_id}</span>`
-                    : html`<span class="access-col-iter">iter ${col.iteration}</span>`
-                }
-              </div>`,
-            )
-      }
-    </div>`);
-
-    if (!collapsed) {
-      for (const col of cols) {
-        colHeaderCells.push(
-          html`<div class="access-col-header" role="columnheader" data-col-key=${col.key}>
-            ${col.agent}
-          </div>`,
-        );
-      }
+  for (const v of visible) {
+    if (v.type === 'sigma') {
+      colHeaderCells.push(
+        html`<div class="access-col-header access-col-header--collapsed" role="columnheader" data-stage=${v.stage}>
+          <span class="access-col-iter">Σ</span>
+          <span class="access-col-agent">${v.cols.length} iter${v.cols.length === 1 ? '' : 's'}</span>
+        </div>`,
+      );
     } else {
       colHeaderCells.push(
-        html`<div class="access-col-header access-col-header--collapsed" role="columnheader" data-stage=${stage}>
-          Σ ${stage}
+        html`<div
+          class="access-col-header"
+          role="columnheader"
+          data-col-key=${v.col.key}
+          title=${v.col.bead_id ? `bead ${v.col.bead_id}` : nothing}
+        >
+          <span class="access-col-iter">${v.iterLabel}</span>
+          <span class="access-col-agent">${v.col.agent}</span>
         </div>`,
       );
     }
   }
-
   colHeaderCells.push(
     html`<div class="access-col-header access-sigma-header" role="columnheader">Σ</div>`,
   );
@@ -420,56 +472,56 @@ function _tableHeader(_columns, stageGroups) {
   </div>`;
 }
 
-function _treeNode(node, columns, depth, maxOps, scopePaths) {
-  if (node.type === 'dir') {
-    return _dirRow(node, columns, depth, maxOps, scopePaths);
+// Flatten a tree node into an ordered array of row templates. Folding is done
+// here in JS (a collapsed dir simply omits its descendants) rather than with a
+// CSS display hack — the collapsed dir row keeps the server-side rollup totals.
+function _treeRows(node, visible, depth, maxOps, scopePaths) {
+  if (node.type === 'file') {
+    return [_fileRow(node, visible, depth, maxOps)];
   }
-  return _fileRow(node, columns, depth, maxOps);
+  const collapsed = _collapsedDirs.has(node.path);
+  const rows = [_dirRow(node, visible, depth, maxOps, scopePaths, collapsed)];
+  if (!collapsed) {
+    for (const child of node.children || []) {
+      rows.push(..._treeRows(child, visible, depth + 1, maxOps, scopePaths));
+    }
+  }
+  return rows;
 }
 
-function _dirRow(node, columns, depth, maxOps, scopePaths) {
-  const collapsed = _collapsedDirs.has(node.path);
+function _dirRow(node, visible, depth, maxOps, scopePaths, collapsed) {
   const isScope = scopePaths?.has(node.path);
 
-  return html`
-    <div
-      class="access-row access-row--dir${collapsed ? ' access-row--dir-collapsed' : ''}"
-      role="row"
-      data-path=${node.path}
-      style="--depth:${depth}"
-    >
-      <div class="access-cell access-cell--file" role="rowheader">
-        <button
-          class="access-dir-toggle"
-          type="button"
-          aria-expanded=${!collapsed}
-          aria-label="${collapsed ? 'Expand' : 'Collapse'} ${node.name}"
-          @click=${() => {
-            if (collapsed) _collapsedDirs.delete(node.path);
-            else _collapsedDirs.add(node.path);
-            _rerender();
-          }}
-        >
-          <span aria-hidden="true">${unsafeHTML(iconSvg(collapsed ? ChevronRight : ChevronDown, 12))}</span>
-        </button>
-        <span aria-hidden="true">${unsafeHTML(iconSvg(FolderOpen, 14))}</span>
-        <span class="access-file-name">${node.name}</span>
-        ${isScope ? html`<span class="access-scope-dot" title="search scope" aria-label="search scope"></span>` : nothing}
-      </div>
-      ${_rowCells(node.cells, columns, maxOps)}
-      ${_sigmaCell(node.totals)}
+  return html`<div
+    class="access-row access-row--dir${collapsed ? ' access-row--dir-collapsed' : ''}"
+    role="row"
+    data-path=${node.path}
+    style="--depth:${depth}"
+  >
+    <div class="access-cell access-cell--file" role="rowheader">
+      <button
+        class="access-dir-toggle"
+        type="button"
+        aria-expanded=${!collapsed}
+        aria-label="${collapsed ? 'Expand' : 'Collapse'} ${node.name}"
+        @click=${() => {
+          if (collapsed) _collapsedDirs.delete(node.path);
+          else _collapsedDirs.add(node.path);
+          _rerender();
+        }}
+      >
+        <span aria-hidden="true">${unsafeHTML(iconSvg(collapsed ? ChevronRight : ChevronDown, 12))}</span>
+      </button>
+      <span aria-hidden="true">${unsafeHTML(iconSvg(FolderOpen, 14))}</span>
+      <span class="access-file-name">${node.name}</span>
+      ${isScope ? html`<span class="access-scope-dot" title="search scope" aria-label="search scope"></span>` : nothing}
     </div>
-    ${(node.children || []).map(
-      (
-        child,
-      ) => html`<div class="access-children${collapsed ? ' access-row--hidden' : ''}">
-        ${_treeNode(child, columns, depth + 1, maxOps, scopePaths)}
-      </div>`,
-    )}
-  `;
+    ${_rowCells(node.cells, visible, maxOps)}
+    ${_sigmaCell(node.totals)}
+  </div>`;
 }
 
-function _fileRow(node, columns, depth, maxOps) {
+function _fileRow(node, visible, depth, maxOps) {
   const categoryClass = `access-file-name--${node.category}`;
   const showTracked = node.tracked && (node.totals?.write || 0) > 0;
 
@@ -498,13 +550,33 @@ function _fileRow(node, columns, depth, maxOps) {
           : nothing
       }
     </div>
-    ${_rowCells(node.cells, columns, maxOps, node.path)}
+    ${_rowCells(node.cells, visible, maxOps, node.path)}
     ${_sigmaCell(node.totals)}
   </div>`;
 }
 
-function _rowCells(cells, columns, maxOps, filePath) {
-  return columns.map((col) => {
+function _rowCells(cells, visible, maxOps, filePath) {
+  return visible.map((v) => {
+    // Collapsed stage → a single aggregated Σ cell over the stage's columns.
+    if (v.type === 'sigma') {
+      let r = 0;
+      let w = 0;
+      for (const col of v.cols) {
+        const c = cells?.[col.key];
+        if (c) {
+          r += c.read || 0;
+          w += c.write || 0;
+        }
+      }
+      if (r === 0 && w === 0) {
+        return html`<div class="access-cell access-cell--empty access-cell--stage-agg" role="gridcell" data-stage=${v.stage}>·</div>`;
+      }
+      return html`<div class="access-cell access-cell--stage-agg" role="gridcell" data-stage=${v.stage}>
+        ${_opPills(r, w)}
+      </div>`;
+    }
+
+    const col = v.col;
     const cell = cells?.[col.key];
     if (!cell || (!cell.read && !cell.write)) {
       return html`<div class="access-cell access-cell--empty" role="gridcell" data-col-key=${col.key}>·</div>`;
@@ -542,39 +614,33 @@ function _rowCells(cells, columns, maxOps, filePath) {
             }
           : nothing
       }
-    >${_cellBadge(cell)}</div>`;
+    >${_opPills(cell.read || 0, cell.write || 0)}</div>`;
   });
 }
 
-function _cellBadge(cell) {
-  const r = cell.read || 0;
-  const w = cell.write || 0;
+// A single op pill: just the bold count, coloured by op kind (green=read,
+// blue=write). The letter is dropped — colour carries read-vs-write — but a
+// title/aria-label keeps it accessible (not colour-only).
+function _opPill(count, kind, label) {
+  return html`<span
+    class="access-badge access-badge--${kind}"
+    title="${count} ${label}"
+    aria-label="${count} ${label}"
+  >${count}</span>`;
+}
 
-  if (r > 0 && w > 0) {
-    return html`<span class="access-badge access-badge--rw">
-      <span class="access-badge-label">RW</span>
-      ${r + w > 2 ? html`<sup class="access-op-count">${r + w}</sup>` : nothing}
-    </span>`;
-  }
-  if (w > 0) {
-    return html`<span class="access-badge access-badge--write">
-      <span class="access-badge-label">W</span>
-      ${w > 1 ? html`<sup class="access-op-count">${w}</sup>` : nothing}
-    </span>`;
-  }
-  return html`<span class="access-badge access-badge--read">
-    <span class="access-badge-label">R</span>
-    ${r > 1 ? html`<sup class="access-op-count">${r}</sup>` : nothing}
-  </span>`;
+// Read and/or write pills for a cell or rollup. Shared by data cells, the Σ
+// total column, and collapsed-stage Σ cells so every indicator looks the same.
+function _opPills(r, w) {
+  if (r <= 0 && w <= 0) return nothing;
+  return html`${r > 0 ? _opPill(r, 'read', 'reads') : nothing}${w > 0 ? _opPill(w, 'write', 'writes') : nothing}`;
 }
 
 function _sigmaCell(totals) {
   const r = totals?.read ?? 0;
   const w = totals?.write ?? 0;
   return html`<div class="access-cell access-cell--sigma" role="gridcell">
-    ${r > 0 ? html`<span class="access-sigma-read">${r}R</span>` : nothing}
-    ${w > 0 ? html`<span class="access-sigma-write">${w}W</span>` : nothing}
-    ${r === 0 && w === 0 ? html`<span>·</span>` : nothing}
+    ${r === 0 && w === 0 ? html`<span class="access-cell--empty">·</span>` : _opPills(r, w)}
   </div>`;
 }
 
@@ -674,6 +740,70 @@ function _searchRow(s) {
           : nothing
       }
     </td>
+  </tr>`;
+}
+
+// ---------------------------------------------------------------------------
+// Graph-queries lane (graphify / CRG) — structural/semantic lookups
+// ---------------------------------------------------------------------------
+
+function _graphQueriesLane(graphQueries) {
+  if (!graphQueries || graphQueries.length === 0) return nothing;
+  return html`<div class="access-searches access-graph-lane">
+    <div class="access-searches-header">
+      <h3 class="access-searches-title">Graph queries</h3>
+      <button
+        class="access-searches-group-toggle${_groupGraphByStage ? ' access-searches-group-toggle--active' : ''}"
+        type="button"
+        title="Group graph queries by stage"
+        @click=${() => {
+          _groupGraphByStage = !_groupGraphByStage;
+          _rerender();
+        }}
+      >Group by stage</button>
+    </div>
+    ${_groupGraphByStage ? _graphGrouped(graphQueries) : _graphTable(graphQueries)}
+  </div>`;
+}
+
+function _graphTable(rows) {
+  return html`<table class="access-searches-table access-graph-table">
+    <thead>
+      <tr>
+        <th>Stage</th>
+        <th>Engine</th>
+        <th>Op</th>
+        <th>Query</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows.map(_graphRow)}
+    </tbody>
+  </table>`;
+}
+
+function _graphGrouped(rows) {
+  const groups = new Map();
+  for (const g of rows) {
+    if (!groups.has(g.stage)) groups.set(g.stage, []);
+    groups.get(g.stage).push(g);
+  }
+  return html`<div class="access-searches-groups">
+    ${[...groups.entries()].map(
+      ([stage, stageRows]) => html`<div class="access-searches-stage-group">
+        <div class="access-searches-stage-header">${stage}</div>
+        ${_graphTable(stageRows)}
+      </div>`,
+    )}
+  </div>`;
+}
+
+function _graphRow(g) {
+  return html`<tr class="access-search-row" data-col-key=${g.colKey}>
+    <td>${g.stage}:${g.iteration}</td>
+    <td><span class="access-engine-badge access-engine-badge--${g.engine}">${g.engine === 'crg' ? 'CRG' : g.engine}</span></td>
+    <td>${g.op}</td>
+    <td class="access-search-pattern">${g.query}</td>
   </tr>`;
 }
 

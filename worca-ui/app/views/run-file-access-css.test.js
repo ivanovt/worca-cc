@@ -46,7 +46,6 @@ describe('File Access CSS rules present in styles.css', () => {
     expect(css).toContain('.access-chip');
     expect(css).toContain('.access-chip--reads');
     expect(css).toContain('.access-chip--writes');
-    expect(css).toContain('.access-chip--searches');
     expect(css).toContain('.access-chip--active');
   });
 
@@ -76,8 +75,10 @@ describe('File Access CSS rules present in styles.css', () => {
     expect(css).toMatch(/\.access-col-file-header\s*\{[^}]*left\s*:\s*0/);
   });
 
-  it('defines .access-stage-groups with left padding for file column offset', () => {
-    expect(css).toMatch(/\.access-stage-groups\s*\{[^}]*padding-left/);
+  it('defines .access-stage-groups as a grid using the shared --fa-grid template', () => {
+    expect(css).toMatch(
+      /\.access-stage-groups\s*\{[^}]*grid-template-columns:\s*var\(--fa-grid\)/,
+    );
   });
 
   it('defines .access-stage-group-header', () => {
@@ -103,8 +104,10 @@ describe('File Access CSS rules present in styles.css', () => {
     expect(css).toContain('.access-row--file');
   });
 
-  it('defines .access-row--hidden as display:none', () => {
-    expect(css).toMatch(/\.access-row--hidden\s*\{[^}]*display\s*:\s*none/);
+  it('lays out .access-row on the shared --fa-grid template (so cells align with headers)', () => {
+    expect(css).toMatch(
+      /\.access-row\s*\{[^}]*grid-template-columns:\s*var\(--fa-grid\)/,
+    );
   });
 
   // ── Cells ─────────────────────────────────────────────────────────────────
