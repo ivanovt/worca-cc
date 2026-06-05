@@ -6,6 +6,11 @@
 **Date:** 2026-06-05
 **Depends on:** W-064 (agent file-access telemetry)
 
+> **Triage decisions (2026-06-05):**
+> 1. **Dir-row rollups** — computed **server-side**; the aggregator emits dir-row Σ in the tree model (see §2).
+> 2. **Default stage-group expansion** — **expand all by default** in v1; the user collapses to manage width. No "most-active" auto-collapse heuristic (see §4b).
+> 3. **"Access" button gating** — render the button **only when `worca.telemetry.file_access.enabled`** is on, not always-with-empty-state (see §1). The `enabled:false` empty-state still covers pre-W-064 runs that reach the page via a direct hash.
+
 ## Problem
 
 W-064 (PR #285, closes #278) ships agent file-access & search telemetry as a **passive, data-only** feature — it records every Read/Write/Glob/Grep per agent subprocess and aggregates them at `complete_iteration` into a `pipeline.iteration.access` Tier-2 event, written to `.worca/runs/<run-id>/events.jsonl`. The PR explicitly states: *"Visualization/UI explicitly out of scope (deferred to a future `area:ui` plan)."* Today this rich per-iteration footprint — which files each stage read, wrote, and searched, plus capture-integrity metrics — is **invisible**: there is no surface in worca-ui that reads `pipeline.iteration.access` events. The data accrues and is never seen. Users debugging an agent's behavior ("why did the implementer keep re-reading `path_canon.py`?", "did the tester touch files outside its bead?", "why are searches returning zero hits?") have no way to inspect it short of hand-grepping `events.jsonl`.
@@ -20,7 +25,7 @@ Add a per-run sub-view titled **"File Access"** (nav/button label **"Access"**),
 
 - **Current state:** Timeline is reached via a primary button in the `pipeline-timing-bar-actions` group — `worca-ui/app/views/run-detail.js:1829-1835` (`BarChart3` icon, `@click=${options.onOpenTimeline}`). It dispatches at `worca-ui/app/main.js:4102-4131` (`if (route.action === 'timeline' && route.runId) { return runTimelineView(...) }`), wired via `onOpenTimeline: () => navigate(route.section, route.runId, route.projectId, 'timeline')` (`main.js:4202`). Hash format `#/{section}/{runId}/{action}` is parsed in `worca-ui/app/router.js`.
 - **Obstacle:** none structural — the pattern is established and reusable. The only design choice is button grouping and the new action keyword.
-- **Resolution:** add an **"Access"** primary button immediately after the Timeline button inside the same `pipeline-timing-bar-actions` div, gated on `options.onOpenAccess`. Add a route action `access`. View module: `worca-ui/app/views/run-file-access.js`, export `runFileAccessView(run, settings, options)`.
+- **Resolution:** add an **"Access"** primary button immediately after the Timeline button inside the same `pipeline-timing-bar-actions` div, gated on `options.onOpenAccess` **AND `worca.telemetry.file_access.enabled !== false`** (decision 3 — the button only appears when file-access telemetry is on; runs with telemetry off get no button). Add a route action `access`. View module: `worca-ui/app/views/run-file-access.js`, export `runFileAccessView(run, settings, options)`. The view still renders the `enabled:false` empty-state for pre-W-064 runs reached via a direct `#/{section}/{runId}/access` hash.
 
 ```js
 // run-detail.js — inside pipeline-timing-bar-actions, after the Timeline button
@@ -115,7 +120,7 @@ Aggregated server response (`get-file-access` reply):
 
 Derivation rules (server):
 - **Column order** follows the canonical stage order (reuse the stage-ordering helper used by Timeline / `stage-hues.js` / `computeTimelineLayout`); within a stage, ascending iteration, then bead_id (nulls first).
-- **Tree build** = union of all `reads` ∪ `writes` paths across all events, split on `/` into a nested dir/file structure; dir rows carry rolled-up child totals (computed client-side or server-side — server-side preferred for large trees).
+- **Tree build** = union of all `reads` ∪ `writes` paths across all events, split on `/` into a nested dir/file structure; dir rows carry rolled-up child totals computed **server-side** (decision 1 — the aggregator emits dir-row Σ in the tree model so the browser never recomputes O(files×events) on filter/sort/collapse).
 - **`category`** per file: `write` if any write recorded; `leaked` if written but `tracked === false` (hook saw a write git didn't, or gitignored — drives amber); else `read`. (`tracked` ← whether the path survived git respelling, inferable because gitignored writes are dropped from `writes` in `aggregate_file_access`.)
 - **`broad`** ← `scope` ∈ {".", ""} (equivalent to `totals.root_scoped` contributor). **`zero_hit`** ← `result_count === 0`.
 - **`oracle: "degraded"`** if any contributing event had `capture.oracle === "degraded"` → drives the integrity banner.
@@ -144,7 +149,7 @@ Four stacked regions inside `run-file-access.js` (single scroll, sticky table he
 **(a) KPI strip** — stat cards: files touched · read (distinct + ops) · written (distinct + ops) · searches (with zero-hit count) · broad scans · capture (leakage_pct + oracle badge). Amber on: broad>0, zero_result>0, leakage>0, oracle degraded.
 
 **(b) Treetable (centerpiece)** — files (rows) × columns (stage→iteration→bead).
-- First column sticky (file tree); header row sticky. Stage column groups **collapsible to a single aggregate column** (collapsed by default for stages other than the most-active; handles width — "expect it to be wide").
+- First column sticky (file tree); header row sticky. Stage column groups **collapsible to a single aggregate column**, **expanded by default** (decision 2 — v1 starts fully expanded and the user collapses to manage width; no "most-active" auto-collapse heuristic — "expect it to be wide").
 - Cell = badge(s): `R` (blue, eye), `W` (green, pencil), `RW` (both); superscript = op count; `·` = untouched.
 - **Heatmap toggle** ⊞ — shade cell background by op-count density.
 - **Category toggle chips** `[▣ Reads] [▣ Writes] [▣ Searches]` — show/hide layers.
@@ -217,7 +222,7 @@ Read = **blue** (active/informational) · Write = **green** (done/mutation) · C
 
 ## Considerations
 
-- **Read-only & opt-in-data:** the page only reads events; zero pipeline behavior change. When `worca.telemetry.file_access.enabled` is off (gate `_is_file_access_telemetry_enabled`, `src/worca/orchestrator/runner.py`) or a run predates W-064, no `pipeline.iteration.access` events exist → server returns `enabled: false` → page shows an informative empty-state ("File-access telemetry not recorded for this run"). The button can still render; the page explains the absence.
+- **Read-only & opt-in-data:** the page only reads events; zero pipeline behavior change. When `worca.telemetry.file_access.enabled` is off (gate `_is_file_access_telemetry_enabled`, `src/worca/orchestrator/runner.py`) the **"Access" button is not rendered** (decision 3). For a run that predates W-064 but has telemetry on — or any direct `#/{section}/{runId}/access` hash with no access events — the server returns `enabled: false` and the page shows an informative empty-state ("File-access telemetry not recorded for this run").
 - **Width / scale:** runs with many beads/iterations make the matrix very wide; collapsible stage groups + horizontal scroll + the per-file Σ column mitigate. Server-side tree pre-build avoids client-side O(files×events) work each render.
 - **Searches are pattern-level:** deliberately a separate lane, not file-tree rows — the telemetry has no per-file match attribution (only pattern, scope, result_count). The tree search-dot overlay is a hint, not a claim.
 - **Degraded oracle:** when git canonicalization degraded, counts are approximate and case may be Layer-1 form; the integrity banner states this rather than hiding it.
