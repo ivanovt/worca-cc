@@ -1136,6 +1136,15 @@ h1, h2, h3, h4, h5, h6 {
   border-bottom: 1px solid var(--border);
 }
 
+/* Pending stage: placeholder line shown until the stage starts (then replaced
+   by the real Started/Finished/Duration strip). Keeps the body non-empty so
+   the absolute Copy button aligns to content instead of the divider. */
+.timing-strip--pending .timing-strip-pending {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--fg-muted);
+}
+
 .run-info-section {
   padding: 12px 16px;
   background: var(--bg-hover);

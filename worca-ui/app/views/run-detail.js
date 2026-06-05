@@ -1418,6 +1418,21 @@ function timingStripView(startedAt, completedAt, extra = nothing) {
   `;
 }
 
+// Timing row for an expanded stage panel. A pending stage has no started_at, so
+// the normal timing strip would render empty — leaving the panel body nearly
+// blank and letting the absolutely-positioned "Copy" button float up against
+// the divider. Show a "not started" placeholder instead (keeping the
+// .timing-strip border so the divider is intact); once the stage runs this is
+// replaced by the real Started / Finished / Duration line.
+export function _stageTimingRow(stage) {
+  if (!stage.started_at) {
+    return html`<div class="timing-strip timing-strip--pending">
+      <span class="timing-strip-pending">This stage hasn't started yet.</span>
+    </div>`;
+  }
+  return timingStripView(stage.started_at, stage.completed_at);
+}
+
 function _modelInfoView(model, modelAlias) {
   if (!model) return nothing;
   const hasAlias = !!modelAlias && modelAlias !== model;
@@ -2133,7 +2148,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                   <div class="stage-content-wrapper">
                     ${copyBtn}
                     <div class="stage-detail">
-                      ${timingStripView(stage.started_at, stage.completed_at)}
+                      ${_stageTimingRow(stage)}
                       <div class="stage-info-strip">
                         ${stageAgent ? html`<span class="stage-info-item"><span class="meta-label">Agent:</span> <span class="meta-value">${stageAgent}</span></span>` : nothing}
                         ${_modelInfoView(stageModel, stage.model_alias)}
