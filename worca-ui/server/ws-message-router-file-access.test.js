@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { createMessageRouter } from './ws-message-router.js';
 
@@ -185,8 +186,10 @@ describe('ws-message-router get-file-access', () => {
       '/mock/default/.worca',
       'run-xyz',
     );
+    // Production joins runDir + 'events.jsonl' via node:path, so build the
+    // expected path the same way to stay OS-agnostic (Windows uses '\').
     expect(buildFileAccessModel).toHaveBeenCalledWith(
-      '/mock/default/.worca/runs/run-xyz/events.jsonl',
+      join('/mock/default/.worca/runs/run-xyz', 'events.jsonl'),
     );
 
     const response = JSON.parse(ws.send.mock.calls[0][0]);
