@@ -84,6 +84,69 @@ function tierView(title, items, { locked, warn, removable, onRemove }) {
   `;
 }
 
+/**
+ * Editable variant of tierView for the Always Disallowed / Default Denied
+ * tiers. Unlike tierView it ALWAYS renders (even when empty) so the user
+ * can add the first entry, and it carries a free-text add input (Enter to
+ * commit, Escape to clear). Used only when `denyTiersEditable` is set —
+ * i.e. the template editor, where these tiers are template-owned config.
+ */
+function editableTierView(
+  title,
+  items,
+  { locked, warn, tierState, placeholder, onAdd, onRemove, rerender },
+) {
+  return html`
+    <div class="dispatch-tier dispatch-tier--editable" data-tier="${title}">
+      <div class="dispatch-tier-label">${title}</div>
+      <div class="dispatch-tag-input-wrapper">
+        <div
+          class="dispatch-tag-input"
+          @click=${(e) => {
+            const input = e.currentTarget.querySelector(
+              '.dispatch-tag-input-field',
+            );
+            if (input && e.target !== input) input.focus();
+          }}
+        >
+          ${(items || []).map((tag) =>
+            chipView(tag, {
+              locked,
+              warn,
+              removable: true,
+              onRemove: () => onRemove(tag),
+            }),
+          )}
+          <input
+            class="dispatch-tag-input-field"
+            type="text"
+            .value=${tierState.input || ''}
+            placeholder=${(items || []).length === 0 ? placeholder : ''}
+            @input=${(e) => {
+              tierState.input = e.target.value;
+              rerender();
+            }}
+            @keydown=${(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                const value = (tierState.input || '').trim();
+                if (value) {
+                  tierState.input = '';
+                  onAdd(value);
+                  rerender();
+                }
+              } else if (e.key === 'Escape') {
+                tierState.input = '';
+                rerender();
+              }
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function filterSuggestions(input, knownItems, currentTags, deniedSet, warnSet) {
   const query = (input || '').trim().toLowerCase();
   const warns = warnSet || new Set();
@@ -348,6 +411,7 @@ export function dispatchSectionView({
   state,
   rerender,
   showTitle = true,
+  denyTiersEditable = false,
 }) {
   const alwaysDisallowed = config.always_disallowed || [];
   const defaultDenied = config.default_denied || [];
@@ -360,6 +424,15 @@ export function dispatchSectionView({
       editingState[agent] = { input: '', showSuggestions: false };
     }
     return editingState[agent];
+  }
+
+  // Tier-level add inputs (Always Disallowed / Default Denied) keep their
+  // own edit state under reserved keys so they don't collide with the
+  // per-agent rows ('_defaults' + agent names never start with '__tier').
+  function getTierState(tier) {
+    const key = `__tier_${tier}`;
+    if (!editingState[key]) editingState[key] = { input: '' };
+    return editingState[key];
   }
 
   function emit(newPerAgentAllow) {
@@ -427,6 +500,31 @@ export function dispatchSectionView({
     });
   }
 
+  function handleAddDefaultDenied(tag) {
+    const trimmed = (tag || '').trim();
+    if (!trimmed || defaultDenied.includes(trimmed)) return;
+    onChange({
+      ...config,
+      default_denied: [...defaultDenied, trimmed],
+    });
+  }
+
+  function handleAddAlwaysDisallowed(tag) {
+    const trimmed = (tag || '').trim();
+    if (!trimmed || alwaysDisallowed.includes(trimmed)) return;
+    onChange({
+      ...config,
+      always_disallowed: [...alwaysDisallowed, trimmed],
+    });
+  }
+
+  function handleRemoveAlwaysDisallowed(tag) {
+    onChange({
+      ...config,
+      always_disallowed: alwaysDisallowed.filter((t) => t !== tag),
+    });
+  }
+
   const allAgentKeys = ['_defaults', ...agentRoles];
 
   const sectionHint = _SECTION_HINTS[section];
@@ -482,18 +580,42 @@ export function dispatchSectionView({
       }
       ${wildcardWarning}
 
-      ${tierView('Always Disallowed', alwaysDisallowed, {
-        locked: true,
-        warn: false,
-        removable: false,
-      })}
+      ${
+        denyTiersEditable
+          ? editableTierView('Always Disallowed', alwaysDisallowed, {
+              locked: true,
+              warn: false,
+              tierState: getTierState('always_disallowed'),
+              placeholder: `Add hard-deny ${section.slice(0, -1)}…`,
+              onAdd: handleAddAlwaysDisallowed,
+              onRemove: handleRemoveAlwaysDisallowed,
+              rerender: triggerRerender,
+            })
+          : tierView('Always Disallowed', alwaysDisallowed, {
+              locked: true,
+              warn: false,
+              removable: false,
+            })
+      }
 
-      ${tierView('Default Denied', defaultDenied, {
-        locked: false,
-        warn: true,
-        removable: true,
-        onRemove: handleRemoveDefaultDenied,
-      })}
+      ${
+        denyTiersEditable
+          ? editableTierView('Default Denied', defaultDenied, {
+              locked: false,
+              warn: true,
+              tierState: getTierState('default_denied'),
+              placeholder: `Add default-denied ${section.slice(0, -1)}…`,
+              onAdd: handleAddDefaultDenied,
+              onRemove: handleRemoveDefaultDenied,
+              rerender: triggerRerender,
+            })
+          : tierView('Default Denied', defaultDenied, {
+              locked: false,
+              warn: true,
+              removable: true,
+              onRemove: handleRemoveDefaultDenied,
+            })
+      }
 
       <div class="dispatch-tier">
         <div class="dispatch-tier-label">Per-Agent Allow</div>

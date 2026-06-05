@@ -431,6 +431,27 @@ test('edit governance dispatch section', async ({ page }) => {
     const toolsSection = govSection.locator('.dispatch-section:has(.dispatch-section-title:has-text("Tools"))');
     await expect(toolsSection).toBeAttached();
 
+    // Deny tiers are now visible AND editable at the template level.
+    // They seed from the shipped DISPATCH_DEFAULTS floor, so the Tools
+    // "Always Disallowed" tier shows the hard-deny defaults even though
+    // this template overrides nothing in that tier.
+    const alwaysTier = toolsSection.locator(
+      '[data-tier="Always Disallowed"].dispatch-tier--editable',
+    );
+    const deniedTier = toolsSection.locator(
+      '[data-tier="Default Denied"].dispatch-tier--editable',
+    );
+    await expect(alwaysTier).toBeVisible();
+    await expect(deniedTier).toBeVisible();
+    await expect(alwaysTier).toContainText('EnterPlanMode');
+
+    // Add a new hard-deny entry via the tier's add input (Enter to commit).
+    const alwaysInput = alwaysTier.locator('.dispatch-tag-input-field');
+    await alwaysInput.click();
+    await alwaysInput.fill('CustomHardDeny');
+    await alwaysInput.press('Enter');
+    await expect(alwaysTier).toContainText('CustomHardDeny');
+
     // Find the planner row within tools section and its input
     const plannerInput = page.locator(
       '#dispatch-tools-planner .dispatch-tag-input-field',

@@ -28,6 +28,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { DISPATCH_DEFAULTS } from '../../server/dispatch-defaults.js';
 import { buildFormBuffer, formBufferToConfig } from './pipelines-editor.js';
 
 // --- 1a: effort block round-trips ---
@@ -234,6 +235,104 @@ describe('formBufferToConfig — governance.dispatch is template-owned but not p
       per_agent_allow: { planner: ['something'] },
     });
     expect(out.governance.dispatch.subagents).toBeUndefined();
+  });
+});
+
+// --- 1e: dispatch display is correctly sectioned + deny tiers editable ---
+
+describe('buildFormBuffer — display dispatch is keyed by section', () => {
+  it('produces tools/skills/subagents sections (not a single flat tier-set)', () => {
+    const form = buildFormBuffer({}, { worca: {} });
+    const d = form.governance.dispatch;
+    expect(d.tools).toBeDefined();
+    expect(d.skills).toBeDefined();
+    expect(d.subagents).toBeDefined();
+    // The pre-fix bug produced a flat {always_disallowed,...} at the top
+    // level; guard against its return.
+    expect(d.always_disallowed).toBeUndefined();
+  });
+
+  it('seeds each section deny tiers from the shipped DISPATCH_DEFAULTS floor', () => {
+    const form = buildFormBuffer({}, { worca: {} });
+    expect(form.governance.dispatch.tools.always_disallowed).toEqual(
+      DISPATCH_DEFAULTS.tools.always_disallowed,
+    );
+    expect(form.governance.dispatch.skills.default_denied).toEqual(
+      DISPATCH_DEFAULTS.skills.default_denied,
+    );
+  });
+
+  it("preserves the template's own per_agent_allow (regression: was dropped)", () => {
+    const config = {
+      governance: {
+        dispatch: { tools: { per_agent_allow: { planner: ['Read'] } } },
+      },
+    };
+    const form = buildFormBuffer(config, { worca: {} });
+    expect(form.governance.dispatch.tools.per_agent_allow).toEqual({
+      planner: ['Read'],
+    });
+  });
+
+  it('does NOT seed the project dispatch as the floor (templates are portable)', () => {
+    const config = {};
+    const projectSettings = {
+      worca: {
+        governance: {
+          dispatch: {
+            tools: { always_disallowed: ['ProjectOnlyTool'] },
+          },
+        },
+      },
+    };
+    const form = buildFormBuffer(config, projectSettings);
+    expect(form.governance.dispatch.tools.always_disallowed).not.toContain(
+      'ProjectOnlyTool',
+    );
+    expect(form.governance.dispatch.tools.always_disallowed).toEqual(
+      DISPATCH_DEFAULTS.tools.always_disallowed,
+    );
+  });
+});
+
+describe('formBufferToConfig — deny tiers strip-on-write vs persist-when-customized', () => {
+  it('strips deny tiers that equal the shipped defaults (per_agent_allow-only edit)', () => {
+    const config = {
+      governance: {
+        dispatch: { tools: { per_agent_allow: { planner: ['Read'] } } },
+      },
+    };
+    const form = buildFormBuffer(config, { worca: {} });
+    // dirty the section (deny tiers untouched = seeded defaults)
+    form._dispatchDirty.tools = true;
+    const out = formBufferToConfig(form);
+    expect(out.governance.dispatch.tools).toEqual({
+      per_agent_allow: { planner: ['Read'] },
+    });
+  });
+
+  it('persists an added always_disallowed entry', () => {
+    const form = buildFormBuffer({}, { worca: {} });
+    form.governance.dispatch.tools.always_disallowed = [
+      ...DISPATCH_DEFAULTS.tools.always_disallowed,
+      'CustomTool',
+    ];
+    form._dispatchDirty.tools = true;
+    const out = formBufferToConfig(form);
+    expect(out.governance.dispatch.tools.always_disallowed).toContain(
+      'CustomTool',
+    );
+  });
+
+  it('persists a pruned default_denied entry as the shorter list', () => {
+    const form = buildFormBuffer({}, { worca: {} });
+    form.governance.dispatch.skills.default_denied =
+      DISPATCH_DEFAULTS.skills.default_denied.filter((x) => x !== 'simplify');
+    form._dispatchDirty.skills = true;
+    const out = formBufferToConfig(form);
+    expect(out.governance.dispatch.skills.default_denied).not.toContain(
+      'simplify',
+    );
   });
 });
 
