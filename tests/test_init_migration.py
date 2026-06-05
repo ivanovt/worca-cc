@@ -596,7 +596,10 @@ class TestPostToolUseMatcherWidening:
         }
 
     def test_bash_only_matcher_is_widened(self):
-        from worca.claude_hooks.post_tool_use import FILE_ACCESS_TOOLS
+        from worca.claude_hooks.post_tool_use import (
+            CRG_MATCHER_PATTERNS,
+            FILE_ACCESS_TOOLS,
+        )
 
         migrated, changes = _migrate_settings_paths(self._stale_settings())
         matcher = self._worca_post_matcher(migrated)
@@ -604,9 +607,16 @@ class TestPostToolUseMatcherWidening:
         assert "Bash" in tokens, "Bash must survive (test-gate + graph queries)"
         for tool in FILE_ACCESS_TOOLS:
             assert tool in tokens, f"matcher must cover recorded tool {tool}"
+        for pat in CRG_MATCHER_PATTERNS:
+            assert pat in tokens, f"matcher must cover CRG MCP pattern {pat}"
         assert any("PostToolUse matcher" in c and "W-064" in c for c in changes)
 
-    def test_already_broad_matcher_is_noop(self):
+    def test_widens_file_only_matcher_to_add_crg(self):
+        """A matcher that already covers the file tools but predates the CRG
+        patterns is still widened — CRG graph queries would otherwise be
+        dropped from the access ledger while the badge counts them."""
+        from worca.claude_hooks.post_tool_use import CRG_MATCHER_PATTERNS
+
         settings = {
             "hooks": {
                 "PostToolUse": [
@@ -619,9 +629,34 @@ class TestPostToolUseMatcherWidening:
                 ]
             }
         }
+        migrated, changes = _migrate_settings_paths(settings)
+        tokens = {t for t in self._worca_post_matcher(migrated).split("|") if t}
+        for pat in CRG_MATCHER_PATTERNS:
+            assert pat in tokens, f"matcher must gain CRG MCP pattern {pat}"
+        assert any("PostToolUse matcher" in c for c in changes)
+
+    def test_already_broad_matcher_is_noop(self):
+        from worca.claude_hooks.post_tool_use import (
+            CRG_MATCHER_PATTERNS,
+            FILE_ACCESS_TOOLS,
+        )
+
+        full = "|".join(["Bash", *FILE_ACCESS_TOOLS, *CRG_MATCHER_PATTERNS])
+        settings = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": full,
+                        "hooks": [
+                            {"type": "command", "command": "python3 .../post_tool_use.py"}
+                        ],
+                    }
+                ]
+            }
+        }
         _migrated, changes = _migrate_settings_paths(settings)
         assert not any("PostToolUse matcher" in c for c in changes), (
-            "already-broad matcher must not trigger a change"
+            "already-broad matcher (incl. CRG patterns) must not trigger a change"
         )
 
     def test_idempotent_rerun(self):

@@ -22,7 +22,7 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit|Grep|Glob",
+        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit|Grep|Glob|mcp__code-review-graph__.*|mcp__code_review_graph__.*",
         "hooks": [
           {
             "type": "command",

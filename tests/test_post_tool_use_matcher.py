@@ -13,7 +13,7 @@ import json
 import os
 
 import worca
-from worca.claude_hooks.post_tool_use import FILE_ACCESS_TOOLS
+from worca.claude_hooks.post_tool_use import CRG_MATCHER_PATTERNS, FILE_ACCESS_TOOLS
 
 SETTINGS_PATH = os.path.join(os.path.dirname(worca.__file__), "settings.json")
 
@@ -58,4 +58,17 @@ def test_post_tool_use_matcher_keeps_bash():
     assert "Bash" in tokens, (
         f"PostToolUse matcher dropped Bash; the test-gate and graph-query "
         f"recording rely on it. tokens={sorted(tokens)}"
+    )
+
+
+def test_post_tool_use_matcher_covers_crg_mcp_tools():
+    # CRG is queried over MCP (mcp__<server>__<tool>), not Bash. Without these
+    # patterns the hook never fires for CRG tools, so CRG graph queries are
+    # dropped from the access ledger even though the crg_invocations badge
+    # counts them — the badge and the Graph-queries table then disagree.
+    _, tokens = _post_tool_use_matcher_tokens()
+    missing = [p for p in CRG_MATCHER_PATTERNS if p not in tokens]
+    assert not missing, (
+        f"PostToolUse matcher does not cover CRG MCP patterns {missing}; CRG "
+        f"graph queries are never recorded. matcher tokens={sorted(tokens)}"
     )

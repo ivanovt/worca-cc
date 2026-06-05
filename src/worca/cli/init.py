@@ -359,13 +359,19 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
     # for Read/Write/Edit/MultiEdit/NotebookEdit/Grep/Glob — nothing is
     # written to .worca/runs/<id>/access/ and the Access Map stays empty.
     # The matcher MUST stay a superset of post_tool_use.FILE_ACCESS_TOOLS
-    # (plus Bash, which drives the test-gate and graph-query recording) or
-    # capture silently no-ops. Worktree runs inherit this file verbatim via
-    # copy_claude_config, so fixing the project file fixes future worktrees.
-    from worca.claude_hooks.post_tool_use import FILE_ACCESS_TOOLS
+    # (plus Bash, which drives the test-gate and graph-query recording) AND
+    # carry the CRG MCP patterns (CRG_MATCHER_PATTERNS) so CRG graph queries —
+    # reached over MCP, not Bash — are recorded into the graph-query ledger
+    # rather than silently dropped while the crg_invocations badge still counts
+    # them. Worktree runs inherit this file verbatim via copy_claude_config, so
+    # fixing the project file fixes future worktrees.
+    from worca.claude_hooks.post_tool_use import (
+        CRG_MATCHER_PATTERNS,
+        FILE_ACCESS_TOOLS,
+    )
 
-    required_tokens = {"Bash", *FILE_ACCESS_TOOLS}
-    canonical_matcher = "|".join(["Bash", *FILE_ACCESS_TOOLS])
+    required_tokens = {"Bash", *FILE_ACCESS_TOOLS, *CRG_MATCHER_PATTERNS}
+    canonical_matcher = "|".join(["Bash", *FILE_ACCESS_TOOLS, *CRG_MATCHER_PATTERNS])
     for entry in hooks.get("PostToolUse", []):
         is_worca = any(
             "post_tool_use.py" in h.get("command", "") for h in entry.get("hooks", [])
@@ -378,7 +384,7 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
             entry["matcher"] = canonical_matcher
             changes.append(
                 f"  hooks.PostToolUse matcher: {old_matcher!r} -> "
-                f"{canonical_matcher!r} (W-064 file-access capture)"
+                f"{canonical_matcher!r} (W-064 file-access + CRG graph-query capture)"
             )
 
     return migrated, changes

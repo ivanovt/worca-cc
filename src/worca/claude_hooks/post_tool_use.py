@@ -140,6 +140,18 @@ def _graph_query_from_tool(tool_name, tool_input):
 # recorded. test_post_tool_use_matcher.py asserts that wiring.
 FILE_ACCESS_TOOLS = ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob")
 
+# PostToolUse matcher fragments (regex alternatives) for the CRG MCP tools, so
+# Claude Code fires this hook for CRG graph queries. CRG is reached over MCP —
+# tools are named mcp__<server>__<tool> — and the matcher selects which tool
+# calls reach a hook. Without these alternatives in the matcher, the CRG branch
+# of _graph_query_from_tool is dead: CRG queries never land in the access ledger
+# even though the runner's crg_invocations badge counts them (the badge reads
+# the agent tool-use stream, this hook reads the matcher-gated callbacks — two
+# different channels that must agree). Derived from _CRG_TOOL_PREFIXES so the
+# matcher and the recorder stay in lockstep. test_post_tool_use_matcher.py
+# asserts the shipped matcher carries these.
+CRG_MATCHER_PATTERNS = tuple(f"{prefix}.*" for prefix in _CRG_TOOL_PREFIXES)
+
 
 def _record_file_access(tool_name, tool_input, tool_response):
     """Record file access for reads, writes, searches, and graph queries."""
