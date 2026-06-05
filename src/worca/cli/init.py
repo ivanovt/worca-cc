@@ -352,6 +352,35 @@ def _migrate_settings_paths(settings: dict) -> tuple[dict, list[str]]:
         })
         changes.append("  hooks.PreToolUse[Skill]: registered skill_use.py")
 
+    # Widen the worca-owned PostToolUse matcher to cover every tool the
+    # file-access recorder targets (W-064). Pre-W-064 projects shipped a
+    # "Bash"-only matcher; _deep_merge preserves the existing list verbatim
+    # on upgrade (lists are treated as scalars), so the recorder never fires
+    # for Read/Write/Edit/MultiEdit/NotebookEdit/Grep/Glob — nothing is
+    # written to .worca/runs/<id>/access/ and the Access Map stays empty.
+    # The matcher MUST stay a superset of post_tool_use.FILE_ACCESS_TOOLS
+    # (plus Bash, which drives the test-gate and graph-query recording) or
+    # capture silently no-ops. Worktree runs inherit this file verbatim via
+    # copy_claude_config, so fixing the project file fixes future worktrees.
+    from worca.claude_hooks.post_tool_use import FILE_ACCESS_TOOLS
+
+    required_tokens = {"Bash", *FILE_ACCESS_TOOLS}
+    canonical_matcher = "|".join(["Bash", *FILE_ACCESS_TOOLS])
+    for entry in hooks.get("PostToolUse", []):
+        is_worca = any(
+            "post_tool_use.py" in h.get("command", "") for h in entry.get("hooks", [])
+        )
+        if not is_worca:
+            continue
+        present = {tok.strip() for tok in entry.get("matcher", "").split("|") if tok.strip()}
+        if not required_tokens.issubset(present):
+            old_matcher = entry.get("matcher", "")
+            entry["matcher"] = canonical_matcher
+            changes.append(
+                f"  hooks.PostToolUse matcher: {old_matcher!r} -> "
+                f"{canonical_matcher!r} (W-064 file-access capture)"
+            )
+
     return migrated, changes
 
 

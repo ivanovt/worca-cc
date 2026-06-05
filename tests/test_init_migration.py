@@ -561,6 +561,104 @@ class TestSkillHookRegistration:
         assert not any("PreToolUse[Skill]" in c for c in changes)
 
 
+class TestPostToolUseMatcherWidening:
+    """W-064: the worca-owned PostToolUse matcher must be widened on upgrade.
+
+    Pre-W-064 projects shipped a "Bash"-only matcher. _deep_merge preserves
+    the existing list verbatim (lists are treated as scalars), so the
+    file-access recorder never fires for Read/Write/Edit/MultiEdit/
+    NotebookEdit/Grep/Glob — nothing lands in .worca/runs/<id>/access/ and
+    the Access Map stays empty. The migration self-heals the matcher so the
+    fix propagates to in-place runs and (via copy_claude_config) to worktrees.
+    """
+
+    def _worca_post_matcher(self, settings):
+        for entry in settings.get("hooks", {}).get("PostToolUse", []):
+            if any(
+                "post_tool_use.py" in h.get("command", "")
+                for h in entry.get("hooks", [])
+            ):
+                return entry.get("matcher", "")
+        return None
+
+    def _stale_settings(self):
+        return {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "python3 .../post_tool_use.py"}
+                        ],
+                    }
+                ]
+            }
+        }
+
+    def test_bash_only_matcher_is_widened(self):
+        from worca.claude_hooks.post_tool_use import FILE_ACCESS_TOOLS
+
+        migrated, changes = _migrate_settings_paths(self._stale_settings())
+        matcher = self._worca_post_matcher(migrated)
+        tokens = {t for t in matcher.split("|") if t}
+        assert "Bash" in tokens, "Bash must survive (test-gate + graph queries)"
+        for tool in FILE_ACCESS_TOOLS:
+            assert tool in tokens, f"matcher must cover recorded tool {tool}"
+        assert any("PostToolUse matcher" in c and "W-064" in c for c in changes)
+
+    def test_already_broad_matcher_is_noop(self):
+        settings = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Bash|Read|Write|Edit|MultiEdit|NotebookEdit|Grep|Glob",
+                        "hooks": [
+                            {"type": "command", "command": "python3 .../post_tool_use.py"}
+                        ],
+                    }
+                ]
+            }
+        }
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("PostToolUse matcher" in c for c in changes), (
+            "already-broad matcher must not trigger a change"
+        )
+
+    def test_idempotent_rerun(self):
+        first, _ = _migrate_settings_paths(self._stale_settings())
+        _second, second_changes = _migrate_settings_paths(first)
+        assert not any("PostToolUse matcher" in c for c in second_changes), (
+            "second upgrade must be a no-op for the PostToolUse matcher"
+        )
+
+    def test_non_worca_posttooluse_entry_untouched(self):
+        """A user's own PostToolUse hook (different command) is left alone."""
+        settings = {
+            "hooks": {
+                "PostToolUse": [
+                    {
+                        "matcher": "Write",
+                        "hooks": [
+                            {"type": "command", "command": "python3 /my/custom/linter.py"}
+                        ],
+                    }
+                ]
+            }
+        }
+        _migrated, changes = _migrate_settings_paths(settings)
+        assert not any("PostToolUse matcher" in c for c in changes)
+
+    def test_matches_shipped_template_matcher(self):
+        """The widened matcher equals the matcher in the shipped template, so a
+        migrated project and a freshly-init'd project capture identically."""
+        template_path = Path(__file__).parent.parent / "src" / "worca" / "settings.json"
+        with open(template_path, encoding="utf-8") as f:
+            template = json.load(f)
+        template_matcher = self._worca_post_matcher(template)
+        migrated, _ = _migrate_settings_paths(self._stale_settings())
+        assert self._worca_post_matcher(migrated) == template_matcher
+
+
 # ── §11b: _migrate_global_keys_to_preferences ──────────────────────
 
 
