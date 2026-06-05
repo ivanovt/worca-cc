@@ -305,12 +305,12 @@ export function buildFormBuffer(templateConfig, settings) {
 
 /**
  * Deep merge governance config with defaults.
+ *
+ * `dispatch` is rebuilt per-section by buildDisplayDispatch — the
+ * remaining keys (guards, test_gate_strikes, plan_review_enforce)
+ * fall back to project defaults then the shipped defaults.
  */
 function deepMergeGovernance(gov, defaultGov) {
-  const base = deepMergeGovernanceTiered(
-    gov?.dispatch || {},
-    defaultGov?.dispatch || {},
-  );
   const guards = {
     ...DEFAULT_GOVERNANCE.guards,
     ...(defaultGov?.guards || {}),
@@ -323,43 +323,81 @@ function deepMergeGovernance(gov, defaultGov) {
       gov?.test_gate_strikes ?? defaultGov?.test_gate_strikes ?? 2,
     plan_review_enforce:
       gov?.plan_review_enforce ?? defaultGov?.plan_review_enforce ?? 'auto',
-    dispatch: base,
+    dispatch: buildDisplayDispatch(gov?.dispatch),
   };
 }
 
 /**
- * Deep merge dispatch governance (3-tier + per-agent).
+ * Build the per-section dispatch view the editor form binds to.
+ *
+ * The result is keyed by section (tools / skills / subagents) — the
+ * shape `_governanceSection` reads via `dispatch[section]`. Each
+ * section's deny tiers (Always Disallowed / Default Denied) are seeded
+ * from the SHIPPED floor (DISPATCH_DEFAULTS) so the user can see and
+ * edit them even when the template overrides nothing; per_agent_allow
+ * carries the template's OWN entries (per-agent display fallback to the
+ * defaults happens inside dispatchSectionView).
+ *
+ * The project's own governance.dispatch is intentionally NOT used as the
+ * floor — templates are portable, so the baseline is the shipped default
+ * every project inherits, never the current project's tweaks. (An
+ * earlier version merged the whole `{tools,skills,subagents}` object as
+ * if it were a single tier-set, which collapsed every section to an
+ * empty view and silently dropped per_agent_allow on save.)
  */
-function deepMergeGovernanceTiered(dispatch, defaultDispatch) {
-  const tiered = {
-    always_disallowed: [...(defaultDispatch?.always_disallowed || [])],
-    default_denied: [...(defaultDispatch?.default_denied || [])],
-    per_agent_allow: {},
-  };
-
-  // Merge default per_agent entries
-  const perAgent = { ...(defaultDispatch?.per_agent_allow || {}) };
-  for (const [agent, defEntries] of Object.entries(perAgent)) {
-    tiered.per_agent_allow[agent] = [...(defEntries || [])];
+function buildDisplayDispatch(templateDispatch) {
+  const out = {};
+  for (const section of ['tools', 'skills', 'subagents']) {
+    const t = templateDispatch?.[section] || {};
+    const d = DISPATCH_DEFAULTS[section] || {};
+    out[section] = {
+      always_disallowed: [
+        ...(t.always_disallowed ?? d.always_disallowed ?? []),
+      ],
+      default_denied: [...(t.default_denied ?? d.default_denied ?? [])],
+      per_agent_allow: { ...(t.per_agent_allow || {}) },
+    };
   }
+  return out;
+}
 
-  // Overlay template dispatch settings
-  if (dispatch) {
-    if (dispatch.always_disallowed) {
-      tiered.always_disallowed = [...dispatch.always_disallowed];
-    }
-    if (dispatch.default_denied) {
-      tiered.default_denied = [...dispatch.default_denied];
-    }
-    if (dispatch.per_agent_allow) {
-      const overlay = dispatch.per_agent_allow;
-      for (const [agent, entries] of Object.entries(overlay)) {
-        tiered.per_agent_allow[agent] = [...(entries || [])];
-      }
-    }
+/**
+ * Order-insensitive membership equality for two string lists.
+ */
+function _sameMembers(a, b) {
+  const aa = a || [];
+  const bb = b || [];
+  if (aa.length !== bb.length) return false;
+  const seen = new Set(bb);
+  return aa.every((x) => seen.has(x));
+}
+
+/**
+ * Strip deny-tier entries that exactly match the shipped DISPATCH_DEFAULTS
+ * so a template only persists genuinely-customized tiers. Without this,
+ * any edit to a section (even just a per_agent_allow tweak) would freeze
+ * the shipped Always Disallowed / Default Denied lists into the template,
+ * so a future change to the shipped floor would never reach it.
+ */
+function _cleanSectionForWrite(section, cfg) {
+  const d = DISPATCH_DEFAULTS[section] || {};
+  const out = {};
+  if (
+    cfg.always_disallowed !== undefined &&
+    !_sameMembers(cfg.always_disallowed, d.always_disallowed)
+  ) {
+    out.always_disallowed = cfg.always_disallowed;
   }
-
-  return tiered;
+  if (
+    cfg.default_denied !== undefined &&
+    !_sameMembers(cfg.default_denied, d.default_denied)
+  ) {
+    out.default_denied = cfg.default_denied;
+  }
+  if (cfg.per_agent_allow && Object.keys(cfg.per_agent_allow).length > 0) {
+    out.per_agent_allow = cfg.per_agent_allow;
+  }
+  return out;
 }
 
 /**
@@ -439,7 +477,10 @@ export function formBufferToConfig(formBuffer) {
   let dispatchHasEntries = false;
   for (const section of ['tools', 'skills', 'subagents']) {
     if (dirty[section]) {
-      writtenDispatch[section] = mergedDispatch[section] || {};
+      writtenDispatch[section] = _cleanSectionForWrite(
+        section,
+        mergedDispatch[section] || {},
+      );
       dispatchHasEntries = true;
     } else if (original[section] !== undefined) {
       writtenDispatch[section] = original[section];
@@ -2036,9 +2077,14 @@ function _governanceSection(formBuffer, settings, projectId, rerender) {
 
       <h3 class="settings-section-title">Governance dispatch</h3>
       <p class="settings-section-desc">
-        Per-agent allow / deny lists for tools, skills, and subagents.
-        The project's <code>governance.guards</code> (hook gates) remain
-        cross-template and are edited in Project Settings.
+        Allow / deny lists for tools, skills, and subagents, per agent.
+        <strong>Always Disallowed</strong> is the hard-deny floor and
+        <strong>Default Denied</strong> is blocked under <code>*</code>
+        unless an agent opts in — both are seeded from the shipped
+        defaults and editable here; a tier left untouched stays inherited
+        rather than frozen into the template. The project's
+        <code>governance.guards</code> (hook gates) remain cross-template
+        and are edited in Project Settings.
       </p>
       <div class="governance-content">
         ${['tools', 'skills', 'subagents'].map((section) => {
@@ -2049,6 +2095,7 @@ function _governanceSection(formBuffer, settings, projectId, rerender) {
               section === 'tools' ? [] : section === 'skills' ? [] : [],
             agentRoles: AGENT_NAMES,
             defaults: DISPATCH_DEFAULTS[section],
+            denyTiersEditable: true,
             onChange: (newConfig) => {
               if (!editorState.formBuffer.governance) {
                 editorState.formBuffer.governance = { ...DEFAULT_GOVERNANCE };
