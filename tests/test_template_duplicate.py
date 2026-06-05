@@ -332,3 +332,217 @@ class TestTemplateResolverDuplicate:
         assert written["id"] == "minimal-copy"
         assert written["run"] == "prompt-only"
         assert written["config"]["empty"] is True
+
+
+# ---------------------------------------------------------------------------
+# Self-contained duplication: agents/ dir carries a fully-resolved prompt set
+# ---------------------------------------------------------------------------
+
+
+def _make_core_dir(tmp_path: Path) -> Path:
+    """Build a small but representative core-prompt dir.
+
+    - planner.md: has an append-able ## Rules section + a {{placeholder}} and
+      a {{block:plan}} reference (must survive resolution intact).
+    - coordinator.md: a second role the source template will NOT override.
+    - tester.md: a third role with a {{#if foo}} conditional.
+    - plan.block.md: a block file (resolved through resolve_block).
+    """
+    core = tmp_path / "core"
+    core.mkdir(parents=True, exist_ok=True)
+    (core / "planner.md").write_text(
+        "# Planner\n\n"
+        "You plan work for {{project_name}}.\n\n"
+        "{{block:plan}}\n\n"
+        "## Rules\n\n"
+        "- Core rule one.\n",
+        encoding="utf-8",
+    )
+    (core / "coordinator.md").write_text(
+        "# Coordinator\n\nDecompose into beads for {{project_name}}.\n",
+        encoding="utf-8",
+    )
+    (core / "tester.md").write_text(
+        "# Tester\n\n{{#if has_guide}}Honor the guide.{{/if}}\nRun tests.\n",
+        encoding="utf-8",
+    )
+    (core / "plan.block.md").write_text(
+        "Produce a MASTER_PLAN.md for {{project_name}}.\n",
+        encoding="utf-8",
+    )
+    return core
+
+
+def _make_src_template_with_append_overlay(tmp_path: Path) -> Path:
+    """A built-in-style source template that ships an <!-- append --> overlay
+    for the planner only (mirrors the real bugfix template shape)."""
+    src_dir = tmp_path / "builtin" / "src-with-overlay"
+    _write_template(src_dir, _minimal("src-with-overlay"))
+    agents = src_dir / "agents"
+    agents.mkdir(parents=True, exist_ok=True)
+    (agents / "planner.md").write_text(
+        "<!-- append -->\n\n"
+        "## Override: Rules\n\n"
+        "- Template-injected rule.\n",
+        encoding="utf-8",
+    )
+    return src_dir
+
+
+class TestSelfContainedDuplicate:
+    def test_agents_dir_has_file_for_every_core_role_and_block(self, tmp_path):
+        """Self-contained duplicate must carry a resolved file for EVERY core
+        role and block — even roles the source template never overrode."""
+        core = _make_core_dir(tmp_path)
+        _make_src_template_with_append_overlay(tmp_path)
+        resolver = _make_resolver_with_tiers(tmp_path)
+
+        resolver.duplicate(
+            "src-with-overlay", "copy", "project", core_dir=core
+        )
+
+        dest = tmp_path / "project" / "copy" / "agents"
+        # Every role present
+        assert (dest / "planner.md").is_file()
+        assert (dest / "coordinator.md").is_file()
+        assert (dest / "tester.md").is_file()
+        # Block present
+        assert (dest / "plan.block.md").is_file()
+
+        # A non-overridden role gets the core prompt verbatim.
+        coord = (dest / "coordinator.md").read_text(encoding="utf-8")
+        assert "Decompose into beads for {{project_name}}." in coord
+
+    def test_overridden_role_folds_in_both_core_and_overlay(self, tmp_path):
+        """An append-overridden role's resolved file contains BOTH core and the
+        override content, with no literal <!-- append --> marker left behind."""
+        core = _make_core_dir(tmp_path)
+        _make_src_template_with_append_overlay(tmp_path)
+        resolver = _make_resolver_with_tiers(tmp_path)
+
+        resolver.duplicate(
+            "src-with-overlay", "copy", "project", core_dir=core
+        )
+
+        planner = (
+            tmp_path / "project" / "copy" / "agents" / "planner.md"
+        ).read_text(encoding="utf-8")
+
+        assert "Core rule one." in planner  # core content survives
+        assert "Template-injected rule." in planner  # overlay merged in
+        assert "<!-- append -->" not in planner  # marker stripped
+
+    def test_placeholders_and_blocks_preserved(self, tmp_path):
+        """{{placeholder}}, {{block:...}}, and {{#if}} tokens must be preserved
+        verbatim — they are filled at runtime, not at duplicate time."""
+        core = _make_core_dir(tmp_path)
+        _make_src_template_with_append_overlay(tmp_path)
+        resolver = _make_resolver_with_tiers(tmp_path)
+
+        resolver.duplicate(
+            "src-with-overlay", "copy", "project", core_dir=core
+        )
+
+        dest = tmp_path / "project" / "copy" / "agents"
+        planner = (dest / "planner.md").read_text(encoding="utf-8")
+        tester = (dest / "tester.md").read_text(encoding="utf-8")
+        block = (dest / "plan.block.md").read_text(encoding="utf-8")
+
+        assert "{{project_name}}" in planner
+        assert "{{block:plan}}" in planner  # NOT inlined
+        assert "{{#if has_guide}}" in tester  # conditional NOT resolved
+        assert "{{project_name}}" in block
+
+    def test_project_overrides_not_baked_in(self, tmp_path):
+        """A project-level override (.claude/agents/) must NOT be composed into
+        the duplicate — only core + the source template's overlay."""
+        core = _make_core_dir(tmp_path)
+        _make_src_template_with_append_overlay(tmp_path)
+
+        # Set up a project override dir. The resolver is constructed without
+        # knowledge of it, and duplicate() points OverlayResolver at a
+        # non-existent overrides dir, so this must never leak in.
+        proj_overrides = tmp_path / "dot-claude-agents"
+        proj_overrides.mkdir(parents=True, exist_ok=True)
+        (proj_overrides / "coordinator.md").write_text(
+            "<!-- append -->\n\n## Override: Rules\n\n- PROJECT-LEAK.\n",
+            encoding="utf-8",
+        )
+
+        # Run from a cwd where ".claude/agents" would resolve, to be safe we
+        # just rely on the explicit non-existent overrides behavior.
+        resolver = _make_resolver_with_tiers(tmp_path)
+        resolver.duplicate(
+            "src-with-overlay", "copy", "project", core_dir=core
+        )
+
+        coord = (
+            tmp_path / "project" / "copy" / "agents" / "coordinator.md"
+        ).read_text(encoding="utf-8")
+        assert "PROJECT-LEAK" not in coord
+
+    def test_resolved_files_overwrite_raw_overlays(self, tmp_path):
+        """The resolved planner.md must overwrite the raw <!-- append --> overlay
+        that copytree placed there — so agents/ is a uniform resolved set."""
+        core = _make_core_dir(tmp_path)
+        _make_src_template_with_append_overlay(tmp_path)
+        resolver = _make_resolver_with_tiers(tmp_path)
+
+        resolver.duplicate(
+            "src-with-overlay", "copy", "project", core_dir=core
+        )
+
+        planner = (
+            tmp_path / "project" / "copy" / "agents" / "planner.md"
+        ).read_text(encoding="utf-8")
+        # The raw overlay started with the append marker + Override heading; the
+        # resolved file is a full prompt that opens with the core title.
+        assert planner.lstrip().startswith("# Planner")
+
+    def test_no_core_dir_falls_back_to_raw_copytree(self, tmp_path):
+        """If no core_dir is available (and none auto-detected), duplication
+        still works and keeps the source's raw overlays (graceful skip)."""
+        _make_src_template_with_append_overlay(tmp_path)
+        resolver = _make_resolver_with_tiers(tmp_path)
+
+        # No core_dir passed; tmp_path/builtin has no agents/core sibling.
+        result = resolver.duplicate("src-with-overlay", "copy", "project")
+
+        planner = (
+            tmp_path / "project" / "copy" / "agents" / "planner.md"
+        ).read_text(encoding="utf-8")
+        # Raw overlay preserved verbatim — append marker still present.
+        assert "<!-- append -->" in planner
+        assert result.agents_dir is not None
+
+    def test_auto_detect_core_dir_sibling_of_templates(self, tmp_path):
+        """When the builtin templates dir has an agents/core sibling, duplicate
+        auto-detects it without an explicit core_dir arg."""
+        # Layout: <root>/templates (builtin) and <root>/agents/core sibling.
+        root = tmp_path / "worca-runtime"
+        builtin = root / "templates"
+        core = root / "agents" / "core"
+        core.mkdir(parents=True, exist_ok=True)
+        (core / "planner.md").write_text(
+            "# Planner\n\nPlan for {{project_name}}.\n", encoding="utf-8"
+        )
+
+        src_dir = builtin / "src-auto"
+        _write_template(src_dir, _minimal("src-auto"))
+        (src_dir / "agents").mkdir(parents=True, exist_ok=True)
+        (src_dir / "agents" / "planner.md").write_text(
+            "<!-- append -->\n\n## Override: Extra\n\n- Auto rule.\n",
+            encoding="utf-8",
+        )
+
+        resolver = TemplateResolver(
+            builtin, tmp_path / "project", tmp_path / "user"
+        )
+        resolver.duplicate("src-auto", "copy", "project")
+
+        planner = (
+            tmp_path / "project" / "copy" / "agents" / "planner.md"
+        ).read_text(encoding="utf-8")
+        assert "Plan for {{project_name}}." in planner  # core composed
+        assert "Auto rule." in planner  # overlay composed
+        assert "<!-- append -->" not in planner

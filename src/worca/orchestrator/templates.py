@@ -596,7 +596,93 @@ class TemplateResolver:
         merged = deep_merge_config(base_settings or {}, rendered_config)
         return validate_merged_config(merged)
 
-    def duplicate(self, src_id: str, dst_id: str, dst_scope: str = "project") -> "Template":
+    def _find_core_dir(self) -> Path | None:
+        """Locate the directory holding core agent prompts (`*.md`/`*.block.md`).
+
+        Self-contained duplication composes each core prompt with the source
+        template's overlay, so we need the core prompt set. It lives as a
+        sibling of the templates dir in both supported layouts:
+
+        - runtime install: ``.claude/worca/templates`` → ``.claude/worca/agents/core``
+        - package/dev:      ``src/worca/templates``    → ``src/worca/agents/core``
+
+        We probe the parent of each known tier dir (builtin/project/user) for an
+        ``agents/core`` sibling. Returns the first that exists, else None — in
+        which case duplication gracefully skips the self-containment pass.
+        """
+        candidates: list[Path] = []
+        for tier_dir in (self._builtin_dir, self._project_dir, self._user_dir):
+            if tier_dir is None:
+                continue
+            # Sibling of the templates dir: <parent>/agents/core
+            candidates.append(tier_dir.parent / "agents" / "core")
+        for cand in candidates:
+            if cand.is_dir():
+                return cand
+        return None
+
+    def _write_self_contained_agents(
+        self,
+        src_template: "Template",
+        dest_agents_dir: Path,
+        core_dir: Path,
+    ) -> None:
+        """Compose every core role + block with the source template's overlay
+        and write the fully-resolved prompts into ``dest_agents_dir``.
+
+        The resolution chain is core → (source) template overlay only — project
+        overrides (``.claude/agents``) are deliberately excluded by pointing the
+        OverlayResolver at a non-existent overrides dir. Placeholders
+        (``{{...}}`` / ``{{block:...}}`` / ``{{#if}}``) are preserved verbatim;
+        they are filled at runtime, not at duplicate time.
+
+        The written files OVERWRITE any raw overlays already copied by the
+        copytree step, leaving a uniform, resolved, self-contained set.
+        """
+        from worca.orchestrator.overlay import OverlayResolver
+
+        # An overrides_dir that cannot exist → the project-overlay tier is
+        # always skipped, so only core + template overlay are composed.
+        non_existent_overrides = str(dest_agents_dir / "__no_project_overrides__")
+        resolver = OverlayResolver(overrides_dir=non_existent_overrides)
+
+        src_agents_dir = (
+            str(src_template.agents_dir) if src_template.agents_dir else None
+        )
+
+        dest_agents_dir.mkdir(parents=True, exist_ok=True)
+
+        roles: list[str] = []
+        blocks: list[str] = []
+        for entry in sorted(core_dir.iterdir()):
+            if not entry.is_file() or entry.suffix != ".md":
+                continue
+            name = entry.name
+            if name.endswith(".block.md"):
+                blocks.append(name[: -len(".block.md")])
+            else:
+                roles.append(name[: -len(".md")])
+
+        for role in roles:
+            core_content = (core_dir / f"{role}.md").read_text(encoding="utf-8")
+            resolved = resolver.resolve(role, core_content, src_agents_dir)
+            (dest_agents_dir / f"{role}.md").write_text(resolved, encoding="utf-8")
+
+        for block in blocks:
+            resolved = resolver.resolve_block(block, str(core_dir), src_agents_dir)
+            if resolved is None:
+                continue
+            (dest_agents_dir / f"{block}.block.md").write_text(
+                resolved, encoding="utf-8"
+            )
+
+    def duplicate(
+        self,
+        src_id: str,
+        dst_id: str,
+        dst_scope: str = "project",
+        core_dir: str | Path | None = None,
+    ) -> "Template":
         """Resolve src_id from any tier, write a copy to dst_scope as dst_id.
 
         Duplicating a built-in to project/user scope with the SAME id is
@@ -605,10 +691,21 @@ class TemplateResolver:
         'project' or 'user', so there is no path by which `duplicate`
         can overwrite a built-in on disk.
 
+        The duplicate is made **self-contained**: its ``agents/`` dir carries a
+        complete, resolved prompt file for every core agent role and block —
+        the core prompt composed with the source template's overlay — so the
+        copy no longer depends on the shipped core prompts at runtime.
+        Placeholders are preserved (filled at runtime); project overrides are
+        NOT baked in. If a core prompt dir can't be located, the self-contained
+        pass is skipped gracefully (the duplicate keeps the source's raw
+        overlays only).
+
         Args:
             src_id: Template id to copy from (resolves from any tier: project → user → builtin)
             dst_id: Id to assign to the copy in the destination scope
             dst_scope: "project" or "user" (builtin is not a valid destination)
+            core_dir: Optional explicit core-prompt directory. None → auto-detect
+                as a sibling of the templates tier dir. Mainly for tests.
 
         Returns:
             Template instance representing the copied template
@@ -684,13 +781,23 @@ class TemplateResolver:
         # Write template.json
         (tmpl_dir / "template.json").write_text(json.dumps(dst_data, indent=2), encoding="utf-8")
 
+        dest_agents_dir = tmpl_dir / "agents"
+
         # Copy agents directory if present
         if src_template.agents_dir and Path(src_template.agents_dir).is_dir():
             src_agents_dir = Path(src_template.agents_dir)
-            dest_agents_dir = tmpl_dir / "agents"
             if dest_agents_dir.is_dir():
                 shutil.rmtree(dest_agents_dir)
             shutil.copytree(src_agents_dir, dest_agents_dir)
+
+        # Self-containment pass: compose every core role + block with the
+        # source template's overlay and write the resolved prompts, overwriting
+        # the raw overlays copied above. Skips gracefully if no core dir found.
+        resolved_core_dir = Path(core_dir) if core_dir else self._find_core_dir()
+        if resolved_core_dir is not None and resolved_core_dir.is_dir():
+            self._write_self_contained_agents(
+                src_template, dest_agents_dir, resolved_core_dir
+            )
 
         # Return new Template instance
         tier = "user" if dst_scope == "user" else "project"
