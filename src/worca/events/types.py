@@ -579,7 +579,7 @@ def git_pr_deferred_payload(
     pr_title: str,
     base_branch: str,
     head_branch: str,
-    commit_sha: str = None,
+    commit_sha: str | None = None,
 ) -> dict:
     return {
         "pr_title": pr_title,

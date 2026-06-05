@@ -16,9 +16,9 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Mapping, Optional
 
-from worca.orchestrator.guardian_context import build_guardian_context, compute_defer_pr
+from worca.orchestrator.guardian_context import build_guardian_context
 from worca.orchestrator.error_classifier import (
     classify_error, record_failure, record_success,
     should_halt, get_retry_delay, get_circuit_breaker_state,
@@ -1327,6 +1327,26 @@ def _apply_defer_pr_from_config(worca_config: dict, subprocess_env: dict) -> Non
         subprocess_env["WORCA_DEFER_PR"] = "1"
 
 
+def _pr_stage_is_deferred(settings_path: str, env: Optional[Mapping[str, str]] = None) -> bool:
+    """Resolve whether the PR stage defers, the SAME way the guardian prompt does.
+
+    The guardian *prompt* is rendered in run_pipeline from an env copy that folds
+    the worca.stages.pr.defer config toggle in via _apply_defer_pr_from_config and
+    then runs through build_guardian_context (which also honors revise-PR
+    precedence). The PR-stage *schema* selection must use that identical
+    resolution — otherwise a config-only defer (no WORCA_DEFER_PR in os.environ)
+    renders the deferred prompt ("stash, do not open a PR") while the schema stays
+    pr.json (which demands pr_number/pr_url), and the agent's output can't satisfy
+    both. Reusing the same two functions keeps schema and prompt from ever
+    disagreeing.
+    """
+    resolved_env = dict(os.environ if env is None else env)
+    _apply_defer_pr_from_config(
+        load_settings(settings_path).get("worca", {}), resolved_env
+    )
+    return bool(build_guardian_context(resolved_env)["defer_pr"])
+
+
 def _lift_pr_deferred_to_status(result: dict, status: dict) -> None:
     """When the PR stage output has deferred:True, mark status.pr_deferred=True."""
     if isinstance(result, dict) and result.get("deferred") is True:
@@ -1374,11 +1394,15 @@ def run_stage(
     is the full claude CLI JSON response for logging.
     """
     config = get_stage_config(stage, settings_path=settings_path)
-    # PR stage uses a different schema when the run defers PR creation to a
-    # parent orchestrator (workspace child). Two schemas instead of one
-    # conditional schema keeps each flat — the Claude API rejects custom
-    # tools whose input_schema has top-level allOf/oneOf/anyOf.
-    if stage == Stage.PR and compute_defer_pr(os.environ):
+    # PR stage uses a different schema when the run defers PR creation — either a
+    # workspace child (WORCA_DEFER_PR=1, set by dag_executor) or a project that
+    # set worca.stages.pr.defer:true. _pr_stage_is_deferred resolves this the
+    # SAME way the guardian prompt is resolved in run_pipeline, so a config-only
+    # defer still selects pr-deferred.json (otherwise the agent is told to stash
+    # the PR while the schema still demands pr_number/pr_url). Two flat schemas
+    # instead of one conditional schema keeps each flat — the Claude API rejects
+    # custom tools whose input_schema has top-level allOf/oneOf/anyOf.
+    if stage == Stage.PR and _pr_stage_is_deferred(settings_path):
         config = {**config, "schema": "pr-deferred.json"}
     max_turns = config["max_turns"] * msize
     raw_prompt = context.get("prompt", "")

@@ -841,6 +841,17 @@ W-059: Plan review `review_and_edit` mode — optional in-place plan editing by 
 - **Editor UI polish.** The Governance tab's "Plan review enforcement" section drops its redundant `ENFORCE MODE` field label (an `aria-label` on the `<sl-select>` replaces it for screen readers). The Iteration view's Effort row absorbs the Bead chip inline; the chip is suppressed when the bead label matches the effort level, when `auto_mode: disabled` made the label irrelevant, or when it was applied as-is. The common case (`fast` template with `auto_mode: disabled`) now renders one compact row instead of two near-identical ones.
 - No config / settings.json migration required — `worca init --upgrade` is sufficient.
 
+### 0.48.x → 0.49.0
+
+W-065: Deferrable PR creation with manual promote-from-UI.
+
+- **New `worca.stages.pr.defer` toggle (default `false`).** When `true`, the guardian stage composes the PR title/body/base and stashes them in `status.json` (`pr_deferred: true` plus `stages.pr.{pr_title,pr_body,base_branch,source_branch}`) instead of opening a PR. Promote it later with `worca pr create <run-id>` or the **Create PR** button on the run-detail PR section. Default-off means existing projects are unaffected. This is a **template-owned** key (it lives under `worca.stages`), so a template in play at run launch owns it — set it in the template's `config`, not project Settings, when a default template is pinned.
+- **The config toggle and the workspace `WORCA_DEFER_PR=1` env var compose monotonically** — either can defer, neither can un-defer. Workspace child runs continue to defer to the parent DAG executor exactly as before.
+- **⚠️ `pr-deferred.json` schema is stricter (upgrade-ordering hazard for custom guardians).** On `outcome: success` the deferred PR schema now *requires* `pr_title`, `pr_body`, and `base_branch` (previously only `deferred` + `commit_sha`). This schema gates **every workspace child run** (they always set `WORCA_DEFER_PR=1`). The shipped `guardian.md` was restructured to emit those three fields, so a consistent install is fine — but a project with a **custom/pinned `.claude/agents/guardian.md` override** (or a stale `.claude/worca/` runtime copy) that predates W-065 will keep emitting the old deferred shape, which the new schema rejects → the guardian stage fails on workspace/deferred runs that worked before. **Fix: run `worca init --upgrade`** to refresh the runtime schema *and* re-derive the guardian prompt; if you maintain a guardian override, add `pr_title`/`pr_body`/`base_branch` to its deferred-branch structured output. Non-deferred runs use the unchanged `pr.json` schema and are unaffected.
+- **`status.json` schema (additive).** Deferred runs gain a top-level `pr_deferred: true`, the stashed `stages.pr.*` fields above, and a `pr_creation` block (`state: in_progress|done|failed`, timestamps, `pr_url`/`error`) written by `worca pr create`. Absence of these fields means a normal (non-deferred) run — backward-compatible with existing consumers.
+- **New `pipeline.git.pr_deferred` event** (Tier 1, chat-rendered, `warning` severity) fires when a deferred run reaches done. Additive — subscribers that don't recognize it simply ignore it; the pipeline outbound constant count moves 56 → 57.
+- No automatic settings.json migration required beyond `worca init --upgrade` (which refreshes the schema + guardian prompt as noted above).
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

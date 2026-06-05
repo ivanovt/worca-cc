@@ -15,7 +15,10 @@ import jsonschema
 import pytest
 import worca
 
-from worca.orchestrator.runner import _apply_defer_pr_from_config
+from worca.orchestrator.runner import (
+    _apply_defer_pr_from_config,
+    _pr_stage_is_deferred,
+)
 
 DEFERRED_SCHEMA_PATH = os.path.join(os.path.dirname(worca.__file__), "schemas", "pr-deferred.json")
 
@@ -188,3 +191,74 @@ class TestComputeDeferPrFromConfig:
         env = {"WORCA_DEFER_PR": "1"}
         _apply_defer_pr_from_config({"stages": {"pr": {"defer": False}}}, env)
         assert env["WORCA_DEFER_PR"] == "1"
+
+
+class TestPrStageSchemaSelection:
+    """run_stage selects pr-deferred.json via _pr_stage_is_deferred, which must
+    resolve defer the SAME way the guardian prompt is resolved (env copy folded
+    with the config toggle, then build_guardian_context).
+
+    Regression for the config-vs-env schema seam: a project that sets
+    worca.stages.pr.defer:true but does NOT have WORCA_DEFER_PR in os.environ
+    must still get the deferred schema. Before the fix the schema selection read
+    os.environ only, so config-only defer rendered the deferred *prompt* ("stash,
+    do not open a PR") while keeping pr.json (which requires pr_number/pr_url) —
+    an unsatisfiable contract under real Claude.
+    """
+
+    def _write_settings(self, tmp_path, worca_block) -> str:
+        p = tmp_path / "settings.json"
+        p.write_text(json.dumps({"worca": worca_block}))
+        return str(p)
+
+    def test_config_only_defer_selects_deferred(self, tmp_path):
+        """THE regression: config defer:true + no WORCA_DEFER_PR in env → deferred."""
+        settings = self._write_settings(
+            tmp_path, {"stages": {"pr": {"defer": True}}}
+        )
+        assert _pr_stage_is_deferred(settings, env={}) is True
+
+    def test_config_defer_false_not_deferred(self, tmp_path):
+        settings = self._write_settings(
+            tmp_path, {"stages": {"pr": {"defer": False}}}
+        )
+        assert _pr_stage_is_deferred(settings, env={}) is False
+
+    def test_config_absent_not_deferred(self, tmp_path):
+        settings = self._write_settings(tmp_path, {})
+        assert _pr_stage_is_deferred(settings, env={}) is False
+
+    def test_missing_settings_file_not_deferred(self, tmp_path):
+        missing = str(tmp_path / "does-not-exist.json")
+        assert _pr_stage_is_deferred(missing, env={}) is False
+
+    def test_workspace_env_defer_selects_deferred(self, tmp_path):
+        """Workspace child path: WORCA_DEFER_PR=1 in env, no config → deferred."""
+        settings = self._write_settings(tmp_path, {})
+        assert _pr_stage_is_deferred(settings, env={"WORCA_DEFER_PR": "1"}) is True
+
+    def test_env_defer_overrides_config_false(self, tmp_path):
+        """Monotonic compose: env defers even when the child template says false."""
+        settings = self._write_settings(
+            tmp_path, {"stages": {"pr": {"defer": False}}}
+        )
+        assert _pr_stage_is_deferred(settings, env={"WORCA_DEFER_PR": "1"}) is True
+
+    def test_revise_pr_takes_precedence_over_config_defer(self, tmp_path):
+        """An existing PR cannot be deferred: WORCA_REVISE_PR forces non-deferred
+        even when config defer:true, matching build_guardian_context precedence."""
+        settings = self._write_settings(
+            tmp_path, {"stages": {"pr": {"defer": True}}}
+        )
+        assert (
+            _pr_stage_is_deferred(settings, env={"WORCA_REVISE_PR": "42"}) is False
+        )
+
+    def test_revise_pr_takes_precedence_over_env_defer(self, tmp_path):
+        settings = self._write_settings(tmp_path, {})
+        assert (
+            _pr_stage_is_deferred(
+                settings, env={"WORCA_DEFER_PR": "1", "WORCA_REVISE_PR": "42"}
+            )
+            is False
+        )
