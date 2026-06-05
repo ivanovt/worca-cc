@@ -296,6 +296,7 @@ export function runCardView(
       })()}
       ${sourceBranch ? html`<div class="run-card-meta"><span class="run-card-meta-item"><span class="meta-label">Source Branch:</span> <span class="meta-value">${sourceBranch}</span></span>${targetBranch && targetBranch !== defaultBranch ? html`<span class="run-card-meta-item"><span class="meta-label">Target Branch:</span> <span class="meta-value">${targetBranch}</span></span>` : nothing}</div>` : nothing}
       ${pipelineTemplate ? html`<div class="run-card-template"><span class="meta-label">Pipeline:</span> <span class="meta-value">${pipelineTemplate}</span></div>` : nothing}
+      ${run.revises_pr ? html`<div class="run-card-revises-pr"><sl-badge variant="warning" pill class="run-card-revises-pr-badge">Revising PR #${run.revises_pr}</sl-badge></div>` : nothing}
       <div class="run-card-meta">
         <span class="run-card-meta-item"><span class="meta-label">Started:</span> <span class="meta-value">${formatTimestamp(run.started_at)}</span></span>
         <span class="run-card-meta-item"><span class="meta-label">Finished:</span> <span class="meta-value">${formatTimestamp(endTime)}</span></span>

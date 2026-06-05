@@ -16,6 +16,23 @@ The orchestrator has pre-computed your PR metadata for this run. Use the values 
 
 Run `git add -A`, commit with a scoped conventional message (see CLAUDE.md for the format), and push the branch: `git push -u origin <head_branch>`. If nothing stages, STOP with `outcome: reject`.
 
+{{#if revise_pr}}
+### Step 2 — Update the existing PR (#{{revise_pr}})
+
+This run is revising PR #{{revise_pr}}. The PR already exists — **do not** call `gh pr create` (or any host equivalent). Pushing the same head branch in Step 1 is sufficient to auto-update the PR (**L2** — head branch name preserved verbatim).
+
+**W-065 compose note:** `revise_pr` and `defer_pr` are mutually exclusive. When this run is in revision mode the PR already exists, so deferred-PR creation is a no-op.
+
+**Writeback is automatic — do not post comments yourself.** The orchestrator posts the summary comment and per-thread replies (reply-only, never resolve — D3) after you return, reading `review_feedback` from `status.json`. Your only job here is the push from Step 1.
+
+Capture the commit SHA you just pushed (`git rev-parse HEAD`) and return this structured output:
+
+- `outcome: "success"`
+- `pr_number: {{revise_pr}}`
+- `commit_sha: "<short or full SHA of the commit you made>"` — used by the orchestrator in the summary/reply text and to verify HEAD moved.
+
+The orchestrator re-reads the existing PR to fill in `pr_url`, so you do not need to emit it. If the push failed, return `outcome: "reject"` with a descriptive reason.
+{{else}}
 {{#if defer_pr}}
 ### Step 2 — PR creation is deferred
 
@@ -49,6 +66,7 @@ Build the PR body from the work request and approach summary. If the orchestrato
 Then run the host CLI from CLAUDE.md to open the PR. With `gh`, that is:
 
 `gh pr create --base <base_branch> --head <head_branch> --title "<prefixed_title>" --body "<body>"`
+{{/if}}
 {{/if}}
 
 The work request and approach summary arrive as a user message.

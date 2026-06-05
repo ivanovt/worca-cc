@@ -565,6 +565,119 @@ describe('watcher', () => {
     expect(asyncRun.head_branch).toBeNull();
   });
 
+  // ---- source_type / source_ref passthrough (#W-067) ----
+  it('source_type and source_ref pass through from status.json for a regular run', () => {
+    const runId = 'run-pr-src-1';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        source_type: 'github_pr',
+        source_ref: 'gh:pr:42',
+        work_request: { title: 'pr revision' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === runId);
+    expect(run).toBeDefined();
+    expect(run.source_type).toBe('github_pr');
+    expect(run.source_ref).toBe('gh:pr:42');
+  });
+
+  it('source_type and source_ref default to null when absent from status.json', () => {
+    const runId = 'run-no-src-1';
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        work_request: { title: 'no source' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === runId);
+    expect(run).toBeDefined();
+    expect(run.source_type).toBeNull();
+    expect(run.source_ref).toBeNull();
+  });
+
+  it('worktree run passes source_type and source_ref from status.json', async () => {
+    const wtDir = join(dir, 'worktrees', 'wt-pr-src');
+    const wtRunId = 'run-wt-pr-src-1';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(
+      join(wtRunDir, 'status.json'),
+      JSON.stringify({
+        run_id: wtRunId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        source_type: 'github_pr',
+        source_ref: 'gh:pr:99',
+        work_request: { title: 'wt pr revision' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({
+        run_id: wtRunId,
+        worktree_path: wtDir,
+        title: 'wt pr revision',
+        pid: 99994,
+        status: 'running',
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === wtRunId);
+    expect(run).toBeDefined();
+    expect(run.is_worktree_run).toBe(true);
+    expect(run.source_type).toBe('github_pr');
+    expect(run.source_ref).toBe('gh:pr:99');
+  });
+
+  it('worktree run source_type and source_ref default to null when absent', async () => {
+    const wtDir = join(dir, 'worktrees', 'wt-no-src');
+    const wtRunId = 'run-wt-no-src-1';
+    const wtRunDir = join(wtDir, '.worca', 'runs', wtRunId);
+    mkdirSync(wtRunDir, { recursive: true });
+    writeFileSync(
+      join(wtRunDir, 'status.json'),
+      JSON.stringify({
+        run_id: wtRunId,
+        started_at: '2026-06-04T10:00:00Z',
+        pipeline_status: 'running',
+        work_request: { title: 'wt no source' },
+        stages: { plan: { status: 'in_progress' } },
+      }),
+    );
+    const pipelinesDir = join(dir, 'multi', 'pipelines.d');
+    mkdirSync(pipelinesDir, { recursive: true });
+    writeFileSync(
+      join(pipelinesDir, `${wtRunId}.json`),
+      JSON.stringify({
+        run_id: wtRunId,
+        worktree_path: wtDir,
+        title: 'wt no source',
+        pid: 99993,
+        status: 'running',
+      }),
+    );
+    const run = discoverRuns(dir).find((r) => r.run_id === wtRunId);
+    expect(run).toBeDefined();
+    expect(run.is_worktree_run).toBe(true);
+    expect(run.source_type).toBeNull();
+    expect(run.source_ref).toBeNull();
+  });
+
   it('in-place run does not have head_branch', () => {
     const runId = 'run-inplace-001';
     const runDir = join(dir, 'runs', runId);

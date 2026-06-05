@@ -243,6 +243,30 @@ def test_init_status_worktree_path_key_absent():
     assert "worktree_path" not in result
 
 
+def test_init_status_pr_revision_fields_defaults():
+    wr = {"title": "Task"}
+    result = init_status(wr, "feat/task")
+    assert result["source_type"] is None
+    assert result["source_ref"] is None
+    assert result["revises_pr"] is None
+    assert result["review_feedback"] == []
+
+
+def test_init_status_pr_revision_fields_from_work_request():
+    wr = {
+        "title": "Fix auth",
+        "source_type": "github_pr",
+        "source_ref": "gh:pr:42",
+        "pr_number": 42,
+        "review_comments": [{"body": "Needs tests", "path": "auth.py"}],
+    }
+    result = init_status(wr, "feat/fix-auth")
+    assert result["source_type"] == "github_pr"
+    assert result["source_ref"] == "gh:pr:42"
+    assert result["revises_pr"] == 42
+    assert result["review_feedback"] == [{"body": "Needs tests", "path": "auth.py"}]
+
+
 # --- start_iteration ---
 
 def test_start_iteration_creates_list():

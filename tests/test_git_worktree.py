@@ -246,3 +246,78 @@ class TestListPipelineWorktrees:
 
         entries = list_pipeline_worktrees()
         assert entries == []
+
+
+# ---------------------------------------------------------------------------
+# checkout_pr_worktree
+# ---------------------------------------------------------------------------
+
+class TestCheckoutPrWorktree:
+
+    def _make_gh_mock(self, returncode=0):
+        """Return a mock that lets git calls through and fakes gh pr checkout."""
+        real_run = subprocess.run
+
+        def side_effect(cmd, **kwargs):
+            if cmd[0] == "gh":
+                result = subprocess.CompletedProcess(cmd, returncode, stdout="", stderr="")
+                return result
+            return real_run(cmd, **kwargs)
+
+        return side_effect
+
+    def test_success_creates_worktree_and_returns_path(self, git_repo):
+        from worca.utils.git import checkout_pr_worktree
+
+        with patch("worca.utils.git.subprocess.run", side_effect=self._make_gh_mock(0)):
+            result = checkout_pr_worktree("r1", pr_number=42, pr_head_branch="feature/auth")
+
+        assert os.path.isabs(result)
+        assert os.path.isdir(result)
+        assert result.endswith(os.path.join(".worktrees", "pipeline-r1"))
+
+    def test_success_calls_gh_inside_worktree(self, git_repo):
+        from worca.utils.git import checkout_pr_worktree
+
+        gh_calls = []
+        real_run = subprocess.run
+
+        def side_effect(cmd, **kwargs):
+            if cmd[0] == "gh":
+                gh_calls.append(kwargs.get("cwd"))
+                return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+            return real_run(cmd, **kwargs)
+
+        with patch("worca.utils.git.subprocess.run", side_effect=side_effect):
+            result = checkout_pr_worktree("r2", pr_number=7, pr_head_branch="fix/bug")
+
+        assert len(gh_calls) == 1
+        # gh pr checkout ran inside the newly created worktree (normalize both)
+        assert os.path.abspath(gh_calls[0]) == result
+
+    def test_gh_failure_cleans_up_worktree(self, git_repo):
+        from worca.utils.git import checkout_pr_worktree
+
+        real_run = subprocess.run
+
+        def side_effect(cmd, **kwargs):
+            if cmd[0] == "gh":
+                return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="auth error")
+            return real_run(cmd, **kwargs)
+
+        with patch("worca.utils.git.subprocess.run", side_effect=side_effect):
+            result = checkout_pr_worktree("r3", pr_number=99, pr_head_branch="main")
+
+        assert result == ""
+        # Worktree directory should have been removed on failure
+        expected_path = os.path.join(str(git_repo), ".worktrees", "pipeline-r3")
+        assert not os.path.isdir(expected_path)
+
+    def test_git_worktree_failure_returns_empty(self, git_repo):
+        from worca.utils.git import checkout_pr_worktree
+
+        with patch("worca.utils.git._run_git") as mock_git:
+            mock_git.return_value = subprocess.CompletedProcess([], 1, stdout="", stderr="err")
+            result = checkout_pr_worktree("r4", pr_number=5, pr_head_branch="branch")
+
+        assert result == ""

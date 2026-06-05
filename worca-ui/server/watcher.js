@@ -158,7 +158,13 @@ function _shapeRunFromFile(
     if (enrich && runDir) status = enrichWithDispatchEvents(status, runDir);
     const id = createRunId(status);
     const active = !isTerminal(status) && status.pipeline_status === 'running';
-    const base = { id, active, ...status };
+    const base = {
+      id,
+      active,
+      ...status,
+      source_type: status.source_type ?? null,
+      source_ref: status.source_ref ?? null,
+    };
     if (worktreeReg) {
       return {
         ...base,
@@ -196,7 +202,13 @@ function _discoverRunsUncached(worcaDir) {
         seenIds.add(id);
         const active =
           !isTerminal(status) && status.pipeline_status === 'running';
-        runs.push({ id, active, ...status });
+        runs.push({
+          id,
+          active,
+          ...status,
+          source_type: status.source_type ?? null,
+          source_ref: status.source_ref ?? null,
+        });
       } catch {
         /* ignore */
       }
@@ -212,7 +224,13 @@ function _discoverRunsUncached(worcaDir) {
       if (!seenIds.has(id)) {
         const active =
           !isTerminal(status) && status.pipeline_status === 'running';
-        runs.push({ id, active, ...status });
+        runs.push({
+          id,
+          active,
+          ...status,
+          source_type: status.source_type ?? null,
+          source_ref: status.source_ref ?? null,
+        });
         seenIds.add(id);
       }
     } catch {
@@ -236,7 +254,13 @@ function _discoverRunsUncached(worcaDir) {
               seenIds.add(id);
               const active =
                 !isTerminal(data) && data.pipeline_status === 'running';
-              runs.push({ id, active, ...data });
+              runs.push({
+                id,
+                active,
+                ...data,
+                source_type: data.source_type ?? null,
+                source_ref: data.source_ref ?? null,
+              });
             }
           }
         } else if (entry.isDirectory()) {
@@ -249,7 +273,13 @@ function _discoverRunsUncached(worcaDir) {
               seenIds.add(id);
               const active =
                 !isTerminal(data) && data.pipeline_status === 'running';
-              runs.push({ id, active, ...data });
+              runs.push({
+                id,
+                active,
+                ...data,
+                source_type: data.source_type ?? null,
+                source_ref: data.source_ref ?? null,
+              });
             }
           }
         }
@@ -287,6 +317,8 @@ function _discoverRunsUncached(worcaDir) {
               id,
               active,
               ...status,
+              source_type: status.source_type ?? null,
+              source_ref: status.source_ref ?? null,
               worktree_worca_dir: join(reg.worktree_path, '.worca'),
               is_worktree_run: true,
               head_branch: reg.branch || null,
@@ -338,7 +370,13 @@ export async function discoverRunsAsync(worcaDir) {
       seenIds.add(id);
       const active =
         !isTerminal(status) && status.pipeline_status === 'running';
-      runs.push({ id, active, ...status });
+      runs.push({
+        id,
+        active,
+        ...status,
+        source_type: status.source_type ?? null,
+        source_ref: status.source_ref ?? null,
+      });
     }
   } catch {
     /* ignore */
@@ -353,7 +391,13 @@ export async function discoverRunsAsync(worcaDir) {
     if (!seenIds.has(id)) {
       const active =
         !isTerminal(status) && status.pipeline_status === 'running';
-      runs.push({ id, active, ...status });
+      runs.push({
+        id,
+        active,
+        ...status,
+        source_type: status.source_type ?? null,
+        source_ref: status.source_ref ?? null,
+      });
       seenIds.add(id);
     }
   } catch {
@@ -386,7 +430,13 @@ export async function discoverRunsAsync(worcaDir) {
       if (!seenIds.has(id)) {
         seenIds.add(id);
         const active = !isTerminal(data) && data.pipeline_status === 'running';
-        runs.push({ id, active, ...data });
+        runs.push({
+          id,
+          active,
+          ...data,
+          source_type: data.source_type ?? null,
+          source_ref: data.source_ref ?? null,
+        });
       }
     }
   } catch {
@@ -442,6 +492,8 @@ export async function discoverRunsAsync(worcaDir) {
         id,
         active,
         ...status,
+        source_type: status.source_type ?? null,
+        source_ref: status.source_ref ?? null,
         worktree_worca_dir: join(reg.worktree_path, '.worca'),
         is_worktree_run: true,
         head_branch: reg.branch || null,

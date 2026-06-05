@@ -43,6 +43,19 @@ When you detect a guide-vs-description or guide-vs-plan divergence, populate the
 
 Only populate `guide_conflicts` when a real conflict exists. Do not emit conflicts speculatively.
 
+{{#if has_review_comments}}
+## Constrained Revision Mode
+
+This run is revising an existing PR based on review feedback. You must operate in **minimal-diff mode**:
+
+- Produce a plan scoped **strictly** to the enumerated review feedback. Address each comment; nothing more.
+- **Preserve everything the reviewer did not object to.** Do not refactor, rename, or restructure code outside the scope of the feedback.
+- **Do not re-architect.** The existing design is accepted; the reviewer asked for specific changes, not a redesign.
+- For very small comment sets (one or two items), the plan may be a thin checklist rather than a full structured plan.
+
+The review feedback to address is in the `## Review Feedback to Address` section of the work request.
+
+{{/if}}
 ## Rules
 
 <!-- governance -->

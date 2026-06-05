@@ -13,6 +13,7 @@ from worca.orchestrator.work_request import (
     normalize_spec_file,
     normalize_github_issue,
     normalize_beads_task,
+    normalize_github_pr,
     normalize,
 )
 
@@ -31,6 +32,31 @@ class TestWorkRequest:
         assert wr.source_ref is None
         assert wr.priority == 2
         assert wr.plan_path is None
+
+    def test_pr_revision_fields_default(self):
+        wr = WorkRequest(source_type="prompt", title="t")
+        assert wr.pr_number is None
+        assert wr.pr_head_branch is None
+        assert wr.pr_base_branch is None
+        assert wr.pr_is_cross_repo is False
+        assert wr.review_comments == []
+
+    def test_pr_revision_fields_set(self):
+        wr = WorkRequest(
+            source_type="github_pr",
+            title="Fix review comments",
+            pr_number=42,
+            pr_head_branch="worca/my-feature-abc123",
+            pr_base_branch="main",
+            pr_is_cross_repo=True,
+            review_comments=[{"id": "RC_1", "body": "Fix this", "path": "foo.py", "line": 10}],
+        )
+        assert wr.pr_number == 42
+        assert wr.pr_head_branch == "worca/my-feature-abc123"
+        assert wr.pr_base_branch == "main"
+        assert wr.pr_is_cross_repo is True
+        assert len(wr.review_comments) == 1
+        assert wr.review_comments[0]["id"] == "RC_1"
 
     def test_all_fields(self):
         wr = WorkRequest(
@@ -916,6 +942,51 @@ class TestAttachGuide:
         with pytest.raises(ValueError, match="exceeds worca.guide.max_bytes"):
             attach_guide(wr, [str(a), str(b)], max_bytes=100)
 
+    def test_pr_fields_preserved_with_guide(self, tmp_path):
+        from worca.orchestrator.work_request import attach_guide
+
+        guide = tmp_path / "spec.md"
+        guide.write_text("Normative spec.")
+
+        wr = WorkRequest(
+            source_type="github_pr",
+            title="Fix bug",
+            description="PR body.",
+            pr_number=42,
+            pr_head_branch="worca/fix-abc",
+            pr_base_branch="main",
+            pr_is_cross_repo=True,
+            review_comments=[{"id": "RC_1", "body": "Nit"}],
+        )
+        result = attach_guide(wr, [str(guide)])
+
+        assert result.pr_number == 42
+        assert result.pr_head_branch == "worca/fix-abc"
+        assert result.pr_base_branch == "main"
+        assert result.pr_is_cross_repo is True
+        assert result.review_comments == [{"id": "RC_1", "body": "Nit"}]
+
+    def test_pr_fields_preserved_empty_guide_list(self):
+        from worca.orchestrator.work_request import attach_guide
+
+        wr = WorkRequest(
+            source_type="github_pr",
+            title="Fix bug",
+            description="PR body.",
+            pr_number=7,
+            pr_head_branch="worca/my-branch",
+            pr_base_branch="main",
+            pr_is_cross_repo=False,
+            review_comments=[{"id": "RC_2", "body": "Fix this"}],
+        )
+        result = attach_guide(wr, [])
+
+        assert result.pr_number == 7
+        assert result.pr_head_branch == "worca/my-branch"
+        assert result.pr_base_branch == "main"
+        assert result.pr_is_cross_repo is False
+        assert result.review_comments == [{"id": "RC_2", "body": "Fix this"}]
+
 
 class TestResolveGuideMaxBytes:
     """resolve_guide_max_bytes(settings) reads worca.guide.max_bytes."""
@@ -940,6 +1011,277 @@ class TestResolveGuideMaxBytes:
         from worca.orchestrator.work_request import GUIDE_MAX_BYTES_DEFAULT
 
         assert GUIDE_MAX_BYTES_DEFAULT == 131072
+
+
+# --- normalize_github_pr ---
+
+class TestNormalizeGithubPr:
+    """Tests for normalize_github_pr() — full implementation."""
+
+    _GH_PR_RESPONSE = {
+        "title": "Fix memory leak in connection pool",
+        "body": "This PR fixes the memory leak described in #42.",
+        "baseRefName": "main",
+        "headRefName": "worca/fix-leak-abc123",
+        "isCrossRepository": False,
+        "author": {"login": "alice"},
+    }
+
+    _REVIEW_COMMENT = {
+        "thread_id": "PRRT_aaa",
+        "path": "src/pool.py",
+        "line": 42,
+        "diff_hunk": "@@ -40,6 @@",
+        "author": "bob",
+        "body": "this leaks a file handle",
+        "kind": "inline",
+        "created_at": "2026-06-03T12:00:00Z",
+    }
+
+    @pytest.fixture(autouse=True)
+    def _patch_pr_helpers(self):
+        """nwo is resolved via subprocess (gh) in gh_pr; stub it so
+        normalize_github_pr never shells out during unit tests. nwo comes from
+        the base repo (current_repo_nwo), NOT the PR's headRepository."""
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo",
+            return_value="owner/repo",
+        ):
+            yield
+
+    def _mock_gh(self, mock_subprocess, response=None):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(response if response is not None else self._GH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_gh_pr_scheme_returns_github_pr_work_request(self, mock_subprocess, mock_fetch):
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = []
+        wr = normalize_github_pr("gh:pr:42")
+        assert wr.source_type == "github_pr"
+        assert wr.pr_number == 42
+        assert wr.source_ref == "gh:pr:42"
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_gh_pr_scheme_title_from_pr_metadata(self, mock_subprocess, mock_fetch):
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = []
+        wr = normalize_github_pr("gh:pr:42")
+        assert wr.title == "Fix memory leak in connection pool"
+
+    def test_gh_pr_scheme_invalid_number_raises(self):
+        with pytest.raises(ValueError):
+            normalize_github_pr("gh:pr:abc")
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_normalize_github_pr_builds_work_request(self, mock_subprocess, mock_fetch):
+        """Full: all WorkRequest PR-revision fields are populated correctly."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = [self._REVIEW_COMMENT]
+
+        wr = normalize_github_pr("gh:pr:42")
+
+        assert wr.source_type == "github_pr"
+        assert wr.pr_number == 42
+        assert wr.title == "Fix memory leak in connection pool"
+        assert wr.pr_head_branch == "worca/fix-leak-abc123"
+        assert wr.pr_base_branch == "main"
+        assert wr.pr_is_cross_repo is False
+        assert wr.source_ref == "gh:pr:42"
+        assert wr.review_comments == [self._REVIEW_COMMENT]
+        mock_fetch.assert_called_once_with("owner/repo", 42)
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_review_feedback_description_synthesis(self, mock_subprocess, mock_fetch):
+        """Description = original PR body + ## Review Feedback to Address with [file:line] anchors."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = [self._REVIEW_COMMENT]
+
+        wr = normalize_github_pr("gh:pr:42")
+
+        assert "This PR fixes the memory leak" in wr.description
+        assert "## Review Feedback to Address" in wr.description
+        assert "[src/pool.py:42]" in wr.description
+        assert "@bob" in wr.description
+        assert "this leaks a file handle" in wr.description
+        assert "PRRT_aaa" in wr.description
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_no_review_comments_omits_feedback_section(self, mock_subprocess, mock_fetch):
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = []
+        wr = normalize_github_pr("gh:pr:42")
+        assert "## Review Feedback to Address" not in wr.description
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_cross_repo_flag_set(self, mock_subprocess, mock_fetch):
+        response = dict(self._GH_PR_RESPONSE, isCrossRepository=True)
+        self._mock_gh(mock_subprocess, response)
+        mock_fetch.return_value = []
+        wr = normalize_github_pr("gh:pr:7")
+        assert wr.pr_is_cross_repo is True
+
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_gh_failure_raises_runtime_error(self, mock_subprocess):
+        mock_result = MagicMock()
+        mock_result.returncode = 1
+        mock_result.stderr = "authentication required"
+        mock_subprocess.run.return_value = mock_result
+        with pytest.raises(RuntimeError, match="Failed to fetch PR"):
+            normalize_github_pr("gh:pr:99")
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_nwo_resolved_from_base_repo_not_head_repository(
+        self, mock_subprocess, mock_fetch
+    ):
+        """Regression: nwo must come from current_repo_nwo() (the base repo),
+        never from the PR's headRepository — gh pr view does not expose a
+        nameWithOwner there, so the old path silently fetched nothing."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = []
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo",
+            return_value="base-owner/base-repo",
+        ):
+            normalize_github_pr("gh:pr:42")
+        nwo_arg = mock_fetch.call_args[0][0]
+        assert nwo_arg == "base-owner/base-repo"
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_empty_nwo_skips_fetch(self, mock_subprocess, mock_fetch):
+        """If the base repo can't be resolved, ingestion is skipped, not crashed."""
+        self._mock_gh(mock_subprocess)
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo", return_value=""
+        ):
+            wr = normalize_github_pr("gh:pr:42")
+        mock_fetch.assert_not_called()
+        assert wr.review_comments == []
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_pr_level_feedback_synthesized_without_anchor(
+        self, mock_subprocess, mock_fetch
+    ):
+        """A review_summary item (no path / thread_id) renders as [PR-level]
+        with no trailing (thread: …) suffix."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = [
+            {
+                "thread_id": "",
+                "path": "",
+                "line": None,
+                "diff_hunk": "",
+                "author": "carol",
+                "body": "add a test for the empty case",
+                "kind": "review_summary",
+                "created_at": "2026-06-03T12:00:00Z",
+            }
+        ]
+        wr = normalize_github_pr("gh:pr:42")
+        assert "[PR-level] @carol:" in wr.description
+        assert "(thread:" not in wr.description
+
+
+# --- parse_pr_url number extraction ---
+
+class TestParsePrUrlNumber:
+    def test_pr_url_resolves_to_number(self):
+        from worca.utils.pr_url import parse_pr_url
+        result = parse_pr_url("https://github.com/owner/repo/pull/99")
+        assert result["provider"] == "github"
+        assert result["number"] == 99
+
+    def test_pr_url_github_enterprise_resolves_number(self):
+        from worca.utils.pr_url import parse_pr_url
+        result = parse_pr_url("https://github.mycompany.com/owner/repo/pull/123")
+        assert result["provider"] == "github"
+        assert result["number"] == 123
+
+    def test_pr_url_non_github_has_no_number(self):
+        from worca.utils.pr_url import parse_pr_url
+        result = parse_pr_url("https://gitlab.com/group/repo/-/merge_requests/5")
+        assert result["provider"] == "gitlab"
+        # number not required for non-github, but should not crash
+        assert "number" not in result or result["number"] is None
+
+
+# --- normalize dispatcher with gh:pr: ---
+
+_DISPATCH_PR_RESPONSE = {
+    "title": "Some PR",
+    "body": "",
+    "baseRefName": "main",
+    "headRefName": "feature/x",
+    "isCrossRepository": False,
+    "author": {"login": "alice"},
+}
+
+
+class TestNormalizeGithubPrDispatch:
+    @pytest.fixture(autouse=True)
+    def _patch_pr_helpers(self):
+        with patch(
+            "worca.orchestrator.work_request.current_repo_nwo",
+            return_value="owner/repo",
+        ):
+            yield
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_normalize_dispatches_gh_pr_scheme(self, mock_subprocess, mock_fetch):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(_DISPATCH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+        wr = normalize("source", "gh:pr:55")
+        assert wr.source_type == "github_pr"
+        assert wr.pr_number == 55
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_normalize_dispatches_full_github_pr_url(self, mock_subprocess, mock_fetch):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(_DISPATCH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+        wr = normalize("source", "https://github.com/owner/repo/pull/77")
+        assert wr.source_type == "github_pr"
+        assert wr.pr_number == 77
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_normalize_pr_type_dispatches_gh_pr(self, mock_subprocess, mock_fetch):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(_DISPATCH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+        wr = normalize("pr", "gh:pr:10")
+        assert wr.source_type == "github_pr"
+
+    def test_normalize_non_github_pr_url_raises(self):
+        with pytest.raises(ValueError, match="not yet supported"):
+            normalize("source", "https://gitlab.com/group/repo/-/merge_requests/5")
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback", return_value=[])
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_normalize_full_github_pr_url_sets_source_ref(self, mock_subprocess, mock_fetch):
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = json.dumps(_DISPATCH_PR_RESPONSE)
+        mock_subprocess.run.return_value = mock_result
+        wr = normalize("source", "https://github.com/owner/repo/pull/33")
+        assert wr.source_ref == "gh:pr:33"
 
 
 # --- graph report static-injection surface removed (W-053 query pivot) ---

@@ -69,6 +69,25 @@ describe('fleetLauncherView — work source', () => {
     expect(out).toContain('>None<');
     expect(out).toContain('>GitHub Issue<');
     expect(out).toContain('>Spec File<');
+    expect(out).toContain('>GitHub PR<');
+  });
+
+  it('shows source value input when type is GitHub PR', () => {
+    resetLauncherState({ sourceType: 'pr' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('input-fleet-source');
+  });
+
+  it('shows gh:pr placeholder when type is GitHub PR', () => {
+    resetLauncherState({ sourceType: 'pr' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('gh:pr:');
+  });
+
+  it('shows PR hint text when type is GitHub PR', () => {
+    resetLauncherState({ sourceType: 'pr' });
+    const out = renderToString(fleetLauncherView({ projects: [] }, {}));
+    expect(out).toContain('revision mode');
   });
 
   it('does not show source value input when type is None', () => {

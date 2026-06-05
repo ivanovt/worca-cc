@@ -42,6 +42,12 @@ from worca.state.status import (
 )
 from worca.utils.beads import bd_ready, bd_show, bd_update, bd_close, bd_label_add, bd_daemon_stop, bd_get_effort_label
 from worca.utils.gh_issues import gh_issue_start, gh_issue_complete
+from worca.utils.gh_pr import (
+    WORCA_COMMENT_MARKER,
+    current_repo_nwo,
+    post_revision_summary,
+    reply_to_thread,
+)
 from worca.utils.claude_cli import run_agent, terminate_current, terminate_all, AgentSubprocessError
 from worca.utils.proc import pid_is_alive
 from worca.utils.proc_registry import kill_all_tracked
@@ -1484,6 +1490,66 @@ def _extract_pr_fields_from_text(text) -> Optional[dict]:
 PRVerification = collections.namedtuple("PRVerification", ["ok", "reason"])
 
 
+def _fetch_pr_url_via_gh(pr_number: int, timeout: int = 10) -> Optional[str]:
+    """Return the URL of an existing PR, or None on any error.
+
+    Used in revise mode to populate status["pr"].url when the guardian re-reads
+    an existing PR instead of creating a new one.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "url,number"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    return data.get("url") or None
+
+
+def _revise_pr_writeback(pr_number, commit_sha, review_feedback) -> None:
+    """Post the revision summary + per-thread replies for a revise-mode run.
+
+    Runner-side writeback (like gh_issues.py) — NOT an agent tool call — so it
+    bypasses the pre_tool_use governance hook and never depends on the guardian
+    formatting GraphQL by hand. Both helpers are error-suppressed and
+    WORCA_NO_GITHUB-gated; failures here never fail the pipeline.
+
+    Every comment posted here starts with WORCA_COMMENT_MARKER so a later
+    revise run recognises and skips worca's own writeback (L1).
+
+    - Summary: one top-level comment on the PR (D1 — update in place).
+    - Replies: one reply per ingested thread that carries a thread_id (D3 —
+      reply only, never resolve). Review-summary items have no thread_id and
+      are skipped. In a revision run every ingested unresolved thread is in
+      scope, so all of them are replied to with the addressing commit.
+    """
+    nwo = current_repo_nwo()
+    sha = (commit_sha or "").strip()
+    sha_phrase = f" in commit `{sha}`" if sha else ""
+
+    if nwo:
+        n_threads = sum(1 for c in (review_feedback or []) if c.get("thread_id"))
+        summary = (
+            f"{WORCA_COMMENT_MARKER} · addressed {n_threads} review "
+            f"{'comment' if n_threads == 1 else 'comments'}{sha_phrase}."
+        )
+        post_revision_summary(nwo, pr_number, summary)
+
+    seen_threads = set()
+    for comment in review_feedback or []:
+        thread_id = comment.get("thread_id")
+        if not thread_id or thread_id in seen_threads:
+            continue
+        seen_threads.add(thread_id)
+        reply_to_thread(nwo, thread_id, f"{WORCA_COMMENT_MARKER} · addressed{sha_phrase}.")
+
+
 def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> Optional[PRVerification]:
     """Best-effort `gh pr view` check.
 
@@ -2480,6 +2546,8 @@ def run_pipeline(
         prompt_builder.update_context("run_id", status.get("run_id", ""))
         prompt_builder.update_context("branch", branch_name)
         prompt_builder.update_context("title", work_request.title)
+        if work_request.review_comments:
+            prompt_builder.update_context("review_comments", work_request.review_comments)
         # Guardian template variables (issue #165): derived once here so the
         # dispatch-time resolve_agent call resolves {{pr_title_prefix}},
         # {{pr_footer}}, and {{#if defer_pr}} in guardian.md. Computed from
@@ -2628,6 +2696,11 @@ def run_pipeline(
                 }
                 if _eff_level is not None:
                     _effort_env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = _eff_level
+
+            if current_stage == Stage.PR:
+                _revises_pr_num = status.get("revises_pr")
+                if _revises_pr_num is not None:
+                    _effort_env_overrides["WORCA_REVISE_PR"] = str(_revises_pr_num)
 
             # Start a new iteration record
             _iter_kwargs = {
@@ -4174,6 +4247,16 @@ def run_pipeline(
                 if isinstance(result, dict):
                     _pr_url = result.get("pr_url")
                     _pr_number = result.get("pr_number")
+                    # In revise mode, if the agent's prose fallback didn't carry
+                    # pr_url/pr_number, re-read the existing PR via gh so
+                    # status["pr"] still populates with the correct number/url.
+                    _revises_pr = status.get("revises_pr")
+                    if _revises_pr is not None and (not _pr_url or _pr_number is None):
+                        _fetched_url = _fetch_pr_url_via_gh(_revises_pr)
+                        if _fetched_url and not _pr_url:
+                            _pr_url = _fetched_url
+                        if _pr_number is None:
+                            _pr_number = _revises_pr
                     if _pr_url and _pr_number is not None:
                         _commit_sha = result.get("commit_sha")
                         # Branches: prefer agent value, fall back to runner state.
@@ -4216,6 +4299,18 @@ def run_pipeline(
                                 target_branch=_target_branch,
                                 provider=_provider,
                             ))
+
+                        # Revise mode: worca owns the PR writeback (summary
+                        # comment + per-thread replies). The guardian only
+                        # pushes the head branch; doing the writeback here keeps
+                        # it off the agent tool path and reliable (D3 — replies
+                        # only, never resolve).
+                        if _revises_pr is not None:
+                            _revise_pr_writeback(
+                                _pr_number,
+                                _commit_sha,
+                                status.get("review_feedback", []),
+                            )
 
                     _maybe_graphify_post_guardian(
                         settings_path=settings_path,

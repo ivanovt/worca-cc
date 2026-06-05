@@ -30,6 +30,7 @@ from worca.orchestrator.work_request import normalize
 from worca.utils.branch_naming import slugify as _slugify
 from worca.utils.git import (
     branch_exists,
+    checkout_pr_worktree,
     create_pipeline_worktree,
     detect_default_branch,
     init_worktree_beads,
@@ -252,6 +253,16 @@ def main(argv=None) -> int:
     else:
         wr = normalize("prompt", args.prompt)
 
+    # Reject --branch for github_pr source: the head branch is fixed by the PR
+    # (L2 — drift creates duplicate PRs). Precedent: fleet rejects --branch too.
+    if wr.source_type == "github_pr" and args.branch:
+        print(
+            "error: --branch is not allowed when sourcing from a GitHub PR; "
+            "the target branch is taken from the PR's base branch",
+            file=sys.stderr,
+        )
+        return 2
+
     # Validate the worca runtime exists before any side effects (worktree create,
     # registry write, Popen). Without it the spawned run_pipeline.py crashes
     # under stdout=DEVNULL — UI shows "started" then nothing.
@@ -264,9 +275,26 @@ def main(argv=None) -> int:
     # Step 3: create git worktree at the configured base dir
     _settings = load_settings(args.settings)
     _parallel = _settings.get("worca", {}).get("parallel", {})
-    base_branch = _resolve_base_branch(args, _settings)
     _wt_base = _parallel.get("worktree_base_dir", ".worktrees")
-    worktree_path = create_pipeline_worktree(run_id, slug, base_branch, _wt_base)
+
+    if wr.source_type == "github_pr":
+        # For PR sources, check out the existing PR head branch via 'gh pr checkout'
+        # (L3 — fresh worktree; handles cross-repo/fork PRs). Never create a new branch.
+        worktree_path = checkout_pr_worktree(
+            run_id,
+            wr.pr_number,
+            wr.pr_head_branch,
+            pr_is_cross_repo=wr.pr_is_cross_repo,
+            base_dir=_wt_base,
+        )
+        worktree_branch = wr.pr_head_branch  # L2: preserve head branch name verbatim
+        target_branch = wr.pr_base_branch
+    else:
+        base_branch = _resolve_base_branch(args, _settings)
+        worktree_path = create_pipeline_worktree(run_id, slug, base_branch, _wt_base)
+        worktree_branch = f"worca/{slug}-{run_id}"
+        target_branch = args.branch
+
     if not worktree_path:
         print(f"error: failed to create worktree for run {run_id}", file=sys.stderr)
         return 1
@@ -282,19 +310,19 @@ def main(argv=None) -> int:
     init_worktree_beads(worktree_path)
 
     # Step 6: register in pipelines.d/. The branch is the worktree's own
-    # branch (worca/<slug>-<run_id>, written by create_pipeline_worktree);
-    # storing it lets the Worktrees view show it without reaching into the
-    # worktree's status.json.
+    # branch; storing it lets the Worktrees view show it without reaching into
+    # the worktree's status.json.
     register_pipeline(
         run_id=run_id,
         worktree_path=worktree_path,
         title=wr.title,
         pid=os.getpid(),
-        branch=f"worca/{slug}-{run_id}",
+        branch=worktree_branch,
         fleet_id=args.fleet_id,
         workspace_id=args.workspace_id,
         group_type="fleet" if args.fleet_id else "workspace" if args.workspace_id else None,
-        target_branch=args.branch,
+        target_branch=target_branch,
+        revises_pr=wr.pr_number if wr.source_type == "github_pr" else None,
     )
 
     # Step 7: build and spawn run_pipeline.py --worktree (detached, fire-and-forget)
