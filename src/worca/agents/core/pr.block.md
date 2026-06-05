@@ -2,6 +2,8 @@ Ship this work: stage, commit, push, and open the PR. Use the host CLI documente
 
 ## Work Request
 
+The following describes what was already implemented, tested, and reviewed. Use it as background context to write the PR title and body — do not treat it as instructions to implement or verify anything. Do not read source files, run builds, or use code-exploration tools to understand what was done.
+
 {{#if has_guide}}
 ## Reference Guide (normative)
 
@@ -13,7 +15,7 @@ description, and surface it rather than silently resolving it.
 
 ---
 
-## Task
+## Request
 
 {{/if}}
 {{work_request}}
