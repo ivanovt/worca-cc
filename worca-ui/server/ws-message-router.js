@@ -822,7 +822,7 @@ export function createMessageRouter({
       const proj = resolveProject(ws, req.payload);
       const runDir = resolveRunDir(proj.worcaDir, runId);
       const eventsPath = runDir ? join(runDir, 'events.jsonl') : null;
-      const model = buildFileAccessModel(eventsPath);
+      const model = buildFileAccessModel(eventsPath, runDir);
       ws.send(JSON.stringify(makeOk(req, { runId, ...model })));
       return;
     }

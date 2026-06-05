@@ -930,17 +930,56 @@ function fetchRunBeads(runId) {
     });
 }
 
-function fetchRunAccessModel(runId) {
-  if (!runId || runAccessModels.has(runId)) return;
+function fetchRunAccessModel(runId, force = false) {
+  if (!runId) return;
+  // Cached one-shot for completed runs; `force` (the live poll) refetches so the
+  // server's live fragment folding reaches the page during an active run.
+  if (!force && runAccessModels.has(runId)) return;
   ws.send('get-file-access', { runId, projectId: _runProjectId(runId) })
     .then((payload) => {
       runAccessModels.set(runId, payload);
       rerender();
     })
     .catch(() => {
-      runAccessModels.set(runId, { enabled: false });
-      rerender();
+      if (!runAccessModels.has(runId)) {
+        runAccessModels.set(runId, { enabled: false });
+        rerender();
+      }
     });
+}
+
+// Live Access Map: while the access view of an active run is open, re-fetch the
+// model every few seconds so the in-progress iteration's fragment (folded live
+// server-side) keeps updating. Self-terminates when the run reaches a terminal
+// state, and is cleared on navigation away (route-change handler).
+let _accessPollTimer = null;
+let _accessPollRunId = null;
+const _ACCESS_POLL_MS = 3000;
+const _TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+
+function _isRunPollable(runId) {
+  const r = store.getRunById(runId);
+  if (!r) return true; // status not known yet — poll until we learn otherwise
+  const ps = r.pipeline_status || (r.active ? 'running' : 'completed');
+  return !_TERMINAL_RUN_STATUSES.has(ps);
+}
+
+function startAccessPoll(runId) {
+  if (_accessPollRunId === runId && _accessPollTimer) return; // already polling
+  stopAccessPoll();
+  _accessPollRunId = runId;
+  _accessPollTimer = setInterval(() => {
+    fetchRunAccessModel(runId, true);
+    if (!_isRunPollable(runId)) stopAccessPoll(); // final fetch issued above
+  }, _ACCESS_POLL_MS);
+}
+
+function stopAccessPoll() {
+  if (_accessPollTimer) {
+    clearInterval(_accessPollTimer);
+    _accessPollTimer = null;
+  }
+  _accessPollRunId = null;
 }
 
 function fetchAgentPrompts(runId, stages) {
@@ -1692,6 +1731,14 @@ onHashChange((newRoute) => {
     startIntegrationsPoll();
   } else {
     stopIntegrationsPoll();
+  }
+
+  // Live Access Map polling — only while the access view of a non-terminal run
+  // is open. Cleared on any other navigation.
+  if (route.action === 'access' && route.runId && _isRunPollable(route.runId)) {
+    startAccessPoll(route.runId);
+  } else {
+    stopAccessPoll();
   }
 
   if (route.section === 'project-settings') {

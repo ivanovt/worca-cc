@@ -767,3 +767,149 @@ describe('graphQueries', () => {
     expect(summary.graph_queries).toBe(0);
   });
 });
+
+// ─── live fragment folding (in-progress iterations) ──────────────────────────
+
+describe('buildFileAccessModel — live fragment folding', () => {
+  // Build a run dir at <root>/.worca/runs/<id> so repoRoot (3 levels up) === root.
+  function makeRunDir(id = 'live-run') {
+    const runDir = join(root, '.worca', 'runs', id);
+    mkdirSync(join(runDir, 'access'), { recursive: true });
+    return runDir;
+  }
+
+  function writeFragment(runDir, name, records) {
+    writeJsonl(join(runDir, 'access', name), records);
+  }
+
+  it('folds an in-progress iteration live from its fragment (no completion event)', () => {
+    const runDir = makeRunDir();
+    const eventsPath = join(runDir, 'events.jsonl');
+    // events.jsonl exists but carries no iteration.access event yet.
+    writeJsonl(eventsPath, [
+      { event_type: 'pipeline.run.started', payload: {} },
+    ]);
+    writeFragment(runDir, 'plan-1.jsonl', [
+      {
+        ts: 't1',
+        tool: 'mcp__code-review-graph__query_graph_tool',
+        op: 'graph_query',
+        engine: 'crg',
+        graph_op: 'query_graph_tool',
+        query: 'arch',
+      },
+      {
+        ts: 't2',
+        tool: 'Bash',
+        op: 'graph_query',
+        engine: 'graphify',
+        graph_op: 'query',
+        query: 'overview',
+      },
+      {
+        ts: 't3',
+        tool: 'Read',
+        op: 'read',
+        path: `${root}/docs/architecture.md`,
+      },
+    ]);
+
+    const m = buildFileAccessModel(eventsPath, runDir);
+    expect(m.enabled).toBe(true);
+    expect(m.columns).toHaveLength(1);
+    expect(m.columns[0]).toMatchObject({
+      stage: 'plan',
+      iteration: 1,
+      live: true,
+    });
+    expect(m.summary.crg).toBe(1);
+    expect(m.summary.graphify).toBe(1);
+    expect(m.graphQueries).toHaveLength(2);
+    // Read path is relativised against repoRoot (live stand-in for respelling).
+    expect(m.summary.distinct_read).toBe(1);
+    const flatFiles = JSON.stringify(m.tree);
+    expect(flatFiles).toContain('architecture.md');
+    expect(flatFiles).not.toContain(root); // absolute prefix stripped
+  });
+
+  it('does NOT double-count: a completed column wins over its fragment', () => {
+    const runDir = makeRunDir('dedupe-run');
+    const eventsPath = join(runDir, 'events.jsonl');
+    // Completion event for plan:1 with 3 CRG queries (authoritative).
+    writeJsonl(eventsPath, [
+      makeAccessEvent('plan', 1, null, {
+        reads: {},
+        writes: {},
+        searches: [],
+        graph_queries: [
+          { engine: 'crg', op: 'query_graph_tool', query: 'a' },
+          { engine: 'crg', op: 'query_graph_tool', query: 'b' },
+          { engine: 'crg', op: 'query_graph_tool', query: 'c' },
+        ],
+        capture: defaultCapture(),
+      }),
+    ]);
+    // A leftover fragment for the same column must be ignored.
+    writeFragment(runDir, 'plan-1.jsonl', [
+      {
+        ts: 't1',
+        tool: 'x',
+        op: 'graph_query',
+        engine: 'crg',
+        graph_op: 'query_graph_tool',
+        query: 'stale',
+      },
+    ]);
+
+    const m = buildFileAccessModel(eventsPath, runDir);
+    expect(m.columns).toHaveLength(1);
+    expect(m.columns[0].live).toBe(false); // completion column, not live
+    expect(m.summary.crg).toBe(3); // event's 3, not 3+1
+  });
+
+  it('mixes completed event columns with the live in-flight column', () => {
+    const runDir = makeRunDir('mixed-run');
+    const eventsPath = join(runDir, 'events.jsonl');
+    writeJsonl(eventsPath, [
+      makeAccessEvent('plan', 1, null, {
+        reads: {},
+        writes: {},
+        searches: [],
+        graph_queries: [{ engine: 'crg', op: 'q', query: 'x' }],
+        capture: defaultCapture(),
+      }),
+    ]);
+    // implement:1 is still running — only a fragment exists.
+    writeFragment(runDir, 'implement-1.jsonl', [
+      { ts: 't1', tool: 'Write', op: 'write', path: `${root}/src/new.py` },
+    ]);
+
+    const m = buildFileAccessModel(eventsPath, runDir);
+    const cols = m.columns.map((c) => `${c.stage}:${c.iteration}:${c.live}`);
+    expect(cols).toContain('plan:1:false');
+    expect(cols).toContain('implement:1:true');
+    expect(m.summary.distinct_write).toBe(1);
+  });
+
+  it('is unchanged (event-only) when runDir is omitted', () => {
+    const runDir = makeRunDir('noarg-run');
+    const eventsPath = join(runDir, 'events.jsonl');
+    writeJsonl(eventsPath, [
+      { event_type: 'pipeline.run.started', payload: {} },
+    ]);
+    writeFragment(runDir, 'plan-1.jsonl', [
+      {
+        ts: 't1',
+        tool: 'x',
+        op: 'graph_query',
+        engine: 'crg',
+        graph_op: 'q',
+        query: 'y',
+      },
+    ]);
+    // No runDir → no live folding → no access events → disabled.
+    expect(buildFileAccessModel(eventsPath).enabled).toBe(false);
+    // With runDir → live folding kicks in.
+    expect(buildFileAccessModel(eventsPath, runDir).enabled).toBe(true);
+  });
+});

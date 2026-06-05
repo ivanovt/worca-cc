@@ -24,41 +24,66 @@
  * Pattern: mirrors dispatch-events-aggregator.js.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { STAGE_ORDER } from '../app/utils/stage-order.js';
 
 const ACCESS_EVENT_TYPE = 'pipeline.iteration.access';
 
+// Access fragment filename: `<stage>-<iter>.jsonl` or `<stage>-<iter>-<bead>.jsonl`.
+// Stage keys never contain a hyphen (plan, coordinate, implement, plan_review…);
+// iteration is digits; bead ids may contain hyphens, so they soak up the rest.
+const FRAGMENT_NAME_RE = /^([a-z_]+)-(\d+)(?:-(.+))?\.jsonl$/;
+
 /**
  * Build the Access Map model from a run's events.jsonl.
  *
+ * The completed iterations come from `pipeline.iteration.access` events (the
+ * runner's authoritative completion-time aggregation). When `runDir` is given,
+ * the still-running iteration is folded in LIVE by reading its on-disk access
+ * fragment directly — so the map, searches and graph-queries populate during
+ * the stage instead of only at completion. A live column is never double-counted
+ * once its completion event lands (the completion payload wins by colKey), and
+ * capture-integrity (leakage/oracle) stays pending for live columns since it's
+ * only computable from the finished iteration.
+ *
  * @param {string} eventsPath — absolute path to events.jsonl
+ * @param {string|null} runDir — run directory (enables live fragment folding)
  * @returns {{ enabled: false } | { enabled: true, columns, tree, searches, summary }}
  */
-export function buildFileAccessModel(eventsPath) {
-  if (!eventsPath || !existsSync(eventsPath)) return { enabled: false };
-
-  let content;
-  try {
-    content = readFileSync(eventsPath, 'utf8');
-  } catch {
-    return { enabled: false };
-  }
-
-  // Parse and filter to access events only.
+export function buildFileAccessModel(eventsPath, runDir = null) {
+  // Parse completion-time access events (authoritative for finished iterations).
   const accessPayloads = [];
-  for (const line of content.split('\n')) {
-    if (!line.trim()) continue;
-    let e;
+  if (eventsPath && existsSync(eventsPath)) {
+    let content = '';
     try {
-      e = JSON.parse(line);
+      content = readFileSync(eventsPath, 'utf8');
     } catch {
-      continue;
+      content = '';
     }
-    if (e.event_type !== ACCESS_EVENT_TYPE) continue;
-    if (!e.payload) continue;
-    accessPayloads.push(e.payload);
+    for (const line of content.split('\n')) {
+      if (!line.trim()) continue;
+      let e;
+      try {
+        e = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (e.event_type !== ACCESS_EVENT_TYPE) continue;
+      if (!e.payload) continue;
+      accessPayloads.push(e.payload);
+    }
   }
+
+  // Fold the still-running iteration's fragment(s) in live — skipping any
+  // column that already has an authoritative completion event.
+  const completedCols = new Set(
+    accessPayloads.map((p) => colKey(p.stage, p.iteration, p.bead_id)),
+  );
+  const livePayloads = runDir
+    ? readLiveFragmentPayloads(runDir, completedCols)
+    : [];
+  accessPayloads.push(...livePayloads);
 
   if (accessPayloads.length === 0) return { enabled: false };
 
@@ -75,6 +100,7 @@ export function buildFileAccessModel(eventsPath) {
         iteration: p.iteration,
         bead_id: p.bead_id ?? null,
         agent: p.agent,
+        live: !!p._live,
       });
     }
   }
@@ -211,6 +237,138 @@ export function buildFileAccessModel(eventsPath) {
 
 function colKey(stage, iteration, beadId) {
   return beadId ? `${stage}:${iteration}:${beadId}` : `${stage}:${iteration}`;
+}
+
+/**
+ * Read access fragments under runDir/access/ and synthesise per-iteration
+ * payloads (same shape as a pipeline.iteration.access event's payload) for the
+ * still-running iterations — i.e. any fragment whose column has no completion
+ * event yet. Mirrors the Python aggregation in file_access_aggregation.py,
+ * minus the GitPathOracle respelling (paths are repo-root-relativised here as a
+ * live approximation; the completion event respells authoritatively).
+ *
+ * @param {string} runDir
+ * @param {Set<string>} completedCols — colKeys that already have a completion event
+ * @returns {Array<object>} synthetic access payloads with `_live: true`
+ */
+function readLiveFragmentPayloads(runDir, completedCols) {
+  const accessDir = join(runDir, 'access');
+  if (!existsSync(accessDir)) return [];
+  // runDir is `<repoRoot>/.worca/runs/<id>` → repoRoot is three levels up.
+  const repoRoot = resolve(runDir, '..', '..', '..');
+
+  let files;
+  try {
+    files = readdirSync(accessDir);
+  } catch {
+    return [];
+  }
+
+  const payloads = [];
+  for (const fname of files) {
+    const m = FRAGMENT_NAME_RE.exec(fname);
+    if (!m) continue;
+    const stage = m[1];
+    const iteration = Number(m[2]);
+    const bead_id = m[3] || null;
+    if (completedCols.has(colKey(stage, iteration, bead_id))) continue;
+
+    let records;
+    try {
+      records = readFileSync(join(accessDir, fname), 'utf8')
+        .split('\n')
+        .filter((l) => l.trim())
+        .map((l) => {
+          try {
+            return JSON.parse(l);
+          } catch {
+            return null;
+          }
+        })
+        .filter(Boolean);
+    } catch {
+      continue;
+    }
+    if (records.length === 0) continue;
+
+    payloads.push({
+      stage,
+      iteration,
+      bead_id,
+      agent: null,
+      _live: true,
+      file_access: fragmentRecordsToFileAccess(records, repoRoot),
+    });
+  }
+  return payloads;
+}
+
+/**
+ * Fold raw access-fragment records into the `file_access` shape the model
+ * builder consumes. Capture is left empty — leakage/oracle are only computable
+ * from the finished iteration, so they stay pending for a live column.
+ */
+function fragmentRecordsToFileAccess(records, repoRoot) {
+  const reads = {};
+  const writes = {};
+  const searches = [];
+  const graph_queries = [];
+
+  for (const r of records) {
+    switch (r.op) {
+      case 'read': {
+        const p = canonicalizePath(r.path, repoRoot);
+        if (p) reads[p] = (reads[p] || 0) + 1;
+        break;
+      }
+      case 'write': {
+        const p = canonicalizePath(r.path, repoRoot);
+        if (p) writes[p] = (writes[p] || 0) + 1;
+        break;
+      }
+      case 'search': {
+        let scope = r.scope || '';
+        if (!scope || scope === '.') scope = '.';
+        const entry = {
+          tool: r.tool,
+          pattern: (r.pattern || '').slice(0, 200),
+          scope,
+          result_count: r.result_count ?? 0,
+        };
+        if ('filter' in r) entry.filter = r.filter;
+        searches.push(entry);
+        break;
+      }
+      case 'graph_query': {
+        if (r.engine === 'graphify' || r.engine === 'crg') {
+          graph_queries.push({
+            engine: r.engine,
+            op: r.graph_op || '',
+            query: (r.query || '').slice(0, 200),
+          });
+        }
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  return { reads, writes, searches, graph_queries, capture: {} };
+}
+
+/**
+ * Relativise an absolute fragment path against the repo root (a live stand-in
+ * for the Python GitPathOracle respelling). Paths already relative, or outside
+ * the repo, are returned unchanged; the repo root itself maps to null.
+ */
+function canonicalizePath(rawPath, repoRoot) {
+  if (!rawPath) return null;
+  if (repoRoot && rawPath.startsWith(`${repoRoot}/`)) {
+    return rawPath.slice(repoRoot.length + 1);
+  }
+  if (rawPath === repoRoot) return null;
+  return rawPath;
 }
 
 function ensureFile(fileData, path) {
