@@ -141,15 +141,29 @@ def test_allows_learner_dispatching_explore():
     assert code == 0
 
 
-def test_check_dispatch_blocks_general_purpose_by_default():
-    """check_dispatch denies general-purpose for an agent with no explicit allow
-    entry: it resolves via the `*` wildcard, which excludes default_denied. The
-    returned message is the default_denied ("cannot dispatch") path, not the
-    always_disallowed ("denylist") one."""
-    code, reason = check_dispatch("coordinator", "general-purpose")
+def test_check_dispatch_maps_default_denied_to_cannot_dispatch():
+    """check_dispatch maps a default_denied verdict to the "cannot dispatch"
+    message (not the always_disallowed "denylist" message). general-purpose is
+    now allowed by default, so we force the denied verdict via the underlying
+    check_allowed to test the mapping independent of the shipped config."""
+    with patch(
+        "worca.hooks.tracking.check_allowed",
+        return_value=(False, "default_denied", None),
+    ):
+        code, reason = check_dispatch("coordinator", "general-purpose")
     assert code == 2
     assert "cannot dispatch" in reason
     assert "denylist" not in reason.lower()
+
+
+def test_check_dispatch_allows_general_purpose_by_default():
+    """With general-purpose removed from default_denied it now dispatches via
+    the `*` wildcard (config-independent: forced through the default map)."""
+    allowed, _reason, via = check_allowed(
+        "subagents", "coordinator", "general-purpose", settings_override={},
+    )
+    assert allowed is True
+    assert via == "wildcard"
 
 
 def test_always_disallowed_wins_over_per_agent_allow():
