@@ -1160,6 +1160,8 @@ h1, h2, h3, h4, h5, h6 {
    block reads as a uniform stack. Mirror .run-group below it. */
 .run-project,
 .run-branch,
+.run-target-branch,
+.run-source,
 .run-template,
 .run-worktree {
   display: flex;
