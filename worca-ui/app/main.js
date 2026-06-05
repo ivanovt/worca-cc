@@ -1002,7 +1002,14 @@ ws.on('runs-list', (payload, msg) => {
     }
     const now = Date.now();
     for (const run of payload.runs || []) {
-      if (sourceProject) run._project = sourceProject;
+      const prev = existing[run.id] || archivedUpdates[run.id];
+      run._project =
+        sourceProject ||
+        run.project ||
+        run._project ||
+        prev?._project ||
+        prev?.project ||
+        null;
       if (run.archived) {
         if (isArchivedRunExpired(run, now)) continue;
         archivedUpdates[run.id] = run;

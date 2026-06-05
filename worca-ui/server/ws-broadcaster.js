@@ -14,10 +14,11 @@ export function createBroadcaster({ wss, getSubs }) {
    * Build a message envelope. For protocol 2 clients with a projectId,
    * a `project` field is added to the top-level message.
    */
-  function sendToClient(ws, baseMsg) {
+  function sendToClient(ws, baseMsg, sourceProjectId) {
     const s = getSubs(ws);
-    if (s && s.protocolVersion >= 2 && s.projectId) {
-      ws.send(JSON.stringify({ ...baseMsg, project: s.projectId }));
+    const project = sourceProjectId || (s && s.projectId) || null;
+    if (s && s.protocolVersion >= 2 && project) {
+      ws.send(JSON.stringify({ ...baseMsg, project }));
     } else {
       ws.send(JSON.stringify(baseMsg));
     }
@@ -44,7 +45,7 @@ export function createBroadcaster({ wss, getSubs }) {
         )
           continue;
       }
-      sendToClient(ws, base);
+      sendToClient(ws, base, projectId);
     }
   }
 
