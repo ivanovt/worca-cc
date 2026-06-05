@@ -236,9 +236,11 @@ class TestRunnerWiring:
         src = RUNNER_PATH.read_text()
         # The call to build_guardian_context must appear adjacent to an
         # update_context call to prove the values land in prompt_builder.
-        assert "build_guardian_context(os.environ)" in src
+        # W-065 routes the env through a per-run copy (guardian_env) rather
+        # than mutating the live os.environ, so the call site reads from it.
+        assert "build_guardian_context(guardian_env)" in src
         # Crude proximity check: both tokens within the same 300-char window.
-        idx = src.find("build_guardian_context(os.environ)")
+        idx = src.find("build_guardian_context(guardian_env)")
         window = src[max(0, idx - 300):idx + 300]
         assert "prompt_builder.update_context" in window, (
             "build_guardian_context output must be threaded into "
@@ -348,25 +350,36 @@ class TestBehaviorPreservation:
         assert "--base" in rendered
 
     def test_combined_workspace_run_renders_all_clauses(self):
-        """All six clauses from the old §6.5 still produce correct output:
-        defer respect, workspace title, target_branch base, workspace body
-        line. (Repo role was removed in ed9161e and is not asserted here.)"""
+        """All clauses still produce correct output: defer respect, workspace
+        title, target_branch base, workspace body line.
+
+        W-065 restructured guardian.md so Step 2 (compose title/body + resolve
+        base branch) is *shared* by both the defer and PR-create branches —
+        only Step 3 diverges (stash vs. open). As a result the deferred render
+        now also contains the composed metadata (`target_branch`, footer); the
+        defer-specific behavior is the absence of the `gh pr create` imperative,
+        not the absence of the composed fields. (Repo role was removed in
+        ed9161e and is not asserted here.)"""
         env = {
             "WORCA_WORKSPACE_ID": "ws_202601011200_b3c4d5e6",
             "WORCA_WORKSPACE_NAME": "my-platform",
             "WORCA_DEFER_PR": "1",
         }
         rendered = _render(env)
-        # defer wins — PR-creation imperative absent
+        # defer wins — PR-creation imperative absent, but the shared Step 2
+        # compose (title/body/base) still renders so the stashed metadata
+        # matches what a later `worca pr create` will open.
         assert "deferred" in rendered
         assert "gh pr create --base" not in rendered
-        assert "target_branch" not in rendered  # base-branch step is in the PR-create branch
-        assert "**Workspace:**" not in rendered  # footer is only emitted on the PR-create branch
+        assert "target_branch" in rendered  # base resolved in shared Step 2
+        assert "**Workspace:** my-platform" in rendered  # footer composed in Step 2
 
-        # Now flip defer off — workspace + body augmentation should appear.
+        # Now flip defer off — workspace + body augmentation should appear,
+        # and the PR-create imperative returns.
         env_no_defer = dict(env)
         del env_no_defer["WORCA_DEFER_PR"]
         rendered_no_defer = _render(env_no_defer)
         assert "[workspace:b3c4d5e6]" in rendered_no_defer
         assert "target_branch" in rendered_no_defer
         assert "**Workspace:** my-platform" in rendered_no_defer
+        assert "gh pr create --base" in rendered_no_defer

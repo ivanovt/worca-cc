@@ -884,8 +884,12 @@ export function createApp(options = {}) {
 
     const work = (async () => {
       const { stdout } = await prSpawn(runId, projectPath);
+      // Match a PR/MR URL across hosts the CLI may emit: GitHub (/pull/N),
+      // GitLab (/-/merge_requests/N), Bitbucket (/pull-requests/N), and
+      // Azure DevOps (/pullrequest/N). Keep it provider-agnostic so the
+      // returned pr_url isn't silently dropped on non-GitHub hosts.
       const prUrlMatch = stdout.match(
-        /https:\/\/github\.com\/[^\s]+\/pull\/\d+/,
+        /https?:\/\/\S+?\/(?:pull|pull-requests|pullrequest|merge_requests)\/\d+/,
       );
       if (prUrlMatch) return { pr_url: prUrlMatch[0] };
       return {};

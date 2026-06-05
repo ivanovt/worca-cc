@@ -383,3 +383,40 @@ describe('formBufferToConfig — per-agent unknown keys survive round-trip', () 
     expect(out.agents.planner.max_turns).toBe(30);
   });
 });
+
+describe('formBufferToConfig — per-stage unknown keys survive round-trip', () => {
+  it('preserves stages.pr.defer (template-owned PR-defer toggle)', () => {
+    const config = {
+      stages: {
+        pr: { agent: 'guardian', enabled: true, defer: true },
+      },
+    };
+    const form = buildFormBuffer(config, { worca: {} });
+    const out = formBufferToConfig(form);
+    expect(out.stages.pr.defer).toBe(true);
+    expect(out.stages.pr.enabled).toBe(true);
+    expect(out.stages.pr.agent).toBe('guardian');
+  });
+
+  it('preserves an arbitrary future per-stage key', () => {
+    const config = {
+      stages: {
+        pr: { agent: 'guardian', enabled: true, custom_stage_knob: 'x' },
+      },
+    };
+    const form = buildFormBuffer(config, { worca: {} });
+    const out = formBufferToConfig(form);
+    expect(out.stages.pr.custom_stage_knob).toBe('x');
+  });
+
+  it('reflects a defer toggle flipped off in the form buffer', () => {
+    const config = {
+      stages: { pr: { agent: 'guardian', enabled: true, defer: true } },
+    };
+    const form = buildFormBuffer(config, { worca: {} });
+    // Mirror the editor's switch handler: off deletes the key.
+    delete form.stages.pr.defer;
+    const out = formBufferToConfig(form);
+    expect(out.stages.pr).not.toHaveProperty('defer');
+  });
+});
