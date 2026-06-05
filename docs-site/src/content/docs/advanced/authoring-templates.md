@@ -237,7 +237,7 @@ So a bundle export of a model with a real API key looks like this on the wire:
   "templates": [ /* ... */ ],
   "models": {
     "opus": {
-      "id": "claude-opus-4-6",
+      "id": "claude-opus-4-7",
       "env": {
         "ANTHROPIC_BASE_URL": "https://proxy.example.com",  // preserved
         "ANTHROPIC_API_KEY": "<YOUR-SECRET-HERE>"            // value redacted, key kept

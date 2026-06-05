@@ -24,7 +24,7 @@ _DEFAULT_MODEL = "haiku"
 _DEFAULT_MODEL_IDS = {
     "haiku": "claude-haiku-4-5-20251001",
     "sonnet": "claude-sonnet-4-6",
-    "opus": "claude-opus-4-6",
+    "opus": "claude-opus-4-7",
 }
 _DEFAULT_MAX_CONSECUTIVE = 3
 _DEFAULT_BACKOFF = [10, 30, 90]

@@ -19,7 +19,7 @@ class TestResolveModel:
 
     def test_resolve_falls_back_to_default_map(self):
         result = resolve_model("opus", {})
-        assert result == ("claude-opus-4-6", {})
+        assert result == ("claude-opus-4-7", {})
 
     def test_resolve_none_name(self):
         result = resolve_model(None, {})
@@ -30,7 +30,7 @@ class TestResolveModel:
             resolve_model("bad", {"bad": {"env": {}}})
 
     def test_resolve_all_default_models(self):
-        assert resolve_model("opus", {}) == ("claude-opus-4-6", {})
+        assert resolve_model("opus", {}) == ("claude-opus-4-7", {})
         assert resolve_model("sonnet", {}) == ("claude-sonnet-4-6", {})
         assert resolve_model("haiku", {}) == ("claude-haiku-4-5-20251001", {})
 

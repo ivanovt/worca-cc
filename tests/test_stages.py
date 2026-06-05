@@ -219,7 +219,7 @@ class TestGetStageConfig:
 
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["agent"] == "planner"
-        assert config["model"] == "claude-opus-4-6"  # "opus" resolved via default map
+        assert config["model"] == "claude-opus-4-7"  # "opus" resolved via default map
         assert config["max_turns"] == 10
         assert config["schema"] == "plan.json"
 
@@ -356,7 +356,7 @@ class TestGetStageConfigWithStages:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["agent"] == "guardian"
-        assert config["model"] == "claude-opus-4-6"
+        assert config["model"] == "claude-opus-4-7"
         assert config["max_turns"] == 30
 
     def test_falls_back_to_hardcoded_when_no_stages_config(self, tmp_path):
@@ -371,7 +371,7 @@ class TestGetStageConfigWithStages:
         settings_file.write_text(json.dumps(settings))
         config = get_stage_config(Stage.PLAN, settings_path=str(settings_file))
         assert config["agent"] == "planner"
-        assert config["model"] == "claude-opus-4-6"
+        assert config["model"] == "claude-opus-4-7"
 
     def test_falls_back_to_hardcoded_when_stage_missing_from_stages(self, tmp_path):
         settings = {
@@ -613,7 +613,7 @@ class TestModelResolution:
         assert model_env == {}
 
     def test_resolve_model_falls_back_to_default_map(self):
-        assert _resolve_model("opus", {})[0] == "claude-opus-4-6"
+        assert _resolve_model("opus", {})[0] == "claude-opus-4-7"
         assert _resolve_model("sonnet", {})[0] == "claude-sonnet-4-6"
         assert _resolve_model("haiku", {})[0] == "claude-haiku-4-5-20251001"
 
