@@ -17,6 +17,7 @@ from worca.hooks.tracking import (
     adopt_narrowed_skills_denylist,
     adopt_stale_subagent_default,
     normalize_dispatch_defaults,
+    release_general_purpose_default_deny,
 )
 
 # The legacy (W-038-era) Explore-only subagent default, as it survives a W-054
@@ -171,18 +172,41 @@ def test_adopt_general_purpose_noop_when_already_migrated():
     assert adopt_general_purpose_allowable(cfg) is False
 
 
+# --- release_general_purpose_default_deny (v3) -------------------------------
+
+
+def test_release_removes_general_purpose_from_default_denied():
+    cfg = {"always_disallowed": [], "default_denied": ["general-purpose"]}
+    assert release_general_purpose_default_deny(cfg) is True
+    assert cfg["default_denied"] == []
+
+
+def test_release_noop_when_already_clear():
+    cfg = {"always_disallowed": [], "default_denied": []}
+    assert release_general_purpose_default_deny(cfg) is False
+    assert cfg["default_denied"] == []
+
+
+def test_release_preserves_customized_default_denied():
+    """A denylist with extra entries is a deliberate operator choice — leave it."""
+    cfg = {"always_disallowed": [], "default_denied": ["general-purpose", "custom"]}
+    assert release_general_purpose_default_deny(cfg) is False
+    assert cfg["default_denied"] == ["general-purpose", "custom"]
+
+
 # --- normalize_dispatch_defaults (Pop 1) -------------------------------------
 
 
 def test_normalize_pop1_collapses_and_narrows_and_stamps():
     gov = _pop1_config()
     changes = normalize_dispatch_defaults(gov)
-    # Three normalizations fire: subagent default collapse, skills-glob narrow,
-    # and general-purpose moved to default_denied.
-    assert len(changes) == 3
+    # Four normalizations fire: subagent default collapse, skills-glob narrow,
+    # general-purpose moved to default_denied (v2), then released from it (v3).
+    # Net for general-purpose: allowed under "*" (neither deny tier).
+    assert len(changes) == 4
     assert gov["dispatch"]["subagents"]["per_agent_allow"] == {"_defaults": ["*"]}
     assert gov["dispatch"]["subagents"]["always_disallowed"] == []
-    assert gov["dispatch"]["subagents"]["default_denied"] == ["general-purpose"]
+    assert gov["dispatch"]["subagents"]["default_denied"] == []
     assert "worca-*" not in gov["dispatch"]["skills"]["always_disallowed"]
     assert "worca-release" in gov["dispatch"]["skills"]["always_disallowed"]
     assert gov["dispatch_migration_version"] == DISPATCH_MIGRATION_VERSION
@@ -211,6 +235,48 @@ def test_normalize_noop_without_dispatch_block():
     gov = {"guards": {"block_rm_rf": True}}
     assert normalize_dispatch_defaults(gov) == []
     assert "dispatch_migration_version" not in gov
+
+
+def test_normalize_v2_stamped_config_releases_general_purpose():
+    """A project already migrated to v2 (general-purpose parked in
+    default_denied) must be healed on the v3 upgrade — otherwise it silently
+    denies the subagent even though the shipped default now allows it. This is
+    the exact shape observed in the field after the allow-by-default change."""
+    gov = {
+        "dispatch": {
+            "subagents": {
+                "always_disallowed": [],
+                "default_denied": ["general-purpose"],
+                "per_agent_allow": {"_defaults": ["*"]},
+            },
+        },
+        "dispatch_migration_version": 2,
+    }
+    changes = normalize_dispatch_defaults(gov)
+    assert gov["dispatch"]["subagents"]["default_denied"] == []
+    assert any("released general-purpose" in c for c in changes)
+    assert gov["dispatch_migration_version"] == DISPATCH_MIGRATION_VERSION
+
+
+def test_normalize_v2_stamped_preserves_customized_default_denied():
+    """A v2 project that deliberately added other default_denied entries is left
+    alone (the release only fires on the untouched ['general-purpose'] shape)."""
+    gov = {
+        "dispatch": {
+            "subagents": {
+                "always_disallowed": [],
+                "default_denied": ["general-purpose", "custom-agent"],
+                "per_agent_allow": {"_defaults": ["*"]},
+            },
+        },
+        "dispatch_migration_version": 2,
+    }
+    changes = normalize_dispatch_defaults(gov)
+    assert gov["dispatch"]["subagents"]["default_denied"] == [
+        "general-purpose",
+        "custom-agent",
+    ]
+    assert not any("released general-purpose" in c for c in changes)
 
 
 # --- Pop 2: legacy subagent_dispatch through the migration entry point --------
