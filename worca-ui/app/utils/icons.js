@@ -31,6 +31,7 @@ import ExternalLink from 'lucide/dist/esm/icons/external-link';
 import FileText from 'lucide/dist/esm/icons/file-text';
 import Flag from 'lucide/dist/esm/icons/flag';
 import FolderOpen from 'lucide/dist/esm/icons/folder-open';
+import FolderTree from 'lucide/dist/esm/icons/folder-tree';
 import GitBranch from 'lucide/dist/esm/icons/git-branch';
 import GitPullRequest from 'lucide/dist/esm/icons/git-pull-request';
 import Hash from 'lucide/dist/esm/icons/hash';
@@ -119,6 +120,7 @@ export {
   FileText,
   Flag,
   FolderOpen,
+  FolderTree,
   GitBranch,
   GitPullRequest,
   Hash,

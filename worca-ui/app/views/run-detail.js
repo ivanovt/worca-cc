@@ -12,6 +12,7 @@ import {
   Coins,
   ExternalLink,
   FileText,
+  FolderTree,
   GitBranch,
   GitPullRequest,
   iconSvg,
@@ -1826,13 +1827,25 @@ export function runDetailView(run, settings = {}, options = {}) {
                 : nothing
             }
             ${
-              options.onOpenTimeline
+              options.onOpenTimeline || options.onOpenAccess
                 ? html`
               <div class="pipeline-timing-bar-actions">
-                <button
+                ${
+                  options.onOpenTimeline
+                    ? html`<button
                   class="action-btn action-btn--primary"
                   @click=${options.onOpenTimeline}
-                ><span aria-hidden="true">${unsafeHTML(iconSvg(BarChart3, 14))}</span> Timeline</button>
+                ><span aria-hidden="true">${unsafeHTML(iconSvg(BarChart3, 14))}</span> Timeline</button>`
+                    : nothing
+                }
+                ${
+                  options.onOpenAccess
+                    ? html`<button
+                  class="action-btn action-btn--primary"
+                  @click=${options.onOpenAccess}
+                ><span aria-hidden="true">${unsafeHTML(iconSvg(FolderTree, 14))}</span> Access</button>`
+                    : nothing
+                }
               </div>
             `
                 : nothing

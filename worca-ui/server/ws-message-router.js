@@ -17,6 +17,7 @@ import {
   listIssuesByLabel,
   listUnlinkedIssues,
 } from './beads-reader.js';
+import { buildFileAccessModel } from './file-access-aggregator.js';
 import {
   listIterationFiles,
   listLogFiles,
@@ -804,6 +805,25 @@ export function createMessageRouter({
         limit,
       });
       ws.send(JSON.stringify(makeOk(req, { events })));
+      return;
+    }
+
+    // get-file-access
+    if (req.type === 'get-file-access') {
+      const { runId } = req.payload || {};
+      if (typeof runId !== 'string') {
+        ws.send(
+          JSON.stringify(
+            makeError(req, 'bad_request', 'payload.runId required'),
+          ),
+        );
+        return;
+      }
+      const proj = resolveProject(ws, req.payload);
+      const runDir = resolveRunDir(proj.worcaDir, runId);
+      const eventsPath = runDir ? join(runDir, 'events.jsonl') : null;
+      const model = buildFileAccessModel(eventsPath);
+      ws.send(JSON.stringify(makeOk(req, { runId, ...model })));
       return;
     }
 
