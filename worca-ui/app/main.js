@@ -48,6 +48,7 @@ import {
   resetLauncherState,
   submitFleetLauncher,
 } from './views/fleet-launcher.js';
+import { gistExportDialogView } from './views/gist-export-dialog.js';
 import { mountHelpEdgeTab } from './views/help-edge-tab.js';
 import { buildRunMeta, learningsSectionView } from './views/learnings-panel.js';
 import {
@@ -77,7 +78,7 @@ import {
   submitNewRun,
 } from './views/new-run.js';
 import {
-  copyGistUrl,
+  createGist,
   exportTemplate,
   fetchTemplates,
   pipelinesView,
@@ -2616,17 +2617,70 @@ function handleExportTemplate(tid, tier) {
   exportTemplate(projectId, tid, tier || template?.tier, template?.name || tid);
 }
 
+let _gistCopiedTimer = null;
+
 async function handleCopyGistUrl(tid, tier) {
   const projectId = store.getState().currentProjectId || null;
   const template = (store.getState().templates || []).find(
     (t) => t.id === tid && (!tier || t.tier === tier),
   );
-  await copyGistUrl(
-    projectId,
-    tid,
-    tier || template?.tier,
-    template?.name || tid,
-  );
+  const templateName = template?.name || tid;
+  const resolvedTier = tier || template?.tier;
+
+  // Open the dialog immediately in its loading state, before the network
+  // request resolves — no toast in this flow.
+  if (_gistCopiedTimer) {
+    clearTimeout(_gistCopiedTimer);
+    _gistCopiedTimer = null;
+  }
+  store.setState({
+    gistDialog: {
+      open: true,
+      status: 'loading',
+      url: null,
+      error: null,
+      templateName,
+      copied: false,
+    },
+  });
+
+  const result = await createGist(projectId, tid, resolvedTier);
+
+  // Bail if the dialog was dismissed while the request was in flight.
+  if (!store.getState().gistDialog?.open) return;
+
+  store.setState({
+    gistDialog: {
+      open: true,
+      status: result.ok ? 'done' : 'error',
+      url: result.ok ? result.gistUrl : null,
+      error: result.ok ? null : result.error,
+      templateName,
+      copied: false,
+    },
+  });
+}
+
+function handleGistDialogClose() {
+  if (_gistCopiedTimer) {
+    clearTimeout(_gistCopiedTimer);
+    _gistCopiedTimer = null;
+  }
+  const dlg = store.getState().gistDialog || {};
+  store.setState({ gistDialog: { ...dlg, open: false, copied: false } });
+}
+
+function handleGistDialogCopy(url) {
+  if (!url) return;
+  Promise.resolve(navigator.clipboard?.writeText(url)).catch(() => {});
+  const dlg = store.getState().gistDialog || {};
+  store.setState({ gistDialog: { ...dlg, copied: true } });
+  if (_gistCopiedTimer) clearTimeout(_gistCopiedTimer);
+  _gistCopiedTimer = setTimeout(() => {
+    _gistCopiedTimer = null;
+    const cur = store.getState().gistDialog || {};
+    if (cur.open) store.setState({ gistDialog: { ...cur, copied: false } });
+  }, 1500);
 }
 
 function handleStageFilter(stage) {
@@ -5048,6 +5102,10 @@ function rerender() {
         rerender();
       },
       rerender,
+    })}
+    ${gistExportDialogView(state, {
+      onClose: handleGistDialogClose,
+      onCopy: handleGistDialogCopy,
     })}
   `,
     appEl,

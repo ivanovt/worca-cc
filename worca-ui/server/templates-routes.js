@@ -343,6 +343,26 @@ function exportBundle(projectRoot, tier, id) {
   }
 }
 
+/**
+ * Export a single template to a (secret) GitHub gist via the CLI and return the
+ * gist URL. Delegates to `worca templates export --to gist`, which shells out to
+ * `gh gist create` and prints the URL on stdout. Throws (via runWorcaTemplates)
+ * with the CLI stderr as the message when gh is unavailable or gist creation
+ * fails — the caller maps that to a JSON error. Gist export only supports
+ * overlay-free templates (the CLI rejects overlays); the UI hides the button
+ * for templates with overlays, matching that constraint.
+ */
+function exportGist(projectRoot, id) {
+  const stdout = runWorcaTemplates(
+    projectRoot,
+    ['export', '--to', 'gist', '--templates', id],
+    { timeout: 30000 },
+  );
+  // The CLI prints the gist URL (from `gh gist create`) as its final stdout line.
+  const match = stdout.match(/https?:\/\/\S+/);
+  return match ? match[0] : null;
+}
+
 function handleZipImport(req, res) {
   const dstTier = req.query.dst_tier;
   if (!isValidTier(dstTier)) {
@@ -804,6 +824,44 @@ export function createTemplatesRoutes() {
         res.json({ ok: true, bundle: result.data });
       }
     } catch (err) {
+      res
+        .status(statusForCliCode(err.cliCode))
+        .json({ ok: false, error: err.message, code: err.cliCode });
+    }
+  });
+
+  /**
+   * POST /api/projects/:projectId/templates/:tier/:id/bundle?format=gist
+   *
+   * Create a (secret) GitHub gist from the template bundle and return its URL.
+   * Gist creation is a mutation (it shells out to `gh gist create`), so it is a
+   * POST distinct from the GET bundle download above. Only `?format=gist` is
+   * accepted here; zip/JSON downloads use the GET route. The client copies the
+   * returned `gist_url` to the clipboard so the template can be shared and
+   * imported elsewhere via `worca templates import --from <url>`.
+   */
+  router.post('/templates/:tier/:id/bundle', (req, res) => {
+    const { tier, id } = req.params;
+    if (rejectInvalidTierId(res, tier, id)) return;
+    if (req.query.format !== 'gist') {
+      return res.status(400).json({
+        ok: false,
+        error: 'unsupported bundle POST format — use ?format=gist',
+      });
+    }
+    try {
+      const gistUrl = exportGist(req.project.projectRoot, id);
+      if (!gistUrl) {
+        return res.status(502).json({
+          ok: false,
+          error: 'gist created but no URL was returned by gh',
+        });
+      }
+      res.json({ ok: true, gist_url: gistUrl });
+    } catch (err) {
+      // gh-missing / gist-create failures arrive here with the CLI stderr as the
+      // message (it mentions "gh"/"gist", which the client maps to a friendly
+      // "GitHub CLI is not available" toast).
       res
         .status(statusForCliCode(err.cliCode))
         .json({ ok: false, error: err.message, code: err.cliCode });

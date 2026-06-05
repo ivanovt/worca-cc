@@ -1087,4 +1087,77 @@ describe('templates-routes — (tier, id) contract', () => {
       expect(t.has_overlays).toBe(false);
     });
   });
+
+  describe('POST /templates/:tier/:id/bundle?format=gist', () => {
+    // Regression: the "Copy gist URL" button POSTs here. Before this route
+    // existed the POST fell through to the SPA catch-all and the client
+    // JSON-parsed HTML ("Unexpected token '<', "<!DOCTYPE"). These assert a
+    // real JSON contract on every path.
+    it('creates a gist and returns gist_url, delegating to the export CLI', async () => {
+      mockExecSync.mockReturnValue('https://gist.github.com/octocat/abc123\n');
+      const app = await createTestApp(projectRoot);
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/builtin/feature/bundle?format=gist',
+      );
+      expect(status).toBe(200);
+      expect(body.ok).toBe(true);
+      expect(body.gist_url).toBe('https://gist.github.com/octocat/abc123');
+      const argv = mockExecSync.mock.calls[0][1];
+      expect(argv).toEqual(
+        expect.arrayContaining([
+          'export',
+          '--to',
+          'gist',
+          '--templates',
+          'feature',
+        ]),
+      );
+    });
+
+    it('rejects a non-gist format with 400 and does not shell out', async () => {
+      const app = await createTestApp(projectRoot);
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/builtin/feature/bundle?format=zip',
+      );
+      expect(status).toBe(400);
+      expect(body.ok).toBe(false);
+      expect(mockExecSync).not.toHaveBeenCalled();
+    });
+
+    it('surfaces a gh-unavailable failure as JSON (not HTML)', async () => {
+      mockExecSync.mockImplementation(() => {
+        const err = new Error('Command failed');
+        err.stderr = Buffer.from(
+          'error: gh gist create failed: gh not installed',
+        );
+        throw err;
+      });
+      const app = await createTestApp(projectRoot);
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/builtin/feature/bundle?format=gist',
+      );
+      expect(status).toBeGreaterThanOrEqual(400);
+      expect(body.ok).toBe(false);
+      expect(typeof body.error).toBe('string');
+      expect(body.error).toContain('gh');
+    });
+
+    it('returns 502 when the CLI prints no URL', async () => {
+      mockExecSync.mockReturnValue('   \n');
+      const app = await createTestApp(projectRoot);
+      const { status, body } = await request(
+        app,
+        'POST',
+        '/api/projects/test/templates/builtin/feature/bundle?format=gist',
+      );
+      expect(status).toBe(502);
+      expect(body.ok).toBe(false);
+    });
+  });
 });

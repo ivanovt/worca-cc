@@ -160,16 +160,19 @@ export async function exportTemplate(
 }
 
 /**
- * Copy a gist URL for a template when gh CLI is available.
+ * Create a public gist for a template via the server and return its URL.
  *
- * Creates a public gist via the server and copies the URL to clipboard.
- * Shows an error toast if gh CLI is not available or the operation fails.
+ * POSTs to the bundle route with `?format=gist` (the server returns
+ * `{ ok, gist_url }`). Does NOT touch the clipboard or dispatch toasts — the
+ * caller (the gist-export dialog) owns presentation. Maps the gh-unavailable
+ * case to a friendly message.
  *
  * @param {string} projectId - Project ID for API scoping
  * @param {string} templateId - Template ID to gist
- * @param {string} templateName - Optional template name for toast message
+ * @param {string} tier - Template tier (defaults to 'project')
+ * @returns {Promise<{ ok: true, gistUrl: string } | { ok: false, error: string }>}
  */
-export async function copyGistUrl(projectId, templateId, tier, _templateName) {
+export async function createGist(projectId, templateId, tier) {
   try {
     const baseUrl = projectId
       ? `/api/projects/${projectId}/templates`
@@ -186,23 +189,47 @@ export async function copyGistUrl(projectId, templateId, tier, _templateName) {
     );
 
     if (!response.ok) {
-      const data = await response.json();
-      if (data.error?.includes('gh') || data.error?.includes('gist')) {
-        throw new Error('GitHub CLI (gh) is not available on the server');
+      let errMsg = `HTTP ${response.status}`;
+      try {
+        const data = await response.json();
+        if (data?.error) errMsg = data.error;
+      } catch (_) {}
+      if (errMsg.includes('gh') || errMsg.includes('gist')) {
+        return {
+          ok: false,
+          error: 'GitHub CLI (gh) is not available on the server',
+        };
       }
-      throw new Error(data.error || 'Failed to create gist');
+      return { ok: false, error: errMsg };
     }
 
     const data = await response.json();
-
     if (!data.gist_url) {
-      throw new Error('No gist URL returned from server');
+      return { ok: false, error: 'No gist URL returned from server' };
     }
 
-    // Copy to clipboard
-    await navigator.clipboard.writeText(data.gist_url);
+    return { ok: true, gistUrl: data.gist_url };
+  } catch (err) {
+    const message = err.message?.includes('gh')
+      ? 'GitHub CLI (gh) is not available on the server'
+      : err.message || 'Failed to create gist';
+    return { ok: false, error: message };
+  }
+}
 
-    // Dispatch success toast
+/**
+ * Legacy clipboard+toast gist helper, retained for any non-dialog callers.
+ * Delegates URL creation to {@link createGist}; the dialog flow no longer uses
+ * this path (it shows the URL in a dialog instead of toasting).
+ *
+ * @param {string} projectId - Project ID for API scoping
+ * @param {string} templateId - Template ID to gist
+ * @param {string} tier - Template tier
+ */
+export async function copyGistUrl(projectId, templateId, tier) {
+  const result = await createGist(projectId, templateId, tier);
+  if (result.ok) {
+    await navigator.clipboard.writeText(result.gistUrl);
     document.dispatchEvent(
       new CustomEvent('worca:toast', {
         detail: {
@@ -211,22 +238,14 @@ export async function copyGistUrl(projectId, templateId, tier, _templateName) {
         },
       }),
     );
-
-    return { success: true, gistUrl: data.gist_url };
-  } catch (err) {
-    // Dispatch error toast
-    const message = err.message.includes('gh')
-      ? 'GitHub CLI is not available on the server'
-      : `Failed to create gist: ${err.message}`;
-
-    document.dispatchEvent(
-      new CustomEvent('worca:toast', {
-        detail: { message, variant: 'danger' },
-      }),
-    );
-
-    return { success: false, error: message };
+    return { success: true, gistUrl: result.gistUrl };
   }
+  document.dispatchEvent(
+    new CustomEvent('worca:toast', {
+      detail: { message: result.error, variant: 'danger' },
+    }),
+  );
+  return { success: false, error: result.error };
 }
 
 /**

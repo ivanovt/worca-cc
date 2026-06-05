@@ -42,6 +42,16 @@ export function createStore(initial = {}) {
     },
     runsLoaded: initial.runsLoaded ?? false,
     addProjectDialogOpen: initial.addProjectDialogOpen ?? false,
+    // Gist-export dialog state. `open` controls the sl-dialog; `status` walks
+    // loading→done|error; `copied` drives the transient copy-button feedback.
+    gistDialog: initial.gistDialog ?? {
+      open: false,
+      status: 'loading',
+      url: null,
+      error: null,
+      templateName: '',
+      copied: false,
+    },
     worktrees: initial.worktrees ?? [],
     worktreesLoaded: initial.worktreesLoaded ?? false,
     fleets: initial.fleets ?? [],
@@ -102,6 +112,7 @@ export function createStore(initial = {}) {
         next.beads === state.beads &&
         next.webhookInbox === state.webhookInbox &&
         next.addProjectDialogOpen === state.addProjectDialogOpen &&
+        next.gistDialog === state.gistDialog &&
         next.worktrees === state.worktrees &&
         next.fleets === state.fleets &&
         next.fleetsLoaded === state.fleetsLoaded &&

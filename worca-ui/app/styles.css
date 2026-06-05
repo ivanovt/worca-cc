@@ -5562,6 +5562,44 @@ sl-tooltip.bead-tooltip::part(body) {
 }
 
 /* ─── Add Project / Worca Setup dialog shared styles ─────────────────── */
+/* Gist-export dialog (template "Export (gist)" flow). */
+.gist-export-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gist-export-spinner {
+  font-size: 1rem;
+}
+
+.gist-export-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.gist-export-url-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.gist-export-copy-btn {
+  font-size: 1.15rem;
+  flex: 0 0 auto;
+}
+
+.gist-export-copy-btn.is-copied {
+  color: var(--status-completed, var(--sl-color-success-600));
+}
+
+.gist-export-footer {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+}
+
 .dialog-meta-row {
   display: flex;
   align-items: center;
