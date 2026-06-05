@@ -408,6 +408,52 @@ def _next_plan_path(run_dir: str) -> str:
     return os.path.join(run_dir, f"plan-{next_num:03d}.md")
 
 
+def _materialize_plan_markdown(result: dict, work_request) -> str:
+    """Render a plan markdown document from the planner's structured output.
+
+    Fallback used when the planner returns a valid structured plan but never
+    writes the plan file to disk (see the materialization guard in the PLAN
+    stage handler). Mirrors the human-authored plan layout closely enough that
+    the coordinator and the UI "View plan" viewer have real content to work
+    with. Shape follows ``schemas/plan.json``: ``approach`` (str),
+    ``tasks_outline`` (list of {title, description, estimated_complexity}),
+    ``test_strategy`` (str), ``branch_name`` (str).
+    """
+    title = getattr(work_request, "title", None) or "Plan"
+    lines = [f"# {title}", ""]
+    lines.append(
+        "> _Materialized from the planner's structured output — the planner "
+        "stage completed without writing a plan file. See `plan_materialized` "
+        "in status.json._"
+    )
+    lines.append("")
+
+    approach = (result.get("approach") or "").strip()
+    if approach:
+        lines += ["## Approach", "", approach, ""]
+
+    tasks = result.get("tasks_outline") or []
+    if tasks:
+        lines += ["## Tasks", ""]
+        for i, task in enumerate(tasks, 1):
+            if not isinstance(task, dict):
+                continue
+            t_title = (task.get("title") or f"Task {i}").strip()
+            complexity = (task.get("estimated_complexity") or "").strip()
+            suffix = f" _(complexity: {complexity})_" if complexity else ""
+            lines.append(f"{i}. **{t_title}**{suffix}")
+            desc = (task.get("description") or "").strip()
+            if desc:
+                lines += ["", f"   {desc}", ""]
+        lines.append("")
+
+    test_strategy = (result.get("test_strategy") or "").strip()
+    if test_strategy:
+        lines += ["## Test Strategy", "", test_strategy, ""]
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def _mint_plan_edit_target(run_dir: Optional[str], current_plan: str) -> Optional[str]:
     """Copy the current plan forward to the next numbered revision for editing.
 
@@ -3416,6 +3462,31 @@ def run_pipeline(
                     iter_extras, settings_path, status, current_stage.value, iter_num,
                     bead_id=_assigned_bead,
                 )
+
+                # Resilience guard: the planner is expected to Write its plan to
+                # status["plan_file"], but agents occasionally return a complete
+                # structured plan (+ prose) while skipping the file Write. The
+                # stage still "succeeds" (valid structured output), yet the plan
+                # file never lands on disk — so the coordinator has nothing to
+                # read and the UI "View plan" button 404s ("No plan file found").
+                # Materialize the structured output to the plan file so the run
+                # owns a real artifact. No-op when the planner wrote the file.
+                _plan_file = status.get("plan_file")
+                if _plan_file and isinstance(result, dict) and not os.path.exists(_plan_file):
+                    try:
+                        _pdir = os.path.dirname(_plan_file)
+                        if _pdir:
+                            os.makedirs(_pdir, exist_ok=True)
+                        with open(_plan_file, "w", encoding="utf-8") as _pf:
+                            _pf.write(_materialize_plan_markdown(result, work_request))
+                        iter_extras["plan_materialized"] = True
+                        _log(
+                            "Planner produced no plan file; materialized "
+                            f"{_plan_file} from structured output",
+                            "warn",
+                        )
+                    except OSError as _e:
+                        _log(f"Failed to materialize plan file {_plan_file}: {_e}", "err")
 
                 # Plan approval is a webhook-controlled gate, not a planner
                 # self-assessment. Default to approved; the webhook (when

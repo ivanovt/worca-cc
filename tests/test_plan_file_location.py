@@ -6,7 +6,9 @@ Covers:
 - Backward compatibility with MASTER_PLAN.md
 """
 import os
-from worca.orchestrator.runner import _next_plan_path
+from types import SimpleNamespace
+
+from worca.orchestrator.runner import _materialize_plan_markdown, _next_plan_path
 from worca.hooks.guard import check_guard
 
 
@@ -48,6 +50,66 @@ class TestNextPlanPath:
         (tmp_path / "plan-1.md").write_text("bad")
         result = _next_plan_path(str(tmp_path))
         assert result == os.path.join(str(tmp_path), "plan-001.md")
+
+
+# --- _materialize_plan_markdown (planner-skipped-write fallback) ---
+
+class TestMaterializePlanMarkdown:
+    def _wr(self, title="Add user auth"):
+        return SimpleNamespace(title=title)
+
+    def test_includes_title_and_sections(self):
+        result = {
+            "approach": "Bolt JWT onto the existing session layer.",
+            "tasks_outline": [
+                {
+                    "title": "Add token issuance",
+                    "description": "Issue JWTs on login.",
+                    "estimated_complexity": "medium",
+                },
+                {"title": "Add middleware", "description": "Verify tokens per request."},
+            ],
+            "test_strategy": "Unit tests for issuance + integration for the gate.",
+        }
+        md = _materialize_plan_markdown(result, self._wr())
+        assert md.startswith("# Add user auth")
+        assert "## Approach" in md
+        assert "Bolt JWT onto the existing session layer." in md
+        assert "## Tasks" in md
+        assert "**Add token issuance**" in md
+        assert "complexity: medium" in md
+        assert "Issue JWTs on login." in md
+        assert "**Add middleware**" in md
+        assert "## Test Strategy" in md
+        assert "Unit tests for issuance" in md
+        # The provenance note marks it as a materialized fallback.
+        assert "Materialized from the planner's structured output" in md
+        assert md.endswith("\n")
+
+    def test_handles_missing_optional_fields(self):
+        md = _materialize_plan_markdown({"approach": "Just do it."}, self._wr("Tiny"))
+        assert md.startswith("# Tiny")
+        assert "## Approach" in md
+        # No tasks / test strategy sections when absent.
+        assert "## Tasks" not in md
+        assert "## Test Strategy" not in md
+
+    def test_falls_back_to_generic_title(self):
+        md = _materialize_plan_markdown({"approach": "x"}, SimpleNamespace())
+        assert md.startswith("# Plan")
+
+    def test_empty_result_still_renders_header(self):
+        md = _materialize_plan_markdown({}, self._wr("Empty"))
+        assert "# Empty" in md
+        assert "Materialized from the planner's structured output" in md
+
+    def test_skips_non_dict_tasks(self):
+        md = _materialize_plan_markdown(
+            {"tasks_outline": ["not-a-dict", {"title": "Real", "description": "d"}]},
+            self._wr(),
+        )
+        assert "**Real**" in md
+        assert "not-a-dict" not in md
 
 
 # --- Guard allows plan-NNN.md for planner ---
