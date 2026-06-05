@@ -6,6 +6,20 @@
   "properties": {
     "outcome": { "type": "string", "enum": ["approve", "request_changes", "reject", "restart_planning"] },
     "issues": {
+      "description": "List of actionable issues found during review that require changes.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file": { "type": "string" },
+          "line": { "type": "integer" },
+          "severity": { "type": "string", "enum": ["critical", "major", "minor", "suggestion"] },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "observations": {
+      "description": "Non-blocking observations about the implementation for informational purposes.",
       "type": "array",
       "items": {
         "type": "object",

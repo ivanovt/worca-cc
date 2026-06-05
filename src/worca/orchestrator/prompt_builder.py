@@ -313,6 +313,7 @@ class PromptBuilder:
                 ctx["files_changed_formatted"] = "\n".join(f"- {f}" for f in files_changed)
             else:
                 ctx["files_changed_formatted"] = ""
+            ctx["review_base"] = ctx.get("git_head") or ""
 
         elif stage == "learn":
             full_status = ctx.get("full_status") or {}

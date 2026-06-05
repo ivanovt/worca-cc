@@ -15,7 +15,7 @@ description, and surface it rather than silently resolving it.
 
 ---
 
-## Request
+## Task
 
 {{/if}}
 {{work_request}}

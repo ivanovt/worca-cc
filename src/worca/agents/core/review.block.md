@@ -1,5 +1,7 @@
 Review the code changes for correctness, style, security, and adherence to the plan. You are strictly read-only: do NOT modify code, do NOT run tests (the tester already produced proof artifacts). Produce your structured review output.
 
+Your diff scope is `git diff {{review_base}}..HEAD`. Findings within that diff go in `issues`; pre-existing code outside the diff goes in `observations` only. {{#if review_base}}{{else}}If `{{review_base}}` is empty, determine the merge-base with `git merge-base HEAD origin/HEAD` and use that as the base for all diff commands.{{/if}}
+
 {{#if has_guide}}
 ## Reference Guide (normative)
 

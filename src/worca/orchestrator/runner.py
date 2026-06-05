@@ -2409,6 +2409,7 @@ def run_pipeline(
         if status.get("plan_file"):
             prompt_builder.update_context("plan_file", status["plan_file"])
         prompt_builder.update_context("run_id", status.get("run_id", ""))
+        prompt_builder.update_context("git_head", status.get("git_head") or "")
         prompt_builder.update_context("branch", branch_name)
         prompt_builder.update_context("title", work_request.title)
         # Guardian template variables (issue #165): derived once here so the
@@ -3829,6 +3830,29 @@ def run_pipeline(
                 outcome = result.get("outcome", "approve")
                 _log(f"Review outcome: {outcome}")
                 _emit_guide_conflicts(ctx, "review", result)
+                _observations = result.get("observations", [])
+                if _observations:
+                    try:
+                        _reviews_dir = os.path.join(os.getcwd(), "docs", "reviews")
+                        os.makedirs(_reviews_dir, exist_ok=True)
+                        _obs_file = os.path.join(_reviews_dir, f"observations-{run_id}.md")
+                        _is_first = not os.path.exists(_obs_file)
+                        _iter_n = loop_counters.get("pr_changes", 0) + 1
+                        _lines = []
+                        if not _is_first:
+                            _lines.append("")
+                        _lines.append(f"## Review iteration {_iter_n}")
+                        for _ob in _observations:
+                            _sev = _ob.get("severity", "info")
+                            _f = _ob.get("file", "")
+                            _ln = _ob.get("line", "")
+                            _desc = _ob.get("description", "")
+                            _loc = f"{_f}:{_ln}" if _f and _ln else _f or str(_ln)
+                            _lines.append(f"- [{_sev}] {_loc} — {_desc}")
+                        with open(_obs_file, "a", encoding="utf-8") as _fh:
+                            _fh.write("\n".join(_lines) + "\n")
+                    except Exception as _obs_exc:
+                        _log(f"Warning: could not write observations file: {_obs_exc}", "warn")
                 next_stage, status = handle_pr_review(outcome, status)
                 _all_issues = result.get("issues", [])
                 _critical_count = sum(
