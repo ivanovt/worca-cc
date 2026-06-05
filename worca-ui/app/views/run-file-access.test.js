@@ -126,13 +126,16 @@ describe('runFileAccessView', () => {
     expect(el.textContent).toMatch(/loading/i);
   });
 
-  it('shows disabled empty-state when model.enabled is false', () => {
+  it('shows empty-state when model.enabled is false', () => {
     const el = mount(
       runFileAccessView(MINIMAL_RUN, MINIMAL_SETTINGS, {
         model: { enabled: false },
       }),
     );
-    expect(el.textContent).toMatch(/no file access data/i);
+    // Reworded: state the fact (nothing recorded) rather than misdiagnosing a
+    // version/config cause the server never actually checks.
+    expect(el.textContent).toMatch(/no file access was recorded/i);
+    expect(el.textContent).not.toMatch(/requires worca/i);
   });
 
   // --- KPI strip ---

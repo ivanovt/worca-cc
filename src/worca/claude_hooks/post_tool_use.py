@@ -133,6 +133,14 @@ def _graph_query_from_tool(tool_name, tool_input):
     return None
 
 
+# File/search tools whose PostToolUse this hook records into
+# .worca/runs/<id>/access/. This set MUST be a subset of the PostToolUse
+# matcher in src/worca/settings.json (plus "Bash" for graph queries + the
+# test-gate) — otherwise the hook never fires for these tools and nothing is
+# recorded. test_post_tool_use_matcher.py asserts that wiring.
+FILE_ACCESS_TOOLS = ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob")
+
+
 def _record_file_access(tool_name, tool_input, tool_response):
     """Record file access for reads, writes, searches, and graph queries."""
     # Check if file access recording is enabled
@@ -142,10 +150,7 @@ def _record_file_access(tool_name, tool_input, tool_response):
     graph_query = _graph_query_from_tool(tool_name, tool_input)
 
     # Only record specific tools (plus graphify/CRG graph queries).
-    if (
-        tool_name not in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob")
-        and graph_query is None
-    ):
+    if tool_name not in FILE_ACCESS_TOOLS and graph_query is None:
         return
 
     run_id = os.environ.get("WORCA_RUN_ID")

@@ -77,11 +77,18 @@ export function runFileAccessView(_run, _settings, options = {}) {
   }
 
   if (!model.enabled) {
+    // The server returns { enabled: false } purely when no
+    // pipeline.iteration.access events were found for this run — it does NOT
+    // inspect the worca version or the config flag. So the message must not
+    // assert a version/config cause (it was misdiagnosing runs that simply
+    // recorded nothing). State the fact, then give neutral hints.
     return html`<div class="run-file-access">
       <div class="access-empty-state">
-        <p>No file access data available for this run.</p>
-        <p class="access-empty-hint">File access telemetry requires worca ≥ W-064 with
-          <code>worca.telemetry.file_access.enabled: true</code>.</p>
+        <p>No file access was recorded for this run.</p>
+        <p class="access-empty-hint">File-access telemetry must be enabled
+          (<code>worca.telemetry.file_access.enabled</code>, on by default) and
+          the run must have started after it was wired up — older or in-flight
+          runs aren't backfilled.</p>
       </div>
     </div>`;
   }
