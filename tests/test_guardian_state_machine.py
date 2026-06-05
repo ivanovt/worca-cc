@@ -176,9 +176,10 @@ class TestSourcePromptHygiene:
         assert "workspace_short" not in source
 
     def test_source_prompt_uses_template_variables(self):
-        """The three template variables must actually appear in the source."""
+        """The template variables must actually appear in the source."""
         source = GUARDIAN_PATH.read_text()
         assert "{{#if defer_pr}}" in source
+        assert "{{#if revise_pr}}" in source
         assert "{{pr_title_prefix}}" in source
         assert "{{pr_footer}}" in source
 
@@ -196,6 +197,7 @@ class TestSourcePromptHygiene:
                 "WORCA_WORKSPACE_NAME": "my-platform",
                 "WORCA_DEFER_PR": "1",
             },
+            {"WORCA_REVISE_PR": "42"},
         ):
             rendered = _render(env)
             assert "{{" not in rendered, (

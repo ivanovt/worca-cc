@@ -74,6 +74,29 @@ The runner uses this map as the reliable, programmatic source for per-bead
 effort labels. The `--labels` flag on `bd create` is the best-effort
 first pass; the structured `effort` map is the authoritative fallback.
 
+{{#if has_review_comments}}
+## PR Revision Mode — Comment-to-Bead Decomposition
+
+This run is revising an existing PR based on review feedback. The approved plan is already scoped to the enumerated review comments; your job is to create one bead per unresolved comment so each implementer acts on exactly one thread.
+
+**Decomposition rules:**
+- Create **one bead per unresolved review comment** listed in the `## Review Feedback to Address` section of the work request.
+- Each bead title must include the file:line anchor and a brief label, e.g.: `Address review: src/foo.py:42 — fix file handle leak`.
+- Each bead description must carry the `thread_id` (e.g. `PRRT_xxx`), the file:line location, the comment author, and the comment body verbatim — so the implementer has full context without re-reading the work request.
+- Bead description format:
+
+  ```
+  Thread: PRRT_xxx
+  File: src/foo.py:42
+  Author: @reviewer-login
+  Comment: "exact comment text here"
+  ```
+
+- PR-level comments (no file:line anchor) get a bead with `File: PR-level` in the description.
+- Set dependencies between beads only when comments touch the same file or have a clear ordering constraint; otherwise leave them parallel.
+- Do **not** create additional beads for unrelated refactoring — this run is minimal-diff only.
+
+{{/if}}
 ## Rules
 
 <!-- governance -->

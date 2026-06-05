@@ -1415,6 +1415,28 @@ def _extract_pr_fields_from_text(text) -> Optional[dict]:
 PRVerification = collections.namedtuple("PRVerification", ["ok", "reason"])
 
 
+def _fetch_pr_url_via_gh(pr_number: int, timeout: int = 10) -> Optional[str]:
+    """Return the URL of an existing PR, or None on any error.
+
+    Used in revise mode to populate status["pr"].url when the guardian re-reads
+    an existing PR instead of creating a new one.
+    """
+    try:
+        r = subprocess.run(
+            ["gh", "pr", "view", str(pr_number), "--json", "url,number"],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout or "{}")
+    except json.JSONDecodeError:
+        return None
+    return data.get("url") or None
+
+
 def _verify_pr_via_gh(pr_number: int, expected_url: str, timeout: int = 10) -> Optional[PRVerification]:
     """Best-effort `gh pr view` check.
 
@@ -2411,6 +2433,8 @@ def run_pipeline(
         prompt_builder.update_context("run_id", status.get("run_id", ""))
         prompt_builder.update_context("branch", branch_name)
         prompt_builder.update_context("title", work_request.title)
+        if work_request.review_comments:
+            prompt_builder.update_context("review_comments", work_request.review_comments)
         # Guardian template variables (issue #165): derived once here so the
         # dispatch-time resolve_agent call resolves {{pr_title_prefix}},
         # {{pr_footer}}, and {{#if defer_pr}} in guardian.md. Computed from
@@ -2559,6 +2583,11 @@ def run_pipeline(
                 }
                 if _eff_level is not None:
                     _effort_env_overrides["CLAUDE_CODE_EFFORT_LEVEL"] = _eff_level
+
+            if current_stage == Stage.PR:
+                _revises_pr_num = status.get("revises_pr")
+                if _revises_pr_num is not None:
+                    _effort_env_overrides["WORCA_REVISE_PR"] = str(_revises_pr_num)
 
             # Start a new iteration record
             _iter_kwargs = {
@@ -4074,6 +4103,16 @@ def run_pipeline(
                 if isinstance(result, dict):
                     _pr_url = result.get("pr_url")
                     _pr_number = result.get("pr_number")
+                    # In revise mode, if the agent's prose fallback didn't carry
+                    # pr_url/pr_number, re-read the existing PR via gh so
+                    # status["pr"] still populates with the correct number/url.
+                    _revises_pr = status.get("revises_pr")
+                    if _revises_pr is not None and (not _pr_url or _pr_number is None):
+                        _fetched_url = _fetch_pr_url_via_gh(_revises_pr)
+                        if _fetched_url and not _pr_url:
+                            _pr_url = _fetched_url
+                        if _pr_number is None:
+                            _pr_number = _revises_pr
                     if _pr_url and _pr_number is not None:
                         _commit_sha = result.get("commit_sha")
                         # Branches: prefer agent value, fall back to runner state.

@@ -3,15 +3,18 @@ import json
 import os
 import re
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 from worca.utils.env import get_env, filter_model_env
+from worca.utils.gh_pr import fetch_review_feedback
 from worca.utils.settings import load_settings, resolve_model
 
 _DEFAULT_PLAN_PATH_TEMPLATE = "docs/plans/{timestamp}-{title_slug}.md"
 # Matches GitHub issue URLs: https://github.com/owner/repo/issues/42
 _GH_ISSUE_URL_RE = re.compile(r"https?://github\.com/[^/]+/[^/]+/issues/(\d+)$")
+# Matches any HTTP(S) URL — used to detect URL inputs before routing to parse_pr_url()
+_ANY_URL_RE = re.compile(r"https?://")
 
 
 def _plan_prefix_from_template(template: Optional[str]) -> str:
@@ -98,13 +101,19 @@ def generate_smart_title(content: str, source_hint: str = "") -> str:
 @dataclass
 class WorkRequest:
     """Normalized work request from any input source."""
-    source_type: str  # "github_issue", "beads", "prompt", "spec_file"
+    source_type: str  # "github_issue", "beads", "prompt", "spec_file", "github_pr"
     title: str
     description: str = ""
     source_ref: Optional[str] = None
     priority: int = 2
     plan_path: Optional[str] = None
     guide_content: str = ""  # populated by attach_guide() — body of normative reference material
+    # PR-revision fields (populated when source_type == "github_pr")
+    pr_number: Optional[int] = None
+    pr_head_branch: Optional[str] = None
+    pr_base_branch: Optional[str] = None
+    pr_is_cross_repo: bool = False
+    review_comments: list = field(default_factory=list)
 
 
 def normalize_plan_file(path: str, content: str = None) -> WorkRequest:
@@ -312,6 +321,11 @@ def attach_guide(
             priority=wr.priority,
             plan_path=wr.plan_path,
             guide_content=wr.guide_content,
+            pr_number=wr.pr_number,
+            pr_head_branch=wr.pr_head_branch,
+            pr_base_branch=wr.pr_base_branch,
+            pr_is_cross_repo=wr.pr_is_cross_repo,
+            review_comments=wr.review_comments,
         )
 
     sections = []
@@ -337,17 +351,93 @@ def attach_guide(
         priority=wr.priority,
         plan_path=wr.plan_path,
         guide_content="\n".join(sections),
+        pr_number=wr.pr_number,
+        pr_head_branch=wr.pr_head_branch,
+        pr_base_branch=wr.pr_base_branch,
+        pr_is_cross_repo=wr.pr_is_cross_repo,
+        review_comments=wr.review_comments,
+    )
+
+
+def _synthesize_pr_description(body: str, review_comments: list) -> str:
+    """Build PR work-request description: original body + review feedback list."""
+    parts = [body.rstrip()] if body else []
+    if review_comments:
+        lines = []
+        for c in review_comments:
+            path = c.get("path", "")
+            line = c.get("line")
+            loc = f"{path}:{line}" if line is not None else path
+            author = c.get("author", "")
+            text = c.get("body", "")
+            thread_id = c.get("thread_id", "")
+            lines.append(f'- [{loc}] @{author}: "{text}" (thread: {thread_id})')
+        parts.append("\n## Review Feedback to Address\n")
+        parts.extend(lines)
+    return "\n".join(parts)
+
+
+def normalize_github_pr(source_value: str) -> WorkRequest:
+    """Normalize a GitHub PR reference into a WorkRequest.
+
+    source_value must be "gh:pr:N". Fetches PR metadata via gh CLI,
+    ingests unresolved review threads via fetch_review_feedback(), and
+    synthesizes description = original PR body + review feedback list.
+    """
+    if not source_value.startswith("gh:pr:"):
+        raise ValueError(f"Expected gh:pr:N, got: {source_value}")
+    number_str = source_value[len("gh:pr:"):]
+    try:
+        pr_number = int(number_str)
+    except ValueError:
+        raise ValueError(f"Invalid PR number in {source_value!r}")
+
+    result = subprocess.run(
+        [
+            "gh", "pr", "view", str(pr_number), "--json",
+            "title,body,baseRefName,headRefName,headRepository,isCrossRepository,author",
+        ],
+        capture_output=True,
+        text=True,
+        env=get_env(),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"Failed to fetch PR #{pr_number}: {result.stderr}")
+
+    data = json.loads(result.stdout)
+    title = data.get("title") or f"PR #{pr_number}"
+    body = data.get("body") or ""
+    base_branch = data.get("baseRefName", "")
+    head_branch = data.get("headRefName", "")
+    is_cross_repo = data.get("isCrossRepository", False)
+    nwo = (data.get("headRepository") or {}).get("nameWithOwner", "")
+
+    review_comments = fetch_review_feedback(nwo, pr_number) if nwo else []
+
+    return WorkRequest(
+        source_type="github_pr",
+        title=title,
+        description=_synthesize_pr_description(body, review_comments),
+        source_ref=source_value,
+        pr_number=pr_number,
+        pr_head_branch=head_branch,
+        pr_base_branch=base_branch,
+        pr_is_cross_repo=is_cross_repo,
+        review_comments=review_comments,
     )
 
 
 def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
     """Dispatch to the appropriate normalize_* function.
 
-    source_type can be "prompt", "spec", "plan", or "source" (auto-detect from value).
-    For "source", the value is sniffed: gh:issue:N → GitHub, bd:ID → Beads.
+    source_type can be "prompt", "spec", "plan", "pr", or "source" (auto-detect from value).
+    For "source", the value is sniffed: gh:issue:N → GitHub issue, gh:pr:N → GitHub PR,
+    bd:ID → Beads, or a full PR URL parsed via parse_pr_url().
     Extra kwargs are forwarded to the dispatch function (e.g. content for plan,
     plan_path_template for github_issue).
     """
+    from worca.utils.pr_url import parse_pr_url
+
     plan_path_template = kwargs.pop("plan_path_template", None)
     if source_type == "prompt":
         return normalize_prompt(source_value)
@@ -355,12 +445,31 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
         return normalize_plan_file(source_value, **kwargs)
     elif source_type == "spec":
         return normalize_spec_file(source_value)
+    elif source_type == "pr":
+        if source_value.startswith("gh:pr:"):
+            return normalize_github_pr(source_value)
+        parsed = parse_pr_url(source_value)
+        if parsed["provider"] == "github":
+            return normalize_github_pr(f"gh:pr:{parsed['number']}")
+        raise ValueError(f"PR source not yet supported: {source_value}")
     elif source_type == "source" or source_value.startswith(("gh:", "bd:")):
-        # Convert GitHub URLs to gh:issue:N format
+        # Detect full PR URLs before issue-URL conversion
+        if _ANY_URL_RE.match(source_value):
+            parsed = parse_pr_url(source_value)
+            if parsed["provider"] == "github":
+                ref = f"gh:pr:{parsed['number']}"
+                return normalize_github_pr(ref)
+            if parsed["provider"] != "other":
+                raise ValueError(
+                    f"PR source '{parsed['provider']}' not yet supported: {source_value}"
+                )
+        # Convert GitHub issue URLs to gh:issue:N format
         gh_url_match = _GH_ISSUE_URL_RE.match(source_value)
         if gh_url_match:
             source_value = f"gh:issue:{gh_url_match.group(1)}"
-        if source_value.startswith("gh:issue:"):
+        if source_value.startswith("gh:pr:"):
+            return normalize_github_pr(source_value)
+        elif source_value.startswith("gh:issue:"):
             return normalize_github_issue(
                 source_value, plan_path_template=plan_path_template
             )
@@ -368,5 +477,17 @@ def normalize(source_type: str, source_value: str, **kwargs) -> WorkRequest:
             return normalize_beads_task(source_value)
         else:
             raise ValueError(f"Unknown source reference format: {source_value}")
+    elif _ANY_URL_RE.match(source_value):
+        # Full PR URL — detect provider
+        parsed = parse_pr_url(source_value)
+        if parsed["provider"] == "github":
+            ref = f"gh:pr:{parsed['number']}"
+            wr = normalize_github_pr(ref)
+            return wr
+        if parsed["provider"] != "other":
+            raise ValueError(
+                f"PR source '{parsed['provider']}' not yet supported: {source_value}"
+            )
+        raise ValueError(f"Unknown source reference format: {source_value}")
     else:
         raise ValueError(f"Unknown source type: {source_type}={source_value}")

@@ -634,3 +634,42 @@ def test_reconcile_orphan_groups_strips_fleet_id_only_no_group_type(tmp_path):
     assert orphaned == ["run-ngt"]
     entry = get_pipeline("run-ngt", base=base)
     assert "fleet_id" not in entry
+
+
+# --- revises_pr field ---
+
+
+def test_register_with_revises_pr(tmp_path):
+    """revises_pr: N is stored in the registry when provided (PR revision run)."""
+    base = str(tmp_path / ".worca")
+    path = register_pipeline(
+        "run-rev", "/tmp/wt", "PR Revision", 1, base=base,
+        revises_pr=42,
+    )
+    with open(path) as f:
+        data = json.load(f)
+    assert data["revises_pr"] == 42
+
+
+def test_register_omits_revises_pr_when_unset(tmp_path):
+    """revises_pr is absent from the JSON when not provided (normal runs)."""
+    base = str(tmp_path / ".worca")
+    path = register_pipeline("run-norev", "/tmp/wt", "Normal Run", 1, base=base)
+    with open(path) as f:
+        data = json.load(f)
+    assert "revises_pr" not in data
+
+
+def test_register_pr_revision_preserves_head_branch(tmp_path):
+    """For PR source runs, branch equals the PR head branch name verbatim (L2)."""
+    base = str(tmp_path / ".worca")
+    head_branch = "feature/my-existing-pr-branch"
+    path = register_pipeline(
+        "run-prhead", "/tmp/wt", "PR Head Branch", 1, base=base,
+        branch=head_branch,
+        revises_pr=7,
+    )
+    with open(path) as f:
+        data = json.load(f)
+    assert data["branch"] == head_branch
+    assert data["revises_pr"] == 7

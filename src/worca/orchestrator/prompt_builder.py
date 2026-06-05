@@ -216,6 +216,7 @@ class PromptBuilder:
         """
         if stage == "plan":
             ctx["claude_md"] = self._claude_md_content
+            ctx["has_review_comments"] = bool(ctx.get("review_comments"))
             if ctx.get("plan_revision_mode"):
                 # Prefer the plan content threaded by the runner at the revise
                 # loopback (the current plan being revised). Under W-061's
@@ -249,6 +250,7 @@ class PromptBuilder:
             # changelog. Prefer the plan content threaded from the last PLAN
             # completion; otherwise read the current (latest) plan file.
             ctx["current_plan"] = ctx.get("plan_file_content") or self._read_master_plan()
+            ctx["has_review_comments"] = bool(ctx.get("review_comments"))
 
             unresolved = ctx.get("unresolved_plan_issues")
             if unresolved:

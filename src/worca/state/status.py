@@ -307,6 +307,10 @@ def init_status(work_request: dict, branch: str, git_head: str = None, pipeline_
         },
         "pr_review_outcome": None,
         "pr": None,
+        "source_type": work_request.get("source_type"),
+        "source_ref": work_request.get("source_ref"),
+        "revises_pr": work_request.get("pr_number"),
+        "review_feedback": work_request.get("review_comments", []),
     }
     return status
 

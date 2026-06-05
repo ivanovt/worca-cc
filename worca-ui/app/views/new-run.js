@@ -65,6 +65,7 @@ export function resetNewRunState(overrides = {}) {
 function sourceLabel(type) {
   if (type === 'source') return 'GitHub Issue URL';
   if (type === 'spec') return 'Spec File Path';
+  if (type === 'pr') return 'GitHub PR URL or Number';
   return '';
 }
 
@@ -582,6 +583,7 @@ export function newRunView(_state, { rerender }) {
               <sl-option value="none">None</sl-option>
               <sl-option value="source">GitHub Issue</sl-option>
               <sl-option value="spec">Spec File</sl-option>
+              <sl-option value="pr">GitHub PR</sl-option>
             </sl-select>
           </div>
 
@@ -590,7 +592,7 @@ export function newRunView(_state, { rerender }) {
               ? html`
             <div class="settings-field">
               <label class="settings-label">${sourceLabel(sourceType)}</label>
-              <sl-input id="new-run-source-value" placeholder=${sourceType === 'source' ? 'https://github.com/...' : 'path/to/spec.md'}></sl-input>
+              <sl-input id="new-run-source-value" placeholder=${sourceType === 'source' ? 'https://github.com/...' : sourceType === 'pr' ? 'gh:pr:123 or https://github.com/owner/repo/pull/123' : 'path/to/spec.md'}></sl-input>
             </div>
           `
               : nothing

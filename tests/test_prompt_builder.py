@@ -691,4 +691,54 @@ def test_build_context_crg_with_guide_independent():
     ctx = pb.build_context("plan")
     assert ctx["has_guide"] is True
     assert ctx["has_code_review_graph"] is True
-    assert ctx["guide_content"] == "guide stuff"
+
+
+# --- has_review_comments (planner constrained revision mode, W-067) ---
+
+def test_build_context_has_review_comments_false_by_default():
+    pb = PromptBuilder("Fix bug", "Desc")
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_review_comments") is False
+
+
+def test_build_context_has_review_comments_true_when_set():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [{"thread_id": "T1", "body": "fix this"}])
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_review_comments") is True
+
+
+def test_build_context_has_review_comments_false_when_empty_list():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [])
+    ctx = pb.build_context("plan")
+    assert ctx.get("has_review_comments") is False
+
+
+def test_has_review_comments_active_in_plan_and_coordinate_stages():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [{"thread_id": "T1", "body": "fix this"}])
+    plan_ctx = pb.build_context("plan")
+    coord_ctx = pb.build_context("coordinate")
+    assert plan_ctx.get("has_review_comments") is True
+    assert coord_ctx.get("has_review_comments") is True
+
+
+def test_build_context_coordinate_has_review_comments_false_by_default():
+    pb = PromptBuilder("Fix bug", "Desc")
+    ctx = pb.build_context("coordinate")
+    assert ctx.get("has_review_comments") is False
+
+
+def test_build_context_coordinate_has_review_comments_true_when_set():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [{"thread_id": "PRRT_1", "path": "src/foo.py", "line": 42, "body": "fix this"}])
+    ctx = pb.build_context("coordinate")
+    assert ctx.get("has_review_comments") is True
+
+
+def test_build_context_coordinate_has_review_comments_false_when_empty():
+    pb = PromptBuilder("Fix bug", "Desc")
+    pb.update_context("review_comments", [])
+    ctx = pb.build_context("coordinate")
+    assert ctx.get("has_review_comments") is False

@@ -35,6 +35,7 @@ import {
   priorityVariant,
   statusVariant,
 } from './beads-panel.js';
+import { prCommentsView } from './run-detail-pr-comments.js';
 import { resolveIterationTab } from './stage-tab-memory.js';
 import { stageTimelineView } from './stage-timeline.js';
 
@@ -1004,7 +1005,7 @@ function _prReviewStatusVariant(status) {
   return 'neutral';
 }
 
-function _prInfoStripView(run) {
+function _prInfoStripView(run, { isReviseInput = false } = {}) {
   const pr = run?.pr;
   const prUrl = pr?.url || run?.pr_url;
   if (!prUrl) return nothing;
@@ -1053,6 +1054,7 @@ function _prInfoStripView(run) {
       ${
         reviewStatus
           ? html`<span class="pr-info-item">
+        ${isReviseInput ? html`<span class="meta-label">Trigger:</span>` : nothing}
         <sl-badge class="pr-review-status-badge" variant="${_prReviewStatusVariant(reviewStatus)}" pill>${reviewStatus.replace(/_/g, ' ')}</sl-badge>
       </span>`
           : nothing
@@ -1769,6 +1771,19 @@ export function runDetailView(run, settings = {}, options = {}) {
             : nothing
         }
         ${
+          run.source_type
+            ? html`
+          <div class="run-source">
+            <span class="meta-label">Source:</span>
+            <span class="meta-value run-source-type">${run.source_type}</span>
+            ${run.source_ref ? html`<span class="meta-value run-source-ref">${run.source_ref}</span>` : nothing}
+          </div>
+        `
+            : nothing
+        }
+        ${run.revises_pr ? _prInfoStripView(run, { isReviseInput: true }) : nothing}
+        ${prCommentsView(run.review_feedback)}
+        ${
           pipelineTemplate
             ? html`
           <div class="run-template">
@@ -1990,7 +2005,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                           </div>`;
                       })()}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
-                      ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       <sl-tab-group @sl-tab-show=${(e) => {
                         const panel = e.detail.name;
@@ -2047,7 +2062,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${iterations.length === 1 ? _classificationRowView(iterations[0]) : nothing}
                       ${iterations.length === 1 ? _dispatchEventsRowsView(iterations[0]) : nothing}
                       ${key === 'pr' ? _prVerifiedBadgeView(run) : nothing}
-                      ${key === 'pr' ? _prInfoStripView(run) : nothing}
+                      ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
                       ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
                       ${_planIterationButton(key, iterations[0], run, options.rerender)}

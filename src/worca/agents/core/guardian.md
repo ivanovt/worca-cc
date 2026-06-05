@@ -16,6 +16,45 @@ The orchestrator has pre-computed your PR metadata for this run. Use the values 
 
 Run `git add -A`, commit with a scoped conventional message (see CLAUDE.md for the format), and push the branch: `git push -u origin <head_branch>`. If nothing stages, STOP with `outcome: reject`.
 
+{{#if revise_pr}}
+### Step 2 — Update the existing PR (#{{revise_pr}})
+
+This run is revising PR #{{revise_pr}}. The PR already exists — **do not** call `gh pr create` (or any host equivalent). Pushing the same head branch is sufficient to auto-update the PR (**L2** — head branch name preserved verbatim).
+
+**W-065 compose note:** `revise_pr` and `defer_pr` are mutually exclusive. When this run is in revision mode the PR already exists, so deferred-PR creation is a no-op.
+
+1. Capture the commit SHA just pushed in Step 1:
+   `git rev-parse HEAD`
+
+2. Get the repository `owner/repo` identifier:
+   `gh repo view --json nameWithOwner --jq .nameWithOwner`
+
+3. Post a summary comment on PR #{{revise_pr}} (error-suppressed — continue if it fails):
+   ```
+   gh api --method POST /repos/<nwo>/issues/{{revise_pr}}/comments \
+     -f body="Addressed review comments in commit \`<commit_sha>\`."
+   ```
+
+4. Reply to each addressed thread — **never resolve threads, reply only (D3)**:
+   Read `review_feedback` from `status.json` (field `review_feedback`, a list). For each entry with a `thread_id`, run:
+   ```
+   gh api graphql \
+     -f query='mutation($t:ID!,$b:String!){addPullRequestReviewThreadReply(input:{pullRequestReviewThreadId:$t,body:$b}){comment{id}}}' \
+     -f t="<thread_id>" \
+     -f b="Addressed in commit \`<commit_sha>\`."
+   ```
+   If `review_feedback` is absent or empty, skip this step. Treat individual reply failures as non-fatal — log and continue.
+
+5. Re-read the existing PR to populate the structured output:
+   `gh pr view {{revise_pr}} --json number,url,state`
+
+Return this structured output:
+- `outcome: "success"`
+- `pr_number: {{revise_pr}}`
+- `pr_url: <url from gh pr view>`
+
+If the push or summary comment fails, return `outcome: "reject"` with a descriptive reason.
+{{else}}
 {{#if defer_pr}}
 ### Step 2 — PR creation is deferred
 
@@ -49,6 +88,7 @@ Build the PR body from the work request and approach summary. If the orchestrato
 Then run the host CLI from CLAUDE.md to open the PR. With `gh`, that is:
 
 `gh pr create --base <base_branch> --head <head_branch> --title "<prefixed_title>" --body "<body>"`
+{{/if}}
 {{/if}}
 
 The work request and approach summary arrive as a user message.

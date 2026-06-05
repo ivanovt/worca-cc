@@ -1149,10 +1149,13 @@ def test_run_pipeline_main_calls_gh_issue_fail_on_loop_exhausted(tmp_path, monke
 
     error_msg = "Loop implement_test exhausted after 5 iterations"
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--source", "gh:issue:42",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=LoopExhaustedError(error_msg)):
         with patch.object(mod, "normalize") as mock_normalize:
@@ -1197,10 +1200,13 @@ def test_run_pipeline_main_calls_gh_issue_fail_on_pipeline_error(tmp_path, monke
 
     error_msg = "Guardian rejected changes after 3 review cycles"
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--source", "gh:issue:99",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=PipelineError(error_msg)):
         with patch.object(mod, "normalize") as mock_normalize:
@@ -1237,10 +1243,13 @@ def test_run_pipeline_main_gh_issue_fail_noop_for_non_github(tmp_path, monkeypat
     with open(status_path, "w") as f:
         json.dump(status_data, f)
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--prompt", "do something",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=PipelineError("fail")):
         with patch.object(mod, "normalize") as mock_normalize:
@@ -1274,10 +1283,13 @@ def test_run_pipeline_main_gh_issue_fail_never_crashes_pipeline(tmp_path, monkey
     with open(str(worca_dir / "status.json"), "w") as f:
         json.dump(status_data, f)
 
+    settings_file = tmp_path / "settings.json"
+    settings_file.write_text("{}")
     monkeypatch.setattr(
         "sys.argv",
         ["run_pipeline.py", "--source", "gh:issue:42",
-         "--status-dir", str(worca_dir)],
+         "--status-dir", str(worca_dir),
+         "--settings", str(settings_file)],
     )
     with patch.object(mod, "run_pipeline", side_effect=LoopExhaustedError("exhausted")):
         with patch.object(mod, "normalize") as mock_normalize:
