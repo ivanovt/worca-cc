@@ -264,7 +264,9 @@ test.describe('file access view — empty state', () => {
       await page.goto(`${ctx.url}/#/history/${runId}/access`, GOTO_OPTS);
 
       await expect(page.locator('.access-empty-state')).toBeVisible({ timeout: 10000 });
-      await expect(page.locator('.access-empty-state')).toContainText('No file access data');
+      await expect(page.locator('.access-empty-state')).toContainText(
+        'No file access was recorded for this run',
+      );
     } finally {
       await ctx.close();
     }
