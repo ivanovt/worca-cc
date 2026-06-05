@@ -9,7 +9,10 @@ class TestMigrationFleetNote:
     """MIGRATION.md must have a fleet-runs release-note section covering key flags and surfaces."""
 
     def _content(self):
-        return MIGRATION_MD.read_text()
+        # encoding="utf-8" is required: MIGRATION.md carries non-ASCII (em-dashes,
+        # arrows, emoji) and a bare read_text() decodes with the locale codec on
+        # Windows (cp1252) → UnicodeDecodeError on bytes like 0x8f.
+        return MIGRATION_MD.read_text(encoding="utf-8")
 
     def test_fleet_section_exists(self):
         """A version-specific section mentioning fleet runs must exist."""
