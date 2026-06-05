@@ -144,7 +144,8 @@ describe('ws-message-router get-file-access', () => {
       }),
     );
 
-    expect(buildFileAccessModel).toHaveBeenCalledWith(null);
+    // Live folding passes runDir as the 2nd arg (null here — run dir not found).
+    expect(buildFileAccessModel).toHaveBeenCalledWith(null, null);
     const response = JSON.parse(ws.send.mock.calls[0][0]);
     expect(response.ok).toBe(true);
     expect(response.payload.runId).toBe('run-abc');
@@ -190,6 +191,7 @@ describe('ws-message-router get-file-access', () => {
     // expected path the same way to stay OS-agnostic (Windows uses '\').
     expect(buildFileAccessModel).toHaveBeenCalledWith(
       join('/mock/default/.worca/runs/run-xyz', 'events.jsonl'),
+      '/mock/default/.worca/runs/run-xyz',
     );
 
     const response = JSON.parse(ws.send.mock.calls[0][0]);
