@@ -1207,11 +1207,46 @@ def cmd_templates_validate(args):
         print(f"error: invalid JSON in --config: {e}", file=sys.stderr)
         raise SystemExit(1) from e
 
+    # worca.models is a cross-template, project-owned key — it is never stored in
+    # a template's config but always applies at run launch (the template strip
+    # keeps it). Merge the project's resolved models into the config before
+    # validating so model aliases defined in project settings (e.g. a custom
+    # `glm-ds`) validate the same way they resolve at runtime. Without this every
+    # agents.*.model referencing a project alias false-warns "not defined in
+    # worca.models". Config-provided models win on key collision.
+    if isinstance(merged_config, dict):
+        project_models = _resolve_project_models(getattr(args, "project_root", None))
+        if project_models:
+            existing = merged_config.get("models")
+            existing = existing if isinstance(existing, dict) else {}
+            merged_config["models"] = {**project_models, **existing}
+
     # Delegate to the shared validator so the rules stay in one place.
     from worca.orchestrator.templates import validate_merged_config
 
     issues = validate_merged_config(merged_config)
     print(json.dumps(issues, indent=2))
+
+
+def _resolve_project_models(project_root: str | None) -> dict:
+    """Resolve the project's ``worca.models`` (global ⊕ project ⊕ local merge).
+
+    ``worca.models`` is cross-template (project-owned), so template validation
+    must see it or aliases defined in project settings false-warn. Best-effort:
+    returns ``{}`` if settings can't be read. Mirrors the runtime resolution via
+    ``load_settings_with_global_fallback`` (which also folds in the gitignored
+    ``settings.local.json`` where per-model env overrides live).
+    """
+    from worca.utils.settings import load_settings_with_global_fallback
+
+    base = project_root if project_root else "."
+    settings_path = os.path.join(base, ".claude", "settings.json")
+    try:
+        settings = load_settings_with_global_fallback(settings_path)
+    except Exception:
+        return {}
+    models = settings.get("worca", {}).get("models", {})
+    return models if isinstance(models, dict) else {}
 
 
 def cmd_templates_duplicate(args):

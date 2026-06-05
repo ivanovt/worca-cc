@@ -2705,3 +2705,74 @@ class TestDuplicateBuiltinWithOverlays:
         copied = project_dir / "my-copy" / "agents" / "planner.md"
         assert copied.exists(), "agents/ must be copied to project-scope duplicate"
         assert "Builtin Planner" in copied.read_text()
+
+
+class TestValidateMergesProjectModels:
+    """`worca templates validate` merges the project's worca.models (a
+    cross-template, project-owned key) into the config before validating, so
+    agent model aliases defined in project settings — e.g. a custom 'glm-ds' —
+    don't false-warn as 'not defined in worca.models'. The Pipelines editor's
+    /templates/validate call previously saw only the template config (no
+    models) and flagged every agents.*.model referencing a project alias.
+    """
+
+    def _write_project_models(self, tmp_path: Path, models: dict) -> None:
+        claude = tmp_path / ".claude"
+        claude.mkdir(parents=True, exist_ok=True)
+        (claude / "settings.json").write_text(
+            json.dumps({"worca": {"models": models}})
+        )
+
+    def _validate(self, project_root: Path, config: dict) -> None:
+        from worca.cli.templates import cmd_templates_validate
+
+        parser = create_parser()
+        args = parser.parse_args([
+            "templates", "--project-root", str(project_root),
+            "validate", "--config", json.dumps(config),
+        ])
+        cmd_templates_validate(args)
+
+    def _model_warnings(self, capsys, agent="planner") -> list:
+        issues = json.loads(capsys.readouterr().out)
+        return [i for i in issues if i["field"] == f"agents.{agent}.model"]
+
+    def test_alias_in_project_models_does_not_warn(self, tmp_path, capsys, monkeypatch):
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "worca-home"))
+        self._write_project_models(tmp_path, {"glm-ds": {"id": "opus"}})
+        self._validate(tmp_path, {"agents": {"planner": {"model": "glm-ds"}}})
+        assert self._model_warnings(capsys) == []
+
+    def test_alias_absent_from_project_models_still_warns(self, tmp_path, capsys, monkeypatch):
+        # Negative control: with no project models, the alias still warns —
+        # proving the merge (not a blanket suppression) is what clears it.
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "worca-home"))
+        self._write_project_models(tmp_path, {})
+        self._validate(tmp_path, {"agents": {"planner": {"model": "glm-ds"}}})
+        warnings = self._model_warnings(capsys)
+        assert len(warnings) == 1
+        assert "glm-ds" in warnings[0]["message"]
+
+    def test_inline_config_model_still_respected(self, tmp_path, capsys, monkeypatch):
+        # A model defined inline in the posted config still validates; merging
+        # project models must not clobber config-provided ones.
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "worca-home"))
+        self._write_project_models(tmp_path, {})
+        self._validate(tmp_path, {
+            "models": {"inline-alias": {"id": "sonnet"}},
+            "agents": {"planner": {"model": "inline-alias"}},
+        })
+        assert self._model_warnings(capsys) == []
+
+    def test_resolve_project_models_reads_merged_settings(self, tmp_path, monkeypatch):
+        from worca.cli.templates import _resolve_project_models
+
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "worca-home"))
+        self._write_project_models(tmp_path, {"glm-ds": {"id": "opus"}})
+        assert "glm-ds" in _resolve_project_models(str(tmp_path))
+
+    def test_resolve_project_models_missing_settings_returns_empty(self, tmp_path, monkeypatch):
+        from worca.cli.templates import _resolve_project_models
+
+        monkeypatch.setenv("WORCA_HOME", str(tmp_path / "worca-home"))
+        assert _resolve_project_models(str(tmp_path)) == {}

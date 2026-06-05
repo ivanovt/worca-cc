@@ -60,6 +60,11 @@ let editorState = {
   idDirty: false,
   template: null, // { id, name, description, tags, config, params, tier }
   builtinTemplate: null, // Built-in template config for diff view (id exists in builtin tier)
+  // Project settings ({ worca }) loaded alongside the template. Supplies the
+  // per-agent Model dropdown its option list: worca.models is cross-template
+  // (project-owned), so it lives here, not in the template config. Without it
+  // the dropdown falls back to built-in defaults only and custom aliases vanish.
+  settings: { worca: {} },
   loading: true,
   error: null,
   saving: false,
@@ -104,6 +109,7 @@ export function initEditorState() {
     idDirty: false,
     template: null,
     builtinTemplate: null,
+    settings: { worca: {} },
     loading: true,
     error: null,
     saving: false,
@@ -609,6 +615,27 @@ export function slugifyId(name) {
  * which copy to load. Built-ins are read-only (the route lets them
  * load; save will 405). Project / user are editable.
  */
+/**
+ * Fetch the project's settings ({ worca }) into editorState.settings so the
+ * per-agent Model dropdown can offer custom aliases from worca.models. The
+ * endpoint returns settings.local.json already merged in (where per-model env
+ * overrides live), matching how a run resolves models. Best-effort: on any
+ * failure the dropdown falls back to built-in defaults (opus/sonnet/haiku).
+ */
+async function _loadProjectSettings(projectId) {
+  try {
+    const url = projectId
+      ? `/api/projects/${projectId}/settings`
+      : '/api/settings';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    editorState.settings = { worca: data.worca || {} };
+  } catch {
+    // best-effort — leave the default empty settings in place
+  }
+}
+
 export async function loadTemplate(tier, tid, projectId) {
   editorState.loading = true;
   editorState.error = null;
@@ -624,6 +651,12 @@ export async function loadTemplate(tier, tid, projectId) {
   editorState.nameDraft = '';
   editorState.descriptionDraft = '';
   editorState.idDraft = tid || '';
+  editorState.settings = { worca: {} };
+
+  // Load the project's worca.models so the per-agent Model dropdown lists
+  // custom aliases (cross-template, project-owned — not carried in the
+  // template config). Best-effort and awaited so the first render has options.
+  await _loadProjectSettings(projectId);
 
   try {
     const url = projectId
@@ -1605,7 +1638,16 @@ function _stagesSection(formBuffer, projectId, rerender) {
  */
 function _agentsTab(formBuffer, settings, projectId, rerender) {
   const agents = formBuffer?.agents || {};
-  const modelOptions = getModelOptions(settings?.worca);
+  // Base options come from the project's worca.models (+ built-in defaults).
+  // Union in any alias an agent currently references but that isn't in that
+  // list (a project alias that failed to load, or one later removed from
+  // worca.models) so the select never renders blank and the value round-trips.
+  const referencedModels = Object.values(agents)
+    .map((a) => a?.model)
+    .filter((m) => typeof m === 'string' && m.length > 0);
+  const modelOptions = Array.from(
+    new Set([...getModelOptions(settings?.worca), ...referencedModels]),
+  );
   const effort = formBuffer?.effort || {};
   const autoMode = effort.auto_mode || 'adaptive';
   const autoCap = effort.auto_cap || 'xhigh';
