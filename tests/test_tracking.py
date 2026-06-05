@@ -622,15 +622,14 @@ def test_subagents_wildcard_default_allows_any_non_denied(agent):
     assert via == "wildcard"
 
 
-def test_subagents_general_purpose_denied_by_default_via_default_denied():
-    """general-purpose is denied by default — but via default_denied (not
-    always_disallowed), so the '*' wildcard excludes it while leaving it
-    allowable per-agent."""
-    allowed, reason, _ = check_allowed(
+def test_subagents_general_purpose_allowed_by_default_via_wildcard():
+    """general-purpose is no longer denied by default — it now dispatches via
+    the '*' wildcard like any other subagent (was previously default_denied)."""
+    allowed, reason, via = check_allowed(
         "subagents", "implementer", "general-purpose", settings_override={},
     )
-    assert allowed is False
-    assert reason == "default_denied"
+    assert allowed is True
+    assert via == "wildcard"
 
 
 def test_subagents_general_purpose_allowable_when_named_explicitly():

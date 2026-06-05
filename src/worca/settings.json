@@ -324,7 +324,7 @@
         },
         "subagents": {
           "always_disallowed": [],
-          "default_denied": ["general-purpose"],
+          "default_denied": [],
           "per_agent_allow": {
             "_defaults": ["*"]
           }

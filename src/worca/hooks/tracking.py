@@ -73,13 +73,12 @@ _DISPATCH_DEFAULTS = {
         },
     },
     "subagents": {
+        # No subagents are denied by default. general-purpose (a full-tool
+        # Claude session) is now allowed under the "*" wildcard like any other
+        # subagent; a project can still deny specific subagents by adding them
+        # to always_disallowed or default_denied.
         "always_disallowed": [],
-        # general-purpose spawns an unconstrained full-tool Claude session, so
-        # it stays denied under the "*" wildcard — but as default_denied (not
-        # always_disallowed) a project can re-allow it per agent by naming it
-        # in per_agent_allow. The old always_disallowed placement made that
-        # impossible: the denylist short-circuits before per_agent_allow.
-        "default_denied": ["general-purpose"],
+        "default_denied": [],
         "per_agent_allow": {"_defaults": ["*"]},
     },
 }

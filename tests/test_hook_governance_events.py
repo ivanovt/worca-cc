@@ -9,6 +9,7 @@ import importlib
 import io
 import json
 import os
+from contextlib import nullcontext
 from unittest.mock import patch
 
 import pytest
@@ -270,12 +271,21 @@ class TestSubagentStartDispatchBlockedEvent:
         for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
             os.environ.pop(k, None)
 
-    def _call_main(self, stdin_data, agent=None):
+    def _call_main(self, stdin_data, agent=None, block_reason=None):
         if agent is not None:
             os.environ["WORCA_AGENT"] = agent
         import worca.claude_hooks.subagent_start as m
         importlib.reload(m)
-        with patch("sys.stdin", io.StringIO(stdin_data)):
+        # When block_reason is set, force a blocked verdict so the test exercises
+        # the dispatch_blocked emission path independent of the shipped
+        # governance default (no subagent is denied by default anymore — the
+        # resolution itself is covered by test_tracking.py).
+        gate = (
+            patch.object(m, "check_allowed", return_value=(False, block_reason, None))
+            if block_reason is not None
+            else nullcontext()
+        )
+        with gate, patch("sys.stdin", io.StringIO(stdin_data)):
             with pytest.raises(SystemExit) as exc:
                 m.main()
         return exc.value.code
@@ -286,7 +296,7 @@ class TestSubagentStartDispatchBlockedEvent:
         os.environ["WORCA_RUN_ID"] = "run-001"
 
         data = json.dumps({"agent_type": "general-purpose"})
-        code = self._call_main(data, agent="coordinator")
+        code = self._call_main(data, agent="coordinator", block_reason="default_denied")
 
         assert code == 2
         assert os.path.exists(events_file)
@@ -305,7 +315,7 @@ class TestSubagentStartDispatchBlockedEvent:
         os.environ["WORCA_RUN_ID"] = "run-xyz"
 
         data = json.dumps({"agent_type": "general-purpose"})
-        self._call_main(data, agent="tester")
+        self._call_main(data, agent="tester", block_reason="default_denied")
 
         e = json.loads(open(events_file).read())
         assert e["schema_version"] == "1"
@@ -351,13 +361,13 @@ class TestSubagentStartDispatchBlockedEvent:
         os.environ["WORCA_RUN_ID"] = "run-001"
 
         data = json.dumps({"agent_type": "general-purpose"})
-        self._call_main(data, agent="coordinator")
+        self._call_main(data, agent="coordinator", block_reason="default_denied")
 
         events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]
         e = events[0]
-        # `candidate` carries the child name; `reason` is the rule path.
-        # general-purpose is denied by default via default_denied (it is
-        # excluded from the '*' wildcard), not the always_disallowed tier.
+        # `candidate` carries the child name; `reason` is the canonical rule
+        # path (here a forced "default_denied" verdict — see _call_main). The
+        # event must surface the reason verbatim for the UI/consumers.
         assert e["payload"]["candidate"] == "general-purpose"
         assert e["payload"]["reason"] == "default_denied"
 
@@ -366,7 +376,7 @@ class TestSubagentStartDispatchBlockedEvent:
         os.environ["WORCA_RUN_ID"] = "run-001"
 
         data = json.dumps({"agent_type": "general-purpose"})
-        code = self._call_main(data, agent="coordinator")
+        code = self._call_main(data, agent="coordinator", block_reason="default_denied")
 
         assert code == 2
 
@@ -387,12 +397,19 @@ class TestSubagentStartDispatchAllowedEvent:
         for k in ["WORCA_EVENTS_PATH", "WORCA_RUN_ID", "WORCA_AGENT"]:
             os.environ.pop(k, None)
 
-    def _call_main(self, stdin_data, agent=None):
+    def _call_main(self, stdin_data, agent=None, block_reason=None):
         if agent is not None:
             os.environ["WORCA_AGENT"] = agent
         import worca.claude_hooks.subagent_start as m
         importlib.reload(m)
-        with patch("sys.stdin", io.StringIO(stdin_data)):
+        # block_reason forces a blocked verdict (no subagent is denied by
+        # default anymore; the resolution is covered by test_tracking.py).
+        gate = (
+            patch.object(m, "check_allowed", return_value=(False, block_reason, None))
+            if block_reason is not None
+            else nullcontext()
+        )
+        with gate, patch("sys.stdin", io.StringIO(stdin_data)):
             with pytest.raises(SystemExit) as exc:
                 m.main()
         return exc.value.code
@@ -449,7 +466,7 @@ class TestSubagentStartDispatchAllowedEvent:
         os.environ["WORCA_RUN_ID"] = "run-001"
 
         data = json.dumps({"agent_type": "general-purpose"})
-        code = self._call_main(data, agent="coordinator")
+        code = self._call_main(data, agent="coordinator", block_reason="default_denied")
 
         assert code == 2
         events = [json.loads(line) for line in open(events_file).readlines() if line.strip()]

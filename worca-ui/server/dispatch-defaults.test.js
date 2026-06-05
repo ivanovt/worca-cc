@@ -112,10 +112,8 @@ describe('DISPATCH_DEFAULTS', () => {
     expect(DISPATCH_DEFAULTS.subagents.always_disallowed).toEqual([]);
   });
 
-  it('subagents default_denied is general-purpose (allowable per-agent)', () => {
-    expect(DISPATCH_DEFAULTS.subagents.default_denied).toEqual([
-      'general-purpose',
-    ]);
+  it('subagents default_denied is empty (general-purpose now allowed by default)', () => {
+    expect(DISPATCH_DEFAULTS.subagents.default_denied).toEqual([]);
   });
 
   it('subagents _defaults is wildcard (PR B)', () => {
