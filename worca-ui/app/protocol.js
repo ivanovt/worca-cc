@@ -22,6 +22,8 @@ export const MESSAGE_TYPES = [
   'list-beads-counts',
   'list-beads-refs',
   'list-beads-unlinked',
+  // File access
+  'get-file-access',
   // Webhook inbox
   'get-webhook-inbox',
   'set-webhook-control',

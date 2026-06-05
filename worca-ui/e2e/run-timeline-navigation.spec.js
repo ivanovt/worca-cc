@@ -45,8 +45,11 @@ test.describe('run timeline navigation', () => {
       await page.goto(`${ctx.url}/#/history?run=${runId}`, GOTO_OPTS);
       await expect(page.locator('.run-detail .stage-panels')).toBeVisible({ timeout: 8000 });
 
+      // The timing bar now has both Access and Timeline buttons; target
+      // Timeline specifically by its label.
       const timelineBtn = page.locator(
         '.pipeline-timing-bar-actions button.action-btn--primary',
+        { hasText: 'Timeline' },
       );
       await expect(timelineBtn).toBeVisible({ timeout: 5000 });
       await timelineBtn.click();

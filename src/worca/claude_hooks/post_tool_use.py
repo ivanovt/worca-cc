@@ -4,11 +4,21 @@
 """PostToolUse hook: runs test_gate and links bd create to pipeline runs."""
 import json
 import re
+import shlex
 import subprocess
 import sys
 import os
 from datetime import datetime
 from pathlib import Path
+
+# graphify read subcommands (the queryable surface). Mutating subcommands
+# (update/install/add/...) are blocked by the pre_tool_use guard and are never
+# recorded as queries.
+_GRAPHIFY_READ_OPS = ("query", "explain", "path", "affected", "diagnose")
+
+# CRG is reached via an MCP server keyed "code-review-graph"; Claude Code names
+# its tools mcp__<server>__<tool>.
+_CRG_TOOL_PREFIXES = ("mcp__code-review-graph__", "mcp__code_review_graph__")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
@@ -63,14 +73,79 @@ def _count_grep_results(output):
     return len([line for line in lines if line.strip()])
 
 
+def _parse_graphify_command(command):
+    """Extract a graphify read query from a Bash command, or None.
+
+    Handles compound commands (e.g. a ``cd <root> && graphify query "…"``
+    prefix) by scanning tokens for the graphify invocation. Only the read
+    subcommands are recorded; the query is the positional args with flags
+    (and their values for ``--graph``-style flags) stripped.
+    """
+    if not command or "graphify" not in command:
+        return None
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+    for i, tok in enumerate(tokens):
+        if tok.rsplit("/", 1)[-1] != "graphify":
+            continue
+        rest = tokens[i + 1:]
+        op = None
+        args = []
+        skip_next = False
+        for t in rest:
+            if skip_next:
+                skip_next = False
+                continue
+            if t.startswith("-"):
+                # value-taking flags: skip the following token too
+                if t in ("--graph", "-g", "--out", "--output", "--format"):
+                    skip_next = True
+                continue
+            if op is None:
+                op = t
+                continue
+            args.append(t)
+        if op in _GRAPHIFY_READ_OPS:
+            return {"engine": "graphify", "op": op, "query": " ".join(args).strip()[:200]}
+        # graphify invoked, but not a read subcommand — don't record.
+        return None
+    return None
+
+
+def _graph_query_from_tool(tool_name, tool_input):
+    """Return a {engine, op, query} dict if this tool call is a graph query.
+
+    Only the fields both engines reliably expose are captured: the engine, the
+    op (graphify subcommand / CRG MCP tool name), and the verbatim query/args.
+    """
+    for prefix in _CRG_TOOL_PREFIXES:
+        if tool_name.startswith(prefix):
+            op = tool_name[len(prefix):]
+            try:
+                query = json.dumps(tool_input or {}, separators=(",", ":"), sort_keys=True)
+            except (TypeError, ValueError):
+                query = str(tool_input)
+            return {"engine": "crg", "op": op, "query": query[:200]}
+    if tool_name == "Bash":
+        return _parse_graphify_command((tool_input or {}).get("command", ""))
+    return None
+
+
 def _record_file_access(tool_name, tool_input, tool_response):
-    """Record file access for reads, writes, and searches."""
+    """Record file access for reads, writes, searches, and graph queries."""
     # Check if file access recording is enabled
     if not _is_file_access_enabled():
         return
 
-    # Only record specific tools
-    if tool_name not in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob"):
+    graph_query = _graph_query_from_tool(tool_name, tool_input)
+
+    # Only record specific tools (plus graphify/CRG graph queries).
+    if (
+        tool_name not in ("Read", "Write", "Edit", "MultiEdit", "NotebookEdit", "Grep", "Glob")
+        and graph_query is None
+    ):
         return
 
     run_id = os.environ.get("WORCA_RUN_ID")
@@ -104,7 +179,13 @@ def _record_file_access(tool_name, tool_input, tool_response):
     ts = datetime.utcnow().isoformat() + "Z"
     record = {"ts": ts, "tool": tool_name}
 
-    if tool_name in ("Read",):
+    if graph_query is not None:
+        record["op"] = "graph_query"
+        record["engine"] = graph_query["engine"]
+        record["graph_op"] = graph_query["op"]
+        record["query"] = graph_query["query"]
+
+    elif tool_name in ("Read",):
         record["op"] = "read"
         record["path"] = tool_input.get("file_path", "")
 

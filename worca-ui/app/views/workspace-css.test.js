@@ -188,6 +188,20 @@ describe('workspace CSS — DAG styling', () => {
       '--sl-font-size-small',
       '--sl-font-size-x-small',
       '--sl-font-weight-semibold',
+      // File Access view (access-treetable, heatmap, scope-dot, searches)
+      // added after DAG rules — these are legitimate access-view tokens.
+      '--text-muted',
+      '--fa-file-col-width',
+      '--fa-cell-width',
+      '--fa-cell-height',
+      '--fa-grid',
+      '--depth',
+      '--heat',
+      // File Access drawer panels (file-history / cell-detail overlays)
+      // use --shadow-lg for the drawer drop shadow and --accent-hover for
+      // the timeline link hover state.
+      '--shadow-lg',
+      '--accent-hover',
     ]);
     for (const prop of customProps) {
       expect(allowed.has(prop)).toBe(true);

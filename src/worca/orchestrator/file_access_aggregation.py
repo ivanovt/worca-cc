@@ -69,6 +69,7 @@ def aggregate_file_access(jsonl_path: str, repo_root: str) -> dict:
             "reads": {path: count, ...},
             "writes": {path: count, ...},
             "searches": [...],
+            "graph_queries": [{engine, op, query}, ...],
             "totals": {distinct_read, total_read, distinct_write, total_write, grep, glob, zero_result, root_scoped},
             "capture": {hook_writes, git_writes, leakage_pct, oracle}
         }
@@ -78,6 +79,7 @@ def aggregate_file_access(jsonl_path: str, repo_root: str) -> dict:
     reads: dict[str, int] = {}
     writes: dict[str, int] = {}
     searches: list = []
+    graph_queries: list = []
     hook_write_paths: set = set()  # Track which paths were written by hook
 
     # Build oracle once, pass to handlers for respelling
@@ -111,6 +113,8 @@ def aggregate_file_access(jsonl_path: str, repo_root: str) -> dict:
                     _handle_write_record(record, repo_root, writes, hook_write_paths, oracle)
                 elif op == "search":
                     _handle_search_record(record, searches)
+                elif op == "graph_query":
+                    _handle_graph_query_record(record, graph_queries)
     except Exception:
         # File read failure — return degraded response
         if oracle is None:
@@ -154,6 +158,7 @@ def aggregate_file_access(jsonl_path: str, repo_root: str) -> dict:
         "reads": reads,
         "writes": writes,
         "searches": searches,
+        "graph_queries": graph_queries,
         "totals": totals,
         "capture": {
             "hook_writes": len(hook_write_paths),
@@ -256,12 +261,30 @@ def _handle_search_record(record: dict, searches: list) -> None:
     searches.append(search_entry)
 
 
+def _handle_graph_query_record(record: dict, graph_queries: list) -> None:
+    """Process a graph-query record (graphify / CRG) and add to the list.
+
+    Only the reliably-capturable fields are surfaced: engine, op (graphify
+    subcommand / CRG MCP tool name), and the verbatim query/args.
+    """
+    engine = record.get("engine")
+    if engine not in ("graphify", "crg"):
+        return
+    query = record.get("query", "") or ""
+    graph_queries.append({
+        "engine": engine,
+        "op": record.get("graph_op", ""),
+        "query": query[:200],
+    })
+
+
 def _build_empty_response(oracle_status: str = "degraded") -> dict:
     """Build an empty file_access response on failure."""
     return {
         "reads": {},
         "writes": {},
         "searches": [],
+        "graph_queries": [],
         "totals": {
             "distinct_read": 0,
             "total_read": 0,

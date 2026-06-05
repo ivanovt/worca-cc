@@ -471,3 +471,104 @@ def test_event_payload_pipeline_iteration_access(tmp_path):
     # Verify the event is properly defined (not testing chat_notifiable directly
     # as that's defined elsewhere in the system, but we document the expectation)
     assert types.ITERATION_ACCESS == "pipeline.iteration.access"
+
+
+# ---------------------------------------------------------------------------
+# Graph-query capture (graphify CLI over Bash, CRG MCP tools)
+# ---------------------------------------------------------------------------
+
+
+def _record_graph(tmp_path, tool_name, tool_input):
+    """Run _record_file_access for a graph tool and return the parsed record(s)."""
+    access_dir = tmp_path / "access"
+    access_dir.mkdir(exist_ok=True)
+    with mock.patch.dict(os.environ, {
+        "WORCA_RUN_ID": "test-run-123",
+        "WORCA_STAGE": "plan",
+        "WORCA_ITERATION": "1",
+    }):
+        with mock.patch.object(post_tool_use, "_get_access_dir", return_value=str(access_dir)):
+            post_tool_use._record_file_access(tool_name, tool_input, {})
+    jsonl_file = access_dir / "plan-1.jsonl"
+    if not jsonl_file.exists():
+        return []
+    return [json.loads(line) for line in jsonl_file.read_text().splitlines() if line.strip()]
+
+
+def test_parse_graphify_query():
+    out = post_tool_use._parse_graphify_command('graphify query "what depends on TaskService?"')
+    assert out == {
+        "engine": "graphify",
+        "op": "query",
+        "query": "what depends on TaskService?",
+    }
+
+
+def test_parse_graphify_path_multiple_args():
+    out = post_tool_use._parse_graphify_command("graphify path TaskCLI TaskRepository")
+    assert out["engine"] == "graphify"
+    assert out["op"] == "path"
+    assert out["query"] == "TaskCLI TaskRepository"
+
+
+def test_parse_graphify_strips_graph_flag_and_value():
+    out = post_tool_use._parse_graphify_command(
+        'graphify query "callers of charge" --graph /tmp/g/graph.json'
+    )
+    assert out["op"] == "query"
+    assert out["query"] == "callers of charge"
+
+
+def test_parse_graphify_handles_compound_command():
+    out = post_tool_use._parse_graphify_command('cd /repo && graphify explain TaskService.create')
+    assert out["op"] == "explain"
+    assert out["query"] == "TaskService.create"
+
+
+def test_parse_graphify_ignores_mutating_subcommand():
+    assert post_tool_use._parse_graphify_command("graphify update") is None
+    assert post_tool_use._parse_graphify_command("graphify install") is None
+
+
+def test_parse_graphify_ignores_non_graphify_bash():
+    assert post_tool_use._parse_graphify_command("pytest tests/") is None
+    assert post_tool_use._parse_graphify_command("git status") is None
+
+
+def test_graph_query_from_crg_mcp_tool():
+    out = post_tool_use._graph_query_from_tool(
+        "mcp__code-review-graph__get_impact_radius", {"symbol": "TaskService.create", "depth": 2}
+    )
+    assert out["engine"] == "crg"
+    assert out["op"] == "get_impact_radius"
+    assert "TaskService.create" in out["query"]
+
+
+def test_recorder_writes_graphify_query(tmp_path):
+    records = _record_graph(tmp_path, "Bash", {"command": 'graphify query "what depends on X?"'})
+    assert len(records) == 1
+    r = records[0]
+    assert r["op"] == "graph_query"
+    assert r["engine"] == "graphify"
+    assert r["graph_op"] == "query"
+    assert r["query"] == "what depends on X?"
+
+
+def test_recorder_writes_crg_mcp_query(tmp_path):
+    records = _record_graph(
+        tmp_path, "mcp__code-review-graph__get_review_context", {"file": "src/svc.py"}
+    )
+    assert len(records) == 1
+    assert records[0]["op"] == "graph_query"
+    assert records[0]["engine"] == "crg"
+    assert records[0]["graph_op"] == "get_review_context"
+
+
+def test_recorder_skips_mutating_graphify(tmp_path):
+    records = _record_graph(tmp_path, "Bash", {"command": "graphify update"})
+    assert records == []
+
+
+def test_recorder_skips_plain_bash(tmp_path):
+    records = _record_graph(tmp_path, "Bash", {"command": "pytest tests/"})
+    assert records == []

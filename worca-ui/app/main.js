@@ -90,6 +90,7 @@ import {
   runBeadsSectionView,
   runDetailView,
 } from './views/run-detail.js';
+import { runFileAccessView } from './views/run-file-access.js';
 import { runListView } from './views/run-list.js';
 import { runTimelineView } from './views/run-timeline.js';
 import {
@@ -600,6 +601,7 @@ let beadsPriorityFilter = 'all';
 let beadsStarting = null; // null | issueId
 let beadsStartError = null; // null | string
 const runBeads = new Map(); // runId → issues[] | null (null = load failed)
+const runAccessModels = new Map(); // runId → access model | null (null = load failed)
 const beadsSpinner = new Set(); // runId → show the 150ms-gated loading spinner
 const beadsSpinnerTimers = new Map(); // runId → setTimeout handle
 let beadsCounts = {}; // { runId: count }
@@ -923,6 +925,19 @@ function fetchRunBeads(runId) {
       // null = load failed — distinct from [] ("no linked beads") so the panel
       // doesn't falsely claim the run has no beads when the query errored.
       runBeads.set(runId, null);
+      rerender();
+    });
+}
+
+function fetchRunAccessModel(runId) {
+  if (!runId || runAccessModels.has(runId)) return;
+  ws.send('get-file-access', { runId, projectId: _runProjectId(runId) })
+    .then((payload) => {
+      runAccessModels.set(runId, payload);
+      rerender();
+    })
+    .catch(() => {
+      runAccessModels.set(runId, { enabled: false });
       rerender();
     });
 }
@@ -3454,7 +3469,10 @@ async function handleConfirmRestartStage() {
 }
 
 function handleBack() {
-  if (route.action === 'timeline' && route.runId) {
+  if (
+    (route.action === 'timeline' || route.action === 'access') &&
+    route.runId
+  ) {
     navigate(route.section, route.runId, route.projectId, null);
   } else if (route.runId) {
     navigate(route.section, null, route.projectId);
@@ -3919,7 +3937,10 @@ function contentHeaderView() {
     } else {
       title = 'Workspaces';
     }
-  } else if (route.action === 'timeline' && route.runId) {
+  } else if (
+    (route.action === 'timeline' || route.action === 'access') &&
+    route.runId
+  ) {
     showBack = true;
     ({ title, badge, actionButton } = runPageHeaderParts(route.runId));
   } else if (route.runId && route.section !== 'templates') {
@@ -4218,6 +4239,47 @@ function mainContentView() {
     });
   }
 
+  // Access sub-view for a run: short-circuit to runFileAccessView.
+  if (route.action === 'access' && route.runId) {
+    const run = store.getRunById(route.runId);
+    if (!run) {
+      if (
+        state.runsLoaded &&
+        currentProjectId &&
+        (state.projects || []).length > 1
+      ) {
+        navigate(route.section, null, route.projectId);
+        return html``;
+      }
+      if (state.runsLoaded) {
+        return html`
+          <div class="run-detail run-detail-layout">
+            <div class="run-detail-layout__overview">
+              <sl-alert variant="warning" open>
+                <strong>Run not found.</strong>
+                No <code>status.json</code> exists for
+                <code>${route.runId}</code> — it may have been an orphan worktree
+                whose pipeline died before writing run state. Clean it up from the
+                <a href="#/worktrees" @click=${() => navigate('worktrees')}>Worktrees</a> view.
+              </sl-alert>
+            </div>
+          </div>
+        `;
+      }
+      return html``;
+    }
+    fetchRunAccessModel(route.runId);
+    return runFileAccessView(run, settings, {
+      section: route.section,
+      runId: route.runId,
+      projectId: route.projectId,
+      model: runAccessModels.get(route.runId),
+      onOpenTimeline: () =>
+        navigate(route.section, route.runId, route.projectId, 'timeline'),
+      onRerender: rerender,
+    });
+  }
+
   // Timeline sub-view for a run: short-circuit to runTimelineView.
   if (route.action === 'timeline' && route.runId) {
     const run = store.getRunById(route.runId);
@@ -4313,6 +4375,8 @@ function mainContentView() {
     if (run && !liveStage) {
       updateActiveStage(run);
     }
+    const fileAccessEnabled =
+      settings?.worca?.telemetry?.file_access?.enabled !== false;
     const { overview, stages: stagePanelsHtml } = runDetailView(run, settings, {
       promptCache: promptCache[route.runId] || {},
       onRestartStage: handleRestartStage,
@@ -4320,6 +4384,9 @@ function mainContentView() {
       onStageTabChange: handleStageTabChange,
       onOpenTimeline: () =>
         navigate(route.section, route.runId, route.projectId, 'timeline'),
+      onOpenAccess: fileAccessEnabled
+        ? () => navigate(route.section, route.runId, route.projectId, 'access')
+        : undefined,
       // Plan-stage View plan dialog needs to redraw when the modal
       // toggles open/closed and when the lazy plan fetch resolves.
       rerender,
