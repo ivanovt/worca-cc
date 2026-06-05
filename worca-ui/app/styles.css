@@ -5952,7 +5952,14 @@ sl-tooltip.bead-tooltip::part(body) {
 
 /* ─── Models tab — model cards + env rows ──────────────────────────── */
 .models-cards {
-  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  /* Single column: a model card's action row carries six controls
+     (Rename/Duplicate/Copy/Delete + Discard/Save) that need ~620px to sit on
+     one line, so full-width cards stay roomy and never overflow. (Was a
+     multi-column auto-fill grid at minmax(440px) — too narrow for the row.)
+     For a capped two-column layout instead, use:
+       repeat(auto-fill, minmax(640px, 1fr));
+     .model-card-actions also wraps as a safety net for the dirty-state status. */
+  grid-template-columns: 1fr;
 }
 
 .model-card {
@@ -6099,6 +6106,7 @@ sl-tooltip.bead-tooltip::part(body) {
 .model-card-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   margin-top: 14px;
   padding-top: 12px;
