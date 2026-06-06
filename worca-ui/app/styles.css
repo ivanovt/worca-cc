@@ -8003,14 +8003,26 @@ sl-dialog.markdown-dialog::part(body) {
   cursor: default !important;
 }
 /*
- * Exception: the Overlays tab is a viewer, not an editor. Expanding a stage's
- * <sl-details> and switching between overlay-file tabs are read actions, so
- * re-enable pointer events for the overlays surface even in read-only mode —
- * otherwise built-in templates can't inspect their prompt overlays at all
- * (the panel-wide pointer-events:none above swallows the summary clicks).
+ * Exception: the Prompts tab is itself a read-only viewer, not an editor —
+ * scrolling a prompt, expanding a stage's <sl-details>, and switching the
+ * per-stage Agent/User sub-tabs are all read actions. The panel-wide
+ * pointer-events:none + opacity:0.7 above would (a) swallow wheel events so
+ * the inner 480px `.prompt-file-content` scroll pane can't be scrolled and
+ * (b) bleach the prompt text, which is hard to read on a text-heavy surface.
+ *
+ * Exempt the Prompts panel entirely (it has no editable controls, so
+ * re-enabling pointer-events can't allow edits). Both the outer panel and
+ * the nested per-stage sub-tab panels are covered — the nested
+ * `sl-tab-panel`s would otherwise re-match the base rule above. opacity is
+ * reset on both levels because it compounds (0.7 × 0.7) and isn't inherited.
  */
-.editor-content--readonly sl-tab-panel .overlay-stages {
+.editor-content--readonly sl-tab-panel[name="prompts"],
+.editor-content--readonly sl-tab-panel[name="prompts"] sl-tab-panel {
   pointer-events: auto;
+  opacity: 1;
+}
+.editor-content--readonly sl-tab-panel[name="prompts"] * {
+  cursor: auto !important;
 }
 
 /*

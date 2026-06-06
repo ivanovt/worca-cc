@@ -99,6 +99,18 @@ function seedBuiltinTemplate(dir, tid, overrides = {}) {
 }
 
 /**
+ * Seed the built-in core prompt files the server resolves the Prompts
+ * tab against (mirrors `.claude/worca/agents/core/` from `worca init`).
+ */
+function seedCorePrompts(dir, files) {
+  const coreDir = join(dir, '.claude', 'worca', 'agents', 'core');
+  mkdirSync(coreDir, { recursive: true });
+  for (const [name, content] of Object.entries(files)) {
+    writeFileSync(join(coreDir, name), content, 'utf8');
+  }
+}
+
+/**
  * Write a user-tier template under <WORCA_HOME>/templates/<id>/. The
  * server resolves the user-tier directory via `templatesDir()` in
  * `worca-ui/server/paths.js`, which honors `$WORCA_HOME` (else falls
@@ -668,6 +680,94 @@ test('built-in template editor is read-only: no Save, Close instead of Cancel', 
             .evaluate((el) => el.disabled),
       )
       .toBe(true);
+  } finally {
+    await ctx.close();
+  }
+});
+
+// The read-only editor bleaches + pointer-locks every tab panel, but the
+// Prompts tab is itself a read-only viewer — it must stay scrollable and
+// full-contrast even for a built-in template. Regression guard for the
+// CSS exemption in styles.css (`sl-tab-panel[name="prompts"]`).
+test('built-in Prompts tab stays scrollable and full-contrast (not bleached)', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    seedBuiltinTemplate(ctx.dir, 'frozen', { name: 'Frozen Builtin' });
+    // A planner body long enough to overflow the inner 480px scroll pane.
+    const longBody = Array.from(
+      { length: 200 },
+      (_, i) => `Line ${i}: built-in planner instruction text.`,
+    ).join('\n\n');
+    seedCorePrompts(ctx.dir, {
+      'planner.md': `# Planner\n\n${longBody}`,
+    });
+
+    await page.goto(`${ctx.url}/#/templates/builtin/frozen/edit`, GOTO_OPTS);
+    await expect(page.locator('.pipelines-editor')).toBeAttached({
+      timeout: 10000,
+    });
+
+    // The editor is in read-only mode (the wrapper carries the class that
+    // drives the bleach/pointer-lock the exemption must override).
+    await expect(page.locator('.editor-content--readonly')).toBeAttached();
+
+    const promptsTab = page.locator(
+      '.editor-tab-group sl-tab[panel="prompts"]',
+    );
+    await expect(promptsTab).toBeVisible({ timeout: 8000 });
+    await promptsTab.click();
+
+    const panel = page.locator('sl-tab-panel[name="prompts"]');
+    await expect(panel).toBeAttached({ timeout: 5000 });
+
+    // Outer prompts panel: not bleached, not pointer-locked.
+    await expect
+      .poll(async () =>
+        panel.evaluate((el) => getComputedStyle(el).pointerEvents),
+      )
+      .not.toBe('none');
+    await expect
+      .poll(async () => panel.evaluate((el) => getComputedStyle(el).opacity))
+      .toBe('1');
+
+    // Expand the stage so the nested per-stage sub-tab panel renders.
+    const stageCard = panel.locator('sl-details.overlay-stage-card').first();
+    await expect(stageCard).toBeAttached({ timeout: 5000 });
+    await stageCard.evaluate((el) => {
+      el.open = true;
+    });
+
+    // Nested sub-tab panel (the spot that re-matched pointer-events:none
+    // before the exemption) must also be interactive + full-contrast.
+    const nestedPanel = panel.locator('sl-tab-panel').first();
+    await expect(nestedPanel).toBeAttached({ timeout: 5000 });
+    await expect
+      .poll(async () =>
+        nestedPanel.evaluate((el) => getComputedStyle(el).pointerEvents),
+      )
+      .not.toBe('none');
+    await expect
+      .poll(async () =>
+        nestedPanel.evaluate((el) => getComputedStyle(el).opacity),
+      )
+      .toBe('1');
+
+    // The inner 480px scroll pane overflows and can actually be scrolled.
+    const pane = panel.locator('.prompt-file-content.markdown-body').first();
+    await expect(pane).toBeAttached({ timeout: 5000 });
+    await expect
+      .poll(async () =>
+        pane.evaluate((el) => el.scrollHeight > el.clientHeight),
+      )
+      .toBe(true);
+    await pane.evaluate((el) => {
+      el.scrollTop = 120;
+    });
+    await expect
+      .poll(async () => pane.evaluate((el) => el.scrollTop))
+      .toBeGreaterThan(0);
   } finally {
     await ctx.close();
   }
