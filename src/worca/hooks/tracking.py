@@ -301,7 +301,23 @@ def _reset_dispatch_cache() -> None:
 
 
 def _settings_path() -> str | None:
-    """Return the absolute path to settings.json, or None if it can't be located."""
+    """Return the absolute path to settings.json, or None if it can't be located.
+
+    Resolution order:
+      1. ``WORCA_SETTINGS_PATH`` — the *effective* settings file the runner pins
+         for the run (template-merged + template-owned-key-stripped). Set so the
+         dispatch hooks (subagent_start / skill_use) AND the
+         ``--tools``/``--disallowedTools`` CLI-flag resolution read the SAME
+         config as the rest of the pipeline. Without it both fall through to the
+         raw on-disk project ``.claude/settings.json`` below, which silently
+         overrides a template's ``governance.dispatch`` (the only template-owned
+         key consumed via these on-disk paths). See ``run_pipeline``.
+      2. ``CLAUDE_PROJECT_DIR``/.claude/settings.json
+      3. git-toplevel/.claude/settings.json
+    """
+    pinned = os.environ.get("WORCA_SETTINGS_PATH")
+    if pinned and os.path.exists(pinned):
+        return pinned
     project_dir = os.environ.get("CLAUDE_PROJECT_DIR")
     if not project_dir:
         import subprocess

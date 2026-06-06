@@ -2165,6 +2165,23 @@ def _ensure_beads_initialized() -> None:
             raise PipelineError(f"Failed to initialize beads: {init_result.stderr}")
 
 
+def _pin_effective_settings_path(settings_path: Optional[str]) -> None:
+    """Pin the effective settings file for this run via ``WORCA_SETTINGS_PATH``.
+
+    The runner resolves model/stage/loop config from ``settings_path`` (the
+    template-merged + stripped effective settings), but the dispatch hooks and
+    the ``--tools``/``--disallowedTools`` CLI-flag resolution read settings from
+    disk via ``tracking._settings_path()`` — which, without this pin, falls back
+    to the raw on-disk project ``.claude/settings.json`` and silently overrides a
+    template's ``governance.dispatch``. Exporting the path here (inherited by
+    every agent subprocess via ``get_env`` and thus by the hook subprocesses they
+    spawn) makes both consumers read the same merged config. No-op-equivalent for
+    no-template runs, where ``settings_path`` already IS the on-disk file.
+    """
+    if settings_path:
+        os.environ["WORCA_SETTINGS_PATH"] = os.path.abspath(settings_path)
+
+
 def run_pipeline(
     work_request: WorkRequest,
     plan_file: Optional[str] = None,
@@ -2207,6 +2224,11 @@ def run_pipeline(
     _shutdown_requested = False
     _pending_signal_event = None
     _signal_event_emitted = False
+
+    # Pin the effective settings file so the dispatch hooks and the
+    # --tools/--disallowedTools resolution read the same template-merged config
+    # as the rest of the pipeline (see _pin_effective_settings_path).
+    _pin_effective_settings_path(settings_path)
 
     # status_path can arrive in two shapes:
     #   <worca>/status.json                       (legacy flat layout)
