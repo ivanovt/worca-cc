@@ -111,7 +111,7 @@ function _detectCollision(_template, _projects) {
 
 function _sourceLabel(type) {
   if (type === 'source') return 'GitHub Issue or Bead';
-  if (type === 'spec') return 'Spec File';
+  if (type === 'spec') return 'Specification';
   if (type === 'pr') return 'GitHub PR';
   return '';
 }
@@ -413,9 +413,9 @@ function _workSourceSection({ rerender } = {}) {
               : null
           }
         >
-          <sl-option value="none">None</sl-option>
+          <sl-option value="none">Prompt (Shared)</sl-option>
+          <sl-option value="spec">Specification</sl-option>
           <sl-option value="source">GitHub Issue</sl-option>
-          <sl-option value="spec">Spec File</sl-option>
           <sl-option value="pr">GitHub PR</sl-option>
         </sl-select>
       </div>
