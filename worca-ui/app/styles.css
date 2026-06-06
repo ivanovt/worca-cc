@@ -1959,6 +1959,12 @@ sl-input [slot="prefix"] {
   color: var(--muted);
 }
 
+/* Align the "Revising PR #N" badge with the meta rows above/below it
+   (which carry the same 26px left indent past the status icon). */
+.run-card-revises-pr {
+  padding-left: 26px;
+}
+
 .run-card-stages {
   display: flex;
   flex-wrap: wrap;
