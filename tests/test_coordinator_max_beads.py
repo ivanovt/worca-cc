@@ -474,3 +474,84 @@ class TestLaunchParamStatus:
         from worca.orchestrator.runner import launch_param_status
 
         assert launch_param_status(None, 4, 1) == {"size_multiplier": 4}
+
+
+class TestEffectiveBeadCapStatus:
+    """effective_bead_cap_status maps (resolved cap, override, PR-revision) to the
+    two persisted fields the preflight UI reads: max_beads_effective + source."""
+
+    def test_explicit_override(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        assert effective_bead_cap_status(5, 5, False) == {
+            "max_beads_effective": 5,
+            "max_beads_source": "explicit",
+        }
+
+    def test_template_config_no_override(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        assert effective_bead_cap_status(3, None, False) == {
+            "max_beads_effective": 3,
+            "max_beads_source": "template",
+        }
+
+    def test_auto_run(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        assert effective_bead_cap_status(0, None, False) == {
+            "max_beads_effective": 0,
+            "max_beads_source": "template",
+        }
+
+    def test_pr_revision_records_template_even_with_override(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        # Override was passed, but PR-revision suppression forced the cap to 0;
+        # that isn't a launch-time choice, so source is "template".
+        assert effective_bead_cap_status(0, 1, True) == {
+            "max_beads_effective": 0,
+            "max_beads_source": "template",
+        }
+
+    # --- end-to-end: resolution (PromptBuilder) + status mapping together ---
+
+    def test_e2e_explicit_override(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        pb = _make_pb(max_beads_override=4, max_beads_config=7)
+        ctx = pb.build_context("coordinate")
+        out = effective_bead_cap_status(
+            ctx["max_beads"], 4, bool(ctx.get("has_review_comments"))
+        )
+        assert out == {"max_beads_effective": 4, "max_beads_source": "explicit"}
+
+    def test_e2e_template_config(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        pb = _make_pb(max_beads_config=6)
+        ctx = pb.build_context("coordinate")
+        out = effective_bead_cap_status(
+            ctx["max_beads"], None, bool(ctx.get("has_review_comments"))
+        )
+        assert out == {"max_beads_effective": 6, "max_beads_source": "template"}
+
+    def test_e2e_auto(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        pb = _make_pb()
+        ctx = pb.build_context("coordinate")
+        out = effective_bead_cap_status(
+            ctx["max_beads"], None, bool(ctx.get("has_review_comments"))
+        )
+        assert out == {"max_beads_effective": 0, "max_beads_source": "template"}
+
+    def test_e2e_pr_revision_suppresses(self):
+        from worca.orchestrator.runner import effective_bead_cap_status
+
+        pb = _make_pb(max_beads_override=2, review_comments="please split this")
+        ctx = pb.build_context("coordinate")
+        out = effective_bead_cap_status(
+            ctx["max_beads"], 2, bool(ctx.get("has_review_comments"))
+        )
+        assert out == {"max_beads_effective": 0, "max_beads_source": "template"}

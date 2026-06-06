@@ -2223,6 +2223,29 @@ def launch_param_status(
     return out
 
 
+def effective_bead_cap_status(
+    effective_cap: int, max_beads_override: Optional[int], has_review_comments: bool
+) -> dict:
+    """Status keys recording the RESOLVED coordinator bead cap and where it came from.
+
+    Surfaced on the UI preflight row alongside ``max_beads_override``.
+    ``max_beads_effective`` is the cap prompt_builder actually resolved (0 = Auto,
+    and 0 under PR-revision suppression). ``max_beads_source`` is ``"explicit"``
+    only when a launch override genuinely drove the cap; config/template caps —
+    and PR-revision suppression, which forces the cap to 0 regardless of any
+    override — record ``"template"`` since neither is a launch-time choice.
+    """
+    source = (
+        "explicit"
+        if (max_beads_override is not None and not has_review_comments)
+        else "template"
+    )
+    return {
+        "max_beads_effective": int(effective_cap or 0),
+        "max_beads_source": source,
+    }
+
+
 def run_pipeline(
     work_request: WorkRequest,
     plan_file: Optional[str] = None,
@@ -2981,6 +3004,19 @@ def run_pipeline(
                     prompt_builder.update_context("max_beads_config", stage_config["max_beads"])
 
                 ctx_dict = prompt_builder.build_context(current_stage.value, pb_iteration)
+
+                # W-069: persist the resolved coordinator bead cap + its source so
+                # the UI preflight row can surface the EFFECTIVE cap (not just the
+                # launch override). Written before COORDINATE executes, so it's
+                # visible even if the stage later fails.
+                if current_stage == Stage.COORDINATE:
+                    status.update(effective_bead_cap_status(
+                        int(ctx_dict.get("max_beads", 0) or 0),
+                        max_beads_override,
+                        bool(ctx_dict.get("has_review_comments")),
+                    ))
+                    save_status(status, actual_status_path)
+
                 _stage_agent_name = stage_config["agent"]
                 if current_stage == Stage.PLAN_REVIEW:
                     _pr_mode, _pr_mode_reason = resolve_plan_review_mode(

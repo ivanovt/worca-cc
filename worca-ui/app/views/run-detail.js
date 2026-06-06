@@ -1279,10 +1279,11 @@ function _preflightParamsRow(run) {
   if (!run) return nothing;
   const pill = (text, tip) =>
     html`<sl-tooltip content="${tip}"><sl-badge class="preflight-param-badge" variant="neutral" pill>${text}</sl-badge></sl-tooltip>`;
+  const sourcePill = (text, tip) =>
+    html`<sl-tooltip content="${tip}"><sl-badge class="preflight-param-badge preflight-param-source-badge" variant="neutral" pill>${text}</sl-badge></sl-tooltip>`;
   const items = [];
   const size = run.size_multiplier;
   const loops = run.loop_multiplier;
-  const maxBeads = run.max_beads_override;
   if (typeof size === 'number' && size > 1) {
     items.push(
       html`<span class="meta-label">Size Multiplier:</span> ${pill(`${size}×`, 'Turn multiplier (msize) set at launch — multiplies each agent’s max_turns.')}`,
@@ -1293,12 +1294,43 @@ function _preflightParamsRow(run) {
       html`<span class="meta-label">Loop Multiplier:</span> ${pill(`${loops}×`, 'Loop multiplier (mloops) set at launch — multiplies the test/review/plan retry-loop limits.')}`,
     );
   }
-  if (typeof maxBeads === 'number' && maxBeads > 0) {
-    items.push(
-      html`<span class="meta-label">Max Beads:</span> ${pill(String(maxBeads), 'Maximum beads the coordinator may create, set at launch (0 / unset = Auto).')}`,
+
+  // Max Beads is ALWAYS shown — the EFFECTIVE resolved cap plus a second pill
+  // for where it came from. Resolution degrades gracefully on old runs:
+  //   1. new fields present → effective value + its persisted source
+  //   2. legacy max_beads_override only → that value, source "explicit"
+  //   3. neither (legacy auto run) → 0 (Auto), source unknown (pill omitted)
+  let beadValue;
+  let beadSource;
+  if (typeof run.max_beads_effective === 'number') {
+    beadValue = run.max_beads_effective;
+    beadSource = run.max_beads_source;
+  } else if (typeof run.max_beads_override === 'number') {
+    beadValue = run.max_beads_override;
+    beadSource = 'explicit';
+  } else {
+    beadValue = 0;
+    beadSource = undefined;
+  }
+  const beadText = beadValue > 0 ? String(beadValue) : '0 (Auto)';
+  const beadPills = [
+    pill(
+      beadText,
+      'Effective cap on the number of beads the coordinator may create (0 = Auto / no cap).',
+    ),
+  ];
+  if (beadSource !== undefined) {
+    beadPills.push(
+      sourcePill(
+        beadSource,
+        beadSource === 'explicit'
+          ? 'Cap set explicitly at launch via --max-beads.'
+          : 'Cap came from the template / project config (or was suppressed for a PR-revision run).',
+      ),
     );
   }
-  if (!items.length) return nothing;
+  items.push(html`<span class="meta-label">Max Beads:</span> ${beadPills}`);
+
   return html`<div class="iteration-tags-row preflight-params-row">${items}</div>`;
 }
 
@@ -1311,7 +1343,10 @@ function _preflightChecksView(stage, iter, run) {
   const checks = output.checks || [];
   const summary = output.summary || '';
   const paramsRow = _preflightParamsRow(run);
-  if (!checks.length && !summary && paramsRow === nothing) return nothing;
+  // The params row now always carries the Max Beads cap (value + source) for any
+  // real run, so it renders even with no checks/summary. Only collapse when
+  // there is genuinely nothing to show — no params row, no checks, no summary.
+  if (paramsRow === nothing && !checks.length && !summary) return nothing;
   return html`
     <div class="preflight-checks-view">
       ${paramsRow}

@@ -4666,6 +4666,12 @@ sl-details.learnings-panel::part(content) {
   color: var(--muted);
 }
 
+/* Secondary pill on the preflight params row (e.g. the Max Beads source:
+   "explicit" / "template"). Same font as the value pill, visually subordinated. */
+.preflight-param-source-badge {
+  opacity: 0.72;
+}
+
 .circuit-breaker-banner {
   margin: 8px 0 4px;
 }
