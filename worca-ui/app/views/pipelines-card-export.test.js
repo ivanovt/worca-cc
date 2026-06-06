@@ -107,46 +107,26 @@ describe('pipelinesView — gist guard (has_overlays)', () => {
     expect(gistBtn).toBeUndefined();
   });
 
-  it('labels the export button "Export (json)" when has_overlays is false', () => {
-    container = mount(
-      {
-        templates: [TPL_NO_OVERLAYS],
-        templatesLoaded: true,
-        worcaCliStatus: HEALTHY,
-      },
-      baseHandlers,
-    );
-    const card = cardForId(container, 'simple-tpl');
-    expect(card).toBeDefined();
-    const exportBtn = Array.from(card.querySelectorAll('button')).find((b) =>
-      (b.textContent || '').includes('Export (json)'),
-    );
-    expect(exportBtn).toBeDefined();
-    const zipBtn = Array.from(card.querySelectorAll('button')).find((b) =>
-      (b.textContent || '').includes('Export (zip)'),
-    );
-    expect(zipBtn).toBeUndefined();
-  });
-
-  it('labels the export button "Export (zip)" when has_overlays is true', () => {
-    container = mount(
-      {
-        templates: [TPL_WITH_OVERLAYS],
-        templatesLoaded: true,
-        worcaCliStatus: HEALTHY,
-      },
-      baseHandlers,
-    );
-    const card = cardForId(container, 'overlay-tpl');
-    expect(card).toBeDefined();
-    const exportBtn = Array.from(card.querySelectorAll('button')).find((b) =>
-      (b.textContent || '').includes('Export (zip)'),
-    );
-    expect(exportBtn).toBeDefined();
-    const jsonBtn = Array.from(card.querySelectorAll('button')).find((b) =>
-      (b.textContent || '').includes('Export (json)'),
-    );
-    expect(jsonBtn).toBeUndefined();
+  // The bundle-download button now has a static "Export" label — the
+  // standalone/delta mode (and resulting zip-vs-json format) is chosen in the
+  // export dialog, not baked into the card label.
+  it('labels the bundle button "Export" regardless of has_overlays', () => {
+    for (const tpl of [TPL_NO_OVERLAYS, TPL_WITH_OVERLAYS]) {
+      container = mount(
+        { templates: [tpl], templatesLoaded: true, worcaCliStatus: HEALTHY },
+        baseHandlers,
+      );
+      const card = cardForId(container, tpl.id);
+      expect(card).toBeDefined();
+      const exportBtn = card.querySelector(
+        'button[title="Export template bundle"]',
+      );
+      expect(exportBtn).not.toBeNull();
+      expect((exportBtn.textContent || '').trim()).toBe('Export');
+      // No stale dynamic "(json)"/"(zip)" suffix on the bundle button.
+      expect(exportBtn.textContent).not.toContain('(json)');
+      expect(exportBtn.textContent).not.toContain('(zip)');
+    }
   });
 
   it('does not show the legacy overlay note when has_overlays is true', () => {
