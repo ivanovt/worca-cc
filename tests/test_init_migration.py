@@ -13,10 +13,12 @@ import os
 from pathlib import Path
 
 from worca.cli.init import (
+    _BUILTIN_MODEL_ALIASES,
     _deep_merge,
     _migrate_dispatch_governance,
     _migrate_global_keys_to_preferences,
     _migrate_settings_paths,
+    _reconcile_builtin_models,
     _strip_inert_milestone_keys,
 )
 from worca.hooks.tracking import _DISPATCH_DEFAULTS
@@ -1129,3 +1131,74 @@ class TestMigrateToLegacyTemplate:
         # New template written under timestamped name
         new_path = tmp_path / ".claude" / "templates" / result / "template.json"
         assert new_path.exists()
+
+
+# --- Built-in model alias reconciliation (force-sync opus/sonnet/haiku) ---
+
+_TEMPLATE_MODELS = {
+    "worca": {
+        "models": {
+            "opus": "claude-opus-4-7",
+            "sonnet": "claude-sonnet-4-6",
+            "haiku": "claude-haiku-4-5-20251001",
+        }
+    }
+}
+
+
+def test_reconcile_overwrites_stale_string_aliases():
+    """A project pinned to an older built-in model string is bumped to the
+    installation's value, and the change is reported."""
+    settings = {"worca": {"models": {"opus": "claude-opus-4-6"}}}
+    changes = _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert settings["worca"]["models"]["opus"] == "claude-opus-4-7"
+    assert any("worca.models.opus" in c for c in changes)
+
+
+def test_reconcile_overwrites_id_env_block_wholesale():
+    """An {id, env} alt-endpoint customization on a built-in alias is replaced
+    wholesale (env wiped) — these three aliases are worca-owned."""
+    settings = {
+        "worca": {
+            "models": {
+                "opus": {"id": "some/alt-model", "env": {"ANTHROPIC_BASE_URL": "x"}},
+            }
+        }
+    }
+    changes = _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert settings["worca"]["models"]["opus"] == "claude-opus-4-7"
+    assert any("worca.models.opus" in c for c in changes)
+
+
+def test_reconcile_preserves_custom_aliases():
+    """Aliases the project added under different names are left untouched."""
+    settings = {
+        "worca": {
+            "models": {
+                "opus": "claude-opus-4-6",
+                "opus-alt": {"id": "x", "env": {"ANTHROPIC_BASE_URL": "y"}},
+                "fast": "claude-haiku-4-5-20251001",
+            }
+        }
+    }
+    _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert settings["worca"]["models"]["opus-alt"] == {
+        "id": "x",
+        "env": {"ANTHROPIC_BASE_URL": "y"},
+    }
+    assert settings["worca"]["models"]["fast"] == "claude-haiku-4-5-20251001"
+
+
+def test_reconcile_noop_when_already_synced():
+    """No changes reported when the built-ins already match the installation."""
+    settings = copy.deepcopy(_TEMPLATE_MODELS)
+    changes = _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    assert changes == []
+
+
+def test_reconcile_seeds_missing_models_block():
+    """A project with no models block gets the built-ins seeded."""
+    settings = {"worca": {}}
+    _reconcile_builtin_models(settings, _TEMPLATE_MODELS)
+    for alias in _BUILTIN_MODEL_ALIASES:
+        assert settings["worca"]["models"][alias] == _TEMPLATE_MODELS["worca"]["models"][alias]

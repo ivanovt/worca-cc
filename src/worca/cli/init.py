@@ -155,6 +155,50 @@ _PATH_MIGRATIONS = [
 ]
 
 
+# Built-in model aliases that worca owns. Unlike the rest of settings.json
+# (which is preserved via non-destructive _deep_merge), these three track the
+# *installation*, not the project: every `worca init --upgrade` force-syncs them
+# to the template's current values. A project that needs custom model routing
+# must use a differently-named alias — customizing opus/sonnet/haiku directly is
+# intentionally overwritten on upgrade.
+_BUILTIN_MODEL_ALIASES = ("opus", "sonnet", "haiku")
+
+
+def _fmt_model(val: object) -> str:
+    """Render a model alias value (plain string or {id, env} dict) for logs."""
+    if isinstance(val, dict):
+        return json.dumps(val, sort_keys=True)
+    return str(val)
+
+
+def _reconcile_builtin_models(settings: dict, template: dict) -> list[str]:
+    """Force the worca-owned model aliases to the installation's values.
+
+    Overwrites ``worca.models.{opus,sonnet,haiku}`` in ``settings`` with the
+    template's values, discarding any project customization of those three.
+    Aliases the project added under other names are left untouched.
+
+    Mutates ``settings`` in place. Returns human-readable change descriptions
+    (empty when the built-ins already match the template).
+    """
+    tmpl_models = template.get("worca", {}).get("models", {})
+    if not tmpl_models:
+        return []
+    cur_models = settings.setdefault("worca", {}).setdefault("models", {})
+    changes: list[str] = []
+    for alias in _BUILTIN_MODEL_ALIASES:
+        if alias not in tmpl_models:
+            continue
+        new_val = tmpl_models[alias]
+        old_val = cur_models.get(alias)
+        if old_val == new_val:
+            continue
+        cur_models[alias] = copy.deepcopy(new_val)
+        old_repr = "(added)" if old_val is None else _fmt_model(old_val)
+        changes.append(f"  worca.models.{alias}: {old_repr} -> {_fmt_model(new_val)}")
+    return changes
+
+
 def _seed_dispatch_defaults(governance_cfg: dict) -> None:
     """Idempotently fill in any missing tiers/sections of governance.dispatch.
 
@@ -940,6 +984,14 @@ def _show_check(source: Path, git_root: Path) -> None:
             else:
                 print("\nSettings: no changes needed")
 
+            # Built-in model aliases are force-synced (not surfaced by the
+            # additive key diff above, since the keys already exist).
+            model_changes = _reconcile_builtin_models(copy.deepcopy(current), template)
+            if model_changes:
+                print("\nBuilt-in models that would be synced (opus/sonnet/haiku):")
+                for change in model_changes:
+                    print(change)
+
         # Check path migrations
         _, migration_changes = _migrate_settings_paths(current)
         if migration_changes:
@@ -1104,10 +1156,15 @@ def run_init(
             with open(source_settings, encoding="utf-8") as f:
                 template = json.load(f)
             merged = _deep_merge(current, template)
+            model_changes = _reconcile_builtin_models(merged, template)
             with open(settings_path, "w", encoding="utf-8") as f:
                 json.dump(merged, f, indent=2)
                 f.write("\n")
             print("Settings: added new template keys (user values preserved)")
+            if model_changes:
+                print("Built-in models synced to installation (opus/sonnet/haiku):")
+                for change in model_changes:
+                    print(change)
     else:
         # Create from template
         if source_settings.exists():

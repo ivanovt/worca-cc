@@ -60,6 +60,12 @@ Forward-incompatible renames (e.g. `stages.review.agent: guardian -> reviewer` i
 
 If you want to hard-reset your settings to the current template, use `worca init --force` (destructive). Project-specific overrides that should never be touched by any upgrade still belong in `.claude/settings.local.json`.
 
+### Built-in model aliases are force-synced
+
+The three built-in model aliases — `worca.models.opus`, `worca.models.sonnet`, `worca.models.haiku` — are the **exception** to the non-destructive merge above. They track the *installation*, not the project: every `worca init --upgrade` overwrites them with the package's current values (e.g. bumping `opus` to a new Opus model on release). Any project-level customization of these three — including an `{id, env}` alt-endpoint routing block — is **discarded** on upgrade. The change is reported in the upgrade output and previewable under `worca init --check`.
+
+If you need custom model routing, define it under a **differently-named alias** (e.g. `opus-alt`) and point the relevant `worca.agents.<name>.model` at it — user-added aliases are preserved verbatim. Source: `_reconcile_builtin_models` / `_BUILTIN_MODEL_ALIASES` in `src/worca/cli/init.py`.
+
 ### Global key extraction (W-049)
 
 Four settings keys that are naturally global (apply across all projects) are extracted from `.claude/settings.json` into `~/.worca/settings.json`:
