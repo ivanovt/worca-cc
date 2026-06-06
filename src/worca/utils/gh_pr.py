@@ -228,11 +228,16 @@ def reply_to_thread(nwo: str, thread_id: str, body: str) -> bool:
     """
     if _github_disabled():
         return False
-    variables = json.dumps({"threadId": thread_id, "body": body})
     try:
+        # Same constraint as fetch_review_feedback: variables must be flags, not
+        # `--input -` (which would drop the query field). Both are strings here.
         result = subprocess.run(
-            ["gh", "api", "graphql", "-f", f"query={_REPLY_MUTATION}", "--input", "-"],
-            input=variables,
+            [
+                "gh", "api", "graphql",
+                "-f", f"query={_REPLY_MUTATION}",
+                "-f", f"threadId={thread_id}",
+                "-f", f"body={body}",
+            ],
             capture_output=True,
             text=True,
             timeout=15,

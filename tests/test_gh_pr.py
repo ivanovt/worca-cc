@@ -271,7 +271,8 @@ def test_reply_to_thread_exception_suppressed(monkeypatch, capsys):
 
 
 def test_reply_to_thread_passes_thread_id_and_body(monkeypatch):
-    """Thread ID and body are included in the subprocess call input."""
+    """Thread ID and body travel as GraphQL flag variables, not via `--input -`
+    (which would override the body and drop the query field)."""
     monkeypatch.delenv("WORCA_NO_GITHUB", raising=False)
     mock_result = MagicMock()
     mock_result.returncode = 0
@@ -280,11 +281,14 @@ def test_reply_to_thread_passes_thread_id_and_body(monkeypatch):
     with patch("subprocess.run", return_value=mock_result) as mock_run:
         reply_to_thread("owner/repo", "PRRT_xyz", "Addressed in sha123")
 
+    cmd = mock_run.call_args[0][0]
     call_kwargs = mock_run.call_args[1]
-    stdin_input = call_kwargs.get("input", "")
-    variables = json.loads(stdin_input)
-    assert variables["threadId"] == "PRRT_xyz"
-    assert variables["body"] == "Addressed in sha123"
+    assert cmd[:3] == ["gh", "api", "graphql"]
+    assert "--input" not in cmd
+    assert call_kwargs.get("input") is None
+    assert any(a.startswith("query=") for a in cmd)
+    assert "threadId=PRRT_xyz" in cmd
+    assert "body=Addressed in sha123" in cmd
 
 
 # ---------------------------------------------------------------------------
