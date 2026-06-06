@@ -110,7 +110,7 @@ function _detectCollision(_template, _projects) {
 }
 
 function _sourceLabel(type) {
-  if (type === 'source') return 'GitHub Issue or Bead';
+  if (type === 'source') return 'GitHub Issue';
   if (type === 'spec') return 'Specification';
   if (type === 'pr') return 'GitHub PR';
   return '';
@@ -437,7 +437,7 @@ function _workSourceSection({ rerender } = {}) {
                     : null
                 }
               ></sl-input>
-              <span class="settings-field-hint">${sourceType === 'source' ? 'GitHub issue reference or bead id resolved per project.' : sourceType === 'pr' ? 'GitHub PR number or URL. Fetches unresolved review comments and runs in revision mode.' : 'Path resolved relative to each project root.'}</span>
+              <span class="settings-field-hint">${sourceType === 'source' ? 'GitHub issue reference resolved per project.' : sourceType === 'pr' ? 'GitHub PR number or URL. Fetches unresolved review comments and runs in revision mode.' : 'Path resolved relative to each project root.'}</span>
             </div>
           `
           : nothing
