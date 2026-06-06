@@ -323,8 +323,14 @@ export async function submitNewRun({
   rerender();
 
   try {
+    // The "GitHub PR" option is a UI affordance (distinct label/placeholder),
+    // but the runner detects PR refs (gh:pr:N or PR URLs) through the same
+    // --source path as GitHub issues. Map it to "source" on the wire — the
+    // backend only accepts none/source/spec.
+    const wireSourceType = sourceType === 'pr' ? 'source' : sourceType;
+
     const body = {
-      sourceType,
+      sourceType: wireSourceType,
       msize: Math.max(1, Math.min(10, msize)),
       mloops: Math.max(1, Math.min(10, mloops)),
       maxBeads: maxBeadsValue,

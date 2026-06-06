@@ -128,6 +128,20 @@ describe('submitNewRun — new format validation and payload', () => {
     expect(body.sourceValue).toBe('https://github.com/org/repo/issues/42');
   });
 
+  it('maps the GitHub PR option to sourceType=source on the wire', async () => {
+    const getBody = mockFetch();
+    setupDOM({ sourceValue: 'https://github.com/org/repo/pull/117' });
+    resetNewRunState({ sourceType: 'pr' });
+
+    await submitNewRun({ rerender: vi.fn(), onStarted: vi.fn() });
+
+    const body = getBody();
+    // Backend only accepts none/source/spec; the runner sniffs PR refs
+    // through the --source path, so "pr" must go out as "source".
+    expect(body.sourceType).toBe('source');
+    expect(body.sourceValue).toBe('https://github.com/org/repo/pull/117');
+  });
+
   it('sends sourceType and sourceValue for spec file', async () => {
     const getBody = mockFetch();
     setupDOM({ sourceValue: 'docs/spec.md' });
