@@ -71,7 +71,7 @@ export function seedMaxBeadsFromTemplate(templateId) {
 
 function sourceLabel(type) {
   if (type === 'source') return 'GitHub Issue URL';
-  if (type === 'spec') return 'Spec File Path';
+  if (type === 'spec') return 'Specification File Path';
   if (type === 'pr') return 'GitHub PR URL or Number';
   return '';
 }
@@ -611,8 +611,8 @@ export function newRunView(_state, { rerender }) {
             <label class="settings-label">Source Type</label>
             <sl-select id="new-run-source-type" value=${sourceType} @sl-change=${handleSourceTypeChange}>
               <sl-option value="none">Prompt</sl-option>
+              <sl-option value="spec">Specification</sl-option>
               <sl-option value="source">GitHub Issue</sl-option>
-              <sl-option value="spec">Spec File</sl-option>
               <sl-option value="pr">GitHub PR</sl-option>
             </sl-select>
           </div>

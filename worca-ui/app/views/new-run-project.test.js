@@ -418,7 +418,7 @@ describe('new-run source type dropdown', () => {
     expect(html).toContain(
       '<sl-option value="source">GitHub Issue</sl-option>',
     );
-    expect(html).toContain('<sl-option value="spec">Spec File</sl-option>');
+    expect(html).toContain('<sl-option value="spec">Specification</sl-option>');
     expect(html).toContain('<sl-option value="pr">GitHub PR</sl-option>');
   });
 });
