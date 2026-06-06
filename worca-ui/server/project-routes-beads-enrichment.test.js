@@ -24,8 +24,12 @@ vi.mock('./process-manager.js', async (importOriginal) => {
 });
 
 const mockDiscoverRuns = vi.fn().mockReturnValue([]);
+// /runs now scans via discoverRunsAsync (issue #296 — off the event loop, no
+// events.jsonl enrichment). Back both exports with the same mock so the
+// existing mockDiscoverRuns.mockReturnValue(...) setups still drive the route.
 vi.mock('./watcher.js', () => ({
   discoverRuns: (...args) => mockDiscoverRuns(...args),
+  discoverRunsAsync: (...args) => mockDiscoverRuns(...args),
 }));
 
 const { createProjectScopedRoutes, projectResolver } = await import(

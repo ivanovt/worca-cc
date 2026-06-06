@@ -19,6 +19,23 @@ import { existsSync, readFileSync } from 'node:fs';
 const GRAPH_QUERY_EVENT_TYPE = 'pipeline.hook.graph_query';
 
 /**
+ * Classify a single parsed events.jsonl line. Returns the normalised graph-query
+ * entry if the line is a graph-query event, or null otherwise. Extracted so a
+ * combined single-pass reader (events-jsonl-reader.js) can share the exact same
+ * normalisation as the standalone reader below.
+ *
+ * @param {object} e — a parsed events.jsonl object
+ * @returns {{engine, op, timestamp}|null}
+ */
+export function parseGraphQueryEventLine(e) {
+  if (!e || e.event_type !== GRAPH_QUERY_EVENT_TYPE) return null;
+  const payload = e.payload || {};
+  const engine = payload.engine;
+  if (engine !== 'graphify' && engine !== 'crg') return null;
+  return { engine, op: payload.op || '', timestamp: e.timestamp };
+}
+
+/**
  * Parse events.jsonl and return only the graph-query events.
  * Malformed lines are skipped so a corrupt event doesn't break the run view.
  *
@@ -42,11 +59,8 @@ export function readGraphQueryEventsFromJsonl(eventsPath) {
     } catch {
       continue;
     }
-    if (e.event_type !== GRAPH_QUERY_EVENT_TYPE) continue;
-    const payload = e.payload || {};
-    const engine = payload.engine;
-    if (engine !== 'graphify' && engine !== 'crg') continue;
-    out.push({ engine, op: payload.op || '', timestamp: e.timestamp });
+    const entry = parseGraphQueryEventLine(e);
+    if (entry) out.push(entry);
   }
   return out;
 }
