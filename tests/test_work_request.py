@@ -1114,6 +1114,43 @@ class TestNormalizeGithubPr:
 
     @patch("worca.orchestrator.work_request.fetch_review_feedback")
     @patch("worca.orchestrator.work_request.subprocess")
+    def test_inline_comment_includes_diff_hunk_fence(self, mock_subprocess, mock_fetch):
+        """An inline comment's diff hunk is nested under the bullet as a fenced
+        ```diff block so the agent sees the exact code context, not just a
+        path:line coordinate."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = [self._REVIEW_COMMENT]
+
+        wr = normalize_github_pr("gh:pr:42")
+
+        assert "  ```diff" in wr.description
+        assert "  @@ -40,6 @@" in wr.description
+        # The fence sits after the bullet for that comment.
+        desc = wr.description
+        assert desc.index("[src/pool.py:42]") < desc.index("```diff")
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
+    def test_review_summary_has_no_diff_fence(self, mock_subprocess, mock_fetch):
+        """A review_summary item (empty diff_hunk) renders no fenced block."""
+        self._mock_gh(mock_subprocess)
+        mock_fetch.return_value = [
+            {
+                "thread_id": "",
+                "path": "",
+                "line": None,
+                "diff_hunk": "",
+                "author": "carol",
+                "body": "add a test for the empty case",
+                "kind": "review_summary",
+                "created_at": "2026-06-03T12:00:00Z",
+            }
+        ]
+        wr = normalize_github_pr("gh:pr:42")
+        assert "```diff" not in wr.description
+
+    @patch("worca.orchestrator.work_request.fetch_review_feedback")
+    @patch("worca.orchestrator.work_request.subprocess")
     def test_no_review_comments_omits_feedback_section(self, mock_subprocess, mock_fetch):
         self._mock_gh(mock_subprocess)
         mock_fetch.return_value = []
