@@ -459,6 +459,14 @@ export function newRunView(_state, { rerender }) {
     rerender();
   }
 
+  function handleMaxBeadsChange(e) {
+    // Persist the choice to module state so a rerender (async branch/template
+    // fetch resolving before submit) doesn't snap the select back to the
+    // template-seeded value via the `value=${String(maxBeads)}` binding.
+    maxBeads = parseInt(e.target.value, 10) || 0;
+    rerender();
+  }
+
   function handlePlanFocus() {
     fetchPlanFiles(effectiveId).then(() => {
       planDropdownOpen = true;
@@ -767,7 +775,7 @@ export function newRunView(_state, { rerender }) {
 
               <div class="settings-field">
                 <label class="settings-label">Max Beads</label>
-                <sl-select id="new-run-max-beads" value=${String(maxBeads)}>
+                <sl-select id="new-run-max-beads" value=${String(maxBeads)} @sl-change=${handleMaxBeadsChange}>
                   <sl-option value="0">Auto</sl-option>
                   ${[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(
                     (n) => html`<sl-option value=${String(n)}>${n}</sl-option>`,
