@@ -1733,10 +1733,21 @@ onHashChange((newRoute) => {
     stopIntegrationsPoll();
   }
 
-  // Live Access Map polling — only while the access view of a non-terminal run
-  // is open. Cleared on any other navigation.
-  if (route.action === 'access' && route.runId && _isRunPollable(route.runId)) {
-    startAccessPoll(route.runId);
+  // Access Map data load. Force a fresh fetch on every navigation into the
+  // access tab: the per-runId model cache is render-repaint state, not a
+  // freshness signal. Without this, a model cached mid-run (empty/partial) is
+  // served verbatim when the tab is reopened after the run completes — the live
+  // poll has stopped for the now-terminal run and the render path's fetch is a
+  // cache hit — so the final Access Map only appeared after a full page reload.
+  // For non-terminal runs the poll keeps refetching; for terminal runs this one
+  // forced fetch on open delivers the final folded model.
+  if (route.action === 'access' && route.runId) {
+    fetchRunAccessModel(route.runId, true);
+    if (_isRunPollable(route.runId)) {
+      startAccessPoll(route.runId);
+    } else {
+      stopAccessPoll();
+    }
   } else {
     stopAccessPoll();
   }

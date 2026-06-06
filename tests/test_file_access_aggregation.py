@@ -1,8 +1,10 @@
 """Tests for file access aggregation at complete_iteration."""
 
 import json
+import subprocess
 from unittest import mock
 
+import pytest
 
 from worca.orchestrator.file_access_aggregation import aggregate_file_access
 
@@ -487,3 +489,104 @@ class TestAggregateIterationFileAccess:
         path_without_bead = get_iteration_jsonl_path(run_id, stage, iteration, None, ".")
         assert "implement-1.jsonl" in path_without_bead
         assert "beads" not in path_without_bead
+
+
+def _git(root, *args):
+    subprocess.run(["git", *args], cwd=str(root), check=True,
+                   capture_output=True, timeout=10)
+
+
+def _init_git_repo(root):
+    """Initialize a real git repo at ``root`` (skips the test if git is absent)."""
+    try:
+        _git(root, "init", "-q")
+    except (FileNotFoundError, subprocess.SubprocessError):
+        pytest.skip("git not available")
+    _git(root, "config", "user.email", "t@t.dev")
+    _git(root, "config", "user.name", "t")
+
+
+class TestLeakageIsCumulative:
+    """Leakage must compare git's cumulative uncommitted set against the run's
+    *cumulative* hook-write union, not a single stage's writes.
+
+    Regression: worca commits only once (guardian, at run end), so git status
+    accumulates writes across every stage. Comparing one stage's hook log against
+    that growing tree made leakage climb mechanically toward 100% — e.g. a review
+    stage that writes nothing scored 100% against the implementers' uncommitted
+    files. The hook side is now unioned across all access fragments on disk.
+
+    The setup commits files then modifies them so git status lists each path
+    individually (`` M src/a.py``) — mirroring real runs, where the implementers
+    edit existing tracked files. (`git status --porcelain` collapses an
+    *entirely* untracked directory to ``src/``, which is a different case.) The
+    access fragments live outside the repo so the run-state dir never pollutes
+    git status.
+    """
+
+    def _write_fragment(self, access_dir, name, write_paths):
+        records = [
+            {"op": "write", "tool": "Edit", "path": p, "ts": "2026-01-01T00:00:00Z"}
+            for p in write_paths
+        ]
+        (access_dir / name).write_text("\n".join(json.dumps(r) for r in records))
+
+    def _repo_with_committed_files(self, tmp_path, names):
+        repo_root = tmp_path / "repo"
+        (repo_root / "src").mkdir(parents=True)
+        _init_git_repo(repo_root)
+        for n in names:
+            (repo_root / "src" / n).write_text("orig")
+        _git(repo_root, "add", "-A")
+        _git(repo_root, "commit", "-qm", "init")
+        # Modify each so it appears as a tracked change in git status.
+        for n in names:
+            (repo_root / "src" / n).write_text("changed")
+        return repo_root
+
+    def test_review_stage_does_not_score_100pct_against_prior_writes(self, tmp_path):
+        repo_root = self._repo_with_committed_files(tmp_path, ["a.py", "b.py"])
+        access_dir = tmp_path / "access"
+        access_dir.mkdir()
+        # Implement stage recorded both writes; review stage wrote nothing.
+        self._write_fragment(access_dir, "implement-1.jsonl", ["src/a.py", "src/b.py"])
+        self._write_fragment(access_dir, "review-1.jsonl", [])
+
+        result = aggregate_file_access(str(access_dir / "review-1.jsonl"), str(repo_root))
+        capture = result["capture"]
+
+        assert capture["oracle"] == "ok"
+        # Cumulative hook union covers both files git reports → no leak.
+        assert capture["leakage_pct"] == 0.0
+        assert capture["hook_writes"] == 2
+        assert capture["git_writes"] == 2
+
+    def test_genuine_untracked_write_still_counts_as_leak(self, tmp_path):
+        repo_root = self._repo_with_committed_files(tmp_path, ["a.py", "b.py", "c.py"])
+        access_dir = tmp_path / "access"
+        access_dir.mkdir()
+        # c.py changed on disk but no hook recorded it.
+        self._write_fragment(access_dir, "implement-1.jsonl", ["src/a.py", "src/b.py"])
+
+        result = aggregate_file_access(str(access_dir / "implement-1.jsonl"), str(repo_root))
+        capture = result["capture"]
+
+        assert capture["oracle"] == "ok"
+        # c.py landed in the tree but no hook recorded it → 1 of 3 leaks.
+        assert capture["leakage_pct"] == pytest.approx(33.33, abs=0.01)
+
+    def test_hook_union_canonicalizes_absolute_paths_across_fragments(self, tmp_path):
+        """Absolute paths (as the recorder emits) canonicalize and union correctly."""
+        repo_root = self._repo_with_committed_files(tmp_path, ["a.py"])
+        access_dir = tmp_path / "access"
+        access_dir.mkdir()
+        abs_path = str(repo_root / "src" / "a.py")
+        self._write_fragment(access_dir, "implement-1.jsonl", [abs_path])
+        self._write_fragment(access_dir, "review-1.jsonl", [])
+
+        result = aggregate_file_access(str(access_dir / "review-1.jsonl"), str(repo_root))
+        capture = result["capture"]
+
+        assert capture["oracle"] == "ok"
+        assert capture["leakage_pct"] == 0.0
+        assert capture["hook_writes"] == 1

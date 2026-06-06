@@ -247,6 +247,72 @@ test.describe('file access view — searches lane', () => {
   });
 });
 
+test.describe('file access view — refetch on reopen', () => {
+  // Regression: the per-runId access model cache is render state, not a freshness
+  // signal. A model loaded once must NOT be served stale when the tab is reopened
+  // after the on-disk data has changed (e.g. a run that completed and folded more
+  // fragments while the tab was closed). The route handler now force-fetches on
+  // every navigation into /access, so reopening reflects current disk state
+  // without a full browser reload. Here we change events.jsonl between two SPA
+  // (hashchange, no reload) opens and assert the new file appears on reopen.
+  test('reopening /access via SPA nav refetches changed on-disk data', async ({ page }) => {
+    const ctx = await startServer();
+    try {
+      const runId = '20260101-fa-refetch';
+      seedAccessRun(ctx.worcaDir, runId); // reads src/foo.py + src/bar.py
+
+      // First open — full load, populates the access model cache.
+      await page.goto(`${ctx.url}/#/history/${runId}/access`, GOTO_OPTS);
+      await expect(page.locator('.access-treetable')).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.locator('.access-file-name-btn', { hasText: 'foo.py' }).first(),
+      ).toBeVisible({ timeout: 5000 });
+      // The not-yet-folded file is absent on the first load.
+      await expect(
+        page.locator('.access-file-name-btn', { hasText: 'zzz_refetched.py' }),
+      ).toHaveCount(0);
+
+      // SPA-navigate away (no reload → cache survives).
+      await page.evaluate((id) => {
+        window.location.hash = `#/history?run=${id}`;
+      }, runId);
+      await expect(page.locator('.run-detail .stage-panels')).toBeVisible({ timeout: 8000 });
+
+      // The data on disk changes: a new read of src/zzz_refetched.py is folded in.
+      seedEventsJsonl(ctx.worcaDir, runId, [
+        makeAccessEvent(runId, 'implement', 1, 'bead-abc', {
+          reads: { 'src/foo.py': 2, 'src/bar.py': 1, 'src/zzz_refetched.py': 1 },
+          writes: {},
+          searches: [],
+          totals: {
+            distinct_read: 3,
+            total_read: 4,
+            distinct_write: 0,
+            total_write: 0,
+            grep: 0,
+            glob: 0,
+            zero_result: 0,
+            root_scoped: 0,
+          },
+          capture: { hook_writes: 0, git_writes: 0, leakage_pct: 0.0, oracle: 'ok' },
+        }),
+      ]);
+
+      // SPA-navigate back into /access (no reload). The forced fetch must pull the
+      // changed data — without it the stale cached model would hide the new file.
+      await page.evaluate((id) => {
+        window.location.hash = `#/history/${id}/access`;
+      }, runId);
+      await expect(page.locator('.access-treetable')).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.locator('.access-file-name-btn', { hasText: 'zzz_refetched.py' }).first(),
+      ).toBeVisible({ timeout: 8000 });
+    } finally {
+      await ctx.close();
+    }
+  });
+});
+
 test.describe('file access view — empty state', () => {
   test('run with no access events shows empty-state copy', async ({ page }) => {
     const ctx = await startServer();

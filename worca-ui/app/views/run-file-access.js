@@ -230,11 +230,11 @@ function _kpiStrip(summary) {
     })}
     ${_kpiCard(
       'Capture',
-      html`${(summary.leakage_pct_max ?? 0).toFixed(1)}% leak · ${summary.oracle === 'degraded' ? html`<span class="access-oracle-degraded">${unsafeHTML(iconSvg(AlertTriangle, 12))} degraded</span>` : 'ok'}`,
+      html`${(summary.leakage_pct_max ?? 0).toFixed(1)}% leak`,
       captureAmber,
       {
         tooltip:
-          'Capture integrity — how reliably worca’s telemetry attributed this run’s file access. “leak” is the share of writes it could not tie to a specific stage/agent (e.g. writes made outside tracked tool calls, like a shell redirect). “degraded” means path canonicalization failed for some events, so the counts are approximate rather than exact. Lower leak and an “ok” oracle mean the matrix above is trustworthy.',
+          'Capture integrity — how reliably worca’s telemetry attributed this run’s file access. “leak” is the share of writes it could not tie to a tracked tool call (e.g. writes made outside Write/Edit, like a shell redirect), measured as the cumulative hook-recorded writes vs git’s uncommitted set. Lower is better. An amber border can also mean a “degraded” oracle (path canonicalization failed, counts approximate) — the Capture integrity strip below shows the oracle status explicitly.',
       },
     )}
     ${

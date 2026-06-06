@@ -144,10 +144,24 @@ def aggregate_file_access(jsonl_path: str, repo_root: str) -> dict:
         "root_scoped": sum(1 for s in searches if s.get("scope", "") in (".", "")),
     }
 
-    # Compute leakage_pct (union of hook writes vs final git status source set)
+    # Compute leakage_pct (cumulative hook writes vs git's uncommitted source set).
+    #
+    # git status (oracle.writes) is inherently *cumulative* — it reports every
+    # uncommitted change in the worktree, and worca commits only once at the end
+    # of a run (guardian stage). So the hook side must be cumulative too, or the
+    # comparison is not like-for-like: a single stage's hook log measured against
+    # the whole run's accumulated diff makes leakage climb mechanically toward
+    # 100% as later stages run over an ever-growing uncommitted tree (e.g. a
+    # review stage that writes nothing scores 100% against 29 uncommitted files).
+    # We therefore union the write paths across *every* access fragment on disk;
+    # the fragments present at aggregation time mirror the stages that have run,
+    # which is exactly what git status reflects.
+    hook_write_union = hook_write_paths
+    if oracle_status == "ok":
+        hook_write_union = _collect_hook_write_union(os.path.dirname(jsonl_path), repo_root)
+
     leakage_pct = 0.0
     if oracle_status == "ok":
-        hook_write_union = hook_write_paths
         git_write_set = set(oracle.writes.keys())
         symmetric_diff = (hook_write_union - git_write_set) | (git_write_set - hook_write_union)
         total_writes = len(hook_write_union | git_write_set)
@@ -161,12 +175,56 @@ def aggregate_file_access(jsonl_path: str, repo_root: str) -> dict:
         "graph_queries": graph_queries,
         "totals": totals,
         "capture": {
-            "hook_writes": len(hook_write_paths),
+            "hook_writes": len(hook_write_union),
             "git_writes": len(oracle.writes) if oracle_status == "ok" else 0,
             "leakage_pct": leakage_pct,
             "oracle": oracle_status,
         },
     }
+
+
+def _collect_hook_write_union(access_dir: str, repo_root: str) -> set:
+    """Union of canonical hook-recorded write paths across all access fragments.
+
+    Scans every ``*.jsonl`` fragment in ``access_dir`` (one per stage/iteration)
+    and returns the set of canonicalized write paths. This is the cumulative
+    counterpart to git status, which reports the whole worktree's uncommitted
+    set rather than a single stage's writes. Mirrors ``_handle_write_record``'s
+    canonicalization (pre-respell, including not-yet-gitignore-filtered paths) so
+    the leakage comparison stays consistent with prior behavior on the hook side.
+    """
+    union: set = set()
+    try:
+        names = os.listdir(access_dir)
+    except OSError:
+        return union
+
+    for name in names:
+        if not name.endswith(".jsonl"):
+            continue
+        frag_path = os.path.join(access_dir, name)
+        try:
+            with open(frag_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        record = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if record.get("op") != "write":
+                        continue
+                    raw_path = record.get("path", "")
+                    if not raw_path:
+                        continue
+                    canonical = canonicalize(raw_path, repo_root)
+                    if canonical is not None:
+                        union.add(canonical)
+        except OSError:
+            continue
+
+    return union
 
 
 def _handle_read_record(
