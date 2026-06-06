@@ -37,7 +37,7 @@ import {
 } from '../utils/templates.js';
 import { AGENT_NAMES } from './agent-names.js';
 import { dispatchSectionView } from './dispatch-section.js';
-import { overlaysTabView } from './pipelines-editor-overlays.js';
+import { promptsTabView } from './pipelines-editor-overlays.js';
 import {
   AUTO_MODES,
   getModelKeys,
@@ -81,10 +81,11 @@ let editorState = {
   loadingBuiltin: false,
   // Track if this is a new template (create) or existing (update)
   isNewTemplate: false,
-  // Overlays: fetched once on tab activation; null = not yet loaded
-  overlays: null,
-  overlaysLoaded: false,
-  overlaysLoading: false,
+  // Prompts: effective per-stage prompt model, fetched on tab activation.
+  // null = not yet loaded. The Prompts tab is always shown.
+  prompts: null,
+  promptsLoaded: false,
+  promptsLoading: false,
 };
 
 // Stored rerender callback from pipelinesEditorView — used by async background
@@ -121,9 +122,9 @@ export function initEditorState() {
     diffData: null,
     loadingBuiltin: false,
     isNewTemplate: false,
-    overlays: null,
-    overlaysLoaded: false,
-    overlaysLoading: false,
+    prompts: null,
+    promptsLoaded: false,
+    promptsLoading: false,
   };
   dispatchEditState = { tools: {}, skills: {}, subagents: {} };
   return editorState;
@@ -655,9 +656,9 @@ export async function loadTemplate(tier, tid, projectId) {
   editorState.template = null;
   editorState.builtinTemplate = null;
   editorState.diffData = null;
-  editorState.overlays = null;
-  editorState.overlaysLoaded = false;
-  editorState.overlaysLoading = false;
+  editorState.prompts = null;
+  editorState.promptsLoaded = false;
+  editorState.promptsLoading = false;
   editorState.idDirty = false;
   editorState.nameDraft = '';
   editorState.descriptionDraft = '';
@@ -716,11 +717,10 @@ export async function loadTemplate(tier, tid, projectId) {
       if (shadowsBuiltin(data.template || {}))
         await loadBuiltinTemplate(tid, projectId);
 
-      // Eagerly probe overlays so the Overlays tab appears when ≥1 file exists.
-      // Fire-and-forget — result populates editorState.overlays after template
-      // load completes; the caller's rerender callback is not available here so
-      // the outer loadOverlays rerender will be called separately when needed.
-      _probeOverlays(tier, tid, projectId);
+      // Eagerly pre-fetch the effective prompts so the always-on Prompts tab is
+      // ready on first click. Fire-and-forget — populates editorState.prompts
+      // after template load; rerenders via the stored callback when it lands.
+      _probePrompts(tier, tid, projectId);
     }
   } catch (err) {
     editorState.error = err.message;
@@ -729,53 +729,48 @@ export async function loadTemplate(tier, tid, projectId) {
   }
 }
 
+function _promptsUrl(tier, tid, projectId) {
+  return projectId
+    ? `/api/projects/${projectId}/templates/${tier}/${tid}/prompts`
+    : `/api/templates/${tier}/${tid}/prompts`;
+}
+
 /**
- * Probe overlays during template load (no rerender callback available yet).
- * Stores result in editorState so the Overlays tab can appear on next render.
+ * Pre-fetch the effective prompts during template load (no rerender callback
+ * available yet). Stores result in editorState; rerenders when it lands.
  */
-async function _probeOverlays(tier, tid, projectId) {
-  if (editorState.overlaysLoaded || editorState.overlaysLoading) return;
-  editorState.overlaysLoading = true;
+async function _probePrompts(tier, tid, projectId) {
+  if (editorState.promptsLoaded || editorState.promptsLoading) return;
+  editorState.promptsLoading = true;
   try {
-    const url = projectId
-      ? `/api/projects/${projectId}/templates/${tier}/${tid}/overlays`
-      : `/api/templates/${tier}/${tid}/overlays`;
-    const res = await fetch(url);
-    editorState.overlays = res.ok ? (await res.json()).overlays || {} : {};
+    const res = await fetch(_promptsUrl(tier, tid, projectId));
+    editorState.prompts = res.ok ? (await res.json()).prompts || {} : {};
   } catch {
-    editorState.overlays = {};
+    editorState.prompts = {};
   } finally {
-    editorState.overlaysLoaded = true;
-    editorState.overlaysLoading = false;
+    editorState.promptsLoaded = true;
+    editorState.promptsLoading = false;
     _rerenderFn?.();
   }
 }
 
 /**
- * Fetch overlays for a template on first Overlays-tab activation.
- * Result cached in editorState.overlays; subsequent calls are no-ops.
+ * Fetch the effective prompts for a template on first Prompts-tab activation.
+ * Result cached in editorState.prompts; subsequent calls are no-ops.
  */
-export async function loadOverlays(tier, tid, projectId, rerender) {
-  if (editorState.overlaysLoaded || editorState.overlaysLoading) return;
-  editorState.overlaysLoading = true;
+export async function loadPrompts(tier, tid, projectId, rerender) {
+  if (editorState.promptsLoaded || editorState.promptsLoading) return;
+  editorState.promptsLoading = true;
   rerender?.();
   try {
-    const url = projectId
-      ? `/api/projects/${projectId}/templates/${tier}/${tid}/overlays`
-      : `/api/templates/${tier}/${tid}/overlays`;
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      editorState.overlays = data.overlays || {};
-    } else {
-      editorState.overlays = {};
-    }
+    const res = await fetch(_promptsUrl(tier, tid, projectId));
+    editorState.prompts = res.ok ? (await res.json()).prompts || {} : {};
   } catch (err) {
-    console.warn('Failed to load overlays:', err);
-    editorState.overlays = {};
+    console.warn('Failed to load prompts:', err);
+    editorState.prompts = {};
   } finally {
-    editorState.overlaysLoaded = true;
-    editorState.overlaysLoading = false;
+    editorState.promptsLoaded = true;
+    editorState.promptsLoading = false;
     rerender?.();
   }
 }
@@ -1412,8 +1407,12 @@ export function pipelinesEditorView(state, options) {
         </div>
 
         <sl-tab-group class="editor-tab-group" @sl-tab-show=${(e) => {
-          if (e.detail?.name === 'overlays' && !editorState.overlaysLoaded) {
-            loadOverlays(
+          if (
+            e.detail?.name === 'prompts' &&
+            !editorState.isNewTemplate &&
+            !editorState.promptsLoaded
+          ) {
+            loadPrompts(
               editorState.tier,
               editorState.templateId,
               projectId,
@@ -1428,8 +1427,8 @@ export function pipelinesEditorView(state, options) {
               Pipeline  → stages + loops + circuit_breaker
                           (mirrors Project Settings → Pipeline)
               Governance → dispatch allow/deny lists
-              Overlays  → read-only view of agents/*.md overlays
-                          (only shown when ≥1 overlay file exists)
+              Prompts   → read-only view of the effective per-stage prompts
+                          (built-in / replaced / merged) — always shown
           -->
           <sl-tab slot="nav" panel="agents">
             ${unsafeHTML(iconSvg(Users, 14))}
@@ -1446,16 +1445,10 @@ export function pipelinesEditorView(state, options) {
             Governance
             ${helpFor('dispatch')}
           </sl-tab>
-          ${
-            !editorState.isNewTemplate &&
-            editorState.overlaysLoaded &&
-            Object.keys(editorState.overlays || {}).length > 0
-              ? html`<sl-tab slot="nav" panel="overlays">
-                  ${unsafeHTML(iconSvg(FileText, 14))}
-                  Overlays
-                </sl-tab>`
-              : nothing
-          }
+          <sl-tab slot="nav" panel="prompts">
+            ${unsafeHTML(iconSvg(FileText, 14))}
+            Prompts
+          </sl-tab>
 
           <sl-tab-panel name="agents">
             ${_agentsTab(formBuffer, settings, projectId, rerender)}
@@ -1471,19 +1464,17 @@ export function pipelinesEditorView(state, options) {
           <sl-tab-panel name="governance">
             ${_governanceSection(formBuffer, settings, projectId, rerender)}
           </sl-tab-panel>
-          ${
-            !editorState.isNewTemplate &&
-            editorState.overlaysLoaded &&
-            Object.keys(editorState.overlays || {}).length > 0
-              ? html`<sl-tab-panel name="overlays">
-                  ${
-                    editorState.overlaysLoading
-                      ? html`<div class="settings-tab-content"><sl-spinner></sl-spinner></div>`
-                      : overlaysTabView(editorState.overlays || {})
-                  }
-                </sl-tab-panel>`
-              : nothing
-          }
+          <sl-tab-panel name="prompts">
+            ${
+              editorState.isNewTemplate
+                ? html`<div class="settings-tab-content overlay-empty">
+                    The effective prompts appear here once the pipeline is saved.
+                  </div>`
+                : editorState.promptsLoading || !editorState.promptsLoaded
+                  ? html`<div class="settings-tab-content"><sl-spinner></sl-spinner></div>`
+                  : promptsTabView(editorState.prompts || {})
+            }
+          </sl-tab-panel>
         </sl-tab-group>
       </div>
 

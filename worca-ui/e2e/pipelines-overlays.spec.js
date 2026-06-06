@@ -1,9 +1,12 @@
 /**
- * Playwright e2e tests for the Overlays tab in the Pipelines editor.
+ * Playwright e2e tests for the Prompts tab in the Pipelines editor.
  *
- * W-064 Phase 7: verifies that a template with overlays shows an Overlays
- * tab in the editor, that the tab is absent for templates without overlays,
- * and that expanding a stage card renders the markdown content.
+ * The Prompts tab is always shown and always lists the effective per-stage
+ * prompt, classifying each file as Built-in (fallback), Replaced (the pipeline
+ * overrides it wholesale), or Merged (the pipeline appends/overwrites sections
+ * of the built-in). These tests seed the built-in core prompts (always present
+ * in a real install) plus a project-tier template overlay and assert the
+ * resulting visualization.
  *
  * Run with:
  *   cd worca-ui && npx playwright test e2e/pipelines-overlays.spec.js --workers=1
@@ -16,18 +19,23 @@ import { startServer } from './fixtures.js';
 
 const GOTO_OPTS = { waitUntil: 'domcontentloaded' };
 
-/**
- * Write a project-tier template with overlay files to the fixture dir.
- */
-function seedTemplateWithOverlays(dir, tid, overlays = {}) {
-  const templateDir = join(dir, '.claude', 'templates', tid);
-  const agentsDir = join(templateDir, 'agents');
-  mkdirSync(agentsDir, { recursive: true });
+/** Seed the built-in core prompts the server resolves against. */
+function seedCorePrompts(dir, files) {
+  const coreDir = join(dir, '.claude', 'worca', 'agents', 'core');
+  mkdirSync(coreDir, { recursive: true });
+  for (const [name, content] of Object.entries(files)) {
+    writeFileSync(join(coreDir, name), content, 'utf8');
+  }
+}
 
+/** Write a project-tier template, optionally with overlay files. */
+function seedTemplate(dir, tid, overlays = null) {
+  const templateDir = join(dir, '.claude', 'templates', tid);
+  mkdirSync(templateDir, { recursive: true });
   const tpl = {
     id: tid,
-    name: `Overlay Template ${tid}`,
-    description: 'Has prompt overlays',
+    name: `Template ${tid}`,
+    description: 'test',
     tags: ['test'],
     config: {
       stages: { plan: { enabled: true, agent: 'planner' } },
@@ -35,157 +43,110 @@ function seedTemplateWithOverlays(dir, tid, overlays = {}) {
     },
   };
   writeFileSync(join(templateDir, 'template.json'), JSON.stringify(tpl, null, 2));
-
-  for (const [filename, content] of Object.entries(overlays)) {
-    writeFileSync(join(agentsDir, filename), content, 'utf8');
+  if (overlays) {
+    const agentsDir = join(templateDir, 'agents');
+    mkdirSync(agentsDir, { recursive: true });
+    for (const [name, content] of Object.entries(overlays)) {
+      writeFileSync(join(agentsDir, name), content, 'utf8');
+    }
   }
 }
 
-/**
- * Write a project-tier template without any overlay files.
- */
-function seedTemplateNoOverlays(dir, tid) {
-  const templateDir = join(dir, '.claude', 'templates', tid);
-  mkdirSync(templateDir, { recursive: true });
-  const tpl = {
-    id: tid,
-    name: `Plain Template ${tid}`,
-    description: 'No overlays',
-    tags: ['test'],
-    config: {},
-  };
-  writeFileSync(join(templateDir, 'template.json'), JSON.stringify(tpl, null, 2));
+async function openPromptsTab(page, ctx, tid) {
+  await page.goto(`${ctx.url}/#/templates/project/${tid}/edit`, GOTO_OPTS);
+  await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 15000 });
+  const promptsTab = page.locator('.editor-tab-group sl-tab[panel="prompts"]');
+  await expect(promptsTab).toBeVisible({ timeout: 8000 });
+  await promptsTab.click();
+  const panel = page.locator('sl-tab-panel[name="prompts"]');
+  await expect(panel).toBeAttached({ timeout: 5000 });
+  return panel;
 }
 
-// ─── Test 1: Overlays tab visible when overlays present ──────────────────────
+// ─── Test 1: tab is always present, even with no overlays ────────────────────
 
-test('Overlays tab appears in editor when template has overlay files', async ({ page }) => {
+test('Prompts tab is always shown, even for a template with no overlays', async ({
+  page,
+}) => {
   const ctx = await startServer();
   try {
-    seedTemplateWithOverlays(ctx.dir, 'overlay-tpl', {
-      'planner.md': '# Custom Planner\n\nThis is the **custom** planner overlay.',
-    });
+    seedCorePrompts(ctx.dir, { 'planner.md': '# Core Planner\n\nbuilt-in body' });
+    seedTemplate(ctx.dir, 'plain-tpl'); // no overlays
 
-    await page.goto(`${ctx.url}/#/templates/project/overlay-tpl/edit`, GOTO_OPTS);
-    await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 15000 });
-
-    // Wait for overlays to be probed (async background fetch on template load)
-    await expect
-      .poll(
-        async () => {
-          const tab = page.locator('.editor-tab-group sl-tab[panel="overlays"]');
-          return await tab.isVisible().catch(() => false);
-        },
-        { timeout: 8000 },
-      )
-      .toBe(true);
-
-    const overlaysTab = page.locator('.editor-tab-group sl-tab[panel="overlays"]');
-    await expect(overlaysTab).toBeVisible();
-  } finally {
-    await ctx.close();
-  }
-});
-
-// ─── Test 2: Overlays tab absent when no overlays ────────────────────────────
-
-test('Overlays tab is absent when template has no overlay files', async ({ page }) => {
-  const ctx = await startServer();
-  try {
-    seedTemplateNoOverlays(ctx.dir, 'plain-tpl');
-
-    await page.goto(`${ctx.url}/#/templates/project/plain-tpl/edit`, GOTO_OPTS);
-    await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 15000 });
-
-    // Wait for template to load fully (Agents tab is default)
-    await expect(page.locator('.editor-tab-group sl-tab[panel="agents"]')).toBeVisible({
-      timeout: 8000,
-    });
-
-    // Give overlays probe time to complete
-    await page.waitForTimeout(1500);
-
-    const overlaysTab = page.locator('.editor-tab-group sl-tab[panel="overlays"]');
-    await expect(overlaysTab).not.toBeVisible();
-  } finally {
-    await ctx.close();
-  }
-});
-
-// ─── Test 3: Expand Plan card → assert markdown rendered ─────────────────────
-
-test('Overlays tab — expand Plan card renders markdown heading', async ({ page }) => {
-  const ctx = await startServer();
-  try {
-    const plannerContent = '# My Planner Overlay\n\nHello from the **planner** overlay.';
-    seedTemplateWithOverlays(ctx.dir, 'md-tpl', {
-      'planner.md': plannerContent,
-    });
-
-    await page.goto(`${ctx.url}/#/templates/project/md-tpl/edit`, GOTO_OPTS);
-    await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 15000 });
-
-    // Wait for Overlays tab to appear
-    const overlaysTab = page.locator('.editor-tab-group sl-tab[panel="overlays"]');
-    await expect
-      .poll(
-        async () => overlaysTab.isVisible().catch(() => false),
-        { timeout: 8000 },
-      )
-      .toBe(true);
-
-    // Click the Overlays tab
-    await overlaysTab.click();
-
-    // Wait for the overlays panel to be visible
-    const overlaysPanel = page.locator('sl-tab-panel[name="overlays"]');
-    await expect(overlaysPanel).toBeAttached({ timeout: 5000 });
-
-    // The Plan stage should render as sl-details (expandable)
-    const planDetails = overlaysPanel.locator('sl-details[summary="Plan"]');
+    const panel = await openPromptsTab(page, ctx, 'plain-tpl');
+    const planDetails = panel.locator('sl-details[summary="Plan"]');
     await expect(planDetails).toBeAttached({ timeout: 5000 });
-
-    // Open the Plan stage card
     await planDetails.click();
-
-    // The markdown content should contain the heading text
-    const markdownBody = overlaysPanel.locator('.markdown-body');
-    await expect(markdownBody.first()).toContainText('My Planner Overlay', { timeout: 5000 });
+    // Built-in fallback content is shown.
+    await expect(panel.locator('.markdown-body').first()).toContainText(
+      'Core Planner',
+      { timeout: 5000 },
+    );
+    // …with a Built-in source badge inside the stage card.
+    await expect(planDetails.locator('.prompt-source-badge').first()).toContainText(
+      'Built-in',
+    );
   } finally {
     await ctx.close();
   }
 });
 
-// ─── Test 4: Disabled stages rendered for stages without overlays ─────────────
+// ─── Test 2: replace overlay → "Replaced" badge + overlay content ────────────
 
-test('Overlays tab — stages with no overlays are disabled (not sl-details)', async ({ page }) => {
+test('Prompts tab shows a Replaced badge and the overlay content for a full override', async ({
+  page,
+}) => {
   const ctx = await startServer();
   try {
-    seedTemplateWithOverlays(ctx.dir, 'partial-tpl', {
-      'planner.md': '# Planner only',
+    seedCorePrompts(ctx.dir, { 'planner.md': '# Core Planner\n\nbuilt-in body' });
+    seedTemplate(ctx.dir, 'replace-tpl', {
+      'planner.md': '# Custom Planner\n\nfully replaced body',
     });
 
-    await page.goto(`${ctx.url}/#/templates/project/partial-tpl/edit`, GOTO_OPTS);
-    await expect(page.locator('.pipelines-editor')).toBeAttached({ timeout: 15000 });
+    const panel = await openPromptsTab(page, ctx, 'replace-tpl');
+    const planDetails = panel.locator('sl-details[summary="Plan"]');
+    await planDetails.click();
+    await expect(planDetails.locator('.prompt-source-badge').first()).toContainText(
+      'Replaced',
+    );
+    await expect(panel.locator('.markdown-body').first()).toContainText(
+      'Custom Planner',
+      { timeout: 5000 },
+    );
+  } finally {
+    await ctx.close();
+  }
+});
 
-    const overlaysTab = page.locator('.editor-tab-group sl-tab[panel="overlays"]');
-    await expect
-      .poll(
-        async () => overlaysTab.isVisible().catch(() => false),
-        { timeout: 8000 },
-      )
-      .toBe(true);
+// ─── Test 3: append overlay → "Merged" badge + green append highlight ────────
 
-    await overlaysTab.click();
+test('Prompts tab merges an append overlay and highlights the appended section', async ({
+  page,
+}) => {
+  const ctx = await startServer();
+  try {
+    seedCorePrompts(ctx.dir, {
+      'planner.md': '# Core Planner\n\n## Rules\n\nbuilt-in rules',
+    });
+    seedTemplate(ctx.dir, 'append-tpl', {
+      'planner.md':
+        '<!-- append -->\n## Override: Rules\nan extra project-specific rule',
+    });
 
-    const overlaysPanel = page.locator('sl-tab-panel[name="overlays"]');
-    await expect(overlaysPanel).toBeAttached({ timeout: 5000 });
-
-    // Disabled cards for stages without overlays
-    const disabledCards = overlaysPanel.locator('.overlay-stage-card--disabled');
-    const disabledCount = await disabledCards.count();
-    // There are 8 stages total; only plan has an overlay → 7 disabled
-    expect(disabledCount).toBe(7);
+    const panel = await openPromptsTab(page, ctx, 'append-tpl');
+    const planDetails = panel.locator('sl-details[summary="Plan"]');
+    await planDetails.click();
+    await expect(planDetails.locator('.prompt-source-badge').first()).toContainText(
+      'Merged',
+    );
+    // The built-in base is shown…
+    await expect(planDetails).toContainText('Built-in base', { timeout: 5000 });
+    // …and the appended section is highlighted with the append (green) treatment.
+    await expect(planDetails.locator('.prompt-merge-append').first()).toBeAttached({
+      timeout: 5000,
+    });
+    await expect(planDetails).toContainText('Appends to');
+    await expect(planDetails).toContainText('an extra project-specific rule');
   } finally {
     await ctx.close();
   }

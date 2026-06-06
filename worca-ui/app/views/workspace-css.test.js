@@ -177,7 +177,7 @@ describe('workspace CSS — DAG styling', () => {
       '--sl-color-primary-50',
       '--sl-color-primary-500',
       '--sl-color-primary-700',
-      // Used by the overlays tab (pipelines-editor-overlays) — spacing,
+      // Used by the Prompts tab (pipelines-editor-overlays) — spacing,
       // border-radius, color, and typography tokens from Shoelace.
       '--sl-spacing-x-small',
       '--sl-spacing-small',
@@ -188,6 +188,12 @@ describe('workspace CSS — DAG styling', () => {
       '--sl-font-size-small',
       '--sl-font-size-x-small',
       '--sl-font-weight-semibold',
+      // Prompts tab merge highlighting: green = appended (additive), amber =
+      // overwrites a built-in section (caution), per the badge color language.
+      '--sl-color-success-50',
+      '--sl-color-success-500',
+      '--sl-color-warning-50',
+      '--sl-color-warning-500',
       // File Access view (access-treetable, heatmap, scope-dot, searches)
       // added after DAG rules — these are legitimate access-view tokens.
       '--text-muted',

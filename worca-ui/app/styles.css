@@ -8814,6 +8814,100 @@ body.help-mode-active sl-tab {
   padding: var(--sl-spacing-medium);
 }
 
+/* ── Prompts tab (pipelines-editor-overlays.js) ─────────────────────────── */
+
+.prompt-file-content.markdown-body {
+  padding: var(--sl-spacing-medium);
+  max-height: 480px;
+  overflow-y: auto;
+  font-size: var(--sl-font-size-small);
+}
+
+.prompt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--sl-font-size-x-small);
+  color: var(--sl-color-neutral-500);
+  padding: 0 var(--sl-spacing-x-small) var(--sl-spacing-small);
+}
+
+.prompt-source-badge {
+  margin-left: var(--sl-spacing-x-small);
+}
+
+.prompt-base-label,
+.prompt-customizations-label {
+  font-size: var(--sl-font-size-x-small);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sl-color-neutral-500);
+  padding: var(--sl-spacing-small) var(--sl-spacing-medium) 0;
+}
+
+.prompt-customizations-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--sl-spacing-small);
+}
+
+.prompt-help-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--sl-color-neutral-300);
+  color: var(--sl-color-neutral-700);
+  font-size: 10px;
+  font-weight: 700;
+  cursor: help;
+}
+
+/* Merge contributions: green = appended (additive), amber = overwrites a
+   built-in section (caution). Follows the badge color language. */
+.prompt-merge-block {
+  margin: var(--sl-spacing-x-small) var(--sl-spacing-medium);
+  border-left: 3px solid var(--sl-color-neutral-300);
+  border-radius: 0 var(--sl-border-radius-medium) var(--sl-border-radius-medium) 0;
+  padding: var(--sl-spacing-x-small) var(--sl-spacing-small);
+}
+
+.prompt-merge-block .prompt-file-content.markdown-body {
+  padding: var(--sl-spacing-x-small) 0 0;
+  max-height: none;
+}
+
+.prompt-merge-append {
+  background: var(--sl-color-success-50);
+  border-left-color: var(--sl-color-success-500);
+}
+
+.prompt-merge-overwrite {
+  background: var(--sl-color-warning-50);
+  border-left-color: var(--sl-color-warning-500);
+}
+
+.prompt-merge-tag {
+  font-size: var(--sl-font-size-x-small);
+  color: var(--sl-color-neutral-600);
+}
+
+.prompt-merge-tag code {
+  font-size: var(--sl-font-size-x-small);
+}
+
+.prompt-merge-verb {
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: help;
+}
+
 /* ── File Access view (run-file-access.js) ──────────────────────────────── */
 
 .run-file-access {

@@ -42,6 +42,7 @@ import { dirname, join } from 'node:path';
 import { raw as expressRaw, Router } from 'express';
 import { atomicWriteSync } from './atomic-write.js';
 import { templatesDir } from './paths.js';
+import { buildPromptsModel } from './template-prompts.js';
 
 /**
  * Match template IDs: lowercase alphanumeric, hyphens, and underscores,
@@ -899,6 +900,29 @@ export function createTemplatesRoutes() {
         }
       }
       res.json({ ok: true, overlays });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/projects/:projectId/templates/:tier/:id/prompts
+   *
+   * Effective per-stage prompt model for the editor's "Prompts" tab: each agent
+   * `*.md` and user-prompt `*.block.md` resolved against the built-in core
+   * prompts, classified as 'builtin' (fallback), 'pipeline' (replace), or
+   * 'extends' (append/overwrite merge). Unlike /overlays this is never empty —
+   * a template with no overlays still shows every built-in prompt. Tolerant of a
+   * missing template dir (returns core-only) so the tab works for new drafts.
+   */
+  router.get('/templates/:tier/:id/prompts', (req, res) => {
+    const { tier, id } = req.params;
+    if (rejectInvalidTierId(res, tier, id)) return;
+    const { projectRoot } = req.project;
+    const coreDir = join(projectRoot, '.claude', 'worca', 'agents', 'core');
+    const overlayDir = join(dirForTier(projectRoot, tier), id, 'agents');
+    try {
+      res.json({ ok: true, prompts: buildPromptsModel(coreDir, overlayDir) });
     } catch (err) {
       res.status(500).json({ ok: false, error: err.message });
     }
