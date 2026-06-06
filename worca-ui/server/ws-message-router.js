@@ -34,7 +34,7 @@ import {
 } from './process-manager.js';
 import { resolveRunDir } from './run-dir-resolver.js';
 import { readSettings } from './settings-reader.js';
-import { discoverRuns, findRun } from './watcher.js';
+import { discoverRunsAsync, findRun } from './watcher.js';
 import { resolveBeadsCounts } from './ws-beads-watcher.js';
 
 /**
@@ -143,7 +143,8 @@ export function createMessageRouter({
     // list-runs
     if (req.type === 'list-runs') {
       const proj = resolveProject(ws, req.payload);
-      const runs = discoverRuns(proj.worcaDir);
+      // List/sidebar path: async scan, no events.jsonl enrichment (issue #296).
+      const runs = await discoverRunsAsync(proj.worcaDir, { enrich: false });
       const settings = readSettings(proj.settingsPath);
       ws.send(JSON.stringify(makeOk(req, { runs, settings })));
       return;

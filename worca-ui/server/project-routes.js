@@ -53,7 +53,7 @@ import { validateSettingsPayload } from './settings-validator.js';
 import { createTemplatesRoutes } from './templates-routes.js';
 import { isVersionBehind } from './version-check.js';
 import { getVersionInfo } from './versions.js';
-import { discoverRuns } from './watcher.js';
+import { discoverRuns, discoverRunsAsync } from './watcher.js';
 import {
   checkWorcaInstalled,
   readProjectWorcaVersion,
@@ -365,7 +365,12 @@ export function createProjectScopedRoutes({
   // GET /api/projects/:projectId/runs — list runs for this project
   router.get('/runs', requireWorcaDir, async (req, res) => {
     try {
-      const runs = discoverRuns(req.project.worcaDir);
+      // List/sidebar path: scan off the event loop (async) and skip
+      // events.jsonl enrichment entirely — neither the run list nor the sidebar
+      // render dispatch_events / graph-query counts (issue #296).
+      const runs = await discoverRunsAsync(req.project.worcaDir, {
+        enrich: false,
+      });
       const default_branch = getDefaultBranch(req.project.projectRoot);
 
       const { getBeadsCounts } = req.app.locals;
@@ -1715,7 +1720,9 @@ export function createProjectScopedRoutes({
   // Reads per-iteration token_usage from each run's status.json.
   router.get('/costs', requireWorcaDir, (req, res) => {
     const { worcaDir } = req.project;
-    const runs = discoverRuns(worcaDir);
+    // Costs read only per-iteration token_usage from status.json — no
+    // events.jsonl enrichment needed (issue #296).
+    const runs = discoverRuns(worcaDir, { enrich: false });
     const tokenData = {};
 
     for (const run of runs) {

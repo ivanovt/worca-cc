@@ -255,7 +255,7 @@ describe('watcher', () => {
     ]);
   });
 
-  it('enriches iterations with aggregated dispatch_events when events.jsonl is present', () => {
+  it('enriches iterations with aggregated dispatch_events when events.jsonl is present (enrich:true)', () => {
     const runId = 'run-disp-1';
     const runDir = join(dir, 'runs', runId);
     mkdirSync(runDir, { recursive: true });
@@ -329,7 +329,7 @@ describe('watcher', () => {
       `${events.map((e) => JSON.stringify(e)).join('\n')}\n`,
     );
 
-    const runs = discoverRuns(dir);
+    const runs = discoverRuns(dir, { enrich: true });
     const run = runs.find((r) => r.id === runId);
     expect(run).toBeDefined();
     const iter = run.stages.implement.iterations[0];
@@ -349,6 +349,75 @@ describe('watcher', () => {
     expect(blocked.candidate).toBe('general-purpose');
     expect(blocked.count).toBe(1);
     expect(blocked.reason).toBe('Blocked: denylist');
+  });
+
+  // ---- list-path enrichment opt-out (#296) ----
+  // The run list / sidebar never render dispatch_events, so discoverRuns
+  // defaults to enrich:false and skips reading every project's events.jsonl —
+  // the hot-path fix. findRun (detailed view) still enriches.
+  const _writeRunWithEvents = (runId) => {
+    const runDir = join(dir, 'runs', runId);
+    mkdirSync(runDir, { recursive: true });
+    writeFileSync(
+      join(runDir, 'status.json'),
+      JSON.stringify({
+        run_id: runId,
+        started_at: '2026-04-13T11:00:00.000Z',
+        completed_at: '2026-04-13T11:05:00.000Z',
+        pipeline_status: 'completed',
+        stages: {
+          implement: {
+            status: 'completed',
+            iterations: [
+              {
+                number: 1,
+                started_at: '2026-04-13T11:00:00.000Z',
+                completed_at: '2026-04-13T11:05:00.000Z',
+              },
+            ],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(runDir, 'events.jsonl'),
+      `${JSON.stringify({
+        event_type: 'pipeline.hook.dispatch_allowed',
+        timestamp: '2026-04-13T11:01:00.000Z',
+        payload: { section: 'subagents', candidate: 'Explore' },
+      })}\n`,
+    );
+  };
+
+  it('discoverRuns defaults to enrich:false — no dispatch_events even when events.jsonl is present', () => {
+    // Enrichment is the only thing that reads events.jsonl in discoverRuns, so
+    // the absence of dispatch_events here transitively proves the list path
+    // performs no events.jsonl read (the #296 hot-path fix).
+    const runId = 'run-optout-1';
+    _writeRunWithEvents(runId);
+    const run = discoverRuns(dir).find((r) => r.id === runId);
+    expect(run).toBeDefined();
+    expect(run.stages.implement.iterations[0].dispatch_events).toBeUndefined();
+  });
+
+  it('discoverRuns({ enrich: true }) DOES enrich the same run (parity counterpart)', () => {
+    const runId = 'run-optout-enriched';
+    _writeRunWithEvents(runId);
+    const run = discoverRuns(dir, { enrich: true }).find((r) => r.id === runId);
+    expect(run.stages.implement.iterations[0].dispatch_events).toBeDefined();
+  });
+
+  it('findRun still enriches a runs/ run while discoverRuns (default) does not', () => {
+    const runId = 'run-optout-2';
+    _writeRunWithEvents(runId);
+    const viaFind = findRun(dir, runId);
+    const viaListScan = discoverRuns(dir).find((r) => r.id === runId);
+    expect(
+      viaFind.stages.implement.iterations[0].dispatch_events,
+    ).toBeDefined();
+    expect(
+      viaListScan.stages.implement.iterations[0].dispatch_events,
+    ).toBeUndefined();
   });
 
   it('discoverRuns_no_active_run: finds runs in runs/ without active_run file present', () => {
