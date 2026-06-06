@@ -182,6 +182,102 @@ def deep_merge_config(base: dict, overlay: dict) -> dict:
     return result
 
 
+# Loop names recognised by the pipeline. Each defaults to LOOP_DEFAULT_LIMIT
+# iterations when not configured (runner.within_loop_limit / _get_loop_limit).
+# Enumerated here so a standalone export can materialise the loop block.
+PIPELINE_LOOP_NAMES: tuple[str, ...] = (
+    "implement_test",
+    "plan_review",
+    "pr_changes",
+    "restart_planning",
+)
+LOOP_DEFAULT_LIMIT = 5
+
+# Agent-config defaults applied inline at consumption (stages.get_stage_config):
+# model shorthand "sonnet", max_turns 30, coordinator max_beads 0. Kept here as
+# named constants so the drift test (tests/test_templates_standalone.py) can
+# assert default_pipeline_config() still matches the live resolver defaults.
+AGENT_DEFAULT_MODEL = "sonnet"
+AGENT_DEFAULT_MAX_TURNS = 30
+COORDINATOR_DEFAULT_MAX_BEADS = 0
+
+# Effort block defaults (runner.py resolve path).
+EFFORT_DEFAULT_AUTO_MODE = "adaptive"
+EFFORT_DEFAULT_AUTO_CAP = "xhigh"
+
+# Circuit-breaker defaults (schemas/keys.json defaults block).
+CIRCUIT_BREAKER_DEFAULTS = {
+    "enabled": True,
+    "max_consecutive_failures": 3,
+    "classifier_model": "haiku",
+}
+
+
+def default_pipeline_config() -> dict:
+    """Build the built-in default config snapshot for the template-owned keys
+    that survive export (``stages``, ``agents``, ``effort``, ``loops``,
+    ``circuit_breaker``).
+
+    This is the materialisation base for a *standalone* export: the template's
+    sparse delta is deep-merged over this snapshot so the exported config is a
+    complete, version-pinned picture rather than a delta interpreted against the
+    importer's defaults.
+
+    Derived from the live constants in ``stages.py`` (stage order, default-agent
+    map, default-disabled set) where possible so it tracks those automatically;
+    the inline scalar defaults are mirrored from named constants above and
+    guarded by a drift test against the real resolvers. Governance/milestones
+    are deliberately omitted — they are stripped by CONFIG_ALLOWLIST on export.
+    """
+    from worca.orchestrator.stages import (
+        STAGE_AGENT_MAP,
+        STAGE_ORDER,
+        Stage,
+        _STAGES_DEFAULT_DISABLED,
+    )
+
+    stages: dict = {}
+    # STAGE_ORDER omits LEARN (it's not in the per-stage flow); include it so the
+    # snapshot covers every stage a template might toggle.
+    for stage in (*STAGE_ORDER, Stage.LEARN):
+        entry: dict = {"enabled": stage not in _STAGES_DEFAULT_DISABLED}
+        agent = STAGE_AGENT_MAP.get(stage)
+        if agent is not None:
+            entry["agent"] = agent
+        stages[stage.value] = entry
+
+    agents: dict = {}
+    for agent in sorted(a for a in STAGE_AGENT_MAP.values() if a is not None):
+        cfg = {"model": AGENT_DEFAULT_MODEL, "max_turns": AGENT_DEFAULT_MAX_TURNS}
+        if agent == "coordinator":
+            cfg["max_beads"] = COORDINATOR_DEFAULT_MAX_BEADS
+        agents[agent] = cfg
+
+    return {
+        "stages": stages,
+        "agents": agents,
+        "effort": {
+            "auto_mode": EFFORT_DEFAULT_AUTO_MODE,
+            "auto_cap": EFFORT_DEFAULT_AUTO_CAP,
+        },
+        "loops": {name: LOOP_DEFAULT_LIMIT for name in PIPELINE_LOOP_NAMES},
+        "circuit_breaker": dict(CIRCUIT_BREAKER_DEFAULTS),
+    }
+
+
+def materialize_config(template_config: dict) -> dict:
+    """Return the effective config for a *standalone* export: the built-in
+    defaults (``default_pipeline_config``) with the template's sparse delta
+    deep-merged on top.
+
+    Only the keys present in the defaults snapshot are materialised. Any other
+    key the template carries (e.g. ``models``) is preserved verbatim on top, so
+    nothing the template declared is lost. Secret scrubbing is NOT done here —
+    the manifest still goes through ``redact_bundle`` after materialisation.
+    """
+    return deep_merge_config(default_pipeline_config(), template_config or {})
+
+
 VALID_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max"})
 
 
@@ -642,36 +738,34 @@ class TemplateResolver:
                 return cand
         return None
 
-    def _write_self_contained_agents(
+    def resolve_self_contained_agents(
         self,
         src_template: "Template",
-        dest_agents_dir: Path,
         core_dir: Path,
-    ) -> None:
-        """Compose every core role + block with the source template's overlay
-        and write the fully-resolved prompts into ``dest_agents_dir``.
+    ) -> dict[str, str]:
+        """Return ``{filename: content}`` for a fully-resolved, self-contained
+        prompt set: every core role + block composed with the source template's
+        overlay.
 
         The resolution chain is core → (source) template overlay only — project
         overrides (``.claude/agents``) are deliberately excluded by pointing the
         OverlayResolver at a non-existent overrides dir. Placeholders
         (``{{...}}`` / ``{{block:...}}`` / ``{{#if}}``) are preserved verbatim;
-        they are filled at runtime, not at duplicate time.
+        they are filled at runtime, not at resolution time.
 
-        The written files OVERWRITE any raw overlays already copied by the
-        copytree step, leaving a uniform, resolved, self-contained set.
+        Shared by ``duplicate`` (writes the result to disk) and standalone
+        ``export`` (carries the result as ``_overlays`` in the bundle).
         """
         from worca.orchestrator.overlay import OverlayResolver
 
         # An overrides_dir that cannot exist → the project-overlay tier is
         # always skipped, so only core + template overlay are composed.
-        non_existent_overrides = str(dest_agents_dir / "__no_project_overrides__")
+        non_existent_overrides = str(core_dir / "__no_project_overrides__")
         resolver = OverlayResolver(overrides_dir=non_existent_overrides)
 
         src_agents_dir = (
             str(src_template.agents_dir) if src_template.agents_dir else None
         )
-
-        dest_agents_dir.mkdir(parents=True, exist_ok=True)
 
         roles: list[str] = []
         blocks: list[str] = []
@@ -684,18 +778,36 @@ class TemplateResolver:
             else:
                 roles.append(name[: -len(".md")])
 
+        out: dict[str, str] = {}
         for role in roles:
             core_content = (core_dir / f"{role}.md").read_text(encoding="utf-8")
-            resolved = resolver.resolve(role, core_content, src_agents_dir)
-            (dest_agents_dir / f"{role}.md").write_text(resolved, encoding="utf-8")
+            out[f"{role}.md"] = resolver.resolve(role, core_content, src_agents_dir)
 
         for block in blocks:
             resolved = resolver.resolve_block(block, str(core_dir), src_agents_dir)
             if resolved is None:
                 continue
-            (dest_agents_dir / f"{block}.block.md").write_text(
-                resolved, encoding="utf-8"
-            )
+            out[f"{block}.block.md"] = resolved
+
+        return out
+
+    def _write_self_contained_agents(
+        self,
+        src_template: "Template",
+        dest_agents_dir: Path,
+        core_dir: Path,
+    ) -> None:
+        """Compose every core role + block with the source template's overlay
+        and write the fully-resolved prompts into ``dest_agents_dir``.
+
+        The written files OVERWRITE any raw overlays already copied by the
+        copytree step, leaving a uniform, resolved, self-contained set.
+        """
+        dest_agents_dir.mkdir(parents=True, exist_ok=True)
+        for fname, content in self.resolve_self_contained_agents(
+            src_template, core_dir
+        ).items():
+            (dest_agents_dir / fname).write_text(content, encoding="utf-8")
 
     def duplicate(
         self,

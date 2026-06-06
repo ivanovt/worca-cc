@@ -36,6 +36,7 @@ from worca.orchestrator.bundle import (
 from worca.orchestrator.templates import (
     TemplateError,
     TemplateResolver,
+    materialize_config,
 )
 from worca.utils.env import filter_model_env
 from worca.utils.settings import deep_merge
@@ -274,6 +275,17 @@ def register_subcommand(sub):
         dest="templates_filter",
         default=None,
         help="Comma-separated template IDs to export (default: all project+user)",
+    )
+    export_parser.add_argument(
+        "--mode",
+        choices=["standalone", "delta"],
+        default="standalone",
+        help=(
+            "standalone (default): self-contained bundle — config materialised "
+            "over built-in defaults and prompts resolved into a complete set. "
+            "delta: sparse template overlay that re-merges over the importer's "
+            "defaults at run launch."
+        ),
     )
 
     # import
@@ -629,6 +641,16 @@ def cmd_templates_export(args):
     resolver = _make_resolver(getattr(args, "project_root", None))
     worca_config = _load_current_worca_config()
 
+    export_mode = getattr(args, "mode", "standalone")
+    standalone = export_mode == "standalone"
+    core_dir = resolver._find_core_dir() if standalone else None
+    if standalone and core_dir is None:
+        print(
+            "warning: standalone export requested but core prompt dir not found — "
+            "prompts will be carried as raw overlays instead of a self-contained set",
+            file=sys.stderr,
+        )
+
     if args.templates_filter:
         template_ids = [tid.strip() for tid in args.templates_filter.split(",") if tid.strip()]
     else:
@@ -648,11 +670,19 @@ def cmd_templates_export(args):
             "name": tmpl.name,
             "description": tmpl.description,
             "tags": list(tmpl.tags),
-            "config": tmpl.config,
+            # Standalone: materialise the effective config over the built-in
+            # defaults so the bundle is self-describing and version-pinned.
+            # Delta: ship the sparse overlay (re-merges on import).
+            "config": materialize_config(tmpl.config) if standalone else tmpl.config,
         }
         if tmpl.params:
             entry["params"] = tmpl.params
-        overlays = _read_template_overlays(tmpl)
+        if standalone and core_dir is not None:
+            # Self-contained prompts: every core role + block composed with this
+            # template's overlay (same resolution duplicate uses).
+            overlays = resolver.resolve_self_contained_agents(tmpl, core_dir)
+        else:
+            overlays = _read_template_overlays(tmpl)
         if overlays:
             entry["_overlays"] = overlays
         tmpl_objects.append(tmpl)
@@ -681,7 +711,9 @@ def cmd_templates_export(args):
             pricing, _ = _filter_pricing_by_aliases(
                 worca_config.get("pricing") or {}, referenced_aliases, direction="export"
             )
-        manifest = build_export_manifest(template_entries, models=models, pricing=pricing)
+        manifest = build_export_manifest(
+            template_entries, models=models, pricing=pricing, export_mode=export_mode
+        )
         redacted, redacted_paths = redact_bundle(manifest)
         if redacted_paths:
             for rp in redacted_paths:
@@ -729,6 +761,7 @@ def cmd_templates_export(args):
             [entry],
             models=models if not has_overlays else None,
             pricing=pricing if not has_overlays else None,
+            export_mode=export_mode,
         )
         redacted_manifest, redacted_paths = redact_bundle(per_manifest)
         if redacted_paths:
@@ -744,7 +777,7 @@ def cmd_templates_export(args):
             out_path = dest
 
         if has_overlays:
-            _write_zip(redacted_entry, out_path)
+            _write_zip(redacted_entry, out_path, export_mode=export_mode)
         else:
             Path(out_path).write_text(
                 json.dumps(redacted_manifest, indent=2), encoding="utf-8"
@@ -782,6 +815,16 @@ def cmd_templates_import(args):
     bundle_templates = manifest.get("templates", [])
     bundle_models = manifest.get("models")
     bundle_pricing = manifest.get("pricing")
+
+    # Standalone bundles carry a fully-materialised config + self-contained
+    # prompts; they are written verbatim (applied as-is), so the imported
+    # template behaves identically to the source regardless of local defaults.
+    if manifest.get("export_mode") == "standalone":
+        print(
+            "info: standalone bundle — config and prompts applied as-is "
+            "(no re-merge over local defaults)",
+            file=sys.stderr,
+        )
 
     resolver = _make_resolver(getattr(args, "project_root", None))
     _, project_dir, user_dir = _resolve_dirs()

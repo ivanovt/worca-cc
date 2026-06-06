@@ -291,4 +291,37 @@ describe('exportTemplate — blob download path', () => {
 
     vi.restoreAllMocks();
   });
+
+  it('requests standalone mode by default, delta when asked', async () => {
+    const mockBlob = new Blob(['x'], { type: 'application/zip' });
+    const headers = new Headers({
+      'Content-Disposition': 'attachment; filename="t-bundle.zip"',
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      blob: vi.fn().mockResolvedValue(mockBlob),
+      headers,
+    });
+    global.fetch = fetchMock;
+    global.URL.createObjectURL = vi.fn(() => 'blob:fake');
+    global.URL.revokeObjectURL = vi.fn();
+    const origCreate = document.createElement.bind(document);
+    vi.spyOn(document, 'createElement').mockImplementation((tag) => {
+      const el = origCreate(tag);
+      if (tag === 'a') vi.spyOn(el, 'click').mockImplementation(() => {});
+      return el;
+    });
+
+    await exportTemplate('proj', 't', 'project', 'T');
+    expect(fetchMock.mock.calls[0][0]).toContain('?mode=standalone');
+
+    await exportTemplate('proj', 't', 'project', 'T', 'delta');
+    expect(fetchMock.mock.calls[1][0]).toContain('?mode=delta');
+
+    // An unknown mode normalises to standalone.
+    await exportTemplate('proj', 't', 'project', 'T', 'bogus');
+    expect(fetchMock.mock.calls[2][0]).toContain('?mode=standalone');
+
+    vi.restoreAllMocks();
+  });
 });

@@ -301,42 +301,40 @@ function duplicateTemplateViaCli(projectRoot, srcId, dstId, dstTier) {
  * Export a template bundle. Returns `{ json, data }` where `json` is
  * true for JSON bundles (data is parsed object) and false for zip bundles
  * (data is raw Buffer with filename in `filename`).
+ *
+ * `mode` is 'standalone' (default — self-contained config + resolved prompts)
+ * or 'delta' (sparse overlay). Standalone materialises a prompt set even when
+ * the template has no on-disk overlays, so the CLI may emit a zip in cases the
+ * old on-disk `hasOverlays` check would have missed. We therefore sniff the
+ * produced file's magic bytes instead of predicting the format.
  */
-function exportBundle(projectRoot, tier, id) {
-  const tierDir = dirForTier(projectRoot, tier);
-  const tmplDir = tierDir ? join(tierDir, id) : null;
-  const useZip = tmplDir && hasOverlays(tmplDir);
-
+function exportBundle(projectRoot, id, mode = 'standalone') {
+  const normalizedMode = mode === 'delta' ? 'delta' : 'standalone';
   const dir = mkdtempSync(join(tmpdir(), 'worca-bundle-'));
   try {
-    if (useZip) {
-      const bundlePath = join(dir, `${id}-bundle.zip`);
-      runWorcaTemplates(projectRoot, [
-        'export',
-        '--to',
-        bundlePath,
-        '--templates',
-        id,
-      ]);
-      if (existsSync(bundlePath)) {
-        return {
-          json: false,
-          filename: `${id}-bundle.zip`,
-          data: readFileSync(bundlePath),
-        };
-      }
-    }
-
-    const bundlePath = join(dir, `${id}.json`);
+    const bundlePath = join(dir, `${id}-bundle.out`);
     runWorcaTemplates(projectRoot, [
       'export',
       '--to',
       bundlePath,
       '--templates',
       id,
+      '--mode',
+      normalizedMode,
     ]);
     if (existsSync(bundlePath)) {
-      return { json: true, data: JSON.parse(readFileSync(bundlePath, 'utf8')) };
+      const buf = readFileSync(bundlePath);
+      // ZIP local-file-header magic: 'PK\x03\x04'.
+      const isZip =
+        buf.length >= 4 &&
+        buf[0] === 0x50 &&
+        buf[1] === 0x4b &&
+        buf[2] === 0x03 &&
+        buf[3] === 0x04;
+      if (isZip) {
+        return { json: false, filename: `${id}-bundle.zip`, data: buf };
+      }
+      return { json: true, data: JSON.parse(buf.toString('utf8')) };
     }
     return { json: true, data: { templates: [{ id }] } };
   } finally {
@@ -806,14 +804,16 @@ export function createTemplatesRoutes() {
   /**
    * GET /api/projects/:projectId/templates/:tier/:id/bundle
    *
-   * Auto-detects format: zip when the template has overlays, JSON otherwise.
-   * Optional ?format=zip forces zip output.
+   * Optional ?mode=standalone|delta (default standalone). Standalone emits a
+   * self-contained bundle (config materialised + prompts resolved); delta emits
+   * the sparse overlay. Output format (zip vs JSON) is auto-detected.
    */
   router.get('/templates/:tier/:id/bundle', (req, res) => {
     const { tier, id } = req.params;
     if (rejectInvalidTierId(res, tier, id)) return;
+    const mode = req.query.mode === 'delta' ? 'delta' : 'standalone';
     try {
-      const result = exportBundle(req.project.projectRoot, tier, id);
+      const result = exportBundle(req.project.projectRoot, id, mode);
       if (!result.json) {
         res.setHeader('Content-Type', 'application/zip');
         res.setHeader(

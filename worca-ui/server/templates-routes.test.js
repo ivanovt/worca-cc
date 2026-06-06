@@ -1160,4 +1160,44 @@ describe('templates-routes — (tier, id) contract', () => {
       expect(body.ok).toBe(false);
     });
   });
+
+  describe('GET /templates/:tier/:id/bundle — export mode', () => {
+    it('defaults to standalone mode', async () => {
+      const app = await createTestApp(projectRoot);
+      seedBuiltin('feature');
+      await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/builtin/feature/bundle',
+      );
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args).toContain('export');
+      expect(args).toContain('--mode');
+      expect(args[args.indexOf('--mode') + 1]).toBe('standalone');
+    });
+
+    it('passes --mode delta when ?mode=delta', async () => {
+      const app = await createTestApp(projectRoot);
+      seedBuiltin('feature');
+      await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/builtin/feature/bundle?mode=delta',
+      );
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args[args.indexOf('--mode') + 1]).toBe('delta');
+    });
+
+    it('falls back to standalone for an unrecognised mode', async () => {
+      const app = await createTestApp(projectRoot);
+      seedBuiltin('feature');
+      await request(
+        app,
+        'GET',
+        '/api/projects/test/templates/builtin/feature/bundle?mode=bogus',
+      );
+      const args = templateArgs(mockExecSync.mock.calls[0]);
+      expect(args[args.indexOf('--mode') + 1]).toBe('standalone');
+    });
+  });
 });

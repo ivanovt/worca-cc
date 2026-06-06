@@ -96,6 +96,7 @@ export async function exportTemplate(
   templateId,
   tier,
   templateName,
+  mode = 'standalone',
 ) {
   try {
     const baseUrl = projectId
@@ -106,7 +107,12 @@ export async function exportTemplate(
     // (tier, id) primary-key redesign. Fall back to 'project' when
     // the caller didn't supply a tier — most card actions know it.
     const tierSlug = tier || 'project';
-    const response = await fetch(`${baseUrl}/${tierSlug}/${templateId}/bundle`);
+    // standalone (default) = self-contained config + resolved prompts;
+    // delta = sparse overrides that re-merge on import.
+    const modeParam = mode === 'delta' ? 'delta' : 'standalone';
+    const response = await fetch(
+      `${baseUrl}/${tierSlug}/${templateId}/bundle?mode=${modeParam}`,
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to export template (HTTP ${response.status})`);
@@ -568,7 +574,7 @@ function _templateCard(template, defaultTemplate, handlers) {
           title="Export template bundle"
         >
           ${unsafeHTML(iconSvg(Download, 14))}
-          ${has_overlays ? 'Export (zip)' : 'Export (json)'}
+          Export
         </button>
         ${
           has_overlays

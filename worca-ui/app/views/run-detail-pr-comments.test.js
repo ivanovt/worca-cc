@@ -6,8 +6,6 @@
 import { describe, expect, it } from 'vitest';
 import { prCommentsView } from './run-detail-pr-comments.js';
 
-const LIT_NOTHING = Symbol.for('lit-nothing');
-
 function renderToString(template) {
   if (template === null || template === undefined) return '';
   if (typeof template === 'symbol') return '';

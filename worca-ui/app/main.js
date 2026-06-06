@@ -12,6 +12,7 @@ import {
   CircleSlash,
   Copy,
   Database,
+  Download,
   iconSvg,
   Loader,
   Pause,
@@ -2076,6 +2077,8 @@ export { _slugifyId as slugifyId };
 
 function _validateActionDialog(dlg, state) {
   if (!dlg) return null;
+  // Export only chooses a mode; nothing to validate.
+  if (dlg.mode === 'export') return null;
   if (dlg.mode === 'import') {
     if (dlg.importResult) return null;
     if (!dlg.parsed) return 'Choose a bundle file to import.';
@@ -2169,18 +2172,21 @@ function _templateActionDialogTemplate(state) {
     duplicate: 'Duplicate template',
     rename: 'Rename or move template',
     import: 'Import template bundle',
+    export: 'Export template bundle',
   };
   const confirmLabel = {
     create: 'Create',
     duplicate: 'Duplicate',
     rename: 'Apply',
     import: dlg.importResult ? 'Done' : 'Import',
+    export: 'Export',
   };
   const confirmIcon = {
     create: Plus,
     duplicate: Copy,
     rename: Pencil,
     import: Upload,
+    export: Download,
   };
   const validationError = _validateActionDialog(dlg, state);
   const disabled = _templateActionBusy || !!validationError;
@@ -2389,6 +2395,37 @@ function _templateActionDialogTemplate(state) {
           <sl-option value="project">Project (.claude/templates/)</sl-option>
           <sl-option value="user">User (~/.worca/templates/)</sl-option>
         </sl-select>
+      </div>
+    `;
+  } else if (dlg.mode === 'export') {
+    const exportMode = dlg.exportMode || 'standalone';
+    body = html`
+      <p class="dialog-lead">
+        Export <code>${dlg.srcId}</code> (${dlg.srcTier}) as a bundle you can
+        import into another project.
+      </p>
+      <div class="settings-field">
+        <label class="settings-label" for="dlg-export-mode">Bundle contents</label>
+        <sl-radio-group
+          id="dlg-export-mode"
+          .value=${exportMode}
+          @sl-change=${(e) => _updateActionDialog({ exportMode: e.target.value })}
+        >
+          <sl-radio value="standalone">
+            Standalone (self-contained)
+            <span class="settings-field-hint">
+              Config materialised over the built-in defaults and prompts resolved
+              into a complete set. Behaves identically wherever it's imported.
+            </span>
+          </sl-radio>
+          <sl-radio value="delta">
+            Delta (overrides only)
+            <span class="settings-field-hint">
+              Just this template's changes. Re-merges over the destination's
+              defaults at run launch — smaller, but version-dependent.
+            </span>
+          </sl-radio>
+        </sl-radio-group>
       </div>
     `;
   }
@@ -2654,6 +2691,23 @@ async function _confirmTemplateActionDialog() {
       store.setState({ templates, defaultTemplate: templates.defaultTemplate });
       return;
     }
+
+    if (dlg.mode === 'export') {
+      // exportTemplate triggers a browser download and raises its own
+      // toast on success/failure; close the dialog once it returns.
+      const projectId = store.getState().currentProjectId || null;
+      await exportTemplate(
+        projectId,
+        dlg.srcId,
+        dlg.srcTier,
+        dlg.name,
+        dlg.exportMode || 'standalone',
+      );
+      _templateActionDialog = null;
+      _templateActionBusy = false;
+      rerender();
+      return;
+    }
   } catch (err) {
     _templateActionDialog = {
       ...dlg,
@@ -2665,14 +2719,20 @@ async function _confirmTemplateActionDialog() {
 }
 
 function handleExportTemplate(tid, tier) {
-  const projectId = store.getState().currentProjectId || null;
-  // The cards pass tier alongside id — find the template by both so
-  // we get the right name (and don't accidentally pick up a same-id
-  // sibling from a different tier).
+  // Open the export dialog so the user picks standalone (default) vs delta.
+  // The actual download happens on confirm via exportTemplate().
   const template = (store.getState().templates || []).find(
     (t) => t.id === tid && (!tier || t.tier === tier),
   );
-  exportTemplate(projectId, tid, tier || template?.tier, template?.name || tid);
+  _templateActionDialog = {
+    mode: 'export',
+    srcId: tid,
+    srcTier: tier || template?.tier || 'project',
+    name: template?.name || tid,
+    exportMode: 'standalone',
+  };
+  _templateActionBusy = false;
+  rerender();
 }
 
 let _gistCopiedTimer = null;

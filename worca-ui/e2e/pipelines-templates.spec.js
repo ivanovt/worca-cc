@@ -518,18 +518,23 @@ test('Export Card button GETs /templates/:tier/:id/bundle (tier in URL)', async 
       .locator('.template-card')
       .filter({ hasText: 'Exportable' });
     // Target the bundle-download button by its unique title — "Export (gist)"
-    // also matches has-text("Export") now that the label is dynamic
-    // ("Export (json)" / "Export (zip)").
+    // also matches has-text("Export").
     const exportBtn = card.locator('button[title="Export template bundle"]');
     await expect(exportBtn).toBeVisible();
 
+    // The Export button now opens a mode-picker dialog; the GET fires on
+    // confirm and carries ?mode=<standalone|delta> (default standalone).
+    await exportBtn.click();
+    const dialog = page.locator('sl-dialog.template-action-dialog');
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+
     const bundleRes = page.waitForResponse(
       (res) =>
-        /\/templates\/project\/expo\/bundle$/.test(res.url()) &&
+        /\/templates\/project\/expo\/bundle\?mode=standalone$/.test(res.url()) &&
         res.request().method() === 'GET',
       { timeout: 10000 },
     );
-    await exportBtn.click();
+    await dialog.locator('sl-button[variant="primary"]').click();
     const res = await bundleRes;
     expect(res.ok()).toBe(true);
 

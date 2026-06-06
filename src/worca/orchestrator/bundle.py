@@ -128,16 +128,26 @@ def collect_referenced_model_aliases(
     return referenced
 
 
+# Export modes. "standalone" = config materialised over built-in defaults and
+# prompts resolved into a self-contained set; the importer applies it as-is
+# (no re-merge needed for fidelity). "delta" = the sparse template overlay
+# (legacy behaviour) that re-merges over the importer's defaults at run launch.
+VALID_EXPORT_MODES = frozenset({"standalone", "delta"})
+
+
 def build_export_manifest(
     templates: list[dict],
     models: dict | None = None,
     pricing: dict | None = None,
+    export_mode: str | None = None,
 ) -> dict:
     manifest: dict = {
         "worca_bundle_version": 1,
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "templates": templates,
     }
+    if export_mode is not None:
+        manifest["export_mode"] = export_mode
     if models is not None:
         manifest["models"] = models
     if pricing is not None:
@@ -430,14 +440,22 @@ def _parse_zip_bundle(raw_bytes: bytes, staging: Path) -> dict:
         if overlays:
             tmpl_data["_overlays"] = overlays
 
-        return {
+        # export_mode rides inside template.json (see _write_zip); lift it back
+        # to the manifest and strip it from the entry so the imported
+        # template.json stays clean.
+        export_mode = tmpl_data.pop("export_mode", None)
+
+        manifest: dict = {
             "worca_bundle_version": 2,
             "exported_at": datetime.now(timezone.utc).isoformat(),
             "templates": [tmpl_data],
         }
+        if export_mode is not None:
+            manifest["export_mode"] = export_mode
+        return manifest
 
 
-def _write_zip(tmpl_entry: dict, dest: str) -> None:
+def _write_zip(tmpl_entry: dict, dest: str, export_mode: str | None = None) -> None:
     """Write a single-template zip bundle to *dest*.
 
     *tmpl_entry* is a (redacted) template dict that may carry
@@ -448,10 +466,17 @@ def _write_zip(tmpl_entry: dict, dest: str) -> None:
 
     This mirrors the layout expected by ``_parse_zip_bundle`` so a zip
     produced here can be round-tripped through ``fetch_bundle``.
+
+    ``export_mode`` is a manifest-level concept, but the strict zip layout
+    carries no manifest wrapper — so it rides inside ``template.json`` and is
+    lifted back to the synthesized manifest by ``_parse_zip_bundle`` (and
+    popped off the entry there, so it never lands in the on-disk template.json).
     """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         json_entry = {k: v for k, v in tmpl_entry.items() if k != "_overlays"}
+        if export_mode is not None:
+            json_entry["export_mode"] = export_mode
         zf.writestr("template.json", json.dumps(json_entry, indent=2))
         for fname, content in (tmpl_entry.get("_overlays") or {}).items():
             zf.writestr(f"agents/{fname}", content)
@@ -573,6 +598,7 @@ _KNOWN_TOP_KEYS = {
     "templates",
     "models",
     "pricing",
+    "export_mode",
     "_redacted",
     "_stripped",
 }
@@ -588,6 +614,9 @@ _TEMPLATE_TOPLEVEL_KEYS = frozenset({
     "config",
     "params",
     "_overlays",
+    # Transient: only present inside a zip's template.json to ferry the
+    # manifest-level export_mode through the layout; _parse_zip_bundle pops it.
+    "export_mode",
 })
 
 

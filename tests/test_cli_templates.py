@@ -1593,7 +1593,7 @@ class TestExportImportRoundtrip:
             "worca.cli.templates._load_current_worca_config",
             return_value={},
         ):
-            main(["templates", "export", "--to", str(bundle_file)])
+            main(["templates", "export", "--to", str(bundle_file), "--mode", "delta"])
 
         bundle = json.loads(bundle_file.read_text())
         # webhooks must be gone, allowlisted fields must survive.
@@ -2073,7 +2073,10 @@ class TestExportAliasFiltering:
             "worca.cli.templates._load_current_worca_config",
             return_value=settings,
         ):
-            main(["templates", "export", "--to", str(out_file), "--include-models"])
+            main([
+                "templates", "export", "--to", str(out_file),
+                "--include-models", "--mode", "delta",
+            ])
 
         bundle = json.loads(out_file.read_text())
         assert set(bundle["models"].keys()) == {"opus"}
@@ -2105,7 +2108,10 @@ class TestExportAliasFiltering:
             "worca.cli.templates._load_current_worca_config",
             return_value=settings,
         ):
-            main(["templates", "export", "--to", str(out_file), "--include-models"])
+            main([
+                "templates", "export", "--to", str(out_file),
+                "--include-models", "--mode", "delta",
+            ])
 
         bundle = json.loads(out_file.read_text())
         assert set(bundle["models"].keys()) == {"glm-ds"}
