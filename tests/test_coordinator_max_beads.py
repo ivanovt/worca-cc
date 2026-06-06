@@ -1,8 +1,7 @@
 """Tests for max_beads validation in validate_merged_config and prompt_builder resolution."""
 
 import json
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from worca.orchestrator.templates import validate_merged_config
 from worca.orchestrator.prompt_builder import PromptBuilder
@@ -334,15 +333,6 @@ class TestRunPipelineMaxBeadsFlag:
 class TestRunnerSoftWarnsOnCapDeviation:
     """_warn_if_cap_deviation logs on deviation; run proceeds regardless."""
 
-    def _call(self, effective_cap, created_count, is_pr_revision=False):
-        from worca.orchestrator.runner import _warn_if_cap_deviation
-        from unittest.mock import patch, call
-        warnings = []
-        with patch("worca.orchestrator.runner._log") as mock_log:
-            _warn_if_cap_deviation(effective_cap, created_count, is_pr_revision)
-            warn_calls = [c for c in mock_log.call_args_list if c == call(c.args[0], "warn")]
-            return mock_log.call_args_list
-
     def test_cap_one_exact_no_warning(self):
         from worca.orchestrator.runner import _warn_if_cap_deviation
         from unittest.mock import patch
@@ -417,7 +407,6 @@ class TestQuickFixTemplateMaxBeads:
     """quick-fix template must set coordinator.max_beads=1 and pass validate_merged_config."""
 
     def _load_quick_fix_config(self):
-        import importlib.resources as pkg_resources
         from pathlib import Path
         # Locate the builtin template from the installed package
         pkg_dir = Path(__file__).parent.parent / "src" / "worca" / "templates" / "quick-fix"
