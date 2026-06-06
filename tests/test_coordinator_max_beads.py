@@ -442,3 +442,35 @@ class TestQuickFixTemplateMaxBeads:
                 f"Template '{tmpl_dir.name}' has coordinator.max_beads={max_beads!r}; "
                 "only quick-fix should set this to a non-zero value"
             )
+
+
+class TestLaunchParamStatus:
+    """launch_param_status persists launch-time params only when explicitly set,
+    so the preflight UI row can surface them (and stay empty otherwise)."""
+
+    def test_all_set(self):
+        from worca.orchestrator.runner import launch_param_status
+
+        assert launch_param_status(12, 3, 2) == {
+            "max_beads_override": 12,
+            "size_multiplier": 3,
+            "loop_multiplier": 2,
+        }
+
+    def test_defaults_omitted(self):
+        from worca.orchestrator.runner import launch_param_status
+
+        # msize/mloops at the default of 1 and max_beads unset → empty dict.
+        assert launch_param_status(None, 1, 1) == {}
+
+    def test_max_beads_zero_is_kept_but_multiplier_one_is_not(self):
+        from worca.orchestrator.runner import launch_param_status
+
+        # max_beads=0 is an explicit value (None means "not passed"); multipliers
+        # of 1 are the default and are dropped.
+        assert launch_param_status(0, 1, 1) == {"max_beads_override": 0}
+
+    def test_partial(self):
+        from worca.orchestrator.runner import launch_param_status
+
+        assert launch_param_status(None, 4, 1) == {"size_multiplier": 4}

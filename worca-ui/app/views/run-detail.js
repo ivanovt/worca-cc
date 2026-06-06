@@ -1271,7 +1271,38 @@ function _preflightGraphBadgesRow(stage, run) {
   return html`<div class="iteration-tags-row">${gfx}${crg}</div>`;
 }
 
-function _preflightChecksView(stage, iter) {
+// Launch-time pipeline params (set via the new-run UI) surfaced on the preflight
+// row. Each is shown only when explicitly set; values render as neutral pills,
+// matching the Graphify / Code Review Graph badges. Returns `nothing` when no
+// param was set so the row collapses entirely.
+function _preflightParamsRow(run) {
+  if (!run) return nothing;
+  const pill = (text, tip) =>
+    html`<sl-tooltip content="${tip}"><sl-badge class="preflight-param-badge" variant="neutral" pill>${text}</sl-badge></sl-tooltip>`;
+  const items = [];
+  const size = run.size_multiplier;
+  const loops = run.loop_multiplier;
+  const maxBeads = run.max_beads_override;
+  if (typeof size === 'number' && size > 1) {
+    items.push(
+      html`<span class="meta-label">Size Multiplier:</span> ${pill(`${size}×`, 'Turn multiplier (msize) set at launch — multiplies each agent’s max_turns.')}`,
+    );
+  }
+  if (typeof loops === 'number' && loops > 1) {
+    items.push(
+      html`<span class="meta-label">Loop Multiplier:</span> ${pill(`${loops}×`, 'Loop multiplier (mloops) set at launch — multiplies the test/review/plan retry-loop limits.')}`,
+    );
+  }
+  if (typeof maxBeads === 'number' && maxBeads > 0) {
+    items.push(
+      html`<span class="meta-label">Max Beads:</span> ${pill(String(maxBeads), 'Maximum beads the coordinator may create, set at launch (0 / unset = Auto).')}`,
+    );
+  }
+  if (!items.length) return nothing;
+  return html`<div class="iteration-tags-row preflight-params-row">${items}</div>`;
+}
+
+function _preflightChecksView(stage, iter, run) {
   const isSkipped = stage.skipped || iter.outcome === 'skipped';
   if (isSkipped) {
     return html`<div class="preflight-checks-view"><sl-badge variant="neutral" pill>Skipped</sl-badge></div>`;
@@ -1279,10 +1310,16 @@ function _preflightChecksView(stage, iter) {
   const output = iter.output || {};
   const checks = output.checks || [];
   const summary = output.summary || '';
-  if (!checks.length && !summary) return nothing;
+  const paramsRow = _preflightParamsRow(run);
+  if (!checks.length && !summary && paramsRow === nothing) return nothing;
   return html`
     <div class="preflight-checks-view">
-      ${summary ? html`<div class="preflight-summary markdown-body">${unsafeHTML(renderMarkdown(summary))}</div>` : nothing}
+      ${paramsRow}
+      ${
+        summary
+          ? html`<div class="iteration-tags-row preflight-status-row"><span class="meta-label">Status:</span> <span class="meta-value markdown-body markdown-inline">${unsafeHTML(renderMarkdown(summary))}</span></div>`
+          : nothing
+      }
       ${
         checks.length > 0
           ? html`
@@ -2205,7 +2242,7 @@ export function runDetailView(run, settings = {}, options = {}) {
                       ${key === 'pr' && !run?.revises_pr ? _prInfoStripView(run) : nothing}
                       ${key === 'pr' ? prDeferredSectionView(run, options.rerender, options) : nothing}
                       ${key === 'preflight' ? _preflightGraphBadgesRow(stage, run) : nothing}
-                      ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0]) : nothing}
+                      ${key === 'preflight' && iterations.length === 1 ? _preflightChecksView(stage, iterations[0], run) : nothing}
                       ${_planIterationButton(key, iterations[0], run, options.rerender)}
                       ${promptData ? _agentPromptSection(key, promptData) : nothing}
                     </div>

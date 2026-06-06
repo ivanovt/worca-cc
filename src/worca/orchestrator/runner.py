@@ -2203,6 +2203,26 @@ def _pin_effective_settings_path(settings_path: Optional[str]) -> None:
         os.environ["WORCA_SETTINGS_PATH"] = os.path.abspath(settings_path)
 
 
+def launch_param_status(
+    max_beads_override: Optional[int], msize: int, mloops: int
+) -> dict:
+    """Status keys recording launch-time params, present only when explicitly set.
+
+    The UI surfaces these on the preflight row. ``max_beads_override`` is stored
+    whenever provided (``None`` means "not passed"); the size/loop multipliers are
+    stored only when raised above their default of 1 so an unset multiplier leaves
+    the key absent and the UI shows nothing.
+    """
+    out: dict = {}
+    if max_beads_override is not None:
+        out["max_beads_override"] = max_beads_override
+    if isinstance(msize, int) and msize > 1:
+        out["size_multiplier"] = msize
+    if isinstance(mloops, int) and mloops > 1:
+        out["loop_multiplier"] = mloops
+    return out
+
+
 def run_pipeline(
     work_request: WorkRequest,
     plan_file: Optional[str] = None,
@@ -2392,8 +2412,7 @@ def run_pipeline(
         if worktree:
             status["worktree"] = True
 
-        if max_beads_override is not None:
-            status["max_beads_override"] = max_beads_override
+        status.update(launch_param_status(max_beads_override, msize, mloops))
 
         # target_branch is the PR base branch (what the PR merges into).
         # Sourced from WORCA_TARGET_BRANCH env var (highest priority) or the

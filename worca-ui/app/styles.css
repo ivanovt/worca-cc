@@ -4633,11 +4633,6 @@ sl-details.learnings-panel::part(content) {
   margin-top: 10px;
 }
 
-.preflight-summary {
-  font-size: 0.8rem;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
 
 .preflight-table {
   width: 100%;

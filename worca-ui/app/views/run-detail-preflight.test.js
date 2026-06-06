@@ -245,4 +245,73 @@ describe('runDetailView preflight stage', () => {
     const html = renderToString(runDetailView(run));
     expect(html).not.toContain('preflight-checks-view');
   });
+
+  it('renders the summary as a labeled "Status:" meta row (not the old muted style)', () => {
+    const run = _makeRun({
+      outcome: 'success',
+      output: { status: 'pass', checks: [], summary },
+      _stageExtras: {},
+    });
+    const html = renderToString(runDetailView(run));
+    // New: "Status:" meta-label in an iteration-tags row, value carries meta-value.
+    expect(html).toContain('preflight-status-row');
+    expect(html).toContain('Status:');
+    expect(html).toContain('meta-value');
+    expect(html).toContain(summary);
+    // Old muted markdown-only style is gone.
+    expect(html).not.toContain('preflight-summary');
+  });
+
+  it('shows launch-param pills only when explicitly set', () => {
+    const run = {
+      size_multiplier: 3,
+      loop_multiplier: 2,
+      max_beads_override: 12,
+      stages: {
+        preflight: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'success',
+              output: { status: 'pass', checks: [], summary },
+            },
+          ],
+        },
+      },
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).toContain('preflight-params-row');
+    expect(html).toContain('Size Multiplier:');
+    expect(html).toContain('Loop Multiplier:');
+    expect(html).toContain('Max Beads:');
+    expect(html).toContain('preflight-param-badge');
+  });
+
+  it('omits the params row when no launch param is set (or at defaults)', () => {
+    const run = {
+      // size/loop default to 1, max_beads 0 → none "explicitly set"
+      size_multiplier: 1,
+      loop_multiplier: 1,
+      max_beads_override: 0,
+      stages: {
+        preflight: {
+          status: 'completed',
+          iterations: [
+            {
+              number: 1,
+              status: 'completed',
+              outcome: 'success',
+              output: { status: 'pass', checks: [], summary },
+            },
+          ],
+        },
+      },
+    };
+    const html = renderToString(runDetailView(run));
+    expect(html).not.toContain('preflight-params-row');
+    expect(html).not.toContain('Size Multiplier:');
+    expect(html).not.toContain('Max Beads:');
+  });
 });
