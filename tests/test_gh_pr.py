@@ -174,6 +174,30 @@ def test_fetch_review_feedback_drops_empty_body():
     assert comments == []
 
 
+def test_fetch_review_feedback_passes_query_and_typed_vars():
+    """The gh invocation must send the query plus variables as flags, never
+    via `--input -` (which overrides the body and drops the query field →
+    GitHub's "A query attribute must be specified" error)."""
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = _make_gh_result(GRAPHQL_RESPONSE)
+        fetch_review_feedback("octo/widget", 117)
+
+    cmd = mock_run.call_args[0][0]
+    call_kwargs = mock_run.call_args[1]
+    assert cmd[:3] == ["gh", "api", "graphql"]
+    # No stdin body — variables travel as flags
+    assert "--input" not in cmd
+    assert call_kwargs.get("input") is None
+    joined = " ".join(cmd)
+    assert "query=" in joined
+    assert "owner=octo" in cmd
+    assert "repo=widget" in cmd
+    # number is passed via -F (type-inferred to Int!), not -f
+    assert "number=117" in cmd
+    f_idx = cmd.index("number=117") - 1
+    assert cmd[f_idx] == "-F"
+
+
 def test_fetch_review_feedback_gh_error_returns_empty(capsys):
     """When the gh CLI fails, returns [] with a stderr warning."""
     result = MagicMock()
@@ -247,7 +271,8 @@ def test_reply_to_thread_exception_suppressed(monkeypatch, capsys):
 
 
 def test_reply_to_thread_passes_thread_id_and_body(monkeypatch):
-    """Thread ID and body are included in the subprocess call input."""
+    """Thread ID and body travel as GraphQL flag variables, not via `--input -`
+    (which would override the body and drop the query field)."""
     monkeypatch.delenv("WORCA_NO_GITHUB", raising=False)
     mock_result = MagicMock()
     mock_result.returncode = 0
@@ -256,11 +281,14 @@ def test_reply_to_thread_passes_thread_id_and_body(monkeypatch):
     with patch("subprocess.run", return_value=mock_result) as mock_run:
         reply_to_thread("owner/repo", "PRRT_xyz", "Addressed in sha123")
 
+    cmd = mock_run.call_args[0][0]
     call_kwargs = mock_run.call_args[1]
-    stdin_input = call_kwargs.get("input", "")
-    variables = json.loads(stdin_input)
-    assert variables["threadId"] == "PRRT_xyz"
-    assert variables["body"] == "Addressed in sha123"
+    assert cmd[:3] == ["gh", "api", "graphql"]
+    assert "--input" not in cmd
+    assert call_kwargs.get("input") is None
+    assert any(a.startswith("query=") for a in cmd)
+    assert "threadId=PRRT_xyz" in cmd
+    assert "body=Addressed in sha123" in cmd
 
 
 # ---------------------------------------------------------------------------

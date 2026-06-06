@@ -125,12 +125,21 @@ def fetch_review_feedback(nwo: str, pr_number: int) -> list[dict]:
         review bodies (which have no thread_id / file anchor).
     """
     owner, repo = nwo.split("/", 1)
-    variables = json.dumps({"owner": owner, "repo": repo, "number": pr_number})
 
     try:
+        # Pass GraphQL variables as typed flags. `--input -` cannot be combined
+        # with `-f query=...`: it overrides the request body with stdin, which
+        # then carries no `query` field and GitHub rejects it with "A query
+        # attribute must be specified". `-f` sends strings, `-F` type-infers so
+        # the Int! `number` is sent as a number, not a string.
         result = subprocess.run(
-            ["gh", "api", "graphql", "-f", f"query={_GRAPHQL_QUERY}", "--input", "-"],
-            input=variables,
+            [
+                "gh", "api", "graphql",
+                "-f", f"query={_GRAPHQL_QUERY}",
+                "-f", f"owner={owner}",
+                "-f", f"repo={repo}",
+                "-F", f"number={pr_number}",
+            ],
             capture_output=True,
             text=True,
             timeout=30,
@@ -219,11 +228,16 @@ def reply_to_thread(nwo: str, thread_id: str, body: str) -> bool:
     """
     if _github_disabled():
         return False
-    variables = json.dumps({"threadId": thread_id, "body": body})
     try:
+        # Same constraint as fetch_review_feedback: variables must be flags, not
+        # `--input -` (which would drop the query field). Both are strings here.
         result = subprocess.run(
-            ["gh", "api", "graphql", "-f", f"query={_REPLY_MUTATION}", "--input", "-"],
-            input=variables,
+            [
+                "gh", "api", "graphql",
+                "-f", f"query={_REPLY_MUTATION}",
+                "-f", f"threadId={thread_id}",
+                "-f", f"body={body}",
+            ],
             capture_output=True,
             text=True,
             timeout=15,

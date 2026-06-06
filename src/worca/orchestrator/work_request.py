@@ -360,7 +360,14 @@ def attach_guide(
 
 
 def _synthesize_pr_description(body: str, review_comments: list) -> str:
-    """Build PR work-request description: original body + review feedback list."""
+    """Build PR work-request description: original body + review feedback list.
+
+    For inline comments, the reviewer's diff hunk (the ``@@ ... @@`` context
+    they were looking at) is nested under the bullet as a fenced ``diff`` block.
+    Without it the agent gets only a ``path:line`` coordinate — which can have
+    drifted since review — and must re-derive which code a terse comment
+    ("this leaks a file handle") refers to. Review summaries carry no hunk.
+    """
     parts = [body.rstrip()] if body else []
     if review_comments:
         lines = []
@@ -376,6 +383,13 @@ def _synthesize_pr_description(body: str, review_comments: list) -> str:
             thread_id = c.get("thread_id", "")
             suffix = f" (thread: {thread_id})" if thread_id else ""
             lines.append(f'- [{loc}] @{author}: "{text}"{suffix}')
+            diff_hunk = c.get("diff_hunk", "")
+            if diff_hunk:
+                # 2-space indent keeps the fenced block inside the list item.
+                lines.append("")
+                lines.append("  ```diff")
+                lines.extend(f"  {h}" for h in diff_hunk.splitlines())
+                lines.append("  ```")
         parts.append("\n## Review Feedback to Address\n")
         parts.extend(lines)
     return "\n".join(parts)

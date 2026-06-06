@@ -33,10 +33,41 @@ from worca.utils.git import (
     checkout_pr_worktree,
     create_pipeline_worktree,
     detect_default_branch,
+    find_worktree_for_branch,
     init_worktree_beads,
 )
 from worca.utils.runtime import copy_claude_config, validate_runtime
 from worca.utils.settings import load_settings
+
+
+def _worktree_pipeline_is_live(worktree_path: str) -> bool:
+    """True if a registered pipeline at `worktree_path` is still running.
+
+    Reuse of an existing PR-head worktree is only safe when no pipeline is
+    actively writing to it. Scans the multi-pipeline registry for a RUNNING
+    entry pointing at this worktree whose PID is still alive.
+    """
+    from worca.orchestrator.registry import list_pipelines
+    from worca.state.status import PipelineStatus
+    from worca.utils.proc import pid_is_alive
+
+    target = os.path.abspath(worktree_path)
+    for entry in list_pipelines():
+        if entry.get("status") != PipelineStatus.RUNNING:
+            continue
+        path = entry.get("worktree_path")
+        if not path or os.path.abspath(path) != target:
+            continue
+        pid = entry.get("pid")
+        if pid is None:
+            continue
+        try:
+            if pid_is_alive(pid):
+                return True
+        except PermissionError:
+            # Process exists but owned by another user — treat as live.
+            return True
+    return False
 
 
 def _resolve_base_branch(args, settings: dict) -> str:
@@ -287,15 +318,38 @@ def main(argv=None) -> int:
     _wt_base = _parallel.get("worktree_base_dir", ".worktrees")
 
     if wr.source_type == "github_pr":
-        # For PR sources, check out the existing PR head branch via 'gh pr checkout'
-        # (L3 — fresh worktree; handles cross-repo/fork PRs). Never create a new branch.
-        worktree_path = checkout_pr_worktree(
-            run_id,
-            wr.pr_number,
-            wr.pr_head_branch,
-            pr_is_cross_repo=wr.pr_is_cross_repo,
-            base_dir=_wt_base,
-        )
+        # A git branch can only be checked out in one worktree at a time. The
+        # worca run that originally opened the PR leaves the PR head branch
+        # checked out in its (frequently still-on-disk) worktree, so a fresh
+        # `gh pr checkout` of the same branch fails with "already used by
+        # worktree at …". When such a worktree already exists, reuse it —
+        # unless a pipeline is still live there (reusing would corrupt it).
+        existing = find_worktree_for_branch(wr.pr_head_branch)
+        if existing:
+            if _worktree_pipeline_is_live(existing):
+                print(
+                    f"error: PR head branch '{wr.pr_head_branch}' is checked out "
+                    f"in a worktree with a running pipeline ({existing}); "
+                    "stop that run before launching a revision.",
+                    file=sys.stderr,
+                )
+                return 1
+            print(
+                f"reusing existing worktree for PR #{wr.pr_number} head branch "
+                f"'{wr.pr_head_branch}': {existing}",
+                file=sys.stderr,
+            )
+            worktree_path = existing
+        else:
+            # No existing checkout — create a fresh worktree and check out the
+            # PR head via 'gh pr checkout' (handles cross-repo/fork PRs).
+            worktree_path = checkout_pr_worktree(
+                run_id,
+                wr.pr_number,
+                wr.pr_head_branch,
+                pr_is_cross_repo=wr.pr_is_cross_repo,
+                base_dir=_wt_base,
+            )
         worktree_branch = wr.pr_head_branch  # L2: preserve head branch name verbatim
         target_branch = wr.pr_base_branch
     else:

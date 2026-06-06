@@ -557,6 +557,89 @@ export class ProcessManager {
     const env = { ...process.env };
     delete env.CLAUDECODE;
 
+    // run_worktree.py is a *launcher*: it performs all setup (PR-metadata
+    // fetch, worktree checkout, registry write) and only exits 0 after the
+    // real pipeline wrote its status.json (_await_pipeline_startup), printing
+    // diagnostics to stderr and exiting non-zero on any failure. Its detached
+    // grandchild redirects its own stdio to a log file, so it never holds our
+    // pipes open. That makes the launcher's exit code an authoritative
+    // success/failure signal — wait for it instead of guessing with a fixed
+    // timer. The old 2s timer resolved "started" before slow failures (e.g. a
+    // PR fetch followed by a worktree collision) surfaced, so the UI reported
+    // success while nothing ran. run_pipeline.py (in-place / resume) is NOT a
+    // launcher — it *is* the long-lived pipeline — so it keeps the timer path.
+    const isFireAndForget = scriptRel === worktreeScriptRel;
+
+    if (isFireAndForget) {
+      return new Promise((resolve, reject) => {
+        const child = spawn('python3', args, {
+          detached: true,
+          // Capture stderr to surface the launcher's error; ignore stdin/stdout
+          // (stdout carries only run_id+path and is not needed).
+          stdio: ['ignore', 'ignore', 'pipe'],
+          cwd,
+          env,
+        });
+
+        let settled = false;
+        let stderr = '';
+        const STDERR_CAP = 8192;
+        // Generous safety net: the launcher normally exits within seconds, but
+        // a hung gh/network call shouldn't block the launch request forever.
+        const hardCap = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          child.removeAllListeners('error');
+          child.removeAllListeners('exit');
+          cleanupPromptFile(promptFilePath);
+          const err = new Error(
+            'Pipeline launcher did not finish within 180s — aborting launch',
+          );
+          err.code = 'spawn_timeout';
+          reject(err);
+        }, 180000);
+        hardCap.unref?.();
+
+        if (child.stderr) {
+          child.stderr.on('data', (d) => {
+            if (stderr.length < STDERR_CAP) stderr += d.toString();
+          });
+        }
+
+        child.on('error', (spawnErr) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(hardCap);
+          cleanupPromptFile(promptFilePath);
+          const err = new Error(
+            `Failed to start pipeline: ${spawnErr.message}`,
+          );
+          err.code = 'spawn_error';
+          reject(err);
+        });
+
+        child.on('exit', (code, signal) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(hardCap);
+          cleanupPromptFile(promptFilePath);
+          if (code === 0) {
+            child.unref();
+            resolve({ pid: child.pid });
+            return;
+          }
+          const detail = stderr.trim().split('\n').slice(-6).join('\n').trim();
+          const reason =
+            code !== null ? `exit code ${code}` : `signal ${signal}`;
+          const err = new Error(
+            `Pipeline failed to start (${reason})${detail ? `:\n${detail}` : ''}`,
+          );
+          err.code = 'spawn_error';
+          reject(err);
+        });
+      });
+    }
+
     return new Promise((resolve, reject) => {
       const child = spawn('python3', args, {
         detached: true,
