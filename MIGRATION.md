@@ -852,6 +852,11 @@ W-065: Deferrable PR creation with manual promote-from-UI.
 - **New `pipeline.git.pr_deferred` event** (Tier 1, chat-rendered, `warning` severity) fires when a deferred run reaches done. Additive — subscribers that don't recognize it simply ignore it; the pipeline outbound constant count moves 56 → 57.
 - No automatic settings.json migration required beyond `worca init --upgrade` (which refreshes the schema + guardian prompt as noted above).
 
+### 0.49.x → 0.50.0
+
+- **`quick-fix` template now mandates a single bead (`max_beads: 1`).** Previously the coordinator could produce multiple beads for a quick-fix run; now it is instructed to deliver the entire fix as one atomic bead. All other built-in templates (feature, bugfix, refactor) remain unchanged at `max_beads: 0` (auto). If you have a **custom `quick-fix` template override** that relies on multi-bead decomposition, add `max_beads: 0` to its `config.agents.coordinator` block to restore the old behavior.
+- **New `worca.agents.coordinator.max_beads` config key (additive, default `0`).** No existing runs or templates are affected — `0` means auto, which is today's behavior. The key is template-owned and settable per-run via `--max-beads`. No `worca init --upgrade` required.
+
 ## Getting help
 
 - Issues: https://github.com/SinishaDjukic/worca-cc/issues

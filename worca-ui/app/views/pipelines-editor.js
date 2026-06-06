@@ -256,12 +256,16 @@ export function buildFormBuffer(templateConfig, settings) {
   form.agents = {};
   for (const name of AGENT_NAMES) {
     const agentConfig = config.agents?.[name] || {};
-    form.agents[name] = {
+    const agentEntry = {
       _original: { ...agentConfig },
       model: agentConfig.model || 'sonnet',
       max_turns: agentConfig.max_turns || 30,
       effort: agentConfig.effort || null,
     };
+    if (name === 'coordinator') {
+      agentEntry.max_beads = agentConfig.max_beads ?? 0;
+    }
+    form.agents[name] = agentEntry;
   }
 
   // Loops
@@ -450,6 +454,13 @@ export function formBufferToConfig(formBuffer) {
       // User explicitly cleared effort — don't carry the original
       // value through.
       delete merged.effort;
+    }
+    if (name === 'coordinator') {
+      if (agent.max_beads) {
+        merged.max_beads = agent.max_beads;
+      } else {
+        delete merged.max_beads;
+      }
     }
     config.agents[name] = merged;
   }
@@ -1816,6 +1827,46 @@ function _agentsTab(formBuffer, settings, projectId, rerender) {
                     )}
                   </sl-select>
                 </div>
+                ${
+                  name === 'coordinator'
+                    ? html`
+                      <div class="settings-field">
+                        <label class="settings-label" for="coordinator-max-beads"
+                          >Max beads</label
+                        >
+                        <sl-select
+                          id="coordinator-max-beads"
+                          .value=${String(agent.max_beads ?? 0)}
+                          size="small"
+                          hoist
+                          @sl-change=${(e) => {
+                            editorState.formBuffer.agents.coordinator.max_beads =
+                              parseInt(e.target.value, 10) || 0;
+                            rerender();
+                          }}
+                          @sl-blur=${() => {
+                            validateConfigDebounced(
+                              projectId,
+                              editorState.formBuffer,
+                              state.viewMode,
+                              rerender,
+                            );
+                          }}
+                        >
+                          <sl-option value="0">Auto</sl-option>
+                          ${Array.from({ length: 10 }, (_, i) => i + 1).map(
+                            (n) =>
+                              html`<sl-option value="${n}">${n}</sl-option>`,
+                          )}
+                        </sl-select>
+                        <span class="settings-field-hint"
+                          >Auto = no cap; 1 = single bead; &gt;1 = advisory
+                          budget.</span
+                        >
+                      </div>
+                    `
+                    : nothing
+                }
               </div>
             </div>
           `;

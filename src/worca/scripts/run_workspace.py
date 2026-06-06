@@ -936,6 +936,14 @@ def create_parser() -> argparse.ArgumentParser:
         help="Path to settings.json",
     )
 
+    parser.add_argument(
+        "--max-beads",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Override coordinator decomposition cap for every child (0 = auto)",
+    )
+
     return parser
 
 
@@ -1470,7 +1478,7 @@ def main(argv=None) -> int:
 
     print(f"Workspace run {ws_id} — dispatching {len(ws.projects)} project(s)")
 
-    executor = DagExecutor(manifest, run_dir, settings_path=settings_path)
+    executor = DagExecutor(manifest, run_dir, settings_path=settings_path, max_beads=args.max_beads)
     result = executor.execute()
 
     if result["status"] == "halted":

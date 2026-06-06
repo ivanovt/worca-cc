@@ -136,6 +136,7 @@ def get_stage_config(stage: Stage, settings_path: str = ".claude/settings.json")
         "model_env": model_env,
         "max_turns": agent_config.get("max_turns", 30),
         "effort": agent_config.get("effort"),
+        "max_beads": agent_config.get("max_beads", 0),
         "schema": STAGE_SCHEMA_MAP.get(stage, f"{stage.value}.json"),
     }
 

@@ -259,6 +259,27 @@ def validate_merged_config(merged: dict) -> list[dict]:
                 ),
             })
 
+        if "max_beads" in agent_data:
+            max_beads = agent_data["max_beads"]
+            if not isinstance(max_beads, int) or isinstance(max_beads, bool):
+                issues.append({
+                    "field": f"agents.{agent_name}.max_beads",
+                    "severity": "error",
+                    "message": f"agents.{agent_name}.max_beads must be an integer",
+                })
+            elif max_beads < 0:
+                issues.append({
+                    "field": f"agents.{agent_name}.max_beads",
+                    "severity": "error",
+                    "message": f"agents.{agent_name}.max_beads must be >= 0",
+                })
+            elif max_beads > 50:
+                issues.append({
+                    "field": f"agents.{agent_name}.max_beads",
+                    "severity": "error",
+                    "message": f"agents.{agent_name}.max_beads must be <= 50",
+                })
+
     effort_config = merged.get("effort", {})
     if isinstance(effort_config, dict):
         auto_cap = effort_config.get("auto_cap")

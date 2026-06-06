@@ -60,6 +60,10 @@ def create_parser():
                         help="Pre-assigned run ID (set by run_worktree.py so the runner "
                              "and the multi-pipeline registry agree on the key). When "
                              "omitted, the runner generates its own.")
+    parser.add_argument("--max-beads", type=int, default=None,
+                        help="Cap on the number of beads the coordinator may create "
+                             "(0 = auto, None = use config). Allowed on --resume without "
+                             "--force-template-change.")
     return parser
 
 
@@ -231,6 +235,11 @@ def main():
                         file=sys.stderr,
                     )
                     raise SystemExit(2)
+        # Restore max_beads_override from status.json; CLI value wins if provided.
+        if args.max_beads is None:
+            _persisted_max_beads = existing.get("max_beads_override")
+            if isinstance(_persisted_max_beads, int):
+                args.max_beads = _persisted_max_beads
         plan_file = args.plan
         print(f"Resuming pipeline: {work_request.title}")
     else:
@@ -373,6 +382,7 @@ def main():
             pipeline_template=_pipeline_template,
             registry_base=args.registry_base,
             run_id=args.run_id,
+            max_beads_override=args.max_beads,
         )
 
         # Snapshot template to run dir and write merged settings for traceability.

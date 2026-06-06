@@ -859,3 +859,57 @@ class TestParseRunIdFromStdout:
     def test_strips_whitespace(self):
         from worca.scripts.run_fleet import _parse_run_id_from_stdout
         assert _parse_run_id_from_stdout("  r-001  \n/path\n") == "r-001"
+
+
+# ---- W-069: --max-beads passthrough -----------------------------------------
+
+class TestMaxBeadsFleet:
+    """--max-beads is parsed and forwarded to build_child_cmd."""
+
+    def _parse(self, argv):
+        from worca.scripts.run_fleet import create_parser
+        return create_parser().parse_args(argv)
+
+    def test_max_beads_default_none(self):
+        args = self._parse(["--prompt", "x", "--projects", "/p"])
+        assert args.max_beads is None
+
+    def test_max_beads_parsed(self):
+        args = self._parse(["--prompt", "x", "--projects", "/p", "--max-beads", "4"])
+        assert args.max_beads == 4
+
+    def test_max_beads_zero_accepted(self):
+        args = self._parse(["--prompt", "x", "--projects", "/p", "--max-beads", "0"])
+        assert args.max_beads == 0
+
+    def test_build_child_cmd_includes_max_beads_when_set(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            prompt="x",
+            max_beads=3,
+        )
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "3"
+
+    def test_build_child_cmd_omits_max_beads_when_none(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            prompt="x",
+            max_beads=None,
+        )
+        assert "--max-beads" not in cmd
+
+    def test_build_child_cmd_includes_max_beads_zero(self):
+        from worca.scripts.run_fleet import build_child_cmd
+        cmd = build_child_cmd(
+            project_dir="/p",
+            fleet_id="f-001",
+            prompt="x",
+            max_beads=0,
+        )
+        idx = cmd.index("--max-beads")
+        assert cmd[idx + 1] == "0"

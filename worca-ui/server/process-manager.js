@@ -541,6 +541,9 @@ export class ProcessManager {
     if (opts.mloops && opts.mloops > 1) {
       args.push('--mloops', String(opts.mloops));
     }
+    if (opts.maxBeads != null) {
+      args.push('--max-beads', String(opts.maxBeads));
+    }
     if (opts.planFile) {
       args.push('--plan', opts.planFile);
     }

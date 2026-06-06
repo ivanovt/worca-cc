@@ -955,6 +955,27 @@ def _log_stage_metrics(
             _log(f"{stage_label} verdict: {outcome}", level)
 
 
+def _warn_if_cap_deviation(effective_cap: int, created_count: int, is_pr_revision: bool) -> None:
+    """Log a warning when coordinator bead count deviates from the effective cap.
+
+    Skip when cap is 0 (no cap) or in PR-revision mode. Pipeline always proceeds.
+    """
+    if not effective_cap or is_pr_revision:
+        return
+    if effective_cap == 1 and created_count != 1:
+        _log(
+            f"Coordinator created {created_count} bead(s) but cap was 1 "
+            f"(expected exactly 1) — proceeding as-is",
+            "warn",
+        )
+    elif effective_cap > 1 and created_count > effective_cap:
+        _log(
+            f"Coordinator created {created_count} bead(s) but cap was "
+            f"{effective_cap} — proceeding as-is",
+            "warn",
+        )
+
+
 def _save_stage_output(stage: Stage, result: dict, logs_dir: str = ".worca/logs", iteration: int = 1) -> None:
     """Save stage output to a per-iteration log file for resume support."""
     stage_dir = os.path.join(logs_dir, stage.value)
@@ -2197,6 +2218,7 @@ def run_pipeline(
     pipeline_template: Optional[str] = None,
     registry_base: Optional[str] = None,
     run_id: Optional[str] = None,
+    max_beads_override: Optional[int] = None,
 ) -> dict:
     """Run the full pipeline for a single work request.
 
@@ -2370,6 +2392,9 @@ def run_pipeline(
         if worktree:
             status["worktree"] = True
 
+        if max_beads_override is not None:
+            status["max_beads_override"] = max_beads_override
+
         # target_branch is the PR base branch (what the PR merges into).
         # Sourced from WORCA_TARGET_BRANCH env var (highest priority) or the
         # --branch flag, which in worktree mode names the base branch.
@@ -2515,7 +2540,7 @@ def run_pipeline(
         # PR-stage retries so iter_2 verification compares against the same
         # pre-stage HEAD as iter_1.
         _pr_baseline_head: Optional[str] = None
-        max_beads = 0
+        created_bead_count = 0
 
         # Initialize PromptBuilder for context threading across stages
         prompt_context_path = os.path.join(run_dir, "prompt_context.json") if run_dir else None
@@ -2547,11 +2572,11 @@ def run_pipeline(
             _backfilled = backfill_prompt_context(prompt_builder, status, logs_dir)
             if _backfilled:
                 _log(f"Resume backfill: populated {len(_backfilled)} missing context key(s): {', '.join(_backfilled)}")
-            # Restore max_beads from persisted context — the COORDINATE stage
+            # Restore created_bead_count from persisted context — the COORDINATE stage
             # that originally set it will be skipped on resume.
             resumed_beads = prompt_builder.get_context("beads_ids")
             if resumed_beads:
-                max_beads = len(resumed_beads)
+                created_bead_count = len(resumed_beads)
             # Re-flag graphify availability on resume — the PREFLIGHT handler
             # that sets has_graphify + GRAPHIFY_OUT is skipped on resume.
             _graphify_out = _reattach_graphify_on_resume(status, prompt_builder)
@@ -2930,6 +2955,11 @@ def run_pipeline(
                     pb_iteration = prompt_builder.get_context("bead_prompt_iteration") or 0
                 else:
                     pb_iteration = loop_counters.get(f"{current_stage.value}_iteration", 0)
+
+                # Thread max_beads cap into prompt_builder before building COORDINATE context
+                if current_stage == Stage.COORDINATE:
+                    prompt_builder.update_context("max_beads_override", max_beads_override)
+                    prompt_builder.update_context("max_beads_config", stage_config["max_beads"])
 
                 ctx_dict = prompt_builder.build_context(current_stage.value, pb_iteration)
                 _stage_agent_name = stage_config["agent"]
@@ -3844,7 +3874,12 @@ def run_pipeline(
                             raise PipelineInterrupted("Aborted via control webhook", stop_reason="control_webhook")
                 # Thread coordinate outputs into PromptBuilder
                 beads_ids = result.get("beads_ids", [])
-                max_beads = len(beads_ids)
+                created_bead_count = len(beads_ids)
+                _warn_if_cap_deviation(
+                    ctx_dict.get("max_beads", 0),
+                    created_bead_count,
+                    bool(prompt_builder.get_context("review_comments")),
+                )
                 prompt_builder.update_context("beads_ids", beads_ids)
                 prompt_builder.update_context("dependency_graph", result.get("dependency_graph", {}))
                 prompt_builder.pop_context("unresolved_plan_issues")
@@ -3963,7 +3998,7 @@ def run_pipeline(
                             )
                             next_bead = None
                     if next_bead and Stage.IMPLEMENT in stage_order:
-                        safety_cap = max(max_beads, len(run_bead_ids or [])) + 3
+                        safety_cap = max(created_bead_count, len(run_bead_ids or [])) + 3
                         if loop_counters["bead_iteration"] < safety_cap:
                             # Keep stage in_progress between beads so resume works
                             if prompt_context_path:
@@ -3976,7 +4011,7 @@ def run_pipeline(
                                 emit_event(ctx, BEAD_NEXT, bead_next_payload(
                                     next_bead_id=next_bead["id"],
                                     bead_iteration=loop_counters["bead_iteration"],
-                                    max_beads=max_beads,
+                                    max_beads=created_bead_count,
                                 ))
                             continue
                         else:
@@ -4005,9 +4040,9 @@ def run_pipeline(
                 save_status(status, actual_status_path)
                 if ctx:
                     _bead_kwargs = {}
-                    if max_beads:
+                    if created_bead_count:
                         _bead_kwargs["beads_done"] = loop_counters.get("bead_iteration", 0)
-                        _bead_kwargs["beads_total"] = max_beads
+                        _bead_kwargs["beads_total"] = created_bead_count
                     _sc_event = emit_event(ctx, STAGE_COMPLETED, stage_completed_payload(
                         stage=current_stage.value, iteration=iter_num,
                         duration_ms=iter_extras.get("duration_ms", 0),

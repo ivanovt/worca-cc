@@ -122,7 +122,8 @@ Skills and subagents in this repo split into two scopes:
 Agent config in `.claude/settings.json` under the `worca` namespace. Key sections:
 - `worca.default_template` — optional template id pinned as the project default; every run uses it unless `--template` overrides at launch
 - `worca.stages` — enable/disable stages, override agents
-- `worca.agents` — model, max_turns, and effort per agent
+- `worca.agents` — model, max_turns, effort, and max_beads per agent (coordinator only for max_beads)
+- `worca.agents.coordinator.max_beads` — bead decomposition cap: `0` = auto (default, current behavior), `1` = single-bead mandate, `>1` = advisory budget. Enforcement is soft (logs on deviation, run proceeds). Suppressed when PR-revision mode is active (review comments drive bead count). Precedence: per-run `--max-beads` override → template config → `0`. The `quick-fix` template ships with `max_beads: 1` (entire fix as one atomic bead).
 - `worca.effort` — auto_mode, auto_cap for adaptive effort levels (see [`docs/effort.md`](./docs/effort.md))
 - `worca.models` — shorthand→full model ID mapping (supports per-model env vars)
 - `worca.loops` — max iterations for test/review/planning retry loops

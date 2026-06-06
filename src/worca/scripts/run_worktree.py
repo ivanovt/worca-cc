@@ -174,6 +174,9 @@ def _build_pipeline_cmd(args: argparse.Namespace, run_id: str = "") -> list:
     if args.skip_preflight:
         cmd.append("--skip-preflight")
 
+    if args.max_beads is not None:
+        cmd.extend(["--max-beads", str(args.max_beads)])
+
     return cmd
 
 
@@ -226,6 +229,12 @@ def create_parser() -> argparse.ArgumentParser:
         "--skip-preflight",
         action="store_true",
         help="Skip the PREFLIGHT stage",
+    )
+    parser.add_argument(
+        "--max-beads",
+        type=int,
+        default=None,
+        help="Cap on the number of beads the coordinator may create (0 = auto, None = use config)",
     )
     parser.add_argument(
         "--settings",
