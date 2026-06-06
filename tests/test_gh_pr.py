@@ -174,6 +174,30 @@ def test_fetch_review_feedback_drops_empty_body():
     assert comments == []
 
 
+def test_fetch_review_feedback_passes_query_and_typed_vars():
+    """The gh invocation must send the query plus variables as flags, never
+    via `--input -` (which overrides the body and drops the query field →
+    GitHub's "A query attribute must be specified" error)."""
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = _make_gh_result(GRAPHQL_RESPONSE)
+        fetch_review_feedback("octo/widget", 117)
+
+    cmd = mock_run.call_args[0][0]
+    call_kwargs = mock_run.call_args[1]
+    assert cmd[:3] == ["gh", "api", "graphql"]
+    # No stdin body — variables travel as flags
+    assert "--input" not in cmd
+    assert call_kwargs.get("input") is None
+    joined = " ".join(cmd)
+    assert "query=" in joined
+    assert "owner=octo" in cmd
+    assert "repo=widget" in cmd
+    # number is passed via -F (type-inferred to Int!), not -f
+    assert "number=117" in cmd
+    f_idx = cmd.index("number=117") - 1
+    assert cmd[f_idx] == "-F"
+
+
 def test_fetch_review_feedback_gh_error_returns_empty(capsys):
     """When the gh CLI fails, returns [] with a stderr warning."""
     result = MagicMock()
