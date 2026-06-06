@@ -321,3 +321,42 @@ class TestCheckoutPrWorktree:
             result = checkout_pr_worktree("r4", pr_number=5, pr_head_branch="branch")
 
         assert result == ""
+
+
+# ---------------------------------------------------------------------------
+# find_worktree_for_branch
+# ---------------------------------------------------------------------------
+
+
+class TestFindWorktreeForBranch:
+
+    def test_finds_worktree_holding_branch(self, git_repo):
+        from worca.utils.git import create_pipeline_worktree, find_worktree_for_branch
+
+        path = create_pipeline_worktree("fwfb1", "myfeat")
+        # create_pipeline_worktree checks out branch worca/<slug>-<runid>
+        found = find_worktree_for_branch("worca/myfeat-fwfb1")
+        assert found == os.path.abspath(path)
+
+    def test_returns_empty_when_branch_not_checked_out(self, git_repo):
+        from worca.utils.git import create_pipeline_worktree, find_worktree_for_branch
+
+        create_pipeline_worktree("fwfb2", "other")
+        assert find_worktree_for_branch("worca/nonexistent-branch") == ""
+
+    def test_returns_empty_for_empty_branch(self, git_repo):
+        from worca.utils.git import find_worktree_for_branch
+
+        assert find_worktree_for_branch("") == ""
+
+    def test_matches_non_pipeline_worktree_branch(self, git_repo):
+        """The lookup is by branch name, not limited to pipeline worktrees."""
+        from worca.utils.git import find_worktree_for_branch
+
+        other_path = os.path.join(str(git_repo), "manual-wt")
+        subprocess.run(
+            ["git", "worktree", "add", "-b", "feature/manual", other_path, "HEAD"],
+            cwd=str(git_repo), check=True, capture_output=True,
+        )
+        found = find_worktree_for_branch("feature/manual")
+        assert found == os.path.abspath(other_path)

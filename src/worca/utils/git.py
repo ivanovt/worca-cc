@@ -175,6 +175,36 @@ def create_pipeline_worktree(
     return os.path.abspath(path)
 
 
+def find_worktree_for_branch(branch: str) -> str:
+    """Return the absolute path of the worktree that has `branch` checked out.
+
+    A git branch can be checked out in at most one worktree at a time. Scans
+    `git worktree list --porcelain` and returns the matching worktree's path,
+    or "" if no worktree currently has that branch checked out.
+
+    Used by the PR-revision flow: worca's own pipeline that opened a PR leaves
+    the PR head branch checked out in its (often still-on-disk) worktree, so a
+    follow-up revision run must reuse that worktree rather than fail trying to
+    check the same branch out a second time.
+    """
+    if not branch:
+        return ""
+    result = _run_git("worktree", "list", "--porcelain")
+    if result.returncode != 0:
+        return ""
+    current_path = ""
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            current_path = line[len("worktree "):]
+        elif line.startswith("branch "):
+            ref = line[len("branch "):]
+            if ref.startswith("refs/heads/"):
+                ref = ref[len("refs/heads/"):]
+            if ref == branch and current_path:
+                return os.path.abspath(current_path)
+    return ""
+
+
 def checkout_pr_worktree(
     run_id: str,
     pr_number: int,
